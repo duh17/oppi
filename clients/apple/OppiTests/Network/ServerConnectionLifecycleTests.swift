@@ -818,7 +818,6 @@ struct ServerConnectionLifecycleTests {
         )
     }
 
-
 }
 enum RoutingBootstrapFailure: Sendable {
     case authentication
@@ -979,7 +978,6 @@ private actor LANProbeCounter {
         value += 1
     }
 }
-
 
 private final class ListRefreshRequestLog: @unchecked Sendable {
     private let lock = NSLock()

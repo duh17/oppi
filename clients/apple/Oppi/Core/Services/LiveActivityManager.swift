@@ -60,7 +60,7 @@ final class LiveActivityManager {
             relevanceScore = content.relevanceScore
         }
 
-        static func == (lhs: DeliveredSnapshot, rhs: DeliveredSnapshot) -> Bool {
+        static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.state == rhs.state
                 && lhs.staleDate == rhs.staleDate
                 && lhs.relevanceScore == rhs.relevanceScore

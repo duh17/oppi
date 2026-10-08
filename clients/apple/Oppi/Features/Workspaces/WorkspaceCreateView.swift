@@ -325,7 +325,6 @@ struct WorkspaceCreateView: View {
                 }
             }
 
-
             if let connection = coordinator.connection(for: server.id),
                connection.controlSessionsAvailable,
                connection.apiClient != nil {

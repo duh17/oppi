@@ -80,7 +80,6 @@ struct LiveActivityPreviewScreen: View {
     }
 }
 
-
 private struct PreviewLockScreenCard: View {
     let state: PiSessionAttributes.ContentState
     let isStale: Bool
@@ -167,7 +166,6 @@ private struct PreviewLockScreenCard: View {
     }
 
 }
-
 
 private struct PreviewStatusHint: View {
     let text: LocalizedStringKey

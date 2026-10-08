@@ -62,43 +62,43 @@ struct ToolRowViewportPolicy {
         }
     }
 
-    static let bashOutput = ToolRowViewportPolicy(
+    static let bashOutput = Self(
         surface: .label,
         viewportMode: .text,
         heightBehavior: .cachedMeasured(mode: .output),
         constraintPriority: .required
     )
 
-    static let diff = ToolRowViewportPolicy(
+    static let diff = Self(
         surface: .label,
         viewportMode: .diff,
         heightBehavior: .cachedMeasured(mode: .expandedDiff),
         constraintPriority: .required
     )
 
-    static let code = ToolRowViewportPolicy(
+    static let code = Self(
         surface: .label,
         viewportMode: .code,
         heightBehavior: .cachedMeasured(mode: .expandedCode),
         constraintPriority: .required
     )
 
-    static let text = ToolRowViewportPolicy(
+    static let text = Self(
         surface: .label,
         viewportMode: .text,
         heightBehavior: .cachedMeasured(mode: .expandedText),
         constraintPriority: .required
     )
 
-    static let status = ToolRowViewportPolicy(
+    static let status = Self(
         surface: .label,
         viewportMode: .text,
         heightBehavior: .cachedMeasured(mode: .expandedText),
         constraintPriority: .required
     )
 
-    static func markdown(isCustomTool: Bool) -> ToolRowViewportPolicy {
-        ToolRowViewportPolicy(
+    static func markdown(isCustomTool: Bool) -> Self {
+        Self(
             surface: .markdownViewport,
             viewportMode: .text,
             heightBehavior: .markdownViewport(
@@ -115,11 +115,11 @@ struct ToolRowViewportPolicy {
         filePath: String?,
         attachments: [ToolPresentationBuilder.ToolMediaAttachment],
         fileType: FileType?
-    ) -> ToolRowViewportPolicy {
+    ) -> Self {
         let facts = readMediaFacts(output: output, filePath: filePath, attachments: attachments, fileType: fileType)
 
         if facts.isVoiceMessage {
-            return ToolRowViewportPolicy(
+            return Self(
                 surface: .hostedView,
                 viewportMode: .text,
                 heightBehavior: .voiceReadMedia(
@@ -131,7 +131,7 @@ struct ToolRowViewportPolicy {
         }
 
         if facts.shouldUseCompactVideoLauncher {
-            return ToolRowViewportPolicy(
+            return Self(
                 surface: .compactHostedView,
                 viewportMode: .text,
                 heightBehavior: .compactMeasured(minHeight: 1, maxHeight: nil),
@@ -139,7 +139,7 @@ struct ToolRowViewportPolicy {
             )
         }
 
-        return ToolRowViewportPolicy(
+        return Self(
             surface: .hostedView,
             viewportMode: .text,
             heightBehavior: .naturalReadMedia(
@@ -150,7 +150,7 @@ struct ToolRowViewportPolicy {
         )
     }
 
-    static let audioMessage = ToolRowViewportPolicy(
+    static let audioMessage = Self(
         surface: .compactHostedView,
         viewportMode: .text,
         heightBehavior: .compactMeasured(minHeight: 1, maxHeight: nil),
@@ -160,7 +160,7 @@ struct ToolRowViewportPolicy {
     static func forExpandedContent(
         _ content: ToolPresentationBuilder.ToolExpandedContent,
         toolNamePrefix: String?
-    ) -> ToolRowViewportPolicy {
+    ) -> Self {
         switch content {
         case .bash:
             return .bashOutput
@@ -186,7 +186,7 @@ struct ToolRowViewportPolicy {
     }
 
     /// The cell does not scroll. The reader wraps it.
-    static let notebook = ToolRowViewportPolicy(
+    static let notebook = Self(
         surface: .compactHostedView,
         viewportMode: .text,
         heightBehavior: .compactMeasured(
@@ -196,8 +196,8 @@ struct ToolRowViewportPolicy {
         constraintPriority: .required
     )
 
-    static func document(_ traits: DocumentFamily.InlineTraits) -> ToolRowViewportPolicy {
-        ToolRowViewportPolicy(
+    static func document(_ traits: DocumentFamily.InlineTraits) -> Self {
+        Self(
             surface: .hostedView,
             viewportMode: .text,
             heightBehavior: .compactMeasured(

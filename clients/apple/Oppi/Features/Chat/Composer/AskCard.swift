@@ -133,7 +133,7 @@ struct AskCard: View {
 
     /// Total pages: one per question.
     private var totalPages: Int {
-        AskCard.pageCount(for: request)
+        Self.pageCount(for: request)
     }
 
     private var currentQuestion: AskQuestion? {

@@ -469,7 +469,7 @@ private struct NavigationChromeChatFilesReproHarnessView: View {
     private static let sessionId = "nav-chrome-repro-session"
 
     @State private var navigation = AppNavigation()
-    @State private var connection = NavigationChromeChatFilesReproHarnessView.makeConnection()
+    @State private var connection = Self.makeConnection()
     @State private var quickCommentTemplateStore = QuickCommentTemplateStore(templates: [])
     @State private var composerDraftStore = ComposerDraftStore()
     @State private var didAutoOpen = false

@@ -94,8 +94,7 @@ struct AuthenticatedMediaSource: Sendable {
 /// Keeps file sharing on the same TLS trust boundary as range playback and
 /// refuses redirects so an Authorization header cannot be replayed elsewhere.
 final class AuthenticatedMediaFileDownloadDelegate: NSObject, @unchecked Sendable,
-    URLSessionDelegate, URLSessionTaskDelegate
-{
+    URLSessionDelegate, URLSessionTaskDelegate {
     private let trustDelegate: PinnedServerTrustDelegate
 
     init(pinnedLeafFingerprint: String?, expectedServerName: String?) {

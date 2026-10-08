@@ -10,7 +10,6 @@ enum AskCardShared {
 
     // MARK: - Display Helpers
 
-
     // MARK: - Selection Queries
 
     static func isOptionSelected(

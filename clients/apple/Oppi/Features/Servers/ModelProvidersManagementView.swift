@@ -1036,7 +1036,7 @@ struct ModelProvidersManagementView: View {
     }
 }
 
-fileprivate struct ProviderQuotaDetails: View {
+private struct ProviderQuotaDetails: View {
     let quota: ProviderQuota
     let providerName: String
 

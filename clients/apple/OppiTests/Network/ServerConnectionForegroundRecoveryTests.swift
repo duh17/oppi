@@ -31,7 +31,7 @@ struct ServerConnectionForegroundRecoveryTests {
         )
         var routeReachable = true
         var bootstrapAttempts = 0
-        let apiFactory: ServerConnectionAPIClientFactory = { environment, observer in
+        let apiFactory: ServerConnectionAPIClientFactory = { environment, _ in
             makeForegroundRecoveryFailingAPIClient(environment: environment)
         }
         let bootstrap: ServerConnectionInfoBootstrap = { _, _ in
@@ -217,7 +217,6 @@ struct ServerConnectionForegroundRecoveryTests {
         return conn
     }
 }
-
 
 private func makeForegroundRecoveryFailingAPIClient(
     environment: OppiClientEnvironment? = nil

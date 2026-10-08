@@ -308,8 +308,7 @@ struct AppleOnDeviceCaptureStartupTests {
         await session.cancel()
         #expect(drained == 1 && cancellations == 0)
         #expect(!inputs.checkDeadline())
-        do { for try await _ in session.events {} }
-        catch { Issue.record("Ordinary Stop must remain successful: \(error)") }
+        do { for try await _ in session.events {} } catch { Issue.record("Ordinary Stop must remain successful: \(error)") }
     }
 
     private func makeQueuedPCM(_ inputs: AnalyzerInputBuffer) throws -> AVAudioPCMBuffer {
@@ -447,8 +446,7 @@ struct AppleOnDeviceCaptureStartupTests {
         #expect(session._testEnqueueAnalyzerInput(AnalyzerInput(buffer: buffer)))
         await session.stop()
         session._testFinishAnalyzerResults()
-        do { for try await _ in session.events {} }
-        catch { Issue.record("Recovered pressure must not fail the take: \(error)") }
+        do { for try await _ in session.events {} } catch { Issue.record("Recovered pressure must not fail the take: \(error)") }
     }
 
     @Test(arguments: TestOrdinaryConversionFailure.allCases, [false, true])
@@ -477,8 +475,7 @@ struct AppleOnDeviceCaptureStartupTests {
         await session.stop()
         session._testFinishAnalyzerResults()
         var failure: Error?
-        do { for try await _ in session.events {} }
-        catch { failure = error }
+        do { for try await _ in session.events {} } catch { failure = error }
         #expect(failure != nil, "Stop cannot turn dropped ordinary audio into a successful take")
         if failureKind == .nsError {
             #expect((failure as NSError?)?.domain == "TestOrdinaryConverter")
@@ -507,8 +504,7 @@ struct AppleOnDeviceCaptureStartupTests {
         #expect(feed.feed(buffer, at: nil))
         await session.stop()
         session._testFinishAnalyzerResults()
-        do { for try await _ in session.events {} }
-        catch { Issue.record("Buffered/no-output is not a converter failure: \(error)") }
+        do { for try await _ in session.events {} } catch { Issue.record("Buffered/no-output is not a converter failure: \(error)") }
         var delivered = 0
         for await _ in input { delivered += 1 }
         #expect(delivered == 1)

@@ -9,8 +9,7 @@ import Foundation
 final class IOSChatSessionRuntimeAdapter:
     ChatSessionHistoryPort,
     ChatSessionFocusedStreamPort,
-    ChatSessionEffectsStatePort
-{
+    ChatSessionEffectsStatePort {
     private weak var connection: ServerConnection?
     private weak var sessionStore: SessionStore?
 

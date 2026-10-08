@@ -1915,7 +1915,7 @@ struct HarnessFrameIntervalSnapshot: Sendable {
     let over34MsPercent: Int
     let over50MsPercent: Int
 
-    static let empty = HarnessFrameIntervalSnapshot(
+    static let empty = Self(
         sampleCount: 0,
         p95IntervalMs: 0,
         p99IntervalMs: 0,

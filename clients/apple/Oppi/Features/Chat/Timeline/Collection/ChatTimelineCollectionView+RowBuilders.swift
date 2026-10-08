@@ -343,7 +343,8 @@ extension ChatTimelineCollectionHost.Controller {
             fullOutput: "",
             isLoadingOutput: false,
             callSegments: card.map { [StyledSegment(text: $0.title, style: .accent),
-                StyledSegment(text: " " + ($0.output?.command ?? ""), style: .dim)] }
+                StyledSegment(text: " " + ($0.output?.command ?? ""), style: .dim)]
+            }
                 ?? toolSegmentStore?.callSegments(for: itemID),
             resultSegments: card.flatMap { $0.status.map { [StyledSegment(text: $0, style: .muted)] } }
                 ?? toolSegmentStore?.resultSegments(for: itemID),
@@ -383,7 +384,8 @@ extension ChatTimelineCollectionHost.Controller {
             fullOutput: toolOutputStore?.fullOutput(for: itemID) ?? "",
             isLoadingOutput: toolOutputLoader.isLoading(itemID),
             callSegments: card.map { [StyledSegment(text: $0.title, style: .accent),
-                StyledSegment(text: " " + ($0.output?.command ?? ""), style: .dim)] }
+                StyledSegment(text: " " + ($0.output?.command ?? ""), style: .dim)]
+            }
                 ?? toolSegmentStore?.callSegments(for: itemID),
             resultSegments: card.flatMap { $0.status.map { [StyledSegment(text: $0, style: .muted)] } }
                 ?? toolSegmentStore?.resultSegments(for: itemID),

@@ -379,8 +379,7 @@ struct SessionRow: View {
     private func highlightedSearchSnippet(_ snippet: AttributedString) -> AttributedString {
         var highlighted = snippet
         for run in highlighted.runs
-            where run.inlinePresentationIntent?.contains(.stronglyEmphasized) == true
-        {
+            where run.inlinePresentationIntent?.contains(.stronglyEmphasized) == true {
             highlighted[run.range].foregroundColor = .themeYellow
         }
         return highlighted

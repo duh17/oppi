@@ -96,7 +96,7 @@ struct StatusPill: View {
     var accessibilityLabel: String? = nil
 
     var body: some View {
-        let _ = themeID
+        _ = themeID
         switch emphasis {
         case .glass:
             content

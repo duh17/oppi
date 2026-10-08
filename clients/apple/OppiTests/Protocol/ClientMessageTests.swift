@@ -298,8 +298,6 @@ struct ClientMessageTests {
         #expect(payload?["skills"] as? Bool == true)
     }
 
-
-
     // MARK: - Helpers
 
     private enum DecodeError: Error {

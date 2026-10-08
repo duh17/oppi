@@ -147,7 +147,7 @@ struct FileShareServiceTests {
             Issue.record("Expected PDF, got \(item)")
             return
         }
-        #expect(data.count > 0)
+        #expect(!data.isEmpty)
         #expect(filename == "diagram.pdf")
     }
 
@@ -225,7 +225,7 @@ struct FileShareServiceTests {
             Issue.record("Expected PDF, got \(item)")
             return
         }
-        #expect(data.count > 0)
+        #expect(!data.isEmpty)
         #expect(filename == "document.pdf")
     }
 
@@ -299,7 +299,7 @@ struct FileShareServiceTests {
             Issue.record("Expected PDF, got \(item)")
             return
         }
-        #expect(data.count > 0)
+        #expect(!data.isEmpty)
         #expect(filename == "formula.pdf")
     }
 
@@ -309,7 +309,7 @@ struct FileShareServiceTests {
             Issue.record("Expected PDF, got \(item)")
             return
         }
-        #expect(data.count > 0)
+        #expect(!data.isEmpty)
         #expect(filename == "code.pdf")
     }
 

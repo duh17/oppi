@@ -420,7 +420,6 @@ extension DiffChunkCollectionView: UICollectionViewDataSource, UICollectionViewD
         return cell
     }
 
-
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         prepareVisibleChunkRunway()
     }

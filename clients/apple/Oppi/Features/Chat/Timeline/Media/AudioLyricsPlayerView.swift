@@ -233,7 +233,7 @@ struct AudioLyricsPlayerView: View {
             // File browser embeds this view with the shared player and
             // `showsCloseButton: false`. Stop belongs only on presented
             // Now Playing chrome so it cannot kill unrelated playback.
-            if (showsCloseButton || usesNavigationBackButton), let audioPlayer {
+            if showsCloseButton || usesNavigationBackButton, let audioPlayer {
                 InAppNowPlayingStopButton(
                     audioPlayer: audioPlayer,
                     accessibilityIdentifier: "audioLyrics.stop"

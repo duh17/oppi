@@ -87,12 +87,6 @@ struct XYChartYAxis: Equatable, Sendable {
     let min: Double?
     /// Declared upper bound. `nil` means auto from data.
     let max: Double?
-
-    init(title: String?, min: Double?, max: Double?) {
-        self.title = title
-        self.min = min
-        self.max = max
-    }
 }
 
 struct XYChartSeries: Equatable, Sendable {
@@ -100,12 +94,6 @@ struct XYChartSeries: Equatable, Sendable {
     /// Named series appear in the legend. Unnamed series do not.
     let name: String?
     let values: [Double]
-
-    init(kind: XYChartSeriesKind, name: String?, values: [Double]) {
-        self.kind = kind
-        self.name = name
-        self.values = values
-    }
 }
 
 enum XYChartSeriesKind: Equatable, Sendable {

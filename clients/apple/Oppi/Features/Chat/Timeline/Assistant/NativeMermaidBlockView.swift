@@ -25,7 +25,7 @@ final class NativeMermaidBlockView: UIView {
         let renderSync: @Sendable (String, CGFloat, RenderTheme) -> RasterResult?
         let renderAsync: @Sendable (String, CGFloat, RenderTheme) async -> RasterResult?
 
-        static let live = Rasterizer(
+        static let live = Self(
             renderSync: { code, _, theme in
                 DocumentRenderPipeline.renderInlineGraphicalImage(
                     parser: MermaidParser(),

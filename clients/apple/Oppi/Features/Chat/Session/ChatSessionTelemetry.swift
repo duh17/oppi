@@ -137,7 +137,6 @@ enum ChatSessionTelemetry {
 
     // MARK: - App Launch
 
-
     // MARK: - Session Switch
 
     static func recordSessionSwitch(

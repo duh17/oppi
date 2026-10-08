@@ -19,7 +19,6 @@ struct TimelineReducerBasicTests {
         }
     }
 
-
     @Test func basicAgentTurn() {
         let reducer = TimelineReducer()
 

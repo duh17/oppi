@@ -294,7 +294,7 @@ indirect enum FullScreenCodeContent {
     case notebook(NotebookCellPlan)
 
     /// Build content from raw text and a file path by detecting the file type.
-    static func fromText(_ text: String, filePath: String?) -> FullScreenCodeContent {
+    static func fromText(_ text: String, filePath: String?) -> Self {
         let fileType = FileType.detect(from: filePath, content: text)
         if let document = DocumentFamily(fileType: fileType, text: text, filePath: filePath) {
             return .document(document)
@@ -323,7 +323,7 @@ indirect enum FullScreenCodeContent {
         _ text: String,
         filePath: String?,
         resourceAccess: MarkdownResourceAccess
-    ) -> FullScreenCodeContent {
+    ) -> Self {
         let base = fromText(text, filePath: filePath)
         if case .markdown(let content, let path, _, let rawText, let sidecarSource) = base {
             return .markdown(content: content, filePath: path, resourceAccess: resourceAccess, rawText: rawText, sidecarSource: sidecarSource)

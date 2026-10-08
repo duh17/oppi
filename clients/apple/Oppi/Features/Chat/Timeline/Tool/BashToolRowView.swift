@@ -491,7 +491,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
 
         deferredCommandTask = Task.detached(priority: .utility) { [weak self] in
             #if DEBUG
-            if let artificialDelay = BashToolRowView.deferredCommandHighlightDelayForTesting {
+            if let artificialDelay = Self.deferredCommandHighlightDelayForTesting {
                 try? await Task.sleep(for: artificialDelay)
             }
             #endif
@@ -577,7 +577,7 @@ final class BashToolRowView: UIView, UIScrollViewDelegate {
         deferredANSISignature = signature
         deferredANSITask = Task.detached(priority: .utility) { [weak self] in
             #if DEBUG
-            if let artificialDelay = BashToolRowView.deferredANSIDelayForTesting {
+            if let artificialDelay = Self.deferredANSIDelayForTesting {
                 try? await Task.sleep(for: artificialDelay)
             }
             #endif

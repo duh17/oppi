@@ -81,9 +81,9 @@ struct WorkspaceSessionNavTarget: Hashable {
         }
     }
 
-    func withWorkspaceIdIfMissing(_ workspaceId: String?) -> WorkspaceSessionNavTarget {
+    func withWorkspaceIdIfMissing(_ workspaceId: String?) -> Self {
         guard routeScope == nil else { return self }
-        return WorkspaceSessionNavTarget(
+        return Self(
             serverId: serverId,
             sessionId: sessionId,
             routeScope: Self.normalizedWorkspaceId(workspaceId).map(SessionRouteScope.workspace)
@@ -142,7 +142,7 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
         navigationContext: FileBrowserNavigationContext? = nil,
         lineAnchor: SourceLineAnchor? = nil,
         sourceSessionId: String? = nil
-    ) -> WorkspaceLinkedFileNavTarget {
+    ) -> Self {
         let resolvedFileName: String
         if let fileName, !fileName.isEmpty {
             resolvedFileName = fileName
@@ -150,7 +150,7 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
             resolvedFileName = path.split(separator: "/").last.map(String.init) ?? path
         }
 
-        return WorkspaceLinkedFileNavTarget(
+        return Self(
             serverId: serverId,
             workspaceId: workspaceId,
             worktreeId: worktreeId,
@@ -169,14 +169,14 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
         fileName: String? = nil,
         lineAnchor: SourceLineAnchor? = nil,
         sourceSessionId: String? = nil
-    ) -> WorkspaceLinkedFileNavTarget {
+    ) -> Self {
         let resolvedFileName: String
         if let fileName, !fileName.isEmpty {
             resolvedFileName = fileName
         } else {
             resolvedFileName = path.split(separator: "/").last.map(String.init) ?? path
         }
-        return WorkspaceLinkedFileNavTarget(
+        return Self(
             serverId: serverId,
             workspaceId: workspaceId,
             kind: .sessionFile(path: path, fileName: resolvedFileName, sessionId: sessionId),
@@ -193,7 +193,7 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
         lineAnchor: SourceLineAnchor? = nil,
         sourceSessionId: String? = nil,
         controlSessionId: String? = nil
-    ) -> WorkspaceLinkedFileNavTarget {
+    ) -> Self {
         let resolvedFileName: String
         if let fileName, !fileName.isEmpty {
             resolvedFileName = fileName
@@ -201,7 +201,7 @@ struct WorkspaceLinkedFileNavTarget: Hashable {
             resolvedFileName = path.split(separator: "/").last.map(String.init) ?? path
         }
 
-        return WorkspaceLinkedFileNavTarget(
+        return Self(
             serverId: serverId,
             workspaceId: workspaceId,
             kind: .hostFile(path: path, fileName: resolvedFileName),
@@ -601,7 +601,7 @@ enum HostSwitcherDestination: Hashable {
     case modelProviders
     case serverSettings
 
-    static let menuItems: [HostSwitcherDestination] = [
+    static let menuItems: [Self] = [
         .modelProviders,
         .usage,
         .serverSettings,
@@ -643,7 +643,7 @@ enum HostSwitcherDestination: Hashable {
         }
     }
 
-    func shouldNavigate(from current: HostSwitcherDestination) -> Bool {
+    func shouldNavigate(from current: Self) -> Bool {
         self != current
     }
 }

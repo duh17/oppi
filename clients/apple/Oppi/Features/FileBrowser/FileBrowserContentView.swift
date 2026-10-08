@@ -213,7 +213,6 @@ struct FileBrowserContentView: View {
         (currentFilePath as NSString).pathExtension.lowercased()
     }
 
-
     /// Whether the UIKit file viewer is active (text content loaded).
     /// When true, the SwiftUI navigation bar is hidden and the UIKit
     /// viewer's internal nav bar provides all chrome.
@@ -842,8 +841,7 @@ struct FileBrowserContentView: View {
 
         // For text files with known size above threshold, show a warning first.
         if !force, requestedCategory == .text,
-           let size = requestedSelection.size, size > Self.sizeWarningThreshold
-        {
+           let size = requestedSelection.size, size > Self.sizeWarningThreshold {
             content = .sizeWarning(size)
             return
         }

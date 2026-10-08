@@ -17,28 +17,28 @@ enum AppFont {
     // created, so a stale read during a font-preference transition is harmless.
 
     /// Code-small — line numbers, counters, secondary labels
-    nonisolated(unsafe) static private(set) var monoSmall = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-    nonisolated(unsafe) static private(set) var monoSmallSemibold = UIFont.monospacedSystemFont(ofSize: 10, weight: .semibold)
+    nonisolated(unsafe) private(set) static var monoSmall = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+    nonisolated(unsafe) private(set) static var monoSmallSemibold = UIFont.monospacedSystemFont(ofSize: 10, weight: .semibold)
 
     /// Code-regular — code content, output text, ANSI terminal, language labels
-    nonisolated(unsafe) static private(set) var mono = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-    nonisolated(unsafe) static private(set) var monoBold = UIFont.monospacedSystemFont(ofSize: 11, weight: .bold)
+    nonisolated(unsafe) private(set) static var mono = UIFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    nonisolated(unsafe) private(set) static var monoBold = UIFont.monospacedSystemFont(ofSize: 11, weight: .bold)
 
     /// Code-medium — code blocks, diff content, file paths, section headers
-    nonisolated(unsafe) static private(set) var monoMedium = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-    nonisolated(unsafe) static private(set) var monoMediumBold = UIFont.monospacedSystemFont(ofSize: 12, weight: .bold)
-    nonisolated(unsafe) static private(set) var monoMediumSemibold = UIFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
+    nonisolated(unsafe) private(set) static var monoMedium = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    nonisolated(unsafe) private(set) static var monoMediumBold = UIFont.monospacedSystemFont(ofSize: 12, weight: .bold)
+    nonisolated(unsafe) private(set) static var monoMediumSemibold = UIFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
 
     /// 15pt — prompt icons, spinner characters
-    nonisolated(unsafe) static private(set) var monoLarge = UIFont.monospacedSystemFont(ofSize: 15, weight: .regular)
-    nonisolated(unsafe) static private(set) var monoLargeSemibold = UIFont.monospacedSystemFont(ofSize: 15, weight: .semibold)
+    nonisolated(unsafe) private(set) static var monoLarge = UIFont.monospacedSystemFont(ofSize: 15, weight: .regular)
+    nonisolated(unsafe) private(set) static var monoLargeSemibold = UIFont.monospacedSystemFont(ofSize: 15, weight: .semibold)
 
     /// 17pt — assistant icon
-    nonisolated(unsafe) static private(set) var monoXL = UIFont.monospacedSystemFont(ofSize: 17, weight: .semibold)
+    nonisolated(unsafe) private(set) static var monoXL = UIFont.monospacedSystemFont(ofSize: 17, weight: .semibold)
 
     /// Message body font — system body by default, or the selected mono font
     /// when `FontPreferences.useMonoForMessages` is enabled.
-    nonisolated(unsafe) static private(set) var messageBody: UIFont = .preferredFont(forTextStyle: .body)
+    nonisolated(unsafe) private(set) static var messageBody: UIFont = .preferredFont(forTextStyle: .body)
 
     // MARK: - System (UIKit, non-monospaced) — these don't change
 
@@ -118,7 +118,7 @@ extension Font {
 
     /// Configured monospaced — raw/code content in SwiftUI views
     static var appCaptionMono: Font {
-        Font.system(size: FontPreferences.codePointSize(baseSize: 11), design: .monospaced)
+        Self.system(size: FontPreferences.codePointSize(baseSize: 11), design: .monospaced)
     }
 
     /// 12pt regular — workspace names, context labels
@@ -131,7 +131,6 @@ extension Font {
 
     /// 15pt bold — primary send buttons
     static let appButton = Font.system(size: 15, weight: .bold)
-
 
     // -- Settings / section headers --
 

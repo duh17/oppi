@@ -173,8 +173,7 @@ private final class DeviceSSHKeyPresenceContext: SSHKeyPresenceContext, @uncheck
         let keyData = try KeychainSSHIdentityStorage().load()
         guard let keyData else { throw SSHIdentityKeyStoreError.sealedDataCorrupt }
         let key = try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: keyData.dropFirst(), authenticationContext: context)
-        do { _ = try key.signature(for: Data("Oppi SSH approval check".utf8)) }
-        catch { throw SSHIdentityKeyStoreError.authenticationExpired }
+        do { _ = try key.signature(for: Data("Oppi SSH approval check".utf8)) } catch { throw SSHIdentityKeyStoreError.authenticationExpired }
         #endif
         return identity
     }
@@ -213,8 +212,7 @@ enum SSHIdentityKeyStore {
         // Loading/exporting the public key must not trigger presence either.
         authenticationContext.interactionNotAllowed = true
         let sealed: Data?
-        do { sealed = try storage.load() }
-        catch SSHIdentityKeyStoreError.devicePasscodeChanged where createReplacement { sealed = nil }
+        do { sealed = try storage.load() } catch SSHIdentityKeyStoreError.devicePasscodeChanged where createReplacement { sealed = nil }
         #if targetEnvironment(simulator)
         return try loadOrCreateSoftware(sealed: sealed, storage: storage)
         #else
@@ -225,8 +223,7 @@ enum SSHIdentityKeyStore {
     /// Only a definitive missing enclave reference permits deletion. Locked
     /// device, cancelled approval, decode failures and unknown errors retain it.
     static func restore<Key>(sealed: Data, storage: any SSHIdentitySealedStorage, using restore: (Data) throws -> Key) throws -> Key {
-        do { return try restore(sealed) }
-        catch {
+        do { return try restore(sealed) } catch {
             if let status = SSHIdentityKeyStoreError.securityStatus(error) {
                 if status == errSecItemNotFound {
                     try storage.requireReplacement()
@@ -269,8 +266,7 @@ enum SSHIdentityKeyStore {
         let key: P256.Signing.PrivateKey
         if let sealed {
             guard sealed.first == softwareTag else { throw SSHIdentityKeyStoreError.sealedDataCorrupt }
-            do { key = try P256.Signing.PrivateKey(rawRepresentation: sealed.dropFirst()) }
-            catch { throw SSHIdentityKeyStoreError.sealedDataCorrupt }
+            do { key = try P256.Signing.PrivateKey(rawRepresentation: sealed.dropFirst()) } catch { throw SSHIdentityKeyStoreError.sealedDataCorrupt }
         } else {
             key = P256.Signing.PrivateKey()
             try storage.save(Data([softwareTag]) + key.rawRepresentation)

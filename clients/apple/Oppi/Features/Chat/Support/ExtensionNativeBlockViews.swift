@@ -958,7 +958,7 @@ final class ExtensionNativeActivityRowView: UIView {
                     currentSessionId: context.linkContext.sessionID ?? ""
                 )
             )
-        }
+            }
 
         let separateLink = hasDetail ? rowLink : nil
         linkButton.isHidden = separateLink == nil

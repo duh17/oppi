@@ -270,33 +270,33 @@ struct ThemeSurfaceStyle {
     static func resolve(
         _ role: ThemeSurfaceRole,
         palette: ThemePalette = ThemeRuntimeState.currentPalette()
-    ) -> ThemeSurfaceStyle {
+    ) -> Self {
         switch role {
         case .elevatedPanel:
             // 0.78 is the established elevated-glass translucency on dark
             // palettes; it is safe only because the role pairs with blur.
-            return ThemeSurfaceStyle(
+            return Self(
                 fill: .themeSurface(darkOpacity: 0.78, palette: palette),
                 stroke: palette.fg.opacity(0.12),
                 strokeLineWidth: 0.5,
                 wantsGlassBlur: true
             )
         case .floatingControl:
-            return ThemeSurfaceStyle(
+            return Self(
                 fill: .themeSurface(darkOpacity: 0.64, palette: palette),
                 stroke: palette.fg.opacity(0.10),
                 strokeLineWidth: 1,
                 wantsGlassBlur: true
             )
         case .opaqueCard:
-            return ThemeSurfaceStyle(
+            return Self(
                 fill: .themeSurface(darkOpacity: 0.92, palette: palette),
                 stroke: palette.comment.opacity(0.22),
                 strokeLineWidth: 1,
                 wantsGlassBlur: false
             )
         case .popover:
-            return ThemeSurfaceStyle(
+            return Self(
                 fill: .themeSurface(darkOpacity: 0.96, palette: palette),
                 stroke: nil,
                 strokeLineWidth: 0,
@@ -343,7 +343,7 @@ private struct ThemedListRowBackgroundModifier: ViewModifier {
     @Environment(\.themeID) private var themeID
 
     func body(content: Content) -> some View {
-        let _ = themeID
+        _ = themeID
         return content
             .listRowBackground(Rectangle().fill(.themeBg))
     }

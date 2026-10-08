@@ -291,7 +291,7 @@ struct WorkspaceMediaOverlayNavigationTests {
         #expect(navigation.endMediaOverlay(currentServerId: "server-b") == nil)
 
         navigation.workspacePath = NavigationPath()
-        #expect(navigation.workspacePath.count == 0)
+        #expect(navigation.workspacePath.isEmpty)
         #expect(navigation.workspaceStackDiagnosticContext == .inboxAll)
     }
 

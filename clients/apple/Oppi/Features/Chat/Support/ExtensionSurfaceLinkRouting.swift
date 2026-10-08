@@ -5,7 +5,7 @@ struct ExtensionSurfaceLinkContext: Equatable {
     var workspaceID: String? = nil
     var sessionID: String? = nil
 
-    static let empty = ExtensionSurfaceLinkContext()
+    static let empty = Self()
 }
 
 enum ExtensionSurfaceOpenAction: Equatable {

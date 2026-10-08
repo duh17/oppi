@@ -114,7 +114,7 @@ enum MermaidJourneyParser {
     private static func parseTitleValue(_ raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return nil }
-        if (trimmed.first == "\"" || trimmed.first == "'"),
+        if trimmed.first == "\"" || trimmed.first == "'",
            trimmed.count >= 2,
            trimmed.last == trimmed.first {
             return MermaidTextUtils.normalizeLabel(String(trimmed.dropFirst().dropLast()))

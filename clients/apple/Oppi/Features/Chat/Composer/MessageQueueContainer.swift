@@ -100,8 +100,7 @@ struct MessageQueueContainer: View {
         errorText = nil
         Task { @MainActor in
             defer { isUpdating = false }
-            do { try await operation() }
-            catch { errorText = error.localizedDescription }
+            do { try await operation() } catch { errorText = error.localizedDescription }
         }
     }
 
@@ -144,8 +143,7 @@ struct MessageQueueContainer: View {
         Group {
             if let decodedImage {
                 Image(uiImage: decodedImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .resizable().scaledToFill()
             } else {
                 ZStack {
                     Rectangle().fill(.themeRecessedInset)

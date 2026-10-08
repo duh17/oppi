@@ -135,8 +135,7 @@ struct TerminalInspectionTests {
         let reducer = TimelineReducer()
         let coalescer = DeltaCoalescer()
         coalescer.onFlush = { events in
-            if batched { reducer.processBatch(events) }
-            else { for event in events { reducer.process(event) } }
+            if batched { reducer.processBatch(events) } else { for event in events { reducer.process(event) } }
         }
         let correlator = ToolCallCorrelator()
         coalescer.receive(correlator.start(sessionId: "s", tool: "run_thing", args: ["script": "emit fixture"], toolCallId: "tc",

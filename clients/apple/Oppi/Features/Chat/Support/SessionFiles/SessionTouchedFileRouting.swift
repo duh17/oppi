@@ -20,7 +20,7 @@ enum SessionTouchedFileLoadRoute: Equatable {
         path: String,
         workspaceRuntime: WorkspaceRuntime?,
         hostMount: String?
-    ) -> SessionTouchedFileLoadRoute {
+    ) -> Self {
         if workspaceRuntime == .sandbox {
             return .sessionRaw(path: path)
         }

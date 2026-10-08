@@ -38,8 +38,7 @@ struct MessageQueueComposerRestoreTests {
                     }
                 },
                 abort: {
-                    do { try await sender.sendStop() }
-                    catch { Issue.record("Stop unexpectedly failed: \(error)") }
+                    do { try await sender.sendStop() } catch { Issue.record("Stop unexpectedly failed: \(error)") }
                 },
                 onError: { errorText = $0.localizedDescription }
             )

@@ -126,7 +126,6 @@ enum ReviewCommentSurfaceKind: Equatable {
     case fullScreenMarkdown
     case fullScreenThinking
 
-
     var usesInlineCommentWidget: Bool {
         switch self {
         case .toolExpandedText, .fullScreenCode, .fullScreenDiff, .fullScreenSource, .fullScreenTerminal, .fullScreenMarkdown, .fullScreenThinking:
@@ -247,8 +246,8 @@ struct ReviewCommentSelectionContext {
         languageHint: String? = nil,
         timelineItemId: String? = nil,
         sourceSurfaceOverride: ReviewCommentSurfaceKind? = nil
-    ) -> ReviewCommentSelectionContext {
-        ReviewCommentSelectionContext(
+    ) -> Self {
+        Self(
             dispatcher: dispatcher,
             sessionId: sessionId ?? self.sessionId,
             sourceLabel: sourceLabel ?? self.sourceLabel,
@@ -317,8 +316,8 @@ struct ReviewCommentSourceContext: Equatable {
         self.timelineItemId = timelineItemId
     }
 
-    func withLineRange(_ range: ClosedRange<Int>?) -> ReviewCommentSourceContext {
-        ReviewCommentSourceContext(
+    func withLineRange(_ range: ClosedRange<Int>?) -> Self {
+        Self(
             sessionId: sessionId,
             surface: surface,
             sourceLabel: sourceLabel,

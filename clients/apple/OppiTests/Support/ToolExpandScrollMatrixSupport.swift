@@ -21,11 +21,11 @@ enum ToolExpandScrollMatrixCase: CaseIterable, Sendable {
 
     /// Default OppiUnitTests families. Remainder families are `.perf` and
     /// `OPPI_RUN_PERF_TESTS=1` gated because OppiUnitTests.xcscheme does not filter tags.
-    static let unitFamilies: [ToolExpandScrollMatrixCase] = [
+    static let unitFamilies: [Self] = [
         .writeCode, .readMarkdown, .extensionMarkdown, .readMedia,
     ]
 
-    static let perfFamilies: [ToolExpandScrollMatrixCase] = [
+    static let perfFamilies: [Self] = [
         .readCode,
         .bashOutput,
         .editDiff,

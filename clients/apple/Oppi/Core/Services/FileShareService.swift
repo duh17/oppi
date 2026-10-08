@@ -98,7 +98,7 @@ enum FileShareService {
         /// Detects the file type from the path and maps to the appropriate
         /// content case. Used by hosting views (file browser, touched-file
         /// viewer, review detail) to create share content for the toolbar.
-        static func fromText(_ text: String, filePath: String?) -> ShareableContent {
+        static func fromText(_ text: String, filePath: String?) -> Self {
             let fileType = FileType.detect(from: filePath, content: text)
             let fileName = FileShareService.fileName(fromPath: filePath)
             if let document = DocumentFamily(fileType: fileType, text: text, filePath: filePath) {
@@ -543,7 +543,7 @@ enum FileShareService {
     /// Pure CPU work (CGPDFDocument + UIGraphicsImageRenderer) — safe to
     /// call from any thread. Extracted so callers can dispatch off the
     /// main actor.
-    private nonisolated static func rasterizePDFPage(
+    nonisolated private static func rasterizePDFPage(
         from pdfData: Data, scale: CGFloat
     ) -> UIImage? {
         guard let provider = CGDataProvider(data: pdfData as CFData),
@@ -1134,12 +1134,12 @@ enum FileShareService {
 
     // MARK: - Temp File Management
 
-    private nonisolated static var tempRootDirectoryURL: URL {
+    nonisolated private static var tempRootDirectoryURL: URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("oppi-share", isDirectory: true)
     }
 
-    private nonisolated static func makeExportTempDirectory() -> URL {
+    nonisolated private static func makeExportTempDirectory() -> URL {
         let root = tempRootDirectoryURL
         let exportDir = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
@@ -1153,7 +1153,7 @@ enum FileShareService {
         return url
     }
 
-    fileprivate nonisolated static func writeTempData(data: Data, filename: String) -> URL {
+    nonisolated fileprivate static func writeTempData(data: Data, filename: String) -> URL {
         let dir = makeExportTempDirectory()
         let url = dir.appendingPathComponent(filename)
         try? data.write(to: url)
@@ -1409,4 +1409,3 @@ private final class PDFNavigationDelegate: NSObject, WKNavigationDelegate {
     }
     // swiftlint:enable no_force_unwrap_production
 }
-

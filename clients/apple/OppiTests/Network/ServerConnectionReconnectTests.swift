@@ -8,7 +8,6 @@ import Network
 @MainActor
 struct ServerConnectionReconnectTests {
 
-
     /// Real URLSession upgrades and the installed ServerConnection health callback:
     /// lose an established socket, reject three upgrades, then accept the next one.
     @Test func threeTransient503sThenAcceptReconnectsWithoutWatchdog() async throws {
@@ -162,7 +161,6 @@ struct ServerConnectionReconnectTests {
             Issue.record("After repeated reconnect, expected streaming or queueSync for s1, got \(state)")
         }
     }
-
 
     // MARK: - Stale queue sync doesn't race after reconnect
 

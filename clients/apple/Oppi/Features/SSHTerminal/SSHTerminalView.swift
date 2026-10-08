@@ -210,8 +210,7 @@ struct SSHTerminalView: View {
             Button("Paste") {
                 guard let text = pendingPaste else { return }
                 pendingPaste = nil
-                do { try channel.paste(text, confirmed: true) }
-                catch { pasteFailure = "Paste was not sent. \(error.localizedDescription)" }
+                do { try channel.paste(text, confirmed: true) } catch { pasteFailure = "Paste was not sent. \(error.localizedDescription)" }
             }
         } message: { Text("This text contains a newline or terminal control sequence and may run commands. Paste only text you trust.") }
         .alert("Paste Not Sent", isPresented: Binding(get: { pasteFailure != nil }, set: { if !$0 { pasteFailure = nil } })) {
@@ -272,8 +271,7 @@ struct SSHTerminalView: View {
             pendingPaste = text
             pasteConfirmation = true
         } else {
-            do { try channel.paste(text) }
-            catch { pasteFailure = "Paste was not sent. \(error.localizedDescription)" }
+            do { try channel.paste(text) } catch { pasteFailure = "Paste was not sent. \(error.localizedDescription)" }
         }
     }
 }
@@ -294,7 +292,7 @@ enum SSHTerminalTapAction: Equatable {
         keyboardUp: Bool,
         otherInputFocused: Bool,
         appWantsClicks: Bool
-    ) -> SSHTerminalTapAction {
+    ) -> Self {
         if keyboardUp { return appWantsClicks ? .mouseClick : .hideKeyboard }
         if terminalTyping { return .typeInTerminal }
         if otherInputFocused { return .dismissOtherInput }

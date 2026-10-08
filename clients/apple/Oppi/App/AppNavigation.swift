@@ -132,13 +132,13 @@ struct WorkspaceStackDiagnosticContext: Equatable, Sendable {
     let sessionId: String?
     let workspaceId: String?
 
-    static let inboxAll = WorkspaceStackDiagnosticContext(
+    static let inboxAll = Self(
         screen: "workspace_inbox_all",
         sessionId: nil,
         workspaceId: nil
     )
 
-    static let unknown = WorkspaceStackDiagnosticContext(
+    static let unknown = Self(
         screen: "workspace_stack_unknown",
         sessionId: nil,
         workspaceId: nil
@@ -237,7 +237,7 @@ final class AppNavigation {
                 return
             }
             synchronizeWorkspaceStackMetadata()
-            if workspaceNavigationPresentation == .stack, workspacePath.count == 0 {
+            if workspaceNavigationPresentation == .stack, workspacePath.isEmpty {
                 selectedWorkspaceFilter = nil
             }
         }
@@ -424,7 +424,7 @@ final class AppNavigation {
         // from there keeps chat on top of all sessions instead of inventing
         // the session's unvisited workspace inbox. The workspace hint still
         // rides on the session target for server scoping.
-        let isAtAllSessionsRoot = selectedWorkspaceFilter == nil && workspacePath.count == 0
+        let isAtAllSessionsRoot = selectedWorkspaceFilter == nil && workspacePath.isEmpty
         if let workspace, !isAtAllSessionsRoot {
             selectedWorkspaceFilter = workspace
         }
@@ -878,7 +878,7 @@ final class AppNavigation {
 
     private func popTrailingHostSwitcherJobs() {
         while Self.hostSwitcherDestination(from: workspaceStackRouteElements.last) != nil,
-              workspacePath.count > 0 {
+              !workspacePath.isEmpty {
             workspacePath.removeLast()
         }
     }
@@ -1535,7 +1535,7 @@ final class AppNavigation {
             }
         }
 
-        return path.count > 0 ? (path, contexts, routeElements) : nil
+        return !path.isEmpty ? (path, contexts, routeElements) : nil
     }
 
     private func splitStateForCurrentStackSelection() -> (

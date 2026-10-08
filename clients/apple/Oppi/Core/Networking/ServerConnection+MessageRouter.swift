@@ -63,7 +63,7 @@ extension ServerConnection {
         case .textDelta, .thinkingDelta, .toolStart, .toolOutput, .toolEnd, .customCard:
             silenceWatchdog.recordEvent()
 
-        case .error(_, _, _):
+        case .error:
             break
 
         case .sessionEnded, .sessionDeleted, .stopConfirmed, .extensionUISettled:

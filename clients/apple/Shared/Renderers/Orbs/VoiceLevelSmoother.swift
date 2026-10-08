@@ -7,7 +7,7 @@ struct VoiceSpectrumFrame: Equatable, Sendable {
     /// Sum of positive band-energy changes, in dB per analysis frame.
     var flux: Float = 0
 
-    static let zero = VoiceSpectrumFrame()
+    static let zero = Self()
 }
 
 /// Per-band elapsed-time smoothing; no scalar speech gate couples the bands.

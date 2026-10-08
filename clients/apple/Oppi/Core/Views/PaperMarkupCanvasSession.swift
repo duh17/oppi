@@ -567,6 +567,8 @@ final class ComposerCanvasDestinationAnchorController: UIViewController {
 
     override func didMove(toParent parent: UIViewController?) {
         super.didMove(toParent: parent)
+        // Covering the chat (wiki-link push) must leave Add to Chat wired.
+        // Pop only when this chat is actually removed or replaced.
         if parent == nil {
             if let destination {
                 ComposerCanvasActiveDestination.pop(destination)
@@ -584,12 +586,6 @@ final class ComposerCanvasDestinationAnchorController: UIViewController {
         install()
         publishIfVisible()
         publishReviewCommentRouter()
-    }
-
-    override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated)
-        // Covering the chat (wiki-link push) must leave Add to Chat wired.
-        // Pop only when this chat is actually removed or replaced.
     }
 
     private func install() {

@@ -1,7 +1,5 @@
 import Foundation
 import os
-import os.log
-
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Cache")
 
 /// Cached trace snapshot for a session.

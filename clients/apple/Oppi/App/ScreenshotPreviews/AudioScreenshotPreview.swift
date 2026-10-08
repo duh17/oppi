@@ -37,7 +37,6 @@ struct GlobalAudioBannerPreview: View {
     }
 }
 
-
 // MARK: - Voice Message Preview
 
 struct VoiceMessageExpandedPreview: View {
@@ -94,7 +93,6 @@ struct VoiceMessageExpandedPreview: View {
     }
 }
 
-
 private struct VoiceMessageToolRowRepresentable: UIViewRepresentable {
     let configuration: ToolTimelineRowConfiguration
     let width: CGFloat
@@ -107,7 +105,6 @@ private struct VoiceMessageToolRowRepresentable: UIViewRepresentable {
         uiView.update(configuration: configuration, width: width)
     }
 }
-
 
 private final class VoiceMessageToolRowHostView: UIView {
     private let contentView: ToolTimelineRowContentView

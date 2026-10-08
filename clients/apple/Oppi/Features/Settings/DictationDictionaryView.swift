@@ -278,8 +278,7 @@ enum DictationDictionaryDraft {
         global: inout [String], workspace: inout [String], editing: inout Editing?
     ) {
         editing = nil
-        if workspaceScope { workspace.remove(atOffsets: offsets) }
-        else { global.remove(atOffsets: offsets) }
+        if workspaceScope { workspace.remove(atOffsets: offsets) } else { global.remove(atOffsets: offsets) }
     }
 
     @discardableResult
@@ -300,11 +299,9 @@ enum DictationDictionaryDraft {
         // Renaming to an existing destination must leave the original intact.
         guard !destination.contains(value) else { return false }
         if let editing {
-            if editing.workspace { workspace.remove(at: editing.index) }
-            else { global.remove(at: editing.index) }
+            if editing.workspace { workspace.remove(at: editing.index) } else { global.remove(at: editing.index) }
         }
-        if workspaceScope { workspace.append(value) }
-        else { global.append(value) }
+        if workspaceScope { workspace.append(value) } else { global.append(value) }
         return true
     }
 

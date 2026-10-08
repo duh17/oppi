@@ -40,7 +40,6 @@ enum AppHaptics {
         success()
     }
 
-
     /// Feedback for changing a selected value or option.
     static func selectionChanged() {
         guard AppPreferences.Interaction.isHapticFeedbackEnabled else { return }

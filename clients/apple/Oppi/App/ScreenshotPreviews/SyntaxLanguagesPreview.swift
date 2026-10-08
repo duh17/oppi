@@ -127,7 +127,6 @@ struct SyntaxLanguagesPreview: View {
     }
 }
 
-
 private struct SyntaxPreviewCodeView: UIViewRepresentable {
     let text: NSAttributedString
 
@@ -162,7 +161,6 @@ private struct SyntaxPreviewCodeView: UIViewRepresentable {
         return CGSize(width: width, height: max(1, fitting.height))
     }
 }
-
 
 extension SyntaxLanguagesPreview.Page {
     var headline: String {

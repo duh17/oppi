@@ -173,7 +173,7 @@ final class SSHPTYSession: @unchecked Sendable {
         // closes the parent and cancels the timer with it.
         let keepalive = parent.eventLoop.scheduleRepeatedTask(initialDelay: .seconds(60), delay: .seconds(60)) { task in
             guard parent.isActive else { task.cancel(); return }
-            SSHPTYSession.probe(parent, timeout: .seconds(15))
+            Self.probe(parent, timeout: .seconds(15))
         }
         parent.closeFuture.whenComplete { _ in keepalive.cancel() }
         channels = Mutex(Channels(parent: parent, terminal: terminal, keepalive: keepalive))
@@ -800,8 +800,6 @@ private final class SSHPTYChannelHandler: ChannelInboundHandler {
         heldExitEvents.removeAll()
         for event in held { sink(event) }
     }
-
-
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         switch event {

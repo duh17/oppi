@@ -528,8 +528,7 @@ enum ComposerShared {
                             onAnnotateImage?(attachment)
                         } label: {
                             Image(uiImage: thumbnail)
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
+                                .resizable().scaledToFill()
                                 .frame(width: attachmentThumbnailSize, height: attachmentThumbnailSize)
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
                                 .overlay(

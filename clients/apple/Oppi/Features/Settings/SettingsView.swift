@@ -23,8 +23,8 @@ struct SettingsView: View {
         var dictationEngine: String
 
         @MainActor
-        static func current() -> Summary {
-            Summary(
+        static func current() -> Self {
+            Self(
                 codeFont: FontPreferences.codeFont.displayName,
                 dictationEngine: AppPreferences.Voice.engineMode.label
             )

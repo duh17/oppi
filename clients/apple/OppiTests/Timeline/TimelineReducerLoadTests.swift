@@ -431,7 +431,6 @@ struct TimelineReducerLoadTests {
             "appendAudioClip should break incremental mode")
     }
 
-
     // MARK: - Incremental edge cases
 
     @Test func resetClearsIncrementalTrackingState() {

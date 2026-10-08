@@ -85,11 +85,7 @@ final class AnalyzerInputBuffer: AsyncSequence, @unchecked Sendable {
             let instant = now()
             let oldestAge = entries[head].map { $0.queuedAt.duration(to: instant) } ?? .zero
             let reason: String?
-            if oldestAge >= .seconds(Self.maxAudioSeconds) { reason = "age_limit" }
-            else if seconds + duration > Self.maxAudioSeconds { reason = "audio_limit" }
-            else if size > byteLimit - bytes { reason = "byte_limit" }
-            else if count == Self.maxBuffers { reason = "count_limit" }
-            else { reason = nil }
+            if oldestAge >= .seconds(Self.maxAudioSeconds) { reason = "age_limit" } else if seconds + duration > Self.maxAudioSeconds { reason = "audio_limit" } else if size > byteLimit - bytes { reason = "byte_limit" } else if count == Self.maxBuffers { reason = "count_limit" } else { reason = nil }
             if let reason {
                 report(status: "exhausted", reason: reason)
                 failLocked(VoiceInputError.captureBufferOverflow)
@@ -113,8 +109,7 @@ final class AnalyzerInputBuffer: AsyncSequence, @unchecked Sendable {
                     if deadlineTask == nil {
                         deadlineTask = Task.detached { [weak self] in
                             while !Task.isCancelled {
-                                do { try await Task.sleep(for: .milliseconds(250)) }
-                                catch { return }
+                                do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
                                 guard self?.checkDeadline() == true else { return }
                             }
                         }
@@ -147,7 +142,7 @@ final class AnalyzerInputBuffer: AsyncSequence, @unchecked Sendable {
                 entries[head] = nil
                 head = (head + 1) % Self.maxBuffers
                 count -= 1
-                if closed, count == 0 {
+                if closed, isEmpty {
                     deadlineTask?.cancel()
                     deadlineTask = nil
                 }
@@ -208,7 +203,7 @@ final class AnalyzerInputBuffer: AsyncSequence, @unchecked Sendable {
             bytes = 0
             seconds = 0
         }
-        if count == 0 {
+        if isEmpty {
             deadlineTask?.cancel()
             deadlineTask = nil
         }

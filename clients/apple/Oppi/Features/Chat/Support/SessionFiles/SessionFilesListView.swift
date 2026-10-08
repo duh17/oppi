@@ -218,8 +218,7 @@ struct SessionFilesListView: View {
 
         Group {
             if let workspaceId, let gitFile,
-               SessionFileOpenRouting.mode(path: path, gitFile: gitFile) == .review
-            {
+               SessionFileOpenRouting.mode(path: path, gitFile: gitFile) == .review {
                 // Git-changed file → push to diff/review detail (needs tabs + actions)
                 NavigationLink {
                     reviewDetail(

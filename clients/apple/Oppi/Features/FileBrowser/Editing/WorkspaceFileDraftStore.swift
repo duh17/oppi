@@ -26,7 +26,7 @@ struct WorkspaceFileDraftStore: Sendable {
     static let shared: WorkspaceFileDraftStore = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
-        return WorkspaceFileDraftStore(directory: base.appendingPathComponent("WorkspaceFileDrafts", isDirectory: true))
+        return Self(directory: base.appendingPathComponent("WorkspaceFileDrafts", isDirectory: true))
     }()
 
     func loadResult(_ identity: WorkspaceFileEditIdentity) -> LoadResult {

@@ -63,7 +63,6 @@ struct ShareRedactionReportPreview: View {
     }
 }
 
-
 struct ShareRedactionSettingsPreview: View {
     @State private var policy = ShareSessionRedactionPolicy(
         secrets: true,

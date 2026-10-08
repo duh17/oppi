@@ -91,7 +91,7 @@ struct PairedServer: Identifiable, Codable, Sendable, Hashable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let host = try container.decodeIfPresent(String.self, forKey: .host) ?? ""
         let port = try container.decodeIfPresent(Int.self, forKey: .port) ?? 0
-        if (container.contains(.transports) || container.contains(.credentialGrant)), host.isEmpty && port == 0 {
+        if container.contains(.transports) || container.contains(.credentialGrant), host.isEmpty && port == 0 {
             throw DecodingError.dataCorruptedError(
                 forKey: .transports,
                 in: container,

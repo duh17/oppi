@@ -94,7 +94,6 @@ struct ChatInputAttachmentContainmentPreview: View {
     }
 }
 
-
 // MARK: - Quick Session Dictation Composer Preview
 
 struct QuickSessionDictationComposerPreview: View {

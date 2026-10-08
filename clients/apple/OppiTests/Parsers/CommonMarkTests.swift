@@ -1390,8 +1390,7 @@ struct PartialTableParsingTests {
 
 @Suite("Lenient table markup")
 struct LenientTableMarkupTests {
-    @Test func alignedGFMTableFromUserReportParses()
-    {
+    @Test func alignedGFMTableFromUserReportParses() {
         let md = """
         | Tree | Files | Lines |
         |------|------:|------:|
@@ -1470,8 +1469,7 @@ struct LenientTableMarkupTests {
         #expect(rows.map { $0.map { plainText(from: $0) } } == [["a.ts", "12"]])
     }
 
-    @Test func htmlTableWithColspanStaysHTML()
-    {
+    @Test func htmlTableWithColspanStaysHTML() {
         let md = """
         <table>
         <tr><td colspan=\"2\">wide</td></tr>
@@ -1482,8 +1480,7 @@ struct LenientTableMarkupTests {
         #expect(!blocks.contains { if case .table = $0 { true } else { false } })
     }
 
-    @Test func fencedHTMLTableStaysCode()
-    {
+    @Test func fencedHTMLTableStaysCode() {
         let md = """
         ```html
         <table>
@@ -1515,8 +1512,7 @@ struct LenientTableMarkupTests {
         #expect(rows.map { $0.map { plainText(from: $0) } } == [["1+2", "3"]])
     }
 
-    @Test func emDashThematicBreakIsNotATable()
-    {
+    @Test func emDashThematicBreakIsNotATable() {
         let blocks = parseCommonMark("———\n")
         #expect(!blocks.contains { if case .table = $0 { true } else { false } })
     }

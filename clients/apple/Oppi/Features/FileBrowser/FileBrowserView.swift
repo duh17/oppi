@@ -21,7 +21,7 @@ enum FileBrowserDirectoryRequest: Equatable, Sendable {
     case workspace(workspaceId: String, path: String, worktreeId: String?)
     case hostHome(path: String)
 
-    static func make(scope: FileBrowserScope, path: String) -> FileBrowserDirectoryRequest {
+    static func make(scope: FileBrowserScope, path: String) -> Self {
         switch scope {
         case .workspace(let workspaceId, let worktreeId):
             return .workspace(workspaceId: workspaceId, path: path, worktreeId: worktreeId)
@@ -65,8 +65,8 @@ struct FileBrowserNavTarget: Hashable {
         )
     }
 
-    static func hostHome(serverId: String, path: String = "") -> FileBrowserNavTarget {
-        FileBrowserNavTarget(serverId: serverId, scope: .hostHome, path: path)
+    static func hostHome(serverId: String, path: String = "") -> Self {
+        Self(serverId: serverId, scope: .hostHome, path: path)
     }
 
     var workspaceId: String? {
@@ -155,7 +155,7 @@ struct FileBrowserPushTransitionSpec: Equatable, Sendable {
     let insertion: FileBrowserPushTransitionEdge
     let removal: FileBrowserPushTransitionEdge
 
-    static func spec(for direction: FileBrowserNavigationDirection) -> FileBrowserPushTransitionSpec {
+    static func spec(for direction: FileBrowserNavigationDirection) -> Self {
         switch direction {
         case .previous:
             return .init(insertion: .leading, removal: .trailing)
@@ -986,7 +986,7 @@ struct FileBrowserView: View {
                 }
             } else {
                 NavigationLink {
-                    FileBrowserView(
+                    Self(
                         serverId: serverId,
                         scope: scope,
                         initialPath: dirPath,

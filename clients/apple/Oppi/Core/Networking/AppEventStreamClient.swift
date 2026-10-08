@@ -306,7 +306,7 @@ final class AppEventStreamClient {
 
                     await MainActor.run { [weak self] in
                         switch self?.status {
-                        case .connecting, .reconnecting(_):
+                        case .connecting, .reconnecting:
                             self?.status = .connected
                             // A successfully received frame resets the forced-refresh
                             // budget so a later natural token expiry can refresh again.

@@ -484,8 +484,8 @@ struct AgentNativeEditView: View {
 
     private var existingToolPolicySummary: String? {
         guard agent.definition.sessionDefaults?.tools == nil,
-              (agent.definition.sessionDefaults?.excludeTools != nil
-                || agent.definition.sessionDefaults?.noTools != nil) else { return nil }
+              agent.definition.sessionDefaults?.excludeTools != nil
+                || agent.definition.sessionDefaults?.noTools != nil else { return nil }
         if let noTools = agent.definition.sessionDefaults?.noTools {
             return noTools.displayName
         }

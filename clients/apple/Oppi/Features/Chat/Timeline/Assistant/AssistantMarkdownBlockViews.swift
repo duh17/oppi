@@ -390,7 +390,7 @@ final class NativeCodeBlockView: UIView {
 
         highlightTask = Task { [weak self] in
             #if DEBUG
-            if let delay = NativeCodeBlockView.highlightDelayForTesting {
+            if let delay = Self.highlightDelayForTesting {
                 try? await Task.sleep(for: delay)
             }
             #endif

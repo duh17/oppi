@@ -161,10 +161,10 @@ extension TailnetSameUserPairing {
         await withTaskGroup(of: (String, TailnetPeerProbe).self) { group in
             for dnsName in dnsNames {
                 group.addTask {
-                    let outcome = await TailnetSameUserPairing.probeOutcome(dnsName: dnsName) { @MainActor url in
-                        try TailnetSameUserPairing.requireRunning(TailnetNodeController.shared.state)
+                    let outcome = await Self.probeOutcome(dnsName: dnsName) { @MainActor url in
+                        try Self.requireRunning(TailnetNodeController.shared.state)
                         guard TailnetTransportRoute.proxy != nil else { throw Failure.proxyNotReady }
-                        return try await TailnetSameUserPairing.peerHealth(at: url)
+                        return try await Self.peerHealth(at: url)
                     }
                     return (dnsName, outcome)
                 }

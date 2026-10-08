@@ -35,7 +35,7 @@ struct SessionRowDisplay: Equatable, Codable, Sendable {
     var showsThreadLaneGraph = true
 
     /// Today's rich appearance.
-    static let standard = SessionRowDisplay()
+    static let standard = Self()
 
     var isCompact: Bool { density == .compact }
 }

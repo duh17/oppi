@@ -97,5 +97,4 @@ struct StatsHeroRow: View {
 
     // MARK: - Formatting
 
-
 }

@@ -9,10 +9,10 @@ struct ServerSkillFileTreeNode: Identifiable, Hashable {
     let name: String
     let path: String
     let kind: Kind
-    let children: [ServerSkillFileTreeNode]
+    let children: [Self]
 
     var id: String { "\(kind == .directory ? "directory" : "file"):\(path)" }
-    var outlineChildren: [ServerSkillFileTreeNode]? { children.isEmpty ? nil : children }
+    var outlineChildren: [Self]? { children.isEmpty ? nil : children }
 }
 
 enum ServerSkillFileTree {

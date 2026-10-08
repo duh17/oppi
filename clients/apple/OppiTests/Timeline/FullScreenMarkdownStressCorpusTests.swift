@@ -450,7 +450,8 @@ struct FullScreenMarkdownStressCorpusTests {
         }
         #expect(!latex.isEmpty)
         #expect(latex.contains { $0.debugIsShowingFormulaForTesting && $0.debugFormulaImageForTesting != nil
-            || $0.accessibilityIdentifier == "latex.formula.open" })
+            || $0.accessibilityIdentifier == "latex.formula.open"
+        })
 
         scrollToFirst { segment in
             if case .mermaidDiagram = segment { return true }

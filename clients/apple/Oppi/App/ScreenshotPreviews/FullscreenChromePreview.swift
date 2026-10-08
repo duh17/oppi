@@ -33,7 +33,6 @@ struct FullscreenMermaidChromePreview: View {
     }
 }
 
-
 struct FullscreenHTMLChromePreview: View {
     private let themeID: ThemeID
 
@@ -59,7 +58,6 @@ struct FullscreenHTMLChromePreview: View {
     }
 }
 
-
 struct FullscreenSVGChromePreview: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIViewController {
         let svg = Data("""
@@ -81,7 +79,6 @@ struct FullscreenSVGChromePreview: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
 }
-
 
 struct FullscreenImageChromePreview: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIViewController {

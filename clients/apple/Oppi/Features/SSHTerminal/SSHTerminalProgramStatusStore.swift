@@ -149,7 +149,8 @@ final class SSHTerminalProgramStatusStore {
     /// exited does not leave "idle" behind its shell prompt.
     private func dropRunning() {
         let doomed = records.filter { $0.value.state != GHOSTTY_PROGRAM_STATUS_STATE_DONE
-            && $0.value.state != GHOSTTY_PROGRAM_STATUS_STATE_ERROR }.keys
+            && $0.value.state != GHOSTTY_PROGRAM_STATUS_STATE_ERROR
+        }.keys
         for key in doomed { records[key] = nil }
     }
 

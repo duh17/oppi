@@ -755,8 +755,7 @@ struct OppiDictationProviderLifecycleTests {
         }
         var failed = false
         let events = Task {
-            do { for try await _ in session.events {} }
-            catch { failed = true }
+            do { for try await _ in session.events {} } catch { failed = true }
         }
         incoming.continuation.finish()
         let didFail = await waitForMainActorCondition { failed }
@@ -1137,8 +1136,7 @@ struct DictationCaptureStartupTests {
         if feedAfterFailure { #expect(!feed(buffer)) }
         await session.stop()
         var failure: Error?
-        do { for try await _ in session.events {} }
-        catch { failure = error }
+        do { for try await _ in session.events {} } catch { failure = error }
         #expect(failure != nil, "A final response must not hide ordinary capture loss")
         if failureKind == .nsError {
             #expect((failure as NSError?)?.domain == "TestOrdinaryConverter")
@@ -1167,8 +1165,7 @@ struct DictationCaptureStartupTests {
         ) != nil)
         audio.continuation.finish()
         events.continuation.finish()
-        do { for try await _ in events.stream {} }
-        catch { Issue.record("Buffered/no-output is not a converter failure: \(error)") }
+        do { for try await _ in events.stream {} } catch { Issue.record("Buffered/no-output is not a converter failure: \(error)") }
         var delivered = 0
         for await _ in audio.stream { delivered += 1 }
         #expect(delivered == 1)

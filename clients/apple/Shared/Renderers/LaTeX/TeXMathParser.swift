@@ -358,7 +358,7 @@ private enum TeXMathValidator {
         var seen: Set<Character> = []
 
         while cursor < source.endIndex,
-              (source[cursor] == "^" || source[cursor] == "_") {
+              source[cursor] == "^" || source[cursor] == "_" {
             let script = source[cursor]
             if !seen.insert(script).inserted {
                 append(.duplicateScript(String(script)))

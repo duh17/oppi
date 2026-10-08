@@ -63,8 +63,7 @@ struct InteractiveMediaInspectionTests {
         #expect(result.inspection.supplement?.text.contains("## Calls") == true)
         #expect(result.inspection.supplement?.text.contains("Lookup") == true)
         guard case .media(let media) = result.content else { Issue.record("Expected native media"); return }
-        if audio { #expect(media.audio?.attachmentId == "audio-1") }
-        else { #expect(media.attachments.map(\.id) == ["image-1"]) }
+        if audio { #expect(media.audio?.attachmentId == "audio-1") } else { #expect(media.attachments.map(\.id) == ["image-1"]) }
     }
 
     @Test func fileMediaKeepsInputAndCalls() {
@@ -109,8 +108,7 @@ struct InteractiveMediaInspectionTests {
         let coalescer = DeltaCoalescer()
         coalescer.onFlush = { reducer.processBatch($0) }
         func send(_ event: AgentEvent) {
-            if batched { coalescer.receive(event) }
-            else { reducer.process(event) }
+            if batched { coalescer.receive(event) } else { reducer.process(event) }
         }
         send(.toolStart(sessionId: "s", toolEventId: "p", tool: "codemode", args: ["code": "await a(); await b()" ]))
         send(.toolStart(sessionId: "s", toolEventId: "a", tool: "mcp__alpha__a", args: ["query": "first"], display: .init(title: "First call", verbatim: true), parentToolCallId: "p"))

@@ -150,7 +150,7 @@ struct PhotoLibraryMediaImporterTests {
         #expect(draftURL.standardizedFileURL == imported.standardizedFileURL)
         #expect(FileManager.default.fileExists(atPath: draftURL.path))
         #expect(attachment.localFileData == nil)
-        #expect(try Data(contentsOf: draftURL).count > 0)
+        #expect(try !Data(contentsOf: draftURL).isEmpty)
     }
 
     @Test func removingAVideoChipDeletesTheDraftFileViaStore() throws {

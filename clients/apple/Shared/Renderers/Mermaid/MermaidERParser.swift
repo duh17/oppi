@@ -56,7 +56,7 @@ enum ERCardinality: Equatable, Sendable {
     case zeroOrMore
 
     /// Normalize any written marker (either side) to a cardinality.
-    static func fromMarker(_ marker: String) -> ERCardinality? {
+    static func fromMarker(_ marker: String) -> Self? {
         switch marker {
         case "||": return .exactlyOne
         case "|o", "o|": return .zeroOrOne

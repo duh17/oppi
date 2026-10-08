@@ -150,7 +150,6 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
         }
     }
 
-
     private static func modelKey(
         engine: VoiceInputManager.TranscriptionEngine,
         localeID: String

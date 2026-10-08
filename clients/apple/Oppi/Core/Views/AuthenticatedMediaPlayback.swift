@@ -36,7 +36,7 @@ struct AuthenticatedMediaRequestedRange: Equatable, Sendable {
         offset: Int64,
         requestedLength: Int,
         requestsAllDataToEndOfResource: Bool
-    ) -> AuthenticatedMediaRequestedRange {
+    ) -> Self {
         Self.make(
             currentOffset: offset,
             requestedOffset: offset,
@@ -52,7 +52,7 @@ struct AuthenticatedMediaRequestedRange: Equatable, Sendable {
         requestedOffset: Int64,
         requestedLength: Int,
         requestsAllDataToEndOfResource: Bool
-    ) -> AuthenticatedMediaRequestedRange {
+    ) -> Self {
         let origin = max(requestedOffset, 0)
         let start = max(currentOffset, origin)
         let wantsRest = requestsAllDataToEndOfResource
@@ -74,7 +74,7 @@ struct AuthenticatedMediaRequestedRange: Equatable, Sendable {
         ) {
             return chunk
         }
-        return AuthenticatedMediaRequestedRange(
+        return Self(
             start: start,
             end: start,
             continuesToEnd: wantsRest,
@@ -1709,7 +1709,7 @@ struct AuthenticatedMediaPlayerView: View {
     var body: some View {
         let model = injectedModel ?? ownedModel
 #if DEBUG
-        let _ = AuthenticatedMediaPlayerTesting.record(model, source: source)
+        _ = AuthenticatedMediaPlayerTesting.record(model, source: source)
 #endif
         AuthenticatedMediaPlayerHost(
             source: source,
@@ -2308,7 +2308,7 @@ enum AuthenticatedMediaE2EPlaybackProbe {
         weak var controller: AVPlayerViewController?
         weak var playerView: UIView?
         weak var fullscreenView: UIView?
-        private nonisolated(unsafe) var displayLink: CADisplayLink?
+        nonisolated(unsafe) private var displayLink: CADisplayLink?
         private let displayLinkProxy = DisplayLinkProxy()
 
         var isDisplayLinkActive: Bool { displayLink != nil }

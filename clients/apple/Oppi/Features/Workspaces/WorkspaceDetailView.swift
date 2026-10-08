@@ -248,7 +248,6 @@ struct WorkspaceDetailView: View {
             .filter { ($0.worktreeId ?? WorkspaceWorktree.mainId) == selectedWorktreeId }
     }
 
-
     /// Importable local pi TUI sessions for this workspace.
     ///
     /// The server owns CWD/hostMount alignment so the client only applies the

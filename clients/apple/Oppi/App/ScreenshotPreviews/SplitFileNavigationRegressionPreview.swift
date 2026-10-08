@@ -78,7 +78,6 @@ struct SplitFileNavigationRegressionPreview: View {
     }
 }
 
-
 private struct SplitFileNavigationSessionProbe: View {
     let target: WorkspaceSessionNavTarget
 
@@ -99,7 +98,6 @@ private struct SplitFileNavigationSessionProbe: View {
         .navigationTitle("Session")
     }
 }
-
 
 private struct SplitFileNavigationLinkedFileProbe: View {
     @Environment(\.dismiss) private var dismiss

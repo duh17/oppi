@@ -157,7 +157,6 @@ struct QuietWorkStripPreview: View {
     }
 }
 
-
 private struct QuietWorkStripRowPreview: UIViewRepresentable {
     let workLine: QuietTimelineWorkLine
     let style: AppPreferences.ChatDisplay.WorkStripStyle

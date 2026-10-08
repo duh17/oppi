@@ -17,10 +17,10 @@ enum TimedText {
         case ass
         case ssa
 
-        static let audioPriority: [Format] = [.lrc, .vtt, .srt, .ass, .ssa]
-        static let videoPriority: [Format] = [.vtt, .srt, .ass, .ssa]
+        static let audioPriority: [Self] = [.lrc, .vtt, .srt, .ass, .ssa]
+        static let videoPriority: [Self] = [.vtt, .srt, .ass, .ssa]
 
-        static func priority(for kind: MediaKind) -> [Format] {
+        static func priority(for kind: MediaKind) -> [Self] {
             switch kind {
             case .audio: return audioPriority
             case .video: return videoPriority
@@ -55,7 +55,7 @@ enum TimedText {
         var tracks: [Track]
         var selectedIndex: Int
 
-        static let empty = LoadResult(tracks: [], selectedIndex: 0)
+        static let empty = Self(tracks: [], selectedIndex: 0)
 
         var selected: Track? {
             tracks.indices.contains(selectedIndex) ? tracks[selectedIndex] : nil

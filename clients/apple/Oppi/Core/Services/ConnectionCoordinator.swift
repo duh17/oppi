@@ -438,7 +438,7 @@ final class ConnectionCoordinator {
         }
         #endif
         guard endpoint == nil,
-              (NetworkPathTelemetry.allowsLAN(pathType: networkPathType()) || networkPathType() == "unknown"),
+              NetworkPathTelemetry.allowsLAN(pathType: networkPathType()) || networkPathType() == "unknown",
               initialLANWaitCompleted.insert(server.id).inserted else { return endpoint }
         startLANDiscovery()
         return await lanDiscovery.waitForEndpoint(deadline: initialLANDiscoveryDeadline()) { [weak self] endpoints in
@@ -490,8 +490,8 @@ final class ConnectionCoordinator {
                   let serverId = credentials.normalizedServerFingerprint,
                   let expectedDeviceId = credentials.deviceCredential?.deviceId,
                   self.serverStore.server(for: serverId) != nil,
-                  (self.isCurrentPreparation(preparationID, serverId: serverId)
-                    || self.connections[serverId] === connection) else { return }
+                  self.isCurrentPreparation(preparationID, serverId: serverId)
+                    || self.connections[serverId] === connection else { return }
             do {
                 let merged = try self.serverStore.persistDeviceCredentialRefresh(
                     id: serverId,

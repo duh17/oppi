@@ -249,7 +249,8 @@ struct LANFirstConnectionPolicyTests {
             built = true
             #expect(TailnetTransportRoute.generation == 42)
             return APIClient(environment: environment, availabilityObserver: observer)
-        }, serverInfoBootstrap: { _, _ in self.info }) }
+        }, serverInfoBootstrap: { _, _ in self.info })
+        }
         await gate.waitUntilStarted()
         #expect(!built)
         gate.release()
@@ -280,7 +281,8 @@ struct LANFirstConnectionPolicyTests {
         let gate = LANPolicyGate()
         let wait = Task { await discovery.waitForEndpoint(deadline: .init(wait: { await gate.wait() })) { endpoints in
             endpoints.first { $0.serverFingerprintPrefix == "server" }
-        } }
+        }
+        }
         await gate.waitUntilStarted()
         discovery.publishForTesting([LANDiscoveredEndpoint(host: "unrelated", port: 443, serverFingerprintPrefix: "other", tlsCertFingerprintPrefix: nil)])
         discovery.publishForTesting([endpoint])

@@ -374,8 +374,7 @@ struct QuietTimelineProjection: Equatable {
                 if let stats = inspection?.file?.stats {
                     editAdded += stats.added
                     editRemoved += stats.removed
-                    if inspection?.file?.provenance == .requested { hasRequestedStats = true }
-                    else { hasResultStats = true }
+                    if inspection?.file?.provenance == .requested { hasRequestedStats = true } else { hasResultStats = true }
                 } else {
                     hasCompleteEditStats = false
                 }

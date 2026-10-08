@@ -1387,14 +1387,14 @@ struct DictationDeviceAuthTests {
         let consumer = Task { @MainActor in for await _ in stream {} }
 
         await gate.waitUntilEntered()
-        #expect(factory.sockets.count == 0)
+        #expect(factory.sockets.isEmpty)
         client.disconnect()
         await gate.release()
 
         _ = await waitForMainActorCondition(timeout: .seconds(1)) {
             factory.sockets.count == 1
         }
-        #expect(factory.sockets.count == 0, "Disconnect during a failed currentAccessToken() must not leftover-open")
+        #expect(factory.sockets.isEmpty, "Disconnect during a failed currentAccessToken() must not leftover-open")
         #expect(client.status == .disconnected)
 
         await consumer.value

@@ -76,8 +76,7 @@ struct SSHPreflightView: View {
         ), titleVisibility: .visible) {
             Button("Forget Trusted Key", role: .destructive) {
                 guard let host = forgetHost else { return }
-                do { try SSHKnownHosts().forget(host: host, port: Self.sshPort); phase = .idle }
-                catch { phase = .failed(.handshakeFailed(error.localizedDescription), host: host) }
+                do { try SSHKnownHosts().forget(host: host, port: Self.sshPort); phase = .idle } catch { phase = .failed(.handshakeFailed(error.localizedDescription), host: host) }
                 forgetHost = nil
             }
         } message: { Text("Independently verify why the host key changed before forgetting it.") }

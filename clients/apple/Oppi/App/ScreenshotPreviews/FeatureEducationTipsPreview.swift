@@ -13,7 +13,6 @@ private struct FeatureEducationTipPreviewItem: Identifiable {
     let stories: String
 }
 
-
 struct FeatureEducationTipsPreview: View {
     private static let priorities = ["P0", "P1", "P2"]
     private static let tips: [FeatureEducationTipPreviewItem] = [

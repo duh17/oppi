@@ -202,8 +202,8 @@ struct EasyGrammarFixture: Sendable, CustomTestStringConvertible {
 
     var testDescription: String { language.displayName }
 
-    static let all: [EasyGrammarFixture] = [
-        EasyGrammarFixture(
+    static let all: [Self] = [
+        Self(
             language: .go,
             code: """
             func Hello() {
@@ -216,7 +216,7 @@ struct EasyGrammarFixture: Sendable, CustomTestStringConvertible {
             tokenNeedle: "Hello",
             tokenKind: .function
         ),
-        EasyGrammarFixture(
+        Self(
             language: .rust,
             code: """
             fn hello() {
@@ -229,7 +229,7 @@ struct EasyGrammarFixture: Sendable, CustomTestStringConvertible {
             tokenNeedle: "hello",
             tokenKind: .function
         ),
-        EasyGrammarFixture(
+        Self(
             language: .c,
             code: """
             /* keep
@@ -241,7 +241,7 @@ struct EasyGrammarFixture: Sendable, CustomTestStringConvertible {
             tokenNeedle: "main",
             tokenKind: .function
         ),
-        EasyGrammarFixture(
+        Self(
             language: .cpp,
             code: """
             /* keep
@@ -254,7 +254,7 @@ struct EasyGrammarFixture: Sendable, CustomTestStringConvertible {
             tokenNeedle: "color",
             tokenKind: .comment
         ),
-        EasyGrammarFixture(
+        Self(
             language: .html,
             code: """
             <!-- keep
@@ -266,7 +266,7 @@ struct EasyGrammarFixture: Sendable, CustomTestStringConvertible {
             tokenNeedle: "div",
             tokenKind: .keyword
         ),
-        EasyGrammarFixture(
+        Self(
             language: .css,
             code: """
             /* keep
@@ -278,7 +278,7 @@ struct EasyGrammarFixture: Sendable, CustomTestStringConvertible {
             tokenNeedle: "foo",
             tokenKind: .type
         ),
-        EasyGrammarFixture(
+        Self(
             language: .ruby,
             code: """
             s = "hello
@@ -291,7 +291,7 @@ struct EasyGrammarFixture: Sendable, CustomTestStringConvertible {
             tokenNeedle: "foo",
             tokenKind: .function
         ),
-        EasyGrammarFixture(
+        Self(
             language: .java,
             code: """
             /* keep
@@ -305,7 +305,7 @@ struct EasyGrammarFixture: Sendable, CustomTestStringConvertible {
             tokenNeedle: "bar",
             tokenKind: .function
         ),
-        EasyGrammarFixture(
+        Self(
             language: .yaml,
             code: """
             foo: |
@@ -317,7 +317,7 @@ struct EasyGrammarFixture: Sendable, CustomTestStringConvertible {
             tokenNeedle: "foo",
             tokenKind: .type
         ),
-        EasyGrammarFixture(
+        Self(
             language: .toml,
             code: #"""
             foo = """hello

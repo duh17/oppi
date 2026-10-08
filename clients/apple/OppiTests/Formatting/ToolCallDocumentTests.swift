@@ -87,8 +87,7 @@ struct ToolCallDocumentTests {
     ])
     func nonMCPContentKeepsSiblingFields(_ output: String) throws {
         let text = try doc(output).text
-        if output.contains("count") { #expect(text.contains("| count | 42 |")) }
-        else { #expect(text.contains("| type | doc |")); #expect(text.contains("paragraph")) }
+        if output.contains("count") { #expect(text.contains("| count | 42 |")) } else { #expect(text.contains("| type | doc |")); #expect(text.contains("paragraph")) }
         #expect(text.contains("**content**"))
     }
     @Test func callArgumentsStayLiteralIncludingBackticks() throws {

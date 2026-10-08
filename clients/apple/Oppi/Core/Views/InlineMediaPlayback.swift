@@ -1200,8 +1200,7 @@ struct DataImagePreviewView: View {
             case .staticImage(let image, let aspectRatio):
                 renderedImage(
                     Image(uiImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
+                        .resizable().scaledToFit()
                         .onTapGesture {
                             guard allowsFullscreenStaticImage else { return }
                             let fullResolutionImage = UIImage(data: data) ?? image

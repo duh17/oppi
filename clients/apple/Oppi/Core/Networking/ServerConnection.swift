@@ -391,7 +391,6 @@ final class ServerConnection {
     var _onFocusedStreamReadinessWaitForTesting: (() -> Void)?
 #endif
 
-
     // Extension UI
     var activeExtensionDialog: ExtensionUIRequest? {
         get {
@@ -659,9 +658,7 @@ final class ServerConnection {
                 guard transportConfigurationGeneration == configurationGeneration else { return false }
                 if candidate.transportPath == .paired,
                    ServerTLSTrustPolicy.isTailscaleHostname(credentials.host) {
-                    do { try await prepareTailnetProxy() }
-                    catch is CancellationError { return false }
-                    catch {
+                    do { try await prepareTailnetProxy() } catch is CancellationError { return false } catch {
                         ClientLog.info("Network", "In-app Tailscale not ready; using system resolver", metadata: [
                             "reason": String(describing: type(of: error)),
                         ])
@@ -3007,15 +3004,12 @@ final class ServerConnection {
         transportConfigurationGeneration
     }
 
-
     // periphery:ignore - used by ServerConnectionLifecycleTests via @testable import
     func routeCandidateKindForTesting(
         _ path: ConnectionTransportPath
     ) -> ServerRouteCandidateKind? {
         routeCandidateKind(for: path)
     }
-
-
 
     func setSplitStreamCapabilitiesForTesting(
         sessionStream: Bool = true,

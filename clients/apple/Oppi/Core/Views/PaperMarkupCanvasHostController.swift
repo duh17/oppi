@@ -65,7 +65,6 @@ final class PaperMarkupCanvasHostController: UIViewController {
         paperViewController?.zoomRange
     }
 
-
     var toolPickerAccessoryItemForTesting: UIBarButtonItem? {
         toolPicker?.accessoryItem
     }
@@ -867,4 +866,3 @@ private final class PaperMarkupChangeRelay: NSObject, PaperMarkupViewController.
         }
     }
 }
-

@@ -141,8 +141,7 @@ struct McpAddServerView: View {
             saving = true; error = nil
             Task {
                 defer { saving = false }
-                do { try await client.addMcpServer(scopeId: scope.id, input); onAdded(); dismiss() }
-                catch { self.error = error.localizedDescription }
+                do { try await client.addMcpServer(scopeId: scope.id, input); onAdded(); dismiss() } catch { self.error = error.localizedDescription }
             }
         }
     }

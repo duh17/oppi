@@ -513,7 +513,6 @@ enum ModelPickerProviderOrdering {
     }
 }
 
-
 /// One persistence path for Quick Session and an already-running saved Agent.
 @MainActor
 enum ModelDefaultPersistence {

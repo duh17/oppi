@@ -52,8 +52,7 @@ struct AppleOnDeviceSpeechSettingsTests {
         #expect(!inputs.enqueue(AnalyzerInput(buffer: buffer)))
         events.continuation.finish() // successful analyzer completion cannot win
         var failure: Error?
-        do { for try await _ in events.stream {} }
-        catch { failure = error }
+        do { for try await _ in events.stream {} } catch { failure = error }
         #expect(VoiceInputTelemetry.metricErrorKind(for: try #require(failure)) == "capture_buffer_overflow")
         #expect(failure?.localizedDescription == "Dictation couldn’t continue. Please try again.")
     }
@@ -110,8 +109,7 @@ struct AppleOnDeviceSpeechSettingsTests {
         #expect(diagnostics.records.last?["recoveries"] == "1")
         #expect(diagnostics.records.last?["peak_buffered_ms"] == "2048")
         events.continuation.finish()
-        do { for try await _ in events.stream {} }
-        catch { Issue.record("Transient pressure is not a capture failure: \(error)") }
+        do { for try await _ in events.stream {} } catch { Issue.record("Transient pressure is not a capture failure: \(error)") }
     }
 
     @Test func stoppedInputWithStuckConsumerExpiresWithoutAnotherTapAndCancelsAnalyzerOnce() async throws {

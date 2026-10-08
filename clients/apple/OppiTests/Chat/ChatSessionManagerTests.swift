@@ -1868,7 +1868,6 @@ struct ChatSessionManagerTests {
         await TimelineCache.shared.removeTrace(sessionId)
     }
 
-
     @Test func reconnectCatchUpReplaysStopConfirmedDeterministically() async {
         let sessionId = "catch-stop-ok-\(UUID().uuidString)"
         let manager = ChatSessionManager(sessionId: sessionId)

@@ -53,7 +53,7 @@ struct RenderConfiguration: Sendable {
     let displayMode: RenderDisplayMode
 
     static func `default`(maxWidth: CGFloat = 360) -> Self {
-        RenderConfiguration(
+        Self(
             fontSize: 14,
             maxWidth: maxWidth,
             theme: .fallback,
@@ -108,7 +108,7 @@ struct RenderTheme: Sendable {
     }
 
     /// Neutral fallback for tests and platforms without theme context.
-    static let fallback = RenderTheme(
+    static let fallback = Self(
         foreground: CGColor(gray: 0.9, alpha: 1),
         foregroundDim: CGColor(gray: 0.6, alpha: 1),
         background: CGColor(gray: 0.12, alpha: 1),
@@ -163,7 +163,7 @@ struct RenderTheme: Sendable {
     }
 
     /// Built-in light render theme for tests and light-mode exports.
-    static let light = RenderTheme(
+    static let light = Self(
         foreground: CGColor(gray: 0.1, alpha: 1),
         foregroundDim: CGColor(gray: 0.4, alpha: 1),
         background: CGColor(gray: 1.0, alpha: 1),

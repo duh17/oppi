@@ -112,7 +112,6 @@ struct ServerConnectionNetworkPathChangeTests {
                 "Focused session must survive network path change")
     }
 
-
     @Test func pathChangePreservesReducerTimeline() {
         let (conn, pipe) = makeConnectionOnLAN()
         conn.wsClient?._setStatusForTesting(.connected)

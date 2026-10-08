@@ -1186,5 +1186,3 @@ struct SessionStoreUnreadCompletionTests {
 }
 
 // MARK: - Context summary clearing
-
-

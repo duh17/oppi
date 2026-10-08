@@ -1288,5 +1288,4 @@ actor ChatMetricsService {
         flushIfNeeded()
     }
 
-
 }

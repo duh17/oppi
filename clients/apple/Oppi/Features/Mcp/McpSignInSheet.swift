@@ -46,8 +46,7 @@ struct McpSignInSheet: View {
                 if let error = attempt.refreshError { Text(error).foregroundStyle(.themeOrange) }
                 if attempt.isGone { Text("The host no longer has this flow. Start a new sign-in.") }
                 Section {
-                    if attempt.isSettled { Button("Done") { owner.showingSheet = false } }
-                    else {
+                    if attempt.isSettled { Button("Done") { owner.showingSheet = false } } else {
                         Button("Cancel Sign-In", role: .destructive) { Task { await owner.cancel() } }
                             .disabled(attempt.isCancelling)
                     }

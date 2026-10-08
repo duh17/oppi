@@ -113,7 +113,6 @@ struct AskCardLongComposerPreview: View {
     }
 }
 
-
 // MARK: - Ask Card Preview
 
 private enum AskCardPreviewFixture {
@@ -205,7 +204,7 @@ private enum AskCardPreviewFixture {
             ````
             """
         )
-        return request.inlineAskRequest ?? AskCardPreviewFixture.request
+        return request.inlineAskRequest ?? Self.request
     }()
 
     static let multiSelectLongOptionsRequest = AskRequest(
@@ -292,7 +291,6 @@ private enum AskCardPreviewFixture {
         timeout: nil
     )
 }
-
 
 struct AskCardPreview: View {
     @State private var currentPage = 0
@@ -402,7 +400,6 @@ struct AskCardPreview: View {
     }
 }
 
-
 struct AskCardMultiSelectLongOptionsPreview: View {
     @State private var currentPage = 0
     @State private var answers: [String: AskAnswer] = [:]
@@ -493,7 +490,6 @@ struct AskCardMultiSelectLongOptionsPreview: View {
     }
 }
 
-
 struct AskCardLongUnfocusedComposerPreview: View {
     @State private var text = ""
     @State private var textBeforeRecording: String?
@@ -552,7 +548,6 @@ struct AskCardLongUnfocusedComposerPreview: View {
     }
 }
 
-
 struct AskCardExpandedSheetPreview: View {
     @State private var currentPage = 0
     @State private var answers: [String: AskAnswer] = [:]
@@ -590,7 +585,6 @@ struct AskCardExpandedSheetPreview: View {
         .accessibilityIdentifier("screenshot.ready")
     }
 }
-
 
 struct AskCardExpandedCustomPreview: View {
     @State private var currentPage = 0
@@ -632,7 +626,6 @@ struct AskCardExpandedCustomPreview: View {
         .accessibilityIdentifier("screenshot.ready")
     }
 }
-
 
 struct OppiCommandApprovalInlinePreview: View {
     @State private var currentPage = 0

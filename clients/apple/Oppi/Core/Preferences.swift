@@ -84,7 +84,6 @@ enum AppPreferences {
             UserDefaults.standard.bool(forKey: sshTerminalKey)
         }
 
-
         /// Session Threads: launch-tree grouping, Thread strips, Thread detail, and
         /// compose in every session list. Off lists every session as its own row.
         static var sessionThreadsEnabled: Bool {

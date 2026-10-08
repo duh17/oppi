@@ -262,7 +262,6 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
         pickController.refreshHighlightAfterViewportChange()
     }
 
-
     func snapshotRenderedImage() async throws -> UIImage {
         guard isRenderReady else {
             throw PaperMarkupCanvasSession.SnapshotError.notReady

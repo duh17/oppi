@@ -359,7 +359,7 @@ enum MermaidGanttRenderer {
                             : barW
                         let taskLine = makeLine(task.name, font: smallFont, color: theme.foreground)
                         let labelWidth = CTLineGetBoundsWithOptions(taskLine, []).width
-                        let placement = MermaidGanttRenderer.compactLabelPlacement(
+                        let placement = Self.compactLabelPlacement(
                             labelWidth: labelWidth,
                             barX: barX,
                             barWidth: effectiveBarW,

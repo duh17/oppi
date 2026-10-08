@@ -191,7 +191,6 @@ struct ChatFileBrowserPanelPreview: View {
     }
 }
 
-
 private enum ScreenshotPreviewFileBrowserAPI {
     static func makeClient() -> APIClient {
         let config = URLSessionConfiguration.ephemeral
@@ -204,7 +203,6 @@ private enum ScreenshotPreviewFileBrowserAPI {
         )
     }
 }
-
 
 private final class ScreenshotPreviewFileBrowserURLProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool {
@@ -333,7 +331,6 @@ private final class ScreenshotPreviewFileBrowserURLProtocol: URLProtocol {
         return (status, "application/json", body)
     }
 }
-
 
 private extension ScreenshotPreviewConfig {
     static var panelTab: ChatFileBrowserPanelTab {

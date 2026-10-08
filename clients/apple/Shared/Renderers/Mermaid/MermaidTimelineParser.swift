@@ -37,11 +37,6 @@ struct TimelinePeriod: Equatable, Sendable {
 struct TimelineSection: Equatable, Sendable {
     let name: String?
     let periods: [TimelinePeriod]
-
-    init(name: String?, periods: [TimelinePeriod]) {
-        self.name = name
-        self.periods = periods
-    }
 }
 
 struct TimelineDiagram: Equatable, Sendable {
@@ -59,7 +54,7 @@ struct TimelineDiagram: Equatable, Sendable {
         self.sections = sections
     }
 
-    static let empty = TimelineDiagram(title: nil, sections: [])
+    static let empty = Self(title: nil, sections: [])
 }
 
 // MARK: - Parser

@@ -253,7 +253,7 @@ private struct OverlayHarness {
     let window: UIWindow
     let root: UIViewController
 
-    static func make() -> OverlayHarness {
+    static func make() -> Self {
         let scene = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .first
@@ -268,7 +268,7 @@ private struct OverlayHarness {
         window.rootViewController = root
         window.makeKeyAndVisible()
         root.loadViewIfNeeded()
-        return OverlayHarness(window: window, root: root)
+        return Self(window: window, root: root)
     }
 
     func teardown() {

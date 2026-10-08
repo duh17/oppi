@@ -458,9 +458,7 @@ enum SSHTerminalKeymap {
     private static func stripComment(_ line: String) -> String {
         var quote: Character?
         for (index, character) in zip(line.indices, line) {
-            if let open = quote { if character == open { quote = nil } }
-            else if character == "\"" || character == "'" { quote = character }
-            else if character == "#" { return String(line[..<index]) }
+            if let open = quote { if character == open { quote = nil } } else if character == "\"" || character == "'" { quote = character } else if character == "#" { return String(line[..<index]) }
         }
         return line
     }

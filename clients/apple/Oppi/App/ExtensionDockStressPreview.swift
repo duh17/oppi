@@ -13,7 +13,7 @@ struct ExtensionDockStressPreview: View {
     @State private var showGoalDetail = false
 
     var body: some View {
-        GeometryReader { proxy in
+        GeometryReader { _ in
             ZStack(alignment: .top) {
                 Color.themeBg
                     .ignoresSafeArea()

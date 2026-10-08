@@ -566,7 +566,6 @@ struct WorkspaceContextBar: View {
                         }
                     }
 
-
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .font(gitBarFont(compact: .appTagBold, iPad: .caption2.weight(.bold)))
                         .foregroundStyle(.themeComment)
@@ -1245,4 +1244,3 @@ private struct RowFramePreferenceKey: PreferenceKey {
         value.merge(nextValue()) { _, new in new }
     }
 }
-

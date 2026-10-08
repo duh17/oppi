@@ -84,47 +84,47 @@ struct ChatReaderPayload {
         content: FullScreenCodeContent,
         reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil,
         destination: ComposerCanvasDestination? = nil
-    ) -> ChatReaderPayload {
-        ChatReaderPayload(
+    ) -> Self {
+        Self(
             content: content,
             reviewCommentSelectionContext: reviewCommentSelectionContext,
             destination: destination
         )
     }
 
-    static func image(_ image: UIImage) -> ChatReaderPayload {
-        ChatReaderPayload(kind: .image(image))
+    static func image(_ image: UIImage) -> Self {
+        Self(kind: .image(image))
     }
 
-    static func imageData(_ data: Data, mimeType: String?) -> ChatReaderPayload {
-        ChatReaderPayload(kind: .imageData(data, mimeType: mimeType))
+    static func imageData(_ data: Data, mimeType: String?) -> Self {
+        Self(kind: .imageData(data, mimeType: mimeType))
     }
 
-    static func audioLyrics(_ content: AudioLyricsReaderContent) -> ChatReaderPayload {
-        ChatReaderPayload(kind: .audioLyrics(content))
+    static func audioLyrics(_ content: AudioLyricsReaderContent) -> Self {
+        Self(kind: .audioLyrics(content))
     }
 
-    static func video(_ content: ChatReaderVideoContent) -> ChatReaderPayload {
-        ChatReaderPayload(kind: .video(content))
+    static func video(_ content: ChatReaderVideoContent) -> Self {
+        Self(kind: .video(content))
     }
 
-    static func nowPlaying(_ audioPlayer: AudioPlayerService) -> ChatReaderPayload {
-        ChatReaderPayload(kind: .nowPlaying(audioPlayer))
+    static func nowPlaying(_ audioPlayer: AudioPlayerService) -> Self {
+        Self(kind: .nowPlaying(audioPlayer))
     }
 
-    static func extensionNative(_ content: ExtensionNativeReaderContent) -> ChatReaderPayload {
-        ChatReaderPayload(kind: .extensionNative(content))
+    static func extensionNative(_ content: ExtensionNativeReaderContent) -> Self {
+        Self(kind: .extensionNative(content))
     }
 
     /// Stamp the origin chat. Nested opens inherit this value, including nil.
     func stamped(
         with destination: ComposerCanvasDestination?,
         lockOrigin: ScopedLockTarget? = nil
-    ) -> ChatReaderPayload {
-        ChatReaderPayload(kind: kind, destination: destination, lockOrigin: lockOrigin)
+    ) -> Self {
+        Self(kind: kind, destination: destination, lockOrigin: lockOrigin)
     }
 
-    func inheritingDestination(from parent: ChatReaderPayload) -> ChatReaderPayload {
+    func inheritingDestination(from parent: Self) -> Self {
         stamped(with: parent.destination, lockOrigin: parent.lockOrigin)
     }
 

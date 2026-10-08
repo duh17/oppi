@@ -387,7 +387,7 @@ enum MarkdownListContinuation {
             }
             if index + 3 <= next {
                 let fence = text.character(at: index)
-                if (fence == backtick || fence == tilde),
+                if fence == backtick || fence == tilde,
                    text.character(at: index + 1) == fence,
                    text.character(at: index + 2) == fence {
                     inside.toggle()

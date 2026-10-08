@@ -9,7 +9,7 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
         case idle, working, blocked, done, unknown
 
         init(from decoder: any Decoder) throws {
-            self = Status(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
+            self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
         }
     }
 

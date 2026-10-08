@@ -143,7 +143,7 @@ enum MermaidQuadrantParser {
         guard let raw else { return nil }
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return nil }
-        if (trimmed.first == "\"" || trimmed.first == "'"),
+        if trimmed.first == "\"" || trimmed.first == "'",
            trimmed.count >= 2,
            trimmed.last == trimmed.first {
             return MermaidTextUtils.normalizeLabel(String(trimmed.dropFirst().dropLast()))

@@ -231,7 +231,6 @@ struct ServerConnectionStreamRecoveryTests {
     /// If the first paired bootstrap after LAN loss fails, automatic recovery
     /// must retry with budget instead of settling with nil clients forever.
 
-
     /// While demotion is in flight, diagnostics/UI must not present a settled
     /// "local network" connection with nil clients.
     @Test func lanPathLossMarksTransportDemotingDuringReconfigureHole() async throws {

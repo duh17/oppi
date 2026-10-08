@@ -565,7 +565,7 @@ private final class SemanticPickHighlightView: UIView {
         backgroundColor = .clear
         isOpaque = false
         accessibilityIdentifier = "semantic-pick.highlight"
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: SemanticPickHighlightView, _) in
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: Self, _) in
             view.setNeedsDisplay()
         }
     }

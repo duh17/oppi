@@ -1071,7 +1071,6 @@ enum ToolTimelineRowUIHelpers {
         return distance <= autoFollowBottomThreshold
     }
 
-
     /// Resolve a language badge string to either an asset catalog image or an SF Symbol.
     ///
     /// Prefers custom language icons from the asset catalog (`lang-*`),

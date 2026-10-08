@@ -325,7 +325,6 @@ struct MermaidRenderingPreview: View {
     }
 }
 
-
 // The architecture graph that exposed inline/expanded shelf-packing drift.
 struct MermaidConsistencyPreview: View {
     let expanded: Bool
@@ -403,7 +402,6 @@ struct MermaidConsistencyPreview: View {
     """
 }
 
-
 // MARK: - Mermaid Fullscreen Preview
 
 /// Production full-screen mermaid viewer at iPhone width, including fit-to-width zoom.
@@ -434,7 +432,6 @@ struct MermaidFullscreenPreview: View {
             .accessibilityIdentifier("screenshot.ready")
     }
 }
-
 
 // MARK: - Mermaid Responsive Routing Preview
 

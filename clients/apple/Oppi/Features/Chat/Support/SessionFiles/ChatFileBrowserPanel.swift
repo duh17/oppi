@@ -26,7 +26,7 @@ enum ChatFileBrowserPanelTab: String, CaseIterable, Identifiable, Sendable {
 
 /// UserDefaults-backed selected-tab store for chat file panels.
 struct ChatFileBrowserPanelTabStore {
-    static var shared: ChatFileBrowserPanelTabStore { ChatFileBrowserPanelTabStore() }
+    static var shared: Self { Self() }
 
     private let defaults: UserDefaults
     private let key = "\(AppIdentifiers.subsystem).chatFileBrowser.selectedTabsBySession"
@@ -123,7 +123,6 @@ struct ChatFileBrowserPanel: View {
             ])
         }
     }
-
 
     private var tabPicker: some View {
         Picker("File browser mode", selection: $selectedTab) {

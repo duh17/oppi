@@ -227,7 +227,6 @@ struct ScreenshotPreviewView: View {
     }
 }
 
-
 /// First-run pairing choices, including Connect through Tailscale.
 private struct OnboardingScreenshotPreview: View {
     private let coordinator = ConnectionCoordinator(serverStore: ServerStore())

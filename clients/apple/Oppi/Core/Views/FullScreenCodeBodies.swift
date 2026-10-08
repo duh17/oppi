@@ -682,7 +682,7 @@ final class NativeFullScreenCodeBody: UIView, UIScrollViewDelegate, UICollection
         #endif
         highlightTask = Task { [weak self] in
             #if DEBUG
-            if let delay = NativeFullScreenCodeBody.highlightDelayForTesting {
+            if let delay = Self.highlightDelayForTesting {
                 try? await Task.sleep(for: delay)
             }
             #endif
@@ -2071,7 +2071,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         self.stream = stream
         var resolvedSidecar = sidecarSource
         if resolvedSidecar == nil, stream?.snapshot.isDone == true {
-            resolvedSidecar = stream?.completionSidecarSource ?? nil
+            resolvedSidecar = stream?.completionSidecarSource
         }
         self.sidecarSource = resolvedSidecar
         var preferences = readerPreferences
@@ -2723,7 +2723,6 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         )
     }
 
-
     #endif
 
     private var virtualizedCommandItemCount: Int { virtualizedCommand == nil ? 0 : 1 }
@@ -3009,10 +3008,6 @@ private final class FullScreenMarkdownSegmentCell: UICollectionViewCell, UITextV
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-    }
 
     override func prepareForReuse() {
         parkHandler?(self)

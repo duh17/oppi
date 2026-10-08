@@ -32,25 +32,25 @@ enum StreamingRenderPolicy {
         var thermalState: ProcessInfo.ThermalState
         var isLowPowerModeEnabled: Bool
 
-        static let nominal = ResourcePressure(
+        static let nominal = Self(
             thermalState: .nominal,
             isLowPowerModeEnabled: false
         )
-        static let fair = ResourcePressure(
+        static let fair = Self(
             thermalState: .fair,
             isLowPowerModeEnabled: false
         )
-        static let serious = ResourcePressure(
+        static let serious = Self(
             thermalState: .serious,
             isLowPowerModeEnabled: false
         )
-        static let critical = ResourcePressure(
+        static let critical = Self(
             thermalState: .critical,
             isLowPowerModeEnabled: false
         )
 
-        static func current(processInfo: ProcessInfo = .processInfo) -> ResourcePressure {
-            ResourcePressure(
+        static func current(processInfo: ProcessInfo = .processInfo) -> Self {
+            Self(
                 thermalState: processInfo.thermalState,
                 isLowPowerModeEnabled: processInfo.isLowPowerModeEnabled
             )

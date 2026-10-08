@@ -284,7 +284,7 @@ struct SemanticHitResult: Equatable, Sendable {
 
     var isAmbiguous: Bool { targets.count > 1 }
 
-    static let none = SemanticHitResult(targets: [])
+    static let none = Self(targets: [])
 }
 
 struct SemanticAnnotationMap: Equatable, Sendable {
@@ -498,7 +498,7 @@ struct ReviewCommentSemanticAnchor: Codable, Equatable, Sendable {
         self.isStale = isStale
     }
 
-    func markedStaleAgainst(currentRevision: String) -> ReviewCommentSemanticAnchor {
+    func markedStaleAgainst(currentRevision: String) -> Self {
         guard sourceRevision != currentRevision else { return self }
         var copy = self
         copy.isStale = true

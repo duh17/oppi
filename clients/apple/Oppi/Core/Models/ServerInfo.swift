@@ -143,7 +143,7 @@ struct ProviderQuota: Codable, Sendable, Equatable, Identifiable {
         case compact(limit: Int)
 
         /// Default picker density: one shortest window.
-        static let picker = WindowPresentation.compact(limit: 1)
+        static let picker = Self.compact(limit: 1)
     }
 
     struct Window: Codable, Sendable, Equatable, Identifiable {

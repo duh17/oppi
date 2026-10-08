@@ -78,8 +78,8 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         let provider: String?
     }
 
-    private nonisolated static let nowPlayingFallbackTitle = "Voice reply"
-    private nonisolated static let nowPlayingFallbackArtist = "Oppi"
+    nonisolated private static let nowPlayingFallbackTitle = "Voice reply"
+    nonisolated private static let nowPlayingFallbackArtist = "Oppi"
 
     /// ID of the ChatItem currently playing (nil when idle).
     private(set) var playingItemID: String?
@@ -1101,7 +1101,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     // periphery:ignore - test seam used by AudioPlayer/ConnectionCoordinator lifecycle tests
     func _setPlaybackStateForTesting(playing: String?, loading: String?) {
-        if (playing != nil || loading != nil), playingItemID == nil, loadingItemID == nil {
+        if playing != nil || loading != nil, playingItemID == nil, loadingItemID == nil {
             activePlaybackContext = sessionContext
         }
         setPlaybackState(playing: playing, loading: loading)

@@ -1095,7 +1095,7 @@ private struct OrbPixelShot {
         return OrbOpaqueColorStats(count: count, luma: lumaSum / denom, chroma: chromaSum / denom)
     }
 
-    func changedCount(vs other: OrbPixelShot, minChannelDelta: Int) -> Int {
+    func changedCount(vs other: Self, minChannelDelta: Int) -> Int {
         let count = min(bytes.count, other.bytes.count)
         var changed = 0
         var index = 0

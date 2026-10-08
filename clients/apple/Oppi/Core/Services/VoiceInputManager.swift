@@ -2434,7 +2434,6 @@ final class VoiceInputManager {
         }
     }
 
-
 }
 
 // MARK: - Testing Support

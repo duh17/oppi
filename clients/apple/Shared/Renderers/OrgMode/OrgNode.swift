@@ -29,7 +29,7 @@ enum OrgBlock: Equatable, Sendable {
 
     /// Block quote: `#+begin_quote ... #+end_quote`
     /// Contains recursively parsed blocks.
-    case quote([OrgBlock])
+    case quote([Self])
 
     /// Keyword line: `#+KEY: value`
     case keyword(key: String, value: String)
@@ -65,13 +65,13 @@ enum OrgInline: Equatable, Sendable {
     case text(String)
 
     /// Bold: `*text*` — can contain nested inlines.
-    case bold([OrgInline])
+    case bold([Self])
 
     /// Italic: `/text/` — can contain nested inlines.
-    case italic([OrgInline])
+    case italic([Self])
 
     /// Underline: `_text_` — can contain nested inlines.
-    case underline([OrgInline])
+    case underline([Self])
 
     /// Verbatim: `=text=` — raw string, no nesting.
     case verbatim(String)
@@ -80,10 +80,10 @@ enum OrgInline: Equatable, Sendable {
     case code(String)
 
     /// Strikethrough: `+text+` — can contain nested inlines.
-    case strikethrough([OrgInline])
+    case strikethrough([Self])
 
     /// Link: `[[url][description]]` or `[[url]]`
-    case link(url: String, description: [OrgInline]?)
+    case link(url: String, description: [Self]?)
 }
 
 /// List kind — unordered (bullet) or ordered (numbered).

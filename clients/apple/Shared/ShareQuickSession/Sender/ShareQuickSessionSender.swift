@@ -79,8 +79,8 @@ struct ShareQuickSessionServer: Codable, Equatable, Identifiable, Sendable {
 
     /// Replace the device credential, clearing the static token so it is never
     /// used after the short-lived access token has been issued.
-    func withDeviceCredential(_ credential: DeviceCredential) -> ShareQuickSessionServer {
-        guard let updated = ShareQuickSessionServer(
+    func withDeviceCredential(_ credential: DeviceCredential) -> Self {
+        guard let updated = Self(
             id: id,
             name: name,
             baseURL: baseURL,

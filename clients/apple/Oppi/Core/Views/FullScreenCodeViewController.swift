@@ -258,7 +258,6 @@ final class FullScreenCodeViewController: UIViewController {
         NotificationCenter.default.removeObserver(self, name: .oppiThemeDidChange, object: nil)
     }
 
-
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         guard let intent = currentMarkdownViewportIntent() else { return }
@@ -2396,7 +2395,7 @@ private final class FullScreenContentHostController: UIViewController {
         super.viewDidLoad()
         #if canImport(SwiftUI, _version: 8.0.85)
         if #available(iOS 27.1, *) {
-            registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (host: FullScreenContentHostController, _) in
+            registerForTraitChanges(UITraitCollection.systemTraitsAffectingVerticalBarEdge) { (host: Self, _) in
                 host.onVerticalBarEdgeChange?()
             }
         }
@@ -2456,7 +2455,7 @@ private final class FullScreenViewingOptionsController: UIHostingController<Full
 
     @available(*, unavailable)
     @MainActor @preconcurrency
-    required dynamic init?(coder aDecoder: NSCoder) { nil }
+    dynamic required init?(coder aDecoder: NSCoder) { nil }
 
     override func viewDidLoad() {
         super.viewDidLoad()

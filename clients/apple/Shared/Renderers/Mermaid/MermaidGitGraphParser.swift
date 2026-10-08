@@ -51,7 +51,7 @@ enum MermaidGitGraphParser {
                 ) {
                     error = typeError
                 } else {
-                    headId = branchHeads[currentBranch] ?? nil
+                    headId = branchHeads[currentBranch]
                 }
                 continue
             }
@@ -223,7 +223,7 @@ enum MermaidGitGraphParser {
             return "Trying to checkout branch which is not yet created. (Help try using \"branch \(name)\")"
         }
         currentBranch = name
-        if let id = branchHeads[name] ?? nil {
+        if let id = branchHeads[name] {
             headId = id
         } else {
             headId = nil
@@ -253,7 +253,7 @@ enum MermaidGitGraphParser {
         guard branchHeads.keys.contains(other) else {
             return "Incorrect usage of \"merge\". Branch to be merged (\(other)) does not exist"
         }
-        guard let otherId = branchHeads[other] ?? nil else {
+        guard let otherId = branchHeads[other] else {
             return "Incorrect usage of \"merge\". Branch to be merged (\(other)) has no commits"
         }
         if currentId == otherId {
@@ -348,7 +348,7 @@ enum MermaidGitGraphParser {
     ) -> [GitGraphBranch] {
         var result: [(GitGraphBranch, Double)] = []
         for (index, name) in appearance.enumerated() {
-            let declared = (name == mainName) ? (config[name] ?? mainOrder) : config[name] ?? nil
+            let declared = (name == mainName) ? (config[name] ?? mainOrder) : config[name]
             let sort: Double
             if let declared {
                 sort = Double(declared)

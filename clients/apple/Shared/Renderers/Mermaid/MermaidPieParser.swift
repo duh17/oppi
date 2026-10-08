@@ -22,12 +22,6 @@ struct PieDiagram: Equatable, Sendable {
     /// `showData` renders the actual data values after the legend text.
     let showData: Bool
 
-    init(title: String?, slices: [PieSlice], showData: Bool) {
-        self.title = title
-        self.slices = slices
-        self.showData = showData
-    }
-
     static let empty = Self(title: nil, slices: [], showData: false)
 }
 
@@ -36,11 +30,6 @@ struct PieSlice: Equatable, Sendable {
     /// Raw positive numeric value from source. The renderer derives
     /// percentages from the slice-value total.
     let value: Double
-
-    init(label: String, value: Double) {
-        self.label = label
-        self.value = value
-    }
 }
 
 // MARK: - Parser

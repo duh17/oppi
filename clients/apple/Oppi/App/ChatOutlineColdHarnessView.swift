@@ -44,7 +44,7 @@ struct ChatOutlineColdHarnessView: View {
     private static let serverId = "cold-outline-server"
 
     @State private var navigation = AppNavigation()
-    @State private var connection = ChatOutlineColdHarnessView.makeConnection()
+    @State private var connection = Self.makeConnection()
     @State private var quickCommentTemplateStore = QuickCommentTemplateStore(templates: [])
     @State private var composerDraftStore = ComposerDraftStore()
     @State private var sessionId = ChatOutlineColdHarnessConfig.sessionA

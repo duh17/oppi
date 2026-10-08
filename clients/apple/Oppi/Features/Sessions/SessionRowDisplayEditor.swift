@@ -16,7 +16,7 @@ struct SessionRowPreviewSubject {
 
     /// Illustrative rows for a thread whose root is Done while children work,
     /// ask a question, and finish. Nothing here comes from the user's sessions.
-    static func sample(now: Date = Date()) -> SessionRowPreviewSubject {
+    static func sample(now: Date = Date()) -> Self {
         func session(
             _ id: String,
             _ name: String,
@@ -70,7 +70,7 @@ struct SessionRowPreviewSubject {
             startedAgo: 3_600, activeAgo: 2_400, cost: 0.19
         )
         let rollup = SessionThreadGrouping.rollups(from: [root, working, question, finished])[0]
-        return SessionRowPreviewSubject(
+        return Self(
             presentation: SessionRowPresentationBuilder.make(
                 session: root,
                 workspaceContext: root.workspaceName
@@ -82,7 +82,7 @@ struct SessionRowPreviewSubject {
     /// A snapshot of an already-loaded thread (or, when none has children, the
     /// first loaded session) from the cold list projection.
     @MainActor
-    static func loaded(from connection: ServerConnection?) -> SessionRowPreviewSubject? {
+    static func loaded(from connection: ServerConnection?) -> Self? {
         guard let connection else { return nil }
         let store = connection.sessionStore
         let rollups = SessionThreadGrouping.rollups(from: store.listProjectionSessions)
@@ -108,7 +108,7 @@ struct SessionRowPreviewSubject {
             unreadCompletionAt: store.unreadCompletionDate(for: root.id),
             catalogModels: connection.chatState.cachedModels
         )
-        return SessionRowPreviewSubject(
+        return Self(
             presentation: presentation,
             thread: rollup.descendants.isEmpty
                 ? nil

@@ -491,7 +491,6 @@ struct CommitFileDiffView: View {
         }
     }
 
-
     // MARK: - Data Loading
 
     private func loadDiff() async {

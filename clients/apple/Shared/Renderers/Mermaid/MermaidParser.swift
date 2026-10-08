@@ -145,7 +145,7 @@ struct MermaidParser: DocumentParser, Sendable {
 
     private struct YAMLMap {
         var scalars: [String: String] = [:]
-        var children: [String: YAMLMap] = [:]
+        var children: [String: Self] = [:]
     }
 
     /// Indent-based YAML subset for Mermaid frontmatter `config:` blocks.
@@ -160,16 +160,14 @@ struct MermaidParser: DocumentParser, Sendable {
         func indent(of line: String) -> Int {
             var count = 0
             for character in line {
-                if character == " " { count += 1 }
-                else if character == "\t" { count += 4 }
-                else { break }
+                if character == " " { count += 1 } else if character == "\t" { count += 4 } else { break }
             }
             return count
         }
 
         func unquote(_ raw: String) -> String {
             var trimmed = raw.trimmingCharacters(in: .whitespaces)
-            if (trimmed.first == "\"" || trimmed.first == "'"),
+            if trimmed.first == "\"" || trimmed.first == "'",
                trimmed.count >= 2,
                trimmed.last == trimmed.first {
                 trimmed = String(trimmed.dropFirst().dropLast())

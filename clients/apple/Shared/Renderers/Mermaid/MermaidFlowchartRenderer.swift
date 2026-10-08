@@ -53,8 +53,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             configuration: RenderConfiguration,
             edgePaths: [GraphLayoutEdgePath] = [],
             draw: @escaping @Sendable (CGContext, CGPoint) -> Void
-        ) -> FlowchartLayout {
-            FlowchartLayout(
+        ) -> Self {
+            Self(
                 graphResult: GraphLayoutResult(
                     nodePositions: nodePositions, edgePaths: edgePaths, totalSize: size
                 ),

@@ -1142,7 +1142,6 @@ final class AssistantMarkdownSegmentApplier {
         }
     }
 
-
     private func updateStreamingTextTail(
         _ attributed: AttributedString,
         in textView: BaselineSafeTextView,
@@ -1422,7 +1421,6 @@ final class AssistantMarkdownSegmentApplier {
             timelineItemId: base.timelineItemId
         )
     }
-
 
     private func makeThematicBreak(palette: ThemePalette) -> UIView {
         let hr = UIView()

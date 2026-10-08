@@ -1357,8 +1357,7 @@ enum MermaidXYChartRenderer {
             lines = Array(lines.prefix(maxLines))
             var last = lines[maxLines - 1]
             while !last.isEmpty,
-                  textWidth(last + "…", font: font) > maxWidth
-            {
+                  textWidth(last + "…", font: font) > maxWidth {
                 last.removeLast()
             }
             lines[maxLines - 1] = last.isEmpty ? "…" : last + "…"

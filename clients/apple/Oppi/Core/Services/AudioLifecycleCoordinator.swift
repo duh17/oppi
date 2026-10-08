@@ -137,7 +137,6 @@ final class AudioLifecycleCoordinator: VoicePlaybackInterrupter {
         }
     }
 
-
     func startDictation() {
         if case .playing(let itemID, _) = presentation.mode {
             stopRequests.append((itemID: itemID, reason: .microphoneStarted))

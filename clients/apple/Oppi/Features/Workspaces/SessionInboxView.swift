@@ -700,7 +700,7 @@ struct SessionInboxView: View {
                 case .sshTerminal:
                     SSHTerminalHostListView()
                 case .durableSessions:
-                    SessionInboxView(scope: .durable)
+                    Self(scope: .durable)
                 case .desktopStill:
                     DesktopCurrentStillViewerView()
                 case .manageServers:
@@ -976,7 +976,7 @@ struct SessionInboxView: View {
                 systemImage: "arrow.triangle.2.circlepath",
                 description: Text("Refreshing \(selectedServer.name)…")
             )
-        } else if (selectedServerRefreshFailed || selectedServerTransportUnavailable), let selectedServer {
+        } else if selectedServerRefreshFailed || selectedServerTransportUnavailable, let selectedServer {
             ContentUnavailableView {
                 Label("Server Data Unavailable", systemImage: "exclamationmark.triangle.fill")
             } description: {
@@ -1330,7 +1330,7 @@ struct SessionInboxView: View {
 
     private func autoOpenE2EWorkspaceIfRequested() {
         guard !hasAutoOpenedE2EWorkspace,
-              navigation.workspacePath.count == 0,
+              navigation.workspacePath.isEmpty,
               let workspaceName = ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_WORKSPACE"],
               !workspaceName.isEmpty,
               let activeServerId,

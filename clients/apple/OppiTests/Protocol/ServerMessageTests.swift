@@ -993,8 +993,6 @@ struct ServerMessageTests {
         }
     }
 
-
-
     @Test func extensionUINotification() throws {
         let json = """
         {"type":"extension_ui_notification","method":"status","message":"Building...","notifyType":"info","extensionScopeId":"npm:review-helper","extensionDisplayName":"Review Helper"}

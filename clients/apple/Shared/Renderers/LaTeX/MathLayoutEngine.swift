@@ -848,7 +848,7 @@ struct MathLayoutEngine: Sendable {
 
         let opBox = layoutGlyph(displayStr, fontSize: opFontSize, italic: opItalic, cache: cache)
 
-        guard let limits, (limits.lower != nil || limits.upper != nil) else {
+        guard let limits, limits.lower != nil || limits.upper != nil else {
             return opBox
         }
 

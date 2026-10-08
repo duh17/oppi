@@ -36,8 +36,7 @@ enum MermaidXYChartParser {
             if line.hasPrefix("%%") { continue }
 
             if let remainder = consumingKeyword(line, "xychart-beta")
-                ?? consumingKeyword(line, "xychart")
-            {
+                ?? consumingKeyword(line, "xychart") {
                 orientation = parseOrientation(remainder)
                 continue
             }
@@ -58,15 +57,13 @@ enum MermaidXYChartParser {
             }
 
             if let remainder = consumingKeyword(line, "bar"),
-               let parsed = parseSeries(remainder, kind: .bar)
-            {
+               let parsed = parseSeries(remainder, kind: .bar) {
                 series.append(parsed)
                 continue
             }
 
             if let remainder = consumingKeyword(line, "line"),
-               let parsed = parseSeries(remainder, kind: .line)
-            {
+               let parsed = parseSeries(remainder, kind: .line) {
                 series.append(parsed)
                 continue
             }

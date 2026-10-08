@@ -52,7 +52,7 @@ extension String {
         let normalized = normalizedDisplayPath
         guard !normalized.isEmpty else { return normalized }
         let components = normalized.split(separator: "/")
-        return components.last.map(String.init) ?? normalized
+        return components.last.map(Self.init) ?? normalized
     }
 
     var parentPathForDisplay: String? {
@@ -99,6 +99,6 @@ extension String {
         while normalized.count > 1 && normalized.hasSuffix("/") {
             normalized.removeLast()
         }
-        return normalized.split(separator: "/").map(String.init)
+        return normalized.split(separator: "/").map(Self.init)
     }
 }

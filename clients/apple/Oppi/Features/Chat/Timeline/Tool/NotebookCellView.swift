@@ -386,7 +386,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         let expectedTokens = Set(snippets.map(\.token))
         highlightTask = Task.detached(priority: .utility) { [weak self] in
             #if DEBUG
-            if let delay = NotebookCellView.deferredHighlightDelayForTesting {
+            if let delay = Self.deferredHighlightDelayForTesting {
                 try? await Task.sleep(for: delay)
             }
             #endif

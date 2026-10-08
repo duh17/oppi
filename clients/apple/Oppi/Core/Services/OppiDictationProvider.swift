@@ -130,8 +130,7 @@ final class OppiDictationProvider: VoiceTranscriptionProvider {
             readyContinuation = continuation
 
             readyTimeoutTask = Task { [weak self] in
-                do { try await Task.sleep(for: timeout) }
-                catch { return }
+                do { try await Task.sleep(for: timeout) } catch { return }
                 guard let self, let cont = self.readyContinuation else { return }
                 self.readyContinuation = nil
                 cont.resume(throwing: VoiceInputError.remoteRequestTimedOut)

@@ -643,7 +643,6 @@ final class ChatTimelinePreparationRunway {
     }
 }
 
-
 @MainActor
 final class TimelineImagePreparationBroker {
     enum State: Equatable, Sendable {
@@ -1200,7 +1199,6 @@ actor TimelineSerialRasterPreparer {
         )
     }
 }
-
 
 extension ChatTimelineCollectionHost.Controller: UICollectionViewDataSourcePrefetching {
     func makeTimelinePreparationRequest(

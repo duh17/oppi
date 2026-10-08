@@ -157,8 +157,7 @@ extension ANSIParser {
             if i < count && buf[i] >= 0x80 {
                 let b = buf[i]
                 plainBytes.append(b)
-                if b < 0xC0 { utf16Pos += 1; i += 1 }
-                else if b < 0xE0 {
+                if b < 0xC0 { utf16Pos += 1; i += 1 } else if b < 0xE0 {
                     if i + 1 < count { plainBytes.append(buf[i + 1]) }
                     utf16Pos += 1; i += 2
                 } else if b < 0xF0 {
@@ -682,8 +681,7 @@ private struct SGRState {
                 hasDigit = true
             } else if b == 0x3B {
                 guard hasDigit, component < 2 else { return nil }
-                if component == 0 { values.0 = current }
-                else { values.1 = current }
+                if component == 0 { values.0 = current } else { values.1 = current }
                 component += 1
                 current = 0
                 hasDigit = false

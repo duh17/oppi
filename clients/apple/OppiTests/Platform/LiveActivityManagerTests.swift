@@ -103,8 +103,6 @@ struct LiveActivityStateTests {
         #expect(mgr.currentState.primaryRemovedLines == 4)
     }
 
-
-
     @Test("working outranks awaitingReply across sessions")
     @MainActor func workingOutranksAwaitingReply() {
         let mgr = LiveActivityManager()
@@ -116,7 +114,6 @@ struct LiveActivityStateTests {
         #expect(mgr.currentState.primaryPhase == .working)
         #expect(mgr.currentState.primarySessionId == "s1")
     }
-
 
     @Test("removeConnection clears state")
     @MainActor func removeConnectionClears() {
@@ -258,7 +255,6 @@ struct LiveActivityDeepLinkTests {
             .map(String.init)
         #expect(sessionId == "abc-123")
     }
-
 
 }
 

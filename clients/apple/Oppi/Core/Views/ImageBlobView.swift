@@ -108,8 +108,7 @@ struct ImageBlobView: View {
         let targetHeight = staticImageTargetHeight(for: image, maxHeight: maxHeight)
 
         Image(uiImage: image)
-            .resizable()
-            .aspectRatio(contentMode: .fit)
+            .resizable().scaledToFit()
             .frame(maxWidth: .infinity)
             .frame(height: targetHeight)
             .clipShape(RoundedRectangle(cornerRadius: 8))

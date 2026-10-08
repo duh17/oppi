@@ -117,8 +117,7 @@ struct McpServerDetailView: View {
             Button("Remove Server", role: .destructive) {
                 busy = true
                 Task {
-                    do { try await client.removeMcpServer(scopeId: scope.id, name: entry.name); dismiss() }
-                    catch { self.error = error.localizedDescription }
+                    do { try await client.removeMcpServer(scopeId: scope.id, name: entry.name); dismiss() } catch { self.error = error.localizedDescription }
                     busy = false
                 }
             }
@@ -155,8 +154,7 @@ struct McpServerDetailView: View {
         busy = true; error = nil
         Task {
             defer { busy = false }
-            do { try await action(); await refresh() }
-            catch { self.error = error.localizedDescription }
+            do { try await action(); await refresh() } catch { self.error = error.localizedDescription }
         }
     }
     private func startLogin() {

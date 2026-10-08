@@ -86,7 +86,6 @@ final class IconPickerModel<Value: Equatable & Sendable> {
         }
     }
 
-
     var hasChanges: Bool {
         draft != .value(savedValue)
     }
@@ -272,7 +271,7 @@ enum IconSymbolCatalog {
 
     static func availableOptions(
         matching query: String,
-        isAvailable: (String) -> Bool = IconSymbolCatalog.isAvailable
+        isAvailable: (String) -> Bool = Self.isAvailable
     ) -> [IconSymbolOption] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return options.filter {

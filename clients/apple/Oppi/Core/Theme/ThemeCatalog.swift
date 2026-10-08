@@ -96,8 +96,8 @@ enum ThemeID: Hashable, Codable, Sendable {
     /// Pass `nil` for the manual picker, which can choose any theme.
     static func pickerThemes(matching scheme: ColorScheme?) -> [Self] {
         let builtinMatches = builtins.filter { scheme == nil || $0.preferredColorScheme == scheme }
-        let customMatches = CustomThemeStore.names().compactMap { name -> ThemeID? in
-            let themeID = ThemeID.custom(name)
+        let customMatches = CustomThemeStore.names().compactMap { name -> Self? in
+            let themeID = Self.custom(name)
             guard scheme == nil || themeID.preferredColorScheme == scheme else { return nil }
             return themeID
         }
@@ -110,15 +110,14 @@ enum ThemeID: Hashable, Codable, Sendable {
     }
 
     /// Keep a persisted Light/Dark preset on the matching side of the picker.
-    func matching(scheme: ColorScheme) -> ThemeID {
-        preferredColorScheme == scheme ? self : ThemeID.defaultTheme(for: scheme)
+    func matching(scheme: ColorScheme) -> Self {
+        preferredColorScheme == scheme ? self : Self.defaultTheme(for: scheme)
     }
 
     var isImported: Bool {
         if case .custom = self { return true }
         return false
     }
-
 
     static let storageKey = "\(AppIdentifiers.subsystem).theme.id"
 

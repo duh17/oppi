@@ -19,28 +19,28 @@ enum MathNode: Equatable, Sendable {
     case symbol(MathSymbol)
 
     /// \frac{numerator}{denominator}
-    case fraction(numerator: [MathNode], denominator: [MathNode])
+    case fraction(numerator: [Self], denominator: [Self])
 
     /// base^{exponent}
-    case superscript(base: [MathNode], exponent: [MathNode])
+    case superscript(base: [Self], exponent: [Self])
 
     /// base_{index}
-    case `subscript`(base: [MathNode], index: [MathNode])
+    case `subscript`(base: [Self], index: [Self])
 
     /// base_{sub}^{sup} — combined sub and superscript
-    case subSuperscript(base: [MathNode], sub: [MathNode], sup: [MathNode])
+    case subSuperscript(base: [Self], sub: [Self], sup: [Self])
 
     /// \sqrt[index]{radicand}
-    case sqrt(index: [MathNode]?, radicand: [MathNode])
+    case sqrt(index: [Self]?, radicand: [Self])
 
     /// Brace group {a + b}
-    case group([MathNode])
+    case group([Self])
 
     /// \left( ... \right)
-    case leftRight(left: Delimiter, right: Delimiter, body: [MathNode])
+    case leftRight(left: Delimiter, right: Delimiter, body: [Self])
 
     /// \begin{pmatrix} a & b \\ c & d \end{pmatrix}
-    case matrix(rows: [[[MathNode]]], style: MatrixStyle)
+    case matrix(rows: [[[Self]]], style: MatrixStyle)
 
     /// \text{...}
     case text(String)
@@ -49,16 +49,16 @@ enum MathNode: Equatable, Sendable {
     case space(MathSpace)
 
     /// \hat{x}, \vec{v}, \overline{AB}
-    case accent(MathAccentKind, base: [MathNode])
+    case accent(MathAccentKind, base: [Self])
 
     /// \mathbb{R}, \mathcal{L}, etc.
-    case font(MathFontStyle, body: [MathNode])
+    case font(MathFontStyle, body: [Self])
 
     /// \sum, \prod, \int, \lim — with optional limits
     case bigOperator(BigOpKind, limits: MathLimits?)
 
     /// \begin{cases} ... \end{cases} and other named environments
-    case environment(String, rows: [[[MathNode]]])
+    case environment(String, rows: [[[Self]]])
 }
 
 // MARK: - Supporting Enums

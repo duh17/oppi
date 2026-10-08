@@ -38,7 +38,6 @@ struct OrgParser: DocumentParser, Sendable {
         stripped(s[...])
     }
 
-
     nonisolated func parse(_ source: String) -> [OrgBlock] {
         let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
         var cursor = 0
@@ -364,7 +363,7 @@ struct OrgParser: DocumentParser, Sendable {
         while idx < line.endIndex, line[idx].isNumber {
             idx = line.index(after: idx)
         }
-        guard idx < line.endIndex, (line[idx] == "." || line[idx] == ")") else { return false }
+        guard idx < line.endIndex, line[idx] == "." || line[idx] == ")" else { return false }
         let nextIdx = line.index(after: idx)
         guard nextIdx < line.endIndex, line[nextIdx] == " " else { return false }
         return true
@@ -386,7 +385,7 @@ struct OrgParser: DocumentParser, Sendable {
         while idx < trimmed.endIndex, trimmed[idx].isNumber {
             idx = trimmed.index(after: idx)
         }
-        guard idx < trimmed.endIndex, (trimmed[idx] == "." || trimmed[idx] == ")") else { return nil }
+        guard idx < trimmed.endIndex, trimmed[idx] == "." || trimmed[idx] == ")" else { return nil }
         let bulletEnd = trimmed.index(after: idx)
         let bullet = String(trimmed[..<bulletEnd])
         guard bulletEnd < trimmed.endIndex, trimmed[bulletEnd] == " " else { return nil }

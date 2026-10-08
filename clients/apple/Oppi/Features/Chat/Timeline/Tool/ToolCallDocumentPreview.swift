@@ -87,8 +87,7 @@ struct ToolCallDocumentPreview: View {
             Text(fixture?["label"]?.stringValue ?? (direct ? "Direct MCP sample" : "Tool inspection sample"))
                 .font(.headline).foregroundStyle(.themeFg)
                 .accessibilityIdentifier("screenshot.ready")
-            if let configuration { PreviewRow(configuration: configuration) }
-            else { Text("Missing run-local tool call fixture").accessibilityIdentifier("tool-document.fixture-missing") }
+            if let configuration { PreviewRow(configuration: configuration) } else { Text("Missing run-local tool call fixture").accessibilityIdentifier("tool-document.fixture-missing") }
             if let next = fixture?["nextFixture"]?.stringValue {
                 Button("Complete tool") { fixturePath = next }
                     .accessibilityIdentifier("tool-document.advance")

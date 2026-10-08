@@ -159,9 +159,6 @@ struct ServerConnectionTests {
         #expect(conn.chatState.slashCommands.map(\.name) == ["compact", "skill:lint"])
     }
 
-
-
-
     @Test func routeAgentStartAndTextAndEnd() {
         let (conn, pipe) = makeTestConnection()
 
@@ -2221,7 +2218,6 @@ struct StreamLifecycleTests {
         #expect(received, "Message should be yielded to session continuation")
     }
 
-
     // MARK: - reconnectIfNeeded restarts dead stream
 
     @Test func reconnectIfNeededRestartsDeadBoundSessionStream() async {
@@ -2305,7 +2301,6 @@ struct StreamLifecycleTests {
     }
 
     // MARK: - routeStreamMessage resolves command waiters at stream boundary
-
 
     @Test func routeStreamMessageResolvesCommandResultsAtBoundary() async {
         let (conn, pipe) = makeTestConnection()
@@ -2397,7 +2392,6 @@ struct StreamLifecycleTests {
         #expect(conn.workspaceStore.workspaceSummaries["w1"]?.hasErrorRoot == true)
     }
 
-
     @Test func askLifecycleSyncsWorkspaceSummaryAttention() {
         let (conn, _) = makeTestConnection()
         conn.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1"))
@@ -2427,6 +2421,5 @@ struct StreamLifecycleTests {
     }
 
     // MARK: - Split stream disconnect cleanup
-
 
 }

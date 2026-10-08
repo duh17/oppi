@@ -163,12 +163,6 @@ final class NativeMarkdownVideoView: UIView {
         }
     }
 
-    override func willMove(toSuperview newSuperview: UIView?) {
-        super.willMove(toSuperview: newSuperview)
-        // AVKit detaches this inline host during fullscreen, PiP, and dismiss.
-        // That is not recycle. Recycle and identity changes call prepareForRemoval().
-    }
-
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window != nil {

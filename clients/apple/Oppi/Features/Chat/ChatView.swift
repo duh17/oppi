@@ -10,7 +10,7 @@ struct TreeNavigationViewUpdate: Equatable {
         let normalized = editorText?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
-        return TreeNavigationViewUpdate(
+        return Self(
             scrollTargetID: targetId,
             inputText: normalized,
             shouldFocusComposer: !normalized.isEmpty && !showComposer
@@ -22,7 +22,7 @@ struct ExtensionSurfaceSessionLink: Equatable {
     let sessionId: String
     let workspaceId: String?
 
-    static func parse(_ url: URL, defaultWorkspaceId: String? = nil) -> ExtensionSurfaceSessionLink? {
+    static func parse(_ url: URL, defaultWorkspaceId: String? = nil) -> Self? {
         guard url.scheme?.lowercased() == "oppi",
               url.host?.lowercased() == "session",
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -41,7 +41,7 @@ struct ExtensionSurfaceSessionLink: Equatable {
 
         let queryWorkspaceId = components.queryItems?.first { $0.name == "workspaceId" }?.value
         let workspaceId = normalized(queryWorkspaceId) ?? normalized(defaultWorkspaceId)
-        return ExtensionSurfaceSessionLink(sessionId: sessionId, workspaceId: workspaceId)
+        return Self(sessionId: sessionId, workspaceId: workspaceId)
     }
 
     private static func normalized(_ value: String?) -> String? {
@@ -986,7 +986,7 @@ struct ChatView: View {
                 // NavigationStack teardown can report tail geometry before onDisappear.
                 scrollController.suspendForNavigation()
             }
-            .onChange(of: sessionId) { oldId, newId in
+            .onChange(of: sessionId) { _, newId in
                 // Self-healing: when SwiftUI reuses this view at the same
                 // structural position with a different session ID (e.g.
                 // deep-link navigation, quick session switch), @State is
@@ -1554,7 +1554,7 @@ struct ChatView: View {
             return
         }
         if appNavigation.workspaceNavigationPresentation == .split {
-            if appNavigation.splitDetailPath.count > 0 {
+            if !appNavigation.splitDetailPath.isEmpty {
                 dismiss()
                 return
             }
@@ -1707,7 +1707,6 @@ struct ChatView: View {
             connection.clearFileSuggestions()
         }
     }
-
 
     @MainActor
     private func handleReviewCommentSelection(
@@ -2247,7 +2246,6 @@ struct ChatView: View {
         }
     }
 
-
     @MainActor
     private func handleAudioPlayerStateChange(_ notification: Notification) {
         guard notification.object as? AudioPlayerService === audioPlayer else { return }
@@ -2756,7 +2754,6 @@ struct ChatView: View {
     }
 
     // MARK: - Sheets & Alerts
-
 
     private var outlineSheet: some View {
         SessionOutlineView(

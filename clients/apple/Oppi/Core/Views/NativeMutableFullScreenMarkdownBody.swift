@@ -482,8 +482,7 @@ final class NativeMutableFullScreenMarkdownBody: UIView, UIScrollViewDelegate {
 final class NativeFullScreenThinkingBody: UIView,
     UITextViewDelegate,
     UICollectionViewDataSource,
-    UICollectionViewDelegateFlowLayout
-{
+    UICollectionViewDelegateFlowLayout {
     /// Above this size, mounting the complete live trace in TextKit makes every
     /// coalesced delta pay the layout cost of the entire document.
     private static let singleTextViewUTF8Limit = 128 * 1024

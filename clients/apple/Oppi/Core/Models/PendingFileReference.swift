@@ -53,8 +53,8 @@ struct PendingAttachment: Identifiable, Sendable {
         }
     }
 
-    static func uploaded(_ reference: ChatAttachmentRef) -> PendingAttachment {
-        PendingAttachment(
+    static func uploaded(_ reference: ChatAttachmentRef) -> Self {
+        Self(
             id: reference.id,
             source: .uploaded(reference),
             displayName: reference.name,
@@ -71,8 +71,8 @@ struct PendingAttachment: Identifiable, Sendable {
         data: Data,
         mimeType: String,
         thumbnail: UIImage? = nil
-    ) -> PendingAttachment {
-        PendingAttachment(
+    ) -> Self {
+        Self(
             id: "local:\(UUID().uuidString)",
             source: .localFile,
             displayName: name,
@@ -92,11 +92,11 @@ struct PendingAttachment: Identifiable, Sendable {
         sizeBytes: Int? = nil,
         thumbnail: UIImage? = nil,
         id: String? = nil
-    ) -> PendingAttachment {
+    ) -> Self {
         let resolvedSize = sizeBytes
             ?? (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
             ?? 0
-        return PendingAttachment(
+        return Self(
             id: id ?? "local:\(UUID().uuidString)",
             source: .localFile,
             displayName: name,
@@ -701,7 +701,7 @@ struct PendingFileReference: Identifiable, Sendable, Equatable {
         )
     }
 
-    static func appendReferenceBlock(to text: String, files: [PendingFileReference]) -> String {
+    static func appendReferenceBlock(to text: String, files: [Self]) -> String {
         var seenFiles = Set<String>()
         var filePaths: [String] = []
         var seenCommits = Set<String>()

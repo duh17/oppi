@@ -141,8 +141,7 @@ struct SSHTerminalSetupView: View {
             session: session, profile: $profile, experimentEnabled: experimentEnabled,
             editHost: { session.showsTerminal = false },
             submitPassword: { password in
-                if session.savingHostOnly { saveHost(password: password) }
-                else { connect(password: password) }
+                if session.savingHostOnly { saveHost(password: password) } else { connect(password: password) }
             }
         )
     }

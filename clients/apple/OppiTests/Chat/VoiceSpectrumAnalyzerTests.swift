@@ -176,8 +176,7 @@ struct VoiceSpectrumAnalyzerTests {
         for chunk in 0..<4 {
             let short = try buffer(count: 256) { Float(0.02 * sin(2 * .pi * 150 * ($0 + Double(chunk * 256)) / 48_000)) }
             let result = shortAnalyzer.analyze(short)
-            if chunk < 3 { #expect(result.bands == .zero) }
-            else { #expect(result.bands[0] > 0.8) }
+            if chunk < 3 { #expect(result.bands == .zero) } else { #expect(result.bands[0] > 0.8) }
         }
     }
 

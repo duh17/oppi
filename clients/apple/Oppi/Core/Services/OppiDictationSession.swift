@@ -445,11 +445,11 @@ final class OppiDictationSession: VoiceTranscriptionSession {
         )
     }
 
-    private nonisolated static func disconnectError() -> VoiceInputError {
+    nonisolated private static func disconnectError() -> VoiceInputError {
         .internalError("Dictation connection lost")
     }
 
-    private nonisolated static func surfacedDisconnectError(for error: Error) -> Error {
+    nonisolated private static func surfacedDisconnectError(for error: Error) -> Error {
         if let wsError = error as? WebSocketError,
            case .notConnected = wsError {
             return disconnectError()
@@ -757,5 +757,3 @@ enum DictationAudioEngineHelper {
         return metadata
     }
 }
-
-

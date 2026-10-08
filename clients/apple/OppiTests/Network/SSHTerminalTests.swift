@@ -172,7 +172,7 @@ struct SSHTerminalTests {
                 try? await Task.sleep(for: .seconds(2)) // bounded failure oracle, not synchronization
                 return nil
             }
-            let first = await group.next() ?? nil
+            let first = await group.next()
             group.cancelAll()
             return first
         }
