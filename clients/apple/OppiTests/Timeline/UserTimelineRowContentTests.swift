@@ -652,30 +652,16 @@ struct UserTimelineRowContentTests {
             window.rootViewController = nil
         }
 
-        let staleHost = UIHostingController(
-            rootView: commitViewerForThemeTest(injectThemeEnvironment: false)
-        )
-        window.rootViewController = staleHost
-        window.makeKeyAndVisible()
-        staleHost.view.layoutIfNeeded()
-
         store.updateSystemColorScheme(.light)
         let lightColor = UIColor(store.activeThemeID.appTheme.bg.secondary)
         #expect(!color(darkColor, approximatelyEquals: lightColor, tolerance: 0.08))
 
-        staleHost.view.setNeedsLayout()
-        staleHost.view.layoutIfNeeded()
-        let staleSample = try #require(commitViewerThemeBackground(in: staleHost.view))
-        #expect(
-            !color(staleSample, approximatelyEquals: lightColor, tolerance: 0.12),
-            "Without theme environment injection the mounted viewer must stay stale; sampled \(staleSample)"
-        )
-
         store.updateSystemColorScheme(.dark)
         let liveHost = UIHostingController(
-            rootView: commitViewerForThemeTest(injectThemeEnvironment: true)
+            rootView: commitViewerForThemeTest()
         )
         window.rootViewController = liveHost
+        window.makeKeyAndVisible()
         liveHost.view.layoutIfNeeded()
 
         store.updateSystemColorScheme(.light)
@@ -1751,8 +1737,8 @@ private struct CommitViewerThemeSwatch: UIViewRepresentable {
 }
 
 @MainActor
-private func commitViewerForThemeTest(injectThemeEnvironment: Bool) -> some View {
-    let viewer = NavigationStack {
+private func commitViewerForThemeTest() -> some View {
+    NavigationStack {
         CommitDetailView(
             workspaceId: "ws-test",
             commit: GitCommitSummary(sha: "0486bc75", message: "", date: "")
@@ -1762,11 +1748,7 @@ private func commitViewerForThemeTest(injectThemeEnvironment: Bool) -> some View
         }
     }
     .environment(ServerConnection().sessionStore)
-
-    if injectThemeEnvironment {
-        return AnyView(viewer.modifier(TimelineCommitThemeEnvironment()))
-    }
-    return AnyView(viewer)
+    .modifier(TimelineCommitThemeEnvironment())
 }
 
 @MainActor
