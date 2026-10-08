@@ -4,8 +4,10 @@ These scripts contain release-critical logic that must remain reviewable from a 
 
 - `preflight.ts` — verifies component versions, Apple build numbers, What's New, release-note readiness, and tracked release paths.
 - `release-notes.ts` — creates and updates the internal changelog. TestFlight What to Test remains a separate brief summary.
-- `apple/testflight.ts` — archives and uploads, and exposes separate Internal TestFlight, external-group, and beta-review operations.
+- `apple/testflight.ts` — archives and uploads with Xcode 27.1 (`/Applications/Xcode-27.1.app`, or an explicit `DEVELOPER_DIR`), and exposes separate Internal TestFlight, external-group, and beta-review operations. The archive command logs `xcodebuild -version` before `xcodegen` and `xcodebuild`.
 - `apple/asc.ts` — provides read-only App Store Connect release-status and usage helpers.
+
+Xcode Cloud builds use the Xcode version selected for the workflow. Set that version to 27.1 in App Store Connect (workflow Environment). `clients/apple/ci_scripts/ci_post_clone.sh` fails the build when the selected Xcode is not 27.1. `clients/apple/scripts/release-mac.sh` is unchanged.
 
 For an internal candidate, run these commands in order:
 

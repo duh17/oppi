@@ -4,10 +4,63 @@
 # this script materializes them first. A vendor hit needs neither Zig nor Go.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TOOL_ROOT="${OPPI_CI_TOOL_ROOT:-${TMPDIR:-/tmp}/oppi-ci-tools}"
-mkdir -p "$TOOL_ROOT/bin"
-export PATH="$TOOL_ROOT/bin:$PATH"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Xcode Cloud images do not have /Applications/Xcode-27.1.app. The shared
+# helper (xcode-toolchain.sh) refuses to consult xcode-select, so this script
+# exports DEVELOPER_DIR only when Apple's CI_XCODE_CLOUD is TRUE. That
+# variable is always available and its documented value is TRUE. CI_WORKSPACE
+# is not a documented name; the workspace path is CI_WORKSPACE_PATH.
+# `xcode-select -p` is read-only. Do not add this fallback to the shared helper.
+oppi_ci_select_xcode() {
+  if [[ "${CI_XCODE_CLOUD:-}" != "TRUE" ]]; then
+    return 0
+  fi
+
+  local pin_file pin name expected selected version_text first_line
+  pin_file="$ROOT/scripts/xcode-toolchain.txt"
+  if [[ ! -f "$pin_file" ]]; then
+    echo "error: missing Xcode pin: $pin_file" >&2
+    exit 1
+  fi
+  pin="$(head -n 1 "$pin_file" | tr -d '[:space:]')"
+  name="${pin##*/}"
+  expected="${name#Xcode-}"
+  expected="${expected%.app}"
+  if [[ -z "$expected" || "$expected" == "$name" ]]; then
+    echo "error: pinned Xcode app name has no version: $pin" >&2
+    exit 1
+  fi
+
+  # A set DEVELOPER_DIR makes `xcode-select -p` echo that path, hiding the
+  # workflow selection. Query without it. Never `xcode-select -s`.
+  if ! selected="$(env -u DEVELOPER_DIR xcode-select -p)"; then
+    echo "error: xcode-select -p failed. Xcode Cloud did not report a selected Xcode." >&2
+    echo "hint: set the workflow Xcode version to ${expected} in App Store Connect (Environment)." >&2
+    exit 1
+  fi
+  if [[ ! -d "$selected" ]]; then
+    echo "error: Xcode Cloud selected Xcode is missing: ${selected:-<empty>}" >&2
+    echo "hint: set the workflow Xcode version to ${expected} in App Store Connect (Environment)." >&2
+    exit 1
+  fi
+
+  if ! version_text="$(DEVELOPER_DIR="$selected" xcodebuild -version)"; then
+    echo "error: xcodebuild -version failed for $selected" >&2
+    exit 1
+  fi
+  first_line="${version_text%%$'\n'*}"
+  first_line="${first_line%$'\r'}"
+  if [[ "$first_line" != "Xcode $expected" ]]; then
+    echo "error: Xcode Cloud selected Xcode is not ${expected} (${first_line} at ${selected})." >&2
+    echo "hint: set the workflow Xcode version to ${expected} in App Store Connect (Environment)." >&2
+    exit 1
+  fi
+
+  export DEVELOPER_DIR="$selected"
+  printf '%s\n' "$version_text"
+  echo "DEVELOPER_DIR=$DEVELOPER_DIR"
+}
 
 host_arch() {
   case "$(uname -m)" in
@@ -71,6 +124,17 @@ ensure_go() {
   go_is_new_enough
 }
 
+# Sourcing defines oppi_ci_select_xcode and does not install tools or build.
+# Executing the script selects the Xcode Cloud toolchain, then vendors frameworks.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
+TOOL_ROOT="${OPPI_CI_TOOL_ROOT:-${TMPDIR:-/tmp}/oppi-ci-tools}"
+mkdir -p "$TOOL_ROOT/bin"
+export PATH="$TOOL_ROOT/bin:$PATH"
+
+oppi_ci_select_xcode
 ensure_zig
 ensure_go
 "$ROOT/scripts/build-ghostty-vt.sh"

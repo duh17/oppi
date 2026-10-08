@@ -20,7 +20,7 @@
 //   bun testflight.ts usage-history [limit]                          # show saved snapshot history
 //
 // Prerequisites:
-//   - Xcode with automatic signing (team AZAQMY4SPZ)
+//   - Xcode 27.1 at /Applications/Xcode-27.1.app, or DEVELOPER_DIR, with automatic signing (team AZAQMY4SPZ)
 //   - ASC API key: ~/.appstoreconnect/AuthKey_<KEY_ID>.p8
 //   - ASC issuer ID: ~/.appstoreconnect/issuer_id
 //   - XcodeGen installed (brew install xcodegen)
@@ -28,9 +28,10 @@
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { $ } from "bun";
+import { applyXcodeToolchain } from "../../../clients/apple/scripts/xcode-toolchain.ts";
 import {
   nextIosReleaseBuild,
   readLastShippedIosBuild,
@@ -434,6 +435,33 @@ function die(msg: string): never {
   process.exit(1);
 }
 
+export function useReleaseXcodeToolchain(env: NodeJS.ProcessEnv): string {
+  return applyXcodeToolchain(env);
+}
+
+export function readXcodeVersion(env: NodeJS.ProcessEnv): string {
+  const developerDir = env.DEVELOPER_DIR;
+  if (!developerDir) {
+    throw new Error(
+      "DEVELOPER_DIR is unset; call useReleaseXcodeToolchain first",
+    );
+  }
+  const result = spawnSync("xcodebuild", ["-version"], {
+    env: { ...process.env, DEVELOPER_DIR: developerDir },
+    encoding: "utf8",
+  });
+  if (result.error) {
+    throw new Error(`xcodebuild -version failed: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout || "").trim();
+    throw new Error(
+      `xcodebuild -version failed with exit code ${result.status}: ${detail}`,
+    );
+  }
+  return (result.stdout ?? "").trim();
+}
+
 export async function runXcodebuild(
   args: string[],
   logPath: string,
@@ -454,9 +482,11 @@ export async function runXcodebuild(
     }
   };
 
+  const env = { ...process.env };
+  useReleaseXcodeToolchain(env);
   const child = spawn(executable, args, {
     cwd: APPLE_DIR,
-    env: process.env,
+    env,
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout.on("data", append);
@@ -719,6 +749,10 @@ async function cmdBuild(opts: {
   if (!fs.existsSync(credentialKeyPath))
     die(`API key not found at ${credentialKeyPath}`);
 
+  // Resolve before rewriting project.yml so a missing Xcode does not bump the build.
+  const developerDir = useReleaseXcodeToolchain(process.env);
+  const xcodeVersion = readXcodeVersion(process.env);
+
   // Step 1: Determine build number
   const currentBuild = readCurrentBuild();
   let newBuild: number;
@@ -740,6 +774,8 @@ async function cmdBuild(opts: {
   const exportPath = path.join(buildDir, "export");
 
   console.log("=== Oppi TestFlight Build ===");
+  console.log(xcodeVersion);
+  console.log(`DEVELOPER_DIR: ${developerDir}`);
   console.log(`Build number: ${currentBuild} -> ${newBuild}`);
   console.log(`Build dir:    ${buildDir}`);
   console.log();
@@ -753,7 +789,7 @@ async function cmdBuild(opts: {
     console.log(`--- Step 2: Build number unchanged (${currentBuild}) ---`);
   }
 
-  // Step 3: Generate Xcode project
+  // Step 3: Generate Xcode project. DEVELOPER_DIR was set above; xcodegen inherits it.
   console.log("--- Step 3: Generating Xcode project ---");
   $.cwd(APPLE_DIR);
   await $`xcodegen generate`.quiet();
@@ -1399,6 +1435,7 @@ async function cmdUsageHistory(limit: number): Promise<void> {
 
 function printHelp(): void {
   console.log(`testflight.ts — Archive and upload Oppi builds with explicit TestFlight distribution steps.
+Archives use Xcode 27.1 (/Applications/Xcode-27.1.app, or DEVELOPER_DIR) and log \`xcodebuild -version\`.
 
 Build commands:
   bun testflight.ts --bump                            Bump build number, archive, upload
