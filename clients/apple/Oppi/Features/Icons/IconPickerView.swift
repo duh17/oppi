@@ -468,26 +468,25 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button(role: .cancel) { dismiss() }
                         .disabled(model.isSaving)
                         .accessibilityIdentifier("\(accessibilityPrefix).cancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        Task { await save() }
-                    } label: {
-                        HStack(spacing: 6) {
-                            if model.isSaving {
-                                ProgressView().controlSize(.small)
-                            }
-                            Text(model.isSaving ? "Saving…" : "Save")
+                    if model.isSaving {
+                        ProgressView()
+                            .accessibilityLabel("Saving")
+                    } else {
+                        Button(role: .confirm) {
+                            Task { await save() }
                         }
+                        .disabled(!model.canSave)
+                        .accessibilityLabel("Save")
+                        .accessibilityHint(
+                            model.validationMessage.map { "Fix custom input: \($0) Save is disabled." } ?? "Saves the selected icon"
+                        )
+                        .accessibilityIdentifier("\(accessibilityPrefix).save")
                     }
-                    .disabled(!model.canSave)
-                    .accessibilityHint(
-                        model.validationMessage.map { "Fix custom input: \($0) Save is disabled." } ?? "Saves the selected icon"
-                    )
-                    .accessibilityIdentifier("\(accessibilityPrefix).save")
                 }
             }
             .interactiveDismissDisabled(model.isSaving)

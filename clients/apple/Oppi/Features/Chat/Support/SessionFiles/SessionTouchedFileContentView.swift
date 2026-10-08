@@ -161,8 +161,8 @@ struct SessionTouchedFileContentView: View {
         .toolbarVisibility(isUsingFileViewer ? .hidden : .automatic, for: .navigationBar)
         .toolbar {
             if !isUsingFileViewer {
-                ToolbarItem(placement: .topBarTrailing) {
-                    if let shareable = shareableContent() {
+                if let shareable = shareableContent() {
+                    ToolbarItem(placement: .topBarTrailing) {
                         FileShareButton(content: shareable, style: .icon)
                     }
                 }

@@ -1772,6 +1772,7 @@
 		E40301E04E036B44B35BA935 /* LiveActivityPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B678D2C7494B1364BEEEC6F /* LiveActivityPresentation.swift */; };
 		E4236BFDBA95943D45CE666D /* ExtensionSurfacePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8F477E5264D3B76FDE67B4E /* ExtensionSurfacePanel.swift */; };
 		E436FCCD8E5BBCDF822033ED /* SkillDetail.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03B7FB8CCC785E87E67A19A /* SkillDetail.swift */; };
+		E4B407FB2172898B4D3B3171 /* RailToolbarScreenshotPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88EBE1C8254EBB5DACDA4C86 /* RailToolbarScreenshotPreview.swift */; };
 		E4D7197A78598D02D1DF605E /* ClientLogUploadModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A416BBF704B084E8F76ED3 /* ClientLogUploadModels.swift */; };
 		E4DD8FD37275130AD9BF7AD1 /* MacToolMetadataVisualGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5627CD1B12E022D2E6813E4A /* MacToolMetadataVisualGateTests.swift */; };
 		E4E02639B31A9F94B92E45D5 /* TreeNavigationComposerUpdateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E62B91BF516910616377502B /* TreeNavigationComposerUpdateTests.swift */; };
@@ -3006,6 +3007,7 @@
 		87C7A1F1C83E8BC9D04AC406 /* AssistantRowContentViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantRowContentViewTests.swift; sourceTree = "<group>"; };
 		887E29B001B145EDFFB2A810 /* AppLockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockTests.swift; sourceTree = "<group>"; };
 		888DF2FC37263AD54D8168EA /* ServerStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerStats.swift; sourceTree = "<group>"; };
+		88EBE1C8254EBB5DACDA4C86 /* RailToolbarScreenshotPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RailToolbarScreenshotPreview.swift; sourceTree = "<group>"; };
 		88F77B23934D4E7593979412 /* TimelineTurnAssembler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineTurnAssembler.swift; sourceTree = "<group>"; };
 		891AE61A81F23834BF813DC2 /* ChatOutlineColdStateUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatOutlineColdStateUITests.swift; sourceTree = "<group>"; };
 		894FB0699E8747F6ADBBDEF0 /* MacWorkspaceGitReviewStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacWorkspaceGitReviewStore.swift; sourceTree = "<group>"; };
@@ -4318,6 +4320,7 @@
 				39BF4B4DF1ABC9A60177AC3A /* MermaidScreenshotPreview.swift */,
 				1023DAE7995BE8214EA62437 /* MetalOrbScreenshotPreview.swift */,
 				3660A6865684E75945B270CE /* QuietWorkStripPreview.swift */,
+				88EBE1C8254EBB5DACDA4C86 /* RailToolbarScreenshotPreview.swift */,
 				218D7F517BD8298893A565EB /* ScopedLocksScreenshotPreview.swift */,
 				906573FBF2EF49102C75B212 /* SessionStatusScreenshotPreview.swift */,
 				21AEFA3E930E3A37B3EC2145 /* SessionTimelinePreview.swift */,
@@ -8841,6 +8844,7 @@
 				CAF23A1B89A16C0299383E40 /* QuietTimelineProjection.swift in Sources */,
 				9E6ABE453D9A1294ECD1AB5E /* QuietWorkLineTimelineRowContent.swift in Sources */,
 				AFC4D21D5963EB23C938E77D /* QuietWorkStripPreview.swift in Sources */,
+				E4B407FB2172898B4D3B3171 /* RailToolbarScreenshotPreview.swift in Sources */,
 				82280F6E55C11E2BC53FE322 /* RemoteTheme.swift in Sources */,
 				87EF26B456383F620E376A7B /* RestorationState.swift in Sources */,
 				EA90D33A5A209A78982A96A5 /* ReviewCommentInlineDraftPresenter.swift in Sources */,

@@ -58,10 +58,8 @@ struct WorkspaceListView: View {
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button {
+                Button("New Workspace", systemImage: "plus") {
                     showCreate = true
-                } label: {
-                    Image(systemName: "plus")
                 }
                 .accessibilityIdentifier("server.workspace.create")
             }

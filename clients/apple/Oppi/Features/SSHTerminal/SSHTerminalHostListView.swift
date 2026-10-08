@@ -78,7 +78,7 @@ struct SSHTerminalHostListView: View {
         .settingsPage("SSH Terminal")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Add") { editor = .add }
+                Button("Add Host", systemImage: "plus") { editor = .add }
                     .accessibilityIdentifier("sshTerminal.host.add")
             }
         }

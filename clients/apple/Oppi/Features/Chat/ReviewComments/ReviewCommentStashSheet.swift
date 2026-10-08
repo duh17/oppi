@@ -182,9 +182,9 @@ private struct ReviewCommentStashSheetChromeModifier: ViewModifier {
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         if showsEditorCancel {
-                            Button("Cancel", action: onCancelEditor)
+                            Button(role: .cancel, action: onCancelEditor)
                         } else if let onClose {
-                            Button("Done", action: onClose)
+                            Button(role: .close, action: onClose)
                         }
                     }
                 }
@@ -335,8 +335,9 @@ private struct ReviewCommentEditorView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Save", action: save)
+                Button(role: .confirm, action: save)
                     .disabled(saveDisabled)
+                    .accessibilityLabel("Save")
             }
         }
         .onAppear {

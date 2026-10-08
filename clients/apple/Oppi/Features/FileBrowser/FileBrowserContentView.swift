@@ -303,19 +303,25 @@ struct FileBrowserContentView: View {
         .toolbarVisibility(shouldHideHostNavigationBar ? .hidden : .automatic, for: .navigationBar)
         .toolbar {
             if isEditingText, let editSession {
-                editingToolbar(session: editSession)
+                WorkspaceFileEditToolbar(
+                    status: editSession.status,
+                    isShowingPreview: $isShowingEditPreview,
+                    onDone: endEditing
+                )
             } else if isUsingFileViewer, canBeginEditing,
                       FileBrowserContentRenderingPolicy.editPlacement(for: chromeMode, source: source) == .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(String(localized: "Edit")) { beginEditing() }
+                    Button(String(localized: "Edit"), systemImage: "pencil") { beginEditing() }
                         .accessibilityLabel(String(localized: "Edit File"))
                         .accessibilityIdentifier("workspace-file-editor.edit")
                 }
             } else if chromeMode == .pushed, !isUsingFileViewer {
-                ToolbarItem(placement: .topBarTrailing) {
-                    if let shareable = shareableContent() {
+                if let shareable = shareableContent() {
+                    ToolbarItem(placement: .topBarTrailing) {
                         FileShareButton(content: shareable, style: .icon)
-                    } else if case .audio(let source) = content {
+                    }
+                } else if case .audio(let source) = content {
+                    ToolbarItem(placement: .topBarTrailing) {
                         AsyncFileShareButton(filename: currentFileName) {
                             try await source.loadFileData()
                         }
@@ -472,25 +478,6 @@ struct FileBrowserContentView: View {
         }
     }
 
-    @ToolbarContentBuilder
-    private func editingToolbar(session: WorkspaceFileEditSession) -> some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            WorkspaceFileEditStatusIndicator(status: session.status)
-        }
-        ToolbarSpacer(.fixed, placement: .topBarTrailing)
-        ToolbarItem(placement: .topBarTrailing) {
-            Button(isShowingEditPreview ? String(localized: "Source") : String(localized: "Preview")) {
-                isShowingEditPreview.toggle()
-            }
-            .accessibilityIdentifier("workspace-file-editor.preview-toggle")
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-            Button(String(localized: "Done")) { endEditing() }
-                .fontWeight(.semibold)
-                .accessibilityIdentifier("workspace-file-editor.done")
-        }
-    }
-
     /// The server offered these displayed bytes for editing, or a session exists.
     private var canBeginEditing: Bool {
         editIdentity(for: currentFilePath) != nil
@@ -515,6 +502,7 @@ struct FileBrowserContentView: View {
             FullScreenViewerNavigationAction(
                 id: "workspace-file-edit",
                 title: String(localized: "Edit"),
+                systemImage: "pencil",
                 accessibilityLabel: String(localized: "Edit File"),
                 handler: { beginEditing() }
             ),

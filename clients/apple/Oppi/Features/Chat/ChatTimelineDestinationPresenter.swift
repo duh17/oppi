@@ -120,9 +120,11 @@ struct TimelineCommitDetailHost: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(action: onDismiss) {
-                        Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
+                        Label(
+                            FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel,
+                            systemImage: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName
+                        )
                     }
-                    .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
                     .accessibilityIdentifier("chat.commit-detail.dismiss")
                 }
             }

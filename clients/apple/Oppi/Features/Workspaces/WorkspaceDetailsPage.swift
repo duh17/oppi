@@ -107,10 +107,11 @@ struct WorkspaceDetailsPage: View {
         .settingsPage("Details")
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Save") {
+                Button(role: .confirm) {
                     Task { await save() }
                 }
                 .disabled(!canSave)
+                .accessibilityLabel("Save")
                 .accessibilityIdentifier("workspace.edit.save")
             }
         }

@@ -231,15 +231,21 @@ struct ScheduleNativeEditView: View {
             .themedListSurface()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button(role: .cancel) { dismiss() }
                         .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(isSaving ? "Saving…" : "Save") {
-                        Task { await save() }
+                    if isSaving {
+                        ProgressView()
+                            .accessibilityLabel("Saving")
+                    } else {
+                        Button(role: .confirm) {
+                            Task { await save() }
+                        }
+                        .disabled(!canSave)
+                        .accessibilityLabel("Save")
+                        .accessibilityIdentifier("schedule.nativeEdit.save")
                     }
-                    .disabled(!canSave)
-                    .accessibilityIdentifier("schedule.nativeEdit.save")
                 }
             }
             .task { await loadAgents() }
@@ -638,7 +644,7 @@ private struct TimeZonePickerView: View {
             .themedListSurface()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button(role: .cancel) { dismiss() }
                 }
             }
         }

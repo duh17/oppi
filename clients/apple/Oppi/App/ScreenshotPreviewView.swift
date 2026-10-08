@@ -256,6 +256,8 @@ struct ScreenshotPreviewView: View {
             )
         case "metal-orbs":
             MetalOrbScreenshotPreview()
+        case let screen where RailToolbarScreenshotPreview.screens.contains(screen):
+            RailToolbarScreenshotPreviewView(screen: screen)
         default:
             Text("Unknown screen: \(ScreenshotPreviewConfig.screen)")
         }

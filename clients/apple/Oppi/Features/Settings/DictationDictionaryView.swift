@@ -87,9 +87,10 @@ struct DictationDictionaryView: View {
         .settingsPage("Dictionary")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Save") { Task { await save() } }
+                Button(role: .confirm) { Task { await save() } }
                     .disabled(isSaving || global == nil ||
                         (globalDraft == global?.phrases && workspaceDraft == (workspace?.phrases ?? [])))
+                    .accessibilityLabel("Save")
             }
         }
         .task(id: "\(serverId ?? ""):\(workspaceId ?? "")") { await load() }

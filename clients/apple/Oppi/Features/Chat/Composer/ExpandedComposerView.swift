@@ -262,7 +262,7 @@ struct ExpandedComposerView: View {
             .toolbarBackground(Color.themeBgDark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(cancelTitle) {
+                    Button(cancelTitle, systemImage: "xmark") {
                         handleCancel()
                     }
                     .disabled(isSubmitInFlight || isHandlingVoiceLifecycle)
@@ -270,11 +270,8 @@ struct ExpandedComposerView: View {
                     .accessibilityIdentifier(cancelAccessibilityIdentifier ?? "expanded.composer.cancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button {
+                    Button(submitTitle, systemImage: "paperplane") {
                         handleSend()
-                    } label: {
-                        Text(submitTitle)
-                            .fontWeight(.semibold)
                     }
                     .disabled(!canSubmit)
                     .foregroundStyle(canSubmit ? accentColor : .themeComment)

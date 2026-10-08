@@ -185,10 +185,10 @@ struct QuickCommentEditorView: View {
         .settingsPage(isNew ? "New Quick Comment" : "Edit Quick Comment")
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel", action: onCancel)
+                Button(role: .cancel, action: onCancel)
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button("Save") {
+                Button(role: .confirm) {
                     let template = QuickCommentTemplate(
                         id: templateId,
                         title: title.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -199,6 +199,7 @@ struct QuickCommentEditorView: View {
                     onSave(template)
                 }
                 .disabled(!canSave)
+                .accessibilityLabel("Save")
             }
         }
     }

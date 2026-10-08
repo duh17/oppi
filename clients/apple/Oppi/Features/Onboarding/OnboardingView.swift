@@ -229,7 +229,7 @@ struct OnboardingView: View {
                 TailnetSettingsView(onPaired: completeTailscalePairing)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("Cancel") { showTailscale = false }
+                            Button(role: .cancel) { showTailscale = false }
                         }
                     }
             }
@@ -317,7 +317,7 @@ private enum ConnectionTestState {
 
 // MARK: - Manual Entry
 
-private struct ManualEntryView: View {
+struct ManualEntryView: View {
     let onConnect: (ServerCredentials) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -351,10 +351,10 @@ private struct ManualEntryView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button(role: .cancel) { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Connect") {
+                    Button(role: .confirm) {
                         let creds = ServerCredentials(
                             host: host,
                             port: Int(port) ?? 7749,
@@ -365,6 +365,7 @@ private struct ManualEntryView: View {
                         onConnect(creds)
                     }
                     .disabled(host.isEmpty || token.isEmpty)
+                    .accessibilityLabel("Connect")
                 }
             }
         }

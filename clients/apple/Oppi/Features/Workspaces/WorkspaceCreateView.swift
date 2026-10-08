@@ -93,10 +93,6 @@ struct WorkspaceCreateView: View {
         }
     }
 
-    private var cancelButtonTitle: String {
-        isGuidedFirstWorkspace ? "Not Now" : "Cancel"
-    }
-
     /// Store scoped to the server this sheet creates on. The environment store
     /// normally matches, but deep links can switch servers just before presenting.
     private var targetWorkspaceStore: WorkspaceStore {
@@ -150,21 +146,25 @@ struct WorkspaceCreateView: View {
             .settingsPage(navigationTitle)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(cancelButtonTitle) { dismiss() }
+                    if isGuidedFirstWorkspace {
+                        Button("Not Now", systemImage: "xmark") { dismiss() }
+                    } else {
+                        Button(role: .cancel) { dismiss() }
+                    }
                 }
                 if step == .configure {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button {
-                            Task { await create() }
-                        } label: {
-                            if isCreating {
-                                ProgressView()
-                            } else {
-                                Text("Create")
+                        if isCreating {
+                            ProgressView()
+                                .accessibilityLabel("Creating")
+                        } else {
+                            Button(role: .confirm) {
+                                Task { await create() }
                             }
+                            .disabled(!canCreate)
+                            .accessibilityLabel("Create")
+                            .accessibilityIdentifier("workspace.create.submit")
                         }
-                        .disabled(!canCreate)
-                        .accessibilityIdentifier("workspace.create.submit")
                     }
                 }
             }

@@ -44,6 +44,28 @@ struct SSHTerminalView: View {
         }
     }
 
+    private var herdrAttentionCount: Int { herdr.snapshot?.needsAttention ?? 0 }
+
+    @ViewBuilder
+    private var terminalActionMenuItems: some View {
+        if inputMode == .chat {
+            Button("Type in Terminal", systemImage: "keyboard", action: showTerminalKeyboard)
+                .accessibilityIdentifier("sshTerminal.useTerminalInput")
+        } else {
+            Button("Use Chat Bar", systemImage: "text.bubble", action: showChatBar)
+                .accessibilityIdentifier("sshTerminal.useChatBar")
+        }
+        Button("Edit Host", systemImage: "pencil", action: editHost)
+        if channel.connected {
+            Button("Hide Bar", systemImage: "chevron.up") { setTopBarHidden(true) }
+                .accessibilityIdentifier("sshTerminal.hideBar")
+            Button("Disconnect", systemImage: "xmark", role: .destructive) { channel.close(reason: "Closed by you.") }
+                .accessibilityIdentifier("sshTerminal.disconnect")
+        } else if !channel.connecting {
+            Button("Reconnect", systemImage: "arrow.clockwise", action: reconnect)
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // A healthy connection shows no status row; the terminal gets the space.
@@ -110,48 +132,33 @@ struct SSHTerminalView: View {
         .navigationTitle(channel.title.isEmpty ? "SSH Terminal" : channel.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .principal) {
-                Text(channel.title.isEmpty ? "SSH Terminal" : channel.title)
-                    .font(.headline).foregroundStyle(.themeFg).lineLimit(1)
-            }
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                if herdr.available {
-                    Button { showsHerdr = true } label: {
-                        Image(systemName: "square.grid.2x2")
-                            .overlay(alignment: .topTrailing) {
-                                if let count = herdr.snapshot?.needsAttention, count > 0 {
-                                    Text("\(count)").font(.caption2.bold()).foregroundStyle(.themeBg)
-                                        .padding(.horizontal, 4).background(.themeOrange, in: .capsule)
-                                        .offset(x: 8, y: -6)
-                                }
-                            }
-                    }
+            if herdr.available {
+                ToolbarItem(placement: .topBarTrailing) {
+                    // A badge overlay does not survive the rail's glyph rendering, so
+                    // attention shows as an orange tint and a count in the title.
+                    Button(
+                        herdrAttentionCount > 0 ? "Herdr agents (\(herdrAttentionCount))" : "Herdr agents",
+                        systemImage: "square.grid.2x2"
+                    ) { showsHerdr = true }
+                    .tint(herdrAttentionCount > 0 ? .themeOrange : nil)
                     .accessibilityLabel("Herdr agents")
                     .accessibilityValue(herdr.snapshot.map { "\($0.needsAttention) need you" } ?? "")
                     .accessibilityIdentifier("sshTerminal.herdr")
                 }
-                Menu {
-                    if inputMode == .chat {
-                        Button("Type in Terminal", systemImage: "keyboard", action: showTerminalKeyboard)
-                            .accessibilityIdentifier("sshTerminal.useTerminalInput")
-                    } else {
-                        Button("Use Chat Bar", systemImage: "text.bubble", action: showChatBar)
-                            .accessibilityIdentifier("sshTerminal.useChatBar")
+            }
+            // System overflow on iOS 27 (vertical rail aware); labeled Menu before that.
+            if #available(iOS 27.0, *) {
+                ToolbarOverflowMenu { terminalActionMenuItems }
+            } else {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        terminalActionMenuItems
+                    } label: {
+                        Label("Terminal actions", systemImage: "ellipsis")
                     }
-                    Button("Edit Host", systemImage: "pencil", action: editHost)
-                    if channel.connected {
-                        Button("Hide Bar", systemImage: "chevron.up") { setTopBarHidden(true) }
-                            .accessibilityIdentifier("sshTerminal.hideBar")
-                        Button("Disconnect", systemImage: "xmark", role: .destructive) { channel.close(reason: "Closed by you.") }
-                            .accessibilityIdentifier("sshTerminal.disconnect")
-                    } else if !channel.connecting {
-                        Button("Reconnect", systemImage: "arrow.clockwise", action: reconnect)
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
+                    .accessibilityLabel("Terminal actions")
+                    .accessibilityIdentifier("sshTerminal.menu")
                 }
-                .accessibilityLabel("Terminal actions")
-                .accessibilityIdentifier("sshTerminal.menu")
             }
         }
         .sheet(isPresented: $showsHerdr) {
@@ -820,7 +827,7 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
             needsFullPaint = true
             needsPaint = true
         }
-        let scale = window?.screen.scale ?? 2
+        let scale = traitCollection.displayScale
         let geometry = SSHTerminalGeometry(
             columns: min(500, max(1, Int(bounds.width / cellSize.width))),
             rows: min(300, max(1, Int(bounds.height / cellSize.height))),

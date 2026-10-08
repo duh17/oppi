@@ -114,7 +114,7 @@ struct ModelPickerSheet: View {
             .searchable(text: $searchText, prompt: "Search models…")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button(role: .cancel) { dismiss() }
                         .disabled(isSavingDefault)
                 }
                 if isSavingDefault {

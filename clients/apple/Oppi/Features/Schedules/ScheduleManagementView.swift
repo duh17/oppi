@@ -291,6 +291,25 @@ private struct ScheduleDetailView: View {
     @State private var showPromptReader = false
     @State private var confirmArchive = false
 
+    @ViewBuilder
+    private func scheduleActionMenuItems(_ schedule: AgentSchedule) -> some View {
+        Button {
+            showRevision = true
+        } label: {
+            Label("Edit with Oppi", systemImage: "text.bubble")
+        }
+        .disabled(isMutating)
+        .accessibilityIdentifier("schedule.detail.edit")
+
+        if schedule.status != .archived {
+            Button("Archive", systemImage: "archivebox", role: .destructive) {
+                confirmArchive = true
+            }
+            .disabled(isMutating)
+            .accessibilityIdentifier("schedule.detail.archive")
+        }
+    }
+
     var body: some View {
         List {
             if isLoading && schedule == nil {
@@ -372,36 +391,29 @@ private struct ScheduleDetailView: View {
         .toolbar {
             // Match agent detail: native Edit plus overflow for guided edit / archive.
             if let schedule {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    if schedule.status != .archived {
-                        Button("Edit") {
+                if schedule.status != .archived {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Edit", systemImage: "pencil") {
                             showNativeEdit = true
                         }
                         .disabled(isMutating)
                         .accessibilityIdentifier("schedule.detail.nativeEdit")
                     }
+                }
 
-                    Menu {
-                        Button {
-                            showRevision = true
+                // System overflow on iOS 27 (vertical rail aware); labeled Menu before that.
+                if #available(iOS 27.0, *) {
+                    ToolbarOverflowMenu { scheduleActionMenuItems(schedule) }
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            scheduleActionMenuItems(schedule)
                         } label: {
-                            Label("Edit with Oppi", systemImage: "text.bubble")
+                            Label("Schedule actions", systemImage: "ellipsis.circle")
                         }
-                        .disabled(isMutating)
-                        .accessibilityIdentifier("schedule.detail.edit")
-
-                        if schedule.status != .archived {
-                            Button("Archive", role: .destructive) {
-                                confirmArchive = true
-                            }
-                            .disabled(isMutating)
-                            .accessibilityIdentifier("schedule.detail.archive")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
+                        .accessibilityLabel("Schedule actions")
+                        .accessibilityIdentifier("schedule.detail.actions")
                     }
-                    .accessibilityLabel("Schedule actions")
-                    .accessibilityIdentifier("schedule.detail.actions")
                 }
             }
         }

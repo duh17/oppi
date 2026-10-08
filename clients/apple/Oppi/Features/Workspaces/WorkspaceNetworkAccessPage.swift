@@ -66,10 +66,11 @@ struct WorkspaceNetworkAccessPage: View {
         .onDisappear { isVisible = false }
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Save") {
+                Button(role: .confirm) {
                     Task { await save() }
                 }
                 .disabled(!isDirty || model.isWritingSandboxConfig)
+                .accessibilityLabel("Save")
                 .accessibilityIdentifier("workspace.edit.networkAccess.save")
             }
         }

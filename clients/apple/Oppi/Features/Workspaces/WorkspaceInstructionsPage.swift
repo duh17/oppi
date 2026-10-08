@@ -21,6 +21,13 @@ struct WorkspaceInstructionsPage: View {
         text != (model.workspace.systemPrompt ?? "")
     }
 
+    private var clearAction: some View {
+        Button("Clear", systemImage: "trash", role: .destructive) {
+            text = ""
+        }
+        .disabled(text.isEmpty)
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             Text("Added after Pi\u{2019}s base prompt for every session in this workspace.")
@@ -59,22 +66,24 @@ struct WorkspaceInstructionsPage: View {
         .navigationTitle("Instructions")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button("Clear", role: .destructive) {
-                        text = ""
-                    }
-                    .disabled(text.isEmpty)
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-            }
             ToolbarItem(placement: .confirmationAction) {
-                Button("Save") {
+                Button(role: .confirm) {
                     Task { await save() }
                 }
                 .disabled(!isDirty || isSaving)
+                .accessibilityLabel("Save")
                 .accessibilityIdentifier("workspace.edit.instructions.save")
+            }
+            if #available(iOS 27.0, *) {
+                ToolbarOverflowMenu { clearAction }
+            } else {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        clearAction
+                    } label: {
+                        Label("More", systemImage: "ellipsis.circle")
+                    }
+                }
             }
         }
         .onAppear { isVisible = true }

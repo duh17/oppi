@@ -443,7 +443,6 @@ struct FileBrowserView: View {
 
     private func adaptiveLayout(for size: CGSize) -> FileBrowserAdaptiveLayout {
         guard layoutMode == .adaptive else { return .compact }
-        guard UIDevice.current.userInterfaceIdiom == .pad else { return .compact }
         guard horizontalSizeClass == .regular else { return .compact }
         return size.width >= size.height ? .landscapeTree : .portraitOverlay
     }

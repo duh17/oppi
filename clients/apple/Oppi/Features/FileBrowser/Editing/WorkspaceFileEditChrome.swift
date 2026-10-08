@@ -79,6 +79,35 @@ enum WorkspaceFileEditStatusPresentation {
     }
 }
 
+/// Toolbar while a file is being edited: save status, Source/Preview, Done.
+/// Every item carries a title and a symbol (or a role) so the Duo vertical rail
+/// can show it; the horizontal bar renders them icon-only.
+struct WorkspaceFileEditToolbar: ToolbarContent {
+    let status: WorkspaceFileEditSession.Status
+    @Binding var isShowingPreview: Bool
+    let onDone: () -> Void
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            WorkspaceFileEditStatusIndicator(status: status)
+        }
+        ToolbarSpacer(.fixed, placement: .topBarTrailing)
+        ToolbarItem(placement: .topBarTrailing) {
+            Button(
+                isShowingPreview ? String(localized: "Source") : String(localized: "Preview"),
+                systemImage: isShowingPreview ? "doc.text" : "eye"
+            ) {
+                isShowingPreview.toggle()
+            }
+            .accessibilityIdentifier("workspace-file-editor.preview-toggle")
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Button(role: .confirm, action: onDone)
+                .accessibilityIdentifier("workspace-file-editor.done")
+        }
+    }
+}
+
 /// Passive toolbar glyph. VoiceOver still speaks `label(for:)`.
 struct WorkspaceFileEditStatusIndicator: View {
     let status: WorkspaceFileEditSession.Status
@@ -250,7 +279,7 @@ struct WorkspaceFileConflictReviewView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button(String(localized: "Keep Editing"), action: onClose)
+                        Button(String(localized: "Keep Editing"), systemImage: "pencil", action: onClose)
                             .accessibilityIdentifier("workspace-file-review.close")
                     }
                 }

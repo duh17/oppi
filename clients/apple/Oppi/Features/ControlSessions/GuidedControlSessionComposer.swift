@@ -648,7 +648,7 @@ struct GuidedControlSessionSheet: View {
             .themedListSurface()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button(role: .cancel) { dismiss() }
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {

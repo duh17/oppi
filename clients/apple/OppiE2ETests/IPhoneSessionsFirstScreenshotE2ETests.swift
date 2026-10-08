@@ -566,13 +566,17 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             app.switches["schedule.detail.enabled"].waitForExistence(timeout: 5),
             "Enabled toggle missing on schedule detail"
         )
+        // iOS 27 shows the system overflow ("More"), which cannot carry an identifier.
+        let scheduleActions = app.buttons["schedule.detail.actions"].waitForExistence(timeout: 5)
+            ? app.buttons["schedule.detail.actions"]
+            : app.buttons["More"]
         XCTAssertTrue(
-            app.buttons["schedule.detail.actions"].waitForExistence(timeout: 5),
+            scheduleActions.waitForExistence(timeout: 5),
             "Schedule actions menu missing on schedule detail"
         )
         try saveLabScreenshot(name: "iphone-schedule-detail-human-when-e2e")
 
-        tap(app.buttons["schedule.detail.actions"], named: "schedule actions menu")
+        tap(scheduleActions, named: "schedule actions menu")
         let editWithOppi = app.buttons["schedule.detail.edit"].exists
             ? app.buttons["schedule.detail.edit"]
             : app.buttons["Edit with Oppi"]

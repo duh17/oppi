@@ -388,15 +388,21 @@ struct AgentNativeEditView: View {
             .themedListSurface()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button(role: .cancel) { dismiss() }
                         .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(isSaving ? "Saving…" : "Save") {
-                        Task { await save() }
+                    if isSaving {
+                        ProgressView()
+                            .accessibilityLabel("Saving")
+                    } else {
+                        Button(role: .confirm) {
+                            Task { await save() }
+                        }
+                        .disabled(!canSave)
+                        .accessibilityLabel("Save")
+                        .accessibilityIdentifier("agent.nativeEdit.save")
                     }
-                    .disabled(!canSave)
-                    .accessibilityIdentifier("agent.nativeEdit.save")
                 }
             }
             .interactiveDismissDisabled(isSaving)
@@ -740,6 +746,13 @@ struct AgentToolSelectionView: View {
         )
     }
 
+    @ViewBuilder
+    private var selectionMenuItems: some View {
+        Button("Select All", systemImage: "checkmark.circle") { selectedNames.formUnion(knownNames) }
+            .disabled(knownNames.isEmpty)
+        Button("Select None", systemImage: "circle") { selectedNames.removeAll() }
+    }
+
     var body: some View {
         List {
             Section {
@@ -829,15 +842,16 @@ struct AgentToolSelectionView: View {
         .themedListSurface()
         .toolbar {
             if mode == .exact {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button("Select All") { selectedNames.formUnion(knownNames) }
-                            .disabled(knownNames.isEmpty)
-                        Button("Select None") { selectedNames.removeAll() }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
+                if #available(iOS 27.0, *) {
+                    ToolbarOverflowMenu { selectionMenuItems }
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            selectionMenuItems
+                        } label: {
+                            Label("Tool selection actions", systemImage: "ellipsis.circle")
+                        }
                     }
-                    .accessibilityLabel("Tool selection actions")
                 }
             }
         }

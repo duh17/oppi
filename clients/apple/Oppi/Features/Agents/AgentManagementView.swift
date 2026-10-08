@@ -794,6 +794,22 @@ private struct AgentDetailView: View {
     @State private var isArchiving = false
     @State private var isLoadingResources = false
 
+    @ViewBuilder
+    private var agentActionMenuItems: some View {
+        Button {
+            isShowingRevision = true
+        } label: {
+            Label("Edit with Oppi", systemImage: "text.bubble")
+        }
+        .accessibilityIdentifier("agents.detail.revise")
+
+        Button("Archive Agent", systemImage: "archivebox", role: .destructive) {
+            Task { await archiveAgent() }
+        }
+        .disabled(isArchiving)
+        .accessibilityIdentifier("agents.detail.archive")
+    }
+
     var body: some View {
         List {
             if isLoading && agent == nil {
@@ -925,30 +941,26 @@ private struct AgentDetailView: View {
         .themedListSurface()
         .toolbar {
             if let agent, agent.status == .active {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button("Edit") {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Edit", systemImage: "pencil") {
                         isShowingNativeEdit = true
                     }
                     .accessibilityIdentifier("agents.detail.edit")
+                }
 
-                    Menu {
-                        Button {
-                            isShowingRevision = true
+                // System overflow on iOS 27 (vertical rail aware); labeled Menu before that.
+                if #available(iOS 27.0, *) {
+                    ToolbarOverflowMenu { agentActionMenuItems }
+                } else {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            agentActionMenuItems
                         } label: {
-                            Label("Edit with Oppi", systemImage: "text.bubble")
+                            Label("Agent actions", systemImage: "ellipsis.circle")
                         }
-                        .accessibilityIdentifier("agents.detail.revise")
-
-                        Button("Archive Agent", role: .destructive) {
-                            Task { await archiveAgent() }
-                        }
-                        .disabled(isArchiving)
-                        .accessibilityIdentifier("agents.detail.archive")
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
+                        .accessibilityLabel("Agent actions")
+                        .accessibilityIdentifier("agents.detail.actions")
                     }
-                    .accessibilityLabel("Agent actions")
-                    .accessibilityIdentifier("agents.detail.actions")
                 }
 
                 // Match session inbox: pin compose to the trailing bottom bar with neutral chrome.
@@ -960,7 +972,7 @@ private struct AgentDetailView: View {
                     Button {
                         startQuickSession(with: agent)
                     } label: {
-                        Image(systemName: "square.and.pencil")
+                        Label("Start Session", systemImage: "square.and.pencil")
                     }
                     .foregroundStyle(.themeFg)
                     .disabled(workspaceStore.workspaces.isEmpty || connection.currentServerId == nil)

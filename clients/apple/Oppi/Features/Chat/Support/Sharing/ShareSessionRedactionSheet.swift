@@ -103,16 +103,21 @@ struct ShareSessionRedactionSheet: View {
             .settingsPage("Share Session")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    Button(role: .cancel) {
                         onCancel()
                     }
                 }
 
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(isSharing ? "Sharing…" : "Share") {
-                        onShare()
+                    if isSharing {
+                        ProgressView()
+                            .accessibilityLabel("Sharing")
+                    } else {
+                        Button("Share", systemImage: "square.and.arrow.up") {
+                            onShare()
+                        }
+                        .disabled(isAnalyzing)
                     }
-                    .disabled(isSharing || isAnalyzing)
                 }
             }
         }

@@ -54,7 +54,7 @@ struct McpSignInSheet: View {
             }
             .settingsPage("Sign In")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Close") { owner.showingSheet = false } }
+                ToolbarItem(placement: .cancellationAction) { Button(role: .close) { owner.showingSheet = false } }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
                     Button("Submit Callback", action: submit)

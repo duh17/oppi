@@ -100,8 +100,21 @@ struct CommitDetailView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                actionMenu
+            // System overflow on iOS 27 (vertical rail aware); labeled Menu before that.
+            if #available(iOS 27.0, *) {
+                ToolbarOverflowMenu {
+                    actionMenuItems
+                        .disabled(actionMenuState.menuDisabled)
+                }
+            } else {
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        actionMenuItems
+                    } label: {
+                        Label("Actions", systemImage: "ellipsis.circle")
+                    }
+                    .disabled(actionMenuState.menuDisabled)
+                }
             }
         }
         .alert(
@@ -121,9 +134,11 @@ struct CommitDetailView: View {
                             Button {
                                 selectedFile = nil
                             } label: {
-                                Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
+                                Label(
+                                    FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel,
+                                    systemImage: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName
+                                )
                             }
-                            .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
                         }
                     }
             }
@@ -139,41 +154,36 @@ struct CommitDetailView: View {
         )
     }
 
-    private var actionMenu: some View {
-        Menu {
-            Button {
-                Task {
-                    await startEmptySession()
-                }
-            } label: {
-                Label("New Session", systemImage: "square.and.pencil")
-            }
-
-            Section("Prompt Templates") {
-                if isLoadingQuickActions && quickActionOptions.isEmpty {
-                    Button("Loading templates…") {}
-                        .disabled(true)
-                } else if sortedQuickActionOptions.isEmpty {
-                    Button("No prompt templates") {}
-                        .disabled(true)
-                } else {
-                    ForEach(sortedQuickActionOptions) { option in
-                        Button {
-                            Task {
-                                await createQuickActionSession(option: option)
-                            }
-                        } label: {
-                            Label("/\(option.commandName)", systemImage: SlashCommand.Source.prompt.iconName)
-                        }
-                        .disabled(actionMenuState.promptTemplatesDisabled)
-                    }
-                }
+    @ViewBuilder
+    private var actionMenuItems: some View {
+        Button {
+            Task {
+                await startEmptySession()
             }
         } label: {
-            Image(systemName: "ellipsis.circle")
+            Label("New Session", systemImage: "square.and.pencil")
         }
-        .disabled(actionMenuState.menuDisabled)
-        .accessibilityLabel("Actions")
+
+        Section("Prompt Templates") {
+            if isLoadingQuickActions && quickActionOptions.isEmpty {
+                Button("Loading templates…") {}
+                    .disabled(true)
+            } else if sortedQuickActionOptions.isEmpty {
+                Button("No prompt templates") {}
+                    .disabled(true)
+            } else {
+                ForEach(sortedQuickActionOptions) { option in
+                    Button {
+                        Task {
+                            await createQuickActionSession(option: option)
+                        }
+                    } label: {
+                        Label("/\(option.commandName)", systemImage: SlashCommand.Source.prompt.iconName)
+                    }
+                    .disabled(actionMenuState.promptTemplatesDisabled)
+                }
+            }
+        }
     }
 
     // MARK: - Loaded Content

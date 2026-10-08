@@ -266,13 +266,29 @@ struct WorkspaceReviewFileDetailView: View {
         .toolbar {
             // The editor owns the bar while typing: status, Preview, Done.
             if !isEditingCurrentFile {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    if toolbarState.showsShare, let shareable = toolbarShareableContent {
+                if toolbarState.showsShare, let shareable = toolbarShareableContent {
+                    ToolbarItem(placement: .topBarTrailing) {
                         FileShareButton(content: shareable, style: .icon)
                     }
+                }
 
-                    if toolbarState.showsActionMenu {
-                        actionMenu
+                if toolbarState.showsActionMenu {
+                    // System overflow on iOS 27 (vertical rail aware); labeled Menu before that.
+                    if #available(iOS 27.0, *) {
+                        ToolbarOverflowMenu {
+                            actionMenuItems
+                                .disabled(toolbarState.actionMenuDisabled)
+                        }
+                    } else {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Menu {
+                                actionMenuItems
+                            } label: {
+                                Label(toolbarState.actionMenuAccessibilityLabel, systemImage: "ellipsis.circle")
+                            }
+                            .disabled(toolbarState.actionMenuDisabled)
+                            .accessibilityIdentifier("review-file.prompt-templates")
+                        }
                     }
                 }
             }
@@ -308,41 +324,35 @@ struct WorkspaceReviewFileDetailView: View {
         )
     }
 
-    private var actionMenu: some View {
-        Menu {
-            Button {
-                Task {
-                    await startEmptySession()
-                }
-            } label: {
-                Label("New Session", systemImage: "square.and.pencil")
+    @ViewBuilder
+    private var actionMenuItems: some View {
+        Button {
+            Task {
+                await startEmptySession()
             }
+        } label: {
+            Label("New Session", systemImage: "square.and.pencil")
+        }
 
-            Section("Prompt Templates") {
-                if isLoadingQuickActions && quickActionOptions.isEmpty {
-                    Button("Loading templates…") {}
-                        .disabled(true)
-                } else if sortedQuickActionOptions.isEmpty {
-                    Button("No prompt templates") {}
-                        .disabled(true)
-                } else {
-                    ForEach(sortedQuickActionOptions) { option in
-                        Button {
-                            Task {
-                                await createQuickActionSession(option: option)
-                            }
-                        } label: {
-                            Label("/\(option.commandName)", systemImage: SlashCommand.Source.prompt.iconName)
+        Section("Prompt Templates") {
+            if isLoadingQuickActions && quickActionOptions.isEmpty {
+                Button("Loading templates…") {}
+                    .disabled(true)
+            } else if sortedQuickActionOptions.isEmpty {
+                Button("No prompt templates") {}
+                    .disabled(true)
+            } else {
+                ForEach(sortedQuickActionOptions) { option in
+                    Button {
+                        Task {
+                            await createQuickActionSession(option: option)
                         }
+                    } label: {
+                        Label("/\(option.commandName)", systemImage: SlashCommand.Source.prompt.iconName)
                     }
                 }
             }
-        } label: {
-            Image(systemName: "ellipsis.circle")
         }
-        .disabled(toolbarState.actionMenuDisabled)
-        .accessibilityLabel(toolbarState.actionMenuAccessibilityLabel)
-        .accessibilityIdentifier("review-file.prompt-templates")
     }
 
     private var horizontalBackSwipeAction: (@MainActor @Sendable () -> Void)? {

@@ -279,15 +279,18 @@ private struct SSHTerminalConnectionModifier: ViewModifier {
                     .navigationTitle("SSH Sign In")
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("Cancel") { session.password = ""; session.passwordPrompt = false }
+                            Button(role: .cancel) { session.password = ""; session.passwordPrompt = false }
                         }
                         ToolbarItem(placement: .confirmationAction) {
-                            Button(session.savingHostOnly ? "Save" : "Connect") {
+                            Button(role: .confirm) {
                                 let attempt = session.password
                                 session.password = ""
                                 session.passwordPrompt = false
                                 submitPassword(attempt)
-                            }.disabled(session.password.isEmpty).accessibilityIdentifier("sshTerminal.passwordConnect")
+                            }
+                            .disabled(session.password.isEmpty)
+                            .accessibilityLabel(session.savingHostOnly ? "Save" : "Connect")
+                            .accessibilityIdentifier("sshTerminal.passwordConnect")
                         }
                     }
                 }.presentationDetents([.medium])

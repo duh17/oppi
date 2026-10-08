@@ -97,10 +97,11 @@ struct McpAddServerView: View {
             .disabled(saving)
             .settingsPage("Add MCP Server")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.disabled(saving) }
+                ToolbarItem(placement: .cancellationAction) { Button(role: .cancel) { dismiss() }.disabled(saving) }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") { add() }
+                    Button(role: .confirm) { add() }
                         .disabled(saving || name.isEmpty || (mode == "url" ? url.isEmpty : command.isEmpty))
+                        .accessibilityLabel("Add")
                         .accessibilityIdentifier("mcp.add.save")
                 }
             }

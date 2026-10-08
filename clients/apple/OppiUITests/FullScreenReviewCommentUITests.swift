@@ -115,7 +115,7 @@ final class FullScreenReviewCommentUITests: XCTestCase {
             stashNavigation.waitForExistence(timeout: 5),
             "Stash button did not present the staged comments sheet"
         )
-        let doneButton = stashNavigation.buttons["Done"]
+        let doneButton = stashNavigation.buttons["Close"]
         XCTAssertTrue(doneButton.waitForExistence(timeout: 2))
 
         tapElement(doneButton)
