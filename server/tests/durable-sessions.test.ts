@@ -1075,12 +1075,6 @@ describe("durable engine on create requests", () => {
 
   it("refuses durable requests the durable engine cannot run, before saving a session", async () => {
     const f = await fixture([]);
-    const sandbox = f.storage.createWorkspace({
-      name: "Sandbox with MCP",
-      hostMount: f.dir,
-      runtime: "sandbox",
-      sandboxConfig: { mcpServers: ["github"] },
-    });
     const before = f.storage.listSessions().length;
 
     const incognito = await route(f, "POST", `/workspaces/${f.workspace.id}/sessions`, {
@@ -1090,12 +1084,6 @@ describe("durable engine on create requests", () => {
     });
     expect(incognito.status).toBe(400);
     expect(incognito.body.error).toContain("Incognito sessions");
-    const mcp = await route(f, "POST", `/workspaces/${sandbox.id}/sessions`, {
-      prompt: "Should not start",
-      engine: "durable",
-    });
-    expect(mcp.status).toBe(400);
-    expect(mcp.body.error).toContain("Sandbox MCP servers");
     expect(f.storage.listSessions()).toHaveLength(before);
 
     // The same requests stay valid on the classic engine.

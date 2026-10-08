@@ -15,6 +15,8 @@
  * - Sign-in stays in Oppi's MCP settings. Problems are reported once after startup, and a
  *   server whose stored credentials changed since it needed sign-in reconnects before the
  *   next prompt.
+ * - In a sandbox workspace, `sandbox` (from `sandboxMcpForWorkspace`) replaces config
+ *   loading, transports, and the log, so the classic sandbox boundary applies unchanged.
  */
 import { join } from "node:path";
 import type { Context, JsonValue } from "@earendil-works/chord";
@@ -37,7 +39,7 @@ import {
   type PiMcpInternals,
   type ToolSearchDocument,
 } from "./pi-mcp-internals.js";
-import { withoutCodemode } from "./sandbox-mcp.js";
+import { withoutCodemode, type SandboxMcpOptions } from "./sandbox-mcp.js";
 import type { Session } from "./types.js";
 
 const log = createLogger({ base: { component: "durable_mcp" } });
@@ -65,9 +67,13 @@ interface Registered {
 
 export interface DurableMcpOptions {
   sessionId: string;
+  /** Host cwd: Pi's connections and the project `.pi/mcp.json` resolve from it. */
   cwd: string;
   agentDir: string;
+  /** Host sessions only; a sandbox never loads the project's `mcp.json`. */
   projectTrusted: boolean;
+  /** A sandbox workspace's servers, transports, and log; host Pi defaults when absent. */
+  sandbox?: SandboxMcpOptions;
   policy: ToolPolicy | undefined;
   providerToken: (provider: string) => Promise<string | undefined>;
   install: (extension: Extension) => void;
@@ -149,11 +155,14 @@ export class DurableMcp {
   static async open(options: DurableMcpOptions): Promise<DurableMcp | undefined> {
     if (options.policy?.noTools === "all") return undefined;
     const internals = await loadPiMcpInternals();
-    const loaded = internals.loadMcpConfig({
-      agentDir: options.agentDir,
-      cwd: options.cwd,
-      projectTrusted: options.projectTrusted,
-    });
+    const loaded = options.sandbox
+      ? // The sandbox loader reads only `ctx.cwd` of Pi's extension context.
+        options.sandbox.loadConfig({ cwd: options.cwd } as never)
+      : internals.loadMcpConfig({
+          agentDir: options.agentDir,
+          cwd: options.cwd,
+          projectTrusted: options.projectTrusted,
+        });
     const entries = loaded.servers
       .filter((entry) => entry.config.enabled !== false)
       .map(withoutCodemode);
@@ -173,7 +182,9 @@ export class DurableMcp {
     this.servers = entries.map((entry) => ({ entry }));
     this.configErrors = configErrors;
     this.credentials = new internals.McpOAuthCredentialStore();
-    this.serverLog = new internals.McpServerLog(join(options.agentDir, "mcp.log"));
+    this.serverLog = new internals.McpServerLog(
+      options.sandbox?.logPath ?? join(options.agentDir, "mcp.log"),
+    );
     this.toolSearch =
       this.servers.some((server) => configuredExposures(server.entry).has("deferred")) &&
       this.permitted(DURABLE_TOOL_SEARCH_NAME)
@@ -201,7 +212,8 @@ export class DurableMcp {
       const connection = new this.internals.McpServerConnection({
         entry: server.entry,
         cwd: this.options.cwd,
-        createTransport: this.internals.createDefaultTransport,
+        createTransport:
+          this.options.sandbox?.createTransport ?? this.internals.createDefaultTransport,
         credentials: this.credentials,
         providerToken: this.options.providerToken,
         log: this.serverLog,

@@ -2043,19 +2043,6 @@ describe("server durable managed runtime", () => {
     expect(confirmation).toHaveBeenCalledOnce();
   });
 
-  it("fails clearly for selected sandbox MCP instead of launching it on the host", async () => {
-    const f = await fixture([]);
-    f.workspace.runtime = "sandbox";
-    f.workspace.sandboxConfig = { mcpServers: ["picked-server"] };
-    const sdk = vi.spyOn(SdkBackend, "create");
-    const ensure = vi.spyOn(SdkBackend, "ensureSandboxWorkspaceVm");
-    await expect(f.manager.startSession(f.session.id, f.workspace)).rejects.toMatchObject({
-      code: "server_durable_not_supported",
-      operation: "Sandbox MCP servers",
-    });
-    expect(sdk).not.toHaveBeenCalled();
-    expect(ensure).not.toHaveBeenCalled();
-  });
   it("gates an early HTTP-equivalent open and prompt before bootstrap even begins", async () => {
     const f = await fixture([]);
     const crashed = await crashedQueuedTools(f);

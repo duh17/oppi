@@ -1,19 +1,25 @@
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { ModelRuntime, ProjectTrustStore, SettingsManager } from "@earendil-works/pi-coding-agent";
+import type { ConversationId } from "@earendil-works/pi-durable";
 import {
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
+import type { GondolinExecResult, GondolinProcess, GondolinVm } from "../src/gondolin-ops.js";
+import { DurableHarness } from "../src/durable-harness.js";
 import { PROJECT_TRUST_OPTIONS } from "../src/project-trust.js";
+import { SdkBackend, resolveSandboxGuestCwd } from "../src/sdk-backend.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
-import type { ServerMessage } from "../src/types.js";
+import type { ServerMessage, Workspace } from "../src/types.js";
 
 const ECHO_SERVER = fileURLToPath(new URL("./fixtures/mcp-echo-server.mjs", import.meta.url));
 
@@ -49,7 +55,10 @@ function writeMcpJson(dir: string, servers: Record<string, unknown>): void {
   writeFileSync(join(dir, "mcp.json"), JSON.stringify({ mcpServers: servers }));
 }
 
-async function fixture(responses: FauxResponseStep[]) {
+async function fixture(
+  responses: FauxResponseStep[],
+  sandboxConfig?: NonNullable<Workspace["sandboxConfig"]>,
+) {
   const dir = mkdtempSync(join(tmpdir(), "oppi-durable-mcp-test-"));
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
@@ -73,7 +82,11 @@ async function fixture(responses: FauxResponseStep[]) {
   );
   const storage = new Storage(dir);
   storage.updateConfig({ experimental: { serverDurable: true } });
-  const workspace = storage.createWorkspace({ name: "Durable MCP", hostMount: dir });
+  const workspace = storage.createWorkspace({
+    name: "Durable MCP",
+    hostMount: dir,
+    ...(sandboxConfig ? { runtime: "sandbox" as const, sandboxConfig } : {}),
+  });
   const session = storage.createSession("Durable MCP", "faux/faux-1");
   session.serverDurable = {};
   session.workspaceId = workspace.id;
@@ -120,6 +133,55 @@ async function toolResults(manager: SessionManager, sessionId: string): Promise<
 }
 
 const read = (path: string): string => (existsSync(path) ? readFileSync(path, "utf8") : "");
+
+/**
+ * A stand-in workspace VM that records every exec. Long-lived stdio peers run as local
+ * processes so the MCP protocol is real; `durable-gondolin-live` and the classic live MCP
+ * test cover a real guest.
+ */
+function recordingVm() {
+  const peers: { argv: string[]; cwd?: string; env?: Record<string, string> }[] = [];
+  const done = (): GondolinExecResult => ({
+    ok: true,
+    exitCode: 0,
+    stdout: "",
+    stdoutBuffer: Buffer.alloc(0),
+  });
+  const vm: GondolinVm = {
+    fs: {
+      mkdir: async () => {},
+      access: async () => {},
+      readFile: async () => Buffer.alloc(0),
+      writeFile: async () => {},
+    },
+    exec: (argv, options) => {
+      if (!options?.stdin)
+        return Object.assign(Promise.resolve(done()), {
+          async *output() {},
+          write() {},
+          end() {},
+        });
+      const args = [...(argv as string[])];
+      peers.push({ argv: args, cwd: options.cwd, env: options.env });
+      const child = spawn(args[0]!, args.slice(1), {
+        env: { ...process.env, ...options.env },
+        stdio: "pipe",
+      });
+      options.signal?.addEventListener("abort", () => child.kill());
+      const exited = new Promise<GondolinExecResult>((resolve) =>
+        child.on("close", (code) => resolve({ ...done(), ok: code === 0, exitCode: code ?? 1 })),
+      );
+      return Object.assign(exited, {
+        async *output() {
+          for await (const data of child.stdout) yield { stream: "stdout" as const, data };
+        },
+        write: (data: string | Buffer) => child.stdin.write(data),
+        end: () => child.stdin.end(),
+      }) as GondolinProcess;
+    },
+  };
+  return { vm, peers };
+}
 
 describe("server durable MCP (host)", () => {
   it("offers direct tools on the first prompt, reports a broken server once, and stops its servers with the session", async () => {
@@ -208,6 +270,73 @@ describe("server durable MCP (host)", () => {
     await prompt(restarted, f.session.id, "Echo again");
     expect(read(marker)).toContain('call echo {"text":"again"}');
     expect((await toolResults(restarted, f.session.id)).at(-1)).toContain("echo:again");
+  });
+
+  it("in a sandbox, loads only picked global servers, runs stdio in the VM, and refuses hosts outside Allowed Hosts", async () => {
+    const marker = (name: string) => join(agentDir, `${name}.marker`);
+    writeMcpJson(agentDir, {
+      picked: echoServer(marker("picked"), { exposure: "direct" }),
+      // Default exposure is codemode, which a sandbox never gets: tool_search only.
+      lazy: echoServer(marker("lazy")),
+      unpicked: echoServer(marker("unpicked"), { exposure: "direct" }),
+      remote: { url: "https://evil.test/mcp", exposure: "direct" },
+    });
+    const { vm, peers } = recordingVm();
+    const ensure = vi.spyOn(SdkBackend, "ensureSandboxWorkspaceVm").mockResolvedValue(vm);
+    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    const f = await fixture(
+      [
+        fauxAssistantMessage([fauxToolCall("mcp__picked__echo", { text: "hi" })], {
+          stopReason: "toolUse",
+        }),
+        fauxAssistantMessage("SANDBOX_DONE"),
+      ],
+      { mcpServers: ["picked", "lazy", "remote"], allowedHosts: ["mcp.example.com"] },
+    );
+    // Sandboxes trust their project for skills; its mcp.json must still never load.
+    writeMcpJson(join(f.dir, ".pi"), {
+      project: echoServer(marker("project"), { exposure: "direct" }),
+    });
+    await f.manager.startSession(f.session.id, f.workspace);
+    expect(ensure).toHaveBeenCalledOnce();
+    const notices: string[] = [];
+    f.manager.subscribe(f.session.id, (message) => {
+      if (message.type === "extension_ui_notification" && message.method === "notify")
+        notices.push(message.message ?? "");
+    });
+
+    await prompt(f.manager, f.session.id, "Echo hi");
+    expect(read(marker("picked"))).toContain('call echo {"text":"hi"}');
+    expect(await toolResults(f.manager, f.session.id)).toEqual([
+      expect.stringContaining("echo:hi"),
+    ]);
+    await waitFor(() => notices.length > 0, "MCP startup notice");
+    expect(notices).toEqual([
+      expect.stringContaining('"remote" is blocked in this sandbox: evil.test is not in'),
+    ]);
+
+    // Both picked stdio servers started through the VM, in the guest workspace.
+    const guestCwd = resolveSandboxGuestCwd(f.workspace);
+    expect(peers.map((peer) => peer.argv)).toEqual([
+      [process.execPath, ECHO_SERVER],
+      [process.execPath, ECHO_SERVER],
+    ]);
+    expect(peers.every((peer) => peer.cwd === guestCwd)).toBe(true);
+    expect(peers.map((peer) => peer.env?.MCP_ECHO_MARKER).sort()).toEqual(
+      [marker("lazy"), marker("picked")].sort(),
+    );
+    expect(existsSync(marker("unpicked"))).toBe(false);
+    expect(existsSync(marker("project"))).toBe(false);
+
+    const { harness } = await opening.mock.results.at(-1)!.value;
+    const id = f.storage.getSession(f.session.id)!.serverDurable!.conversationId as ConversationId;
+    const offered = (
+      await (await harness.conversation(id, BACKGROUND_CONTEXT))!.agent(BACKGROUND_CONTEXT)
+    ).tools.map((tool: { name: string }) => tool.name);
+    expect(offered).toEqual(expect.arrayContaining(["tool_search", "mcp__picked__echo"]));
+    expect(offered.filter((name: string) => name.startsWith("mcp__"))).toEqual([
+      "mcp__picked__echo",
+    ]);
   });
 
   it.each([

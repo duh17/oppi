@@ -73,8 +73,7 @@ import {
   createMcpBuiltinExtensions,
   isBuiltinExtensionPath,
 } from "./host-mcp-extensions.js";
-import { createSandboxMcpOptions, emptySandboxMcp } from "./sandbox-mcp.js";
-import { loadPiMcpInternals } from "./pi-mcp-internals.js";
+import { sandboxMcpForWorkspace } from "./sandbox-mcp.js";
 import { createLifecycleJournalExtension } from "./lifecycle-journal-extension.js";
 import {
   DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS,
@@ -1153,22 +1152,12 @@ export class SdkBackend implements AgentBackend {
       // run inside the VM. Servers connect at session_start, after the VM exists below.
       let sandboxVm: GondolinVm | undefined;
       const sandboxMcpPicks = sandboxMode ? (workspace?.sandboxConfig?.mcpServers ?? []) : [];
-      // Each sandbox's own log, away from `~/.pi/agent/mcp.log` that host agents read.
-      const sandboxMcpLog = join(
-        config.dataDir ?? join(runtimeAgentDir, "oppi"),
-        "sandbox-mcp-logs",
-        `${workspace?.id ?? "sandbox"}.log`,
-      );
-      const sandboxMcp = !sandboxMode
-        ? undefined
-        : sandboxMcpPicks.length === 0
-          ? emptySandboxMcp(sandboxMcpLog)
-          : createSandboxMcpOptions({
-              internals: await loadPiMcpInternals(),
+      const sandboxMcp =
+        sandboxMode && workspace
+          ? await sandboxMcpForWorkspace({
+              workspace,
               agentDir: runtimeAgentDir,
-              logPath: sandboxMcpLog,
-              selected: sandboxMcpPicks,
-              allowedHosts: workspace?.sandboxConfig?.allowedHosts,
+              dataDir: config.dataDir ?? join(runtimeAgentDir, "oppi"),
               guestCwd,
               // This session's own VM. Re-ensuring could stop a newer session's VM whose
               // settings differ, and bring back this session's older Allowed Hosts.
@@ -1176,7 +1165,8 @@ export class SdkBackend implements AgentBackend {
                 if (!sandboxVm) throw new Error("The sandbox VM is not ready");
                 return sandboxVm;
               },
-            });
+            })
+          : undefined;
 
       // Resource loader: follow Pi's normal cwd/settings/package discovery.
       // Oppi no longer applies a workspace-level skills/extensions policy for

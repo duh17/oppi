@@ -162,13 +162,10 @@ export function parseRequestedEngine(
 export function durableUnsupportedFeature(params: {
   ephemeral?: boolean;
   agentDefinition?: AgentDefinition;
-  workspace?: Workspace;
 }): string | undefined {
   if (params.ephemeral) return "Incognito sessions";
   // Classic extension factories cannot run in a durable conversation.
   if (params.agentDefinition?.resources?.extensionIds?.length) return "Saved Agent Extensions";
-  if (params.workspace?.runtime === "sandbox" && params.workspace.sandboxConfig?.mcpServers?.length)
-    return "Sandbox MCP servers";
   return undefined;
 }
 

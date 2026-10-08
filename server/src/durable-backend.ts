@@ -90,6 +90,8 @@ import {
 import { DurableUIProjection } from "./durable-ui-projection.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { DurableMcp } from "./durable-mcp.js";
+import type { GondolinVm } from "./gondolin-ops.js";
+import { sandboxMcpForWorkspace } from "./sandbox-mcp.js";
 import {
   expandSkillCommand,
   loadDurableProjectResources,
@@ -256,7 +258,6 @@ export class DurableBackend implements AgentBackend {
     const unsupported = durableUnsupportedFeature({
       ephemeral: session.ephemeral,
       agentDefinition,
-      workspace,
     });
     if (unsupported) throw new DurableNotSupportedError(unsupported);
     const sandbox = workspace?.runtime === "sandbox";
@@ -273,28 +274,47 @@ export class DurableBackend implements AgentBackend {
       projectTrusted,
       agentDefinition,
     });
+    // Set by `bind` once this attachment's workspace VM is up, before servers connect.
+    let sandboxVm: GondolinVm | undefined;
     // The control conversation selects an exact extension list; it gets no MCP tools.
-    const mcp =
-      sandbox || isControlConversation(session)
-        ? undefined
-        : await owner.replaceMcp(session.id, async () => {
-            const registry = new ModelRegistry(models);
-            return DurableMcp.open({
-              sessionId: session.id,
-              cwd: hostCwd,
-              agentDir,
-              projectTrusted,
-              policy: session.launch?.tools,
-              providerToken: (provider) => registry.getApiKeyForProvider(provider),
-              install: (extension) => owner.installExtension(extension),
-              uninstall: (extension) => owner.uninstallExtension(extension),
-            });
+    const mcp = isControlConversation(session)
+      ? undefined
+      : await owner.replaceMcp(session.id, async () => {
+          const registry = new ModelRegistry(models);
+          return DurableMcp.open({
+            sessionId: session.id,
+            cwd: hostCwd,
+            agentDir,
+            projectTrusted,
+            ...(sandbox
+              ? {
+                  sandbox: await sandboxMcpForWorkspace({
+                    workspace,
+                    agentDir,
+                    dataDir: options.dataDir,
+                    guestCwd: cwd,
+                    // This attachment's VM, as classic sandbox sessions use theirs.
+                    vm: async () => {
+                      if (!sandboxVm) throw new Error("The sandbox VM is not ready");
+                      return sandboxVm;
+                    },
+                  }),
+                }
+              : {}),
+            policy: session.launch?.tools,
+            providerToken: (provider) => registry.getApiKeyForProvider(provider),
+            install: (extension) => owner.installExtension(extension),
+            uninstall: (extension) => owner.uninstallExtension(extension),
           });
+        });
     try {
       return await DurableBackend.bind(options, {
         hostCwd,
         cwd,
         mcp,
+        onSandboxVm: (vm) => {
+          sandboxVm = vm;
+        },
         resources,
         loadResources: () =>
           loadDurableProjectResources({
@@ -317,6 +337,7 @@ export class DurableBackend implements AgentBackend {
       hostCwd: string;
       cwd: string;
       mcp: DurableMcp | undefined;
+      onSandboxVm: (vm: GondolinVm) => void;
       resources: DurableProjectResources;
       loadResources: () => Promise<DurableProjectResources>;
     },
@@ -449,6 +470,7 @@ export class DurableBackend implements AgentBackend {
                     DurableBackgroundJobs,
                     owner.sessionsExtension,
                     DurableProjectContext,
+                    ...(mcp ? [mcp.selection] : []),
                   ]
                 : [
                     CodingTools,
@@ -501,6 +523,8 @@ export class DurableBackend implements AgentBackend {
       if (!probe.ok) throw new Error("Durable sandbox execution requires guest setsid");
       const env = new GondolinExecutionEnv(vm, workspace.id, cwd);
       options.owner.bindSandboxEnv(conversation.id, env);
+      // Stdio MCP servers run in this VM; they connect at `attach` below.
+      target.onSandboxVm(vm);
     }
     await conversation.commit((tx) => ensureWorkingWords(tx, conversation.id), BACKGROUND_CONTEXT);
     mcp?.attach(conversation);

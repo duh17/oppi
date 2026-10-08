@@ -12,16 +12,20 @@
  *   private or local host only when listed exactly; OAuth and `${NAME}` headers resolve on
  *   the host (the agent sees tool results only);
  * - stdio servers run inside the VM, and never receive host secret references.
+ *
+ * `sandboxMcpForWorkspace` is the one entry point: classic sessions hand its options to Pi's
+ * MCP extension, and server durable sessions to `DurableMcp`.
  */
 import { isIP } from "node:net";
-import { posix } from "node:path";
+import { join, posix } from "node:path";
 import type {
   McpExtensionOptions,
   McpServerEntry,
   McpTransportFactory,
 } from "@earendil-works/pi-coding-agent";
 import type { GondolinProcess, GondolinVm } from "./gondolin-ops.js";
-import type { PiMcpInternals } from "./pi-mcp-internals.js";
+import { loadPiMcpInternals, type PiMcpInternals } from "./pi-mcp-internals.js";
+import type { Workspace } from "./types.js";
 
 type McpTransport = ReturnType<McpTransportFactory>;
 type JsonRpcMessage = Parameters<McpTransport["send"]>[0];
@@ -348,9 +352,8 @@ export class VmStdioTransport implements McpTransport {
 }
 
 /** A sandbox session's MCP config loading, transports, and own log. */
-export type SandboxMcpOptions = Pick<
-  McpExtensionOptions,
-  "loadConfig" | "createTransport" | "logPath"
+export type SandboxMcpOptions = Required<
+  Pick<McpExtensionOptions, "loadConfig" | "createTransport" | "logPath">
 >;
 
 /**
@@ -381,6 +384,33 @@ export function emptySandboxMcp(logPath: string): SandboxMcpOptions {
       throw new Error(`MCP server "${entry.name}" is not picked for this sandbox`);
     },
   };
+}
+
+/**
+ * MCP options for a session in a sandbox workspace, for either engine: the servers its owner
+ * picked, its Allowed Hosts, and its own log under `dataDir/sandbox-mcp-logs`. `vm` returns
+ * this session's VM; it never re-creates one with other settings.
+ */
+export async function sandboxMcpForWorkspace(input: {
+  workspace: Pick<Workspace, "id" | "sandboxConfig">;
+  agentDir: string;
+  dataDir: string;
+  guestCwd: string;
+  vm: () => Promise<GondolinVm>;
+}): Promise<SandboxMcpOptions> {
+  // Each sandbox's own log, away from `~/.pi/agent/mcp.log` that host agents read.
+  const logPath = join(input.dataDir, "sandbox-mcp-logs", `${input.workspace.id}.log`);
+  const selected = input.workspace.sandboxConfig?.mcpServers ?? [];
+  if (!selected.length) return emptySandboxMcp(logPath);
+  return createSandboxMcpOptions({
+    internals: await loadPiMcpInternals(),
+    agentDir: input.agentDir,
+    logPath,
+    selected,
+    allowedHosts: input.workspace.sandboxConfig?.allowedHosts,
+    guestCwd: input.guestCwd,
+    vm: input.vm,
+  });
 }
 
 /**

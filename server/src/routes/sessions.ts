@@ -214,7 +214,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
     const durableUnsupported =
       requestedEngine.engine === "durable"
-        ? durableUnsupportedFeature({ ephemeral: body.ephemeral === true, workspace })
+        ? durableUnsupportedFeature({ ephemeral: body.ephemeral === true })
         : undefined;
     if (durableUnsupported) {
       helpers.error(
