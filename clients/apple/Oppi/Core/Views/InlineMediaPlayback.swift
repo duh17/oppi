@@ -1424,12 +1424,12 @@ final class TimedTextCaptionOverlay {
         overlay.addSubview(label)
         overlay.addSubview(languageButton)
         constraints = [
-            label.leadingAnchor.constraint(greaterThanOrEqualTo: overlay.leadingAnchor, constant: 16),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: overlay.trailingAnchor, constant: -16),
+            label.leadingAnchor.constraint(greaterThanOrEqualTo: overlay.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: overlay.safeAreaLayoutGuide.trailingAnchor, constant: -16),
             label.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
             label.bottomAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.bottomAnchor, constant: -52),
             languageButton.topAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.topAnchor, constant: 10),
-            languageButton.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -10),
+            languageButton.trailingAnchor.constraint(equalTo: overlay.safeAreaLayoutGuide.trailingAnchor, constant: -10),
             languageButton.widthAnchor.constraint(equalToConstant: 36),
             languageButton.heightAnchor.constraint(equalToConstant: 36),
         ]
