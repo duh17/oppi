@@ -115,7 +115,7 @@ async function waitFor(predicate: () => boolean, what: string, timeoutMs = 15_00
   }
 }
 
-describe.sequential("host MCP/codemode/tool-search activation", () => {
+describe("host MCP/codemode/tool-search activation", { concurrent: false }, () => {
   let cwd: string;
   let agentDir: string;
   let marker: string;

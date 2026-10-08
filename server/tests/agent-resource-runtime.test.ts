@@ -38,7 +38,7 @@ function resourceLoader(backend: SdkBackend): ResourceLoader {
   ).runtime.services.resourceLoader;
 }
 
-describe.sequential("saved Agent exact resource selection", () => {
+describe("saved Agent exact resource selection", { concurrent: false }, () => {
   it("treats explicit empty Skill and Extension arrays as none", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-agent-no-resources-"));
     const skillDir = join(cwd, ".pi", "skills", "project-skill");

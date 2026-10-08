@@ -9,7 +9,7 @@
  */
 
 import { existsSync, mkdirSync } from "node:fs";
-import { monitorEventLoopDelay, type IntervalHistogram } from "node:perf_hooks";
+import { monitorEventLoopDelay, type ELDHistogram } from "node:perf_hooks";
 import { join } from "node:path";
 import {
   appendJsonlLineWithByteLimit,
@@ -64,7 +64,7 @@ function intervalFromEnv(): number {
 export class ServerResourceSampler {
   private timer: NodeJS.Timeout | null = null;
   private lastCpu: CpuSnapshot | null = null;
-  private eventLoopDelay: IntervalHistogram | null = null;
+  private eventLoopDelay: ELDHistogram | null = null;
   private readonly maxFileBytes = jsonlMaxBytesFromEnv("OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES");
   private readonly cappedFiles = new Set<string>();
   /** Peak active session count since last sample — reset each interval. */
