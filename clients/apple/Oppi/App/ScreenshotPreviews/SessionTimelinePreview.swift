@@ -128,4 +128,109 @@ struct SessionTimelinePreview: View {
         .accessibilityIdentifier("screenshot.ready")
     }
 }
+
+// MARK: - Wide Content Timeline Preview
+
+/// The production timeline collection under ChatView's scaffold (expanded under
+/// the top bar only) with full-width rows: a Mermaid diagram, long code lines,
+/// and tool rows. Proves rows stop at the trailing safe-area edge when a
+/// vertical rail occupies it (`SCREENSHOT_SCREEN=session-timeline-wide`,
+/// `SCREENSHOT_ORIENTATION=landscape` on iPhone Duo).
+struct SessionTimelineWideContentPreview: View {
+    @State private var connection = ServerConnection()
+    @State private var sessionManager = ChatSessionManager(sessionId: "wide-preview")
+    @State private var scrollController = ChatScrollController()
+    @State private var audioPlayer = AudioPlayerService()
+    @State private var audioLifecycleCoordinator = AudioLifecycleCoordinator()
+    @State private var seeded = false
+
+    /// ChatView expands the timeline under the top bar only. `SCREENSHOT_TIMELINE_FULL_BLEED=1`
+    /// also expands it under the side rail, to prove the collection insets its rows itself.
+    private static var expandedEdges: Edge.Set {
+        ProcessInfo.processInfo.environment["SCREENSHOT_TIMELINE_FULL_BLEED"] == "1" ? [.top, .horizontal] : .top
+    }
+
+    private static let assistantMarkdown = #"""
+    The review pass found three layout problems. The flow, then the offending lines:
+
+    ```mermaid
+    flowchart LR
+        Dispatch[Dispatch work] --> Review{Review passes?}
+        Review -->|yes| Land[Fast-forward main]
+        Review -->|no| Fix[Fix findings]
+        Fix --> Dispatch
+        Land --> Verify[Run the full proof matrix on the final commit]
+    ```
+
+    ```swift
+    let identifierForTheTrailingEdgeProbe = "this line is deliberately far wider than any phone column so it reaches the trailing edge"
+    ```
+    """#
+
+    var body: some View {
+        NavigationStack {
+            ChatTimelineView(
+                sessionId: "wide-preview",
+                serverId: nil,
+                workspaceId: nil,
+                isBusy: false,
+                extensionWorkingState: nil,
+                extensionHiddenThinkingLabel: nil,
+                currentModel: nil,
+                sessionContent: connection.sessionContent,
+                iconAssetCache: nil,
+                openDestination: nil,
+                loadOlderPage: nil,
+                scrollController: scrollController,
+                sessionManager: sessionManager,
+                audioLifecycleCoordinator: audioLifecycleCoordinator,
+                onFork: { _ in },
+                onOpenCurrentFile: { _ in },
+                onBackSwipe: {},
+                reviewCommentSelectionRouter: nil,
+                topOverlap: 0,
+                bottomOverlap: 0
+            )
+            .ignoresSafeArea(.container, edges: Self.expandedEdges)
+            .navigationTitle("Wide content")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Files", systemImage: "folder") {}
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Outline", systemImage: "list.bullet") {}
+                }
+            }
+        }
+        .environment(sessionManager.reducer)
+        .environment(sessionManager.reducer.toolOutputStore)
+        .environment(sessionManager.reducer.toolArgsStore)
+        .environment(audioPlayer)
+        .task {
+            guard !seeded else { return }
+            seeded = true
+            ScreenshotPreviewOrientation.applyRequested()
+            seed(sessionManager.reducer)
+        }
+        .accessibilityIdentifier("screenshot.ready")
+    }
+
+    private func seed(_ reducer: TimelineReducer) {
+        _ = reducer.appendUserMessage("Run the checks and show me the layout")
+        reducer.processBatch([
+            .agentStart(sessionId: "wide-preview"),
+            .messageEnd(sessionId: "wide-preview", content: Self.assistantMarkdown),
+            .toolStart(
+                sessionId: "wide-preview",
+                toolEventId: "wide-bash",
+                tool: "bash",
+                args: ["command": "swift test --filter ChatTimelineLayoutTests --parallel --enable-code-coverage --verbose"],
+                display: .init(title: "Bash")
+            ),
+            .toolEnd(sessionId: "wide-preview", toolEventId: "wide-bash"),
+            .agentEnd(sessionId: "wide-preview"),
+        ])
+    }
+}
 #endif

@@ -15,6 +15,24 @@ enum ScreenshotPreviewConfig {
     }
 }
 
+/// Debug-only: `SCREENSHOT_ORIENTATION=landscape-left|landscape-right|portrait` rotates the scene so
+/// Duo landscape poses (vertical rail on the trailing edge) can be captured
+/// without driving Simulator.app.
+@MainActor
+enum ScreenshotPreviewOrientation {
+    static func applyRequested() {
+        guard let raw = ProcessInfo.processInfo.environment["SCREENSHOT_ORIENTATION"],
+              let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+        else { return }
+        let mask: UIInterfaceOrientationMask = switch raw {
+        case "landscape", "landscape-right": .landscapeRight
+        case "landscape-left": .landscapeLeft
+        default: .portrait
+        }
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask))
+    }
+}
+
 // MARK: - Root Preview View
 
 /// Launches a standalone screen with mock data for screenshot capture in UI tests.
@@ -43,6 +61,13 @@ struct ScreenshotPreviewView: View {
             DurableSessionsScreenshotPreview(surface: .list)
         case "scoped-locks":
             ScopedLocksScreenshotPreview()
+        case "quick-session-overlay":
+            DurableSessionsScreenshotPreview(surface: .quickSession)
+        case "session-timeline-wide":
+            SessionTimelineWideContentPreview()
+        case "review-comment-inline-draft":
+            ReviewCommentInlineDraftScreenshotPreview()
+                .ignoresSafeArea()
         case "whats-new-build54-light", "whats-new-build53-light", "whats-new-build52-light", "whats-new-build51-light", "whats-new-build50-light", "whats-new-build49-light":
             WhatsNewScreenshotPreview(themeID: .light)
         case "whats-new-build54-dark", "whats-new-build53-dark", "whats-new-build52-dark", "whats-new-build51-dark", "whats-new-build50-dark", "whats-new-build49-dark":
@@ -233,6 +258,68 @@ struct ScreenshotPreviewView: View {
             MetalOrbScreenshotPreview()
         default:
             Text("Unknown screen: \(ScreenshotPreviewConfig.screen)")
+        }
+    }
+}
+
+/// The production inline review-comment composer opened over text near the
+/// bottom of the screen, so the software keyboard has to push it up. Set
+/// `SCREENSHOT_ORIENTATION=landscape` for the Duo vertical-rail pose.
+private struct ReviewCommentInlineDraftScreenshotPreview: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> InlineDraftPreviewController {
+        InlineDraftPreviewController()
+    }
+
+    func updateUIViewController(_ uiViewController: InlineDraftPreviewController, context: Context) {}
+
+    final class InlineDraftPreviewController: UIViewController {
+        private let textView = UITextView()
+
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            view.backgroundColor = UIColor(ThemeID.dark.palette.bgDark)
+            view.accessibilityIdentifier = "screenshot.ready"
+            textView.isEditable = false
+            textView.backgroundColor = .clear
+            textView.textColor = UIColor(ThemeID.dark.palette.fg)
+            textView.font = .monospacedSystemFont(ofSize: 15, weight: .regular)
+            textView.text = (1...40).map { "line \($0): let value = compute(\($0)) // review target" }
+                .joined(separator: "\n")
+            textView.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(textView)
+            NSLayoutConstraint.activate([
+                textView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+                textView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
+                textView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+                textView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            ])
+        }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            ScreenshotPreviewOrientation.applyRequested()
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(800))
+                self?.presentDraft()
+            }
+        }
+
+        private func presentDraft() {
+            view.layoutIfNeeded()
+            let anchor = CGRect(x: 40, y: textView.bounds.height - 90, width: 120, height: 22)
+            ReviewCommentInlineDraftPresenter.present(
+                sourceView: textView,
+                anchorRect: anchor,
+                request: ReviewCommentSelectionRequest(
+                    selectedText: "let value = compute(40)",
+                    source: ReviewCommentSourceContext(sessionId: "preview", surface: .fullScreenCode)
+                ),
+                router: ReviewCommentSelectionRouter(
+                    dispatch: { _ in },
+                    inlineSave: { _, _ in true },
+                    inlineQuickComments: [.fix]
+                )
+            )
         }
     }
 }

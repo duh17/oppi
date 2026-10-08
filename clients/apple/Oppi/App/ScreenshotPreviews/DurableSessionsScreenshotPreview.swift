@@ -11,6 +11,9 @@ struct DurableSessionsScreenshotPreview: View {
         case settings
         case sidebar
         case list
+        /// The list with the real Quick Session overlay already open, for
+        /// safe-area and keyboard proof (`SCREENSHOT_SCREEN=quick-session-overlay`).
+        case quickSession
     }
 
     let surface: Surface
@@ -26,14 +29,16 @@ struct DurableSessionsScreenshotPreview: View {
     var body: some View {
         content
             .accessibilityIdentifier("screenshot.ready")
-            // Mirrors ContentView's Quick Session overlay so Start opens the real sheet.
+            // The same overlay ContentView hosts, so Start opens the real sheet.
             .overlay {
                 if navigation.showQuickSession {
-                    ZStack(alignment: .bottom) {
-                        Color.black.opacity(0.34).ignoresSafeArea()
-                        QuickSessionSheet { navigation.showQuickSession = false }
-                    }
+                    QuickSessionOverlay { navigation.showQuickSession = false }
                 }
+            }
+            .task {
+                guard surface == .quickSession else { return }
+                ScreenshotPreviewOrientation.applyRequested()
+                navigation.showQuickSession = true
             }
             .environment(coordinator)
             .environment(coordinator.serverStore)
@@ -50,7 +55,7 @@ struct DurableSessionsScreenshotPreview: View {
             NavigationStack { SettingsView() }
         case .sidebar:
             WorkspaceSidebarView()
-        case .list:
+        case .list, .quickSession:
             NavigationStack { SessionInboxView(scope: .durable) }
         }
     }
