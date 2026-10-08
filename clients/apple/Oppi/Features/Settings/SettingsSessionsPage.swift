@@ -3,8 +3,6 @@ import SwiftUI
 struct SettingsSessionsPage: View {
     @State private var autoTitleProvider = AppPreferences.Session.autoTitleProvider
     @State private var rowDensity = AppPreferences.SessionRows.display.density
-    @AppStorage(AppPreferences.SessionRows.leadingSwipeActionKey)
-    private var leadingSwipeAction: SessionLeadingSwipeAction = .defaultValue
 
     var body: some View {
         List {
@@ -32,20 +30,6 @@ struct SettingsSessionsPage: View {
             } footer: {
                 Text("Choose the details shown on session rows in every session list.")
             }
-
-            Section {
-                Picker("Swipe Right", selection: $leadingSwipeAction) {
-                    ForEach(SessionLeadingSwipeAction.allCases) { action in
-                        Text(action.title).tag(action)
-                    }
-                }
-                .pickerStyle(.menu)
-                .accessibilityIdentifier("settings.sessions.leadingSwipe")
-            } header: {
-                Text("Swipe Actions")
-            } footer: {
-                Text(swipeFooter)
-            }
         }
         .settingsPage("Sessions")
         .onAppear {
@@ -53,16 +37,6 @@ struct SettingsSessionsPage: View {
             autoTitleProvider = AppPreferences.Session.autoTitleProvider
             rowDensity = AppPreferences.SessionRows.display.density
         }
-    }
-
-    /// Footer for the current choice; swipe left is always lifecycle.
-    private var swipeFooter: String {
-        let right: String = switch leadingSwipeAction {
-        case .none: "Swipe right on a session does nothing."
-        case .lock: "Swipe right on a session to lock or unlock it."
-        case .lifecycle: "Swipe right on a session to stop or resume it."
-        }
-        return right + " Swipe left to stop a session, or to resume or delete a stopped one."
     }
 
     private var autoTitleProviderLabel: String {

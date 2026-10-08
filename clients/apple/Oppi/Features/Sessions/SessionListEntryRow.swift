@@ -16,26 +16,6 @@ struct SessionListRowActions {
     let lockTarget: (Session) -> ScopedLockTarget?
 }
 
-/// The one action a swipe to the right shows on every session row
-/// (Settings → Sessions → Swipe Actions). Swipe left stays lifecycle.
-enum SessionLeadingSwipeAction: String, CaseIterable, Identifiable {
-    case none
-    case lock
-    case lifecycle
-
-    static let defaultValue: SessionLeadingSwipeAction = .lock
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .none: String(localized: "None")
-        case .lock: String(localized: "Lock")
-        case .lifecycle: String(localized: "Stop or Resume")
-        }
-    }
-}
-
 /// One session-list entry, drawn the same in All Sessions and workspace lists:
 /// the session row, then its Thread strip or a link to the thread it belongs
 /// to. The row body opens the session's chat and the strip or link opens
@@ -117,16 +97,15 @@ extension View {
 }
 
 /// Long-press menu (Open, Stop/Resume, Lock/Unlock, Copy Session ID, Delete)
-/// and swipes for every session row. Swipe left is lifecycle: full swipe
-/// stops; a stopped row offers Resume and Delete with no full swipe, so a
-/// swipe never starts or deletes a session without a deliberate tap. Swipe
-/// right is the one action chosen in Settings → Sessions → Swipe Actions.
+/// and trailing swipes for every session row. Swipe left is lifecycle: full
+/// swipe stops; a stopped row offers Resume and Delete with no full swipe, so
+/// a swipe never starts or deletes a session without a deliberate tap. There
+/// is no leading swipe: a row's leading-edge drag belongs to the workspace
+/// sidebar, and Lock/Unlock lives only in the long-press menu.
 private struct SessionRowActionsModifier: ViewModifier {
     let session: Session
     let actions: SessionListRowActions
 
-    @AppStorage(AppPreferences.SessionRows.leadingSwipeActionKey)
-    private var leadingAction: SessionLeadingSwipeAction = .defaultValue
     @State private var locks = ScopedLockService.shared
 
     private var lockTarget: ScopedLockTarget? {
@@ -144,7 +123,6 @@ private struct SessionRowActionsModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .contextMenu { menu }
-            .swipeActions(edge: .leading, allowsFullSwipe: leadingAllowsFullSwipe) { leadingSwipe }
             .swipeActions(edge: .trailing, allowsFullSwipe: !isStopped) { trailingSwipe }
     }
 
@@ -163,7 +141,7 @@ private struct SessionRowActionsModifier: ViewModifier {
         } else {
             stopButton(.menu)
         }
-        if let lockScope { lockButton(lockScope, .menu) }
+        if let lockScope { lockButton(lockScope) }
         Button {
             UIPasteboard.general.string = session.id
             AppHaptics.impact(style: .light, intensity: 0.8)
@@ -182,31 +160,6 @@ private struct SessionRowActionsModifier: ViewModifier {
     }
 
     // MARK: Swipes
-
-    private var leadingAllowsFullSwipe: Bool {
-        switch leadingAction {
-        case .none: false
-        case .lock: true
-        // Full swipe may stop, never resume.
-        case .lifecycle: !isStopped
-        }
-    }
-
-    @ViewBuilder
-    private var leadingSwipe: some View {
-        switch leadingAction {
-        case .none:
-            EmptyView()
-        case .lock:
-            if let lockScope { lockButton(lockScope, .swipe) }
-        case .lifecycle:
-            if isStopped {
-                if canResume { resumeButton(.swipe) }
-            } else {
-                stopButton(.swipe)
-            }
-        }
-    }
 
     /// Stop anything not stopped (idle included); Resume or Delete a stopped session.
     @ViewBuilder
@@ -232,10 +185,6 @@ private struct SessionRowActionsModifier: ViewModifier {
     private enum Placement {
         case menu
         case swipe
-
-        func symbol(_ name: String) -> String {
-            self == .swipe ? "\(name).fill" : name
-        }
     }
 
     private func stopButton(_ placement: Placement) -> some View {
@@ -258,24 +207,22 @@ private struct SessionRowActionsModifier: ViewModifier {
         .accessibilityIdentifier("session.resume.\(session.id)")
     }
 
-    /// Lock never asks; Unlock removes the lock and asks for device authentication.
+    /// Menu only. Lock never asks; Unlock removes the lock and asks for device authentication.
     @ViewBuilder
-    private func lockButton(_ scope: ScopedLockScope, _ placement: Placement) -> some View {
+    private func lockButton(_ scope: ScopedLockScope) -> some View {
         if locks.isFlagged(scope) {
             Button {
                 Task { await locks.removeLock(scope) }
             } label: {
-                Label("Unlock", systemImage: placement.symbol("lock.open"))
+                Label("Unlock", systemImage: "lock.open")
             }
-            .swipeTint(.themeComment, placement == .swipe)
             .accessibilityIdentifier("session.unlock.\(session.id)")
         } else {
             Button {
                 locks.lock(scope, workspaceId: lockTarget?.workspaceId)
             } label: {
-                Label("Lock", systemImage: placement.symbol("lock"))
+                Label("Lock", systemImage: "lock")
             }
-            .swipeTint(.themeBlue, placement == .swipe)
             .accessibilityIdentifier("session.lock.\(session.id)")
         }
     }

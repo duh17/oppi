@@ -3,8 +3,8 @@ import SwiftUI
 
 /// Server, workspace, and session locks over an in-memory server: lock badges
 /// on session, workspace, and server rows, locked rows that hide their
-/// details, the shared session menu and swipes, the Lock toggles, and the
-/// Swipe Actions setting. Requests go to an in-process stub that answers 404.
+/// details, the shared session menu and swipes, and the Lock toggles.
+/// Requests go to an in-process stub that answers 404.
 ///
 /// `SCOPED_LOCK_SURFACE`: `inbox` (default), `sidebar`, `app-settings`,
 /// `sessions-settings`, `server-settings`, `workspace-settings`, and
