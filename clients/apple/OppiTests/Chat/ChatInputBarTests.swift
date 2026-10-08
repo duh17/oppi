@@ -722,7 +722,7 @@ struct ChatInputBarTests {
         #expect(capsule.contains("ExtensionNativeSurfaceLayout.expandedMaxHeight"))
         #expect(capsule.contains("ComposerInputMetrics.inlineAskCardMaxHeightWithKeyboard"))
         #expect(!capsule.contains("NativeSurfaceViewportScrollContainer"))
-        #expect(capsule.components(separatedBy: "try askCard(request: askRequest)").count - 1 == 1)
+        #expect(capsule.components(separatedBy: "askCard(request: askRequest)").count - 1 == 1)
         #expect(ExtensionNativeSurfaceLayout.expandedMaxHeight == 260)
         #expect(ComposerInputMetrics.inlineAskCardMaxHeightWithKeyboard == 240)
     }

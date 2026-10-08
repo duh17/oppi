@@ -24,9 +24,9 @@ struct DictationHintWiringTests {
             end: "func stop() async {"
         )
         #expect(body.contains("setContext("))
-        #expect(body.contains("try start(inputSequence:"))
+        #expect(body.contains("start(inputSequence:"))
         let setContext = try #require(body.range(of: "setContext(")?.lowerBound)
-        let start = try #require(body.range(of: "try start(inputSequence:")?.lowerBound)
+        let start = try #require(body.range(of: "start(inputSequence:")?.lowerBound)
         #expect(setContext < start)
     }
 

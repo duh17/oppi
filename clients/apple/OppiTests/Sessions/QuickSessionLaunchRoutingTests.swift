@@ -485,7 +485,7 @@ struct QuickSessionWorktreePickerPolicyTests {
         let sheet = try appleSource("Oppi/Features/QuickSession/QuickSessionSheet.swift")
         let send = try sourceSlice(
             sheet,
-            start: "private func handleSend() throws {",
+            start: "private func handleSend() {",
             end: "let plan: QuickSessionLaunchPlan"
         )
         #expect(send.contains("QuickSessionWorktreePickerPolicy.resolvedWorktreeId("))

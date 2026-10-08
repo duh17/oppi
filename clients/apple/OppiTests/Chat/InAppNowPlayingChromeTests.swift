@@ -768,7 +768,7 @@ struct InAppNowPlayingChromeTests {
         ))
         #expect(header.contains("InAppNowPlayingStopButton"))
         #expect(header.contains("audioLyrics.stop"))
-        #expect(header.contains("if (showsCloseButton || usesNavigationBackButton), let audioPlayer"))
+        #expect(header.contains("if showsCloseButton || usesNavigationBackButton, let audioPlayer"))
         #expect(!header.contains("if let audioPlayer {"))
 
         let presenter = try #require(sourceSlice(
