@@ -207,8 +207,23 @@ describe("sim-pool CLI", () => {
     expect(text).toContain("OPPI_SIM_POOL_SLOT_START");
     expect(text).toContain("clients/apple/scripts/sim-pool.sh");
     expect(text).not.toContain(".pi/agent/skills/oppi-dev/scripts/sim-pool.sh");
+    const directory = tempDir("ipad-diag");
+    const developerDir = join(directory, "Developer");
+    const bin = join(directory, "bin");
+    mkdirSync(developerDir);
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, "xcrun"),
+      "#!/bin/sh\nprintf '%s\\n' '{\"devicetypes\":[{\"name\":\"iPad\",\"identifier\":\"com.apple.CoreSimulator.SimDeviceType.iPad-10th-generation\"}]}'\n",
+      { mode: 0o755 },
+    );
     const result = spawnSync("bash", [join(import.meta.dir, "ipad-shell-diagnostic.sh"), "ensure"], {
       encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        DEVELOPER_DIR: developerDir,
+      },
     });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("unsupported without a pool lease");
@@ -452,16 +467,27 @@ describe("sim-pool CLI", () => {
     const held = tryAcquireSlot({ lockDir: join(root, "locks"), slot: 0, argv: ["run"] });
     expect(held.ok).toBe(true);
     initCheckout(root);
+    const fake = join(root, "fake");
+    const bin = join(root, "bin");
+    const developerDir = join(root, "Developer");
+    mkdirSync(fake, { recursive: true });
+    mkdirSync(developerDir, { recursive: true });
+    mkdirSync(join(root, "home"), { recursive: true });
+    writeFileSync(join(fake, "devices.json"), devicesJson());
+    writeFileSync(join(fake, "runtimes.json"), runtimesJson());
+    writeFakeXcrun(bin, fake);
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ""}`,
       HOME: join(root, "home"),
       OPPI_ROOT: root,
       OPPI_SIM_POOL_LOCK_DIR: join(root, "locks"),
       OPPI_SIM_POOL_COUNT: "1",
       OPPI_SIM_POOL_WAIT: "0",
       OPPI_SIM_SLIM: "0",
+      DEVELOPER_DIR: developerDir,
+      OPPI_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-18-5",
     };
-    mkdirSync(join(root, "home"), { recursive: true });
     const result = spawnSync("bun", [cli, "run", "--", "xcodebuild", "build"], {
       cwd: join(root, "clients", "apple"),
       env,

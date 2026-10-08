@@ -440,14 +440,8 @@ export function useReleaseXcodeToolchain(env: NodeJS.ProcessEnv): string {
 }
 
 export function readXcodeVersion(env: NodeJS.ProcessEnv): string {
-  const developerDir = env.DEVELOPER_DIR;
-  if (!developerDir) {
-    throw new Error(
-      "DEVELOPER_DIR is unset; call useReleaseXcodeToolchain first",
-    );
-  }
   const result = spawnSync("xcodebuild", ["-version"], {
-    env: { ...process.env, DEVELOPER_DIR: developerDir },
+    env,
     encoding: "utf8",
   });
   if (result.error) {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   chmodSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -78,16 +79,22 @@ describe("TestFlight release policy", () => {
 
   test("propagates a nonzero xcodebuild exit", async () => {
     const directory = mkdtempSync("/tmp/oppi-xcodebuild-test-");
+    const developerDir = resolve(directory, "Developer");
+    mkdirSync(developerDir);
     const executable = resolve(directory, "xcodebuild-fail");
     const log = resolve(directory, "xcodebuild.log");
     writeFileSync(executable, "#!/bin/sh\necho archive failed >&2\nexit 42\n");
     chmodSync(executable, 0o755);
+    const previous = process.env.DEVELOPER_DIR;
+    process.env.DEVELOPER_DIR = developerDir;
     try {
       await expect(
         runXcodebuild(["archive"], log, 10, executable),
       ).rejects.toThrow("xcodebuild failed with exit code 42");
       expect(readFileSync(log, "utf8")).toContain("archive failed");
     } finally {
+      if (previous === undefined) delete process.env.DEVELOPER_DIR;
+      else process.env.DEVELOPER_DIR = previous;
       rmSync(directory, { recursive: true, force: true });
     }
   });
