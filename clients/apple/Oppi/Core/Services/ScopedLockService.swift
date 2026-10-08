@@ -278,7 +278,6 @@ final class ScopedLockService {
         hasOpenUnlock && !isAuthenticating && !appLock.isAuthenticating
     }
 
-
     // MARK: - Gates
 
     /// Device authentication for `target` unless it is already reachable.

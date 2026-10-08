@@ -478,8 +478,9 @@ struct ChatReaderDestinationView: View {
                 isAuthenticating: false,
                 actionTitle: String(localized: "Close"),
                 actionSystemImage: "xmark",
-                onUnlock: { dismiss() }
-            ) { EmptyView() }
+                onUnlock: { dismiss() },
+                accessory: { EmptyView() }
+            )
         } else {
             ScopedLockGate(target: payload?.lockOrigin, title: String(localized: "Reader")) {
                 readerPage(for: target)
