@@ -381,7 +381,9 @@ struct WorkspaceFileBrowserDestinationView: View {
                 FileBrowserView(
                     serverId: targetServerId,
                     scope: target.scope,
-                    initialPath: target.path
+                    initialPath: target.path,
+                    restoredColumnDirectory: target.columnDirectoryPath,
+                    restoredSelectedFile: target.columnSelectedFile
                 )
                 .withServerScopedEnvironment(connection)
             } else {

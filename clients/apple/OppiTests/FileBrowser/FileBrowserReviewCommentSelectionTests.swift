@@ -58,6 +58,57 @@ struct FileBrowserReviewCommentSelectionTests {
         #expect(timelineActionTitles(in: menu) == ["Comment", "Copy"])
     }
 
+    @Test func foldedColumnBackStaysInsideTheFileBrowser() {
+        let selected = FileBrowserSelection(path: "src/App.swift", name: "App.swift", size: 12)
+
+        #expect(
+            FileBrowserTreeNavigationReducer.usesInPlaceDirectoryNavigation(
+                showsColumn: false,
+                treeDirectoryPathIsSet: true,
+                usesInlineCompactNavigation: false
+            )
+        )
+        #expect(
+            FileBrowserTreeNavigationReducer.usesInPlaceDirectoryNavigation(
+                showsColumn: false,
+                treeDirectoryPathIsSet: false,
+                usesInlineCompactNavigation: false
+            ) == false
+        )
+        #expect(
+            FileBrowserTreeNavigationReducer.columnBackAction(
+                selectedFile: selected,
+                treeDirectoryPath: "src/components/",
+                initialPath: "",
+                currentDirectoryPath: "src/components/"
+            ) == .clearSelectedFile
+        )
+        #expect(
+            FileBrowserTreeNavigationReducer.columnBackAction(
+                selectedFile: nil,
+                treeDirectoryPath: "src/components/",
+                initialPath: "",
+                currentDirectoryPath: "src/components/"
+            ) == .popToDirectory("src/")
+        )
+        #expect(
+            FileBrowserTreeNavigationReducer.columnBackAction(
+                selectedFile: nil,
+                treeDirectoryPath: "",
+                initialPath: "",
+                currentDirectoryPath: ""
+            ) == .useStackBack
+        )
+        #expect(
+            FileBrowserTreeNavigationReducer.columnBackAction(
+                selectedFile: nil,
+                treeDirectoryPath: nil,
+                initialPath: "",
+                currentDirectoryPath: "src/"
+            ) == .useStackBack
+        )
+    }
+
     @Test func treeDirectoryNavigationClearsSelectedFile() {
         let selected = FileBrowserSelection(path: "Sources/App.swift", name: "App.swift", size: 42)
 

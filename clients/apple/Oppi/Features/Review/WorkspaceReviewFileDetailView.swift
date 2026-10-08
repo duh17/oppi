@@ -89,6 +89,10 @@ struct WorkspaceReviewFileDetailView: View {
     var reviewCommentSelectionScopeOverride: ReviewCommentSelectionScope? = nil
     var navigationFiles: [WorkspaceReviewFile] = []
     var allowsHorizontalBackSwipe = true
+    /// Session-file pushes already sit in chat's trailing inspector. The list
+    /// stays on the adjacent-file controls there. Sheets and the screenshot
+    /// host keep the column.
+    var showsFileListInspector = true
 
     @Environment(\.apiClient) private var apiClient
     @Environment(\.dismiss) private var dismiss
@@ -318,7 +322,8 @@ struct WorkspaceReviewFileDetailView: View {
     }
 
     private var usesReviewFileColumn: Bool {
-        TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: horizontalSizeClass)
+        showsFileListInspector
+            && TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: horizontalSizeClass)
             && WorkspaceReviewFileNavigationPolicy.navigationFiles(navigationFiles).count > 1
     }
 
@@ -333,7 +338,14 @@ struct WorkspaceReviewFileDetailView: View {
 
     private var reviewFileListColumn: some View {
         let files = WorkspaceReviewFileNavigationPolicy.navigationFiles(navigationFiles)
-        return List(files) { file in
+        return NavigationStack {
+            reviewFileList(files)
+        }
+        .inspectorColumnWidth(min: 240, ideal: 300, max: 420)
+    }
+
+    private func reviewFileList(_ files: [WorkspaceReviewFile]) -> some View {
+        List(files) { file in
             Button {
                 selectReviewFile(file)
             } label: {
@@ -352,7 +364,6 @@ struct WorkspaceReviewFileDetailView: View {
         }
         .navigationTitle("Files")
         .accessibilityIdentifier("review-file.list")
-        .inspectorColumnWidth(min: 240, ideal: 300, max: 420)
     }
 
     private var launchErrorPresented: Binding<Bool> {

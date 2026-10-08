@@ -50,11 +50,34 @@ struct FileBrowserNavTarget: Hashable {
     let serverId: String
     let scope: FileBrowserScope
     let path: String
+    /// Column folder written while this destination is open. Identity stays
+    /// `path`, so updating it does not remount the browser. A stack/split
+    /// swap reads it back.
+    var columnDirectoryPath: String?
+    var columnSelectedFile: FileBrowserSelection?
 
-    init(serverId: String, scope: FileBrowserScope, path: String) {
+    init(
+        serverId: String,
+        scope: FileBrowserScope,
+        path: String,
+        columnDirectoryPath: String? = nil,
+        columnSelectedFile: FileBrowserSelection? = nil
+    ) {
         self.serverId = serverId
         self.scope = scope
         self.path = path
+        self.columnDirectoryPath = columnDirectoryPath
+        self.columnSelectedFile = columnSelectedFile
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.serverId == rhs.serverId && lhs.scope == rhs.scope && lhs.path == rhs.path
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(serverId)
+        hasher.combine(scope)
+        hasher.combine(path)
     }
 
     init(serverId: String, workspaceId: String, worktreeId: String? = nil, path: String) {
@@ -170,6 +193,12 @@ struct FileBrowserTreeNavigationMutation: Equatable {
     let selectedFile: FileBrowserSelection?
 }
 
+enum FileBrowserColumnBackAction: Equatable {
+    case clearSelectedFile
+    case popToDirectory(String)
+    case useStackBack
+}
+
 enum FileBrowserTreeNavigationReducer {
     static func openDirectory(path: String, selectedFile: FileBrowserSelection?) -> FileBrowserTreeNavigationMutation {
         FileBrowserTreeNavigationMutation(treeDirectoryPath: path, selectedFile: nil)
@@ -177,6 +206,43 @@ enum FileBrowserTreeNavigationReducer {
 
     static func popToBreadcrumb(path: String, selectedFile: FileBrowserSelection?) -> FileBrowserTreeNavigationMutation {
         FileBrowserTreeNavigationMutation(treeDirectoryPath: path, selectedFile: nil)
+    }
+
+    /// Column drills stay in this destination after a fold. A compact drill
+    /// that never set `treeDirectoryPath` still pushes the workspace stack.
+    static func usesInPlaceDirectoryNavigation(
+        showsColumn: Bool,
+        treeDirectoryPathIsSet: Bool,
+        usesInlineCompactNavigation: Bool
+    ) -> Bool {
+        showsColumn || treeDirectoryPathIsSet || usesInlineCompactNavigation
+    }
+
+    static func columnBackAction(
+        selectedFile: FileBrowserSelection?,
+        treeDirectoryPath: String?,
+        initialPath: String,
+        currentDirectoryPath: String
+    ) -> FileBrowserColumnBackAction {
+        if selectedFile != nil { return .clearSelectedFile }
+        guard treeDirectoryPath != nil else { return .useStackBack }
+        guard directoryDepth(currentDirectoryPath) > directoryDepth(initialPath) else {
+            return .useStackBack
+        }
+        return .popToDirectory(parentDirectory(of: currentDirectoryPath))
+    }
+
+    static func directoryDepth(_ path: String) -> Int {
+        let trimmed = path.hasSuffix("/") ? String(path.dropLast()) : path
+        if trimmed.isEmpty { return 0 }
+        return trimmed.split(separator: "/").count
+    }
+
+    static func parentDirectory(of path: String) -> String {
+        let trimmed = path.hasSuffix("/") ? String(path.dropLast()) : path
+        let parts = trimmed.split(separator: "/").dropLast()
+        if parts.isEmpty { return "" }
+        return parts.joined(separator: "/") + "/"
     }
 
     /// Workspace-linked file destinations are registered only on the workspace stack.
@@ -236,13 +302,17 @@ struct FileBrowserView: View {
         scope: FileBrowserScope,
         initialPath: String,
         layoutMode: FileBrowserLayoutMode = .adaptive,
-        opensFirstFileForPreview: Bool = false
+        opensFirstFileForPreview: Bool = false,
+        restoredColumnDirectory: String? = nil,
+        restoredSelectedFile: FileBrowserSelection? = nil
     ) {
         self.serverId = serverId
         self.scope = scope
         self.initialPath = initialPath
         self.layoutMode = layoutMode
         self.opensFirstFileForPreview = opensFirstFileForPreview
+        _treeDirectoryPath = State(initialValue: restoredColumnDirectory)
+        _selectedFile = State(initialValue: restoredSelectedFile)
     }
 
     init(
@@ -251,14 +321,18 @@ struct FileBrowserView: View {
         worktreeId: String? = nil,
         initialPath: String,
         layoutMode: FileBrowserLayoutMode = .adaptive,
-        opensFirstFileForPreview: Bool = false
+        opensFirstFileForPreview: Bool = false,
+        restoredColumnDirectory: String? = nil,
+        restoredSelectedFile: FileBrowserSelection? = nil
     ) {
         self.init(
             serverId: serverId,
             scope: .workspace(workspaceId: workspaceId, worktreeId: worktreeId),
             initialPath: initialPath,
             layoutMode: layoutMode,
-            opensFirstFileForPreview: opensFirstFileForPreview
+            opensFirstFileForPreview: opensFirstFileForPreview,
+            restoredColumnDirectory: restoredColumnDirectory,
+            restoredSelectedFile: restoredSelectedFile
         )
     }
 
@@ -311,8 +385,8 @@ struct FileBrowserView: View {
     @State private var fuzzyResults: [FuzzyMatch.ScoredPath] = []
     @State private var selectedFile: FileBrowserSelection?
     @State private var markdownViewportRestore = FullScreenMarkdownViewportRestoreState()
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var treeDirectoryPath: String?
+    @State private var didRecordColumnRoute = false
 
     private var currentDirectoryPath: String {
         treeDirectoryPath ?? initialPath
@@ -382,8 +456,9 @@ struct FileBrowserView: View {
             }
         }
         .fileBrowserSearchable(isEnabled: !showsFileColumn && selectedFile == nil && !isHostHome, text: $searchText)
-        .navigationTitle(isRoot ? breadcrumbRootLabel : lastPathComponent)
+        .navigationTitle(destinationNavigationTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(replacesStackBackButton)
         .toolbar {
             if shouldShowInlineDirectoryBackButton {
                 ToolbarItem(placement: .topBarLeading) {
@@ -392,8 +467,17 @@ struct FileBrowserView: View {
                     }
                     .accessibilityIdentifier("fileBrowser.inlineBack")
                 }
+            } else if replacesStackBackButton {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: performColumnBack) {
+                        Label("Back", systemImage: "chevron.left")
+                    }
+                    .accessibilityIdentifier("fileBrowser.columnBack")
+                }
             }
         }
+        .onChange(of: treeDirectoryPath) { _, _ in recordColumnRoute() }
+        .onChange(of: selectedFile) { _, _ in recordColumnRoute() }
         .onChange(of: initialPath) { _, _ in
             treeDirectoryPath = nil
             selectedFile = nil
@@ -430,21 +514,76 @@ struct FileBrowserView: View {
     }
 
     private var columnBrowser: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            fileTreeSidebar
-        } detail: {
+        HStack(spacing: 0) {
+            fileTreeColumn
+                .frame(minWidth: 280, idealWidth: 340, maxWidth: 480)
+            Divider()
+                .overlay(.themeComment.opacity(0.18))
             selectedFileContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationSplitViewStyle(.balanced)
+        .background(.themeBg)
     }
 
-    private var fileTreeSidebar: some View {
-        fileTreeBody
-            .navigationTitle(isRoot ? breadcrumbRootLabel : lastPathComponent)
-            .navigationBarTitleDisplayMode(.inline)
-            .fileBrowserSearchable(isEnabled: !isHostHome, text: $searchText)
-            .accessibilityIdentifier("fileBrowser.tree")
-            .navigationSplitViewColumnWidth(min: 280, ideal: 340, max: 480)
+    private var fileTreeColumn: some View {
+        VStack(spacing: 0) {
+            if !isHostHome {
+                fileTreeColumnSearch
+            }
+            fileTreeBody
+        }
+        .accessibilityIdentifier("fileBrowser.tree")
+    }
+
+    private var fileTreeColumnSearch: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.themeComment)
+            TextField("Search files", text: $searchText)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.themeComment)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear file search")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    /// One bar for this destination: the open file, otherwise the folder.
+    private var destinationNavigationTitle: String {
+        if let selectedFile { return selectedFile.name }
+        return isRoot ? breadcrumbRootLabel : lastPathComponent
+    }
+
+    private var replacesStackBackButton: Bool {
+        guard !usesInlineCompactDirectoryNavigation else { return false }
+        if case .useStackBack = columnBackAction { return false }
+        return true
+    }
+
+    private var columnBackAction: FileBrowserColumnBackAction {
+        FileBrowserTreeNavigationReducer.columnBackAction(
+            selectedFile: selectedFile,
+            treeDirectoryPath: treeDirectoryPath,
+            initialPath: initialPath,
+            currentDirectoryPath: currentDirectoryPath
+        )
+    }
+
+    private var usesInPlaceDirectoryNavigation: Bool {
+        FileBrowserTreeNavigationReducer.usesInPlaceDirectoryNavigation(
+            showsColumn: showsFileColumn,
+            treeDirectoryPathIsSet: treeDirectoryPath != nil,
+            usesInlineCompactNavigation: usesInlineCompactDirectoryNavigation
+        )
     }
 
     @ViewBuilder
@@ -1000,8 +1139,39 @@ struct FileBrowserView: View {
         popToBreadcrumbDepth(max(0, currentDepth - 1))
     }
 
+    private func performColumnBack() {
+        switch columnBackAction {
+        case .clearSelectedFile:
+            clearSelectedFileForBackNavigation()
+        case .popToDirectory(let path):
+            let mutation = FileBrowserTreeNavigationReducer.popToBreadcrumb(
+                path: path,
+                selectedFile: selectedFile
+            )
+            treeDirectoryPath = mutation.treeDirectoryPath
+            selectedFile = mutation.selectedFile
+            error = nil
+            listing = nil
+        case .useStackBack:
+            break
+        }
+    }
+
+    private func recordColumnRoute() {
+        guard layoutMode == .adaptive, let serverId else { return }
+        guard didRecordColumnRoute || treeDirectoryPath != nil || selectedFile != nil else { return }
+        didRecordColumnRoute = true
+        navigation.recordFileBrowserColumn(
+            serverId: serverId,
+            scope: scope,
+            routePath: initialPath,
+            directoryPath: currentDirectoryPath,
+            selectedFile: selectedFile
+        )
+    }
+
     private func openDirectory(path: String) {
-        guard !showsFileColumn && !usesInlineCompactDirectoryNavigation else {
+        guard !usesInPlaceDirectoryNavigation else {
             let mutation = FileBrowserTreeNavigationReducer.openDirectory(
                 path: path,
                 selectedFile: selectedFile
@@ -1061,7 +1231,7 @@ struct FileBrowserView: View {
         let popCount = currentDepth - targetDepth
         guard popCount > 0 else { return }
 
-        guard !showsFileColumn && !usesInlineCompactDirectoryNavigation else {
+        guard !usesInPlaceDirectoryNavigation else {
             let mutation = FileBrowserTreeNavigationReducer.popToBreadcrumb(
                 path: breadcrumbPath(for: targetDepth),
                 selectedFile: selectedFile

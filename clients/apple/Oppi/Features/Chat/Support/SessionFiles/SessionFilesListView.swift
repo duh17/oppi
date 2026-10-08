@@ -273,7 +273,8 @@ struct SessionFilesListView: View {
             worktreeId: worktreeId,
             serverId: serverId,
             reviewCommentSelectionScopeOverride: makeFileDetailReviewCommentScope(),
-            navigationFiles: navigationFiles
+            navigationFiles: navigationFiles,
+            showsFileListInspector: false
         )
     }
 

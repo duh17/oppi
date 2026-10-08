@@ -737,6 +737,45 @@ final class AppNavigation {
         }
     }
 
+    /// Keeps a column drill on the file-browser route so a stack/split swap
+    /// rebuilds that folder and file. Identity stays the original path.
+    func recordFileBrowserColumn(
+        serverId: String,
+        scope: FileBrowserScope,
+        routePath: String,
+        directoryPath: String,
+        selectedFile: FileBrowserSelection?
+    ) {
+        func matches(_ target: FileBrowserNavTarget) -> Bool {
+            target.serverId == serverId && target.scope == scope && target.path == routePath
+        }
+        func updated(_ target: FileBrowserNavTarget) -> FileBrowserNavTarget {
+            var copy = target
+            copy.columnDirectoryPath = directoryPath
+            copy.columnSelectedFile = selectedFile
+            return copy
+        }
+
+        switch workspaceNavigationPresentation {
+        case .stack:
+            guard let index = workspaceStackRouteElements.lastIndex(where: { element in
+                if case .fileBrowser(let target) = element { return matches(target) }
+                return false
+            }), case .fileBrowser(let target) = workspaceStackRouteElements[index] else { return }
+            workspaceStackRouteElements[index] = .fileBrowser(updated(target))
+        case .split:
+            if case .fileBrowser(let target) = splitDetailTarget, matches(target) {
+                splitDetailTarget = .fileBrowser(updated(target))
+            }
+            if let index = splitDetailPathElements.lastIndex(where: { element in
+                if case .fileBrowser(let target) = element { return matches(target) }
+                return false
+            }), case .fileBrowser(let target) = splitDetailPathElements[index] {
+                splitDetailPathElements[index] = .fileBrowser(updated(target))
+            }
+        }
+    }
+
     func openWorkspaceFileBrowser(_ target: FileBrowserNavTarget, workspace: WorkspaceNavTarget? = nil) {
         if case .workspace(let workspaceId, _) = target.scope {
             guard scopedLockAllows(.workspace(serverId: target.serverId, workspaceId: workspaceId), retry: {

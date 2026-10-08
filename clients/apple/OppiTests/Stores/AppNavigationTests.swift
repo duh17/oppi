@@ -947,6 +947,34 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.splitColumnVisibility == .detailOnly)
     }
 
+    @Test func columnDrillSurvivesStackToSplitSwap() {
+        let navigation = AppNavigation()
+        let workspaceTarget = WorkspaceNavTarget(
+            serverId: "server-1",
+            workspace: makeTestWorkspace(id: "workspace-1")
+        )
+        let rootTarget = FileBrowserNavTarget(serverId: "server-1", workspaceId: "workspace-1", path: "")
+        let selected = FileBrowserSelection(path: "src/App.swift", name: "App.swift", size: 4)
+        navigation.openWorkspaceFileBrowser(rootTarget, workspace: workspaceTarget)
+        navigation.recordFileBrowserColumn(
+            serverId: "server-1",
+            scope: .workspace(workspaceId: "workspace-1", worktreeId: nil),
+            routePath: "",
+            directoryPath: "src/",
+            selectedFile: selected
+        )
+
+        navigation.setWorkspaceNavigationPresentation(.split)
+
+        guard case .fileBrowser(let restored) = navigation.splitDetailTarget else {
+            Issue.record("file browser was not restored")
+            return
+        }
+        #expect(restored.path == "")
+        #expect(restored.columnDirectoryPath == "src/")
+        #expect(restored.columnSelectedFile == selected)
+    }
+
     @Test func linkedFileUsesDedicatedDestinationInSplitPresentation() {
         let navigation = AppNavigation()
         let workspaceTarget = WorkspaceNavTarget(serverId: "server-1", workspace: makeTestWorkspace(id: "workspace-1"))
