@@ -103,7 +103,8 @@ struct ServerSettingsRootView: View {
             verticalRailToolbarItem(joinsVerticalRail: verticalBarActive) {
                 HostSwitcherMenu(
                     current: pairedServer,
-                    destination: .serverSettings
+                    destination: .serverSettings,
+                    fitsVerticalRail: verticalBarActive
                 )
             }
         }

@@ -129,6 +129,9 @@ struct ChatView: View {
     @State private var sharePreflightTask: Task<Void, Never>?
 
     @State private var showContextInspector = false
+    /// Duo side rail. Chat controls join it and auxiliary panels slide in
+    /// from the trailing edge instead of rising as sheets.
+    @State private var verticalBarActive = false
     @State private var isKeyboardVisible = false
     @State private var footerHeight: CGFloat = 0
     @State private var timelineChromeFrame: CGRect = .zero
@@ -816,12 +819,13 @@ struct ChatView: View {
 
     private var chatPresentationContent: some View {
         configuredChatContent
+            .inspector(isPresented: sidePanelPresented) { chatSidePanel }
             .chatAuxiliaryPresentation(
-                isPresented: $showOutline,
+                isPresented: usesTrailingSidePanel ? .constant(false) : $showOutline,
                 prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
             ) { outlineSheet }
             .chatAuxiliaryPresentation(
-                isPresented: $isFilePanelVisible,
+                isPresented: usesTrailingSidePanel ? .constant(false) : $isFilePanelVisible,
                 prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
             ) { filePanelSheet }
             .sheet(isPresented: $showModelPicker) { modelPickerSheet }
@@ -829,7 +833,7 @@ struct ChatView: View {
                 reviewCommentStashSheet(presentation)
             }
             .chatAuxiliaryPresentation(
-                isPresented: $showContextInspector,
+                isPresented: usesTrailingSidePanel ? .constant(false) : $showContextInspector,
                 prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
             ) { contextInspectorSheet }
             .chatAuxiliaryPresentation(
@@ -1063,24 +1067,145 @@ struct ChatView: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    chatLeadingToolbarItem
-                }
+                if verticalBarActive {
+                    chatRailToolbarContent
+                } else {
+                    ToolbarItem(placement: .topBarLeading) {
+                        chatLeadingToolbarItem
+                    }
 
-                ToolbarItem(placement: .principal) {
-                    chatPrincipalToolbarItem
-                }
+                    ToolbarItem(placement: .principal) {
+                        chatPrincipalToolbarItem
+                    }
 
-                ToolbarItem(placement: .topBarTrailing) {
-                    chatTrailingToolbarItem
+                    ToolbarItem(placement: .topBarTrailing) {
+                        chatTrailingToolbarItem
+                    }
                 }
             }
+            .readVerticalBarActivity($verticalBarActive)
+    }
+
+    /// One control per rail slot, top to bottom: back, session, files,
+    /// outline, context. The title text has no room on the rail, so the
+    /// session slot is the avatar and carries the title's menu actions.
+    @ToolbarContentBuilder
+    private var chatRailToolbarContent: some ToolbarContent {
+        if usesCustomChatBackButton {
+            verticalRailToolbarItem(joinsVerticalRail: true) {
+                chatBackButton
+            }
+        }
+        verticalRailToolbarItem(joinsVerticalRail: true) {
+            chatRailSessionMenu
+        }
+        if session?.workspaceId != nil {
+            verticalRailToolbarItem(joinsVerticalRail: true) {
+                chatFilesToolbarItem
+            }
+        }
+        if outlineAvailability.isAvailable {
+            verticalRailToolbarItem(joinsVerticalRail: true) {
+                chatOutlineButton
+            }
+        }
+        verticalRailToolbarItem(joinsVerticalRail: true) {
+            contextRingButton
+        }
+    }
+
+    private var chatRailSessionMenu: some View {
+        Menu {
+            Section(sessionDisplayName) {
+                Button("Rename", systemImage: "pencil") {
+                    renameText = session?.name ?? ""
+                    showRenameAlert = true
+                }
+                Button("Copy Session ID", systemImage: "doc.on.doc") {
+                    copySessionID()
+                }
+                Button("Share Session", systemImage: "square.and.arrow.up") {
+                    shareSessionFromTitleMenu()
+                }
+                .disabled(!hasShareSlashCommand)
+            }
+        } label: {
+            switch assistantIdentityPresentation {
+            case .agent:
+                AgentIconView(
+                    value: session?.launch?.agentIcon,
+                    size: AgentIconSizingPolicy.titleTextMinimum,
+                    isDecorative: true,
+                    renderStyle: .chatTitle
+                )
+            case .globalAvatar:
+                PiAvatarView(size: 22)
+            }
+        }
+        .accessibilityLabel("Session")
+        .accessibilityValue(sessionDisplayName)
+        .accessibilityIdentifier("chat.rail.session")
+    }
+
+    /// At most one side panel at a time; the newest request wins.
+    private enum ChatSidePanel {
+        case files, outline, context
+    }
+
+    /// The column needs regular width. On a narrow rail screen (the Duo's
+    /// cover display) the inspector would become a sheet, so the existing
+    /// sheets stay in charge there.
+    private var usesTrailingSidePanel: Bool {
+        verticalBarActive && horizontalSizeClass == .regular
+    }
+
+    /// Content follows the panel flags alone. Gating it on the rail too can
+    /// leave a presented column empty while the rail trait settles.
+    private var activeSidePanel: ChatSidePanel? {
+        if isFilePanelVisible { return .files }
+        if showOutline { return .outline }
+        if showContextInspector { return .context }
+        return nil
+    }
+
+    private var sidePanelPresented: Binding<Bool> {
+        Binding(
+            get: { usesTrailingSidePanel && activeSidePanel != nil },
+            set: { presented in
+                guard !presented else { return }
+                isFilePanelVisible = false
+                showOutline = false
+                showContextInspector = false
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var chatSidePanel: some View {
+        Group {
+            switch activeSidePanel {
+            case .files: filePanelSheet
+            case .outline: outlineSheet
+            case .context: contextInspectorSheet
+            case nil: EmptyView()
+            }
+        }
+        .inspectorColumnWidth(min: 320, ideal: 400, max: 520)
+    }
+
+    /// Rail buttons stay visible beside an open panel, so they switch panels.
+    private func showSidePanel(_ panel: ChatSidePanel?) {
+        isFilePanelVisible = panel == .files
+        showOutline = panel == .outline
+        showContextInspector = panel == .context
     }
 
     private var configuredChatNavigationContent: some View {
         chatTimelineScaffold
             .themedScrollSurface()
-            .navigationTitle(sessionDisplayName)
+            // On the side rail the system draws the title as its own strip
+            // above the timeline. The rail session menu carries the name.
+            .navigationTitle(verticalBarActive ? "" : sessionDisplayName)
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarBackButtonHidden(usesCustomChatBackButton)
             .navigationDestination(item: $forkedSessionToOpen) { route in
@@ -1368,6 +1493,7 @@ struct ChatView: View {
         ])
         if isFilePanelVisible {
             showOutline = false
+            showContextInspector = false
         }
     }
 
@@ -1384,20 +1510,24 @@ struct ChatView: View {
     private var chatLeadingToolbarItem: some View {
         HStack(spacing: 10) {
             if usesCustomChatBackButton {
-                Button(action: navigateBackFromChat) {
-                    Image(systemName: "chevron.left")
-                        .font(.headline.weight(.semibold))
-                        .frame(width: 36, height: 36)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Back")
-                .accessibilityIdentifier("chat.toolbar.back")
+                chatBackButton
             }
 
             chatFilesToolbarItem
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private var chatBackButton: some View {
+        Button(action: navigateBackFromChat) {
+            Image(systemName: "chevron.left")
+                .font(.headline.weight(.semibold))
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Back")
+        .accessibilityIdentifier("chat.toolbar.back")
     }
 
     private func navigateBackFromChat() {
@@ -1471,25 +1601,40 @@ struct ChatView: View {
             // rebuild ChatView and `updateUIView`. The UIKit clock publishes
             // this boolean on empty/nonempty transitions and session bind.
             if outlineAvailability.isAvailable {
-                Button { showOutline = true } label: {
-                    Image(systemName: "list.bullet")
-                        .font(.subheadline)
-                        .frame(width: 36, height: 36)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Open session outline")
-                .accessibilityIdentifier("chat.toolbar.outline")
+                chatOutlineButton
             }
 
             contextRingButton
         }
     }
 
+    private var chatOutlineButton: some View {
+        Button {
+            if usesTrailingSidePanel {
+                showSidePanel(showOutline ? nil : .outline)
+            } else {
+                showOutline = true
+            }
+        } label: {
+            Image(systemName: "list.bullet")
+                .font(.subheadline)
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(usesTrailingSidePanel && showOutline ? .themeBlue : .themeFg)
+        .accessibilityLabel("Open session outline")
+        .accessibilityIdentifier("chat.toolbar.outline")
+    }
+
     private var contextRingButton: some View {
         Button {
             AppHaptics.toolbarExpansion()
-            showContextInspector = true
+            if usesTrailingSidePanel {
+                showSidePanel(showContextInspector ? nil : .context)
+            } else {
+                showContextInspector = true
+            }
         } label: {
             ContextUsageRingBadge(
                 usage: contextUsageSnapshot
@@ -2636,7 +2781,8 @@ struct ChatView: View {
                     sessionId: sessionId
                 )
             },
-            toolDetails: { reducer.toolDetailsStore.details(for: $0) }
+            toolDetails: { reducer.toolDetailsStore.details(for: $0) },
+            onClose: { showOutline = false }
         )
     }
 

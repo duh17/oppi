@@ -78,7 +78,8 @@ struct ServerView: View {
                 verticalRailToolbarItem(joinsVerticalRail: verticalBarActive) {
                     HostSwitcherMenu(
                         current: selectedServer,
-                        destination: .usage
+                        destination: .usage,
+                        fitsVerticalRail: verticalBarActive
                     )
                 }
             }

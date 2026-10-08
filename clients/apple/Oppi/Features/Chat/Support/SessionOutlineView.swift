@@ -28,6 +28,8 @@ struct SessionOutlineView: View {
     var initialOutlineSnapshot: SessionOutlineSnapshot? = nil
     var loadOutline: (() async throws -> SessionOutlineSnapshot)? = nil
     var toolDetails: (String) -> JSONValue? = { _ in nil }
+    /// Side-panel hosts close through state. `dismiss` there would pop the chat.
+    var onClose: (() -> Void)?
 
     @Environment(ToolArgsStore.self) private var toolArgsStore
     @Environment(\.dismiss) private var dismiss
@@ -69,6 +71,14 @@ struct SessionOutlineView: View {
 
     @State private var searchDebounceTask: Task<Void, Never>?
 
+    private func close() {
+        if let onClose {
+            onClose()
+        } else {
+            dismiss()
+        }
+    }
+
     enum OutlineLayout: String, CaseIterable {
         case timeline = "Timeline"
         case tree = "Tree"
@@ -103,7 +113,7 @@ struct SessionOutlineView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done") { close() }
                 }
             }
             .task {
@@ -582,7 +592,7 @@ struct SessionOutlineView: View {
 
         guard onNavigateTreeNode != nil else {
             onSelect(nodeId)
-            dismiss()
+            close()
             return
         }
 
@@ -636,7 +646,7 @@ struct SessionOutlineView: View {
 
         guard let onNavigateTreeNode else {
             onSelect(request.targetId)
-            dismiss()
+            close()
             return
         }
 
@@ -649,7 +659,7 @@ struct SessionOutlineView: View {
             do {
                 try await onNavigateTreeNode(request)
                 guard !Task.isCancelled else { return }
-                dismiss()
+                close()
             } catch {
                 guard !Task.isCancelled else { return }
                 treeNavigateErrorMessage = error.localizedDescription
@@ -823,7 +833,7 @@ struct SessionOutlineView: View {
                         let entry = displayedEntries[index]
                         Button {
                             onSelect(entry.id)
-                            dismiss()
+                            close()
                         } label: {
                             OutlineRow(
                                 item: entry.item,
@@ -846,7 +856,7 @@ struct SessionOutlineView: View {
                             if let onFork, entry.isForkable {
                                 Button("Fork from here", systemImage: "arrow.triangle.branch") {
                                     onFork(entry.id)
-                                    dismiss()
+                                    close()
                                 }
                             }
                         }
@@ -992,7 +1002,7 @@ struct SessionOutlineView: View {
                                    UUID(uuidString: node.id) == nil {
                                     Button("Fork from here", systemImage: "arrow.triangle.branch") {
                                         onFork(node.id)
-                                        dismiss()
+                                        close()
                                     }
                                 }
                             }

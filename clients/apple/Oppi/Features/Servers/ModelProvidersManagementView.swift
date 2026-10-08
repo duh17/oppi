@@ -294,7 +294,8 @@ struct ModelProvidersManagementView: View {
             verticalRailToolbarItem(joinsVerticalRail: verticalBarActive) {
                 HostSwitcherMenu(
                     current: pairedServer,
-                    destination: .modelProviders
+                    destination: .modelProviders,
+                    fitsVerticalRail: verticalBarActive
                 )
             }
         }
