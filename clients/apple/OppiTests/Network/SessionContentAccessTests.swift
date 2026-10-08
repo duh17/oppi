@@ -138,7 +138,7 @@ struct SessionContentAccessTests {
     }
 
     @Test("Cancelling a waiting request throws cancellation and never sends a request")
-    func cancellationWhileWaitingSendsNothing() async {
+    func cancellationWhileWaitingSendsNothing() async throws {
         let polls = PollCounter()
         let cancelHandle = TaskHandle()
         let client = try makeClient(host: "server-a.test")

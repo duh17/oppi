@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Chat file browser panel")
 struct ChatFileBrowserPanelTests {
-    @Test func tabStoreDefaultsToChangedWhenSessionHasNoPreference() {
+    @Test func tabStoreDefaultsToChangedWhenSessionHasNoPreference() throws {
         let fixture = try makeDefaults()
         defer { fixture.cleanup() }
         let store = ChatFileBrowserPanelTabStore(defaults: fixture.defaults)
@@ -12,7 +12,7 @@ struct ChatFileBrowserPanelTests {
         #expect(store.tab(for: "session-1") == .changed)
     }
 
-    @Test func tabStoreRemembersSelectionPerSession() {
+    @Test func tabStoreRemembersSelectionPerSession() throws {
         let fixture = try makeDefaults()
         defer { fixture.cleanup() }
         let store = ChatFileBrowserPanelTabStore(defaults: fixture.defaults)

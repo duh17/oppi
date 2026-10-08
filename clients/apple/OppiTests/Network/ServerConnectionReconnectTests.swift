@@ -218,7 +218,7 @@ private final class ReconnectWebSocketFixture: @unchecked Sendable {
     private var startResolved = false
 
     private init(listener: NWListener) { self.listener = listener }
-    var port: UInt16 { (try #require(listener.port)).rawValue }
+    var port: UInt16 { testUnwrap(listener.port).rawValue }
     var upgradeCount: Int { lock.withLock { upgrades } }
     var rejectedStatuses: [Int] { lock.withLock { rejections } }
 

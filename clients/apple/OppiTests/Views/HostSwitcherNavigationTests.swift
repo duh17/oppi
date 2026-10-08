@@ -80,8 +80,8 @@ struct HostScopedServerFollowTests {
     }
 
     private func makeServers(_ ids: String...) throws -> [PairedServer] {
-        ids.enumerated().map { index, id in
-            (try #require(PairedServer(
+        try ids.enumerated().map { index, id in
+            try #require(PairedServer(
                 from: ServerCredentials(
                     host: "host-\(index).local",
                     port: 7749,
@@ -90,7 +90,7 @@ struct HostScopedServerFollowTests {
                     serverFingerprint: id
                 ),
                 sortOrder: index
-            )))
+            ))
         }
     }
 }
