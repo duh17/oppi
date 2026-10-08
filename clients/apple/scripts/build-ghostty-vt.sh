@@ -4,7 +4,9 @@
 # Zig 0.16.0 and Xcode with iPhoneOS + iPhoneSimulator SDKs.
 set -euo pipefail
 
-COMMIT="33da6848d63b3bba2b4f31ab1531d618f2795192"
+# a4aacd9 adds GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS (OSC 7501). The commits after
+# it on main do not touch program status.
+COMMIT="a4aacd918ba9e79929ff608034c60a4341773ef0"
 # SIMD stays off so the static lib does not bundle those C++ libraries.
 # Kitty graphics is compiled in. PNG decode is an embedder callback, and
 # file, temporary-file, and shared-memory loads stay off unless a terminal
