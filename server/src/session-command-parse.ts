@@ -1,5 +1,5 @@
 import type { ShareSessionAction, ShareSessionRedactionPolicyInput } from "./session-share.js";
-import type { ClientMessage } from "./types.js";
+import type { ClientMessage, ConversationStreamAttach } from "./types.js";
 
 export function toRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
@@ -156,6 +156,46 @@ class UnknownCommandTypeError extends Error {
     super(`Unsupported command type: ${commandType}`);
     this.name = "UnknownCommandTypeError";
     this.commandType = commandType;
+  }
+}
+
+function readOptionalEntryId(value: unknown, fieldName: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`Invalid attach payload: ${fieldName} must be a non-negative integer`);
+  }
+  return value;
+}
+
+/** Conversation stream `attach`; socket-only, so it is not a `ClientMessage` command. */
+export function parseConversationStreamAttach(
+  record: Record<string, unknown>,
+):
+  | { ok: true; message: ConversationStreamAttach }
+  | { ok: false; error: string; requestId?: string } {
+  const requestId = readOptionalRequestId(record.requestId);
+  try {
+    const conversationId = readOptionalEntryId(record.conversationId, "conversationId");
+    const afterEntryId = readOptionalEntryId(record.afterEntryId, "afterEntryId");
+    if (record.sessionId !== undefined && typeof record.sessionId !== "string") {
+      throw new Error("Invalid attach payload: sessionId must be a string");
+    }
+    return {
+      ok: true,
+      message: {
+        type: "attach",
+        ...(conversationId !== undefined ? { conversationId } : {}),
+        ...(typeof record.sessionId === "string" ? { sessionId: record.sessionId } : {}),
+        ...(afterEntryId !== undefined ? { afterEntryId } : {}),
+        ...(requestId !== undefined ? { requestId } : {}),
+      },
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      ...(requestId !== undefined ? { requestId } : {}),
+    };
   }
 }
 

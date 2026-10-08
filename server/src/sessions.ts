@@ -16,6 +16,8 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { AgentRuntimeTransport, RuntimeClientCommand } from "./agent-runtime-transport.js";
 import type {
   ChatAttachmentRef,
+  ConversationStreamAttach,
+  ConversationStreamServerMessage,
   MessageQueueState,
   Session,
   SessionPromptCacheWarmer,
@@ -546,6 +548,43 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
    */
   durableSessionsAvailable(): boolean {
     return this.config.experimental?.serverDurable === true;
+  }
+
+  /**
+   * Whether this server can stream durable conversations (`capabilities.conversationStream`):
+   * true whenever a Harness exists, which includes bound sessions after the flag is turned off.
+   */
+  conversationStreamAvailable(): boolean {
+    return this.durableHarness !== undefined;
+  }
+
+  /**
+   * Attach a socket to the session's durable conversation stream. Sends the first frame
+   * before resolving; the returned function ends the stream. Fails for a session that is
+   * not bound to a durable conversation, or a request for another session or conversation.
+   */
+  async attachConversationStream(
+    session: Session,
+    request: ConversationStreamAttach,
+    send: (frame: ConversationStreamServerMessage) => void,
+  ): Promise<() => void> {
+    const id = session.serverDurable?.conversationId;
+    if (id === undefined || !this.durableHarness)
+      throw new Error("The conversation stream requires a durable session");
+    if (request.sessionId !== undefined && request.sessionId !== session.id)
+      throw new Error(`The conversation stream cannot target session ${request.sessionId}`);
+    if (request.conversationId !== undefined && request.conversationId !== id)
+      throw new Error(`Conversation ${request.conversationId} is not this session's conversation`);
+    const { harness } = await (await this.durableHarness).open();
+    const { attachConversationStream } = await import("./durable-conversation-stream.js");
+    const subscription = await attachConversationStream({
+      harness,
+      conversationId: id as ConversationId,
+      renderers: this.mobileRenderers,
+      ...(request.afterEntryId !== undefined ? { afterEntryId: request.afterEntryId } : {}),
+      send,
+    });
+    return () => subscription.dispose();
   }
 
   /** Read-only Harness access for the search index; undefined when no Harness exists (flag off, nothing bound). */

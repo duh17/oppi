@@ -394,6 +394,7 @@ describe("identity module", () => {
       sessions: {
         getActiveSessionIds: vi.fn(() => new Set()),
         durableSessionsAvailable: () => false,
+        conversationStreamAvailable: () => false,
       },
       sessionRuntimes: {
         getActiveSessionIds: vi.fn(() => new Set()),
@@ -458,6 +459,7 @@ describe("identity module", () => {
       sessions: {
         getActiveSessionIds: vi.fn(() => new Set()),
         durableSessionsAvailable: () => false,
+        conversationStreamAvailable: () => false,
       },
       sessionRuntimes: {
         getActiveSessionIds: vi.fn(() => new Set()),
@@ -500,6 +502,7 @@ describe("identity module", () => {
         sessions: {
           getActiveSessionIds: vi.fn(() => new Set()),
           durableSessionsAvailable: () => false,
+        conversationStreamAvailable: () => false,
         },
         sessionRuntimes: {
           getActiveSessionIds: vi.fn(() => new Set()),

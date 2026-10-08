@@ -1,4 +1,5 @@
 import type {
+  Message as PiMessage,
   NestedToolCallRecord as PiNestedToolCallRecord,
   NestedToolCalls as PiNestedToolCalls,
 } from "@earendil-works/pi-ai";
@@ -687,6 +688,99 @@ export type ServerMessage =
      */
     sessionId?: string;
   };
+
+// ── Durable conversation stream (experimental, capabilities.conversationStream v1) ──
+//
+// A replica of one durable conversation's `{ entries, docs }` on the focused session
+// socket. Frames are sent only after the client sends `attach`; the event frames above
+// are unchanged. Frames carry no `seq`: the socket is ordered, and the resume cursor
+// across reconnects is the last entry id the client holds.
+
+/** Presentation of one tool call, rendered by the server's mobile renderer registry. */
+export interface ConversationToolCallView {
+  callSegments?: StyledSegment[];
+  display?: ToolDisplay;
+  inputPresentation?: ToolInputPresentation;
+  outputPresentation?: ToolOutputPresentation;
+}
+
+/** Presentation of one tool result, rendered by the server's mobile renderer registry. */
+export interface ConversationToolResultView {
+  resultSegments?: StyledSegment[];
+  outputPresentation?: ToolOutputPresentation;
+  outputAvailability?: ToolOutputAvailability;
+}
+
+/**
+ * One committed Durable entry: `EntryRecord` without storage internals (`conversationId`,
+ * `byTaskId`, `head`, `edits`), plus server-rendered tool presentation. Entries never
+ * change after commit; clients upsert by `id`.
+ */
+export interface ConversationEntryView {
+  id: number;
+  kind: string;
+  /** Model messages; tool-result `details` are sanitized like trace history. */
+  model?: PiMessage[];
+  data?: unknown;
+  /** Assistant entries: presentation by tool call id. */
+  toolCalls?: Record<string, ConversationToolCallView>;
+  /** Tool-result entries: presentation of the result. */
+  toolResult?: ConversationToolResultView;
+}
+
+export type ConversationDocPath = ReadonlyArray<string | number>;
+
+/**
+ * Chord delta op (`@earendil-works/chord/delta`), applied in order to the client's copy
+ * of one document. `r` replaces the document; `s` sets, `d` deletes; `a` appends to a
+ * string; `t` drops that many leading characters of a string; `p` splices an array
+ * (index, delete count, inserted items); `m` reorders an array (`new[i] = old[perm[i]]`).
+ */
+export type ConversationDocOp =
+  | readonly ["r", unknown]
+  | readonly ["s", ConversationDocPath, unknown]
+  | readonly ["d", ConversationDocPath]
+  | readonly ["a", ConversationDocPath, string]
+  | readonly ["t", ConversationDocPath, number]
+  | readonly ["p", ConversationDocPath, number, number, readonly unknown[]]
+  | readonly ["m", ConversationDocPath, readonly number[]];
+
+/** Server → client frames of the conversation stream. */
+export type ConversationStreamServerMessage =
+  | {
+      /** Replaces the client's replica. Sent on attach, on an unusable cursor, and when the head moves. */
+      type: "snapshot";
+      conversationId: number;
+      /** Id of the newest head entry (reset or compaction) that starts `entries`, or 0. */
+      head: number;
+      /** Older entries exist before the first entry sent. */
+      hasOlder: boolean;
+      /** Active entries in display order: the head entry first, when there is one. */
+      entries: ConversationEntryView[];
+      /** Client-visible documents by kind. */
+      docs: Record<string, Record<string, unknown>>;
+    }
+  | {
+      /** One coalesced batch of whole commits. */
+      type: "update";
+      conversationId: number;
+      /** New entries, in order; upsert by id. */
+      entries?: ConversationEntryView[];
+      /** Ops per document kind; `null` means the document is gone. */
+      docs?: Record<string, ConversationDocOp[] | null>;
+    };
+
+/** Client → server: start (or restart) the conversation stream on a focused session socket. */
+export interface ConversationStreamAttach {
+  type: "attach";
+  /** Must be the bound session's conversation when present. */
+  conversationId?: number;
+  /** Must be the socket's bound session when present. */
+  sessionId?: string;
+  /** Newest entry id the client holds; resumes with an `update` when still usable. */
+  afterEntryId?: number;
+  requestId?: string;
+}
 
 // ── HTTP model catalog (GET /models) ──
 

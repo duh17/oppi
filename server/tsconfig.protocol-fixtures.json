@@ -3,6 +3,10 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "files": ["tests/protocol-fixtures.ts", "scripts/update-protocol-fixtures.ts"],
+  "files": [
+    "tests/protocol-fixtures.ts",
+    "tests/conversation-stream-fixtures.ts",
+    "scripts/update-protocol-fixtures.ts"
+  ],
   "include": []
 }

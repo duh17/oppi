@@ -1,0 +1,511 @@
+{
+  "_meta": {
+    "description": "Experimental durable conversation stream frames — updated by npm run protocol:fixtures:update",
+    "generated": "static",
+    "messageCount": 10
+  },
+  "messages": {
+    "server.snapshot": {
+      "type": "snapshot",
+      "conversationId": 3,
+      "head": 0,
+      "hasOlder": false,
+      "entries": [
+        {
+          "id": 8,
+          "kind": "pi.user",
+          "model": [
+            {
+              "role": "user",
+              "content": "List the files",
+              "timestamp": 1791650000000
+            }
+          ]
+        },
+        {
+          "id": 9,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-1",
+                  "name": "bash",
+                  "arguments": {
+                    "command": "ls"
+                  }
+                }
+              ],
+              "api": "anthropic-messages",
+              "provider": "anthropic",
+              "model": "claude-sonnet-4-5",
+              "usage": {
+                "input": 668,
+                "output": 68,
+                "cacheRead": 0,
+                "cacheWrite": 668,
+                "totalTokens": 1404,
+                "cost": {
+                  "input": 0.002,
+                  "output": 0.001,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0.003
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1791650001000
+            }
+          ],
+          "toolCalls": {
+            "call-1": {
+              "callSegments": [
+                {
+                  "text": "$ ",
+                  "style": "bold"
+                },
+                {
+                  "text": "ls",
+                  "style": "accent"
+                }
+              ],
+              "inputPresentation": {
+                "fields": {
+                  "command": {
+                    "role": "command",
+                    "language": "bash"
+                  }
+                }
+              },
+              "outputPresentation": {
+                "kind": "terminal"
+              }
+            }
+          }
+        },
+        {
+          "id": 10,
+          "kind": "pi.tool-result",
+          "model": [
+            {
+              "role": "toolResult",
+              "toolCallId": "call-1",
+              "toolName": "bash",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "README.md\nsrc\n"
+                }
+              ],
+              "isError": false,
+              "timestamp": 1791650002000
+            }
+          ],
+          "toolResult": {
+            "resultSegments": [
+              {
+                "text": "2 lines",
+                "style": "muted"
+              }
+            ],
+            "outputPresentation": {
+              "kind": "terminal"
+            },
+            "outputAvailability": {
+              "complete": true
+            }
+          }
+        }
+      ],
+      "docs": {
+        "pi.live": {
+          "run": {
+            "taskId": 14,
+            "inputs": [
+              7
+            ]
+          },
+          "generation": {
+            "attempt": 1,
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "There are"
+                }
+              ],
+              "api": "anthropic-messages",
+              "provider": "anthropic",
+              "model": "claude-sonnet-4-5",
+              "usage": {
+                "input": 668,
+                "output": 68,
+                "cacheRead": 0,
+                "cacheWrite": 668,
+                "totalTokens": 1404,
+                "cost": {
+                  "input": 0.002,
+                  "output": 0.001,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0.003
+                }
+              },
+              "stopReason": "pending",
+              "timestamp": 1791650003000
+            }
+          }
+        },
+        "pi.inbox": {
+          "items": []
+        },
+        "pi.agent": {
+          "model": {
+            "provider": "anthropic",
+            "modelId": "claude-sonnet-4-5"
+          },
+          "thinkingLevel": "medium",
+          "tools": [
+            "read",
+            "bash",
+            "edit",
+            "write"
+          ],
+          "cwd": "/workspace/project"
+        },
+        "pi.usage": {
+          "models": {
+            "anthropic/claude-sonnet-4-5": {
+              "input": 668,
+              "output": 68,
+              "cacheRead": 0,
+              "cacheWrite": 668,
+              "totalTokens": 1404,
+              "cost": {
+                "input": 0.002,
+                "output": 0.001,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0.003
+              }
+            }
+          }
+        },
+        "oppi.extension-ui": {
+          "requests": {
+            "ask-1": {
+              "id": "ask-1",
+              "method": "confirm",
+              "title": "Delete build/?"
+            }
+          },
+          "notifications": {
+            "status:jobs": {
+              "id": "status:jobs",
+              "method": "setStatus",
+              "statusKey": "jobs",
+              "statusText": "1 job running"
+            }
+          }
+        }
+      }
+    },
+    "server.update_append": {
+      "type": "update",
+      "conversationId": 3,
+      "docs": {
+        "pi.live": [
+          [
+            "a",
+            [
+              "generation",
+              "message",
+              "content",
+              0,
+              "text"
+            ],
+            " two entries."
+          ]
+        ]
+      }
+    },
+    "server.update_landing": {
+      "type": "update",
+      "conversationId": 3,
+      "entries": [
+        {
+          "id": 11,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "There are two entries."
+                }
+              ],
+              "api": "anthropic-messages",
+              "provider": "anthropic",
+              "model": "claude-sonnet-4-5",
+              "usage": {
+                "input": 668,
+                "output": 68,
+                "cacheRead": 0,
+                "cacheWrite": 668,
+                "totalTokens": 1404,
+                "cost": {
+                  "input": 0.002,
+                  "output": 0.001,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0.003
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1791650003000
+            }
+          ]
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "d",
+            [
+              "run"
+            ]
+          ],
+          [
+            "d",
+            [
+              "generation"
+            ]
+          ]
+        ],
+        "pi.usage": [
+          [
+            "s",
+            [
+              "models",
+              "anthropic/claude-sonnet-4-5",
+              "output"
+            ],
+            82
+          ]
+        ]
+      }
+    },
+    "server.update_running_tool": {
+      "type": "update",
+      "conversationId": 3,
+      "docs": {
+        "pi.live": [
+          [
+            "s",
+            [
+              "tools"
+            ],
+            [
+              {
+                "callId": "call-1",
+                "name": "bash",
+                "taskId": 15,
+                "status": "running",
+                "output": "README.md\n"
+              }
+            ]
+          ],
+          [
+            "s",
+            [
+              "toolCalls"
+            ],
+            {
+              "call-1": {
+                "callSegments": [
+                  {
+                    "text": "$ ",
+                    "style": "bold"
+                  },
+                  {
+                    "text": "ls",
+                    "style": "accent"
+                  }
+                ],
+                "outputPresentation": {
+                  "kind": "terminal"
+                }
+              }
+            }
+          ]
+        ]
+      }
+    },
+    "server.update_output_window": {
+      "type": "update",
+      "conversationId": 3,
+      "docs": {
+        "pi.live": [
+          [
+            "t",
+            [
+              "tools",
+              0,
+              "output"
+            ],
+            10
+          ],
+          [
+            "a",
+            [
+              "tools",
+              0,
+              "output"
+            ],
+            "src\n"
+          ]
+        ]
+      }
+    },
+    "server.update_resume": {
+      "type": "update",
+      "conversationId": 3,
+      "entries": [
+        {
+          "id": 12,
+          "kind": "oppi.failure",
+          "data": {
+            "card": {
+              "title": "Run failed",
+              "body": "Provider overloaded",
+              "accent": "error",
+              "at": 1791650004000
+            }
+          }
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "r",
+            {}
+          ]
+        ],
+        "pi.inbox": [
+          [
+            "r",
+            {
+              "items": []
+            }
+          ]
+        ],
+        "pi.agent": [
+          [
+            "r",
+            {
+              "model": {
+                "provider": "anthropic",
+                "modelId": "claude-sonnet-4-5"
+              }
+            }
+          ]
+        ],
+        "pi.usage": [
+          [
+            "r",
+            {
+              "models": {}
+            }
+          ]
+        ],
+        "oppi.extension-ui": null
+      }
+    },
+    "server.snapshot_after_compaction": {
+      "type": "snapshot",
+      "conversationId": 3,
+      "head": 20,
+      "hasOlder": true,
+      "entries": [
+        {
+          "id": 20,
+          "kind": "pi.compaction",
+          "model": [
+            {
+              "role": "user",
+              "content": "<summary>Listed files</summary>",
+              "timestamp": 1791650005000
+            }
+          ]
+        },
+        {
+          "id": 11,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "There are two entries."
+                }
+              ],
+              "api": "anthropic-messages",
+              "provider": "anthropic",
+              "model": "claude-sonnet-4-5",
+              "usage": {
+                "input": 668,
+                "output": 68,
+                "cacheRead": 0,
+                "cacheWrite": 668,
+                "totalTokens": 1404,
+                "cost": {
+                  "input": 0.002,
+                  "output": 0.001,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0.003
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1791650003000
+            }
+          ]
+        },
+        {
+          "id": 12,
+          "kind": "oppi.failure",
+          "data": {
+            "card": {
+              "title": "Run failed",
+              "body": "Provider overloaded",
+              "accent": "error",
+              "at": 1791650004000
+            }
+          }
+        }
+      ],
+      "docs": {
+        "pi.live": {}
+      }
+    },
+    "client.attach": {
+      "type": "attach",
+      "requestId": "req-attach-1"
+    },
+    "client.attach_resume": {
+      "type": "attach",
+      "conversationId": 3,
+      "afterEntryId": 11,
+      "requestId": "req-attach-2"
+    },
+    "client.attach_by_session": {
+      "type": "attach",
+      "sessionId": "test-session-1"
+    }
+  }
+}

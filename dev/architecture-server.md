@@ -18,6 +18,7 @@ This page keeps the rules that always apply. Read only the detail page for the a
 | [Session runtime](architecture-server/runtime.md) | Session runtime ownership; Managed SDK runtime; Server durable; Saved Agents and schedules; Terminal mirror runtime |
 | [Read models and event stream](architecture-server/read-models.md) | Session list and history read models; App event stream |
 | [Tool inspection](architecture-server/tool-inspection.md) | Producer facts; mobile-renderer registry; full tool-output ownership |
+| [Durable conversation stream](architecture-server/durable-conversation-stream.md) | Experimental `attach` / `snapshot` / `update` replica of a durable conversation on the focused socket |
 | [Cleanup targets and code map](architecture-server/code-map.md) | Server cleanup targets; Where to look in code |
 
 ## Server responsibilities
@@ -135,6 +136,8 @@ When changing protocol messages:
 2. Update Apple models: `ClientMessage.swift`, `ServerMessage.swift`, `AppEventMessage.swift`, and stream wrappers.
 3. Update protocol snapshots in `protocol/*.json` when the wire shape changes. Ordinary protocol tests compare deterministic canonical bytes with the committed fixtures without writing tracked files. Deliberate fixture changes use `cd server && npm run protocol:fixtures:update`.
 4. Run server protocol tests, followed by Apple Codable tests.
+
+The experimental durable conversation stream (`ConversationStreamServerMessage`, `ConversationStreamAttach`) is outside the `ServerMessage`/`ClientMessage` unions and has its own fixture, `protocol/conversation-stream.json`, until an Apple client models it. See [Durable conversation stream](architecture-server/durable-conversation-stream.md).
 
 Tool presentation facts and full-output lifetime are documented in [Tool inspection](architecture-server/tool-inspection.md).
 

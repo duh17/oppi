@@ -8,6 +8,7 @@ Canonical JSON fixtures and transport notes for the Oppi client-server protocol 
 | ------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `server-messages.json`    | Canonical focused-stream `ServerMessage` shapes the iOS client must handle | Built by `server/tests/protocol-fixtures.ts`; updated only by the explicit server script |
 | `app-event-messages.json` | Canonical global app-stream `AppEventMessage` shapes                       | Built by `server/tests/protocol-fixtures.ts`; updated only by the explicit server script |
+| `conversation-stream.json` | Experimental durable conversation stream frames (`attach`, `snapshot`, `update`) on the focused session socket; not decoded by Apple clients yet | Built by `server/tests/conversation-stream-fixtures.ts`; updated only by the explicit server script |
 | `pi-events.json`          | Representative Pi `AgentSessionEvent` shapes, plus a few related backend/RPC frames | Hand-maintained catalog; `server/tests/pi-events-fixture.test.ts` loads it and runs the AgentSessionEvent examples through `translatePiEvent` |
 
 ## How they're used

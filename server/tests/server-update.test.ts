@@ -129,7 +129,7 @@ function identityCtx(service: ServerUpdateService): RouteContext {
       listWorkspaces: () => [],
       listSessions: () => [],
     },
-    sessions: { getActiveSessionIds: () => new Set(), durableSessionsAvailable: () => false },
+    sessions: { getActiveSessionIds: () => new Set(), durableSessionsAvailable: () => false, conversationStreamAvailable: () => false },
     sessionRuntimes: { getActiveSessionIds: () => new Set() },
     skillRegistry: { list: () => [] },
     getModelCatalog: () => [],

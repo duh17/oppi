@@ -157,6 +157,40 @@ export const DurableUI = defineDoc<UIState>({
   initial: () => ({ requests: {}, notifications: {} }),
 });
 
+/**
+ * Conversation stream visibility: clients replicate the open requests and the
+ * notification slots, allowlisted like the event projection. Answered requests
+ * and task ids stay on the server.
+ */
+export const DurableUIClientDoc = {
+  doc: DurableUI,
+  client: true,
+  view(value: UIState): {
+    requests: Record<string, UIRequest>;
+    notifications: Record<string, UINotification>;
+  } {
+    const requests: Record<string, UIRequest> = Object.create(null);
+    const notifications: Record<string, UINotification> = Object.create(null);
+    for (const id in value.requests) {
+      if (!Object.hasOwn(value.requests, id)) continue;
+      const entry = value.requests[id];
+      const request = entry?.response
+        ? undefined
+        : sanitizeUIRequest(id, entry?.request);
+      if (request) requests[id] = request;
+    }
+    for (const slot in value.notifications) {
+      if (!Object.hasOwn(value.notifications, slot)) continue;
+      const notification = sanitizeUINotification(
+        slot,
+        value.notifications[slot],
+      );
+      if (notification) notifications[slot] = notification;
+    }
+    return { requests, notifications };
+  },
+} as const;
+
 /** Publish once per tool task; the answer survives a crash before the memo write. */
 export async function requestUI(
   api: ToolExecutionApi,

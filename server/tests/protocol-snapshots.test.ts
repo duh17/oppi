@@ -16,6 +16,10 @@ import {
   SERVER_MESSAGES_SNAPSHOT_FILE,
   serializeProtocolFixture,
 } from "./protocol-fixtures.js";
+import {
+  CONVERSATION_STREAM_SNAPSHOT_FILE,
+  serializeConversationStreamFixture,
+} from "./conversation-stream-fixtures.js";
 
 const messages = buildCanonicalServerMessages();
 const expectedSnapshot = serializeProtocolFixture(SERVER_MESSAGES_FIXTURE_DESCRIPTION, messages);
@@ -61,9 +65,7 @@ describe("protocol snapshots", () => {
           { [key]: { type: key } },
           { [key]: { type: key } },
         ),
-      ).toThrow(
-        `${fixtureName} has compatibility keys that shadow typed canonical keys: ${key}`,
-      );
+      ).toThrow(`${fixtureName} has compatibility keys that shadow typed canonical keys: ${key}`);
     }
   });
 
@@ -86,6 +88,17 @@ describe("protocol snapshots", () => {
       expect(session.tokens.cacheWrite).toBeTypeOf("number");
       expect(session.cost).toBeTypeOf("number");
     }
+  });
+
+  it("matches the committed experimental conversation stream fixture byte-for-byte", () => {
+    const tracked = readFileSync(CONVERSATION_STREAM_SNAPSHOT_FILE, "utf-8");
+    expect(() =>
+      assertProtocolFixtureBytes(
+        "conversation-stream.json",
+        serializeConversationStreamFixture(),
+        tracked,
+      ),
+    ).not.toThrow();
   });
 
   it("timestamps are Unix milliseconds (not seconds)", () => {

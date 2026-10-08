@@ -9,7 +9,14 @@ import { WebSocket, type RawData } from "ws";
 import { AgentConfigurationError } from "./agent-launch-errors.js";
 import type { SessionManager } from "./sessions.js";
 import type { Storage } from "./storage.js";
-import type { ClientMessage, ServerMessage, Session, Workspace } from "./types.js";
+import type {
+  ClientMessage,
+  ConversationStreamAttach,
+  ConversationStreamServerMessage,
+  ServerMessage,
+  Session,
+  Workspace,
+} from "./types.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { DictationManager } from "./dictation-manager.js";
 import {
@@ -27,7 +34,11 @@ import {
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { isControlConversation, isDeclaredControlSession } from "./control-session.js";
-import { parseClientCommand, type ClientCommandParseErrorCode } from "./session-command-parse.js";
+import {
+  parseClientCommand,
+  parseConversationStreamAttach,
+  type ClientCommandParseErrorCode,
+} from "./session-command-parse.js";
 import {
   CLOCK_SKEW_MS,
   WS_CLOSE_AUTH_EXPIRED,
@@ -124,18 +135,26 @@ function parseIncomingJsonRecord(
   return { ok: true, record };
 }
 
-function parseIncomingSessionCommand(data: RawData):
+type IncomingSessionCommand =
   | { ok: true; message: ClientMessage }
+  | { ok: true; message: ConversationStreamAttach }
   | {
       ok: false;
       error: string;
       requestId?: string;
       command?: string;
       code?: ClientCommandParseErrorCode;
-    } {
+    };
+
+function parseIncomingSessionCommand(data: RawData): IncomingSessionCommand {
   const decoded = parseIncomingJsonRecord(data);
   if (!decoded.ok) {
     return decoded;
+  }
+  // The conversation stream's attach is socket-only; it is not an HTTP command.
+  if (decoded.record.type === "attach") {
+    const attach = parseConversationStreamAttach(decoded.record);
+    return attach.ok ? attach : { ...attach, command: "attach", code: "invalid_field" };
   }
   return parseClientCommand(decoded.record);
 }
@@ -313,6 +332,7 @@ export class BoundSessionStreamMux {
     let heldToolCallId: string | undefined;
     let lastToolUpdateSentAt = 0;
     let queue: Promise<void> = Promise.resolve();
+    let stopConversationStream: (() => void) | undefined;
 
     const cleanupBoundConnection = (code: number, reason?: Buffer): void => {
       if (connectionClosed) return;
@@ -327,6 +347,8 @@ export class BoundSessionStreamMux {
       startupRelay.unsubscribe?.();
       if (startupRelay.messageHandler) ws.off("message", startupRelay.messageHandler);
       liveConnectionCleanup.run?.();
+      stopConversationStream?.();
+      stopConversationStream = undefined;
       stopPing();
       this.ctx.untrackConnection(ws);
       const reasonStr = reason?.toString() || "";
@@ -362,7 +384,10 @@ export class BoundSessionStreamMux {
       });
     });
 
-    const sendWire = (msg: ServerMessage, fromSession: boolean): boolean => {
+    const sendWire = (
+      msg: ServerMessage | ConversationStreamServerMessage,
+      fromSession: boolean,
+    ): boolean => {
       if (connectionClosed || ws.readyState !== WebSocket.OPEN) {
         const context = {
           connId,
@@ -400,7 +425,10 @@ export class BoundSessionStreamMux {
       }
     };
 
-    const send = (msg: ServerMessage, fromSession = false): boolean => {
+    const send = (
+      msg: ServerMessage | ConversationStreamServerMessage,
+      fromSession = false,
+    ): boolean => {
       if (connectionClosed || ws.readyState !== WebSocket.OPEN) return false;
       if (msg.type !== "tool_update" || !msg.toolCallId || msg.toolCallId !== heldToolCallId) {
         flushToolUpdate();
@@ -682,6 +710,45 @@ export class BoundSessionStreamMux {
               requestId: trace.requestId,
               sessionId: trace.sessionId ?? sessionId,
             });
+
+            if (msg.type === "attach") {
+              // One conversation stream per socket; a new attach replaces the previous one.
+              stopConversationStream?.();
+              stopConversationStream = undefined;
+              const reply = (success: boolean, error?: string): void => {
+                if (msg.requestId !== undefined) {
+                  send({
+                    type: "command_result",
+                    command: "attach",
+                    requestId: msg.requestId,
+                    success,
+                    ...(error ? { error } : {}),
+                    sessionId,
+                  });
+                } else if (error) {
+                  send({ type: "error", error, sessionId });
+                }
+              };
+              const targetSession = this.ctx.storage.getSession(sessionId) ?? session;
+              let stop: () => void;
+              try {
+                stop = await this.ctx.sessions.attachConversationStream(
+                  targetSession,
+                  msg,
+                  (frame) => send(frame, true),
+                );
+              } catch (error) {
+                reply(false, safeErrorMessage(error));
+                return;
+              }
+              if (connectionClosed) {
+                stop();
+                return;
+              }
+              stopConversationStream = stop;
+              reply(true);
+              return;
+            }
 
             switch (msg.type) {
               case "dictation_start":
