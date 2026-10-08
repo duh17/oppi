@@ -574,6 +574,12 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
             scheduleActions.waitForExistence(timeout: 5),
             "Schedule actions menu missing on schedule detail"
         )
+        if !app.buttons["schedule.detail.actions"].exists {
+            XCTAssertEqual(
+                app.buttons.matching(NSPredicate(format: "label == %@", "More")).count, 1,
+                "Expected exactly one system overflow button on schedule detail"
+            )
+        }
         try saveLabScreenshot(name: "iphone-schedule-detail-human-when-e2e")
 
         tap(scheduleActions, named: "schedule actions menu")

@@ -41,7 +41,7 @@ struct HerdrAgentsView: View {
             .navigationTitle("Herdr").navigationBarTitleDisplayMode(.inline)
             .refreshable { await monitor.refresh(on: channel) }
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button(role: .close) { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button(role: .confirm) { dismiss() } }
             }
         }
     }

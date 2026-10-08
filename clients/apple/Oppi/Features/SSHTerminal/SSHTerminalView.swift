@@ -813,6 +813,7 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
         displayLink = nil
         if window == nil { keyRepeater.stop() }
         guard window != nil else { return }
+        setNeedsLayout()
         let link = CADisplayLink(target: DisplayTarget(self), selector: #selector(DisplayTarget.tick))
         link.preferredFrameRateRange = .init(minimum: 15, maximum: 30, preferred: 30)
         link.add(to: .main, forMode: .common)
@@ -827,7 +828,10 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
             needsFullPaint = true
             needsPaint = true
         }
+        // Zero until the view has a window; a zero scale would size the PTY and
+        // the grid at zero pixels. didMoveToWindow queues another layout pass.
         let scale = traitCollection.displayScale
+        guard scale > 0 else { return }
         let geometry = SSHTerminalGeometry(
             columns: min(500, max(1, Int(bounds.width / cellSize.width))),
             rows: min(300, max(1, Int(bounds.height / cellSize.height))),
