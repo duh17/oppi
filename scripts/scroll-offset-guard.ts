@@ -21,6 +21,7 @@ const allowedFiles = new Set([
   // Centralized outer timeline offset correction API.
   "clients/apple/Oppi/Features/Chat/Timeline/Collection/TimelineOffsetController.swift",
   // Inner timeline/tool scroll views. These do not own outer timeline offset.
+  "clients/apple/Oppi/Features/Chat/Timeline/Assistant/AssistantMarkdownBlockViews.swift",
   "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowHelpers.swift",
   "clients/apple/Oppi/Features/Chat/Timeline/Tool/BashToolRowView.swift",
   "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowContent.swift",

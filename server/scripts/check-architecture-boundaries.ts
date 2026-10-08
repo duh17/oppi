@@ -88,8 +88,8 @@ function formatXcode(violations, repoRoot) {
   }
 }
 
-function runThemeSurfaceGuard(repoRoot) {
-  const guardPath = path.join(repoRoot, "scripts/theme-surface-guard.ts");
+function runRepoGuard(repoRoot, scriptName) {
+  const guardPath = path.join(repoRoot, "scripts", scriptName);
   const result = spawnSync("bun", [guardPath], {
     cwd: repoRoot,
     encoding: "utf8",
@@ -107,6 +107,14 @@ function runThemeSurfaceGuard(repoRoot) {
   if (result.status !== 0) {
     process.exit(1);
   }
+}
+
+function runThemeSurfaceGuard(repoRoot) {
+  runRepoGuard(repoRoot, "theme-surface-guard.ts");
+}
+
+function runScrollOffsetGuard(repoRoot) {
+  runRepoGuard(repoRoot, "scroll-offset-guard.ts");
 }
 
 function run(options) {
@@ -155,6 +163,7 @@ function run(options) {
   if (violations.length === 0) {
     if (options.scope === "all" || options.scope === "ios") {
       runThemeSurfaceGuard(repoRoot);
+      runScrollOffsetGuard(repoRoot);
     }
     console.log(`Architecture boundary checks passed (scope: ${options.scope}).`);
     return;
