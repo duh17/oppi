@@ -343,9 +343,13 @@ function displayCommand(command: string): string {
 }
 
 function displayLines(output: string): string[] {
+	// ANSI escape stripping needs the ESC and BEL control characters.
 	const stripped = output
+		// eslint-disable-next-line no-control-regex
 		.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "")
+		// eslint-disable-next-line no-control-regex
 		.replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "")
+		// eslint-disable-next-line no-control-regex
 		.replace(/\u001b./g, "");
 	const lines: string[] = [];
 	let current = "";
