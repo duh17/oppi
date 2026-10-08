@@ -759,7 +759,7 @@ struct StickyRefreshReconciliationTests {
         let requestCounter = ReconciliationRequestCounter()
         TestURLProtocol.handler = { request in
             requestCounter.record(path: request.url?.path ?? "")
-            return Self.reconciliationResponse(for: request)
+            return try Self.reconciliationResponse(for: request)
         }
 
         _ = try await connectAppEventStream(
@@ -793,7 +793,7 @@ struct StickyRefreshReconciliationTests {
             if path == "/workspaces" {
                 workspaceGate.blockUntilReleased()
             }
-            return Self.reconciliationResponse(for: request)
+            return try Self.reconciliationResponse(for: request)
         }
 
         let factory = try await connectAppEventStream(for: connection, snapshotRequired: true)
@@ -827,7 +827,7 @@ struct StickyRefreshReconciliationTests {
                 requestGate.blockUntilReleased()
                 throw URLError(.cannotConnectToHost)
             }
-            return Self.reconciliationResponse(for: request)
+            return try Self.reconciliationResponse(for: request)
         }
 
         let initialRefresh = Task { @MainActor in
@@ -932,7 +932,7 @@ struct StickyRefreshReconciliationTests {
                 )))
                 return (Data(body.utf8), response)
             }
-            return Self.reconciliationResponse(for: request)
+            return try Self.reconciliationResponse(for: request)
         }
 
         let refresh = Task { @MainActor in
@@ -958,7 +958,7 @@ struct StickyRefreshReconciliationTests {
             if path == "/sessions/recent" {
                 requestGate.blockUntilReleased()
             }
-            return Self.reconciliationResponse(for: request)
+            return try Self.reconciliationResponse(for: request)
         }
 
         let refresh = Task { @MainActor in
@@ -986,7 +986,7 @@ struct StickyRefreshReconciliationTests {
             if path == "/workspaces" {
                 workspaceGate.blockUntilReleased()
             }
-            return Self.reconciliationResponse(for: request)
+            return try Self.reconciliationResponse(for: request)
         }
 
         _ = try await connectAppEventStream(for: connection, snapshotRequired: false)
