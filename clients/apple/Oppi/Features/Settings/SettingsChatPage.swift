@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsChatPage: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var spinnerStyle = AppPreferences.Appearance.spinnerStyle
     @State private var compactTurnsEnabled = AppPreferences.ChatDisplay.isCompactTurnsEnabled
     @State private var workStripStyle = AppPreferences.ChatDisplay.workStripStyle
@@ -25,10 +26,10 @@ struct SettingsChatPage: View {
                 }
             }
 
-            // Feature availability, not layout: this must match the gate in
-            // ChatView.compactTurnsEnabled, or the toggle shows where it does
-            // nothing (or hides where it applies). Change both together.
-            if UIDevice.current.userInterfaceIdiom == .phone {
+            // Same rule as ChatView.compactTurnsEnabled: compact turns apply
+            // in a compact-width window, so the toggle shows there. Change
+            // both together.
+            if horizontalSizeClass == .compact {
                 Section {
                     Toggle("Compact Turns", isOn: $compactTurnsEnabled)
                         .onChange(of: compactTurnsEnabled) { _, newValue in

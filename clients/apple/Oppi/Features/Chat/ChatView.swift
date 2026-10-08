@@ -435,9 +435,11 @@ struct ChatView: View {
         session?.status == .stopped
     }
 
+    /// Compact turns are a narrow-width density mode. Settings shows the
+    /// toggle under the same rule (`SettingsChatPage`); change both together.
     private var compactTurnsEnabled: Bool {
         _ = chatDisplayRefresh
-        return UIDevice.current.userInterfaceIdiom == .phone
+        return horizontalSizeClass == .compact
             && AppPreferences.ChatDisplay.isCompactTurnsEnabled
     }
 
@@ -1060,8 +1062,10 @@ struct ChatView: View {
             }
     }
 
+    /// A regular-width window (iPad, the iPhone Duo inner display, a large
+    /// iPhone in landscape) has room for full-screen panels.
     private var prefersFullScreenChatAuxiliaryPresentation: Bool {
-        horizontalSizeClass == .regular && UIDevice.current.userInterfaceIdiom == .pad
+        horizontalSizeClass == .regular
     }
 
     private func configuredChatContent(railEdge: HorizontalEdge?) -> some View {
@@ -3172,20 +3176,19 @@ struct ChatSessionTitleView: View {
 }
 
 private extension View {
-    @ViewBuilder
     func chatAuxiliaryPresentation<PresentedContent: View>(
         isPresented: Binding<Bool>,
         prefersFullScreen: Bool,
         @ViewBuilder content: @escaping () -> PresentedContent
     ) -> some View {
-        if prefersFullScreen {
-            fullScreenCover(isPresented: isPresented, content: content)
-        } else {
-            sheet(isPresented: isPresented) {
-                content()
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-            }
+        // Both presenters stay attached so a size-class change (rotation, a
+        // fold, iPad multitasking) moves the panel instead of swapping this
+        // view's identity, which would rebuild the chat timeline underneath.
+        sheet(isPresented: prefersFullScreen ? .constant(false) : isPresented) {
+            content()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
+        .fullScreenCover(isPresented: prefersFullScreen ? isPresented : .constant(false), content: content)
     }
 }
