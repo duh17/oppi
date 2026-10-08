@@ -8,58 +8,72 @@ struct WorkspaceAdaptiveRootView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
-    /// False until the first measured presentation has been applied, so launch
+    /// Window size without the keyboard. Nil until first measured, so launch
     /// never mounts the wrong shell for one frame.
+    @State private var windowSize: CGSize?
+    /// False until the first measured presentation has been applied.
     @State private var hasAppliedPresentation = false
 
-    var body: some View {
-        GeometryReader { proxy in
-            let measured = WorkspaceNavigationPresentation.resolve(
+    private var measured: WorkspaceNavigationPresentation? {
+        windowSize.map {
+            WorkspaceNavigationPresentation.resolve(
                 horizontalSizeClass: horizontalSizeClass,
                 verticalSizeClass: verticalSizeClass,
-                size: proxy.size
+                size: $0
             )
+        }
+    }
 
-            // A locked active server covers everything under it: lists,
-            // sidebar, pushed pages, and settings that follow the active host.
-            ScopedLockGate(
-                target: coordinator.activeServerId.map(ScopedLockTarget.server),
-                title: activeServer?.name ?? String(localized: "Server")
-            ) {
-                LockedServerSwitchMenu()
-            } content: {
-                // Render the shell AppNavigation already converted its routes for,
-                // never the raw measurement. A fold or rotation first converts the
-                // stack path into split selection (or back) in one mutation, then
-                // the new shell mounts once with matching state. Rendering the raw
-                // measurement mounted the new shell against the old shell's routes
-                // for a frame, then remounted the split detail when its
-                // `.id(splitDetailTarget)` changed. AVKit fullscreen freezes the
-                // presentation inside AppNavigation, so it needs no check here.
-                if hasAppliedPresentation {
-                    switch navigation.workspaceNavigationPresentation {
-                    case .stack:
-                        WorkspaceStackRootView()
-                    case .split:
-                        WorkspaceSplitRootView()
-                    }
-                } else {
-                    Color.clear
+    var body: some View {
+        // A locked active server covers everything under it: lists,
+        // sidebar, pushed pages, and settings that follow the active host.
+        ScopedLockGate(
+            target: coordinator.activeServerId.map(ScopedLockTarget.server),
+            title: activeServer?.name ?? String(localized: "Server")
+        ) {
+            LockedServerSwitchMenu()
+        } content: {
+            // Render the shell AppNavigation already converted its routes for,
+            // never the raw measurement. A fold or rotation first converts the
+            // stack path into split selection (or back) in one mutation, then the
+            // new shell mounts once with matching state. Rendering the raw
+            // measurement mounted the new shell against the old shell's routes for
+            // a frame, then remounted the split detail when its
+            // `.id(splitDetailTarget)` changed. AVKit fullscreen freezes the
+            // presentation inside AppNavigation, so it needs no check here.
+            if hasAppliedPresentation {
+                switch navigation.workspaceNavigationPresentation {
+                case .stack:
+                    WorkspaceStackRootView()
+                case .split:
+                    WorkspaceSplitRootView()
                 }
+            } else {
+                Color.clear
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .modifier(WorkspaceCreationIntakeModifier())
-            .onAppear {
-                applyPresentation(measured)
-                hasAppliedPresentation = true
-            }
-            .onChange(of: measured) { _, newValue in
-                applyPresentation(newValue)
-            }
-            .onChange(of: navigation.isMediaOverlayActive) { wasActive, isActive in
-                guard wasActive, !isActive else { return }
-                applyPresentation(measured)
-            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // The shells stay inside the keyboard safe area so fields move up; only
+        // this measurement ignores it. A docked keyboard on a portrait window
+        // (the Duo inner display, iPad) would otherwise make it wider than tall,
+        // swap to split, destroy the focused field, drop the keyboard, and
+        // swap back.
+        // The observer sits inside `ignoresSafeArea`, which extends its child
+        // but keeps its own frame; observing outside it reads the shrunk frame.
+        .background {
+            Color.clear
+                .onGeometryChange(for: CGSize.self) { $0.size } action: { windowSize = $0 }
+                .ignoresSafeArea(.keyboard)
+        }
+        .modifier(WorkspaceCreationIntakeModifier())
+        .onChange(of: measured, initial: true) { _, newValue in
+            guard let newValue else { return }
+            applyPresentation(newValue)
+            hasAppliedPresentation = true
+        }
+        .onChange(of: navigation.isMediaOverlayActive) { wasActive, isActive in
+            guard wasActive, !isActive, let measured else { return }
+            applyPresentation(measured)
         }
     }
 
