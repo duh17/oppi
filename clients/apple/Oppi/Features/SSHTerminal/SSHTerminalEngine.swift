@@ -340,7 +340,9 @@ final class SSHTerminalEngine {
         let write: GhosttyTerminalWritePtyFn = { _, context, bytes, count in
             MainActor.assumeIsolated {
                 guard let context, let bytes else { return }
-                guard Self.isApprovedReply(UnsafeBufferPointer(start: bytes, count: count)) else { return }
+                // C function pointers cannot capture dynamic Self.
+                // swiftlint:disable:next prefer_self_in_static_references
+                guard SSHTerminalEngine.isApprovedReply(UnsafeBufferPointer(start: bytes, count: count)) else { return }
                 let owner = Unmanaged<SSHTerminalEngine>.fromOpaque(context).takeUnretainedValue()
                 if owner.live { owner.replies.append(Data(bytes: bytes, count: count)) }
             }
@@ -398,8 +400,10 @@ final class SSHTerminalEngine {
                 let value = report.pointee
                 Unmanaged<SSHTerminalEngine>.fromOpaque(context).takeUnretainedValue().programStatus.apply(.init(
                     state: value.state, kind: value.kind, progress: Int(value.progress),
-                    id: Self.copy(value.id), app: Self.copy(value.app),
-                    title: Self.copy(value.title), message: Self.copy(value.message)))
+                    // swiftlint:disable:next prefer_self_in_static_references
+                    id: SSHTerminalEngine.copy(value.id), app: SSHTerminalEngine.copy(value.app),
+                    // swiftlint:disable:next prefer_self_in_static_references
+                    title: SSHTerminalEngine.copy(value.title), message: SSHTerminalEngine.copy(value.message)))
             }
         }
         let prompt: GhosttyTerminalSemanticPromptFn = { _, context, event in
