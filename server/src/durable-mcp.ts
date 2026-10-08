@@ -67,7 +67,11 @@ interface Registered {
 
 export interface DurableMcpOptions {
   sessionId: string;
-  /** Host cwd: Pi's connections and the project `.pi/mcp.json` resolve from it. */
+  /**
+   * The MCP root every server sees (`roots/list`), and the base the host project
+   * `.pi/mcp.json` resolves from. Sandbox callers MUST pass the guest path, never the
+   * host mount: a sandbox loads no project file, and its servers must not learn host paths.
+   */
   cwd: string;
   agentDir: string;
   /** Host sessions only; a sandbox never loads the project's `mcp.json`. */

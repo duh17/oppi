@@ -164,7 +164,8 @@ function recordingVm() {
       const args = [...(argv as string[])];
       peers.push({ argv: args, cwd: options.cwd, env: options.env });
       const child = spawn(args[0]!, args.slice(1), {
-        env: { ...process.env, ...options.env },
+        // Exactly what was configured: a host-env leak into the guest must show up.
+        env: { ...options.env },
         stdio: "pipe",
       });
       options.signal?.addEventListener("abort", () => child.kill());
@@ -274,10 +275,11 @@ describe("server durable MCP (host)", () => {
 
   it("in a sandbox, loads only picked global servers, runs stdio in the VM, and refuses hosts outside Allowed Hosts", async () => {
     const marker = (name: string) => join(agentDir, `${name}.marker`);
+    const rootsEnv = (name: string) => ({ MCP_ECHO_MARKER: marker(name), MCP_ECHO_ROOTS: "1" });
     writeMcpJson(agentDir, {
-      picked: echoServer(marker("picked"), { exposure: "direct" }),
+      picked: echoServer(marker("picked"), { exposure: "direct", env: rootsEnv("picked") }),
       // Default exposure is codemode, which a sandbox never gets: tool_search only.
-      lazy: echoServer(marker("lazy")),
+      lazy: echoServer(marker("lazy"), { env: rootsEnv("lazy") }),
       unpicked: echoServer(marker("unpicked"), { exposure: "direct" }),
       remote: { url: "https://evil.test/mcp", exposure: "direct" },
     });
@@ -322,9 +324,23 @@ describe("server durable MCP (host)", () => {
       [process.execPath, ECHO_SERVER],
     ]);
     expect(peers.every((peer) => peer.cwd === guestCwd)).toBe(true);
-    expect(peers.map((peer) => peer.env?.MCP_ECHO_MARKER).sort()).toEqual(
-      [marker("lazy"), marker("picked")].sort(),
+    // The peers get exactly the configured env, nothing from the host.
+    expect(
+      peers
+        .map((peer) => peer.env)
+        .sort((a, b) => a!.MCP_ECHO_MARKER!.localeCompare(b!.MCP_ECHO_MARKER!)),
+    ).toEqual([rootsEnv("lazy"), rootsEnv("picked")]);
+    // Servers can ask for roots/list: it is the guest path, never the host mount.
+    const guestRoot = `file://${guestCwd}`;
+    await waitFor(
+      () => read(marker("picked")).includes("roots ") && read(marker("lazy")).includes("roots "),
+      "roots/list answers",
     );
+    for (const name of ["picked", "lazy"]) {
+      const text = read(marker(name));
+      expect(text).toContain(`roots ${JSON.stringify([guestRoot])}`);
+      expect(text).not.toContain(f.dir);
+    }
     expect(existsSync(marker("unpicked"))).toBe(false);
     expect(existsSync(marker("project"))).toBe(false);
 

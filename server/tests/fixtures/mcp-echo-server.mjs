@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Minimal stdio MCP server for host-MCP activation tests: one `echo` tool.
 // Appends a line to $MCP_ECHO_MARKER at process start (proves a spawn) and one
-// per tools/call (proves the call reached the server).
+// per tools/call (proves the call reached the server). With MCP_ECHO_ROOTS set it also
+// asks the client for `roots/list` after initialization and records the answer.
 import { appendFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
@@ -15,6 +16,14 @@ const reply = (id, result) => send({ jsonrpc: "2.0", id, result });
 createInterface({ input: process.stdin }).on("line", (line) => {
   if (!line.trim()) return;
   const message = JSON.parse(line);
+  if (message.method === "notifications/initialized") {
+    if (process.env.MCP_ECHO_ROOTS) send({ jsonrpc: "2.0", id: "roots", method: "roots/list" });
+    return;
+  }
+  if (message.id === "roots" && message.method === undefined) {
+    note(`roots ${JSON.stringify((message.result?.roots ?? []).map((root) => root.uri))}`);
+    return;
+  }
   if (message.id === undefined) return; // notification
   switch (message.method) {
     case "initialize":

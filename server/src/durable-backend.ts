@@ -283,7 +283,8 @@ export class DurableBackend implements AgentBackend {
           const registry = new ModelRegistry(models);
           return DurableMcp.open({
             sessionId: session.id,
-            cwd: hostCwd,
+            // The MCP root servers see via roots/list: a sandbox gets only the guest path.
+            cwd,
             agentDir,
             projectTrusted,
             ...(sandbox
