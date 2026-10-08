@@ -205,12 +205,12 @@ struct AudioLyricsPlayerView: View {
     private var header: some View {
         HStack {
             if usesNavigationBackButton {
-                Button(action: { dismiss() }) {
+                Button(action: { dismiss() }, label: {
                     Image(systemName: "chevron.backward")
                         .font(.body.weight(.semibold))
                         .foregroundStyle(.themeCyan)
                         .frame(width: 44, height: 44)
-                }
+                })
                 .buttonStyle(.plain)
                 .accessibilityLabel(String(localized: "Back"))
                 .accessibilityIdentifier("fullscreen-audio.back")

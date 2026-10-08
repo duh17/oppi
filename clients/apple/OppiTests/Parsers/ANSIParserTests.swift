@@ -313,7 +313,7 @@ struct ANSIParserTests {
     // MARK: - IncrementalStripper
 
     @Test("incremental stripper produces same result as full strip")
-    func incrementalMatchesFullStrip() {
+    func incrementalMatchesFullStrip() throws {
         let chunks = [
             "\u{1B}[32mHello",
             "\u{1B}[32mHello\u{1B}[0m World",
@@ -326,7 +326,7 @@ struct ANSIParserTests {
                 accumulated += delta
             }
         }
-        let fullStrip = ANSIParser.strip(chunks.last!)
+        let fullStrip = ANSIParser.strip((try #require(chunks.last)))
         #expect(accumulated == fullStrip)
     }
 
@@ -376,7 +376,7 @@ struct ANSIParserTests {
     }
 
     @Test("incremental stripper handles string controls across chunk boundaries")
-    func incrementalStringControlBoundary() {
+    func incrementalStringControlBoundary() throws {
         let chunks = [
             "start\u{1B}Pdcs payload",
             "start\u{1B}Pdcs payload\u{1B}\\middle\u{0090}c1 payload",
@@ -391,7 +391,7 @@ struct ANSIParserTests {
         }
 
         #expect(accumulated == "startmiddleend")
-        #expect(accumulated == ANSIParser.strip(chunks.last!))
+        #expect(accumulated == ANSIParser.strip((try #require(chunks.last))))
 
         let unicodeChunks = ["😀", "😀 Пр", "😀 Привет"]
         var unicodeStripper = ANSIParser.IncrementalStripper()

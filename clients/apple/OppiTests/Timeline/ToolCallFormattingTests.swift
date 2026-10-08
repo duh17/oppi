@@ -43,7 +43,9 @@ struct ToolCallFormattingTests {
                     .object(["value": .string("minimal_patch"), "label": .string("Minimal patch"), "description": .string("Smallest safe change")]),
                     .object(["value": .string("full_refactor"), "label": .string("Full refactor")])
                 ])
-            ])]), "answers": .object(["scope": .string("minimal_patch")]), "allIgnored": .bool(false)
+            ])]),
+            "answers": .object(["scope": .string("minimal_patch")]),
+            "allIgnored": .bool(false),
         ])
         #expect(ToolCallFormatting.askAnswerSummary(details: details) == "**Q:** Which scope should I use?\n- [x] Minimal patch — Smallest safe change\n- [ ] Full refactor")
     }

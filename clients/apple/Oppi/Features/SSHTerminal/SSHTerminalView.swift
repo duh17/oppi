@@ -792,12 +792,12 @@ private final class SSHTerminalGridView: UIView, UIKeyInput {
     }
     override var canBecomeFirstResponder: Bool { true }
     var hasText: Bool { true }
-    var autocorrectionType: UITextAutocorrectionType { get { .no } set {} }
-    var autocapitalizationType: UITextAutocapitalizationType { get { .none } set {} }
-    var smartQuotesType: UITextSmartQuotesType { get { .no } set {} }
-    var smartDashesType: UITextSmartDashesType { get { .no } set {} }
-    var smartInsertDeleteType: UITextSmartInsertDeleteType { get { .no } set {} }
-    var keyboardType: UIKeyboardType { get { .asciiCapable } set {} }
+    var autocorrectionType: UITextAutocorrectionType { get { .no } set { _ = newValue } }
+    var autocapitalizationType: UITextAutocapitalizationType { get { .none } set { _ = newValue } }
+    var smartQuotesType: UITextSmartQuotesType { get { .no } set { _ = newValue } }
+    var smartDashesType: UITextSmartDashesType { get { .no } set { _ = newValue } }
+    var smartInsertDeleteType: UITextSmartInsertDeleteType { get { .no } set { _ = newValue } }
+    var keyboardType: UIKeyboardType { get { .asciiCapable } set { _ = newValue } }
     override var inputAccessoryView: UIView? { bar }
 
     override func didMoveToWindow() {

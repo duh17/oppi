@@ -235,7 +235,7 @@ struct MermaidMindmapParserTests {
 struct MermaidMindmapRendererTests {
     let config = RenderConfiguration.default(maxWidth: 600)
 
-    @Test func layoutProducesNonZeroSize() {
+    @Test func layoutProducesNonZeroSize() throws {
         let diagram = MindmapDiagram(root: MindmapNode(
             label: "Root",
             shape: .default,
@@ -246,8 +246,8 @@ struct MermaidMindmapRendererTests {
         ))
         let layout = MermaidMindmapRenderer.layout(diagram, configuration: config)
         #expect(layout.customSize != nil)
-        #expect(layout.customSize!.width > 0)
-        #expect(layout.customSize!.height > 0)
+        #expect((try #require(layout.customSize)).width > 0)
+        #expect((try #require(layout.customSize)).height > 0)
     }
 
     @Test func layoutIsNotPlaceholder() {
@@ -272,7 +272,7 @@ struct MermaidMindmapRendererTests {
         #expect(layout.customDraw != nil)
     }
 
-    @Test func multiBranchLayoutSizeGrowsWithChildren() {
+    @Test func multiBranchLayoutSizeGrowsWithChildren() throws {
         let small = MindmapDiagram(root: MindmapNode(
             label: "Root",
             shape: .default,
@@ -300,25 +300,25 @@ struct MermaidMindmapRendererTests {
         let largeLayout = MermaidMindmapRenderer.layout(large, configuration: config)
 
         // More branches = wider and taller
-        #expect(largeLayout.customSize!.width > smallLayout.customSize!.width)
-        #expect(largeLayout.customSize!.height > smallLayout.customSize!.height)
+        #expect((try #require(largeLayout.customSize)).width > (try #require(smallLayout.customSize)).width)
+        #expect((try #require(largeLayout.customSize)).height > (try #require(smallLayout.customSize)).height)
     }
 
-    @Test func singleNodeLayoutIsCompact() {
+    @Test func singleNodeLayoutIsCompact() throws {
         let diagram = MindmapDiagram(root: MindmapNode(
             label: "Solo",
             shape: .default,
             children: []
         ))
         let layout = MermaidMindmapRenderer.layout(diagram, configuration: config)
-        let size = layout.customSize!
+        let size = (try #require(layout.customSize))
 
         // Single node should be reasonably small
         #expect(size.width < 200)
         #expect(size.height < 100)
     }
 
-    @Test func drawDoesNotCrash() {
+    @Test func drawDoesNotCrash() throws {
         let diagram = MindmapDiagram(root: MindmapNode(
             label: "Root",
             shape: .circle,
@@ -332,7 +332,7 @@ struct MermaidMindmapRendererTests {
         ))
 
         let layout = MermaidMindmapRenderer.layout(diagram, configuration: config)
-        let size = layout.customSize!
+        let size = (try #require(layout.customSize))
 
         // Create a bitmap context and draw into it.
         let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -353,7 +353,7 @@ struct MermaidMindmapRendererTests {
         layout.customDraw?(ctx, .zero)
     }
 
-    @Test func endToEndParseThenLayout() {
+    @Test func endToEndParseThenLayout() throws {
         let lines = [
             "  root((Ideas))",
             "    Topic A",
@@ -365,8 +365,8 @@ struct MermaidMindmapRendererTests {
         let layout = MermaidMindmapRenderer.layout(diagram, configuration: config)
 
         #expect(!layout.isPlaceholder)
-        #expect(layout.customSize!.width > 0)
-        #expect(layout.customSize!.height > 0)
+        #expect((try #require(layout.customSize)).width > 0)
+        #expect((try #require(layout.customSize)).height > 0)
         #expect(layout.customDraw != nil)
     }
 
@@ -403,7 +403,7 @@ struct MermaidMindmapRendererTests {
         #expect(tidyLayout.customDraw != nil)
     }
 
-    @Test func tidyTreeDrawDoesNotCrash() {
+    @Test func tidyTreeDrawDoesNotCrash() throws {
         let parser = MermaidParser()
         let renderer = MermaidRenderer()
         let diagram = parser.parse("""
@@ -420,7 +420,7 @@ struct MermaidMindmapRendererTests {
         """)
         let layout = renderer.layout(diagram, configuration: config)
         let size = renderer.boundingBox(layout)
-        let ctx = CGContext(
+        let ctx = (try #require(CGContext(
             data: nil,
             width: max(1, Int(size.width)),
             height: max(1, Int(size.height)),
@@ -428,7 +428,7 @@ struct MermaidMindmapRendererTests {
             bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
+        )))
         renderer.draw(layout, in: ctx, at: .zero)
     }
 }

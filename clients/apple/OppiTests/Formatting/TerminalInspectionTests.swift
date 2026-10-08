@@ -93,8 +93,11 @@ struct TerminalInspectionTests {
         let segments: [StyledSegment] = [.init(text: "$ ", style: .bold), .init(text: "Producer summary", style: .accent)]
         reducer.process(.toolStart(sessionId: "s", toolEventId: "tc", tool: "bash", args: ["script": "echo hello"],
             callSegments: segments, inputPresentation: input, outputPresentation: terminal))
-        let details: JSONValue = .object(["expandedText": .string("Structured result"), "presentationFormat": .string("markdown"),
-            "outputPresentation": .object(["kind": .string("structured")])])
+        let details: JSONValue = .object([
+            "expandedText": .string("Structured result"),
+            "presentationFormat": .string("markdown"),
+            "outputPresentation": .object(["kind": .string("structured")]),
+        ])
         reducer.process(.toolEnd(sessionId: "s", toolEventId: "tc", details: details,
             outputPresentation: .init(kind: "structured")))
         var context = ToolPresentationBuilder.Context(args: reducer.toolArgsStore.args(for: "tc"), details: details,

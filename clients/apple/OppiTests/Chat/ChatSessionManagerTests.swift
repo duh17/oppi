@@ -29,14 +29,14 @@ struct ChatSessionManagerTests {
         )
     }
 
-    private func mockAPIResponse(status: Int = 200, json: String) -> (Data, HTTPURLResponse) {
-        let data = json.data(using: .utf8)!
-        let response = HTTPURLResponse(
+    private func mockAPIResponse(status: Int = 200, json: String) throws -> (Data, HTTPURLResponse) {
+        let data = (try #require(json.data(using: .utf8)))
+        let response = (try #require(HTTPURLResponse(
             url: URL(string: "http://localhost:7749")!,
             statusCode: status,
             httpVersion: nil,
             headerFields: ["Content-Type": "application/json"]
-        )!
+        )))
         return (data, response)
     }
 
@@ -631,12 +631,12 @@ struct ChatSessionManagerTests {
 
         TestURLProtocol.handler = { request in
             if request.url?.path == "/workspaces/w1/sessions/\(sessionId)/trace-page" {
-                return mockAPIResponse(status: 404, json: #"{"error":"Not found"}"#)
+                return try mockAPIResponse(status: 404, json: #"{"error":"Not found"}"#)
             }
 
             #expect(request.url?.path == "/workspaces/w1/sessions/\(sessionId)")
             #expect(request.url?.query == "view=full")
-            return mockAPIResponse(json: """
+            return try mockAPIResponse(json: """
             {
                 "session":{"id":"\(sessionId)","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":2,"tokens":{"input":10,"output":5},"cost":0},
                 "trace":[
@@ -2499,7 +2499,7 @@ struct ChatSessionManagerTests {
         manager.cleanup()
     }
 
-    @Test func tracePageAroundDeepLinkAppliesReducerWhilePresentationPaused() async {
+    @Test func tracePageAroundDeepLinkAppliesReducerWhilePresentationPaused() async throws {
         defer { TestURLProtocol.handler = nil }
 
         let sessionId = "paused-trace-page-\(UUID().uuidString)"
@@ -2543,18 +2543,18 @@ struct ChatSessionManagerTests {
             let page: TracePageMetadata
             let metrics: TracePageMetrics
         }
-        let encodedInitial = try! JSONEncoder().encode(
+        let encodedInitial = try JSONEncoder().encode(
             TracePagePayload(session: session, trace: currentTrace, page: initialPage, metrics: metrics)
         )
-        let encodedAround = try! JSONEncoder().encode(
+        let encodedAround = try JSONEncoder().encode(
             TracePagePayload(session: session, trace: olderTrace, page: aroundPage, metrics: metrics)
         )
-        let initialResponse = HTTPURLResponse(
+        let initialResponse = (try #require(HTTPURLResponse(
             url: URL(string: "http://localhost:7749")!,
             statusCode: 200,
             httpVersion: nil,
             headerFields: ["Content-Type": "application/json"]
-        )!
+        )))
         TestURLProtocol.handler = { request in
             #expect(request.url?.path == "/workspaces/\(workspaceId)/sessions/\(sessionId)/trace-page")
             if request.url?.query?.contains("aroundEntryId=older") == true {

@@ -5,7 +5,7 @@ import Testing
 @Suite("Chat file browser panel")
 struct ChatFileBrowserPanelTests {
     @Test func tabStoreDefaultsToChangedWhenSessionHasNoPreference() {
-        let fixture = makeDefaults()
+        let fixture = try makeDefaults()
         defer { fixture.cleanup() }
         let store = ChatFileBrowserPanelTabStore(defaults: fixture.defaults)
 
@@ -13,7 +13,7 @@ struct ChatFileBrowserPanelTests {
     }
 
     @Test func tabStoreRemembersSelectionPerSession() {
-        let fixture = makeDefaults()
+        let fixture = try makeDefaults()
         defer { fixture.cleanup() }
         let store = ChatFileBrowserPanelTabStore(defaults: fixture.defaults)
 
@@ -25,7 +25,7 @@ struct ChatFileBrowserPanelTests {
     }
 
     @Test func tabStoreFallsBackToChangedForMissingOrInvalidSessionIds() {
-        let fixture = makeDefaults()
+        let fixture = try makeDefaults()
         defer { fixture.cleanup() }
         let store = ChatFileBrowserPanelTabStore(defaults: fixture.defaults)
 
@@ -145,9 +145,9 @@ struct ChatFileBrowserPanelTests {
         }
     }
 
-    private func makeDefaults() -> DefaultsFixture {
+    private func makeDefaults() throws -> DefaultsFixture {
         let suiteName = "ChatFileBrowserPanelTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
+        let defaults = (try #require(UserDefaults(suiteName: suiteName)))
         defaults.removePersistentDomain(forName: suiteName)
         return DefaultsFixture(suiteName: suiteName, defaults: defaults)
     }

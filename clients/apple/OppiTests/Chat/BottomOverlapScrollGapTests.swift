@@ -31,7 +31,7 @@ struct BottomOverlapScrollGapTests {
 
         // Simulate: initial scroll fires with footerHeight=0 (not measured yet).
         let scrollCmd = ChatTimelineScrollCommand(
-            id: items.last!.id,
+            id: (try #require(items.last)).id,
             anchor: .bottom,
             animated: false,
             nonce: 1
@@ -106,7 +106,7 @@ struct BottomOverlapScrollGapTests {
         let items = assistantItems(count: 30)
 
         let scrollCmd = ChatTimelineScrollCommand(
-            id: items.last!.id,
+            id: (try #require(items.last)).id,
             anchor: .bottom,
             animated: false,
             nonce: 1
@@ -153,7 +153,7 @@ struct BottomOverlapScrollGapTests {
         // Start with a small footer.
         let smallFooter: CGFloat = 60
         let scrollCmd = ChatTimelineScrollCommand(
-            id: items.last!.id,
+            id: (try #require(items.last)).id,
             anchor: .bottom,
             animated: false,
             nonce: 1
@@ -231,7 +231,7 @@ struct BottomOverlapScrollGapTests {
         let initialItems = assistantItems(count: 20)
 
         let scrollCmd = ChatTimelineScrollCommand(
-            id: initialItems.last!.id,
+            id: (try #require(initialItems.last)).id,
             anchor: .bottom,
             animated: false,
             nonce: 1
@@ -307,7 +307,7 @@ struct BottomOverlapScrollGapTests {
         let items = assistantItems(count: 30)
 
         let scrollCmd = ChatTimelineScrollCommand(
-            id: items.last!.id,
+            id: (try #require(items.last)).id,
             anchor: .bottom,
             animated: false,
             nonce: 1
@@ -380,7 +380,7 @@ struct BottomOverlapScrollGapTests {
         let items = assistantItems(count: 30)
 
         let scrollCmd = ChatTimelineScrollCommand(
-            id: items.last!.id,
+            id: (try #require(items.last)).id,
             anchor: .bottom,
             animated: false,
             nonce: 1

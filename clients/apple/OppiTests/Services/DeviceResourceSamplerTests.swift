@@ -302,7 +302,7 @@ struct DeviceResourceSamplerTests {
         )
 
         let data = try JSONEncoder().encode(sample)
-        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(json["metric"] as? String == "device.memory_mb")
         #expect(json["value"] as? Double == 256.75)
         #expect(json["unit"] as? String == "count")
@@ -321,7 +321,7 @@ struct DeviceResourceSamplerTests {
         )
 
         let data = try JSONEncoder().encode(sample)
-        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(json["metric"] as? String == "device.thermal_state")
         #expect(json["value"] as? Double == 2.0)
     }
@@ -339,7 +339,7 @@ struct DeviceResourceSamplerTests {
         )
 
         let data = try JSONEncoder().encode(sample)
-        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(json["metric"] as? String == "device.memory_available_mb")
     }
 

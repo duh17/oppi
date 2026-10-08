@@ -117,7 +117,7 @@ struct SyntaxHighlightOwnershipTests {
         ))
         #expect(timelineFirstView(ofType: NativeCodeBlockView.self, in: markdown) === codeView)
 
-        try await waitUntil(timeout: .seconds(2)) {
+        try await try waitUntil(timeout: .seconds(2)) {
             codeText(in: codeView).contains("betaUnique")
                 && uniqueForegroundColorCount(codeAttributedText(in: codeView) ?? NSAttributedString()) >= 2
         }
@@ -161,7 +161,7 @@ struct SyntaxHighlightOwnershipTests {
         ))
 
         let codeView = try #require(timelineFirstView(ofType: NativeCodeBlockView.self, in: markdown))
-        try await waitUntil(timeout: .seconds(2)) {
+        try await try waitUntil(timeout: .seconds(2)) {
             codeText(in: codeView).contains("betaUnique")
                 && foregroundColor(of: "let", in: codeAttributedText(in: codeView) ?? NSAttributedString())
                     == UIColor(ThemePalettes.light.syntaxKeyword)
@@ -183,7 +183,7 @@ struct SyntaxHighlightOwnershipTests {
             textSelectionEnabled: true
         ))
         let codeView = try #require(timelineFirstView(ofType: NativeCodeBlockView.self, in: markdown))
-        try await waitUntil(timeout: .seconds(2)) {
+        try await try waitUntil(timeout: .seconds(2)) {
             codeView.debugHasHighlightedTextForTesting
         }
         let workAfterFirst = markdown.debugHighlightWorkCountForTesting
@@ -245,7 +245,7 @@ struct SyntaxHighlightOwnershipTests {
         await body.debugWaitForDocumentPreparationForTesting()
         body.layoutIfNeeded()
 
-        try await waitUntil(timeout: .seconds(2)) {
+        try await try waitUntil(timeout: .seconds(2)) {
             guard let code = timelineFirstView(ofType: NativeCodeBlockView.self, in: body) else {
                 return false
             }
@@ -275,7 +275,7 @@ struct SyntaxHighlightOwnershipTests {
 
         let body = makeFullScreenCodeBody(content: "let value = \"hello\"", themeID: .dark)
         NativeFullScreenCodeBody.highlightDelayForTesting = nil
-        try await waitUntil(timeout: .seconds(2)) {
+        try await try waitUntil(timeout: .seconds(2)) {
             uniqueForegroundColorCount(codeAttributedText(in: body) ?? NSAttributedString()) >= 2
         }
         #expect(uniqueForegroundColorCount(try #require(codeAttributedText(in: body))) >= 2)
@@ -289,7 +289,7 @@ struct SyntaxHighlightOwnershipTests {
 
     @Test func fullscreenUnchangedPaletteDoesNotRedoHighlightWork() async throws {
         let body = makeFullScreenCodeBody(content: "let value = 1", themeID: .dark)
-        try await waitUntil(timeout: .seconds(2)) {
+        try await try waitUntil(timeout: .seconds(2)) {
             uniqueForegroundColorCount(codeAttributedText(in: body) ?? NSAttributedString()) >= 2
         }
         let workAfterFirst = body.debugHighlightWorkCountForTesting

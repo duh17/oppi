@@ -192,10 +192,11 @@ struct FullScreenViewerPresentationPolicyTests {
         await FullScreenViewerPresentationPolicy.dismissCoveringOverlayThenNavigate(
             from: harness.root,
             animated: false,
-            shouldNavigate: { false }
-        ) {
-            navigated = true
-        }
+            shouldNavigate: { false },
+            navigate: {
+                navigated = true
+            }
+        )
 
         #expect(harness.root.presentedViewController == nil)
         #expect(!navigated)

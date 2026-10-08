@@ -22,14 +22,14 @@ struct APIClientToolOutputTests {
         MockURLProtocol.handler = nil
     }
 
-    private func jsonResponse(status: Int = 200, json: String) -> (Data, HTTPURLResponse) {
-        let data = json.data(using: .utf8)!
-        let response = HTTPURLResponse(
+    private func jsonResponse(status: Int = 200, json: String) throws -> (Data, HTTPURLResponse) {
+        let data = (try #require(json.data(using: .utf8)))
+        let response = (try #require(HTTPURLResponse(
             url: URL(string: "http://localhost:7749")!,
             statusCode: status,
             httpVersion: nil,
             headerFields: ["Content-Type": "application/json"]
-        )!
+        )))
         return (data, response)
     }
 
@@ -46,8 +46,8 @@ struct APIClientToolOutputTests {
             #expect(request.value(forHTTPHeaderField: "Range") == "bytes=6-9")
             #expect(request.url?.path == (scope == .control
                 ? "/control-sessions/s1/tool-output/tc-1" : "/workspaces/ws-1/sessions/s1/tool-output/tc-1"))
-            return (bytes, HTTPURLResponse(url: request.url!, statusCode: 206, httpVersion: nil,
-                headerFields: ["Content-Range": "bytes 6-9/10"])!)
+            return (bytes, (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 206, httpVersion: nil,
+                headerFields: ["Content-Range": "bytes 6-9/10"]))))
         }
         let range = try await client.getTerminalOutputRange(scope: scope, sessionId: "s1", toolCallId: "tc-1", range: 6..<10)
         #expect(requests == 1)
@@ -72,21 +72,21 @@ struct APIClientToolOutputTests {
         var jsonRequests = 0
         MockURLProtocol.handler = { request in
             if request.httpMethod == "HEAD" {
-                return (Data(), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
-                    headerFields: ["Content-Length": "\(raw.count)"])!)
+                return (Data(), try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil,
+                    headerFields: ["Content-Length": "\(raw.count)"])))
             }
             if let range = request.value(forHTTPHeaderField: "Range") {
                 ranges.append(range)
                 let bounds = range.dropFirst(6).split(separator: "-")
-                let start = Int(bounds[0])!
-                let end = min(Int(bounds[1])! + 1, raw.count)
-                return (raw.subdata(in: start..<end), HTTPURLResponse(url: request.url!, statusCode: 206,
-                    httpVersion: nil, headerFields: ["Content-Range": "bytes \(start)-\(end - 1)/\(raw.count)"])!)
+                let start = (try #require(Int(bounds[0])))
+                let end = min((try #require(Int(bounds[1]))) + 1, raw.count)
+                return (raw.subdata(in: start..<end), (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 206,
+                    httpVersion: nil, headerFields: ["Content-Range": "bytes \(start)-\(end - 1)/\(raw.count)"]))))
             }
             jsonRequests += 1
             let data = try JSONEncoder().encode(["output": String(decoding: raw, as: UTF8.self)])
-            return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
-                headerFields: ["Content-Type": "application/json"])!)
+            return (data, (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]))))
         }
         let access = SessionToolOutputAccess(apiClient: client, scope: .control, sessionId: "s1")
         let body = NativeFullScreenTerminalBody(
@@ -122,8 +122,8 @@ struct APIClientToolOutputTests {
         let client = makeClient()
         defer { cleanup() }
         MockURLProtocol.handler = { request in
-            (Data([65]), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
-                headerFields: ["Content-Range": "bytes 0-0/1"])!)
+            (Data([65]), (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil,
+                headerFields: ["Content-Range": "bytes 0-0/1"]))))
         }
         do {
             _ = try await client.getTerminalOutputRange(scope: .control, sessionId: "s1", toolCallId: "tc-1", range: 0..<1)
@@ -138,7 +138,7 @@ struct APIClientToolOutputTests {
         defer { cleanup() }
         let sidecar = String(repeating: "line of bash output\n", count: 200)
         struct Payload: Encodable { let output: String }
-        let payload = String(data: try JSONEncoder().encode(Payload(output: sidecar)), encoding: .utf8)!
+        let payload = (try #require(String(data: try JSONEncoder().encode(Payload(output: sidecar)), encoding: .utf8)))
         var decodedEntireBody = false
 
         MockURLProtocol.handler = { request in
@@ -147,7 +147,7 @@ struct APIClientToolOutputTests {
             #expect(request.url?.query == "full=true")
             #expect(request.value(forHTTPHeaderField: "Range") == nil)
             decodedEntireBody = true
-            return self.jsonResponse(json: payload)
+            return try self.jsonResponse(json: payload)
         }
 
         let output = try await client.getNonEmptyFullToolOutput(
@@ -176,8 +176,8 @@ struct APIClientToolOutputTests {
             #expect(request.url?.path == "/workspaces/ws-1/sessions/s1/tool-output/tc-1")
             #expect(request.url?.query == "full=true")
             if request.httpMethod == "HEAD" {
-                let response = HTTPURLResponse(
-                    url: request.url!,
+                let response = (try #require(HTTPURLResponse(
+                    url: (try #require(request.url)),
                     statusCode: 200,
                     httpVersion: nil,
                     headerFields: [
@@ -185,12 +185,12 @@ struct APIClientToolOutputTests {
                         "Accept-Ranges": "bytes",
                         "Content-Length": String(total),
                     ]
-                )!
+                )))
                 return (Data(), response)
             }
             if request.httpMethod == "GET", request.value(forHTTPHeaderField: "Range") != nil {
-                let response = HTTPURLResponse(
-                    url: request.url!,
+                let response = (try #require(HTTPURLResponse(
+                    url: (try #require(request.url)),
                     statusCode: 206,
                     httpVersion: nil,
                     headerFields: [
@@ -199,12 +199,12 @@ struct APIClientToolOutputTests {
                         "Content-Range": "bytes 0-\(first.count - 1)/\(total)",
                         "Content-Length": String(first.count),
                     ]
-                )!
+                )))
                 return (first, response)
             }
             jsonDecoded = true
             Issue.record("JSON full=true path should not run for a large sidecar")
-            return self.jsonResponse(json: #"{"output":"should-not-decode-entire-sidecar"}"#)
+            return try self.jsonResponse(json: #"{"output":"should-not-decode-entire-sidecar"}"#)
         }
 
         let window = try await client.openFullToolOutputSidecar(
@@ -229,8 +229,8 @@ struct APIClientToolOutputTests {
         MockURLProtocol.handler = { request in
             methods.append(request.httpMethod ?? "")
             if request.httpMethod == "HEAD" {
-                let response = HTTPURLResponse(
-                    url: request.url!,
+                let response = (try #require(HTTPURLResponse(
+                    url: (try #require(request.url)),
                     statusCode: 200,
                     httpVersion: nil,
                     headerFields: [
@@ -238,10 +238,10 @@ struct APIClientToolOutputTests {
                         "Accept-Ranges": "bytes",
                         "Content-Length": "5",
                     ]
-                )!
+                )))
                 return (Data(), response)
             }
-            return self.jsonResponse(json: #"{"output":"small"}"#)
+            return try self.jsonResponse(json: #"{"output":"small"}"#)
         }
 
         let window = try await client.openFullToolOutputSidecar(
@@ -270,20 +270,20 @@ struct APIClientToolOutputTests {
             }
             #expect(request.url?.query == "full=true")
             if request.httpMethod == "HEAD" {
-                let response = HTTPURLResponse(
-                    url: request.url!,
+                let response = (try #require(HTTPURLResponse(
+                    url: (try #require(request.url)),
                     statusCode: 200,
                     httpVersion: nil,
                     headerFields: [
                         "Content-Type": "text/plain; charset=utf-8",
                         "Accept-Ranges": "bytes",
                     ]
-                )!
+                )))
                 return (Data(), response)
             }
             if request.httpMethod == "GET", request.value(forHTTPHeaderField: "Range") != nil {
-                let response = HTTPURLResponse(
-                    url: request.url!,
+                let response = (try #require(HTTPURLResponse(
+                    url: (try #require(request.url)),
                     statusCode: 206,
                     httpVersion: nil,
                     headerFields: [
@@ -292,12 +292,12 @@ struct APIClientToolOutputTests {
                         "Content-Range": "bytes 0-\(first.count - 1)/\(total)",
                         "Content-Length": String(first.count),
                     ]
-                )!
+                )))
                 return (first, response)
             }
             jsonDecoded = true
             Issue.record("HEAD-nil expand must not JSON-decode the entire sidecar")
-            return self.jsonResponse(json: #"{"output":"should-not-decode-entire-sidecar"}"#)
+            return try self.jsonResponse(json: #"{"output":"should-not-decode-entire-sidecar"}"#)
         }
 
         let window = try await client.openFullToolOutputSidecar(
@@ -348,8 +348,8 @@ struct APIClientToolOutputTests {
             }
             #expect(request.url?.query == "full=true")
             if request.httpMethod == "HEAD" {
-                let response = HTTPURLResponse(
-                    url: request.url!,
+                let response = (try #require(HTTPURLResponse(
+                    url: (try #require(request.url)),
                     statusCode: 200,
                     httpVersion: nil,
                     headerFields: [
@@ -357,12 +357,12 @@ struct APIClientToolOutputTests {
                         "Accept-Ranges": "bytes",
                         "Content-Length": String(total),
                     ]
-                )!
+                )))
                 return (Data(), response)
             }
             if request.httpMethod == "GET", request.value(forHTTPHeaderField: "Range") != nil {
-                let response = HTTPURLResponse(
-                    url: request.url!,
+                let response = (try #require(HTTPURLResponse(
+                    url: (try #require(request.url)),
                     statusCode: 206,
                     httpVersion: nil,
                     headerFields: [
@@ -371,12 +371,12 @@ struct APIClientToolOutputTests {
                         "Content-Range": "bytes 0-\(first.count - 1)/\(total)",
                         "Content-Length": String(first.count),
                     ]
-                )!
+                )))
                 return (first, response)
             }
             jsonDecoded = true
             Issue.record("expand must not JSON-decode the entire sidecar")
-            return self.jsonResponse(json: #"{"output":"should-not-decode-entire-sidecar"}"#)
+            return try self.jsonResponse(json: #"{"output":"should-not-decode-entire-sidecar"}"#)
         }
 
         let fetched = try await ExpandedToolOutputFetch.fetchForExpand(
@@ -405,7 +405,7 @@ struct APIClientToolOutputTests {
         defer { cleanup() }
         let sidecar = String(repeating: "a", count: ToolOutputSidecarHTTP.firstWindowBytes + 64)
         struct Payload: Encodable { let output: String }
-        let payload = String(data: try JSONEncoder().encode(Payload(output: sidecar)), encoding: .utf8)!
+        let payload = (try #require(String(data: try JSONEncoder().encode(Payload(output: sidecar)), encoding: .utf8)))
         var decodedEntireBody = false
         var usedRange = false
 
@@ -416,7 +416,7 @@ struct APIClientToolOutputTests {
                 usedRange = true
             }
             decodedEntireBody = true
-            return self.jsonResponse(json: payload)
+            return try self.jsonResponse(json: payload)
         }
 
         let output = try await ExpandedToolOutputFetch.fetchForCopy(

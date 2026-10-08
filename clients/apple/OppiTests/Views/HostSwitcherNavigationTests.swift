@@ -50,7 +50,7 @@ struct HostSwitcherDestinationTests {
 @Suite("Host-scoped server follow")
 struct HostScopedServerFollowTests {
     @Test func visibleServerPrefersActiveHostOverFrozenTarget() {
-        let servers = makeServers("sha256:aaa", "sha256:bbb")
+        let servers = try makeServers("sha256:aaa", "sha256:bbb")
         let result = ServerSelection.resolveVisible(
             activeId: "sha256:bbb",
             frozenId: "sha256:aaa",
@@ -60,7 +60,7 @@ struct HostScopedServerFollowTests {
     }
 
     @Test func visibleServerFallsBackToFrozenTargetWhenActiveMissing() {
-        let servers = makeServers("sha256:aaa", "sha256:bbb")
+        let servers = try makeServers("sha256:aaa", "sha256:bbb")
         let result = ServerSelection.resolveVisible(
             activeId: nil,
             frozenId: "sha256:aaa",
@@ -70,7 +70,7 @@ struct HostScopedServerFollowTests {
     }
 
     @Test func visibleServerFallsBackToFirstWhenBothMissing() {
-        let servers = makeServers("sha256:aaa", "sha256:bbb")
+        let servers = try makeServers("sha256:aaa", "sha256:bbb")
         let result = ServerSelection.resolveVisible(
             activeId: "sha256:gone",
             frozenId: "sha256:missing",
@@ -79,9 +79,9 @@ struct HostScopedServerFollowTests {
         #expect(result?.id == "sha256:aaa")
     }
 
-    private func makeServers(_ ids: String...) -> [PairedServer] {
+    private func makeServers(_ ids: String...) throws -> [PairedServer] {
         ids.enumerated().map { index, id in
-            PairedServer(
+            (try #require(PairedServer(
                 from: ServerCredentials(
                     host: "host-\(index).local",
                     port: 7749,
@@ -90,7 +90,7 @@ struct HostScopedServerFollowTests {
                     serverFingerprint: id
                 ),
                 sortOrder: index
-            )!
+            )))
         }
     }
 }

@@ -16,7 +16,7 @@ struct MarkdownInlineVideoNativePlayTests {
     @MainActor
     @Test("diagnosis: authenticated loader play() advances currentTime on known-good H.264")
     func authenticatedLoaderPlayAdvancesCurrentTime() async throws {
-        let body = try Data(contentsOf: knownGoodH264URL())
+        let body = try Data(contentsOf: try knownGoodH264URL())
         let server = try AuthenticatedRangeHTTPServer(body: body, token: "Bearer native-play")
         defer { server.stop() }
 
@@ -77,14 +77,14 @@ struct MarkdownInlineVideoNativePlayTests {
     @MainActor
     @Test("diagnosis: hosted markdown video play() advances currentTime through authenticated route")
     func hostedMarkdownVideoPlayAdvancesCurrentTime() async throws {
-        let body = try Data(contentsOf: knownGoodH264URL())
+        let body = try Data(contentsOf: try knownGoodH264URL())
         let server = try AuthenticatedRangeHTTPServer(body: body, token: "Bearer native-play")
         defer { server.stop() }
 
         let host = try makeHostedMarkdownVideo(source: mediaSource(url: server.url))
         defer { host.window.isHidden = true }
 
-        let video = try await waitForInstalledVideo(in: host.video)
+        let video = try await try waitForInstalledVideo(in: host.video)
         let model = video.debugPlaybackModelForTesting
         let player = try #require(model.player)
         let ready = await waitUntil(timeout: .seconds(8)) {
@@ -119,14 +119,14 @@ struct MarkdownInlineVideoNativePlayTests {
     @MainActor
     @Test("diagnosis: play() still advances currentTime after hide/reveal ownership")
     func playAdvancesAfterHideRevealOwnership() async throws {
-        let body = try Data(contentsOf: knownGoodH264URL())
+        let body = try Data(contentsOf: try knownGoodH264URL())
         let server = try AuthenticatedRangeHTTPServer(body: body, token: "Bearer native-play")
         defer { server.stop() }
 
         let host = try makeHostedMarkdownVideo(source: mediaSource(url: server.url))
         defer { host.window.isHidden = true }
 
-        let video = try await waitForInstalledVideo(in: host.video)
+        let video = try await try waitForInstalledVideo(in: host.video)
         let model = video.debugPlaybackModelForTesting
         let player = try #require(model.player)
         let hideRevealReady = await waitUntil(timeout: .seconds(8)) {
@@ -156,14 +156,14 @@ struct MarkdownInlineVideoNativePlayTests {
     @MainActor
     @Test("diagnosis: play() still advances currentTime after fullscreen ownership events")
     func playAdvancesAfterFullscreenOwnershipEvents() async throws {
-        let body = try Data(contentsOf: knownGoodH264URL())
+        let body = try Data(contentsOf: try knownGoodH264URL())
         let server = try AuthenticatedRangeHTTPServer(body: body, token: "Bearer native-play")
         defer { server.stop() }
 
         let host = try makeHostedMarkdownVideo(source: mediaSource(url: server.url))
         defer { host.window.isHidden = true }
 
-        let video = try await waitForInstalledVideo(in: host.video)
+        let video = try await try waitForInstalledVideo(in: host.video)
         let model = video.debugPlaybackModelForTesting
         let player = try #require(model.player)
         let fullscreenReady = await waitUntil(timeout: .seconds(8)) {

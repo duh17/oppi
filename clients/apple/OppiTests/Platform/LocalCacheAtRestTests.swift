@@ -8,15 +8,19 @@ private final class CacheableResponseProtocol: URLProtocol, @unchecked Sendable 
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        let response = HTTPURLResponse(
-            url: request.url!,
-            statusCode: 200,
-            httpVersion: "HTTP/1.1",
-            headerFields: ["Cache-Control": "max-age=3600", "Content-Type": "application/json"]
-        )!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .allowed)
-        client?.urlProtocol(self, didLoad: Data(#"{"secret":"session-list"}"#.utf8))
-        client?.urlProtocolDidFinishLoading(self)
+        do {
+            let response = (try #require(HTTPURLResponse(
+                url: (try #require(request.url)),
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Cache-Control": "max-age=3600", "Content-Type": "application/json"]
+            )))
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .allowed)
+            client?.urlProtocol(self, didLoad: Data(#"{"secret":"session-list"}"#.utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
     }
 
     override func stopLoading() {}
@@ -35,7 +39,7 @@ struct LocalCacheAtRestTests {
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
 
-        var request = URLRequest(url: URL(string: "https://cache-at-rest.test/\(UUID().uuidString)")!)
+        var request = URLRequest(url: (try #require(URL(string: "https://cache-at-rest.test/\(UUID().uuidString)"))))
         request.setValue("Bearer at_secret", forHTTPHeaderField: "Authorization")
         _ = try await session.data(for: request)
 

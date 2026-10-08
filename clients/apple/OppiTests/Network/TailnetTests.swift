@@ -830,39 +830,39 @@ private final class SOCKS5Recorder: @unchecked Sendable {
     }
 
     private static func record(_ connection: NWConnection) async throws -> Connection {
-        let version = try await read(connection, count: 1)
+        let version = try await try read(connection, count: 1)
         guard version == [0x05] else { throw RecorderError.unsupported("not SOCKS5: \(version)") }
 
         // Greeting: offered methods; choose username/password (0x02).
-        let methodCount = Int(try await read(connection, count: 1)[0])
-        let methods = try await read(connection, count: methodCount)
+        let methodCount = Int(try await try read(connection, count: 1)[0])
+        let methods = try await try read(connection, count: methodCount)
         guard methods.contains(0x02) else {
-            try await send(connection, [0x05, 0xFF])
+            try await try send(connection, [0x05, 0xFF])
             throw RecorderError.unsupported("no username/password method offered: \(methods)")
         }
-        try await send(connection, [0x05, 0x02])
+        try await try send(connection, [0x05, 0x02])
 
         // RFC 1929 sub-negotiation.
-        _ = try await read(connection, count: 1)
-        let username = try await read(connection, count: Int(try await read(connection, count: 1)[0]))
-        let password = try await read(connection, count: Int(try await read(connection, count: 1)[0]))
-        try await send(connection, [0x01, 0x00])
+        _ = try await try read(connection, count: 1)
+        let username = try await try read(connection, count: Int(try await try read(connection, count: 1)[0]))
+        let password = try await try read(connection, count: Int(try await try read(connection, count: 1)[0]))
+        try await try send(connection, [0x01, 0x00])
 
         // CONNECT request.
-        let header = try await read(connection, count: 4)
+        let header = try await try read(connection, count: 4)
         guard header[1] == 0x01 else { throw RecorderError.unsupported("command \(header[1])") }
         let host: String
         switch header[3] {
         case 0x03:
-            host = String(bytes: try await read(connection, count: Int(try await read(connection, count: 1)[0])), encoding: .utf8) ?? ""
+            host = String(bytes: try await try read(connection, count: Int(try await try read(connection, count: 1)[0])), encoding: .utf8) ?? ""
         case 0x01:
-            host = try await read(connection, count: 4).map(String.init).joined(separator: ".")
+            host = try await try read(connection, count: 4).map(String.init).joined(separator: ".")
         default:
             throw RecorderError.unsupported("address type \(header[3])")
         }
-        let portBytes = try await read(connection, count: 2)
+        let portBytes = try await try read(connection, count: 2)
         // Refuse the tunnel; the recorded target is the result.
-        try await send(connection, [0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+        try await try send(connection, [0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
         return .socks(
             username: String(bytes: username, encoding: .utf8) ?? "",
             password: String(bytes: password, encoding: .utf8) ?? "",

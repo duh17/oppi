@@ -92,7 +92,7 @@ struct OrbMetalViewLifecycleTests {
         let harness = try makeOrbHarness(style: .working, side: 16)
         defer { tearDown(harness) }
 
-        let completed = try await waitForCompletions(on: harness.view, minimum: 2)
+        let completed = try await try waitForCompletions(on: harness.view, minimum: 2)
         #expect(completed >= 2)
         #expect(harness.view.framesSubmitted >= completed)
         #expect(harness.view.isDriving)
@@ -112,7 +112,7 @@ struct OrbMetalViewLifecycleTests {
     @Test func hidingTheViewStopsTheDisplayClock() async throws {
         let harness = try makeOrbHarness(style: .composing, side: 44)
         defer { tearDown(harness) }
-        _ = try await waitForCompletions(on: harness.view, minimum: 1)
+        _ = try await try waitForCompletions(on: harness.view, minimum: 1)
         #expect(harness.view.isDriving)
 
         harness.view.isHidden = true
@@ -126,10 +126,10 @@ struct OrbMetalViewLifecycleTests {
     @Test func hidingTheWindowStopsAndShowingRestartsWithoutLayout() async throws {
         let harness = try makeOrbHarness(style: .working, side: 16)
         defer { tearDown(harness) }
-        _ = try await waitForCompletions(on: harness.view, minimum: 1)
+        _ = try await try waitForCompletions(on: harness.view, minimum: 1)
         #expect(harness.view.isDriving)
         harness.window.isHidden = true
-        try await waitUntilStopped(harness.view)
+        try await try waitUntilStopped(harness.view)
         #expect(!harness.view.isDriving)
         let submitted = harness.view.framesSubmitted
         harness.window.isHidden = false
@@ -140,9 +140,9 @@ struct OrbMetalViewLifecycleTests {
     @Test func hidingAnAncestorStopsAndUnhidingRestartsWithoutLayout() async throws {
         let harness = try makeOrbHarness(style: .searching, side: 16)
         defer { tearDown(harness) }
-        _ = try await waitForCompletions(on: harness.view, minimum: 1)
+        _ = try await try waitForCompletions(on: harness.view, minimum: 1)
         harness.container.isHidden = true
-        try await waitUntilStopped(harness.view)
+        try await try waitUntilStopped(harness.view)
         #expect(!harness.view.isDriving)
         harness.container.isHidden = false
         #expect(harness.view.isDriving)
@@ -151,9 +151,9 @@ struct OrbMetalViewLifecycleTests {
     @Test func ancestorAlphaStopsAndRestoresWithoutLayout() async throws {
         let harness = try makeOrbHarness(style: .working, side: 16)
         defer { tearDown(harness) }
-        _ = try await waitForCompletions(on: harness.view, minimum: 1)
+        _ = try await try waitForCompletions(on: harness.view, minimum: 1)
         harness.container.alpha = 0
-        try await waitUntilStopped(harness.view)
+        try await try waitUntilStopped(harness.view)
         #expect(!harness.view.isDriving)
         harness.container.alpha = 1
         #expect(harness.view.isDriving)
@@ -162,10 +162,10 @@ struct OrbMetalViewLifecycleTests {
     @Test func scrollingOffscreenStopsAndReentryRestartsWithoutLayout() async throws {
         let harness = try makeOrbScrollHarness()
         defer { tearDown(harness) }
-        _ = try await waitForCompletions(on: harness.view, minimum: 1)
+        _ = try await try waitForCompletions(on: harness.view, minimum: 1)
         #expect(harness.view.isDriving)
         harness.scroll?.contentOffset = CGPoint(x: 0, y: 240)
-        try await waitUntilStopped(harness.view)
+        try await try waitUntilStopped(harness.view)
         #expect(!harness.view.isEffectivelyVisible)
         #expect(!harness.view.isDriving)
         harness.scroll?.contentOffset = .zero
@@ -193,7 +193,7 @@ struct OrbMetalViewLifecycleTests {
         for style in [OrbStyle.searching, .composing, .breathing] {
             let harness = try makeOrbHarness(style: style, side: style.isVoiceReactive ? 44 : 16)
             defer { tearDown(harness) }
-            _ = try await waitForCompletions(on: harness.view, minimum: 1)
+            _ = try await try waitForCompletions(on: harness.view, minimum: 1)
             let liveSubmitted = harness.view.framesSubmitted
             harness.view.forceReduceMotion = true
             #expect(!harness.view.isDriving)
@@ -213,7 +213,7 @@ struct OrbMetalViewLifecycleTests {
     @Test func freezeResumeFreezePresentsANewStillFrame() async throws {
         let harness = try makeOrbHarness(style: .working, side: 16)
         defer { tearDown(harness) }
-        _ = try await waitForCompletions(on: harness.view, minimum: 1)
+        _ = try await try waitForCompletions(on: harness.view, minimum: 1)
         let liveSubmitted = harness.view.framesSubmitted
         harness.view.forceReduceMotion = true
         #expect(harness.view.framesSubmitted == liveSubmitted + 1)
@@ -349,7 +349,7 @@ struct OrbMetalViewLifecycleTests {
         do {
             let harness = try makeOrbHarness(style: .working, side: 16)
             weakView = harness.view
-            _ = try await waitForCompletions(on: harness.view, minimum: 1)
+            _ = try await try waitForCompletions(on: harness.view, minimum: 1)
             tearDown(harness)
         }
         await Task.yield()
@@ -360,7 +360,7 @@ struct OrbMetalViewLifecycleTests {
     @Test func foreignSceneNotificationDoesNotPauseOwningOrb() async throws {
         let harness = try makeOrbHarness(style: .working, side: 16)
         defer { tearDown(harness) }
-        _ = try await waitForCompletions(on: harness.view, minimum: 1)
+        _ = try await try waitForCompletions(on: harness.view, minimum: 1)
         #expect(harness.view.isDriving)
         NotificationCenter.default.post(name: UIScene.willDeactivateNotification, object: nil)
         #expect(harness.view.isDriving)
@@ -370,18 +370,18 @@ struct OrbMetalViewLifecycleTests {
         let harness = try makeOrbHarness(style: .composing, side: 44)
         defer { tearDown(harness) }
         let renderer = try #require(harness.view.rendererForTests)
-        _ = try await waitForCompletions(on: harness.view, minimum: 2)
+        _ = try await try waitForCompletions(on: harness.view, minimum: 2)
         #expect(harness.view.isDriving)
 
         harness.view.voiceSpectrum = .zero
-        _ = try await waitForCompletions(
+        _ = try await try waitForCompletions(
             on: harness.view,
             minimum: harness.view.framesCompleted + 2
         )
         #expect(harness.view.lastPresentedSpectrum.level < 0.03)
 
         harness.view.voiceSpectrum = VoiceSpectrumFrame(level: 0.35, bands: SIMD8(0.8, 0.4, 0, 0, 0.3, 0, 0, 0))
-        let voice = try await waitUntilPresentedAudio(on: harness.view, atLeast: 0.12)
+        let voice = try await try waitUntilPresentedAudio(on: harness.view, atLeast: 0.12)
         #expect(harness.view.isDriving)
         #expect(harness.view.voiceSpectrum.level == 0.35)
         #expect(harness.view.lastPresentedSpectrum.bands[0] > 0.4)
@@ -412,7 +412,7 @@ struct OrbMetalViewLifecycleTests {
         )
 
         harness.view.voiceSpectrum = .zero
-        _ = try await waitForCompletions(
+        _ = try await try waitForCompletions(
             on: harness.view,
             minimum: harness.view.framesCompleted + 1
         )

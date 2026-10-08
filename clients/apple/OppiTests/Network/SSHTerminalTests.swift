@@ -486,8 +486,14 @@ struct SSHTerminalTests {
         #expect(channel.modifierLatch.isArmed(GhosttyMods(GHOSTTY_MODS_ALT)))
         #expect(channel.key(GHOSTTY_KEY_X, text: "x"))
         #expect(await bytes.next() == Data("\u{1b}x".utf8))
-        for (id, expected) in [("escape", "\u{1b}"), ("tab", "\t"), ("left", "\u{1b}[D"),
-                                ("down", "\u{1b}[B"), ("up", "\u{1b}[A"), ("right", "\u{1b}[C")] {
+        for (id, expected) in [
+            ("escape", "\u{1b}"),
+            ("tab", "\t"),
+            ("left", "\u{1b}[D"),
+            ("down", "\u{1b}[B"),
+            ("up", "\u{1b}[A"),
+            ("right", "\u{1b}[C"),
+        ] {
             let stroke = try #require(SSHTerminalKeymap.fixed.first { $0.id == id }?.stroke)
             #expect(channel.key(stroke.key, text: stroke.text, modifiers: stroke.modifiers))
             #expect(await bytes.next() == Data(expected.utf8))
@@ -731,7 +737,7 @@ struct SSHTerminalTests {
         // pi: a value replaces the defaults, [] unbinds, a broken file is ignored like pi does.
         let pi = #"{"app.interrupt": "ctrl+g", "app.model.select": ["ctrl+k", "ctrl+l"], "app.tools.expand": []}"#
         #expect(try strip("pi", pi) == ["Stop ^G", "Thinking \u{21E7}Tab", "Model ^K"])
-        #expect(try strip("pi", "{ not json") == strip("pi", nil))
+        #expect(try strip("pi", "{ not json") == try strip("pi", nil))
 
         // Claude Code: keys add to defaults; a default key unbound (any alias
         // or case) or taken by another action drops out; other contexts don't apply.
@@ -756,7 +762,7 @@ struct SSHTerminalTests {
         let fixture = TerminalConnectionFixture()
         let channel = try SSHTerminalChannel()
         channel.opened(fixture)
-        let name = SSHTerminalUpload.fileName(extension: "JPEG", id: UUID(uuidString: "A1B2C3D4-0000-0000-0000-000000000000")!)
+        let name = SSHTerminalUpload.fileName(extension: "JPEG", id: (try #require(UUID(uuidString: "A1B2C3D4-0000-0000-0000-000000000000"))))
         #expect(name == "oppi-a1b2c3d4.jpeg")
         #expect(SSHTerminalUpload.fileName(extension: "x;rm -rf").hasSuffix(".xrmrf"))
 

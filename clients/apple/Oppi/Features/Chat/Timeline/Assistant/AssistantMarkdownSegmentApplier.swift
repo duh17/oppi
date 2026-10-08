@@ -1467,9 +1467,11 @@ final class AssistantMarkdownSegmentApplier {
 
         switch config.decorativeDecision(for: .mermaidDiagram) {
         case .allow, .reducedDetail:
-            config.renderingMode.rendersHeightChangingBlocksSynchronously
-                ? mermaidView.applyAsDiagramSync(code: code, palette: palette, availableWidth: preparationWidth)
-                : mermaidView.applyAsDiagram(code: code, palette: palette, availableWidth: preparationWidth)
+            if config.renderingMode.rendersHeightChangingBlocksSynchronously {
+                mermaidView.applyAsDiagramSync(code: code, palette: palette, availableWidth: preparationWidth)
+            } else {
+                mermaidView.applyAsDiagram(code: code, palette: palette, availableWidth: preparationWidth)
+            }
         case .deferToPlain, .refuse:
             if mermaidView.isDisplayingRenderedDiagram {
                 return
@@ -1496,9 +1498,11 @@ final class AssistantMarkdownSegmentApplier {
 
         switch config.decorativeDecision(for: .latexDiagram) {
         case .allow, .reducedDetail:
-            config.renderingMode.rendersHeightChangingBlocksSynchronously
-                ? latexView.applyAsFormulaSync(code: code, palette: palette, availableWidth: preparationWidth)
-                : latexView.applyAsFormula(code: code, palette: palette, availableWidth: preparationWidth)
+            if config.renderingMode.rendersHeightChangingBlocksSynchronously {
+                latexView.applyAsFormulaSync(code: code, palette: palette, availableWidth: preparationWidth)
+            } else {
+                latexView.applyAsFormula(code: code, palette: palette, availableWidth: preparationWidth)
+            }
         case .deferToPlain, .refuse:
             if latexView.isDisplayingRenderedFormula {
                 return

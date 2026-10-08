@@ -113,7 +113,7 @@ struct APIClientWorkspaceFileEditingTests {
             #"{"workspaceFileEditing":{"version":1,"maxBytes":1048576}}"#,
         ] {
             let client = makeClient()
-            try await loadCapabilities(client, capabilities)
+            try await try loadCapabilities(client, capabilities)
             #expect(await client.workspaceFileEditingCapability() == nil)
             let outcome = await client.writeWorkspaceFile(
                 workspaceId: "w1", path: "notes.md", worktreeId: nil,
@@ -133,7 +133,7 @@ struct APIClientWorkspaceFileEditingTests {
     @Test func putTargetsCurrentFileWorkspaceOriginWithExactBytesAndTag() async throws {
         defer { EditURLProtocol.reset() }
         let client = makeClient()
-        try await loadCapabilities(
+        try await try loadCapabilities(
             client,
             #"{"currentFiles":{"version":1},"workspaceFileEditing":{"version":1,"maxBytes":1048576}}"#
         )
@@ -164,7 +164,7 @@ struct APIClientWorkspaceFileEditingTests {
     @Test func putStatusesMapToTypedOutcomes() async throws {
         defer { EditURLProtocol.reset() }
         let client = makeClient()
-        try await loadCapabilities(
+        try await try loadCapabilities(
             client,
             #"{"currentFiles":{"version":1},"workspaceFileEditing":{"version":1,"maxBytes":1048576}}"#
         )
@@ -201,7 +201,7 @@ struct APIClientWorkspaceFileEditingTests {
     @Test func editReadReturnsExactBytesAndETagFromTheSameResponse() async throws {
         defer { EditURLProtocol.reset() }
         let client = makeClient()
-        try await loadCapabilities(
+        try await try loadCapabilities(
             client,
             #"{"currentFiles":{"version":1},"workspaceFileEditing":{"version":1,"maxBytes":1048576}}"#
         )

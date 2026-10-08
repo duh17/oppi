@@ -17,8 +17,7 @@ struct ThinkingRowContentViewTests {
         let textView = try #require(privateTextLabel(in: view))
         let scrollView = try #require(privateScrollView(in: view))
         var hasLink = false
-        textView.attributedText.enumerateAttribute(.link, in: NSRange(location: 0, length: textView.attributedText.length)) {
-            value, _, _ in
+        textView.attributedText.enumerateAttribute(.link, in: NSRange(location: 0, length: textView.attributedText.length)) { value, _, _ in
             if value != nil { hasLink = true }
         }
         #expect(hasLink || textView.dataDetectorTypes.contains(.link), "Bare URLs need the assistant's link detector if Foundation omits NSLink")

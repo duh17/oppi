@@ -243,17 +243,17 @@ struct TimelineReducerCanonicalIdentityTests {
         ])
     }
 
-    @Test func provisionalRowsRekeyToCanonicalIDs() {
+    @Test func provisionalRowsRekeyToCanonicalIDs() throws {
         let reducer = TimelineReducer()
         reducer.processBatch([
             .agentStart(sessionId: "s1"),
             .textDelta(sessionId: "s1", delta: "streaming"),
             .thinkingDelta(sessionId: "s1", delta: "hmm"),
         ])
-        reducer.expandedItemIDs.insert(reducer.items.first { item in
+        reducer.expandedItemIDs.insert((try #require(reducer.items.first { item in
             if case .thinking = item { return true }
             return false
-        }!.id)
+        })).id)
 
         reducer.process(.messageEnd(
             sessionId: "s1",
@@ -282,16 +282,16 @@ struct TimelineReducerCanonicalIdentityTests {
         #expect(reducer.items.allSatisfy { UUID(uuidString: $0.id) == nil })
     }
 
-    @Test func unregisteredLiveRowsRekeyWithoutAgentStart() {
+    @Test func unregisteredLiveRowsRekeyWithoutAgentStart() throws {
         let reducer = TimelineReducer()
         reducer.processBatch([
             .textDelta(sessionId: "s1", delta: "streaming"),
             .thinkingDelta(sessionId: "s1", delta: "hmm"),
         ])
-        reducer.expandedItemIDs.insert(reducer.items.first { item in
+        reducer.expandedItemIDs.insert((try #require(reducer.items.first { item in
             if case .thinking = item { return true }
             return false
-        }!.id)
+        })).id)
 
         reducer.process(.messageEnd(
             sessionId: "s1",

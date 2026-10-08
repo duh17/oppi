@@ -94,6 +94,8 @@ private final class Harness {
             retryDelay: retryDelay
         )!
         buffer = session.currentText
+        // harness outlives the editor callback; weak would hide a use-after-free with an empty buffer
+        // swiftlint:disable:next unowned_variable_capture
         session.attachEditor { [unowned self] in self.buffer }
         return session
     }
@@ -609,6 +611,7 @@ struct WorkspaceFileEditRecoveryTests {
         #expect(WorkspaceFileEditStatusPresentation.offersConflictActions(session.status), "Review is offered")
 
         harness.buffer = session.currentText
+        // swiftlint:disable:next unowned_variable_capture - harness outlives the editor callback
         session.attachEditor { [unowned harness] in harness.buffer }
         harness.type("!", into: session)
         session.flush()

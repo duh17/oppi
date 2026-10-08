@@ -186,13 +186,13 @@ struct InAppNowPlayingStopButton: View {
     var size: CGFloat = 44
 
     var body: some View {
-        Button(action: { audioPlayer.stop() }) {
+        Button(action: { audioPlayer.stop() }, label: {
             Image(systemName: "xmark")
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.themeFg)
                 .frame(width: size, height: size)
                 .contentShape(Rectangle())
-        }
+        })
         .buttonStyle(.plain)
         .accessibilityLabel("Stop Playback")
         .accessibilityIdentifier(accessibilityIdentifier)

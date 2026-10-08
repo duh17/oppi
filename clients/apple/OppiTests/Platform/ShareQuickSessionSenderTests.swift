@@ -430,23 +430,23 @@ private actor ShareSenderStubTransport: ShareQuickSessionHTTPTransport {
 
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         requests.append(request)
-        return nextResponse(for: request)
+        return try nextResponse(for: request)
     }
 
     func upload(for request: URLRequest, fromFile fileURL: URL) async throws -> (Data, URLResponse) {
         requests.append(request)
         uploadedFileURLs.append(fileURL)
-        return nextResponse(for: request)
+        return try nextResponse(for: request)
     }
 
-    private func nextResponse(for request: URLRequest) -> (Data, URLResponse) {
+    private func nextResponse(for request: URLRequest) throws -> (Data, URLResponse) {
         let response = responses.removeFirst()
-        let http = HTTPURLResponse(
+        let http = (try #require(HTTPURLResponse(
             url: request.url ?? URL(string: "https://invalid.example")!,
             statusCode: response.status,
             httpVersion: nil,
             headerFields: ["Content-Type": "application/json"]
-        )!
+        )))
         return (response.data, http)
     }
 }

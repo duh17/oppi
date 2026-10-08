@@ -247,6 +247,8 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
             removeKeyboardObservers()
             isObservingKeyboard = false
         }
+        // teardown, not deinit: keyboard observers must stop while this presenter is still alive
+        // swiftlint:disable:next notification_center_detachment
         NotificationCenter.default.removeObserver(self)
     }
 

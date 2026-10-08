@@ -202,15 +202,16 @@ enum ToolRowTextRenderer {
                     lineStarts: sourceUTF16Starts,
                     tokenStart: tokenStart,
                     tokenEnd: tokenEnd,
-                    lineLengthAt: { sourceUTF16Lengths[$0] }
-                ) { lineIdx, overlapStart, overlapEnd in
-                    let range = NSRange(
-                        location: codeStartOffsets[lineIdx] + (overlapStart - sourceUTF16Starts[lineIdx]),
-                        length: overlapEnd - overlapStart
-                    )
-                    guard range.location >= 0, NSMaxRange(range) <= nsLength else { return }
-                    result.addAttribute(.foregroundColor, value: color, range: range)
-                }
+                    lineLengthAt: { sourceUTF16Lengths[$0] },
+                    body: { lineIdx, overlapStart, overlapEnd in
+                        let range = NSRange(
+                            location: codeStartOffsets[lineIdx] + (overlapStart - sourceUTF16Starts[lineIdx]),
+                            length: overlapEnd - overlapStart
+                        )
+                        guard range.location >= 0, NSMaxRange(range) <= nsLength else { return }
+                        result.addAttribute(.foregroundColor, value: color, range: range)
+                    }
+                )
             }
         }
 

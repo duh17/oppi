@@ -7,7 +7,7 @@ import Testing
 struct AppEventStreamClientTests {
     @Test func decodesStringAndDataFramesWhileSkippingMalformedInput() async throws {
         let factory = ScriptedAppEventSocketFactory()
-        let client = try makeClient(factory: factory)
+        let client = makeClient(factory: factory)
         let stream = client.connect()
         var received: [AppEventMessage] = []
         let consumer = Task { @MainActor in
@@ -37,7 +37,7 @@ struct AppEventStreamClientTests {
 
     @Test func recoverableFailureReconnectsAndContinuesOriginalStream() async throws {
         let factory = ScriptedAppEventSocketFactory()
-        let client = try makeClient(factory: factory, reconnectDelay: { _ in 0 })
+        let client = makeClient(factory: factory, reconnectDelay: { _ in 0 })
         let stream = client.connect()
         var received: [AppEventMessage] = []
         let consumer = Task { @MainActor in
@@ -70,7 +70,7 @@ struct AppEventStreamClientTests {
         let factory = ScriptedAppEventSocketFactory()
         factory.pingBehavior = .withhold
         var healthFailures: [PersistentStreamHealthFailure] = []
-        let client = try makeClient(
+        let client = makeClient(
             factory: factory,
             pingInterval: .milliseconds(1),
             pingTimeout: .milliseconds(20),
@@ -97,7 +97,7 @@ struct AppEventStreamClientTests {
     @Test func repeatedRecoverableFailuresReportUnhealthyTransportAtBoundedThreshold() async throws {
         let factory = ScriptedAppEventSocketFactory()
         var healthFailures: [PersistentStreamHealthFailure] = []
-        let client = try makeClient(
+        let client = makeClient(
             factory: factory,
             reconnectDelay: { _ in 0 },
             onTransportHealthFailure: { healthFailures.append($0) }
@@ -125,7 +125,7 @@ struct AppEventStreamClientTests {
 
     @Test func recoverableFailuresContinuePastFormerRetryCeiling() async throws {
         let factory = ScriptedAppEventSocketFactory()
-        let client = try makeClient(factory: factory, reconnectDelay: { _ in 0 })
+        let client = makeClient(factory: factory, reconnectDelay: { _ in 0 })
         let stream = client.connect()
         var received: [AppEventMessage] = []
         let consumer = Task { @MainActor in
@@ -156,7 +156,7 @@ struct AppEventStreamClientTests {
 
     @Test func nonRetryableHandshakeFailureFinishesWithoutOpeningAnotherSocket() async throws {
         let factory = ScriptedAppEventSocketFactory()
-        let client = try makeClient(factory: factory, reconnectDelay: { _ in 0 })
+        let client = makeClient(factory: factory, reconnectDelay: { _ in 0 })
         let stream = client.connect()
         let consumer = Task {
             for await _ in stream {}
@@ -179,7 +179,7 @@ struct AppEventStreamClientTests {
     @Test func authExpiredCloseForcesOneRefreshThenOneReconnect() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let refreshCounter = RefreshCounter()
-        let client = try makeClient(
+        let client = makeClient(
             factory: factory,
             reconnectDelay: { _ in 0 },
             refreshTokenProvider: {
@@ -220,7 +220,7 @@ struct AppEventStreamClientTests {
     @Test func auth401ForcesOneRefreshThenOneReconnect() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let refreshCounter = RefreshCounter()
-        let client = try makeClient(
+        let client = makeClient(
             factory: factory,
             reconnectDelay: { _ in 0 },
             refreshTokenProvider: {
@@ -260,7 +260,7 @@ struct AppEventStreamClientTests {
     @Test func authRefreshFailureDisconnectsTerminallyWithoutReconnect() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let refreshCounter = RefreshCounter()
-        let client = try makeClient(
+        let client = makeClient(
             factory: factory,
             reconnectDelay: { _ in 0 },
             refreshTokenProvider: {
@@ -293,7 +293,7 @@ struct AppEventStreamClientTests {
     @Test func repeatedAuth401CannotRefreshOrReconnectForever() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let refreshCounter = RefreshCounter()
-        let client = try makeClient(
+        let client = makeClient(
             factory: factory,
             reconnectDelay: { _ in 0 },
             refreshTokenProvider: {
@@ -337,7 +337,7 @@ struct AppEventStreamClientTests {
         let factory = ScriptedAppEventSocketFactory()
         let currentCounter = RefreshCounter()
         let refreshCounter = RefreshCounter()
-        let client = try makeClient(
+        let client = makeClient(
             factory: factory,
             token: "",
             reconnectDelay: { _ in 0 },
@@ -381,7 +381,7 @@ struct AppEventStreamClientTests {
         let factory = ScriptedAppEventSocketFactory()
         let currentCounter = RefreshCounter()
         let refreshCounter = RefreshCounter()
-        let client = try makeClient(
+        let client = makeClient(
             factory: factory,
             token: "",
             reconnectDelay: { _ in 0 },
@@ -431,7 +431,7 @@ struct AppEventStreamClientTests {
     @Test func leftoverSnapshotDoesNotHandshakeBeforeCurrentTokenResolves() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let gate = TokenGate()
-        let client = try makeClient(
+        let client = makeClient(
             factory: factory,
             token: "at_stale",
             currentTokenProvider: {
@@ -457,7 +457,7 @@ struct AppEventStreamClientTests {
 
     @Test func emptyCurrentTokenKeepsLeftoverAndStillOpens() async throws {
         let factory = ScriptedAppEventSocketFactory()
-        let client = try makeClient(
+        let client = makeClient(
             factory: factory,
             currentTokenProvider: { "" }
         )
@@ -478,7 +478,7 @@ struct AppEventStreamClientTests {
     @Test func expiredLeftoverDoesNotOpenAfterResolutionFailure() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let expiredMs = Int64((Date().timeIntervalSince1970 - 120) * 1000)
-        let client = try makeClient(
+        let client = makeClient(
             factory: factory,
             token: "at_expired_leftover",
             leftoverExpiresAtMs: expiredMs,
@@ -501,7 +501,7 @@ struct AppEventStreamClientTests {
     @Test func unexpiredLeftoverCredentialStillOpensAfterResolutionFailure() async throws {
         let factory = ScriptedAppEventSocketFactory()
         let futureMs = Int64((Date().timeIntervalSince1970 + 600) * 1000)
-        let client = try makeClient(
+        let client = makeClient(
             factory: factory,
             token: "at_leftover",
             leftoverExpiresAtMs: futureMs,
@@ -524,7 +524,7 @@ struct AppEventStreamClientTests {
 
     @Test func refreshRejectionKeepsLeftoverAppEventSnapshot() async throws {
         let factory = ScriptedAppEventSocketFactory()
-        let client = try makeClient(
+        let client = makeClient(
             factory: factory,
             currentTokenProvider: {
                 throw DeviceAuthError.refreshRejected(code: "revoked")
@@ -546,7 +546,7 @@ struct AppEventStreamClientTests {
 
     @Test func terminalCloseCodeWithoutHTTPResponseFinishesWithoutRetrying() async throws {
         let factory = ScriptedAppEventSocketFactory()
-        let client = try makeClient(factory: factory, reconnectDelay: { _ in 0 })
+        let client = makeClient(factory: factory, reconnectDelay: { _ in 0 })
         let stream = client.connect()
         let consumer = Task {
             for await _ in stream {}
@@ -564,7 +564,7 @@ struct AppEventStreamClientTests {
 
     @Test func disconnectCancelsScheduledReconnectAndFinishesConsumer() async throws {
         let factory = ScriptedAppEventSocketFactory()
-        let client = try makeClient(factory: factory, reconnectDelay: { _ in 60 })
+        let client = makeClient(factory: factory, reconnectDelay: { _ in 60 })
         let stream = client.connect()
         let consumer = Task {
             for await _ in stream {}
@@ -588,7 +588,7 @@ struct AppEventStreamClientTests {
 
     @Test func staleStreamTerminationCannotDisconnectReplacementConnection() async throws {
         let factory = ScriptedAppEventSocketFactory()
-        let client = try makeClient(factory: factory)
+        let client = makeClient(factory: factory)
 
         let firstStream = client.connect()
         let firstConsumer = Task {
@@ -762,7 +762,7 @@ struct StickyRefreshReconciliationTests {
             return Self.reconciliationResponse(for: request)
         }
 
-        _ = try await connectAppEventStream(
+        _ = try await try connectAppEventStream(
             for: connection,
             snapshotRequired: false
         )
@@ -796,7 +796,7 @@ struct StickyRefreshReconciliationTests {
             return Self.reconciliationResponse(for: request)
         }
 
-        let factory = try await connectAppEventStream(for: connection, snapshotRequired: true)
+        let factory = try await try connectAppEventStream(for: connection, snapshotRequired: true)
         #expect(await waitForTestCondition(timeout: .seconds(1)) { workspaceGate.isStarted })
 
         let socket = try #require(factory.sockets.first)
@@ -834,7 +834,7 @@ struct StickyRefreshReconciliationTests {
             await connection.refreshSessionList(force: true)
         }
         #expect(await waitForTestCondition(timeout: .seconds(1)) { requestGate.isStarted })
-        _ = try await connectAppEventStream(
+        _ = try await try connectAppEventStream(
             for: connection,
             snapshotRequired: false
         )
@@ -874,7 +874,7 @@ struct StickyRefreshReconciliationTests {
             await connection.refreshSessionList(force: true)
         }
         #expect(await waitForTestCondition(timeout: .seconds(1)) { requestGate.isStarted })
-        _ = try await connectAppEventStream(
+        _ = try await try connectAppEventStream(
             for: connection,
             snapshotRequired: false
         )
@@ -900,7 +900,7 @@ struct StickyRefreshReconciliationTests {
     @Test func installingAPIClientDisconnectsAppEventStream() async throws {
         let connection = makeReconciliationConnection()
         defer { cleanup(connection) }
-        _ = try await connectAppEventStream(for: connection, snapshotRequired: false)
+        _ = try await try connectAppEventStream(for: connection, snapshotRequired: false)
         #expect(connection.appEventStreamTransportState == .connected)
 
         connection.setAPIClientForTesting(makeReconciliationAPIClient(token: "replacement"))
@@ -924,12 +924,12 @@ struct StickyRefreshReconciliationTests {
             if path == "/workspaces" {
                 requestGate.blockUntilReleased()
                 let body = #"{"serverNow":1700000000000,"workspaces":[{"id":"stale","name":"Stale","path":"/stale","createdAt":1}],"summaries":[]}"#
-                let response = HTTPURLResponse(
-                    url: request.url!,
+                let response = (try #require(HTTPURLResponse(
+                    url: (try #require(request.url)),
                     statusCode: 200,
                     httpVersion: "HTTP/1.1",
                     headerFields: ["Content-Type": "application/json"]
-                )!
+                )))
                 return (Data(body.utf8), response)
             }
             return Self.reconciliationResponse(for: request)
@@ -989,13 +989,13 @@ struct StickyRefreshReconciliationTests {
             return Self.reconciliationResponse(for: request)
         }
 
-        _ = try await connectAppEventStream(for: connection, snapshotRequired: false)
+        _ = try await try connectAppEventStream(for: connection, snapshotRequired: false)
         let repair = Task { @MainActor in
             await connection.reconcileListSnapshotsAfterAppEventConnection(snapshotRequired: true)
         }
         #expect(await waitForTestCondition(timeout: .seconds(1)) { workspaceGate.isStarted })
 
-        connection.disconnectAppEventStream()
+        connection.distry connectAppEventStream()
         workspaceGate.release()
         await repair.value
 
@@ -1066,12 +1066,12 @@ struct StickyRefreshReconciliationTests {
         }
         let rawBody = "https://secret.example.test/token=sk_secret"
         TestURLProtocol.handler = { request in
-            let response = HTTPURLResponse(
+            let response = (try #require(HTTPURLResponse(
                 url: request.url ?? URL(string: "http://reconcile.example.test:7749")!,
                 statusCode: 503,
                 httpVersion: "HTTP/1.1",
                 headerFields: ["Content-Type": "application/json"]
-            )!
+            )))
             return (Data("{\"error\":\"\(rawBody)\"}".utf8), response)
         }
 
@@ -1141,13 +1141,13 @@ struct StickyRefreshReconciliationTests {
 
     private func cleanup(_ connection: ServerConnection) {
         TestURLProtocol.handler = nil
-        connection.disconnectAppEventStream()
+        connection.distry connectAppEventStream()
         connection.disconnectStream()
     }
 
     private static func reconciliationResponse(
         for request: URLRequest
-    ) -> (Data, HTTPURLResponse) {
+    ) throws -> (Data, HTTPURLResponse) {
         let body: String
         switch request.url?.path {
         case "/workspaces":
@@ -1159,12 +1159,12 @@ struct StickyRefreshReconciliationTests {
         default:
             body = "{}"
         }
-        let response = HTTPURLResponse(
+        let response = (try #require(HTTPURLResponse(
             url: request.url ?? URL(string: "http://reconcile.example.test:7749")!,
             statusCode: 200,
             httpVersion: "HTTP/1.1",
             headerFields: ["Content-Type": "application/json"]
-        )!
+        )))
         return (Data(body.utf8), response)
     }
 }
@@ -1322,7 +1322,7 @@ private final class ScriptedAppEventSocket {
         resume: { [weak self] in self?.taskState = .running },
         receive: { [weak self] in
             guard let self else { throw CancellationError() }
-            return try await self.receive()
+            return try await try self.receive()
         },
         sendPing: { [weak self] handler in
             switch self?.pingBehavior {

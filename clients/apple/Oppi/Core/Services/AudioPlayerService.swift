@@ -904,8 +904,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         // Even dataPlayedBack fires on stop. Inspect the graph on MainActor, not
         // inside this callback: stop can hold AVFoundation locks while calling it.
         // Only this owner restarts a graph, and every restart changes generation.
-        node.scheduleBuffer(pending.buffer, completionCallbackType: .dataPlayedBack) {
-            [weak self, token = pending.token] callbackType in
+        node.scheduleBuffer(pending.buffer, completionCallbackType: .dataPlayedBack) { [weak self, token = pending.token] callbackType in
             Task { @MainActor in
                 guard let self, self.streamEngineGeneration == generation else { return }
                 self.handleStreamBufferCompletion(

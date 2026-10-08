@@ -80,15 +80,15 @@ struct WorkspaceSettingsModelTests {
         return connection
     }
 
-    private func response(status: Int = 200, json: String) -> (Data, HTTPURLResponse) {
+    private func response(status: Int = 200, json: String) throws -> (Data, HTTPURLResponse) {
         (
             Data(json.utf8),
-            HTTPURLResponse(
+            (try #require(HTTPURLResponse(
                 url: URL(string: "http://localhost:7749")!,
                 statusCode: status,
                 httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"]
-            )!
+            )))
         )
     }
 
@@ -124,7 +124,7 @@ struct WorkspaceSettingsModelTests {
         nonisolated(unsafe) var sentBody: [String: Any] = [:]
         TestURLProtocol.handler = { request in
             sentBody = self.body(of: request)
-            return self.response(json: self.workspaceJSON(id: "w1", gitStatusEnabled: false))
+            return try self.response(json: self.workspaceJSON(id: "w1", gitStatusEnabled: false))
         }
 
         await model.setGitStatusEnabled(false)
@@ -145,7 +145,7 @@ struct WorkspaceSettingsModelTests {
         model.attach(connection: connection, workspace: workspace)
 
         TestURLProtocol.handler = { _ in
-            self.response(status: 500, json: "{\"error\":\"disk full\"}")
+            try self.response(status: 500, json: "{\"error\":\"disk full\"}")
         }
 
         await model.setGitStatusEnabled(false)
@@ -165,7 +165,7 @@ struct WorkspaceSettingsModelTests {
         model.attach(connection: connection, workspace: first)
 
         TestURLProtocol.handler = { _ in
-            self.response(status: 500, json: "{\"error\":\"disk full\"}")
+            try self.response(status: 500, json: "{\"error\":\"disk full\"}")
         }
 
         // The write is in flight when the view moves to another workspace.
@@ -189,7 +189,7 @@ struct WorkspaceSettingsModelTests {
         model.attach(connection: connection, workspace: first)
 
         TestURLProtocol.handler = { _ in
-            self.response(json: self.workspaceJSON(id: "w1", gitStatusEnabled: false))
+            try self.response(json: self.workspaceJSON(id: "w1", gitStatusEnabled: false))
         }
 
         let write = Task { await model.setGitStatusEnabled(false) }
@@ -211,7 +211,7 @@ struct WorkspaceSettingsModelTests {
         model.attach(connection: connection, workspace: workspace)
 
         TestURLProtocol.handler = { _ in
-            self.response(json: self.workspaceJSON(id: "w1", gitStatusEnabled: false, updatedAt: 1))
+            try self.response(json: self.workspaceJSON(id: "w1", gitStatusEnabled: false, updatedAt: 1))
         }
 
         await model.setGitStatusEnabled(false)
@@ -231,7 +231,7 @@ struct WorkspaceSettingsModelTests {
         let server = FakeWorkspaceServer(workspaceId: "w1")
         TestURLProtocol.handler = { request in
             let (status, json) = server.handle(request, body: self.body(of: request))
-            return self.response(status: status, json: json)
+            return try self.response(status: status, json: json)
         }
 
         async let git: Void = model.setGitStatusEnabled(false)
@@ -263,7 +263,7 @@ struct WorkspaceSettingsModelTests {
         let server = FakeWorkspaceServer(workspaceId: "w1")
         TestURLProtocol.handler = { request in
             let (status, json) = server.handle(request, body: self.body(of: request))
-            return self.response(status: status, json: json)
+            return try self.response(status: status, json: json)
         }
 
         async let toggle: Void = model.setGitStatusEnabled(false)

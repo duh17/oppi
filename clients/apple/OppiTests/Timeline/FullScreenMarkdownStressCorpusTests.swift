@@ -797,7 +797,7 @@ struct FullScreenMarkdownStressCorpusTests {
         )
         await settleReservedHeights(body)
         var anchor = try #require(body.debugVisibleAnchorForTesting(), "missing first-paint visible anchor")
-        try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: "first paint apply")
+        try await try assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: "first paint apply")
 
         let segments = body.debugRenderedSegmentsForTesting
         let mermaidItem = try #require(segments.firstIndex {
@@ -828,7 +828,7 @@ struct FullScreenMarkdownStressCorpusTests {
             await settleReservedHeights(body)
             try assertReservedHeightsMatchFitting(in: body, items: [item], stage: stage)
             anchor = try #require(body.debugVisibleAnchorForTesting(), "missing visible anchor after \(stage)")
-            try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: stage)
+            try await try assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: stage)
         }
 
         body.debugScrollItemIntoViewForTesting(imageItem)
@@ -870,7 +870,7 @@ struct FullScreenMarkdownStressCorpusTests {
         #expect(reservedFromPixels, "workspace image never committed prepared pixel geometry")
         let reservedDuringDecode = try #require(body.debugReservedHeightForTesting(imageItem))
         #expect(reservedDuringDecode > placeholderHeight)
-        try await assertVisibleAnchorStaysPut(
+        try await try assertVisibleAnchorStaysPut(
             in: body,
             expected: growthAnchor,
             stage: "image growth above anchor"
@@ -896,7 +896,7 @@ struct FullScreenMarkdownStressCorpusTests {
         await settleReservedHeights(body)
         try assertReservedHeightsMatchFitting(in: body, items: [imageItem], stage: "image reuse")
         anchor = try #require(body.debugVisibleAnchorForTesting(), "missing visible anchor after image reuse")
-        try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: "image reuse")
+        try await try assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: "image reuse")
         #expect(
             collectionView.indexPathsForVisibleItems.allSatisfy {
                 body.debugHasFinalGeometryForTesting($0.item)

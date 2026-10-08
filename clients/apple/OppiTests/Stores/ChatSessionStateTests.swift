@@ -32,7 +32,6 @@ struct ChatSessionStateTests {
 
         // Create an API client pointing at an unreachable host.
         // refreshModelCache should catch the error silently.
-        // swiftlint:disable:next force_unwrapping
         let api = APIClient(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test")
         await state.refreshModelCache(api: api)
 

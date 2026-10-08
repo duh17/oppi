@@ -468,10 +468,10 @@ enum FileShareService {
         await rasterizeHTMLViaPDF(source)
     }
 
+    // periphery:ignore - used by MarkdownTextTests via @testable import
     /// Check if an image is effectively blank (solid color).
     ///
     /// Shared by export validation tests and fallback heuristics.
-    // periphery:ignore - used by MarkdownTextTests via @testable import
     static func isBlankImage(_ image: UIImage) -> Bool {
         guard let cgImage = image.cgImage,
               cgImage.width > 10, cgImage.height > 10 else {

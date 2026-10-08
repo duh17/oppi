@@ -15,10 +15,10 @@ struct ProtocolSnapshotTests {
 
     @Test func withdrawalResultsKeepTakenInputSeparateFromQueueState() throws {
         let data = try Data(contentsOf: snapshotURL)
-        let fixture = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-        let messages = fixture["messages"] as! [String: Any]
+        let fixture = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let messages = try #require(fixture["messages"] as? [String: Any])
         for command in ["remove_queued_message", "take_queue"] {
-            let value = messages["command_result_\(command)"]!
+            let value = (try #require(messages["command_result_\(command)"]))
             let encoded = try JSONSerialization.data(withJSONObject: value)
             let decoded = try JSONDecoder().decode(ServerMessage.self, from: encoded)
             guard case .commandResult(let name, _, let success, let result, _) = decoded else {

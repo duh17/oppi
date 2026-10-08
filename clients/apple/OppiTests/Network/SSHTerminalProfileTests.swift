@@ -84,12 +84,12 @@ struct SSHTerminalProfileTests {
         // without a biometric prompt; the separate Security integration test
         // checks the production password item's protection policy.
         for (host, username) in [("two.ts.net", "alice"), ("one.ts.net", "bob")] {
-            try keychain.save(boundSecret(id: expected.id, host: host, username: username, password: "other-target-fixture"),
+            try keychain.save(try boundSecret(id: expected.id, host: host, username: username, password: "other-target-fixture"),
                               account: SSHTerminalProfileStore.passwordAccount(for: expected.id))
             #expect(throws: SSHKeychainError.passwordRequired) { try store.password(for: expected) }
         }
         let other = UUID()
-        try keychain.save(boundSecret(id: other, host: expected.host, username: expected.username, password: "swapped-id-fixture"),
+        try keychain.save(try boundSecret(id: other, host: expected.host, username: expected.username, password: "swapped-id-fixture"),
                           account: SSHTerminalProfileStore.passwordAccount(for: expected.id))
         #expect(throws: SSHKeychainError.passwordRequired) { try store.password(for: expected) }
     }
@@ -160,7 +160,7 @@ struct SSHTerminalProfileTests {
         let keychain = RecordingKeychain()
         let legacy = SSHTerminalLegacyProfile(host: "example.ts.net", username: "alice", savesPassword: true)
         defaults.set(try JSONEncoder().encode(legacy), forKey: SSHTerminalProfileStore.storageKey)
-        keychain.items[SSHTerminalProfileStore.passwordAccount] = legacySecret(host: "example.ts.net", username: "alice", password: "rebind-fixture")
+        keychain.items[SSHTerminalProfileStore.passwordAccount] = try legacySecret(host: "example.ts.net", username: "alice", password: "rebind-fixture")
         let store = SSHTerminalProfileStore(defaults: defaults, keychain: keychain)
         let migrated = try #require(store.load().first)
         #expect(keychain.calls.isEmpty)
@@ -236,7 +236,7 @@ struct SSHTerminalProfileTests {
         let store = SSHTerminalProfileStore(defaults: defaults, keychain: keychain)
         let legacy = SSHTerminalLegacyProfile(host: "old.ts.net", username: "alice", savesPassword: true)
         defaults.set(try JSONEncoder().encode(legacy), forKey: SSHTerminalProfileStore.storageKey)
-        keychain.items[SSHTerminalProfileStore.passwordAccount] = legacySecret(host: "old.ts.net", username: "alice", password: "legacy-fixture")
+        keychain.items[SSHTerminalProfileStore.passwordAccount] = try legacySecret(host: "old.ts.net", username: "alice", password: "legacy-fixture")
         let migrated = try #require(store.load().first)
         let second = SSHTerminalProfile(host: "old.ts.net", username: "alice", savesPassword: true, startupCommand: "herdr")
         try store.save(second, password: "second-secret")
@@ -287,7 +287,7 @@ struct SSHTerminalProfileTests {
     }
 }
 
-private func boundSecret(id: UUID, host: String, username: String, password: String) -> Data {
+private func boundSecret(id: UUID, host: String, username: String, password: String) throws -> Data {
     let record: [String: Any] = [
         "profileID": id.uuidString,
         "profile": [
@@ -301,10 +301,10 @@ private func boundSecret(id: UUID, host: String, username: String, password: Str
         ],
         "password": password,
     ]
-    return try! JSONSerialization.data(withJSONObject: record)
+    return try JSONSerialization.data(withJSONObject: record)
 }
 
-private func legacySecret(host: String, username: String, password: String) -> Data {
+private func legacySecret(host: String, username: String, password: String) throws -> Data {
     let record: [String: Any] = [
         "profile": [
             "host": host,
@@ -315,7 +315,7 @@ private func legacySecret(host: String, username: String, password: String) -> D
         ],
         "password": password,
     ]
-    return try! JSONSerialization.data(withJSONObject: record)
+    return try JSONSerialization.data(withJSONObject: record)
 }
 
 private final class RecordingKeychain: SSHCredentialStoring, @unchecked Sendable {

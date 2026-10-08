@@ -629,7 +629,7 @@ struct ServerConnectionLifecycleTests {
 
     @Test func ordinarySessionListWaitersJoinOnceAndNeverRetry() async throws {
         let startCount = JoinPassStartCounter()
-        let conn = makeSessionListJoinConnection(
+        let conn = try makeSessionListJoinConnection(
             failNetwork: true,
             onSessionListStart: { startCount.increment() }
         )
@@ -658,7 +658,7 @@ struct ServerConnectionLifecycleTests {
 
     @Test func recoveryOwnerJoinsFailedPassAndPerformsExactlyOneRefresh() async throws {
         let startCount = JoinPassStartCounter()
-        let conn = makeSessionListJoinConnection(
+        let conn = try makeSessionListJoinConnection(
             failNetwork: false,
             onSessionListStart: { startCount.increment() }
         )
@@ -692,7 +692,7 @@ struct ServerConnectionLifecycleTests {
 
     @Test func recoveryOwnerJoinsPeerReplacementInsteadOfOverwriting() async throws {
         let startCount = JoinPassStartCounter()
-        let conn = makeSessionListJoinConnection(
+        let conn = try makeSessionListJoinConnection(
             failNetwork: false,
             onSessionListStart: { startCount.increment() }
         )
@@ -740,7 +740,7 @@ struct ServerConnectionLifecycleTests {
     private func makeSessionListJoinConnection(
         failNetwork: Bool,
         onSessionListStart: @escaping @MainActor () -> Void
-    ) -> ServerConnection {
+    ) throws -> ServerConnection {
         let conn = ServerConnection()
         precondition(conn.configure(credentials: ServerCredentials(
             host: "join.example.test",
@@ -786,12 +786,12 @@ struct ServerConnectionLifecycleTests {
             default:
                 body = #"{}"#
             }
-            let response = HTTPURLResponse(
+            let response = (try #require(HTTPURLResponse(
                 url: request.url ?? URL(string: "https://join.example.test")!,
                 statusCode: 200,
                 httpVersion: "HTTP/1.1",
                 headerFields: ["Content-Type": "application/json"]
-            )!
+            )))
             return (Data(body.utf8), response)
         }
 
@@ -1006,11 +1006,15 @@ private final class AutomaticProbeURLProtocol: URLProtocol, @unchecked Sendable 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
-        Self.lock.withLock { Self.recorded.append(request) }
-        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(#"{"ok":false,"protocol":2}"#.utf8))
-        client?.urlProtocolDidFinishLoading(self)
+        do {
+            Self.lock.withLock { Self.recorded.append(request) }
+            let response = (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data(#"{"ok":false,"protocol":2}"#.utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
     }
     override func stopLoading() {}
 }

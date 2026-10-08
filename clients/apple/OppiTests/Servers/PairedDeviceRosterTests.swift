@@ -134,11 +134,11 @@ struct PairingDeviceNameTests {
         #expect(PairingDeviceName.resolved(long)?.count == PairingDeviceName.maxLength)
     }
 
-    @Test func genericModelNameGetsStableVendorSuffix() {
-        let id = UUID(uuidString: "A3F91234-0000-0000-0000-000000000000")!
+    @Test func genericModelNameGetsStableVendorSuffix() throws {
+        let id = (try #require(UUID(uuidString: "A3F91234-0000-0000-0000-000000000000")))
         #expect(PairingDeviceName.resolved("iPhone", model: "iPhone", vendorId: id) == "iPhone (A3F9)")
         #expect(PairingDeviceName.resolved(" iphone ", model: "iPhone", vendorId: id) == "iphone (A3F9)")
-        let other = UUID(uuidString: "B7710000-0000-0000-0000-000000000000")!
+        let other = (try #require(UUID(uuidString: "B7710000-0000-0000-0000-000000000000")))
         #expect(PairingDeviceName.resolved("iPhone", model: "iPhone", vendorId: other) == "iPhone (B771)")
     }
 

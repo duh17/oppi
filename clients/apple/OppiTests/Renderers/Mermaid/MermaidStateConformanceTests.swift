@@ -222,7 +222,7 @@ struct MermaidStateConformanceTests {
         #expect(diagram.states.first { $0.id == "Crash" }?.classes == ["movement"])
     }
 
-    @Test func compositeStateRendersAsClusterWithoutDuplicateNode() {
+    @Test func compositeStateRendersAsClusterWithoutDuplicateNode() throws {
         let result = parser.parse("""
         stateDiagram-v2
             [*] --> First
@@ -250,7 +250,7 @@ struct MermaidStateConformanceTests {
         #expect(layout.edgeEndpointSubgraphs.values.contains { $0.from == "First" })
 
         let box = renderer.boundingBox(layout)
-        let ctx = CGContext(
+        let ctx = (try #require(CGContext(
             data: nil,
             width: max(1, Int(box.width)),
             height: max(1, Int(box.height)),
@@ -258,7 +258,7 @@ struct MermaidStateConformanceTests {
             bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
+        )))
         renderer.draw(layout, in: ctx, at: .zero)
     }
 

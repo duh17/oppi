@@ -1149,7 +1149,7 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.connections["sha256:coalesce"] != nil)
     }
 
-    @Test func directCatalogConsumerCoalescesWithSelectedServerRefreshIncludingEmptyCatalog() async {
+    @Test func directCatalogConsumerCoalescesWithSelectedServerRefreshIncludingEmptyCatalog() async throws {
         defer { TestURLProtocol.handler = nil }
 
         let (coordinator, _) = makeCoordinator()
@@ -1160,8 +1160,8 @@ struct ConnectionCoordinatorTests {
 
         let connectionA = coordinator.ensureConnection(for: serverA)
         let connectionB = coordinator.ensureConnection(for: serverB)
-        connectionA.setAPIClientForTesting(makeTestAPIClient(host: "server-a.test"))
-        connectionB.setAPIClientForTesting(makeTestAPIClient(host: "server-b.test"))
+        connectionA.setAPIClientForTesting(try makeTestAPIClient(host: "server-a.test"))
+        connectionB.setAPIClientForTesting(try makeTestAPIClient(host: "server-b.test"))
         connectionA.setSplitStreamCapabilitiesForTesting()
         connectionB.setSplitStreamCapabilitiesForTesting()
 
@@ -1185,12 +1185,12 @@ struct ConnectionCoordinatorTests {
             default:
                 #"{}"#
             }
-            let response = HTTPURLResponse(
+            let response = (try #require(HTTPURLResponse(
                 url: request.url ?? URL(string: "http://server-b.test")!,
                 statusCode: 200,
                 httpVersion: "HTTP/1.1",
                 headerFields: ["Content-Type": "application/json"]
-            )!
+            )))
             return (Data(body.utf8), response)
         }
 
@@ -1220,7 +1220,7 @@ struct ConnectionCoordinatorTests {
         #expect(!connectionB.sessionStore.lastSyncFailed)
     }
 
-    @Test func refreshServerKeepsFailedUnloadedCatalogDistinctFromSuccessfulEmptySessions() async {
+    @Test func refreshServerKeepsFailedUnloadedCatalogDistinctFromSuccessfulEmptySessions() async throws {
         defer { TestURLProtocol.handler = nil }
 
         let (coordinator, _) = makeCoordinator()
@@ -1228,7 +1228,7 @@ struct ConnectionCoordinatorTests {
         coordinator.serverStore.addOrUpdate(server)
 
         let connection = coordinator.ensureConnection(for: server)
-        connection.setAPIClientForTesting(makeTestAPIClient(host: "failed.test"))
+        connection.setAPIClientForTesting(try makeTestAPIClient(host: "failed.test"))
         connection.setSplitStreamCapabilitiesForTesting()
 
         let requestLog = CoordinatorRequestLog()
@@ -1251,12 +1251,12 @@ struct ConnectionCoordinatorTests {
                 statusCode = 404
                 body = #"{}"#
             }
-            let response = HTTPURLResponse(
+            let response = (try #require(HTTPURLResponse(
                 url: request.url ?? URL(string: "http://failed.test")!,
                 statusCode: statusCode,
                 httpVersion: "HTTP/1.1",
                 headerFields: ["Content-Type": "application/json"]
-            )!
+            )))
             return (Data(body.utf8), response)
         }
 
@@ -1653,7 +1653,7 @@ struct ConnectionCoordinatorTests {
         )
     }
 
-    private func installEmptyCatalogHandler() {
+    private func installEmptyCatalogHandler() throws {
         TestURLProtocol.handler = { request in
             let body = switch request.url?.path {
             case "/workspaces": #"{"serverNow":1700000000000,"workspaces":[],"summaries":[]}"#
@@ -1661,21 +1661,21 @@ struct ConnectionCoordinatorTests {
             case "/sessions/recent": #"{"sessions":[]}"#
             default: #"{}"#
             }
-            let response = HTTPURLResponse(
+            let response = (try #require(HTTPURLResponse(
                 url: request.url ?? URL(string: "http://test.local")!,
                 statusCode: 200,
                 httpVersion: "HTTP/1.1",
                 headerFields: ["Content-Type": "application/json"]
-            )!
+            )))
             return (Data(body.utf8), response)
         }
     }
 
-    private func makeTestAPIClient(host: String) -> APIClient {
+    private func makeTestAPIClient(host: String) throws -> APIClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [TestURLProtocol.self]
         return APIClient(
-            baseURL: URL(string: "http://\(host):7749")!,
+            baseURL: (try #require(URL(string: "http://\(host):7749"))),
             token: "sk_test",
             configuration: configuration
         )

@@ -140,7 +140,7 @@ struct ToolExpandedHostedSurfaceTests {
 
         await gate.open()
         #expect(await waitForTimelineCondition(timeoutMs: 2_000) { await gate.finished == 1 })
-        try await settle()
+        try await try settle()
 
         #expect(view.expandedContainer.isHidden)
         #expect(view.activeExpandedSurfaceKindForTesting == .none)
@@ -161,7 +161,7 @@ struct ToolExpandedHostedSurfaceTests {
 
         await gate.open()
         #expect(await waitForTimelineCondition(timeoutMs: 2_000) { await gate.finished == 1 })
-        try await settle()
+        try await try settle()
 
         #expect(view.activeExpandedSurfaceKindForTesting == .hosted)
         #expect(timelineFirstView(ofType: DelimitedTableRenderView.self, in: view) === table)

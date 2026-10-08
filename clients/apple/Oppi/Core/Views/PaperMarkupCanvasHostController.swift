@@ -99,8 +99,7 @@ final class PaperMarkupCanvasHostController: UIViewController {
         if let destination {
             self.destination = destination
         } else if let onAddToChat {
-            self.destination = ComposerCanvasDestination(sessionId: "composer-cover") {
-                attachment, recognizedText in
+            self.destination = ComposerCanvasDestination(sessionId: "composer-cover") { attachment, recognizedText in
                 onAddToChat(attachment, recognizedText)
             }
         } else {

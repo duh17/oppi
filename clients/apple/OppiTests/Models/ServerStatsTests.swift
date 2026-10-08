@@ -8,7 +8,7 @@ struct ServerStatsTests {
     // MARK: - JSON Helpers
 
     private func decode<T: Decodable>(_ json: String, as type: T.Type = T.self) throws -> T {
-        let data = json.data(using: .utf8)!
+        let data = (try #require(json.data(using: .utf8)))
         return try JSONDecoder().decode(T.self, from: data)
     }
 

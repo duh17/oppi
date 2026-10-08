@@ -207,7 +207,7 @@ struct HTMLDOMElementAnnotationTests {
         #expect(saved.reference.endLine == nil)
         #expect(saved.reference.languageHint == nil)
         #expect(saved.reference.htmlDOMAnchor == anchor)
-        #expect(!saved.reference.selectedText!.contains("outerHTML"))
+        #expect(!(try #require(saved.reference.selectedText)).contains("outerHTML"))
 
         let block = store.appendReviewBlock(to: "")
         #expect(block.contains("**Rendered element:** button \"Save\""))
@@ -246,7 +246,7 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func identicalButtonsInSeparateGroupsHaveReadableDistinctOutgoingContext() async throws {
         let harness = try makeStashHarness()
-        let fixture = try await makeFixture(html: """
+        let fixture = try await try makeFixture(html: """
             <style>body{margin:0}.group,button{display:block;width:120px;height:50px;padding:0}.group button[hidden]{display:none}</style>
             <div id="first" class="group"><button hidden>Hidden</button><button>Save</button></div>
             <div id="second" class="group"><button>Save</button></div>
@@ -254,7 +254,7 @@ struct HTMLDOMElementAnnotationTests {
         defer { fixture.window.isHidden = true }
         // An assigned light-DOM button has a rect, but its shadow slot is
         // suppressed; it must not shift the two readable button positions.
-        _ = try await pageString("""
+        _ = try await try pageString("""
             const host = document.createElement('div');
             host.id = 'slot-host';
             document.body.prepend(host);
@@ -267,13 +267,13 @@ struct HTMLDOMElementAnnotationTests {
             """, in: fixture.view)
         let picker = fixture.view.htmlDOMPickControllerForTesting
         picker.enterPick()
-        let firstRect = try await cssRect(id: "first", in: fixture.view)
-        let firstPoint = try await viewPoint(for: firstRect, in: fixture.view)
+        let firstRect = try await try cssRect(id: "first", in: fixture.view)
+        let firstPoint = try await try viewPoint(for: firstRect, in: fixture.view)
         let firstSelection = await pickAndWait(picker, at: firstPoint)
         let first = try #require(firstSelection)
         let firstAnchor = try #require(picker.snapshotForTesting?.anchor())
-        let secondRect = try await cssRect(id: "second", in: fixture.view)
-        let secondPoint = try await viewPoint(for: secondRect, in: fixture.view)
+        let secondRect = try await try cssRect(id: "second", in: fixture.view)
+        let secondPoint = try await try viewPoint(for: secondRect, in: fixture.view)
         let secondSelection = await pickAndWait(picker, at: secondPoint)
         let second = try #require(secondSelection)
         let secondAnchor = try #require(picker.snapshotForTesting?.anchor())
@@ -292,7 +292,7 @@ struct HTMLDOMElementAnnotationTests {
 
         // A different group may gain a control after selection. Its readable
         // page order changes, but the selected node and private locator do not.
-        _ = try await pageString(
+        _ = try await try pageString(
             "const extra=document.createElement('button'); extra.textContent='Other'; document.getElementById('first').prepend(extra); 'ok'",
             in: fixture.view
         )
@@ -318,7 +318,7 @@ struct HTMLDOMElementAnnotationTests {
     }
 
     @Test func unavailableStandalonePickerStaysHiddenOnBrowseAndContextRemoval() async throws {
-        let fixture = try await makeFixture(html: Self.nestedFixture)
+        let fixture = try await try makeFixture(html: Self.nestedFixture)
         defer { fixture.window.isHidden = true }
         let picker = fixture.view.htmlDOMPickControllerForTesting
         #expect(picker.canPick)
@@ -333,13 +333,13 @@ struct HTMLDOMElementAnnotationTests {
     }
 
     @Test func pickShieldOwnsTouchesAndDoesNotActivatePageControls() async throws {
-        let fixture = try await makeFixture(html: Self.controlFixture)
+        let fixture = try await try makeFixture(html: Self.controlFixture)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
 
-        let trap = try await cssRect(id: "trap", in: fixture.view)
-        let point = try await viewPoint(for: trap, in: fixture.view)
+        let trap = try await try cssRect(id: "trap", in: fixture.view)
+        let point = try await try viewPoint(for: trap, in: fixture.view)
         fixture.view.layoutIfNeeded()
         let hit = fixture.view.hitTest(point, with: nil)
         let pagePoint = CGPoint(x: 48, y: min(fixture.view.bounds.height - 48, max(point.y, 240)))
@@ -357,15 +357,15 @@ struct HTMLDOMElementAnnotationTests {
         #expect(selected.elementId == "trap")
         #expect(!selected.readableLabel.contains("#trap"), "The private DOM ID must not become comment prose")
         #expect(!selected.summaryText.contains("#trap"))
-        let events = try await pageString("JSON.stringify(window.__events || [])", in: fixture.view)
-        let active = try await pageString("document.activeElement && document.activeElement.id", in: fixture.view)
+        let events = try await try pageString("JSON.stringify(window.__events || [])", in: fixture.view)
+        let active = try await try pageString("document.activeElement && document.activeElement.id", in: fixture.view)
         #expect(events == "[]")
         #expect(active != "trap")
         #expect(controller.highlightViewForTesting.isHidden == false)
     }
 
     @Test func nestedParentSelectionRestoresBrowseWithoutReloading() async throws {
-        let fixture = try await makeFixture(html: Self.nestedFixture)
+        let fixture = try await try makeFixture(html: Self.nestedFixture)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         let generation = fixture.view.navigationGenerationForTesting
@@ -373,8 +373,8 @@ struct HTMLDOMElementAnnotationTests {
         let offset = fixture.view.webViewForTesting.scrollView.contentOffset
         controller.enterPick()
 
-        let leaf = try await cssRect(id: "leaf", in: fixture.view)
-        controller.pick(at: try await viewPoint(for: leaf, in: fixture.view))
+        let leaf = try await try cssRect(id: "leaf", in: fixture.view)
+        controller.pick(at: try await try viewPoint(for: leaf, in: fixture.view))
         let selectedLeaf = try #require(await waitForElement(id: "leaf", controller: controller))
         #expect(selectedLeaf.tag == "button", "selected \(selectedLeaf.tag)#\(selectedLeaf.elementId ?? "") bounds \(selectedLeaf.cssBounds)")
 
@@ -389,7 +389,7 @@ struct HTMLDOMElementAnnotationTests {
         #expect(controller.isPicking == false)
         #expect(fixture.view.webViewForTesting.isUserInteractionEnabled == true)
         #expect(controller.bannerTextForTesting == nil || controller.exitButtonForTesting.isHidden)
-        let browseHit = fixture.view.hitTest(try await viewPoint(for: leaf, in: fixture.view), with: nil)
+        let browseHit = fixture.view.hitTest(try await try viewPoint(for: leaf, in: fixture.view), with: nil)
         #expect(!(browseHit is HTMLDOMPickShieldView))
         #expect(fixture.view.navigationGenerationForTesting == generation)
         #expect(fixture.view.loadedSourceSHA256ForTesting == hash)
@@ -398,28 +398,28 @@ struct HTMLDOMElementAnnotationTests {
     }
 
     @Test func selectionTracksScrollAndPageZoom() async throws {
-        let fixture = try await makeFixture(html: Self.coordinateFixture)
+        let fixture = try await try makeFixture(html: Self.coordinateFixture)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
 
-        try await assertPickHitsMarker(in: fixture, controller: controller)
+        try await try assertPickHitsMarker(in: fixture, controller: controller)
 
-        let beforeScroll = try await cssRect(id: "marker", in: fixture.view)
+        let beforeScroll = try await try cssRect(id: "marker", in: fixture.view)
         fixture.view.webViewForTesting.scrollView.setContentOffset(CGPoint(x: 0, y: 36), animated: false)
         try await Task.sleep(for: .milliseconds(80))
-        let scrolled = try await cssRect(id: "marker", in: fixture.view)
+        let scrolled = try await try cssRect(id: "marker", in: fixture.view)
         #expect(scrolled.origin.y < beforeScroll.origin.y - 4, "scroll did not move the marker. before \(beforeScroll) after \(scrolled)")
-        try await assertPickHitsMarker(in: fixture, controller: controller)
+        try await try assertPickHitsMarker(in: fixture, controller: controller)
 
         try await resetViewport(fixture.view.webViewForTesting)
         fixture.view.webViewForTesting.pageZoom = 2
         try await Task.sleep(for: .milliseconds(120))
-        let zoomedCSS = try await cssRect(id: "marker", in: fixture.view)
-        let zoomedView = try await viewPoint(for: zoomedCSS, in: fixture.view)
+        let zoomedCSS = try await try cssRect(id: "marker", in: fixture.view)
+        let zoomedView = try await try viewPoint(for: zoomedCSS, in: fixture.view)
         #expect(fixture.view.webViewForTesting.pageZoom == 2)
         #expect(zoomedView.x.isFinite && zoomedView.y.isFinite)
-        try await assertPickHitsMarker(in: fixture, controller: controller)
+        try await try assertPickHitsMarker(in: fixture, controller: controller)
 
         try await resetViewport(fixture.view.webViewForTesting)
         let webView = fixture.view.webViewForTesting
@@ -428,7 +428,7 @@ struct HTMLDOMElementAnnotationTests {
         webView.scrollView.setZoomScale(2, animated: false)
         try await Task.sleep(for: .milliseconds(120))
         webView.scrollView.setContentOffset(.zero, animated: false)
-        _ = try await pageString(
+        _ = try await try pageString(
             "window.scrollTo(0, 0); document.getElementById('marker').scrollIntoView({block:'center', inline:'center'}); 'ok'",
             in: fixture.view
         )
@@ -436,15 +436,15 @@ struct HTMLDOMElementAnnotationTests {
         webView.scrollView.setContentOffset(.zero, animated: false)
         try await Task.sleep(for: .milliseconds(80))
         let zoomScale = webView.scrollView.zoomScale
-        let visualScale = try await pageNumber("window.visualViewport ? window.visualViewport.scale : 1", in: fixture.view)
+        let visualScale = try await try pageNumber("window.visualViewport ? window.visualViewport.scale : 1", in: fixture.view)
         #expect(abs(zoomScale - 1) > 0.05 || abs(visualScale - 1) > 0.05, "WKWebView did not enter a non-1 pinch scale. zoomScale=\(zoomScale) visualScale=\(visualScale)")
-        try await assertPickHitsMarker(in: fixture, controller: controller)
+        try await try assertPickHitsMarker(in: fixture, controller: controller)
     }
 
     @Test func sanitizerExcludesSensitiveDescendantsShadowsAndFrames() async throws {
-        let fixture = try await makeFixture(html: Self.sensitiveFixture)
+        let fixture = try await try makeFixture(html: Self.sensitiveFixture)
         defer { fixture.window.isHidden = true }
-        try await pageString(
+        try await try pageString(
             """
             const host = document.getElementById('open-host');
             const root = host.attachShadow({mode:'open'});
@@ -462,9 +462,9 @@ struct HTMLDOMElementAnnotationTests {
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
 
-        let card = try await cssRect(id: "card", in: fixture.view)
+        let card = try await try cssRect(id: "card", in: fixture.view)
         let cardPoint = CGRect(x: card.midX, y: card.minY + 12, width: 1, height: 1)
-        let cardElement = try #require(await pickAndWait(controller, at: try await viewPoint(for: cardPoint, in: fixture.view)))
+        let cardElement = try #require(await pickAndWait(controller, at: try await try viewPoint(for: cardPoint, in: fixture.view)))
         let cardText = cardElement.visibleText + cardElement.readableLabel + (cardElement.safeURL ?? "")
         #expect(cardText.contains("Visible card"), "card \(cardElement.tag)#\(cardElement.elementId ?? "") text \(cardText)")
         for secret in ["HIDDEN_SECRET", "DISPLAY_NONE_SECRET", "ARIA_HIDDEN_SECRET", "CLIP_SECRET", "FONT_ZERO_SECRET", "OPACITY_SECRET", "p@ssw0rd", "pw-aria-secret", "pw-title-secret", "user-typed-secret", "editable secret", "editable block secret", "token=abc123", "onclick", "steal("] {
@@ -472,8 +472,8 @@ struct HTMLDOMElementAnnotationTests {
         }
         #expect(cardElement.safeURL == "https://example.com/callback" || cardElement.safeURL == nil)
 
-        let password = try await cssRect(id: "password", in: fixture.view)
-        let passwordElement = try #require(await pickAndWait(controller, at: try await viewPoint(for: password, in: fixture.view)))
+        let password = try await try cssRect(id: "password", in: fixture.view)
+        let passwordElement = try #require(await pickAndWait(controller, at: try await try viewPoint(for: password, in: fixture.view)))
         #expect(passwordElement.tag == "input", "selected \(passwordElement.tag)#\(passwordElement.elementId ?? "")")
         #expect(passwordElement.inputType == "password")
         let passwordText = passwordElement.visibleText + passwordElement.readableLabel + (passwordElement.accessibleName ?? "")
@@ -481,8 +481,8 @@ struct HTMLDOMElementAnnotationTests {
         #expect(!passwordText.contains("pw-aria-secret"))
         #expect(!passwordText.contains("pw-title-secret"))
 
-        let titled = try await cssRect(id: "title-secret", in: fixture.view)
-        let titledElement = try #require(await pickAndWait(controller, at: try await viewPoint(for: titled, in: fixture.view)))
+        let titled = try await try cssRect(id: "title-secret", in: fixture.view)
+        let titledElement = try #require(await pickAndWait(controller, at: try await try viewPoint(for: titled, in: fixture.view)))
         let titledText = titledElement.visibleText + titledElement.readableLabel + (titledElement.accessibleName ?? "")
         #expect(titledElement.elementId == nil)
         #expect(titledElement.classes.isEmpty)
@@ -490,22 +490,22 @@ struct HTMLDOMElementAnnotationTests {
         #expect(!titledText.contains("title-secret"))
         #expect(!titledText.contains("pw-title-secret"))
 
-        let open = try await cssRect(id: "open-host", in: fixture.view)
-        let openElement = try #require(await pickAndWait(controller, at: try await viewPoint(for: open, in: fixture.view)))
+        let open = try await try cssRect(id: "open-host", in: fixture.view)
+        let openElement = try #require(await pickAndWait(controller, at: try await try viewPoint(for: open, in: fixture.view)))
         #expect(openElement.elementId == "open-inner", "selected \(openElement.tag)#\(openElement.elementId ?? "") limitation \(String(describing: openElement.limitation))")
         #expect(openElement.visibleText.contains("Open Inner"))
         #expect(!openElement.visibleText.contains("OPEN_SHADOW_SECRET"))
         #expect(openElement.limitation == nil)
 
-        let closed = try await cssRect(id: "closed-host", in: fixture.view)
-        let closedElement = try #require(await pickAndWait(controller, at: try await viewPoint(for: closed, in: fixture.view)))
+        let closed = try await try cssRect(id: "closed-host", in: fixture.view)
+        let closedElement = try #require(await pickAndWait(controller, at: try await try viewPoint(for: closed, in: fixture.view)))
         #expect(closedElement.elementId == "closed-host", "selected \(closedElement.tag)#\(closedElement.elementId ?? "")")
         #expect(closedElement.limitation == .closedShadowHost)
         #expect(!closedElement.visibleText.contains("SECRET_TOKEN_CLOSED"))
         #expect(!closedElement.readableLabel.contains("SECRET_TOKEN_CLOSED"))
 
-        let frame = try await cssRect(id: "frame", in: fixture.view)
-        let frameElement = try #require(await pickAndWait(controller, at: try await viewPoint(for: frame, in: fixture.view)))
+        let frame = try await try cssRect(id: "frame", in: fixture.view)
+        let frameElement = try #require(await pickAndWait(controller, at: try await try viewPoint(for: frame, in: fixture.view)))
         #expect(frameElement.elementId == "frame", "selected \(frameElement.tag)#\(frameElement.elementId ?? "")")
         #expect(frameElement.limitation == .embeddedFrame)
         #expect(!frameElement.visibleText.contains("IFRAME_SECRET"))
@@ -513,33 +513,33 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func composedTreeTextExcludesUndistributedLightDOMAndInactiveSlotFallback() async throws {
         let harness = try makeStashHarness()
-        let fixture = try await makeFixture(html: Self.composedTreeFixture, router: harness.router)
+        let fixture = try await try makeFixture(html: Self.composedTreeFixture, router: harness.router)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
 
-        let unassigned = try await cssRect(id: "unassigned-host", in: fixture.view)
+        let unassigned = try await try cssRect(id: "unassigned-host", in: fixture.view)
         let unassignedPoint = CGRect(x: unassigned.maxX - 8, y: unassigned.maxY - 8, width: 1, height: 1)
-        let unassignedElement = try #require(await pickAndWait(controller, at: try await viewPoint(for: unassignedPoint, in: fixture.view)))
+        let unassignedElement = try #require(await pickAndWait(controller, at: try await try viewPoint(for: unassignedPoint, in: fixture.view)))
         #expect(unassignedElement.elementId == "unassigned-host")
         #expect(unassignedElement.visibleText.contains("Rendered button"))
         #expect(!unassignedElement.visibleText.contains("UNDISTRIBUTED_SECRET"))
 
-        let assigned = try await cssRect(id: "assigned-host", in: fixture.view)
+        let assigned = try await try cssRect(id: "assigned-host", in: fixture.view)
         let assignedPoint = CGRect(x: assigned.maxX - 8, y: assigned.maxY - 8, width: 1, height: 1)
-        let assignedElement = try #require(await pickAndWait(controller, at: try await viewPoint(for: assignedPoint, in: fixture.view)))
+        let assignedElement = try #require(await pickAndWait(controller, at: try await try viewPoint(for: assignedPoint, in: fixture.view)))
         #expect(assignedElement.elementId == "assigned-host")
         #expect(assignedElement.visibleText.components(separatedBy: "ASSIGNED_VISIBLE").count == 2)
         #expect(!assignedElement.visibleText.contains("INACTIVE_FALLBACK_SECRET"))
         #expect(!assignedElement.visibleText.contains("UNASSIGNED_SLOT_SECRET"))
 
-        let fallback = try await cssRect(id: "fallback-host", in: fixture.view)
+        let fallback = try await try cssRect(id: "fallback-host", in: fixture.view)
         let fallbackPoint = CGRect(x: fallback.maxX - 8, y: fallback.maxY - 8, width: 1, height: 1)
-        let fallbackElement = try #require(await pickAndWait(controller, at: try await viewPoint(for: fallbackPoint, in: fixture.view)))
+        let fallbackElement = try #require(await pickAndWait(controller, at: try await try viewPoint(for: fallbackPoint, in: fixture.view)))
         #expect(fallbackElement.elementId == "fallback-host")
         #expect(fallbackElement.visibleText.contains("ACTIVE_FALLBACK"))
 
-        controller.pick(at: try await viewPoint(for: unassignedPoint, in: fixture.view))
+        controller.pick(at: try await try viewPoint(for: unassignedPoint, in: fixture.view))
         _ = try #require(await waitForElement(id: "unassigned-host", controller: controller))
         let request = try #require(controller.preparedRequestForTesting())
         #expect(harness.controller.save(
@@ -558,7 +558,7 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func closedShadowUndistributedLightTextDoesNotLeakIntoSavedPrompt() async throws {
         let harness = try makeStashHarness()
-        let fixture = try await makeFixture(html: Self.closedShadowLightDOMFixture, router: harness.router)
+        let fixture = try await try makeFixture(html: Self.closedShadowLightDOMFixture, router: harness.router)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
@@ -594,8 +594,8 @@ struct HTMLDOMElementAnnotationTests {
             return (savedText, harness.store.appendReviewBlock(to: ""))
         }
 
-        let custom = try await cssRect(id: "closed-custom", in: fixture.view)
-        let customElement = try #require(await pickAndWait(controller, at: try await viewPoint(for: custom, in: fixture.view)))
+        let custom = try await try cssRect(id: "closed-custom", in: fixture.view)
+        let customElement = try #require(await pickAndWait(controller, at: try await try viewPoint(for: custom, in: fixture.view)))
         #expect(customElement.elementId == "closed-custom")
         let customSaved = try saveCurrent(body: "Review the closed custom host.")
         assertAbsent(
@@ -604,8 +604,8 @@ struct HTMLDOMElementAnnotationTests {
             from: "closed-custom"
         )
 
-        let ordinary = try await cssRect(id: "closed-ordinary", in: fixture.view)
-        let ordinaryElement = try #require(await pickAndWait(controller, at: try await viewPoint(for: ordinary, in: fixture.view)))
+        let ordinary = try await try cssRect(id: "closed-ordinary", in: fixture.view)
+        let ordinaryElement = try #require(await pickAndWait(controller, at: try await try viewPoint(for: ordinary, in: fixture.view)))
         #expect(ordinaryElement.elementId == "closed-ordinary")
         let ordinarySaved = try saveCurrent(body: "Review the closed ordinary host.")
         assertAbsent(
@@ -614,9 +614,9 @@ struct HTMLDOMElementAnnotationTests {
             from: "closed-ordinary"
         )
 
-        let ancestor = try await cssRect(id: "closed-ancestor", in: fixture.view)
+        let ancestor = try await try cssRect(id: "closed-ancestor", in: fixture.view)
         let ancestorPoint = CGRect(x: ancestor.midX, y: ancestor.minY + 10, width: 1, height: 1)
-        let ancestorElement = try #require(await pickAndWait(controller, at: try await viewPoint(for: ancestorPoint, in: fixture.view)))
+        let ancestorElement = try #require(await pickAndWait(controller, at: try await try viewPoint(for: ancestorPoint, in: fixture.view)))
         #expect(ancestorElement.elementId == "closed-ancestor", "selected \(ancestorElement.tag)#\(ancestorElement.elementId ?? "")")
         #expect(ancestorElement.visibleText.contains("Visible ancestor"))
         let ancestorSaved = try saveCurrent(body: "Review the ancestor of closed hosts.")
@@ -628,12 +628,12 @@ struct HTMLDOMElementAnnotationTests {
     }
 
     @Test func isolatedSHA256MatchesCryptoKitAtPaddingUnicodeAndSizeBoundaries() async throws {
-        let fixture = try await makeFixture(html: Self.digestFixture)
+        let fixture = try await try makeFixture(html: Self.digestFixture)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
-        let target = try await cssRect(id: "digest-target", in: fixture.view)
-        controller.pick(at: try await viewPoint(for: target, in: fixture.view))
+        let target = try await try cssRect(id: "digest-target", in: fixture.view)
+        controller.pick(at: try await try viewPoint(for: target, in: fixture.view))
         let selected = try #require(await waitForElement(id: "digest-target", controller: controller))
         let locator = selected.locator
 
@@ -648,7 +648,7 @@ struct HTMLDOMElementAnnotationTests {
             ("maximum", String(repeating: "x", count: 1_048_576)),
         ]
         for fixtureCase in cases {
-            _ = try await pageString(
+            _ = try await try pageString(
                 "document.getElementById('digest-target').textContent = value; 'ok'",
                 arguments: ["value": fixtureCase.value],
                 in: fixture.view
@@ -665,7 +665,7 @@ struct HTMLDOMElementAnnotationTests {
             )
         }
 
-        _ = try await pageString(
+        _ = try await try pageString(
             "document.getElementById('digest-target').textContent = 'x'.repeat(1048577); 'ok'",
             in: fixture.view
         )
@@ -683,7 +683,7 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func viewportRefreshRejectsACloneInsteadOfAdoptingIt() async throws {
         let harness = try makeStashHarness()
-        let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
+        let fixture = try await try makeFixture(html: Self.nestedFixture, router: harness.router)
         defer { fixture.window.isHidden = true }
         let kept = try harness.store.create(
             workspaceId: "workspace",
@@ -693,10 +693,10 @@ struct HTMLDOMElementAnnotationTests {
         )
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
-        let leaf = try await cssRect(id: "leaf", in: fixture.view)
-        controller.pick(at: try await viewPoint(for: leaf, in: fixture.view))
+        let leaf = try await try cssRect(id: "leaf", in: fixture.view)
+        controller.pick(at: try await try viewPoint(for: leaf, in: fixture.view))
         let original = try #require(await waitForElement(id: "leaf", controller: controller))
-        _ = try await pageString(
+        _ = try await try pageString(
             "const node=document.getElementById('leaf'); node.replaceWith(node.cloneNode(true)); 'ok'",
             in: fixture.view
         )
@@ -722,12 +722,12 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func interruptedSaveCannotCrossABrowseAndNewPickSession() async throws {
         let harness = try makeStashHarness()
-        let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
+        let fixture = try await try makeFixture(html: Self.nestedFixture, router: harness.router)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
-        let leaf = try await cssRect(id: "leaf", in: fixture.view)
-        controller.pick(at: try await viewPoint(for: leaf, in: fixture.view))
+        let leaf = try await try cssRect(id: "leaf", in: fixture.view)
+        controller.pick(at: try await try viewPoint(for: leaf, in: fixture.view))
         _ = try #require(await waitForElement(id: "leaf", controller: controller))
         controller.commentButtonForTesting.sendActions(for: .touchUpInside)
         let composer = try #require(await waitForView("review-comment.inline-composer", in: fixture.host.view))
@@ -747,7 +747,7 @@ struct HTMLDOMElementAnnotationTests {
         #expect(await waitUntil { saveLookupStarted })
         controller.exitPick()
         controller.enterPick()
-        controller.pick(at: try await viewPoint(for: leaf, in: fixture.view))
+        controller.pick(at: try await try viewPoint(for: leaf, in: fixture.view))
         _ = try #require(await waitForElement(id: "leaf", controller: controller))
         let newerStatus = controller.statusTextForTesting
         let newerRejection = controller.lastRejection
@@ -768,9 +768,9 @@ struct HTMLDOMElementAnnotationTests {
     }
 
     @Test func pageWorldOverrideDoesNotBecomeANativeAction() async throws {
-        let fixture = try await makeFixture(html: Self.controlFixture)
+        let fixture = try await try makeFixture(html: Self.controlFixture)
         defer { fixture.window.isHidden = true }
-        _ = try await pageString(
+        _ = try await try pageString(
             """
             document.elementFromPoint = function() { return document.getElementById('trap'); };
             Element.prototype.getBoundingClientRect = function() { return {x:0,y:0,width:1,height:1,top:0,left:0,right:1,bottom:1}; };
@@ -780,20 +780,20 @@ struct HTMLDOMElementAnnotationTests {
         )
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
-        let marker = try await contentWorldRect(id: "other", in: fixture.view)
-        controller.pick(at: try await viewPoint(for: marker, in: fixture.view))
+        let marker = try await try contentWorldRect(id: "other", in: fixture.view)
+        controller.pick(at: try await try viewPoint(for: marker, in: fixture.view))
         let selected = try #require(await waitForSnapshot(controller))
         #expect(selected.elementId == "other")
         #expect(selected.elementId != "trap")
         let url = fixture.view.webViewForTesting.url?.absoluteString ?? ""
         #expect(!url.hasPrefix("javascript:"))
-        let events = try await pageString("JSON.stringify(window.__events || [])", in: fixture.view)
+        let events = try await try pageString("JSON.stringify(window.__events || [])", in: fixture.view)
         #expect(events == "[]")
     }
 
     @Test func staleMutationNavigationAndLateCallbackDoNotStageAComment() async throws {
         let harness = try makeStashHarness()
-        let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
+        let fixture = try await try makeFixture(html: Self.nestedFixture, router: harness.router)
         defer { fixture.window.isHidden = true }
         let kept = try harness.store.create(
             workspaceId: "workspace",
@@ -803,11 +803,11 @@ struct HTMLDOMElementAnnotationTests {
         )
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
-        let leaf = try await cssRect(id: "leaf", in: fixture.view)
-        controller.pick(at: try await viewPoint(for: leaf, in: fixture.view))
+        let leaf = try await try cssRect(id: "leaf", in: fixture.view)
+        controller.pick(at: try await try viewPoint(for: leaf, in: fixture.view))
         _ = try #require(await waitForElement(id: "leaf", controller: controller))
 
-        _ = try await pageString("document.getElementById('leaf').textContent = 'changed-label'", in: fixture.view)
+        _ = try await try pageString("document.getElementById('leaf').textContent = 'changed-label'", in: fixture.view)
         controller.commentButtonForTesting.sendActions(for: .touchUpInside)
         #expect(await waitForStatus(containing: "Nothing was saved", controller: controller))
         #expect(find("review-comment.inline-composer", in: fixture.host.view) == nil)
@@ -815,9 +815,9 @@ struct HTMLDOMElementAnnotationTests {
         #expect(harness.dispatches.isEmpty)
         #expect(harness.store.stagedComments.map(\.id) == [kept.id])
 
-        controller.pick(at: try await viewPoint(for: leaf, in: fixture.view))
+        controller.pick(at: try await try viewPoint(for: leaf, in: fixture.view))
         _ = try #require(await waitForSnapshot(controller))
-        _ = try await pageString("document.getElementById('leaf').remove()", in: fixture.view)
+        _ = try await try pageString("document.getElementById('leaf').remove()", in: fixture.view)
         controller.commentButtonForTesting.sendActions(for: .touchUpInside)
         #expect(await waitForStatus(containing: "Nothing was saved", controller: controller))
         #expect(harness.saves.isEmpty)
@@ -840,12 +840,12 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func commentSavesSanitizedReferenceThroughTheExistingStashThenBrowseRestores() async throws {
         let harness = try makeStashHarness()
-        let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
+        let fixture = try await try makeFixture(html: Self.nestedFixture, router: harness.router)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
-        let leaf = try await cssRect(id: "leaf", in: fixture.view)
-        controller.pick(at: try await viewPoint(for: leaf, in: fixture.view))
+        let leaf = try await try cssRect(id: "leaf", in: fixture.view)
+        controller.pick(at: try await try viewPoint(for: leaf, in: fixture.view))
         _ = try #require(await waitForElement(id: "leaf", controller: controller))
         let hash = fixture.view.loadedSourceSHA256ForTesting
 
@@ -887,17 +887,17 @@ struct HTMLDOMElementAnnotationTests {
         #expect(controller.isPicking == false)
         #expect(fixture.view.webViewForTesting.isUserInteractionEnabled == true)
         #expect(fixture.view.webViewForTesting.reviewCommentHandler != nil)
-        let hit = fixture.view.hitTest(try await viewPoint(for: leaf, in: fixture.view), with: nil)
+        let hit = fixture.view.hitTest(try await try viewPoint(for: leaf, in: fixture.view), with: nil)
         #expect(!(hit is HTMLDOMPickShieldView))
     }
 
     @Test func lateLookupAfterBrowseDoesNotRestoreHighlight() async throws {
-        let fixture = try await makeFixture(html: Self.nestedFixture)
+        let fixture = try await try makeFixture(html: Self.nestedFixture)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
-        let leaf = try await cssRect(id: "leaf", in: fixture.view)
-        let point = try await viewPoint(for: leaf, in: fixture.view)
+        let leaf = try await try cssRect(id: "leaf", in: fixture.view)
+        let point = try await try viewPoint(for: leaf, in: fixture.view)
         let stale = controller.staleLookupCount
         let gate = ResumeGate()
         var started = false
@@ -926,12 +926,12 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func lateCommentAfterBrowseDoesNotPresentComposerOrError() async throws {
         let harness = try makeStashHarness()
-        let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
+        let fixture = try await try makeFixture(html: Self.nestedFixture, router: harness.router)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
-        let leaf = try await cssRect(id: "leaf", in: fixture.view)
-        controller.pick(at: try await viewPoint(for: leaf, in: fixture.view))
+        let leaf = try await try cssRect(id: "leaf", in: fixture.view)
+        controller.pick(at: try await try viewPoint(for: leaf, in: fixture.view))
         _ = try #require(await waitForElement(id: "leaf", controller: controller))
 
         let successStale = controller.staleLookupCount
@@ -955,7 +955,7 @@ struct HTMLDOMElementAnnotationTests {
         #expect(harness.saves.isEmpty)
 
         controller.enterPick()
-        controller.pick(at: try await viewPoint(for: leaf, in: fixture.view))
+        controller.pick(at: try await try viewPoint(for: leaf, in: fixture.view))
         _ = try #require(await waitForElement(id: "leaf", controller: controller))
         let errorStale = controller.staleLookupCount
         let errorGate = ResumeGate()
@@ -967,7 +967,7 @@ struct HTMLDOMElementAnnotationTests {
         }
         controller.commentButtonForTesting.sendActions(for: .touchUpInside)
         #expect(await waitUntil { errorStarted })
-        _ = try await pageString("document.getElementById('leaf').remove()", in: fixture.view)
+        _ = try await try pageString("document.getElementById('leaf').remove()", in: fixture.view)
         controller.exitPick()
         errorGate.resume()
         let errorComposer = await waitForComposerOrStale(controller, stale: errorStale, in: fixture.host.view)
@@ -981,12 +981,12 @@ struct HTMLDOMElementAnnotationTests {
     }
 
     @Test func exitThenReenterDropsTheLateLookup() async throws {
-        let fixture = try await makeFixture(html: Self.nestedFixture)
+        let fixture = try await try makeFixture(html: Self.nestedFixture)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
-        let leaf = try await cssRect(id: "leaf", in: fixture.view)
-        let point = try await viewPoint(for: leaf, in: fixture.view)
+        let leaf = try await try cssRect(id: "leaf", in: fixture.view)
+        let point = try await try viewPoint(for: leaf, in: fixture.view)
         let stale = controller.staleLookupCount
         let gate = ResumeGate()
         var started = false
@@ -1013,12 +1013,12 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func supersededCommentDoesNotClearNewerSelectionOrUseCapturedSession() async throws {
         let harness = try makeStashHarness()
-        let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
+        let fixture = try await try makeFixture(html: Self.nestedFixture, router: harness.router)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
-        let leaf = try await cssRect(id: "leaf", in: fixture.view)
-        let point = try await viewPoint(for: leaf, in: fixture.view)
+        let leaf = try await try cssRect(id: "leaf", in: fixture.view)
+        let point = try await try viewPoint(for: leaf, in: fixture.view)
         controller.pick(at: point)
         _ = try #require(await waitForElement(id: "leaf", controller: controller))
 
@@ -1027,7 +1027,7 @@ struct HTMLDOMElementAnnotationTests {
             controller.beforeLookupResumeForTesting = nil
             controller.parentButtonForTesting.sendActions(for: .touchUpInside)
             _ = await self.waitForElement(id: "inner", controller: controller)
-            _ = try? await self.pageString(
+            _ = try? await try self.pageString(
                 "document.getElementById('leaf').textContent = 'changed-after-parent'",
                 in: fixture.view
             )
@@ -1062,19 +1062,19 @@ struct HTMLDOMElementAnnotationTests {
     }
 
     @Test func enterPickResignsNativeKeyboardOwnershipWithoutADomWrite() async throws {
-        let fixture = try await makeFixture(html: Self.focusFixture)
+        let fixture = try await try makeFixture(html: Self.focusFixture)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         let webView = fixture.view.webViewForTesting
         #expect(!HTMLDOMWebKitLookupClient.lookupFunction.contains(".blur("))
         #expect(!HTMLDOMWebKitLookupClient.lookupFunction.contains("activeElement"))
-        _ = try await pageString("document.getElementById('name').focus(); 'ok'", in: fixture.view)
-        #expect(try await pageString("document.activeElement && document.activeElement.id", in: fixture.view) == "name")
+        _ = try await try pageString("document.getElementById('name').focus(); 'ok'", in: fixture.view)
+        #expect(try await try pageString("document.activeElement && document.activeElement.id", in: fixture.view) == "name")
         let nativeInput = UITextField(frame: CGRect(x: 0, y: 0, width: 120, height: 44))
         fixture.host.view.addSubview(nativeInput)
         #expect(nativeInput.becomeFirstResponder())
         #expect(nativeInput.isFirstResponder)
-        let before = try await pageString("document.getElementById('name').value", in: fixture.view)
+        let before = try await try pageString("document.getElementById('name').value", in: fixture.view)
 
         controller.enterPick()
 
@@ -1082,30 +1082,30 @@ struct HTMLDOMElementAnnotationTests {
         let responderAfterPick = currentFirstResponder()
         #expect(responderAfterPick.map { !isDescendantResponder($0, of: webView) } ?? true)
         (responderAfterPick as? UIKeyInput)?.insertText("leak")
-        let after = try await pageString("document.getElementById('name').value", in: fixture.view)
+        let after = try await try pageString("document.getElementById('name').value", in: fixture.view)
         #expect(after == before)
         #expect(!after.contains("leak"))
-        #expect(try await pageString("document.activeElement && document.activeElement.id", in: fixture.view) == "name")
-        let events = try await pageString("JSON.stringify(window.__events || [])", in: fixture.view)
+        #expect(try await try pageString("document.activeElement && document.activeElement.id", in: fixture.view) == "name")
+        let events = try await try pageString("JSON.stringify(window.__events || [])", in: fixture.view)
         #expect(!events.contains("click:"))
     }
 
     @Test func replacedNodeAndUntruncatedTextChangeAreRejectedBeforeStaging() async throws {
         let harness = try makeStashHarness()
-        let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
+        let fixture = try await try makeFixture(html: Self.nestedFixture, router: harness.router)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
-        let leaf = try await cssRect(id: "leaf", in: fixture.view)
-        let point = try await viewPoint(for: leaf, in: fixture.view)
-        let beforeMarkup = try await pageString("document.getElementById('leaf').outerHTML", in: fixture.view)
+        let leaf = try await try cssRect(id: "leaf", in: fixture.view)
+        let point = try await try viewPoint(for: leaf, in: fixture.view)
+        let beforeMarkup = try await try pageString("document.getElementById('leaf').outerHTML", in: fixture.view)
         controller.pick(at: point)
         _ = try #require(await waitForElement(id: "leaf", controller: controller))
-        let afterMarkup = try await pageString("document.getElementById('leaf').outerHTML", in: fixture.view)
+        let afterMarkup = try await try pageString("document.getElementById('leaf').outerHTML", in: fixture.view)
         #expect(afterMarkup == beforeMarkup)
         #expect(!HTMLDOMWebKitLookupClient.lookupFunction.contains("setAttribute"))
 
-        _ = try await pageString(
+        _ = try await try pageString(
             """
             (() => {
               const node = document.getElementById('leaf');
@@ -1124,13 +1124,13 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func textChangePastTheStoredExcerptIsRejected() async throws {
         let harness = try makeStashHarness()
-        let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
+        let fixture = try await try makeFixture(html: Self.nestedFixture, router: harness.router)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
-        let leaf = try await cssRect(id: "leaf", in: fixture.view)
-        let point = try await viewPoint(for: leaf, in: fixture.view)
-        _ = try await pageString(
+        let leaf = try await try cssRect(id: "leaf", in: fixture.view)
+        let point = try await try viewPoint(for: leaf, in: fixture.view)
+        _ = try await try pageString(
             """
             (() => {
               const prefix = 'A'.repeat(240);
@@ -1147,7 +1147,7 @@ struct HTMLDOMElementAnnotationTests {
         #expect(longLeaf.textDigest.count == 64)
         #expect(longLeaf.textDigest.allSatisfy { $0.isHexDigit })
         #expect(longLeaf.textDigest == HTMLDOMSourceIdentity.sha256Hex(String(repeating: "A", count: 240) + "TAIL_ONE"))
-        _ = try await pageString(
+        _ = try await try pageString(
             """
             (() => {
               const prefix = 'A'.repeat(240);
@@ -1166,16 +1166,16 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func changeAfterComposerOpensIsRejectedWhenSaving() async throws {
         let harness = try makeStashHarness()
-        let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
+        let fixture = try await try makeFixture(html: Self.nestedFixture, router: harness.router)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
-        let leaf = try await cssRect(id: "leaf", in: fixture.view)
-        controller.pick(at: try await viewPoint(for: leaf, in: fixture.view))
+        let leaf = try await try cssRect(id: "leaf", in: fixture.view)
+        controller.pick(at: try await try viewPoint(for: leaf, in: fixture.view))
         _ = try #require(await waitForElement(id: "leaf", controller: controller))
         controller.commentButtonForTesting.sendActions(for: .touchUpInside)
         let composer = try #require(await waitForView("review-comment.inline-composer", in: fixture.host.view))
-        _ = try await pageString("document.getElementById('leaf').textContent = 'changed-before-save'", in: fixture.view)
+        _ = try await try pageString("document.getElementById('leaf').textContent = 'changed-before-save'", in: fixture.view)
         let input = try #require(find("review-comment.inline-input", in: composer) as? UITextView)
         input.text = "Please rename this leaf."
         input.delegate?.textViewDidChange?(input)
@@ -1191,12 +1191,12 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func browseAfterComposerOpensCannotStageTheSelection() async throws {
         let harness = try makeStashHarness()
-        let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
+        let fixture = try await try makeFixture(html: Self.nestedFixture, router: harness.router)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
-        let leaf = try await cssRect(id: "leaf", in: fixture.view)
-        controller.pick(at: try await viewPoint(for: leaf, in: fixture.view))
+        let leaf = try await try cssRect(id: "leaf", in: fixture.view)
+        controller.pick(at: try await try viewPoint(for: leaf, in: fixture.view))
         _ = try #require(await waitForElement(id: "leaf", controller: controller))
         controller.commentButtonForTesting.sendActions(for: .touchUpInside)
         let composer = try #require(await waitForView("review-comment.inline-composer", in: fixture.host.view))
@@ -1215,7 +1215,7 @@ struct HTMLDOMElementAnnotationTests {
     }
 
     @Test func pickControlsUseBrowseWordingAndFortyFourPointTargets() async throws {
-        let fixture = try await makeFixture(html: Self.nestedFixture)
+        let fixture = try await try makeFixture(html: Self.nestedFixture)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         fixture.view.layoutIfNeeded()
@@ -1224,8 +1224,8 @@ struct HTMLDOMElementAnnotationTests {
         fixture.view.layoutIfNeeded()
         #expect(controller.bannerTextForTesting == "Pick mode pauses scrolling. Browse to scroll.")
         #expect(controller.exitButtonForTesting.bounds.height >= 44)
-        let leaf = try await cssRect(id: "leaf", in: fixture.view)
-        controller.pick(at: try await viewPoint(for: leaf, in: fixture.view))
+        let leaf = try await try cssRect(id: "leaf", in: fixture.view)
+        controller.pick(at: try await try viewPoint(for: leaf, in: fixture.view))
         _ = try #require(await waitForElement(id: "leaf", controller: controller))
         fixture.view.layoutIfNeeded()
         #expect(controller.parentButtonForTesting.bounds.height >= 44)
@@ -1260,12 +1260,12 @@ struct HTMLDOMElementAnnotationTests {
 
     @Test func cancellingTheComposerDoesNotStageOrDispatch() async throws {
         let harness = try makeStashHarness()
-        let fixture = try await makeFixture(html: Self.nestedFixture, router: harness.router)
+        let fixture = try await try makeFixture(html: Self.nestedFixture, router: harness.router)
         defer { fixture.window.isHidden = true }
         let controller = fixture.view.htmlDOMPickControllerForTesting
         controller.enterPick()
-        let leaf = try await cssRect(id: "leaf", in: fixture.view)
-        controller.pick(at: try await viewPoint(for: leaf, in: fixture.view))
+        let leaf = try await try cssRect(id: "leaf", in: fixture.view)
+        controller.pick(at: try await try viewPoint(for: leaf, in: fixture.view))
         _ = try #require(await waitForElement(id: "leaf", controller: controller))
         controller.commentButtonForTesting.sendActions(for: .touchUpInside)
         let composer = try #require(await waitForView("review-comment.inline-composer", in: fixture.host.view))
@@ -1395,8 +1395,8 @@ struct HTMLDOMElementAnnotationTests {
         in fixture: HostedHTML,
         controller: HTMLDOMPickController
     ) async throws {
-        let css = try await cssRect(id: "marker", in: fixture.view)
-        let metrics = try await metrics(in: fixture.view)
+        let css = try await try cssRect(id: "marker", in: fixture.view)
+        let metrics = try await try metrics(in: fixture.view)
         let mapped = HTMLDOMViewportMapping.viewRect(fromCSSViewportRect: css, metrics: metrics)
         let point = CGPoint(x: mapped.midX, y: mapped.midY)
         let bounds = fixture.view.bounds
@@ -1477,7 +1477,7 @@ struct HTMLDOMElementAnnotationTests {
     private func cssRect(id: String, in view: HTMLRenderView) async throws -> CGRect {
         var last = CGRect.zero
         for _ in 0..<20 {
-            let json = try await pageString(
+            let json = try await try pageString(
                 """
                 (() => { const node = document.getElementById('\(id)'); if (!node) return ''; const rect = node.getBoundingClientRect(); return JSON.stringify({x:rect.x,y:rect.y,width:rect.width,height:rect.height}); })()
                 """,
@@ -1493,7 +1493,7 @@ struct HTMLDOMElementAnnotationTests {
     private func contentWorldRect(id: String, in view: HTMLRenderView) async throws -> CGRect {
         var last = CGRect.zero
         for _ in 0..<20 {
-            last = try await readContentWorldRect(id: id, in: view)
+            last = try await try readContentWorldRect(id: id, in: view)
             if last.width > 1, last.height > 1 { return last }
             try? await Task.sleep(for: .milliseconds(50))
         }
@@ -1523,9 +1523,9 @@ struct HTMLDOMElementAnnotationTests {
 
     private func metrics(in view: HTMLRenderView) async throws -> HTMLDOMViewportMetrics {
         let webView = view.webViewForTesting
-        let scale = try await pageNumber("window.visualViewport ? window.visualViewport.scale : 1", in: view)
-        let offsetX = try await pageNumber("window.visualViewport ? window.visualViewport.offsetLeft : 0", in: view)
-        let offsetY = try await pageNumber("window.visualViewport ? window.visualViewport.offsetTop : 0", in: view)
+        let scale = try await try pageNumber("window.visualViewport ? window.visualViewport.scale : 1", in: view)
+        let offsetX = try await try pageNumber("window.visualViewport ? window.visualViewport.offsetLeft : 0", in: view)
+        let offsetY = try await try pageNumber("window.visualViewport ? window.visualViewport.offsetTop : 0", in: view)
         return HTMLDOMViewportMetrics(
             pageZoom: webView.pageZoom > 0 ? webView.pageZoom : 1,
             scrollZoomScale: webView.scrollView.zoomScale > 0 ? webView.scrollView.zoomScale : 1,
@@ -1540,7 +1540,7 @@ struct HTMLDOMElementAnnotationTests {
     }
 
     private func viewPoint(for rect: CGRect, in view: HTMLRenderView) async throws -> CGPoint {
-        let mapped = HTMLDOMViewportMapping.viewRect(fromCSSViewportRect: rect, metrics: try await metrics(in: view))
+        let mapped = HTMLDOMViewportMapping.viewRect(fromCSSViewportRect: rect, metrics: try await try metrics(in: view))
         return CGPoint(x: mapped.midX, y: mapped.midY)
     }
 

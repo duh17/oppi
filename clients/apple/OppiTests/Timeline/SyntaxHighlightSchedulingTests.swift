@@ -412,7 +412,7 @@ struct SyntaxHighlightBashCommandSchedulingTests {
             wasOutputVisible: false
         )
 
-        try await waitUntil(timeout: .seconds(2)) {
+        try await try waitUntil(timeout: .seconds(2)) {
             let displayed = view.commandLabel.attributedText?.string ?? view.commandLabel.text ?? ""
             return displayed.contains("betaUnique")
                 && uniqueForegroundColorCount(view.commandLabel.attributedText ?? NSAttributedString()) >= 2
@@ -446,7 +446,7 @@ struct SyntaxHighlightMarkdownSchedulingTests {
         ))
         markdown.layoutIfNeeded()
         let code = try #require(timelineFirstView(ofType: NativeCodeBlockView.self, in: markdown))
-        try await waitUntil(timeout: .seconds(2)) {
+        try await try waitUntil(timeout: .seconds(2)) {
             code.debugHasHighlightedTextForTesting
         }
         let workAfterFirst = markdown.debugHighlightWorkCountForTesting
@@ -491,7 +491,7 @@ struct SyntaxHighlightMarkdownSchedulingTests {
             resourcePressure: .nominal
         ))
         markdown.layoutIfNeeded()
-        try await waitUntil(timeout: .seconds(2)) {
+        try await try waitUntil(timeout: .seconds(2)) {
             code.debugHasHighlightedTextForTesting
         }
         let attributed = try #require(codeAttributedText(in: code))

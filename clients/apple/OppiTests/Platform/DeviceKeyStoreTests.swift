@@ -64,12 +64,12 @@ private final class InjectingSealedStorage: DeviceKeySealedStorage, @unchecked S
     }
 }
 
-private func decodeBase64URL(_ value: String) -> Data {
+private func decodeBase64URL(_ value: String) throws -> Data {
     var normalized = value
         .replacingOccurrences(of: "-", with: "+")
         .replacingOccurrences(of: "_", with: "/")
     while normalized.count % 4 != 0 { normalized += "=" }
-    return Data(base64Encoded: normalized)!
+    return (try #require(Data(base64Encoded: normalized)))
 }
 
 @Suite("DeviceKeyStore")
@@ -117,8 +117,8 @@ struct DeviceKeyStoreTests {
 
         #expect(jwk.kty == "EC")
         #expect(jwk.crv == "P-256")
-        let x = decodeBase64URL(jwk.x)
-        let y = decodeBase64URL(jwk.y)
+        let x = try decodeBase64URL(jwk.x)
+        let y = try decodeBase64URL(jwk.y)
         #expect(x.count == 32)
         #expect(y.count == 32)
     }
@@ -130,7 +130,7 @@ struct DeviceKeyStoreTests {
 
         #expect(signature.count == 64)
 
-        let raw = Data([0x04]) + decodeBase64URL(key.publicKey.x) + decodeBase64URL(key.publicKey.y)
+        let raw = Data([0x04]) + try decodeBase64URL(key.publicKey.x) + try decodeBase64URL(key.publicKey.y)
         let publicKey = try P256.Signing.PublicKey(x963Representation: raw)
         let signatureObject = try P256.Signing.ECDSASignature(rawRepresentation: signature)
         #expect(publicKey.isValidSignature(signatureObject, for: input))

@@ -155,16 +155,16 @@ struct PendingAttachmentUploaderTests {
     private static func response(
         status: Int = 200,
         json: String
-    ) -> (Data, HTTPURLResponse) {
+    ) throws -> (Data, HTTPURLResponse) {
         let url = URL(string: "http://localhost:7749")!
         return (
             Data(json.utf8),
-            HTTPURLResponse(
+            (try #require(HTTPURLResponse(
                 url: url,
                 statusCode: status,
                 httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"]
-            )!
+            )))
         )
     }
 }

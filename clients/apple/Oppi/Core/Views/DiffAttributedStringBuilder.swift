@@ -825,15 +825,16 @@ enum DiffAttributedStringBuilder {
                     lineStarts: starts,
                     tokenStart: token.location,
                     tokenEnd: tokenEnd,
-                    lineLengthAt: { hunk.lines[lines[$0].lineIndex].text.isEmpty ? 1 : hunk.lines[lines[$0].lineIndex].text.utf16.count }
-                ) { mappedLine, overlapStart, overlapEnd in
-                    let source = lines[mappedLine]
-                    result[source.lineIndex].append(IndexedSyntaxSpan(
-                        location: overlapStart - source.start,
-                        length: overlapEnd - overlapStart,
-                        kind: token.kind
-                    ))
-                }
+                    lineLengthAt: { hunk.lines[lines[$0].lineIndex].text.isEmpty ? 1 : hunk.lines[lines[$0].lineIndex].text.utf16.count },
+                    body: { mappedLine, overlapStart, overlapEnd in
+                        let source = lines[mappedLine]
+                        result[source.lineIndex].append(IndexedSyntaxSpan(
+                            location: overlapStart - source.start,
+                            length: overlapEnd - overlapStart,
+                            kind: token.kind
+                        ))
+                    }
+                )
             }
         }
 
@@ -863,17 +864,18 @@ enum DiffAttributedStringBuilder {
                 lineStarts: lineStarts,
                 tokenStart: token.location,
                 tokenEnd: tokenEnd,
-                lineLengthAt: { lineInfos[lines[$0].lineIndex].codeLen }
-            ) { lineIdx, overlapStart, overlapEnd in
-                let mapped = lines[lineIdx]
-                let info = lineInfos[mapped.lineIndex]
-                let range = NSRange(
-                    location: info.codeStart + overlapStart - mapped.start,
-                    length: overlapEnd - overlapStart
-                )
-                guard range.location >= 0, NSMaxRange(range) <= nsLength else { return }
-                result.addAttribute(.foregroundColor, value: color, range: range)
-            }
+                lineLengthAt: { lineInfos[lines[$0].lineIndex].codeLen },
+                body: { lineIdx, overlapStart, overlapEnd in
+                    let mapped = lines[lineIdx]
+                    let info = lineInfos[mapped.lineIndex]
+                    let range = NSRange(
+                        location: info.codeStart + overlapStart - mapped.start,
+                        length: overlapEnd - overlapStart
+                    )
+                    guard range.location >= 0, NSMaxRange(range) <= nsLength else { return }
+                    result.addAttribute(.foregroundColor, value: color, range: range)
+                }
+            )
         }
     }
 

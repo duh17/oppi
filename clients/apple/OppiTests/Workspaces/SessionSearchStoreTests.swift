@@ -27,8 +27,6 @@ private final class ControlledSessionSearchClient: SessionSearching {
     }
 }
 
-// swiftlint:disable force_unwrapping
-
 @Suite("SessionSearchStore", .serialized)
 @MainActor
 struct SessionSearchStoreTests {

@@ -12,11 +12,11 @@ import UIKit
 struct SessionToolOutputAccessTests {
     init() { RecordingToolOutputProtocol.reset() }
 
-    private func makeClient(host: String) -> APIClient {
+    private func makeClient(host: String) throws -> APIClient {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [RecordingToolOutputProtocol.self]
         return APIClient(
-            baseURL: URL(string: "http://\(host):7749")!,
+            baseURL: (try #require(URL(string: "http://\(host):7749"))),
             token: "sk_test",
             configuration: config
         )
@@ -40,7 +40,7 @@ struct SessionToolOutputAccessTests {
 
     @Test("Generated result disclosure uses the bound HTTP scope and preserves truncation warnings")
     func inputCardOutputUsesBoundScope() async throws {
-        let content = makeContent(client: makeClient(host: "server-a.test"))
+        let content = makeContent(client: try makeClient(host: "server-a.test"))
         for scope in [SessionRouteScope.workspace("w1"), .control] {
             let fetch = try #require(content.inputCardOutputFetch(sessionId: "s1", routeScope: scope,
                 output: .init(kind: "terminal", entryId: "42", command: nil, truncated: true)))
@@ -57,7 +57,7 @@ struct SessionToolOutputAccessTests {
 
     @Test("Expand, copy, and sidecar reads target the bound session, scope, and client")
     func operationsTargetBoundSessionAndScope() async throws {
-        let content = makeContent(client: makeClient(host: "server-a.test"))
+        let content = makeContent(client: try makeClient(host: "server-a.test"))
         let workspace = try #require(content.toolOutputAccess(sessionId: "s1", routeScope: .workspace("w1")))
         let control = try #require(content.toolOutputAccess(sessionId: "s2", routeScope: .control))
 
@@ -86,14 +86,14 @@ struct SessionToolOutputAccessTests {
         #expect(noClient.toolOutputAccess(sessionId: "s1", routeScope: .workspace("w1")) == nil)
         #expect(clientPolls.count == 1)
 
-        let withClient = makeContent(client: makeClient(host: "server-a.test"))
+        let withClient = makeContent(client: try makeClient(host: "server-a.test"))
         #expect(withClient.toolOutputAccess(sessionId: "s1", routeScope: nil) == nil)
         #expect(RecordingToolOutputProtocol.requests.isEmpty)
     }
 
     @Test("Copy prefers complete stored output, refetches over a stored preview, and requires a producer sidecar fact")
     func copyFetchPolicy() async throws {
-        let content = makeContent(client: makeClient(host: "server-a.test"))
+        let content = makeContent(client: try makeClient(host: "server-a.test"))
         let access = try #require(content.toolOutputAccess(sessionId: "s1", routeScope: .workspace("w1")))
         let store = ToolOutputStore()
 
@@ -112,7 +112,7 @@ struct SessionToolOutputAccessTests {
     @Test("Timeline expand fetches through the connection's client for the timeline's session and scope")
     func timelineExpandUsesBoundSessionAndScope() async throws {
         let harness = makeTimelineHarness(sessionId: "session-a")
-        harness.connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
+        harness.connection.setAPIClientForTesting(try makeClient(host: "server-a.test"))
         let configuration = makeTimelineConfiguration(
             sessionId: "session-a",
             reducer: harness.reducer,
@@ -198,21 +198,25 @@ private final class RecordingToolOutputProtocol: URLProtocol, @unchecked Sendabl
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        Self.lock.lock()
-        Self.recorded.append(request)
-        Self.lock.unlock()
-        let body = request.httpMethod == "HEAD"
-            ? Data()
-            : Data(#"{"output":"OUT","isError":false}"#.utf8)
-        let response = HTTPURLResponse(
-            url: request.url!,
-            statusCode: 200,
-            httpVersion: nil,
-            headerFields: ["Content-Type": "application/json", "Content-Length": "\(body.count)"]
-        )!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        if !body.isEmpty { client?.urlProtocol(self, didLoad: body) }
-        client?.urlProtocolDidFinishLoading(self)
+        do {
+            Self.lock.lock()
+            Self.recorded.append(request)
+            Self.lock.unlock()
+            let body = request.httpMethod == "HEAD"
+                ? Data()
+                : Data(#"{"output":"OUT","isError":false}"#.utf8)
+            let response = try #require(HTTPURLResponse(
+                url: (try #require(request.url)),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json", "Content-Length": "\(body.count)"]
+            ))
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            if !body.isEmpty { client?.urlProtocol(self, didLoad: body) }
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
     }
 
     override func stopLoading() {}

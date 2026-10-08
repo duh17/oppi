@@ -1,3 +1,4 @@
+// swiftlint:disable todo - Org-mode headline keyword examples, not unfinished work
 // MARK: - Org Mode AST Types
 
 /// Block-level elements in an org mode document.

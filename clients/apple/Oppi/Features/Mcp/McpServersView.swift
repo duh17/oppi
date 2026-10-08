@@ -112,9 +112,9 @@ struct McpServersView: View {
         }
         .refreshable { await refresh() }
         .task(id: coordinator.activeServerId) { await refresh() }
-        .sheet(isPresented: Binding(get: { model.signIn.showingSheet }, set: { model.signIn.showingSheet = $0 }), onDismiss: { signIn.sheetDismissed() }) {
+        .sheet(isPresented: Binding(get: { model.signIn.showingSheet }, set: { model.signIn.showingSheet = $0 }), onDismiss: { signIn.sheetDismissed() }, content: {
             if let attempt = signIn.attempt { McpSignInSheet(attempt: attempt, owner: signIn) }
-        }
+        })
         .onChange(of: signIn.attempt?.flow.status) { _, status in
             if status?.isTerminal == true { Task { await refresh() } }
         }

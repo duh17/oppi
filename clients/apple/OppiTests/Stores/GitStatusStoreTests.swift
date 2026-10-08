@@ -139,7 +139,7 @@ struct GitStatusStoreTests {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [TestURLProtocol.self]
         return APIClient(
-            baseURL: URL(string: "http://localhost:1234")!, // swiftlint:disable:this force_unwrapping
+            baseURL: URL(string: "http://localhost:1234")!,
             token: "test-token",
             configuration: config
         )

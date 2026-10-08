@@ -731,11 +731,11 @@ struct CrossLineBoundaryTests {
     }
 
     /// Verify that an unclosed string at end of line does not produce a cross-line token.
-    @Test func unclosedStringStopsAtLineEnd() {
+    @Test func unclosedStringStopsAtLineEnd() throws {
         let text = "echo \"hello\nnext_line"
         let ranges = SyntaxHighlighter.scanTokenRanges(text, language: .shell)
         let chars = Array(text)
-        let newlinePos = chars.firstIndex(of: "\n")!
+        let newlinePos = try #require(chars.firstIndex(of: "\n"))
 
         for token in ranges {
             let tokenEnd = token.location + token.length
@@ -747,7 +747,7 @@ struct CrossLineBoundaryTests {
     }
 
     /// Verify $() subshell handling.
-    /// Tree-sitter correctly parses `$(incomplete` as a command_substitution
+    /// Tree-sitter correctly parses `$(try #require((incomplete` as a command_substitution
     /// that spans to end-of-input. This is correct bash behavior — an unclosed
     /// $() extends to EOF. The old hand-written scanner stopped at newlines.
     @Test func unclosedSubshellParsedByTreeSitter() {
@@ -759,11 +759,11 @@ struct CrossLineBoundaryTests {
     }
 
     /// Generic (non-shell) scanner: strings must not cross line boundaries.
-    @Test func genericStringTokensRespectLineBounds() {
+    @Test func genericStringTokensRespectLineBounds() throws {
         let text = "let x = \"unterminated\nlet y = 2"
         let ranges = SyntaxHighlighter.scanTokenRanges(text, language: .swift)
         let chars = Array(text)
-        let newlinePos = chars.firstIndex(of: "\n")!
+        let newlinePos = try #require(chars.firstIndex(of: "\n"))
 
         for token in ranges {
             let tokenEnd = token.location + token.length
@@ -886,10 +886,11 @@ struct SyntaxTokenLineOverlapTests {
             lineStarts: lineStarts,
             tokenStart: 6,
             tokenEnd: 20,
-            lineLengthAt: { _ in lineLength }
-        ) { lineIdx, overlapStart, overlapEnd in
-            overlaps.append(Overlap(lineIndex: lineIdx, start: overlapStart, end: overlapEnd))
-        }
+            lineLengthAt: { _ in lineLength },
+            body: { lineIdx, overlapStart, overlapEnd in
+                overlaps.append(Overlap(lineIndex: lineIdx, start: overlapStart, end: overlapEnd))
+            }
+        )
         #expect(overlaps == [
             Overlap(lineIndex: 0, start: 6, end: 8),
             Overlap(lineIndex: 1, start: 9, end: 17),
@@ -908,10 +909,11 @@ struct SyntaxTokenLineOverlapTests {
                 lineStarts: lineStarts,
                 tokenStart: tokenStart,
                 tokenEnd: tokenEnd,
-                lineLengthAt: { _ in lineLength }
-            ) { lineIdx, overlapStart, overlapEnd in
-                overlaps.append(Overlap(lineIndex: lineIdx, start: overlapStart, end: overlapEnd))
-            }
+                lineLengthAt: { _ in lineLength },
+                body: { lineIdx, overlapStart, overlapEnd in
+                    overlaps.append(Overlap(lineIndex: lineIdx, start: overlapStart, end: overlapEnd))
+                }
+            )
         }
         #expect(overlaps == [
             Overlap(lineIndex: 2, start: 18, end: 19),
@@ -934,8 +936,9 @@ struct SyntaxTokenLineOverlapTests {
                 lineStarts: lineStarts,
                 tokenStart: tokenStart,
                 tokenEnd: tokenStart + lineLength,
-                lineLengthAt: { _ in lineLength }
-            ) { _, _, _ in inOrderOverlaps += 1 }
+                lineLengthAt: { _ in lineLength },
+                body: { _, _, _ in inOrderOverlaps += 1 }
+            )
         }
 
         var reverseExamined = 0
@@ -946,8 +949,9 @@ struct SyntaxTokenLineOverlapTests {
                 lineStarts: lineStarts,
                 tokenStart: tokenStart,
                 tokenEnd: tokenStart + lineLength,
-                lineLengthAt: { _ in lineLength }
-            ) { _, _, _ in reverseOverlaps += 1 }
+                lineLengthAt: { _ in lineLength },
+                body: { _, _, _ in reverseOverlaps += 1 }
+            )
         }
 
         #expect(inOrderOverlaps == lineCount)

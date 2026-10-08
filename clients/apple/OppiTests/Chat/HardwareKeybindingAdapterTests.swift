@@ -169,7 +169,7 @@ struct HardwareKeybindingAdapterTests {
         #expect(HardwareKeybindingAdapter.registeredChords(for: request).isEmpty)
     }
 
-    @Test func uiKeyCommandMappingSharesKeybindingEventMap() {
+    @Test func uiKeyCommandMappingSharesKeybindingEventMap() throws {
         let mappedJ = KeybindingEventMap.chord(
             characters: "j",
             isUpArrow: false,
@@ -215,13 +215,13 @@ struct HardwareKeybindingAdapterTests {
         )
         #expect(mappedSend == .commandReturn)
         #expect(
-            KeybindingCatalog.action(for: mappedSend!, mode: .vim, focus: .composer) == .send
+            KeybindingCatalog.action(for: (try #require(mappedSend)), mode: .vim, focus: .composer) == .send
         )
         #expect(
-            KeybindingCatalog.action(for: mappedJ!, mode: .vim, focus: .timeline) == .nextToolRow
+            KeybindingCatalog.action(for: (try #require(mappedJ)), mode: .vim, focus: .timeline) == .nextToolRow
         )
         #expect(
-            KeybindingCatalog.action(for: mappedJ!, mode: .macDefault, focus: .timeline) == nil
+            KeybindingCatalog.action(for: (try #require(mappedJ)), mode: .macDefault, focus: .timeline) == nil
         )
     }
 

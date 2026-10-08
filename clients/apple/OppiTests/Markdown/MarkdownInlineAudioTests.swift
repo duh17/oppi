@@ -668,8 +668,8 @@ struct MarkdownInlineAudioTests {
             return try #require(strip.accessibilityIdentifier)
         }
 
-        let worktreeA = try await stripIdentifier(worktreeId: "wt-a")
-        let worktreeB = try await stripIdentifier(worktreeId: "wt-b")
+        let worktreeA = try await try stripIdentifier(worktreeId: "wt-a")
+        let worktreeB = try await try stripIdentifier(worktreeId: "wt-b")
         #expect(worktreeA != worktreeB)
         #expect(worktreeA.contains("wt-a"))
         #expect(worktreeB.contains("wt-b"))

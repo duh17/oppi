@@ -67,7 +67,7 @@ private final class ScriptedFocusedWebSocket {
         resume: { [weak self] in self?.taskState = .running },
         receive: { [weak self] in
             guard let self else { throw CancellationError() }
-            return try await self.receive()
+            return try await try self.receive()
         },
         send: { _, handler in handler(nil) },
         sendPing: { handler in handler(nil) },
@@ -483,11 +483,11 @@ private final class ScriptedDictationSocket {
         resume: {},
         receive: { [weak self] in
             guard let self else { throw CancellationError() }
-            return try await self.receive()
+            return try await try self.receive()
         },
         send: { [weak self] message in
             guard let self else { throw CancellationError() }
-            try await self.recordSend(message)
+            try await try self.recordSend(message)
         },
         cancel: { [weak self] code, _ in self?.cancel(code) },
         response: { [weak self] in self?.response },
@@ -912,11 +912,11 @@ struct DictationDeviceAuthTests {
     }
 
     @Test func cancelBeforeReadyDoesNotReplayStartAfterAuthExpiredClose() async throws {
-        try await assertStopOrCancelBeforeReadyDoesNotReplayStart(.dictationCancel)
+        try await try assertStopOrCancelBeforeReadyDoesNotReplayStart(.dictationCancel)
     }
 
     @Test func stopBeforeReadyDoesNotReplayStartAfterAuthExpiredClose() async throws {
-        try await assertStopOrCancelBeforeReadyDoesNotReplayStart(.dictationStop)
+        try await try assertStopOrCancelBeforeReadyDoesNotReplayStart(.dictationStop)
     }
 
     private func assertStopOrCancelBeforeReadyDoesNotReplayStart(

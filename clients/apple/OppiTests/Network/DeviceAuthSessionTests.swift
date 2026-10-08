@@ -41,16 +41,16 @@ private actor FakeDeviceAuthTransport: DeviceAuthTransport {
     }
 }
 
-private func decodeBase64URL(_ value: String) -> Data {
+private func decodeBase64URL(_ value: String) throws -> Data {
     var normalized = value
         .replacingOccurrences(of: "-", with: "+")
         .replacingOccurrences(of: "_", with: "/")
     while normalized.count % 4 != 0 { normalized += "=" }
-    return Data(base64Encoded: normalized)!
+    return (try #require(Data(base64Encoded: normalized)))
 }
 
 private func p256PublicKey(_ jwk: DevicePublicKey) throws -> P256.Signing.PublicKey {
-    let raw = Data([0x04]) + decodeBase64URL(jwk.x) + decodeBase64URL(jwk.y)
+    let raw = Data([0x04]) + try decodeBase64URL(jwk.x) + try decodeBase64URL(jwk.y)
     return try P256.Signing.PublicKey(x963Representation: raw)
 }
 
@@ -186,7 +186,7 @@ struct DeviceAuthSessionTests {
         // Reconstruct the public key and verify the raw 64-byte signature.
         let publicKey = try p256PublicKey(key.publicKey)
         let input = Data("oppi:refresh:v1.\(nonce)".utf8)
-        let sigBytes = decodeBase64URL(signature)
+        let sigBytes = try decodeBase64URL(signature)
         #expect(sigBytes.count == 64)
         let signatureObject = try P256.Signing.ECDSASignature(rawRepresentation: sigBytes)
         #expect(publicKey.isValidSignature(signatureObject, for: input))

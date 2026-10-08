@@ -27,7 +27,7 @@ struct JSONPrettyPrinterTests {
         #expect(aKey.lowerBound < zKey.lowerBound)
     }
 
-    @Test func returnsNilForInvalidJSON() {
+    @Test func returnsNilForInvalidJSON() throws {
         #expect(JSONPrettyPrinter.prettyPrinted(#"{"ok": true,"#) == nil)
         #expect(JSONPrettyPrinter.prettyPrinted("") == nil)
         #expect(JSONPrettyPrinter.prettyPrinted("not json") == nil)

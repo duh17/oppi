@@ -85,24 +85,25 @@ struct AskCardLongComposerPreview: View {
                 onExpand: {},
                 externalFocusRequestID: focusRequestID,
                 appliesOuterPadding: true,
-                alwaysShowActionRow: true
-            ) {
-                Spacer(minLength: 0)
+                alwaysShowActionRow: true,
+                actionRow: {
+                    Spacer(minLength: 0)
 
-                Text("gpt-5.5")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .glassEffect(.regular, in: Capsule())
+                    Text("gpt-5.5")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.themeFg)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .glassEffect(.regular, in: Capsule())
 
-                Text("max")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themePurple)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .glassEffect(.regular, in: Capsule())
-            }
+                    Text("max")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.themePurple)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .glassEffect(.regular, in: Capsule())
+                }
+            )
         }
         .task {
             try? await Task.sleep(for: .milliseconds(550))
@@ -538,10 +539,11 @@ struct AskCardLongUnfocusedComposerPreview: View {
                 onExpand: {},
                 externalFocusRequestID: 0,
                 appliesOuterPadding: true,
-                alwaysShowActionRow: false
-            ) {
-                Spacer(minLength: 0)
-            }
+                alwaysShowActionRow: false,
+                actionRow: {
+                    Spacer(minLength: 0)
+                }
+            )
         }
         .preferredColorScheme(.dark)
         .accessibilityIdentifier("screenshot.ready")

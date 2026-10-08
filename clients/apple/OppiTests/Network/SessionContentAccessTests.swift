@@ -15,7 +15,7 @@ struct SessionContentAccessTests {
     func sessionFileWaitsForClientAndWorkspace() async throws {
         let sessionStore = SessionStore()
         let polls = PollCounter()
-        let client = makeClient(host: "server-a.test")
+        let client = try makeClient(host: "server-a.test")
         // Client is ready on poll 2 but the session's workspace only arrives on
         // poll 4: a cached row must keep waiting instead of guessing a workspace.
         let content = SessionContentAccess(
@@ -51,7 +51,7 @@ struct SessionContentAccessTests {
     @Test("Timeline user rows read session files for the timeline's own workspace and session")
     func timelineUserRowReaderTargetsBoundWorkspaceAndSession() async throws {
         let harness = makeTimelineHarness(sessionId: "s-row")
-        harness.connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
+        harness.connection.setAPIClientForTesting(try makeClient(host: "server-a.test"))
         harness.coordinator.apply(
             configuration: makeTimelineConfiguration(
                 sessionId: "s-row",
@@ -83,8 +83,8 @@ struct SessionContentAccessTests {
     func connectionSuppliesCurrentClientAndCatalog() async throws {
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials(fingerprint: "server-a"))
-        connection.setAPIClientForTesting(makeClient(host: "old-server.test"))
-        connection.setAPIClientForTesting(makeClient(host: "new-server.test"))
+        connection.setAPIClientForTesting(try makeClient(host: "old-server.test"))
+        connection.setAPIClientForTesting(try makeClient(host: "new-server.test"))
         // Only the connected server's partition knows this sandbox workspace.
         var sandbox = makeTestWorkspace(id: "w1")
         sandbox.runtime = .sandbox
@@ -106,7 +106,7 @@ struct SessionContentAccessTests {
     @Test("Stored attachments keep session versus control-session origin")
     func attachmentOriginFollowsRouteScope() async throws {
         let connection = ServerConnection()
-        connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
+        connection.setAPIClientForTesting(try makeClient(host: "server-a.test"))
         let content = connection.sessionContent
 
         _ = try await content.fetchSessionAttachment(sessionId: "s1", attachmentId: "a1")
@@ -141,7 +141,7 @@ struct SessionContentAccessTests {
     func cancellationWhileWaitingSendsNothing() async {
         let polls = PollCounter()
         let cancelHandle = TaskHandle()
-        let client = makeClient(host: "server-a.test")
+        let client = try makeClient(host: "server-a.test")
         let content = SessionContentAccess(
             apiClient: {
                 if polls.next() == 2 { cancelHandle.cancel() }
@@ -184,11 +184,11 @@ struct SessionContentAccessTests {
             readinessPoll: .milliseconds(1)
         )
 
-        await expectServerError(status: 503, message: "Server client is not ready") {
+        await try expectServerError(status: 503, message: "Server client is not ready") {
             _ = try await content.fetchSessionAttachment(sessionId: "s1", attachmentId: "a1")
         }
         #expect(polls.count == 50)
-        await expectServerError(status: 503, message: "Session file client is not ready") {
+        await try expectServerError(status: 503, message: "Session file client is not ready") {
             _ = try await content.fetchSessionFileData(
                 workspaceId: "w1",
                 sessionId: "s1",
@@ -201,7 +201,7 @@ struct SessionContentAccessTests {
     @Test("Host-path fetch prefers the current catalog runtime over a stale captured one")
     func hostFileRuntimePrecedenceAndOrigins() async throws {
         let connection = ServerConnection()
-        connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
+        connection.setAPIClientForTesting(try makeClient(host: "server-a.test"))
         let content = connection.sessionContent
 
         // Unknown runtime: owner-host read.
@@ -245,9 +245,9 @@ struct SessionContentAccessTests {
     @Test("Sandbox host path without workspace or session is unavailable, not a host read")
     func sandboxHostPathWithoutOriginIsUnavailable() async throws {
         let connection = ServerConnection()
-        connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
+        connection.setAPIClientForTesting(try makeClient(host: "server-a.test"))
 
-        await expectServerError(status: 404, message: "Host image is unavailable") {
+        await try expectServerError(status: 404, message: "Host image is unavailable") {
             _ = try await connection.sessionContent.fetchHostFile(
                 path: "/tmp/a.png",
                 workspaceId: nil,
@@ -262,7 +262,7 @@ struct SessionContentAccessTests {
     @Test("Markdown video resolves current sandbox runtime into session or workspace origin")
     func markdownVideoUsesCurrentRuntime() async throws {
         let connection = ServerConnection()
-        connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
+        connection.setAPIClientForTesting(try makeClient(host: "server-a.test"))
         let content = connection.sessionContent
         var sandbox = makeTestWorkspace(id: "w1")
         sandbox.runtime = .sandbox
@@ -296,7 +296,7 @@ struct SessionContentAccessTests {
     @Test("Session-file media source resolves the workspace from the cached session")
     func sessionFileMediaSourceResolvesWorkspaceFromSession() async throws {
         let connection = ServerConnection()
-        connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
+        connection.setAPIClientForTesting(try makeClient(host: "server-a.test"))
         connection.sessionStore.upsert(makeTestSession(id: "s-bound", workspaceId: "w1"))
 
         let source = try await connection.sessionContent.makeSessionFileMediaSource(
@@ -315,7 +315,7 @@ struct SessionContentAccessTests {
     @Test("Markdown resource access binds the row's identity and routes each provider from it")
     func markdownResourceAccessBindsRowIdentity() async throws {
         let connection = ServerConnection()
-        connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
+        connection.setAPIClientForTesting(try makeClient(host: "server-a.test"))
         var session = makeTestSession(id: "s-bound", workspaceId: "w1")
         session.worktreeId = "wt_feature"
         connection.sessionStore.upsert(session)
@@ -400,7 +400,7 @@ struct SessionContentAccessTests {
         let read = Task { @MainActor in try await readHostFile("/tmp/late.png") }
         await Task.yield()
         #expect(RecordingContentProtocol.requests.isEmpty)
-        connection.setAPIClientForTesting(makeClient(host: "server-late.test"))
+        connection.setAPIClientForTesting(try makeClient(host: "server-late.test"))
         _ = try await read.value
 
         let request = try #require(RecordingContentProtocol.requests.first)
@@ -414,7 +414,7 @@ struct SessionContentAccessTests {
     func assistantRowImageLoadsThroughBoundCheckout() async throws {
         let wh = makeWindowedTimelineHarness(sessionId: "s-bound")
         defer { wh.window.isHidden = true }
-        wh.connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
+        wh.connection.setAPIClientForTesting(try makeClient(host: "server-a.test"))
         var session = makeTestSession(id: "s-bound", workspaceId: "ws-test")
         session.worktreeId = "wt_feature"
         wh.connection.sessionStore.upsert(session)
@@ -443,7 +443,7 @@ struct SessionContentAccessTests {
     func toolMarkdownViewportLoadsImageThroughBoundCheckout(isDone: Bool) async throws {
         let wh = makeWindowedTimelineHarness(sessionId: "s-bound")
         defer { wh.window.isHidden = true }
-        wh.connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
+        wh.connection.setAPIClientForTesting(try makeClient(host: "server-a.test"))
         var session = makeTestSession(id: "s-bound", workspaceId: "ws-test")
         session.worktreeId = "wt_feature"
         wh.connection.sessionStore.upsert(session)
@@ -571,7 +571,7 @@ struct SessionContentAccessTests {
             ),
             to: harness.collectionView
         )
-        harness.connection.setAPIClientForTesting(makeClient(host: "server-a.test"))
+        harness.connection.setAPIClientForTesting(try makeClient(host: "server-a.test"))
         harness.toolArgsStore.set(["path": .string("docs/README.md")], for: "read-md")
         harness.toolArgsStore.setInputPresentation(ToolFileFactsFixture.readInput, for: "read-md")
         harness.toolArgsStore.setOutputPresentation(.init(kind: "fileContent", provenance: "result"), for: "read-md")
@@ -599,11 +599,11 @@ struct SessionContentAccessTests {
 
     // MARK: - Helpers
 
-    private func makeClient(host: String) -> APIClient {
+    private func makeClient(host: String) throws -> APIClient {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [RecordingContentProtocol.self]
         return APIClient(
-            baseURL: URL(string: "http://\(host):7749")!,
+            baseURL: (try #require(URL(string: "http://\(host):7749"))),
             token: "sk_test",
             configuration: config
         )
@@ -712,19 +712,23 @@ private final class RecordingContentProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        Self.lock.lock()
-        Self.recorded.append(request)
-        Self.lock.unlock()
-        let body = Data((request.url?.absoluteString ?? "").utf8)
-        let response = HTTPURLResponse(
-            url: request.url!,
-            statusCode: 200,
-            httpVersion: nil,
-            headerFields: ["Content-Length": "\(body.count)"]
-        )!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: body)
-        client?.urlProtocolDidFinishLoading(self)
+        do {
+            Self.lock.lock()
+            Self.recorded.append(request)
+            Self.lock.unlock()
+            let body = Data((request.url?.absoluteString ?? "").utf8)
+            let response = try #require(HTTPURLResponse(
+                url: (try #require(request.url)),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Length": "\(body.count)"]
+            ))
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
     }
 
     override func stopLoading() {}

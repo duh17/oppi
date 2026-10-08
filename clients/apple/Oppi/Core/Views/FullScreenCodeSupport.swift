@@ -2,6 +2,7 @@ import SwiftUI
 import TipKit
 import UIKit
 
+// periphery:ignore - marker enum; comments grep this name for the fullscreen chrome convention
 /// Shared chrome convention for all fullscreen viewer controllers.
 ///
 /// Fullscreen viewers use immersive presentation: content extends
@@ -41,7 +42,6 @@ import UIKit
 ///
 /// ``FullScreenCodeViewController``, ``FullScreenImageViewController``, and
 /// ``FullScreenImageDataPreviewViewController`` follow this pattern.
-// periphery:ignore - marker enum; comments grep this name for the fullscreen chrome convention
 enum FullScreenViewerChrome {
     // Marker enum — the convention is documented above.
     // Grep for `FullScreenViewerChrome` to find all adopters.

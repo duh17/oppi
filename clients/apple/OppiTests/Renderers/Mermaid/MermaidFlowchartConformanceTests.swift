@@ -324,7 +324,7 @@ struct MermaidFlowchartConformanceTests {
     }
 
     /// SPEC: ## Expanded Node Shapes — v11-only shapes parse to dedicated shapes and render.
-    @Test func generalShapeSyntaxNewV11ShapesRender() {
+    @Test func generalShapeSyntaxNewV11ShapesRender() throws {
         let result = parser.parse("""
         flowchart TD
             A@{ shape: bang, label: "Bang" }
@@ -380,7 +380,7 @@ struct MermaidFlowchartConformanceTests {
         let renderer = MermaidFlowchartRenderer()
         let layout = renderer.layout(result, configuration: .default(maxWidth: 900))
         let box = renderer.boundingBox(layout)
-        let ctx = CGContext(
+        let ctx = (try #require(CGContext(
             data: nil,
             width: max(1, Int(box.width)),
             height: max(1, Int(box.height)),
@@ -388,7 +388,7 @@ struct MermaidFlowchartConformanceTests {
             bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
+        )))
         renderer.draw(layout, in: ctx, at: .zero)
     }
 
@@ -750,7 +750,7 @@ struct MermaidFlowchartConformanceTests {
     }
 
     /// SPEC: ### flowcharts — edges can connect to and from subgraph IDs.
-    @Test func subgraphIdsCanBeUsedAsEdgeEndpoints() {
+    @Test func subgraphIdsCanBeUsedAsEdgeEndpoints() throws {
         let result = parser.parse("""
         flowchart TB
             c1-->a2
@@ -783,7 +783,7 @@ struct MermaidFlowchartConformanceTests {
         #expect(layout.edgeEndpointSubgraphs["b2->c2"]?.from == "two")
 
         let box = renderer.boundingBox(layout)
-        let ctx = CGContext(
+        let ctx = (try #require(CGContext(
             data: nil,
             width: max(1, Int(box.width)),
             height: max(1, Int(box.height)),
@@ -791,7 +791,7 @@ struct MermaidFlowchartConformanceTests {
             bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
+        )))
         renderer.draw(layout, in: ctx, at: .zero)
     }
 

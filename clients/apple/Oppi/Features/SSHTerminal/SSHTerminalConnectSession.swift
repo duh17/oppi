@@ -263,7 +263,7 @@ private struct SSHTerminalConnectionModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .sheet(isPresented: $session.passwordPrompt, onDismiss: { session.password = "" }) {
+            .sheet(isPresented: $session.passwordPrompt, onDismiss: { session.password = "" }, content: {
                 NavigationStack {
                     Form {
                         Section {
@@ -291,7 +291,7 @@ private struct SSHTerminalConnectionModifier: ViewModifier {
                         }
                     }
                 }.presentationDetents([.medium])
-            }
+            })
             .confirmationDialog("Forget the trusted host key?", isPresented: $session.forgetConfirmation, titleVisibility: .visible) {
                 Button("Forget Trusted Key", role: .destructive) { session.forgetTrustedKey() }
             } message: { Text("Only do this after independently verifying why the host key changed.") }

@@ -160,23 +160,23 @@ struct WorkspaceNavigationServerScopeTests {
         )
     }
 
-    private static func makeAPIClient(host: String) -> APIClient {
+    private static func makeAPIClient(host: String) throws -> APIClient {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [TestURLProtocol.self]
         return APIClient(
-            baseURL: URL(string: "http://\(host):7749")!,
+            baseURL: (try #require(URL(string: "http://\(host):7749"))),
             token: "sk_test",
             configuration: config
         )
     }
 
-    private static func response(for request: URLRequest) -> (Data, HTTPURLResponse) {
-        let url = request.url!
+    private static func response(for request: URLRequest) throws -> (Data, HTTPURLResponse) {
+        let url = (try #require(request.url))
         let host = url.host ?? ""
         let path = url.path
 
         if host == "server-a.test", path.hasPrefix("/workspaces/ws-b") {
-            return makeResponse(request: request, status: 404, body: #"{"error":"Workspace not found"}"#)
+            return try makeResponse(request: request, status: 404, body: #"{"error":"Workspace not found"}"#)
         }
 
         switch path {
@@ -184,55 +184,55 @@ struct WorkspaceNavigationServerScopeTests {
             let workspace = host == "server-b.test"
                 ? workspaceJSON(id: "ws-b", name: "Target Workspace")
                 : workspaceJSON(id: "ws-a", name: "Source Workspace")
-            return makeResponse(
+            return try makeResponse(
                 request: request,
                 body: #"{"serverNow":1700000000000,"workspaces":[\#(workspace)],"summaries":[]}"#
             )
         case "/skills":
-            return makeResponse(request: request, body: #"{"skills":[]}"#)
+            return try makeResponse(request: request, body: #"{"skills":[]}"#)
         case "/sessions/recent":
-            return makeResponse(request: request, body: #"{"sessions":[]}"#)
+            return try makeResponse(request: request, body: #"{"sessions":[]}"#)
         default:
             if path.hasSuffix("/sessions") {
                 let workspaceId = workspaceId(in: path)
-                return makeResponse(
+                return try makeResponse(
                     request: request,
                     body: #"{"workspaceId":"\#(workspaceId)","serverNow":1700000000000,"active":[],"stopped":[]}"#
                 )
             }
             if path.hasSuffix("/session-buckets") {
                 let workspaceId = workspaceId(in: path)
-                return makeResponse(
+                return try makeResponse(
                     request: request,
                     body: #"{"workspaceId":"\#(workspaceId)","status":"stopped","beforeMs":0,"serverNow":1700000000000,"buckets":[]}"#
                 )
             }
             if path.hasSuffix("/attention") {
                 let workspaceId = workspaceId(in: path)
-                return makeResponse(
+                return try makeResponse(
                     request: request,
                     body: #"{"workspaceId":"\#(workspaceId)","serverNow":1700000000000,"attention":{"permissions":[],"asks":[]}}"#
                 )
             }
             if path.hasSuffix("/git/status") {
-                return makeResponse(request: request, body: gitStatusJSON)
+                return try makeResponse(request: request, body: gitStatusJSON)
             }
             if path.hasSuffix("/paths") {
-                return makeResponse(request: request, body: #"{"workspaceId":"ws-b","paths":[]}"#)
+                return try makeResponse(request: request, body: #"{"workspaceId":"ws-b","paths":[]}"#)
             }
             if path == "/models" {
-                return makeResponse(request: request, body: #"{"models":[]}"#)
+                return try makeResponse(request: request, body: #"{"models":[]}"#)
             }
             if path == "/extensions" {
-                return makeResponse(request: request, body: #"{"extensions":[]}"#)
+                return try makeResponse(request: request, body: #"{"extensions":[]}"#)
             }
             if path == "/host/path/status" {
-                return makeResponse(
+                return try makeResponse(
                     request: request,
                     body: #"{"status":{"path":"/srv/edit-b","resolvedPath":"/srv/edit-b","exists":true,"isDirectory":true,"isFile":false,"issue":null,"message":null}}"#
                 )
             }
-            return makeResponse(request: request, body: #"{}"#)
+            return try makeResponse(request: request, body: #"{}"#)
         }
     }
 
@@ -256,14 +256,14 @@ struct WorkspaceNavigationServerScopeTests {
         request: URLRequest,
         status: Int = 200,
         body: String
-    ) -> (Data, HTTPURLResponse) {
+    ) throws -> (Data, HTTPURLResponse) {
         let data = Data(body.utf8)
-        let response = HTTPURLResponse(
-            url: request.url!,
+        let response = (try #require(HTTPURLResponse(
+            url: (try #require(request.url)),
             statusCode: status,
             httpVersion: "HTTP/1.1",
             headerFields: ["Content-Type": "application/json"]
-        )!
+        )))
         return (data, response)
     }
 

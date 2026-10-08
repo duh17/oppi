@@ -75,10 +75,11 @@ struct ReviewCommentStripScreenshotPreview: View {
                     onExpand: {},
                     externalFocusRequestID: 0,
                     appliesOuterPadding: false,
-                    alwaysShowActionRow: true
-                ) {
-                    EmptyView()
-                }
+                    alwaysShowActionRow: true,
+                    actionRow: {
+                        EmptyView()
+                    }
+                )
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 24)

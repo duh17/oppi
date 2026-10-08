@@ -82,7 +82,7 @@ struct VoiceInputManagerTests {
             )
         }
 
-        await #expect(throws: TestVoiceError.self) { try await tapMic() }
+        await #expect(throws: TestVoiceError.self) { try await try tapMic() }
         #expect(manager.state == .error("Audio activation failed"))
         #expect(!manager._testOperationInFlight)
         #expect(prefix == nil)
@@ -90,7 +90,7 @@ struct VoiceInputManagerTests {
         #expect(session.startCallCount == 0)
 
         systemAccess.activateAudioSessionError = nil
-        try await tapMic()
+        try await try tapMic()
         #expect(manager.state == .recording)
         #expect(manager.isActiveRecordingSource("inline_mic_tap"))
         #expect(systemAccess.activateAudioSessionCallCount == 2)

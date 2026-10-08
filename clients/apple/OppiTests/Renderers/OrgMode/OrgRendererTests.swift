@@ -6,6 +6,7 @@ import Testing
 import UIKit
 #elseif canImport(AppKit)
 import AppKit
+// swiftlint:disable todo - Org-mode headline keyword examples, not unfinished work
 #endif
 
 // MARK: - Org Attributed String Renderer Tests
@@ -94,7 +95,7 @@ struct OrgRendererTests {
     // MARK: - Headings
 
     @Test("H1 uses 24pt font")
-    func headingLevel1FontSize() {
+    func headingLevel1FontSize() throws {
         let result = render("* Big Title")
         // Find "Big Title" in output
         let str = text(result)
@@ -105,11 +106,11 @@ struct OrgRendererTests {
         let nsOffset = str.distance(from: str.startIndex, to: range.lowerBound)
         let f = font(in: result, at: nsOffset)
         #expect(f != nil)
-        #expect(f!.pointSize == 24)
+        #expect((try #require(f)).pointSize == 24)
     }
 
     @Test("H2 uses 20pt font")
-    func headingLevel2FontSize() {
+    func headingLevel2FontSize() throws {
         let result = render("** Medium Title")
         let str = text(result)
         guard let range = str.range(of: "Medium Title") else {
@@ -119,11 +120,11 @@ struct OrgRendererTests {
         let nsOffset = str.distance(from: str.startIndex, to: range.lowerBound)
         let f = font(in: result, at: nsOffset)
         #expect(f != nil)
-        #expect(f!.pointSize == 20)
+        #expect((try #require(f)).pointSize == 20)
     }
 
     @Test("H3 uses 17pt font")
-    func headingLevel3FontSize() {
+    func headingLevel3FontSize() throws {
         let result = render("*** Small Title")
         let str = text(result)
         guard let range = str.range(of: "Small Title") else {
@@ -133,11 +134,11 @@ struct OrgRendererTests {
         let nsOffset = str.distance(from: str.startIndex, to: range.lowerBound)
         let f = font(in: result, at: nsOffset)
         #expect(f != nil)
-        #expect(f!.pointSize == 17)
+        #expect((try #require(f)).pointSize == 17)
     }
 
     @Test("H4 uses base font size")
-    func headingLevel4FontSize() {
+    func headingLevel4FontSize() throws {
         let result = render("**** Level 4")
         let str = text(result)
         guard let range = str.range(of: "Level 4") else {
@@ -147,7 +148,7 @@ struct OrgRendererTests {
         let nsOffset = str.distance(from: str.startIndex, to: range.lowerBound)
         let f = font(in: result, at: nsOffset)
         #expect(f != nil)
-        #expect(f!.pointSize == config.fontSize)
+        #expect((try #require(f)).pointSize == config.fontSize)
     }
 
     @Test("Headings are bold")

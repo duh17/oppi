@@ -14,12 +14,12 @@ struct AuthenticatedMediaSourceShareTests {
             #expect(request.value(forHTTPHeaderField: "Cache-Control") == "no-cache")
             return (
                 expected,
-                HTTPURLResponse(
+                (try #require(HTTPURLResponse(
                     url: try #require(request.url),
                     statusCode: 200,
                     httpVersion: "HTTP/1.1",
                     headerFields: ["Content-Type": "audio/wav"]
-                )!
+                )))
             )
         }
 
@@ -74,12 +74,12 @@ struct AuthenticatedMediaSourceShareTests {
         AudioShareURLProtocol.handler = { request in
             (
                 Data(),
-                HTTPURLResponse(
+                (try #require(HTTPURLResponse(
                     url: try #require(request.url),
                     statusCode: 403,
                     httpVersion: "HTTP/1.1",
                     headerFields: nil
-                )!
+                )))
             )
         }
 

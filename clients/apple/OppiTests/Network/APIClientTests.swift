@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import Oppi
 
-// swiftlint:disable force_unwrapping non_optional_string_data_conversion
+// swiftlint:disable force_unwrapping
 
 // MARK: - Mock URL Protocol
 
@@ -1360,7 +1360,7 @@ struct APIClientTests {
         MockURLProtocol.handler = { request in
             #expect(request.httpMethod == "POST")
             #expect(request.url?.path == "/host/path/create")
-            let body = try! JSONSerialization.jsonObject(with: self.requestBodyData(request)) as? [String: Any]
+            let body = try JSONSerialization.jsonObject(with: self.requestBodyData(request)) as? [String: Any]
             #expect(body?["path"] as? String == "~/workspace/new-project")
             #expect(body?["confirmed"] as? Bool == true)
             return self.mockResponse(json: """

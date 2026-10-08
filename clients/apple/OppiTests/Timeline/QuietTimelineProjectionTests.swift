@@ -430,10 +430,16 @@ struct QuietTimelineProjectionTests {
     }
 
     /// Named fixtures simulate the facts supplied by the server, not a production fallback.
-    private func projectFixture(items: [ChatItem], isQuiet: Bool, isBusy: Bool, expandedTurnIDs: Set<String>,
+    private func projectFixture(
+        items: [ChatItem],
+        isQuiet: Bool,
+        isBusy: Bool,
+        expandedTurnIDs: Set<String>,
         displayStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons,
-        toolArgs: (String) -> [String: JSONValue]? = { _ in nil }, now: Date = Date(),
-        settledEnds: [String: Date] = [:]) -> QuietTimelineProjection {
+        toolArgs: (String) -> [String: JSONValue]? = { _ in nil },
+        now: Date = Date(),
+        settledEnds: [String: Date] = [:]
+    ) -> QuietTimelineProjection {
         QuietTimelineProjection.make(items: items, isQuiet: isQuiet, isBusy: isBusy,
             expandedTurnIDs: expandedTurnIDs, displayStyle: displayStyle,
             toolInspection: { item in

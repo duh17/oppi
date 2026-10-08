@@ -1,3 +1,4 @@
+// swiftlint:disable todo - Org-mode headline keyword examples, not unfinished work
 /// Line-oriented recursive descent parser for org mode documents.
 ///
 /// Conforms to `DocumentParser` — safe to call from any thread.

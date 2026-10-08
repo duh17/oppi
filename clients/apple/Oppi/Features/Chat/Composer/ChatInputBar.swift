@@ -829,7 +829,7 @@ struct ChatInputBar<ActionRow: View>: View {
         Button(action: {
             guard let askRequest else { return }
             submitAskResponse(request: askRequest, answers: nil)
-        }) {
+        }, label: {
             ZStack {
                 Circle().fill(Color.themeBgHighlight)
                 Circle().stroke(Color.themeComment.opacity(0.35), lineWidth: 1)
@@ -839,7 +839,7 @@ struct ChatInputBar<ActionRow: View>: View {
                     .foregroundStyle(.themeComment)
             }
             .frame(width: actionVisualDiameter, height: actionVisualDiameter)
-        }
+        })
         .buttonStyle(.plain)
         .disabled(onAskIgnoreAll == nil || isCurrentAskSubmitted)
         .accessibilityIdentifier("chat.askIgnore")

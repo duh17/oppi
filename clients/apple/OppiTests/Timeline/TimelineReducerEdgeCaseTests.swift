@@ -716,7 +716,6 @@ struct TimelineReducerEdgeCaseTests {
         }
     }
 
-    // swiftlint:disable:next large_tuple
     private func makeConversation(_ entries: [(String, TraceEventType, String)]) -> [TraceEvent] {
         entries.enumerated().map { idx, entry in
             TraceEvent(

@@ -2513,7 +2513,7 @@ struct MarkdownSegmentCacheTests {
 
 @Suite("FlatSegment image URL resolution")
 struct FlatSegmentImageResolutionTests {
-    private let baseURL = URL(string: "https://server.example.com")! // swiftlint:disable:this force_unwrapping
+    private let baseURL = URL(string: "https://server.example.com")!
     private let workspaceID = "ws-abc123"
 
     // MARK: - Image-only paragraph promotion
@@ -2675,7 +2675,7 @@ struct FlatSegmentImageResolutionTests {
         let segments = FlatSegment.build(
             from: blocks,
             workspaceID: "my-workspace",
-            serverBaseURL: URL(string: "https://pi.local:8080")! // swiftlint:disable:this force_unwrapping
+            serverBaseURL: URL(string: "https://pi.local:8080")!
         )
         if case .image(_, let url) = segments[0] {
             let abs = url.absoluteString
@@ -3357,7 +3357,7 @@ struct AssistantMarkdownInlineImageRenderingTests {
 
 @Suite("Markdown bang embed unification")
 struct MarkdownBangEmbedUnificationTests {
-    private let baseURL = URL(string: "https://server.example.com")! // swiftlint:disable:this force_unwrapping
+    private let baseURL = URL(string: "https://server.example.com")!
 
     @Test func wikiBangHeicEmbedsLikeMarkdownBang() throws {
         let wiki = FlatSegment.build(

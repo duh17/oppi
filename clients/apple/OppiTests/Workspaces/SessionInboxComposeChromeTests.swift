@@ -312,7 +312,7 @@ struct SessionInboxComposeChromeTests {
         )
         let workspaceToolbar = try sourceSlice(
             workspace,
-            start: "if !isNavigatingDeeperInWorkspaceStack {",
+            start: "if !isNavigatingDeeperInWorkspaceStack throws {",
             end: "private func startQuickSession(dictate: Bool)"
         )
         let inboxCompose = try #require(inboxToolbar.range(of: "compactQuickSessionBar"))

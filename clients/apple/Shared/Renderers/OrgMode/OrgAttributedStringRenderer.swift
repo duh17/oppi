@@ -8,6 +8,7 @@ private typealias PlatformFont = UIFont
 private typealias PlatformColor = UIColor
 #elseif canImport(AppKit)
 import AppKit
+// swiftlint:disable todo - Org-mode headline keyword examples, not unfinished work
 private typealias PlatformFont = NSFont
 private typealias PlatformColor = NSColor
 #endif

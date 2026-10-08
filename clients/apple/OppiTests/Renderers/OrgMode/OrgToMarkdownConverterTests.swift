@@ -1,4 +1,5 @@
 import Testing
+// swiftlint:disable todo - Org-mode headline keyword examples, not unfinished work
 @testable import Oppi
 
 // MARK: - Org → Markdown Conversion Tests

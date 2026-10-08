@@ -5,7 +5,7 @@ import UIKit
 import UniformTypeIdentifiers
 @testable import Oppi
 
-// swiftlint:disable force_unwrapping non_optional_string_data_conversion
+// swiftlint:disable force_unwrapping
 
 @Suite("Agent and schedule API client", .serialized)
 struct AgentScheduleAPIClientTests {

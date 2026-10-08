@@ -26,7 +26,7 @@ struct AuthenticatedMediaLoaderBoundaryTests {
         defer { server.stop() }
 
         let session = AuthenticatedMediaPlaybackSession(
-            source: mediaSource(url: server.url, authorizationProvider: auth.provider)
+            source: try mediaSource(url: server.url, authorizationProvider: auth.provider)
         )
         defer { session.teardown() }
         let player = session.player
@@ -89,7 +89,7 @@ struct AuthenticatedMediaLoaderBoundaryTests {
         )
         defer { server.stop() }
 
-        let session = AuthenticatedMediaPlaybackSession(source: mediaSource(url: server.url))
+        let session = AuthenticatedMediaPlaybackSession(source: try mediaSource(url: server.url))
         defer { session.teardown() }
         let player = session.player
         let ready = await waitForMainActorCondition(timeout: .seconds(12)) {
@@ -127,7 +127,7 @@ struct AuthenticatedMediaLoaderBoundaryTests {
     @MainActor
     @Test("authenticated loader rejects redirects instead of following them")
     func authenticatedLoaderRejectsRedirect() async throws {
-        let body = try Data(contentsOf: knownGoodH264URL())
+        let body = try Data(contentsOf: try knownGoodH264URL())
         let server = try AuthenticatedRangeHTTPServer(
             body: body,
             token: "Bearer native-play",
@@ -136,7 +136,7 @@ struct AuthenticatedMediaLoaderBoundaryTests {
         defer { server.stop() }
 
         let session = AuthenticatedMediaPlaybackSession(
-            source: mediaSource(url: server.url, token: "Bearer native-play")
+            source: try mediaSource(url: server.url, token: "Bearer native-play")
         )
         defer { session.teardown() }
         let player = session.player
@@ -178,13 +178,13 @@ struct AuthenticatedMediaLoaderBoundaryTests {
     @MainActor
     @Test("cancelling during authorization does not issue a GET")
     func cancellingDuringAuthorizationDoesNotIssueGet() async throws {
-        let body = try Data(contentsOf: knownGoodH264URL())
+        let body = try Data(contentsOf: try knownGoodH264URL())
         let server = try AuthenticatedRangeHTTPServer(body: body, token: "Bearer cancel-auth")
         defer { server.stop() }
 
         let gate = AuthorizationGate(token: "Bearer cancel-auth")
         let session = AuthenticatedMediaPlaybackSession(
-            source: mediaSource(url: server.url, authorizationProvider: gate.provider)
+            source: try mediaSource(url: server.url, authorizationProvider: gate.provider)
         )
 
         let started = await waitForMainActorCondition(timeout: .seconds(5)) {
@@ -206,7 +206,7 @@ struct AuthenticatedMediaLoaderBoundaryTests {
     @MainActor
     @Test("cancelling during a later authorization does not start another GET")
     func cancellingDuringLaterAuthorizationDoesNotStartAnotherGet() async throws {
-        let body = try Data(contentsOf: knownGoodH264URL())
+        let body = try Data(contentsOf: try knownGoodH264URL())
         let gate = AuthorizationGate(token: "Bearer cancel-continue", blockAfterCount: 2)
         let server = try AuthenticatedRangeHTTPServer(
             body: body,
@@ -215,7 +215,7 @@ struct AuthenticatedMediaLoaderBoundaryTests {
         defer { server.stop() }
 
         let session = AuthenticatedMediaPlaybackSession(
-            source: mediaSource(url: server.url, authorizationProvider: gate.provider)
+            source: try mediaSource(url: server.url, authorizationProvider: gate.provider)
         )
 
         let firstGet = await waitForMainActorCondition(timeout: .seconds(8)) {

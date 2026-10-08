@@ -921,13 +921,13 @@ private struct PushedReaderLeaveChrome: ViewModifier {
     func body(content: Content) -> some View {
         content
             .overlay(alignment: .topLeading) {
-                Button(action: { dismiss() }) {
+                Button(action: { dismiss() }, label: {
                     Image(systemName: "chevron.backward")
                         .font(.body.weight(.semibold))
                         .foregroundStyle(.themeCyan)
                         .frame(width: 44, height: 44)
                         .background(.themeBgHighlight.opacity(0.9), in: Circle())
-                }
+                })
                 .buttonStyle(.plain)
                 .accessibilityLabel(String(localized: "Back"))
                 .accessibilityIdentifier(accessibilityIdentifier)

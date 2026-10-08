@@ -22,7 +22,7 @@ struct GraphLayoutTests {
         #expect(result.totalSize == .zero)
     }
 
-    @Test func singleNode() {
+    @Test func singleNode() throws {
         let input = GraphLayoutInput(
             nodes: [GraphLayoutNode(id: "A", size: CGSize(width: 80, height: 40))],
             edges: [],
@@ -32,7 +32,7 @@ struct GraphLayoutTests {
         )
         let result = SugiyamaLayout.layout(input)
         #expect(result.nodePositions.count == 1)
-        let rect = result.nodePositions["A"]!
+        let rect = (try #require(result.nodePositions["A"]))
         #expect(rect.width == 80)
         #expect(rect.height == 40)
         #expect(result.totalSize.width > 0)
@@ -41,7 +41,7 @@ struct GraphLayoutTests {
 
     // MARK: - Linear chains
 
-    @Test func twoNodeChain() {
+    @Test func twoNodeChain() throws {
         let input = GraphLayoutInput(
             nodes: [
                 GraphLayoutNode(id: "A", size: CGSize(width: 60, height: 30)),
@@ -55,15 +55,15 @@ struct GraphLayoutTests {
         let result = SugiyamaLayout.layout(input)
         #expect(result.nodePositions.count == 2)
 
-        let a = result.nodePositions["A"]!
-        let b = result.nodePositions["B"]!
+        let a = (try #require(result.nodePositions["A"]))
+        let b = (try #require(result.nodePositions["B"]))
         // A should be above B (lower Y).
         #expect(a.midY < b.midY)
         // No overlap.
         #expect(a.maxY <= b.minY)
     }
 
-    @Test func threeNodeChain() {
+    @Test func threeNodeChain() throws {
         let input = GraphLayoutInput(
             nodes: [
                 GraphLayoutNode(id: "A", size: CGSize(width: 60, height: 30)),
@@ -79,16 +79,16 @@ struct GraphLayoutTests {
             rankSpacing: 40
         )
         let result = SugiyamaLayout.layout(input)
-        let a = result.nodePositions["A"]!
-        let b = result.nodePositions["B"]!
-        let c = result.nodePositions["C"]!
+        let a = (try #require(result.nodePositions["A"]))
+        let b = (try #require(result.nodePositions["B"]))
+        let c = (try #require(result.nodePositions["C"]))
 
         // Layer ordering: A < B < C vertically.
         #expect(a.midY < b.midY)
         #expect(b.midY < c.midY)
     }
 
-    @Test func convergingLongPathPropagatesDepthToDescendants() {
+    @Test func convergingLongPathPropagatesDepthToDescendants() throws {
         let nodes = ["A", "B", "C", "D", "E"].map {
             GraphLayoutNode(id: $0, size: CGSize(width: 60, height: 30))
         }
@@ -107,13 +107,13 @@ struct GraphLayoutTests {
         )
         let result = SugiyamaLayout.layout(input)
 
-        #expect(result.nodePositions["C"]!.midY < result.nodePositions["D"]!.midY)
-        #expect(result.nodePositions["D"]!.midY < result.nodePositions["E"]!.midY)
+        #expect((try #require(result.nodePositions["C"])).midY < (try #require(result.nodePositions["D"])).midY)
+        #expect((try #require(result.nodePositions["D"])).midY < (try #require(result.nodePositions["E"])).midY)
     }
 
     // MARK: - Diamond pattern
 
-    @Test func diamondPattern() {
+    @Test func diamondPattern() throws {
         // A -> B, A -> C, B -> D, C -> D
         let input = GraphLayoutInput(
             nodes: [
@@ -134,10 +134,10 @@ struct GraphLayoutTests {
         )
         let result = SugiyamaLayout.layout(input)
 
-        let a = result.nodePositions["A"]!
-        let b = result.nodePositions["B"]!
-        let c = result.nodePositions["C"]!
-        let d = result.nodePositions["D"]!
+        let a = (try #require(result.nodePositions["A"]))
+        let b = (try #require(result.nodePositions["B"]))
+        let c = (try #require(result.nodePositions["C"]))
+        let d = (try #require(result.nodePositions["D"]))
 
         // A is top layer, B and C are middle, D is bottom.
         #expect(a.midY < b.midY)
@@ -156,7 +156,7 @@ struct GraphLayoutTests {
 
     // MARK: - Direction
 
-    @Test func leftToRightDirection() {
+    @Test func leftToRightDirection() throws {
         let input = GraphLayoutInput(
             nodes: [
                 GraphLayoutNode(id: "A", size: CGSize(width: 60, height: 30)),
@@ -168,8 +168,8 @@ struct GraphLayoutTests {
             rankSpacing: 40
         )
         let result = SugiyamaLayout.layout(input)
-        let a = result.nodePositions["A"]!
-        let b = result.nodePositions["B"]!
+        let a = (try #require(result.nodePositions["A"]))
+        let b = (try #require(result.nodePositions["B"]))
 
         // A should be to the left of B.
         #expect(a.midX < b.midX)
@@ -177,7 +177,7 @@ struct GraphLayoutTests {
         #expect(a.maxX <= b.minX)
     }
 
-    @Test func directionAffectsCoordinateAxes() {
+    @Test func directionAffectsCoordinateAxes() throws {
         let nodesTB = [
             GraphLayoutNode(id: "A", size: CGSize(width: 60, height: 30)),
             GraphLayoutNode(id: "B", size: CGSize(width: 60, height: 30)),
@@ -193,10 +193,10 @@ struct GraphLayoutTests {
             nodeSpacing: 20, rankSpacing: 40
         ))
 
-        let tbA = tbResult.nodePositions["A"]!
-        let tbB = tbResult.nodePositions["B"]!
-        let lrA = lrResult.nodePositions["A"]!
-        let lrB = lrResult.nodePositions["B"]!
+        let tbA = (try #require(tbResult.nodePositions["A"]))
+        let tbB = (try #require(tbResult.nodePositions["B"]))
+        let lrA = (try #require(lrResult.nodePositions["A"]))
+        let lrB = (try #require(lrResult.nodePositions["B"]))
 
         // TB: same X, different Y.
         #expect(abs(tbA.midX - tbB.midX) < 1)
@@ -209,7 +209,7 @@ struct GraphLayoutTests {
 
     // MARK: - Node sizes respected
 
-    @Test func nodeSizesRespected() {
+    @Test func nodeSizesRespected() throws {
         let input = GraphLayoutInput(
             nodes: [
                 GraphLayoutNode(id: "A", size: CGSize(width: 100, height: 50)),
@@ -221,8 +221,8 @@ struct GraphLayoutTests {
             rankSpacing: 40
         )
         let result = SugiyamaLayout.layout(input)
-        let a = result.nodePositions["A"]!
-        let b = result.nodePositions["B"]!
+        let a = (try #require(result.nodePositions["A"]))
+        let b = (try #require(result.nodePositions["B"]))
 
         #expect(a.width == 100)
         #expect(a.height == 50)
@@ -232,7 +232,7 @@ struct GraphLayoutTests {
 
     // MARK: - Edge paths
 
-    @Test func edgePathsHaveCorrectEndpoints() {
+    @Test func edgePathsHaveCorrectEndpoints() throws {
         let input = GraphLayoutInput(
             nodes: [
                 GraphLayoutNode(id: "A", size: CGSize(width: 60, height: 30)),
@@ -251,16 +251,16 @@ struct GraphLayoutTests {
         #expect(path.to == "B")
         #expect(path.points.count >= 2)
 
-        let a = result.nodePositions["A"]!
-        let b = result.nodePositions["B"]!
+        let a = (try #require(result.nodePositions["A"]))
+        let b = (try #require(result.nodePositions["B"]))
 
         // First point should be near A's boundary.
-        let firstPoint = path.points.first!
+        let firstPoint = (try #require(path.points.first))
         #expect(abs(firstPoint.x - a.midX) < a.width)
         #expect(abs(firstPoint.y - a.midY) < a.height)
 
         // Last point should be near B's boundary.
-        let lastPoint = path.points.last!
+        let lastPoint = (try #require(path.points.last))
         #expect(abs(lastPoint.x - b.midX) < b.width)
         #expect(abs(lastPoint.y - b.midY) < b.height)
     }
@@ -334,7 +334,7 @@ struct GraphLayoutTests {
         #expect(abs(yValues[1] - yValues[2]) < 1)
     }
 
-    @Test func disconnectedNodesNoOverlap() {
+    @Test func disconnectedNodesNoOverlap() throws {
         let input = GraphLayoutInput(
             nodes: [
                 GraphLayoutNode(id: "A", size: CGSize(width: 80, height: 40)),
@@ -346,8 +346,8 @@ struct GraphLayoutTests {
             rankSpacing: 40
         )
         let result = SugiyamaLayout.layout(input)
-        let a = result.nodePositions["A"]!
-        let b = result.nodePositions["B"]!
+        let a = (try #require(result.nodePositions["A"]))
+        let b = (try #require(result.nodePositions["B"]))
 
         // Should not overlap.
         let overlaps = a.intersects(b)

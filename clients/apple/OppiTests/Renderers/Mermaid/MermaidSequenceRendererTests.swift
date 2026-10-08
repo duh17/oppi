@@ -23,10 +23,10 @@ struct MermaidSequenceRendererTests {
 
     /// Create a bitmap context and draw the layout into it. Returns true if no crash.
     @discardableResult
-    private func drawLayout(_ layout: MermaidFlowchartRenderer.FlowchartLayout) -> Bool {
+    private func drawLayout(_ layout: MermaidFlowchartRenderer.FlowchartLayout) throws -> Bool {
         let size = renderer.boundingBox(layout)
         guard size.width > 0, size.height > 0 else { return false }
-        let ctx = CGContext(
+        let ctx = (try #require(CGContext(
             data: nil,
             width: max(1, Int(size.width)),
             height: max(1, Int(size.height)),
@@ -34,7 +34,7 @@ struct MermaidSequenceRendererTests {
             bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
+        )))
         renderer.draw(layout, in: ctx, at: .zero)
         return true
     }
@@ -54,7 +54,7 @@ struct MermaidSequenceRendererTests {
         // Should produce some size (even if small) and not crash.
         #expect(size.width > 0)
         #expect(size.height > 0)
-        drawLayout(layout)
+        try drawLayout(layout)
     }
 
     @Test func customDrawIsSet() {
@@ -117,7 +117,7 @@ struct MermaidSequenceRendererTests {
         let size = renderer.boundingBox(layout)
         #expect(size.width > 0)
         #expect(size.height > 0)
-        drawLayout(layout)
+        try drawLayout(layout)
     }
 
     @Test func participantStereotypeMetadataRenders() {
@@ -138,7 +138,7 @@ struct MermaidSequenceRendererTests {
         let size = renderer.boundingBox(layout)
         #expect(size.width > 0)
         #expect(size.height > 0)
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     // MARK: - Messages between participants
@@ -149,7 +149,7 @@ struct MermaidSequenceRendererTests {
                 Alice->>Bob: Request
                 Bob-->>Alice: Response
             """)
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     @Test func messageToNonAdjacentParticipant() {
@@ -163,7 +163,7 @@ struct MermaidSequenceRendererTests {
         let size = renderer.boundingBox(layout)
         #expect(size.width > 0)
         #expect(size.height > 0)
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     // MARK: - Blocks and notes
@@ -188,7 +188,7 @@ struct MermaidSequenceRendererTests {
         let size = renderer.boundingBox(layout)
         #expect(size.width > 0)
         #expect(size.height > 0)
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     @Test func sequenceBoxesRender() {
@@ -211,7 +211,7 @@ struct MermaidSequenceRendererTests {
         let size = renderer.boundingBox(layout)
         #expect(size.width > 0)
         #expect(size.height > 0)
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     @Test func sequenceNotesRenderAndAffectHeight() {
@@ -229,7 +229,7 @@ struct MermaidSequenceRendererTests {
         let withoutSize = renderer.boundingBox(withoutNote)
         let withSize = renderer.boundingBox(withNote)
         #expect(withSize.height > withoutSize.height)
-        #expect(drawLayout(withNote))
+        #expect(try drawLayout(withNote))
     }
 
     // MARK: - Self-messages
@@ -242,7 +242,7 @@ struct MermaidSequenceRendererTests {
         let size = renderer.boundingBox(layout)
         #expect(size.width > 0)
         #expect(size.height > 0)
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     @Test func selfMessageRendersWithNonZeroSize() {
@@ -288,39 +288,39 @@ struct MermaidSequenceRendererTests {
 
         #expect(facts.size.width >= requiredWidth - 0.5)
         #expect(layout.customSize?.width == facts.size.width)
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     // MARK: - Arrow styles
 
     @Test func solidArrowRenders() {
         let layout = layoutFor("sequenceDiagram\n    Alice->>Bob: Solid arrow")
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     @Test func dashedArrowRenders() {
         let layout = layoutFor("sequenceDiagram\n    Alice-->>Bob: Dashed arrow")
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     @Test func solidOpenRenders() {
         let layout = layoutFor("sequenceDiagram\n    Alice->Bob: Solid open")
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     @Test func dashedOpenRenders() {
         let layout = layoutFor("sequenceDiagram\n    Alice-->Bob: Dashed open")
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     @Test func solidCrossRenders() {
         let layout = layoutFor("sequenceDiagram\n    Alice-xBob: Solid cross")
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     @Test func dashedCrossRenders() {
         let layout = layoutFor("sequenceDiagram\n    Alice--xBob: Dashed cross")
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     @Test func allArrowStylesInOneDiagram() {
@@ -336,7 +336,7 @@ struct MermaidSequenceRendererTests {
         let size = renderer.boundingBox(layout)
         #expect(size.width > 0)
         #expect(size.height > 0)
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     @Test func v11ArrowStylesRender() {
@@ -357,7 +357,7 @@ struct MermaidSequenceRendererTests {
         let size = renderer.boundingBox(layout)
         #expect(size.width > 0)
         #expect(size.height > 0)
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     @Test func autonumberStartAndIncrementRender() {
@@ -370,7 +370,7 @@ struct MermaidSequenceRendererTests {
         let size = renderer.boundingBox(layout)
         #expect(size.width > 0)
         #expect(size.height > 0)
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     // MARK: - Complex diagrams
@@ -390,7 +390,7 @@ struct MermaidSequenceRendererTests {
         let size = renderer.boundingBox(layout)
         #expect(size.width > 0)
         #expect(size.height > 0)
-        #expect(drawLayout(layout))
+        #expect(try drawLayout(layout))
     }
 
     @Test func renderOutputIsGraphical() {
@@ -874,7 +874,7 @@ struct MermaidSequenceRendererTests {
         )
     }
 
-    @Test func renderDrawDoesNotCrash() {
+    @Test func renderDrawDoesNotCrash() throws {
         let diagram = parser.parse("""
             sequenceDiagram
                 participant A
@@ -888,7 +888,7 @@ struct MermaidSequenceRendererTests {
             Issue.record("Expected graphical output")
             return
         }
-        let ctx = CGContext(
+        let ctx = (try #require(CGContext(
             data: nil,
             width: max(1, Int(result.boundingBox.width)),
             height: max(1, Int(result.boundingBox.height)),
@@ -896,7 +896,7 @@ struct MermaidSequenceRendererTests {
             bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
+        )))
         result.draw(ctx, .zero)
     }
 

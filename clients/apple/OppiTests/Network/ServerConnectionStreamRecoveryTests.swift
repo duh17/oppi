@@ -18,7 +18,7 @@ struct ServerConnectionStreamRecoveryTests {
             if calls == 1 {
                 throw URLError(.networkConnectionLost)
             }
-            return self.mockServerInfoResponse(for: request)
+            return try self.mockServerInfoResponse(for: request)
         }
 
         await connection.refreshStreamCapabilitiesIfNeeded()
@@ -43,7 +43,7 @@ struct ServerConnectionStreamRecoveryTests {
             if calls == 2 {
                 throw URLError(.networkConnectionLost)
             }
-            return self.mockServerInfoResponse(for: request)
+            return try self.mockServerInfoResponse(for: request)
         }
 
         await connection.refreshStreamCapabilities()
@@ -74,12 +74,12 @@ struct ServerConnectionStreamRecoveryTests {
             requestedPaths.append(path)
             switch path {
             case "/server/info":
-                return self.mockServerInfoResponse(for: request, appEventStream: true)
+                return try self.mockServerInfoResponse(for: request, appEventStream: true)
             case "/sessions/recent":
-                return self.jsonResponse("{\"sessions\":[]}", for: request)
+                return try self.jsonResponse("{\"sessions\":[]}", for: request)
             default:
                 Issue.record("Unexpected request path: \(path)")
-                return self.jsonResponse("{}", for: request, statusCode: 404)
+                return try self.jsonResponse("{}", for: request, statusCode: 404)
             }
         }
 
@@ -92,14 +92,14 @@ struct ServerConnectionStreamRecoveryTests {
     }
 
     @Test func networkPathChangeRecomputesPreparedFocusedStreamURL() async throws {
-        let (connection, _) = try await makeProductionLANConnectionWithFocusedStream()
+        let (connection, _) = try await try makeProductionLANConnectionWithFocusedStream()
         defer { cleanup(connection) }
 
         #expect(connection.transportPath == .lan)
         #expect(connection.focusedSessionStreamURLForTesting?.absoluteString == "wss://192.168.1.42:7749/workspaces/w1/sessions/s1/stream")
 
         connection.handleNetworkPathChange()
-        try await waitForPairedFocusedStream(connection)
+        try await try waitForPairedFocusedStream(connection)
 
         #expect(connection.transportPath == .paired)
         #expect(connection.focusedSessionStreamURLForTesting?.absoluteString == "wss://100.64.0.2:7749/workspaces/w1/sessions/s1/stream")
@@ -110,7 +110,7 @@ struct ServerConnectionStreamRecoveryTests {
     /// no consumption task. Recovery must still rebind the prepared session
     /// stream onto paired/Tailscale instead of settling with a dead socket.
     @Test func lanPathLossWithDisconnectedSocketStillReconnectsFocusedStream() async throws {
-        let (connection, connectCalls) = try await makeProductionLANConnectionWithFocusedStream()
+        let (connection, connectCalls) = try await try makeProductionLANConnectionWithFocusedStream()
         defer { cleanup(connection) }
 
         connection.wsClient?._setStatusForTesting(.disconnected)
@@ -118,7 +118,7 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(connection.focusedSessionStreamURLForTesting?.host == "192.168.1.42")
 
         connection.handleNetworkPathChange()
-        try await waitForPairedFocusedStream(connection, minConnectCalls: 1, connectCalls: connectCalls)
+        try await try waitForPairedFocusedStream(connection, minConnectCalls: 1, connectCalls: connectCalls)
 
         #expect(connection.transportPath == .paired)
         #expect(await connection.apiClient?.baseURL.host == "100.64.0.2")
@@ -134,12 +134,12 @@ struct ServerConnectionStreamRecoveryTests {
     /// private IP when Wi‑Fi disappears. Demotion must stop that dead-LAN socket
     /// and reopen the focused stream on paired.
     @Test func lanPathLossWhileReconnectingDoesNotLeaveMissingEndpointSelection() async throws {
-        let (connection, connectCalls) = try await makeProductionLANConnectionWithFocusedStream()
+        let (connection, connectCalls) = try await try makeProductionLANConnectionWithFocusedStream()
         defer { cleanup(connection) }
 
         connection.wsClient?._setStatusForTesting(.reconnecting(attempt: 3))
         connection.handleNetworkPathChange()
-        try await waitForPairedFocusedStream(connection, minConnectCalls: 1, connectCalls: connectCalls)
+        try await try waitForPairedFocusedStream(connection, minConnectCalls: 1, connectCalls: connectCalls)
 
         #expect(connection.transportPath == .paired)
         #expect(await connection.apiClient?.baseURL.host == "100.64.0.2")
@@ -199,8 +199,8 @@ struct ServerConnectionStreamRecoveryTests {
         )
     }
 
-    private func pairedServer() -> PairedServer {
-        PairedServer(from: pairedCredentials())!
+    private func pairedServer() throws -> PairedServer {
+        (try #require(PairedServer(from: pairedCredentials())))
     }
 
     private func waitForPairedFocusedStream(
@@ -274,7 +274,7 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(connection.serverHealth().transportState == .connecting)
         #expect(
             ServerConnectionLanePresentation.title(
-                server: pairedServer(),
+                server: try pairedServer(),
                 connection: connection,
                 state: .recovering,
                 isPreparing: false
@@ -282,7 +282,7 @@ struct ServerConnectionStreamRecoveryTests {
         )
 
         holdFirstDemotion.withLock { $0 = false }
-        try await waitForPairedFocusedStream(connection, timeoutMs: 2_000)
+        try await try waitForPairedFocusedStream(connection, timeoutMs: 2_000)
         #expect(!connection.isTransportDemoting)
         #expect(connection.transportPath == .paired)
     }
@@ -592,14 +592,14 @@ struct ServerConnectionStreamRecoveryTests {
 
     private func mockServerInfo() throws -> ServerInfo {
         let request = URLRequest(url: URL(string: "http://127.0.0.1:7749/server/info")!)
-        let (data, _) = mockServerInfoResponse(for: request)
+        let (data, _) = try mockServerInfoResponse(for: request)
         return try JSONDecoder().decode(ServerInfo.self, from: data)
     }
 
     private func mockServerInfoResponse(
         for request: URLRequest,
         appEventStream: Bool = false
-    ) -> (Data, HTTPURLResponse) {
+    ) throws -> (Data, HTTPURLResponse) {
         let appEventCapability = appEventStream ? ",\n            \"appEventStream\": { \"version\": 1 }" : ""
         let data = Data("""
         {
@@ -624,12 +624,12 @@ struct ServerConnectionStreamRecoveryTests {
           }
         }
         """.utf8)
-        let response = HTTPURLResponse(
+        let response = (try #require(HTTPURLResponse(
             url: request.url ?? URL(string: "http://127.0.0.1:7749/server/info")!,
             statusCode: 200,
             httpVersion: nil,
             headerFields: ["Content-Type": "application/json"]
-        )!
+        )))
         return (data, response)
     }
 
@@ -637,14 +637,14 @@ struct ServerConnectionStreamRecoveryTests {
         _ json: String,
         for request: URLRequest,
         statusCode: Int = 200
-    ) -> (Data, HTTPURLResponse) {
-        let data = json.data(using: .utf8)!
-        let response = HTTPURLResponse(
+    ) throws -> (Data, HTTPURLResponse) {
+        let data = (try #require(json.data(using: .utf8)))
+        let response = (try #require(HTTPURLResponse(
             url: request.url ?? URL(string: "http://127.0.0.1:7749")!,
             statusCode: statusCode,
             httpVersion: nil,
             headerFields: ["Content-Type": "application/json"]
-        )!
+        )))
         return (data, response)
     }
 

@@ -311,7 +311,7 @@ struct MermaidGanttRendererTests {
         return MermaidGanttParser.parse(lines: body)
     }
 
-    @Test func producesNonZeroSize() {
+    @Test func producesNonZeroSize() throws {
         let diagram = parseGantt("""
             gantt
                 section Work
@@ -321,8 +321,8 @@ struct MermaidGanttRendererTests {
         let layout = MermaidGanttRenderer.layout(diagram, configuration: config)
         let size = layout.customSize
         #expect(size != nil)
-        #expect(size!.width > 0)
-        #expect(size!.height > 0)
+        #expect((try #require(size)).width > 0)
+        #expect((try #require(size)).height > 0)
     }
 
     @Test func emptyDiagramReturnsPlaceholder() {
@@ -350,7 +350,7 @@ struct MermaidGanttRendererTests {
         #expect(!layout.isPlaceholder)
     }
 
-    @Test func drawDoesNotCrash() {
+    @Test func drawDoesNotCrash() throws {
         let diagram = parseGantt("""
             gantt
                 title Project Plan
@@ -367,7 +367,7 @@ struct MermaidGanttRendererTests {
         let layout = MermaidGanttRenderer.layout(diagram, configuration: config)
         let size = layout.customSize ?? CGSize(width: 100, height: 100)
 
-        let ctx = CGContext(
+        let ctx = (try #require(CGContext(
             data: nil,
             width: max(1, Int(size.width)),
             height: max(1, Int(size.height)),
@@ -375,13 +375,13 @@ struct MermaidGanttRendererTests {
             bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
+        )))
 
         // Should not crash.
         layout.customDraw?(ctx, .zero)
     }
 
-    @Test func multipleSectionsAffectHeight() {
+    @Test func multipleSectionsAffectHeight() throws {
         let one = parseGantt("""
             gantt
                 section A
@@ -397,12 +397,12 @@ struct MermaidGanttRendererTests {
             """)
         let layoutOne = MermaidGanttRenderer.layout(one, configuration: config)
         let layoutTwo = MermaidGanttRenderer.layout(two, configuration: config)
-        let sizeOne = layoutOne.customSize!
-        let sizeTwo = layoutTwo.customSize!
+        let sizeOne = (try #require(layoutOne.customSize))
+        let sizeTwo = (try #require(layoutTwo.customSize))
         #expect(sizeTwo.height > sizeOne.height)
     }
 
-    @Test func titleAddedToLayout() {
+    @Test func titleAddedToLayout() throws {
         let withTitle = parseGantt("""
             gantt
                 title My Project
@@ -414,12 +414,12 @@ struct MermaidGanttRendererTests {
                 section A
                 Task :1d
             """)
-        let sizeWith = MermaidGanttRenderer.layout(withTitle, configuration: config).customSize!
-        let sizeWithout = MermaidGanttRenderer.layout(withoutTitle, configuration: config).customSize!
+        let sizeWith = (try #require(MermaidGanttRenderer.layout(withTitle, configuration: config).customSize))
+        let sizeWithout = (try #require(MermaidGanttRenderer.layout(withoutTitle, configuration: config).customSize))
         #expect(sizeWith.height > sizeWithout.height)
     }
 
-    @Test func longerDurationsProduceWiderLayout() {
+    @Test func longerDurationsProduceWiderLayout() throws {
         let short = parseGantt("""
             gantt
                 section A
@@ -430,12 +430,12 @@ struct MermaidGanttRendererTests {
                 section A
                 Task :1w
             """)
-        let sizeShort = MermaidGanttRenderer.layout(short, configuration: config).customSize!
-        let sizeLong = MermaidGanttRenderer.layout(long, configuration: config).customSize!
+        let sizeShort = (try #require(MermaidGanttRenderer.layout(short, configuration: config).customSize))
+        let sizeLong = (try #require(MermaidGanttRenderer.layout(long, configuration: config).customSize))
         #expect(sizeLong.width > sizeShort.width)
     }
 
-    @Test func allStatusTypesRender() {
+    @Test func allStatusTypesRender() throws {
         let diagram = parseGantt("""
             gantt
                 section Statuses
@@ -449,8 +449,8 @@ struct MermaidGanttRendererTests {
         #expect(layout.customSize != nil)
         #expect(layout.customDraw != nil)
 
-        let size = layout.customSize!
-        let ctx = CGContext(
+        let size = (try #require(layout.customSize))
+        let ctx = (try #require(CGContext(
             data: nil,
             width: max(1, Int(size.width)),
             height: max(1, Int(size.height)),
@@ -458,7 +458,7 @@ struct MermaidGanttRendererTests {
             bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
+        )))
         layout.customDraw?(ctx, .zero)
     }
 

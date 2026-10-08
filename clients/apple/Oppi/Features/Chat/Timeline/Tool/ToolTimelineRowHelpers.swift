@@ -781,8 +781,7 @@ enum ToolTimelineRowPresentationHelpers {
         }
         let sourceIndexPath = sourceCell.flatMap { collectionView.indexPath(for: $0) }
         let visibleRect = CGRect(origin: collectionView.contentOffset, size: collectionView.bounds.size)
-        let candidates = collectionView.indexPathsForVisibleItems.compactMap {
-            indexPath -> (IndexPath, UICollectionViewLayoutAttributes)? in
+        let candidates = collectionView.indexPathsForVisibleItems.compactMap { indexPath -> (IndexPath, UICollectionViewLayoutAttributes)? in
             guard indexPath != sourceIndexPath,
                   let attributes = collectionView.layoutAttributesForItem(at: indexPath),
                   attributes.frame.intersects(visibleRect) else {

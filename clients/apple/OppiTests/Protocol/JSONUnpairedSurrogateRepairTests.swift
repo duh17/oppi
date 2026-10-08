@@ -4,15 +4,15 @@ import Testing
 
 @Suite("JSON unpaired surrogate repair")
 struct JSONUnpairedSurrogateRepairTests {
-    @Test func foundationRejectsTruncatedSearchSnippetSurrogate() {
-        let data = Self.snippetJSON.data(using: .utf8)!
+    @Test func foundationRejectsTruncatedSearchSnippetSurrogate() throws {
+        let data = (try #require(Self.snippetJSON.data(using: .utf8)))
         #expect(throws: DecodingError.self) {
             _ = try JSONDecoder().decode(TraceEvent.self, from: data)
         }
     }
 
     @Test func repairingTruncatedSearchSnippetLetsHistoryDecode() throws {
-        let repaired = JSONUnpairedSurrogateRepair.repairing(Self.snippetJSON.data(using: .utf8)!)
+        let repaired = JSONUnpairedSurrogateRepair.repairing((try #require(Self.snippetJSON.data(using: .utf8))))
         let event = try JSONDecoder().decode(TraceEvent.self, from: repaired)
         #expect(event.type == .system)
         #expect(event.text?.contains("\u{FFFD}") == true)
@@ -23,7 +23,7 @@ struct JSONUnpairedSurrogateRepairTests {
         let json = """
         {"id":"e1","type":"system","timestamp":"t","text":"ok \\ud83d\\ude0a"}
         """
-        let repaired = JSONUnpairedSurrogateRepair.repairing(json.data(using: .utf8)!)
+        let repaired = JSONUnpairedSurrogateRepair.repairing((try #require(json.data(using: .utf8))))
         let event = try JSONDecoder().decode(TraceEvent.self, from: repaired)
         #expect(event.text == "ok 😊")
     }
@@ -32,7 +32,7 @@ struct JSONUnpairedSurrogateRepairTests {
         let json = """
         {"id":"e1","type":"system","timestamp":"t","text":"literal \\\\ud835"}
         """
-        let repaired = JSONUnpairedSurrogateRepair.repairing(json.data(using: .utf8)!)
+        let repaired = JSONUnpairedSurrogateRepair.repairing((try #require(json.data(using: .utf8))))
         let event = try JSONDecoder().decode(TraceEvent.self, from: repaired)
         #expect(event.text == "literal \\ud835")
     }
@@ -41,7 +41,7 @@ struct JSONUnpairedSurrogateRepairTests {
         let json = """
         {"id":"e1","type":"system","timestamp":"t","text":"bad \\ude0a end"}
         """
-        let repaired = JSONUnpairedSurrogateRepair.repairing(json.data(using: .utf8)!)
+        let repaired = JSONUnpairedSurrogateRepair.repairing((try #require(json.data(using: .utf8))))
         let event = try JSONDecoder().decode(TraceEvent.self, from: repaired)
         #expect(event.text == "bad \u{FFFD} end")
     }

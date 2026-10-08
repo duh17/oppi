@@ -123,12 +123,12 @@ struct ServerConnectionModelCommandsTests {
         ModelSwitchURLProtocol.handler = { request in
             requests.append(request)
             let body = Data(#"{"messages":[{"type":"command_result","command":"set_model","success":true}]}"#.utf8)
-            let response = HTTPURLResponse(
-                url: request.url!,
+            let response = (try #require(HTTPURLResponse(
+                url: (try #require(request.url)),
                 statusCode: 200,
                 httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"]
-            )!
+            )))
             return (body, response)
         }
 

@@ -591,11 +591,11 @@ private struct ExtensionToastSheet: View {
                                     .font(.subheadline)
                                     .foregroundStyle(.themeComment)
                                 HStack(spacing: 12) {
-                                    Button(action: { AppSupportLinks.open(url) }) {
+                                    Button(action: { AppSupportLinks.open(url) }, label: {
                                         Text(url.absoluteString)
                                             .font(.body)
                                             .lineLimit(1)
-                                    }
+                                    })
                                     .buttonStyle(.plain)
                                     .foregroundStyle(.themeBlue)
 

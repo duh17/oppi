@@ -329,10 +329,10 @@ struct ExtensionNativeSurfaceDetailSheet: View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
                 if usesNavigationBackChrome {
-                    Button(action: { dismiss() }) {
+                    Button(action: { dismiss() }, label: {
                         Image(systemName: "chevron.backward")
                             .font(.body.weight(.semibold))
-                    }
+                    })
                     .buttonStyle(.plain)
                     .accessibilityLabel(String(localized: "Back"))
                     .accessibilityIdentifier("extension-native-surface-\(identifierSuffix)-detail-back")

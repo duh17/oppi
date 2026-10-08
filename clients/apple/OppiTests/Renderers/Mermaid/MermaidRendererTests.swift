@@ -68,7 +68,7 @@ struct MermaidRendererTests {
     /// An authored retry loop reads top-down from its real entry: the step
     /// declared first starts the flow, and the fix branch sits below the
     /// decision that leads to it instead of looking like a second entry.
-    @Test func authoredLoopKeepsSourceEntryOnTop() {
+    @Test func authoredLoopKeepsSourceEntryOnTop() throws {
         let layout = renderer.layout(parser.parse("""
             flowchart TD
               Start([Start]) --> Plan[Plan]
@@ -79,40 +79,40 @@ struct MermaidRendererTests {
               Test -->|Yes| Done([Done])
             """), configuration: config)
         let rects = layout.graphResult.nodePositions
-        let start = rects["Start"]!
+        let start = (try #require(rects["Start"]))
         #expect(rects.values.allSatisfy { $0.minY >= start.minY })
-        #expect(rects["Fix"]!.minY > rects["Test"]!.minY)
-        #expect(rects["Impl"]!.minY > rects["Plan"]!.minY)
+        #expect((try #require(rects["Fix"])).minY > (try #require(rects["Test"])).minY)
+        #expect((try #require(rects["Impl"])).minY > (try #require(rects["Plan"])).minY)
     }
 
     // MARK: - Layout integration
 
-    @Test func twoNodeGraph() {
+    @Test func twoNodeGraph() throws {
         let diagram = parser.parse("flowchart TD\n    A --> B")
         let layout = renderer.layout(diagram, configuration: config)
         #expect(!layout.isPlaceholder)
         #expect(layout.graphResult.nodePositions.count == 2)
 
-        let a = layout.graphResult.nodePositions["A"]!
-        let b = layout.graphResult.nodePositions["B"]!
+        let a = (try #require(layout.graphResult.nodePositions["A"]))
+        let b = (try #require(layout.graphResult.nodePositions["B"]))
         #expect(a.midY < b.midY) // A above B
         #expect(!a.intersects(b)) // No overlap
     }
 
-    @Test func threeNodeChainLayering() {
+    @Test func threeNodeChainLayering() throws {
         let diagram = parser.parse("flowchart TD\n    A --> B\n    B --> C")
         let layout = renderer.layout(diagram, configuration: config)
         let positions = layout.graphResult.nodePositions
         #expect(positions.count == 3)
 
-        let a = positions["A"]!
-        let b = positions["B"]!
-        let c = positions["C"]!
+        let a = (try #require(positions["A"]))
+        let b = (try #require(positions["B"]))
+        let c = (try #require(positions["C"]))
         #expect(a.midY < b.midY)
         #expect(b.midY < c.midY)
     }
 
-    @Test func diamondPatternLayers() {
+    @Test func diamondPatternLayers() throws {
         let source = """
             flowchart TD
                 A --> B
@@ -125,23 +125,23 @@ struct MermaidRendererTests {
         let positions = layout.graphResult.nodePositions
         #expect(positions.count == 4)
 
-        let a = positions["A"]!
-        let b = positions["B"]!
-        let c = positions["C"]!
-        let d = positions["D"]!
+        let a = (try #require(positions["A"]))
+        let b = (try #require(positions["B"]))
+        let c = (try #require(positions["C"]))
+        let d = (try #require(positions["D"]))
 
         #expect(a.midY < b.midY)
         #expect(abs(b.midY - c.midY) < 1) // Same layer
         #expect(b.midY < d.midY)
     }
 
-    @Test func leftToRightDirection() {
+    @Test func leftToRightDirection() throws {
         let diagram = parser.parse("flowchart LR\n    A --> B")
         let layout = renderer.layout(diagram, configuration: config)
         let positions = layout.graphResult.nodePositions
 
-        let a = positions["A"]!
-        let b = positions["B"]!
+        let a = (try #require(positions["A"]))
+        let b = (try #require(positions["B"]))
         #expect(a.midX < b.midX) // A left of B
     }
 
@@ -166,11 +166,11 @@ struct MermaidRendererTests {
         #expect(layout.graphResult.totalSize == .zero)
     }
 
-    @Test func singleNode() {
+    @Test func singleNode() throws {
         let diagram = parser.parse("flowchart TD\n    A[Hello]")
         let layout = renderer.layout(diagram, configuration: config)
         #expect(layout.graphResult.nodePositions.count == 1)
-        let a = layout.graphResult.nodePositions["A"]!
+        let a = (try #require(layout.graphResult.nodePositions["A"]))
         #expect(a.width > 0)
         #expect(a.height > 0)
     }
@@ -213,7 +213,7 @@ struct MermaidRendererTests {
         #expect(box.height > (frame?.height ?? 0))
     }
 
-    @Test func nestedSubgraphsStayDisjointAndRouteUsingChildDirection() {
+    @Test func nestedSubgraphsStayDisjointAndRouteUsingChildDirection() throws {
         let diagram = parser.parse("""
             flowchart TB
                 subgraph outer [Outer]
@@ -231,8 +231,8 @@ struct MermaidRendererTests {
 
         #expect(layout.subgraphFrames["left"] != nil)
         #expect(layout.subgraphFrames["right"] != nil)
-        #expect(layout.subgraphFrames["left"]?.intersects(layout.subgraphFrames["right"]!) == false)
-        #expect(positions["A"]!.midX < positions["B"]!.midX)
+        #expect(layout.subgraphFrames["left"]?.intersects((try #require(layout.subgraphFrames["right"]))) == false)
+        #expect((try #require(positions["A"])).midX < (try #require(positions["B"])).midX)
 
         let path = layout.graphResult.edgePaths.first { $0.from == "A" && $0.to == "B" }
         #expect(path?.points.first?.x == positions["A"]?.maxX)
@@ -241,7 +241,7 @@ struct MermaidRendererTests {
         #expect(path?.points.last?.y == positions["B"]?.midY)
     }
 
-    @Test func nestedChildDirectionIsIgnoredWhenMemberLinksOutside() {
+    @Test func nestedChildDirectionIsIgnoredWhenMemberLinksOutside() throws {
         let diagram = parser.parse("""
             flowchart TB
                 outside[Outside] --> A
@@ -255,7 +255,7 @@ struct MermaidRendererTests {
         let layout = renderer.layout(diagram, configuration: config)
         let positions = layout.graphResult.nodePositions
 
-        #expect(positions["A"]!.midY < positions["B"]!.midY)
+        #expect((try #require(positions["A"])).midY < (try #require(positions["B"])).midY)
         let path = layout.graphResult.edgePaths.first { $0.from == "A" && $0.to == "B" }
         #expect(path?.points.first?.x == positions["A"]?.midX)
         #expect(path?.points.last?.x == positions["B"]?.midX)
@@ -442,7 +442,7 @@ struct MermaidRendererTests {
         #expect(inlinePixelCountAt2x <= 8_000_000)
     }
 
-    @Test func subgraphEndpointClippingStaysOrthogonal() {
+    @Test func subgraphEndpointClippingStaysOrthogonal() throws {
         let diagram = parser.parse("""
             flowchart LR
                 before[Before] --> group
@@ -453,9 +453,9 @@ struct MermaidRendererTests {
                 end
             """)
         let layout = renderer.layout(diagram, configuration: config)
-        let frame = layout.subgraphFrames["group"]!
-        let incoming = layout.graphResult.edgePaths.first { $0.from == "before" }!
-        let outgoing = layout.graphResult.edgePaths.first { $0.to == "after" }!
+        let frame = (try #require(layout.subgraphFrames["group"]))
+        let incoming = (try #require(layout.graphResult.edgePaths.first { $0.from == "before" }))
+        let outgoing = (try #require(layout.graphResult.edgePaths.first { $0.to == "after" }))
 
         func liesOnBoundary(_ point: CGPoint, of rect: CGRect) -> Bool {
             abs(point.x - rect.minX) < 0.1 || abs(point.x - rect.maxX) < 0.1
@@ -467,19 +467,19 @@ struct MermaidRendererTests {
             }
         }
 
-        #expect(liesOnBoundary(incoming.points.last!, of: frame))
-        #expect(liesOnBoundary(outgoing.points.first!, of: frame))
+        #expect(liesOnBoundary((try #require(incoming.points.last)), of: frame))
+        #expect(liesOnBoundary((try #require(outgoing.points.first)), of: frame))
         #expect(isOrthogonal(incoming))
         #expect(isOrthogonal(outgoing))
     }
 
-    @Test func directionalPortsDoNotReverseThroughEndpointNodes() {
+    @Test func directionalPortsDoNotReverseThroughEndpointNodes() throws {
         for direction in ["TB", "BT", "LR", "RL"] {
             let diagram = parser.parse("flowchart \(direction)\n A[Alpha] --> B[Beta]")
             let layout = renderer.layout(diagram, configuration: config)
             let path = layout.graphResult.edgePaths[0]
-            let source = layout.graphResult.nodePositions["A"]!
-            let target = layout.graphResult.nodePositions["B"]!
+            let source = (try #require(layout.graphResult.nodePositions["A"]))
+            let target = (try #require(layout.graphResult.nodePositions["B"]))
 
             func midpoint(_ first: CGPoint, _ second: CGPoint) -> CGPoint {
                 CGPoint(x: (first.x + second.x) / 2, y: (first.y + second.y) / 2)
@@ -495,10 +495,10 @@ struct MermaidRendererTests {
             parser.parse("flowchart TB\n A[Alpha] --> B[Beta]\n B --> A"),
             configuration: config
         )
-        let backedge = cycle.graphResult.edgePaths.first { $0.from == "B" && $0.to == "A" }!
-        let forward = cycle.graphResult.edgePaths.first { $0.from == "A" && $0.to == "B" }!
-        let alpha = cycle.graphResult.nodePositions["A"]!.insetBy(dx: 1, dy: 1)
-        let beta = cycle.graphResult.nodePositions["B"]!.insetBy(dx: 1, dy: 1)
+        let backedge = (try #require(cycle.graphResult.edgePaths.first { $0.from == "B" && $0.to == "A" }))
+        let forward = (try #require(cycle.graphResult.edgePaths.first { $0.from == "A" && $0.to == "B" }))
+        let alpha = (try #require(cycle.graphResult.nodePositions["A"])).insetBy(dx: 1, dy: 1)
+        let beta = (try #require(cycle.graphResult.nodePositions["B"])).insetBy(dx: 1, dy: 1)
         // The loop back must not cut through either node or ride on top of
         // the forward edge, or the cycle reads as one line.
         #expect(backedge.points.count >= 2)
@@ -910,7 +910,7 @@ struct MermaidRendererTests {
         #expect(layout.edgeStyles[layout.edgeKeys[2]] == .thick)
     }
 
-    @Test func longOuterEdgeLabelWrapsAndGrowsRankGap() {
+    @Test func longOuterEdgeLabelWrapsAndGrowsRankGap() throws {
         let rawLabel = "This is a deliberately very long outer edge label that must not clip"
         let unlabeled = renderer.layout(
             parser.parse("""
@@ -927,10 +927,10 @@ struct MermaidRendererTests {
             configuration: config
         )
         let stored = layout.edgeLabels["A->B"] ?? ""
-        let unlabeledA = unlabeled.graphResult.nodePositions["A"]!
-        let unlabeledB = unlabeled.graphResult.nodePositions["B"]!
-        let labeledA = layout.graphResult.nodePositions["A"]!
-        let labeledB = layout.graphResult.nodePositions["B"]!
+        let unlabeledA = (try #require(unlabeled.graphResult.nodePositions["A"]))
+        let unlabeledB = (try #require(unlabeled.graphResult.nodePositions["B"]))
+        let labeledA = (try #require(layout.graphResult.nodePositions["A"]))
+        let labeledB = (try #require(layout.graphResult.nodePositions["B"]))
         let unlabeledGap = unlabeledB.minY - unlabeledA.maxY
         let labeledGap = labeledB.minY - labeledA.maxY
         let wrappedSize = measuredEdgeLabel(stored, fontSize: config.fontSize)
@@ -951,7 +951,7 @@ struct MermaidRendererTests {
         assertEveryPathClearsOtherLabelsAndArrowheads(layout, expectedLabelCount: 1)
     }
 
-    @Test func labeledFanOutWrapsAndReservesCorridor() {
+    @Test func labeledFanOutWrapsAndReservesCorridor() throws {
         let unlabeled = renderer.layout(
             parser.parse("""
                 flowchart TD
@@ -975,14 +975,14 @@ struct MermaidRendererTests {
         #expect(readyLabel.contains("\n"), "Fan-out labels should wrap, stored=\(readyLabel)")
         #expect(httpLabel.contains("\n"), "Fan-out labels should wrap, stored=\(httpLabel)")
 
-        let unlabeledSource = unlabeled.graphResult.nodePositions["Unset"]!
-        let unlabeledReady = unlabeled.graphResult.nodePositions["ModuleReady"]!
-        let unlabeledHttp = unlabeled.graphResult.nodePositions["HttpReady"]!
-        let unlabeledMissing = unlabeled.graphResult.nodePositions["ModuleMissing"]!
-        let source = layout.graphResult.nodePositions["Unset"]!
-        let ready = layout.graphResult.nodePositions["ModuleReady"]!
-        let http = layout.graphResult.nodePositions["HttpReady"]!
-        let missing = layout.graphResult.nodePositions["ModuleMissing"]!
+        let unlabeledSource = (try #require(unlabeled.graphResult.nodePositions["Unset"]))
+        let unlabeledReady = (try #require(unlabeled.graphResult.nodePositions["ModuleReady"]))
+        let unlabeledHttp = (try #require(unlabeled.graphResult.nodePositions["HttpReady"]))
+        let unlabeledMissing = (try #require(unlabeled.graphResult.nodePositions["ModuleMissing"]))
+        let source = (try #require(layout.graphResult.nodePositions["Unset"]))
+        let ready = (try #require(layout.graphResult.nodePositions["ModuleReady"]))
+        let http = (try #require(layout.graphResult.nodePositions["HttpReady"]))
+        let missing = (try #require(layout.graphResult.nodePositions["ModuleMissing"]))
 
         let unlabeledRankGap = min(unlabeledReady.minY, unlabeledHttp.minY, unlabeledMissing.minY)
             - unlabeledSource.maxY
@@ -1035,7 +1035,7 @@ struct MermaidRendererTests {
         #expect(result.boundingBox.height > 0)
     }
 
-    @Test func drawDoesNotCrash() {
+    @Test func drawDoesNotCrash() throws {
         let diagram = parser.parse("""
             flowchart TD
                 A[Rectangle] --> B(Rounded)
@@ -1048,7 +1048,7 @@ struct MermaidRendererTests {
         let box = renderer.boundingBox(layout)
 
         // Create a bitmap context and draw into it.
-        let ctx = CGContext(
+        let ctx = (try #require(CGContext(
             data: nil,
             width: Int(box.width),
             height: Int(box.height),
@@ -1056,7 +1056,7 @@ struct MermaidRendererTests {
             bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
+        )))
 
         // Should not crash.
         renderer.draw(layout, in: ctx, at: .zero)
@@ -1230,7 +1230,7 @@ struct MermaidRendererTests {
 
     // MARK: - Render with complex diagram
 
-    @Test func complexDiagramDoesNotCrash() {
+    @Test func complexDiagramDoesNotCrash() throws {
         let source = """
             flowchart TD
                 Start[Start] --> Decision{Is it?}
@@ -1251,7 +1251,7 @@ struct MermaidRendererTests {
         #expect(result.boundingBox.height > 0)
 
         // Draw it.
-        let ctx = CGContext(
+        let ctx = (try #require(CGContext(
             data: nil,
             width: max(1, Int(result.boundingBox.width)),
             height: max(1, Int(result.boundingBox.height)),
@@ -1259,7 +1259,7 @@ struct MermaidRendererTests {
             bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        )!
+        )))
         result.draw(ctx, .zero)
     }
 

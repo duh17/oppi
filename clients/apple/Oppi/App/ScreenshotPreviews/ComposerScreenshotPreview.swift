@@ -49,23 +49,24 @@ struct ChatInputAttachmentContainmentPreview: View {
                 onExpand: {},
                 externalFocusRequestID: 0,
                 appliesOuterPadding: false,
-                alwaysShowActionRow: true
-            ) {
-                HStack(spacing: 6) {
-                    Text("gpt-5.5")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .glassEffect(.regular, in: Capsule())
-                    Text("max")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.themePurple)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .glassEffect(.regular, in: Capsule())
+                alwaysShowActionRow: true,
+                actionRow: {
+                    HStack(spacing: 6) {
+                        Text("gpt-5.5")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.themeFg)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .glassEffect(.regular, in: Capsule())
+                        Text("max")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.themePurple)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .glassEffect(.regular, in: Capsule())
+                    }
                 }
-            }
+            )
             .padding(.horizontal, 16)
             .padding(.bottom, 24)
         }
