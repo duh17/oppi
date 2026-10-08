@@ -63,6 +63,10 @@ A healthy connection shows no status row. **Edit Host**, **Disconnect**, and **R
 
 When `herdr` is on the host, the terminal checks Herdr's API (`herdr api snapshot`) every few seconds over the same SSH connection, in a separate command channel. A grid button appears in the navigation bar, with a count of agents waiting at an approval or question prompt. It opens a list of workspaces and agents showing whether each is working, needs you, done, or idle. Tapping a row runs `herdr workspace focus` or `herdr agent focus` on the host. Hosts without `herdr` are checked once per connection and then left alone.
 
+## Program status (OSC 7501)
+
+The terminal answers the Program Status Protocol support query (`ESC ] 7501 ; ? ST`), so programs that detect support first, such as Pi 1.1.0, start reporting. Reports (idle, working, done, blocked, error, with an optional app, title, and message) are kept per terminal following the [specification](https://www.superlogical.com/rex/docs/build/program-status): one record per id, a `clear` removes a record and its children, at most 256 records. `working` and `blocked` records are dropped when the shell shows its next prompt (OSC 133 A) or the shell or connection ends; `done` and `error` stay. Reset (RIS) clears everything. Records do not appear anywhere yet. This reply is the only OSC reply the terminal sends; clipboard queries still get none.
+
 ## Credentials and host trust
 
 - Profile metadata (host, port, username, sign-in choice, and Run on Connect) is stored in app preferences. Passwords are never stored there or logged. Each saved host has its own id. Changing that host’s hostname, port, username, or sign-in method cannot keep its password, and does not change another host’s password.

@@ -27,7 +27,7 @@ struct SSHTerminalFrame {
 /// Separate from the passive log owner. All C access (including callbacks and
 /// borrowed render data) runs synchronously on MainActor. Frames own their text
 /// and value structs; no borrowed pointer escapes to UIKit. Paint is coalesced
-/// by the surface, never interpretation. Effects start NULL and only the seven
+/// by the surface, never interpretation. Effects start NULL and only the ten
 /// entries below gain authority; in particular there is no clipboard callback.
 @MainActor
 final class SSHTerminalEngine {
@@ -44,6 +44,9 @@ final class SSHTerminalEngine {
     private var heldSince: ContinuousClock.Instant?
     private let sink: (Data) -> Void
     private(set) var title = ""
+    /// OSC 7501 records for this terminal. Outlives `close()` so unseen
+    /// `done`/`error` records can still be shown after the program exits.
+    let programStatus = SSHTerminalProgramStatusStore()
     private(set) var geometry: SSHTerminalGeometry
     private(set) var following = true
     /// Bumped by anything that can change the picture. The display link repaints
@@ -81,6 +84,7 @@ final class SSHTerminalEngine {
     func close() {
         live = false
         replies.removeAll()
+        programStatus.processEnded()
     }
 
     func receive(_ bytes: Data) {
@@ -94,10 +98,7 @@ final class SSHTerminalEngine {
             if ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_TITLE, &value) == GHOSTTY_SUCCESS,
                let ptr = value.ptr {
                 let raw = String(decoding: UnsafeBufferPointer(start: ptr, count: value.len), as: UTF8.self)
-                title = String(String.UnicodeScalarView(raw.unicodeScalars.filter {
-                    !CharacterSet.controlCharacters.contains($0) && !CharacterSet.illegalCharacters.contains($0)
-                        && $0.properties.generalCategory != .format
-                }).prefix(120))
+                title = SSHTerminalDisplayText.sanitized(raw, limit: SSHTerminalDisplayText.titleLimit)
             }
             titleChanged = false
         }
@@ -303,6 +304,28 @@ final class SSHTerminalEngine {
         return output.withUnsafeBytes { Data($0.prefix(written)) }
     }
 
+    /// The only bytes that may reach the PTY from the terminal's own replies.
+    /// NULL clipboard callbacks can still generate an empty OSC 52 or denied
+    /// Kitty reply upstream, so the families are fixed: CSI status/size/mode
+    /// reports, DCS DA/version reports, and exactly the OSC 7501 support reply
+    /// `ESC ] 7501 ; ? ST` (ST = `ESC \` or BEL). No other OSC response
+    /// (including clipboard, and no 7501 reply with anything after the `?`)
+    /// is forwarded.
+    nonisolated static func isApprovedReply(_ bytes: UnsafeBufferPointer<UInt8>) -> Bool {
+        guard bytes.count >= 2, bytes[0] == 0x1b else { return false }
+        if bytes[1] == 0x5b || bytes[1] == 0x50 { return true }
+        let query: [UInt8] = [0x1b, 0x5d, 0x37, 0x35, 0x30, 0x31, 0x3b, 0x3f] // ESC ] 7501 ; ?
+        guard bytes.count == query.count + 1 || bytes.count == query.count + 2,
+              bytes.prefix(query.count).elementsEqual(query) else { return false }
+        let terminator = Array(bytes.dropFirst(query.count))
+        return terminator == [0x07] || terminator == [0x1b, 0x5c]
+    }
+
+    nonisolated private static func copy(_ string: GhosttyString) -> String {
+        guard let ptr = string.ptr else { return "" }
+        return String(decoding: UnsafeBufferPointer(start: ptr, count: string.len), as: UTF8.self)
+    }
+
     private func flushReplies() {
         let pending = replies
         replies.removeAll(keepingCapacity: true)
@@ -314,12 +337,7 @@ final class SSHTerminalEngine {
         let write: GhosttyTerminalWritePtyFn = { _, context, bytes, count in
             MainActor.assumeIsolated {
                 guard let context, let bytes else { return }
-                // NULL clipboard callbacks can still generate an empty OSC 52
-                // or denied Kitty reply upstream. The approved reply families
-                // are CSI status/size/mode reports and DCS DA/version reports;
-                // no OSC response (including clipboard) reaches the PTY.
-                guard count >= 2, bytes[0] == 0x1b,
-                      bytes[1] == 0x5b || bytes[1] == 0x50 else { return }
+                guard SSHTerminalEngine.isApprovedReply(UnsafeBufferPointer(start: bytes, count: count)) else { return }
                 let owner = Unmanaged<SSHTerminalEngine>.fromOpaque(context).takeUnretainedValue()
                 if owner.live { owner.replies.append(Data(bytes: bytes, count: count)) }
             }
@@ -370,6 +388,34 @@ final class SSHTerminalEngine {
                 owner.heldSince = held ? .now : nil
             }
         }
+        // Both copy into a pure-Swift store; strings are valid only during the call.
+        let status: GhosttyTerminalProgramStatusFn = { _, context, report in
+            MainActor.assumeIsolated {
+                guard let context, let report else { return }
+                let value = report.pointee
+                Unmanaged<SSHTerminalEngine>.fromOpaque(context).takeUnretainedValue().programStatus.apply(.init(
+                    state: value.state, kind: value.kind, progress: Int(value.progress),
+                    id: SSHTerminalEngine.copy(value.id), app: SSHTerminalEngine.copy(value.app),
+                    title: SSHTerminalEngine.copy(value.title), message: SSHTerminalEngine.copy(value.message)))
+            }
+        }
+        let prompt: GhosttyTerminalSemanticPromptFn = { _, context, event in
+            MainActor.assumeIsolated {
+                guard let context, let event, event.pointee.kind == GHOSTTY_SEMANTIC_PROMPT_PROMPT_START else { return }
+                Unmanaged<SSHTerminalEngine>.fromOpaque(context).takeUnretainedValue().programStatus.promptStarted()
+            }
+        }
+        // A full reset also reports a status clear first; this keeps RIS clearing
+        // records even if that report were ever missing.
+        let reset: GhosttyTerminalResetFn = { _, context in
+            MainActor.assumeIsolated {
+                guard let context else { return }
+                Unmanaged<SSHTerminalEngine>.fromOpaque(context).takeUnretainedValue().programStatus.removeAll()
+            }
+        }
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS, unsafeBitCast(status, to: UnsafeRawPointer.self))
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SEMANTIC_PROMPT, unsafeBitCast(prompt, to: UnsafeRawPointer.self))
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_RESET, unsafeBitCast(reset, to: UnsafeRawPointer.self))
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY, unsafeBitCast(write, to: UnsafeRawPointer.self))
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES, unsafeBitCast(attributes, to: UnsafeRawPointer.self))
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SIZE, unsafeBitCast(size, to: UnsafeRawPointer.self))

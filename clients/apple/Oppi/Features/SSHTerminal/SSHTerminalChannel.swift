@@ -156,6 +156,8 @@ enum SSHTerminalUpload {
 @MainActor @Observable
 final class SSHTerminalChannel {
     let engine: SSHTerminalEngine
+    /// OSC 7501 program status records reported in this terminal.
+    var programStatus: SSHTerminalProgramStatusStore { engine.programStatus }
     var modifierLatch = SSHTerminalModifierLatch()
     private(set) var connected = false
     private(set) var connecting = true
