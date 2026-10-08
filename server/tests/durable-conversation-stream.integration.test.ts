@@ -12,10 +12,14 @@ import { WebSocket, type RawData } from "ws";
 import { applyImmutable, type Op } from "@earendil-works/chord/delta";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
+import type { ConversationId } from "@earendil-works/pi-durable";
 
+import type { DurableHarness } from "../src/durable-harness.js";
 import { Server } from "../src/server.js";
+import type { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import type { ConversationEntryView, Session, Workspace } from "../src/types.js";
+import { conversationReference } from "./harness/conversation-stream-reference.js";
 
 type Frame = Record<string, unknown> & { type: string };
 
@@ -248,12 +252,21 @@ function frameBytes(frames: Frame[]): number[] {
   return frames.map((frame) => Buffer.byteLength(JSON.stringify(frame)));
 }
 
+/** The replica must converge to the conversation as the server's Harness reads it, without a room. */
 async function expectConverged(client: StreamClient): Promise<void> {
-  const reference = await connect();
-  expect((await reference.attach()).type).toBe("snapshot");
+  const sessions = (server as unknown as { sessions: SessionManager }).sessions;
+  const durable = await (sessions as unknown as { durableHarness: Promise<DurableHarness> })
+    .durableHarness;
+  const { harness } = await durable.open();
+  const conversationId = storage.getSession(session.id)?.serverDurable?.conversationId;
+  const reference = await conversationReference(
+    harness,
+    conversationId as ConversationId,
+    sessions.mobileRenderer,
+  );
   expect(client.entries).toEqual(reference.entries);
   expect(client.docs).toEqual(reference.docs);
-  await reference.close();
+  expect(client.head).toBe(reference.head);
 }
 
 describe("durable conversation stream over the focused session socket", { timeout: 60_000 }, () => {
@@ -371,6 +384,15 @@ describe("durable conversation stream over the focused session socket", { timeou
     expect(snapshot.head).toBe(entries[0]?.id);
     expect(snapshot.hasOlder).toBe(true);
     await settle();
+
+    // Attaching again replaces this socket's subscription, the room's only one, so the
+    // room closes and the new attach loads a new room from the Harness.
+    const cold = await client.attach();
+    expect(cold).toMatchObject({ type: "snapshot", head: snapshot.head });
+    expect((cold.entries as ConversationEntryView[]).map((entry) => entry.id)).toEqual(
+      entries.map((entry) => entry.id),
+    );
+    expect(entries.length).toBeGreaterThan(1);
 
     const late = await connect();
     expect((await late.attach(stale)).type).toBe("snapshot");

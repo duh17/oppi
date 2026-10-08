@@ -69,29 +69,31 @@ class ConversationRoom implements ToolPresenter {
   /** Publications that arrive while the room loads; replayed over the loaded state. */
   private pending: CommitPublication[] | undefined = [];
   private readonly detach: Array<() => void> = [];
+  /**
+   * Settles when the room has loaded. Rejects when the load fails or the room closed
+   * first (the Harness closed), so no waiter ever receives a closed room it must retry.
+   */
+  readonly ready: Promise<void>;
 
-  private constructor(
+  /** Starts loading at once; callers await `ready`. */
+  constructor(
     private readonly harness: Harness,
     readonly conversationId: ConversationId,
     private readonly renderers: MobileRendererRegistry,
-  ) {}
-
-  static async open(
-    harness: Harness,
-    conversationId: ConversationId,
-    renderers: MobileRendererRegistry,
-  ): Promise<ConversationRoom> {
-    const room = new ConversationRoom(harness, conversationId, renderers);
+  ) {
     // Subscribe before reading so no commit falls between the read and the listener.
-    room.detach.push(harness.subscribeCommits((publication) => room.publish(publication)));
-    room.detach.push(harness.subscribeClose(() => room.close()));
-    try {
-      await room.load();
-    } catch (error) {
-      room.close();
-      throw error;
-    }
-    return room;
+    this.detach.push(harness.subscribeCommits((publication) => this.publish(publication)));
+    this.detach.push(harness.subscribeClose(() => this.close()));
+    this.ready = this.load().then(
+      () => {
+        if (this.closed)
+          throw new Error(`Conversation stream ${conversationId} closed while it loaded`);
+      },
+      (error: unknown) => {
+        this.close();
+        throw error;
+      },
+    );
   }
 
   private async load(): Promise<void> {
@@ -100,7 +102,12 @@ class ConversationRoom implements ToolPresenter {
     const state = await conversation.viewState(context);
     const view = state.value;
     state.dispose();
-    for (const entry of view.entries) this.addEntry(entry);
+    // Installed whole, not through `addEntry`: the view lists the head marker first, then
+    // the entries it keeps, whose ids are below the marker's and which `addEntry` drops.
+    this.entries = [...view.entries];
+    const marker = this.entries[0];
+    if (marker?.head !== undefined) this.head = marker.id;
+    for (const entry of this.entries) this.index(entry);
     for (const spec of CONVERSATION_CLIENT_DOCS) {
       const value =
         view.docs[spec.kind] ??
@@ -278,7 +285,7 @@ class ConversationRoom implements ToolPresenter {
     for (const detach of this.detach.splice(0)) detach();
     for (const subscriber of [...this.subscribers]) subscriber.dispose();
     const rooms = ROOMS.get(this.harness);
-    if (rooms?.get(this.conversationId)?.room === this) rooms.delete(this.conversationId);
+    if (rooms?.get(this.conversationId) === this) rooms.delete(this.conversationId);
   }
 }
 
@@ -385,10 +392,8 @@ export class ConversationStreamSubscription {
   }
 }
 
-const ROOMS = new WeakMap<
-  Harness,
-  Map<ConversationId, { opening: Promise<ConversationRoom>; room?: ConversationRoom }>
->();
+/** Open rooms, loading or loaded. A room removes itself when it closes. */
+const ROOMS = new WeakMap<Harness, Map<ConversationId, ConversationRoom>>();
 
 async function roomFor(
   harness: Harness,
@@ -400,19 +405,13 @@ async function roomFor(
     rooms = new Map();
     ROOMS.set(harness, rooms);
   }
-  const existing = rooms.get(conversationId);
-  if (existing) return existing.opening;
-  const slot: { opening: Promise<ConversationRoom>; room?: ConversationRoom } = {
-    opening: ConversationRoom.open(harness, conversationId, renderers),
-  };
-  rooms.set(conversationId, slot);
-  try {
-    slot.room = await slot.opening;
-    return slot.room;
-  } catch (error) {
-    if (rooms.get(conversationId) === slot) rooms.delete(conversationId);
-    throw error;
+  let room = rooms.get(conversationId);
+  if (!room) {
+    room = new ConversationRoom(harness, conversationId, renderers);
+    rooms.set(conversationId, room);
   }
+  await room.ready;
+  return room;
 }
 
 /**
@@ -429,7 +428,8 @@ export async function attachConversationStream(options: {
 }): Promise<ConversationStreamSubscription> {
   for (;;) {
     const room = await roomFor(options.harness, options.conversationId, options.renderers);
-    // The last subscriber may have closed this room while we waited for it.
+    // The last subscriber may have left this loaded room while we waited for it. It removed
+    // itself from ROOMS, so the retry opens a new room.
     if (room.closed) continue;
     const subscription = new ConversationStreamSubscription(room, options.send);
     room.join(subscription);

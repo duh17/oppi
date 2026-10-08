@@ -20,13 +20,18 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { DurableInputCards, DurableUI } from "../extensions/durable/durable-ui.js";
+import {
+  DurableInputCards,
+  DurableUI,
+  DurableUIClientDoc,
+} from "../extensions/durable/durable-ui.js";
 import {
   attachConversationStream,
   type ConversationStreamSubscription,
 } from "../src/durable-conversation-stream.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import type { ConversationEntryView, ConversationStreamServerMessage } from "../src/types.js";
+import { conversationReference } from "./harness/conversation-stream-reference.js";
 
 const harnesses = new Set<Harness>();
 const subscriptions = new Set<ConversationStreamSubscription>();
@@ -146,13 +151,16 @@ async function prompt(conversation: Conversation, content: string): Promise<void
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
 
-/** A fresh attach is the reference: every replica must converge to it. */
+/** Every replica must converge to the conversation as the Harness reads it, without a room. */
 async function expectConverged(
   f: { harness: Harness; conversation: Conversation },
   client: Client,
 ): Promise<void> {
-  const reference = await attach(f);
-  expect(reference.frames[0]?.type).toBe("snapshot");
+  const reference = await conversationReference(
+    f.harness,
+    f.conversation.id,
+    new MobileRendererRegistry(),
+  );
   expect(client.entries).toEqual(reference.entries);
   expect(client.docs).toEqual(reference.docs);
   expect(client.head).toBe(reference.head);
@@ -321,6 +329,83 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
     const current = await attach(f, client.tip);
     expect(current.frames[0]).toMatchObject({ type: "update", entries: [] });
     await expectConverged(f, client);
+  });
+
+  it("loads a closed room's successor with the head marker and the entries it keeps", async () => {
+    const f = await fixture([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
+    const live = await attach(f);
+    await prompt(f.conversation, "first");
+    await prompt(f.conversation, "second");
+    await settle();
+    // Compaction keeps the second turn, whose ids are below the compaction entry's.
+    const kept = live.entries.filter((entry) => entry.kind === "pi.user").at(-1)!.id;
+    await f.conversation.commit(async (tx) => {
+      await tx.appendEntry(f.conversation.id, {
+        kind: "pi.compaction",
+        head: kept as EntryId,
+        model: [{ role: "user", content: "<summary>first</summary>", timestamp: 1 }],
+      });
+    }, context);
+    await settle();
+    const ids = live.entries.map((entry) => entry.id);
+    expect(ids.length).toBeGreaterThan(2);
+    expect(ids.slice(1).every((id) => id >= kept && id < live.head)).toBe(true);
+
+    // The last subscriber leaving closes the room; the next attach loads a new one.
+    live.subscription.dispose();
+    const cold = await attach(f);
+    expect(cold.frames[0]).toMatchObject({ type: "snapshot", head: live.head, hasOlder: true });
+    expect(cold.entries.map((entry) => entry.id)).toEqual(ids);
+    await expectConverged(f, cold);
+
+    // A reset keeps nothing before it; the entries after it are kept.
+    const reset = await f.conversation.commit(async (tx) => {
+      const marker = await tx.appendEntry(f.conversation.id, {
+        kind: "pi.reset",
+        head: "self",
+        model: [{ role: "user", content: "fresh start", timestamp: 2 }],
+      });
+      await tx.appendEntry(f.conversation.id, {
+        kind: "pi.user",
+        model: [{ role: "user", content: "after reset", timestamp: 3 }],
+      });
+      return marker.id;
+    }, context);
+    cold.subscription.dispose();
+    const afterReset = await attach(f);
+    expect(afterReset.head).toBe(reset);
+    expect(afterReset.entries.map((entry) => entry.kind)).toEqual(["pi.reset", "pi.user"]);
+    await expectConverged(f, afterReset);
+  });
+
+  it("fails an attach whose room closes while it loads, without retrying it", async () => {
+    const f = await fixture([]);
+    let reached!: () => void;
+    const atGate = new Promise<void>((resolve) => (reached = resolve));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    // Holds the room's last load read (the extension UI document) until the Harness closed.
+    const gated = new Proxy(f.harness, {
+      get(target, property) {
+        if (property === "snapshot")
+          return async (...args: Parameters<Harness["snapshot"]>) => {
+            const value = await target.snapshot(...args);
+            if (args[0] === DurableUIClientDoc.doc) {
+              reached();
+              await gate;
+            }
+            return value;
+          };
+        const value: unknown = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const attaching = attach({ harness: gated, conversation: f.conversation });
+    await atGate;
+    const closing = f.harness.close(context);
+    release();
+    await expect(attaching).rejects.toThrow("closed while it loaded");
+    await closing;
   });
 
   it("replicates only client-visible documents, projected for clients", async () => {
