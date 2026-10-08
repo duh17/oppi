@@ -16,6 +16,28 @@ enum ToolRowViewportCalculator {
         let cellWidth: CGFloat
     }
 
+    /// Geometry for `view`, with height and vertical safe area taken from one
+    /// container: the enclosing collection view, else the window. A row in a
+    /// sheet or side panel is sized by that panel, not by its window, and the
+    /// safe area subtracted is the one that belongs to the same rectangle.
+    static func geometryContext(
+        for view: UIView,
+        cellWidth: CGFloat,
+        fallbackHeight: CGFloat
+    ) -> GeometryContext {
+        var ancestor = view.superview
+        while let current = ancestor, !(current is UICollectionView) {
+            ancestor = current.superview
+        }
+        let container: UIView? = ancestor ?? view.window
+        let height = container.map(\.bounds.height).flatMap { $0 > 0 ? $0 : nil } ?? fallbackHeight
+        return GeometryContext(
+            windowHeight: height,
+            safeAreaInsets: container?.safeAreaInsets ?? .zero,
+            cellWidth: cellWidth
+        )
+    }
+
     /// Compute the fixed viewport height used during streaming, clamped to screen space.
     static func streamingConstrainedHeight(
         for mode: ViewportMode,

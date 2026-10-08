@@ -1303,7 +1303,7 @@ final class NativeExpandedInlineImageView: UIView {
 
         let availableWidth = bounds.width > 1
             ? bounds.width
-            : (superview?.bounds.width ?? 375)
+            : ((superview?.bounds.width).flatMap { $0 > 0 ? $0 : nil } ?? 375)
         let width = max(1, availableWidth)
         let naturalHeight = ImageViewportSizing.naturalHeight(
             forWidth: width,

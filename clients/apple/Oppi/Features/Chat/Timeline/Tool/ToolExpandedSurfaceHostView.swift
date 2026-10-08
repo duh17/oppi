@@ -20,7 +20,7 @@ final class ToolExpandedSurfaceHostView: UIView {
         guard let activeView else {
             return CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric)
         }
-        let fallbackWidth = superview?.bounds.width ?? 375
+        let fallbackWidth = (superview?.bounds.width).flatMap { $0 > 0 ? $0 : nil } ?? 375
         let width = max(1, bounds.width > 0 ? bounds.width : fallbackWidth - 48)
         let activeWidth = max(1, width - activeContentInsets.leading - activeContentInsets.trailing)
         let activeSize = activeView.systemLayoutSizeFitting(

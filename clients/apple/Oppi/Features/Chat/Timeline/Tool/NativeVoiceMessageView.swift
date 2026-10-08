@@ -32,7 +32,7 @@ final class NativeAudioMessageView: UIView {
     required init?(coder: NSCoder) { nil }
 
     override var intrinsicContentSize: CGSize {
-        let fallbackWidth = superview?.bounds.width ?? 375
+        let fallbackWidth = (superview?.bounds.width).flatMap { $0 > 0 ? $0 : nil } ?? 375
         let targetWidth = max(1, bounds.width > 0 ? bounds.width : fallbackWidth - 48)
         return CGSize(width: UIView.noIntrinsicMetric, height: fittedSize(forWidth: targetWidth).height)
     }

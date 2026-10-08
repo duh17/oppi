@@ -175,7 +175,7 @@ final class NativeSurfaceViewportContainerView<Content: View>: UIView, UIGesture
     }
 
     override var intrinsicContentSize: CGSize {
-        let width = bounds.width > 0 ? bounds.width : (superview?.bounds.width ?? 390)
+        let width = bounds.width > 0 ? bounds.width : ((superview?.bounds.width).flatMap { $0 > 0 ? $0 : nil } ?? 390)
         return CGSize(width: UIView.noIntrinsicMetric, height: viewportHeight(for: width))
     }
 

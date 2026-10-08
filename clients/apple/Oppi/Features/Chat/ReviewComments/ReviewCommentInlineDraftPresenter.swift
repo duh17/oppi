@@ -174,9 +174,13 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     private let anchorRect: CGRect
     /// Spans the host from its top edge to the keyboard layout guide, so its
     /// height is the keyboard's top edge in host coordinates. UIKit moves the
-    /// guide with the keyboard (docked, floating, or none) in the keyboard's
-    /// own animation, so no screen-space frame conversion is needed.
+    /// guide with the keyboard in the keyboard's own animation, so no
+    /// screen-space frame conversion is needed.
     private var keyboardTopProbe: KeyboardTopProbeView?
+    /// Dedicated full-size child of the host whose guide also follows an
+    /// undocked or floating keyboard. The host's own guide is left alone: other
+    /// views pin to it and expect the default (docked-only) behavior.
+    private var keyboardGuideHost: UIView?
     private var isSaving = false
 
     private let stackView = UIStackView()
@@ -284,7 +288,8 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         if cancelOwnedVoiceInput {
             cancelVoiceInputIfOwned()
         }
-        keyboardTopProbe?.removeFromSuperview()
+        keyboardGuideHost?.removeFromSuperview()
+        keyboardGuideHost = nil
         keyboardTopProbe = nil
         // teardown, not deinit: observers must stop while this presenter is still alive
         // swiftlint:disable:next notification_center_detachment
@@ -582,6 +587,21 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
 
     private func installKeyboardTopProbe(in hostView: UIView) {
         guard keyboardTopProbe == nil else { return }
+        let guideHost = UIView()
+        guideHost.translatesAutoresizingMaskIntoConstraints = false
+        guideHost.isUserInteractionEnabled = false
+        guideHost.isAccessibilityElement = false
+        guideHost.backgroundColor = .clear
+        hostView.insertSubview(guideHost, belowSubview: self)
+        NSLayoutConstraint.activate([
+            guideHost.leadingAnchor.constraint(equalTo: hostView.leadingAnchor),
+            guideHost.trailingAnchor.constraint(equalTo: hostView.trailingAnchor),
+            guideHost.topAnchor.constraint(equalTo: hostView.topAnchor),
+            guideHost.bottomAnchor.constraint(equalTo: hostView.bottomAnchor),
+        ])
+        guideHost.keyboardLayoutGuide.followsUndockedKeyboard = true
+        keyboardGuideHost = guideHost
+
         let probe = KeyboardTopProbeView()
         probe.translatesAutoresizingMaskIntoConstraints = false
         probe.isUserInteractionEnabled = false
@@ -592,12 +612,12 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         probe.onLayout = { [weak self] in
             self?.updateFrame(animated: false, forcesHostLayout: false)
         }
-        hostView.addSubview(probe)
+        guideHost.addSubview(probe)
         NSLayoutConstraint.activate([
-            probe.leadingAnchor.constraint(equalTo: hostView.leadingAnchor),
-            probe.trailingAnchor.constraint(equalTo: hostView.trailingAnchor),
-            probe.topAnchor.constraint(equalTo: hostView.topAnchor),
-            probe.bottomAnchor.constraint(equalTo: hostView.keyboardLayoutGuide.topAnchor),
+            probe.leadingAnchor.constraint(equalTo: guideHost.leadingAnchor),
+            probe.trailingAnchor.constraint(equalTo: guideHost.trailingAnchor),
+            probe.topAnchor.constraint(equalTo: guideHost.topAnchor),
+            probe.bottomAnchor.constraint(equalTo: guideHost.keyboardLayoutGuide.topAnchor),
         ])
         keyboardTopProbe = probe
     }

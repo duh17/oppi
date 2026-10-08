@@ -784,7 +784,7 @@ final class NativeMarkdownImageView: UIView {
         let displayWidth = preferredDisplayWidth
             ?? (bounds.width > 0
                 ? bounds.width
-                : (superview?.bounds.width ?? 360))
+                : ((superview?.bounds.width).flatMap { $0 > 0 ? $0 : nil } ?? 360))
         let displayHeight = ImageViewportSizing.fittedHeight(
             forWidth: displayWidth,
             heightToWidthRatio: heightToWidthRatio,

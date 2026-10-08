@@ -330,7 +330,7 @@ final class NativeLatexBlockView: UIView {
         }
         return bounds.width > 0
             ? bounds.width
-            : (superview?.bounds.width ?? 360)
+            : ((superview?.bounds.width).flatMap { $0 > 0 ? $0 : nil } ?? 360)
     }
 
     /// Fence-close reservation: activate the layout-cache height before the
