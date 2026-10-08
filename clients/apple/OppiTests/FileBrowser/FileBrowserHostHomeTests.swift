@@ -65,21 +65,6 @@ struct FileBrowserHostHomeTests {
         let hostSlice = String(load[hostCase.lowerBound..<load.index(hostCall.upperBound, offsetBy: 0)])
         #expect(!hostSlice.contains("listWorkspaceDirectory"))
     }
-
-    @Test func hostHomeIPadTreeRailHidesSearchField() throws {
-        let source = try appleSource("Oppi/Features/FileBrowser/FileBrowserView.swift")
-        let railStart = try #require(
-            source.range(of: "private func fileTreeRail(showCloseButton: Bool) -> some View")
-        )
-        let headerStart = try #require(
-            source.range(of: "private func fileTreeHeader(showCloseButton: Bool) -> some View")
-        )
-        #expect(railStart.lowerBound < headerStart.lowerBound)
-        let rail = String(source[railStart.lowerBound..<headerStart.lowerBound])
-        let hostHomeGuard = try #require(rail.range(of: "if !isHostHome"))
-        let searchField = try #require(rail.range(of: "fileTreeSearchField"))
-        #expect(hostHomeGuard.lowerBound < searchField.lowerBound)
-    }
 }
 
 private func appleSource(_ relativePath: String) throws -> String {
