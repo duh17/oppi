@@ -372,7 +372,7 @@ final class NativeMermaidBlockView: UIView {
         }
         return bounds.width > 0
             ? bounds.width
-            : (window?.windowScene?.screen.bounds.width ?? 360)
+            : (superview?.bounds.width ?? 360)
     }
 
     private func rasterWidthMismatch(

@@ -202,7 +202,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         collectionView.accessibilityIdentifier = "chat.timeline"
         // ChatView already folds nav + context-bar chrome into `topOverlap`.
         // Automatic adjustment would add the window safe area again and park
-        // the first row below the branch chip.
+        // the first row below the branch chip. Horizontal safe area (a vertical
+        // rail on one side) is handled by `ChatTimelineCachedHeightLayout.rowColumn`.
         collectionView.contentInsetAdjustmentBehavior = .never
         collectionView.contentInset.top = configuration.topOverlap
         collectionView.contentInset.bottom = configuration.bottomOverlap
@@ -2185,6 +2186,22 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
     static let sectionInsets = NSDirectionalEdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)
     private static let heightMatchTolerance: CGFloat = 1
 
+    /// Horizontal span rows occupy: the section insets, plus whatever part of the
+    /// window's safe area overlaps this view (a vertical rail holds one side only).
+    /// The collection uses `contentInsetAdjustmentBehavior = .never`, so UIKit adds
+    /// no horizontal inset of its own. `safeAreaInsets` is physical, so each side is
+    /// applied to its own edge and never mirrored or maxed. A view that SwiftUI
+    /// already placed inside the safe area reports 0 here.
+    static func rowColumn(
+        boundsWidth: CGFloat,
+        safeAreaInsets: UIEdgeInsets
+    ) -> (x: CGFloat, width: CGFloat) {
+        let section = sectionInsets
+        let width = boundsWidth - safeAreaInsets.left - safeAreaInsets.right
+            - section.leading - section.trailing
+        return (safeAreaInsets.left + section.leading, max(width, 0))
+    }
+
     private struct CachedHeight {
         var width: CGFloat
         var height: CGFloat
@@ -2381,7 +2398,8 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
         let sectionCount = collectionView.numberOfSections
         let itemCount = sectionCount > 0 ? collectionView.numberOfItems(inSection: 0) : 0
         let insets = Self.sectionInsets
-        let itemWidth = max(width - insets.leading - insets.trailing, 0)
+        let column = Self.rowColumn(boundsWidth: width, safeAreaInsets: collectionView.safeAreaInsets)
+        let itemWidth = column.width
         var y = insets.top
         var nextAttributes: [UICollectionViewLayoutAttributes] = []
         nextAttributes.reserveCapacity(itemCount)
@@ -2403,7 +2421,7 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
                 height = Self.estimatedHeight
             }
             let attributes = UICollectionViewLayoutAttributes(forCellWith: indexPath)
-            attributes.frame = CGRect(x: insets.leading, y: y, width: itemWidth, height: height)
+            attributes.frame = CGRect(x: column.x, y: y, width: itemWidth, height: height)
             nextAttributes.append(attributes)
             y += height
             if index < itemCount - 1 {

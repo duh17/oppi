@@ -346,7 +346,7 @@ final class OrbMetalView: OrbPlatformView {
     private func layoutMetal() {
         let bounds = self.bounds
         #if canImport(UIKit)
-        let scale = max(window?.screen.scale ?? traitCollection.displayScale, 1)
+        let scale = max(traitCollection.displayScale, 1)
         #else
         let scale = max(window?.backingScaleFactor ?? 1, 1)
         #endif
@@ -553,7 +553,7 @@ final class OrbMetalView: OrbPlatformView {
             return false
         }
         #if canImport(UIKit)
-        let scale = max(window?.screen.scale ?? traitCollection.displayScale, 1)
+        let scale = max(traitCollection.displayScale, 1)
         #else
         let scale = max(window?.backingScaleFactor ?? 1, 1)
         #endif

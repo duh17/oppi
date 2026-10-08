@@ -653,8 +653,8 @@ final class PaperMarkupCanvasHostController: UIViewController {
         let size = bounds.size
         guard size.width > 0, size.height > 0 else { return nil }
         let imagePixelSize = copiedBackgroundImage.map(PaperMarkupCanvasSession.nativePixelSize(of:))
-        let sceneScale = view.window?.screen.scale ?? traitCollection.displayScale
-        let screenScale = sceneScale > 0 ? sceneScale : 1
+        let displayScale = traitCollection.displayScale
+        let screenScale = displayScale > 0 ? displayScale : 1
         let pixelSize = PaperMarkupCanvasSession.exportPixelSize(
             imagePixelSize: imagePixelSize,
             markupSize: size,

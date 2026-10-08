@@ -234,7 +234,7 @@ final class CustomTimelineRowContentView: UIView, UIContentView, TimelineRowInte
             let mode = ToolRowViewportCalculator.ViewportMode.output
             let geometry = ToolRowViewportCalculator.GeometryContext(
                 windowHeight: window?.bounds.height ?? bounds.height,
-                safeAreaInsets: window?.safeAreaInsets ?? .zero,
+                safeAreaInsets: safeAreaInsets,
                 cellWidth: configuration.bodyWidth + 12
             )
             bashBodyView.outputViewportHeightConstraint?.constant = ToolRowViewportCalculator.preferredViewportHeight(

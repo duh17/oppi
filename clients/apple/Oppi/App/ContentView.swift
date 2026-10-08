@@ -75,34 +75,8 @@ struct ContentView: View {
         }
         .overlay {
             if nav.showQuickSession {
-                ZStack(alignment: .bottom) {
-                    Button(action: dismissQuickSession) {
-                        Color.black.opacity(0.34)
-                            .ignoresSafeArea()
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityHidden(true)
-                    .accessibilityIdentifier("quickSession.overlay")
-
-                    QuickSessionSheet(onDismiss: dismissQuickSession)
-                }
-                .contentShape(Rectangle())
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: NavigationSwipeGesturePolicy.minimumDistance)
-                        .onEnded { value in
-                            guard NavigationSwipeGesturePolicy.isSwipe(
-                                translation: value.translation,
-                                direction: .down
-                            ) else { return }
-                            dismissQuickSession()
-                        }
-                )
-                .ignoresSafeArea(.container, edges: .horizontal)
-                .accessibilityAddTraits(.isModal)
-                .accessibilityAction(.escape, dismissQuickSession)
-                .accessibilityAction(named: "Dismiss Quick Session", dismissQuickSession)
-                .zIndex(100)
+                QuickSessionOverlay(onDismiss: dismissQuickSession)
+                    .zIndex(100)
             }
         }
         .onAppIntentExecution(QuickSessionOpenIntent.self) { intent in

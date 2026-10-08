@@ -127,6 +127,44 @@ enum ReviewCommentInlineDraftPresenter {
     }
 }
 
+/// Where the inline draft sits relative to the text it comments on.
+enum ReviewCommentInlineDraftPlacement {
+    /// Gap kept between the draft and the keyboard's top edge.
+    static let keyboardGap: CGFloat = 10
+
+    /// Origin Y: below the anchor when it fits, else above, else pinned to the
+    /// lowest position that stays above the keyboard. `keyboardTop` is in the
+    /// same coordinate space as `safeFrame`; nil means no keyboard.
+    static func originY(
+        anchor: CGRect,
+        height: CGFloat,
+        safeFrame: CGRect,
+        keyboardTop: CGFloat?
+    ) -> CGFloat {
+        let bottomLimit = min(safeFrame.maxY, keyboardTop.map { $0 - keyboardGap } ?? safeFrame.maxY)
+        let belowY = anchor.maxY + 8
+        let aboveY = anchor.minY - height - 8
+        if belowY + height <= bottomLimit {
+            return belowY
+        }
+        if aboveY >= safeFrame.minY, aboveY + height <= bottomLimit {
+            return aboveY
+        }
+        return max(safeFrame.minY, bottomLimit - height)
+    }
+}
+
+/// Invisible view pinned from the host's top edge to the keyboard layout guide.
+/// Its height tracks the keyboard's top edge; `onLayout` fires on every change.
+private final class KeyboardTopProbeView: UIView {
+    var onLayout: (() -> Void)?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onLayout?()
+    }
+}
+
 final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     private weak var hostView: UIView?
     private weak var sourceView: UIView?
@@ -134,8 +172,11 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
     private let router: ReviewCommentSelectionRouter
     private let quickComments: [QuickCommentTemplate]
     private let anchorRect: CGRect
-    private var keyboardFrameInHost: CGRect?
-    private var isObservingKeyboard = false
+    /// Spans the host from its top edge to the keyboard layout guide, so its
+    /// height is the keyboard's top edge in host coordinates. UIKit moves the
+    /// guide with the keyboard (docked, floating, or none) in the keyboard's
+    /// own animation, so no screen-space frame conversion is needed.
+    private var keyboardTopProbe: KeyboardTopProbeView?
     private var isSaving = false
 
     private let stackView = UIStackView()
@@ -196,7 +237,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         hostView.addSubview(self)
         updateFrame(animated: false)
         hostView.bringSubviewToFront(self)
-        observeKeyboard()
+        installKeyboardTopProbe(in: hostView)
         observeVoiceInput()
 
         UIView.animate(withDuration: 0.16, delay: 0, options: [.curveEaseOut, .allowUserInteraction]) {
@@ -243,11 +284,9 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         if cancelOwnedVoiceInput {
             cancelVoiceInputIfOwned()
         }
-        if isObservingKeyboard {
-            removeKeyboardObservers()
-            isObservingKeyboard = false
-        }
-        // teardown, not deinit: keyboard observers must stop while this presenter is still alive
+        keyboardTopProbe?.removeFromSuperview()
+        keyboardTopProbe = nil
+        // teardown, not deinit: observers must stop while this presenter is still alive
         // swiftlint:disable:next notification_center_detachment
         NotificationCenter.default.removeObserver(self)
     }
@@ -541,76 +580,38 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         ])
     }
 
-    private func observeKeyboard() {
-        guard !isObservingKeyboard else { return }
-        isObservingKeyboard = true
-        for name in keyboardNotificationNames {
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(handleKeyboardNotification(_:)),
-                name: name,
-                object: nil
-            )
+    private func installKeyboardTopProbe(in hostView: UIView) {
+        guard keyboardTopProbe == nil else { return }
+        let probe = KeyboardTopProbeView()
+        probe.translatesAutoresizingMaskIntoConstraints = false
+        probe.isUserInteractionEnabled = false
+        probe.isAccessibilityElement = false
+        probe.backgroundColor = .clear
+        // Runs inside the keyboard's animation block, so the frame change below
+        // animates with the keyboard and `animated: false` is correct.
+        probe.onLayout = { [weak self] in
+            self?.updateFrame(animated: false, forcesHostLayout: false)
         }
-    }
-
-    private func removeKeyboardObservers() {
-        for name in keyboardNotificationNames {
-            NotificationCenter.default.removeObserver(self, name: name, object: nil)
-        }
-    }
-
-    private var keyboardNotificationNames: [NSNotification.Name] {
-        [
-            UIResponder.keyboardWillShowNotification,
-            UIResponder.keyboardWillHideNotification,
-            UIResponder.keyboardWillChangeFrameNotification,
-        ]
-    }
-
-    @objc private func handleKeyboardNotification(_ notification: Notification) {
-        guard !suppressKeyboard,
-              notification.name != UIResponder.keyboardWillHideNotification else {
-            keyboardFrameInHost = nil
-            updateFrame(animated: notification.name == UIResponder.keyboardWillHideNotification)
-            return
-        }
-
-        guard let hostView,
-              let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
-            keyboardFrameInHost = nil
-            updateFrame(animated: true)
-            return
-        }
-
-        let nextFrame = hostView.convert(frame, from: nil)
-        if let currentFrame = keyboardFrameInHost,
-           currentFrame.intersects(hostView.bounds),
-           nextFrame.intersects(hostView.bounds),
-           notification.name != UIResponder.keyboardWillHideNotification {
-            keyboardFrameInHost = nextFrame.minY < currentFrame.minY ? nextFrame : currentFrame
-        } else {
-            keyboardFrameInHost = nextFrame
-        }
-        let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.22
-        let curveValue = notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt ?? 0
-        let options = UIView.AnimationOptions(rawValue: curveValue << 16)
-            .union([.allowUserInteraction, .beginFromCurrentState])
-        updateFrame(animated: true, duration: duration, options: options)
-    }
-
-    func setKeyboardFrameInHostForTesting(_ frame: CGRect?) {
-        keyboardFrameInHost = frame
-        updateFrame(animated: false)
+        hostView.addSubview(probe)
+        NSLayoutConstraint.activate([
+            probe.leadingAnchor.constraint(equalTo: hostView.leadingAnchor),
+            probe.trailingAnchor.constraint(equalTo: hostView.trailingAnchor),
+            probe.topAnchor.constraint(equalTo: hostView.topAnchor),
+            probe.bottomAnchor.constraint(equalTo: hostView.keyboardLayoutGuide.topAnchor),
+        ])
+        keyboardTopProbe = probe
     }
 
     private func updateFrame(
         animated: Bool,
+        forcesHostLayout: Bool = true,
         duration: TimeInterval = 0.18,
         options: UIView.AnimationOptions = [.curveEaseInOut, .allowUserInteraction, .beginFromCurrentState]
     ) {
         guard !isTornDown, let hostView else { return }
-        hostView.layoutIfNeeded()
+        if forcesHostLayout {
+            hostView.layoutIfNeeded()
+        }
         layoutIfNeeded()
 
         let safeInsets = hostView.safeAreaInsets
@@ -646,18 +647,14 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         var x = min(max(anchor.minX - 18, safeFrame.minX), safeFrame.maxX - width)
         if !x.isFinite { x = safeFrame.minX }
 
-        let keyboardTop = keyboardFrameInHost.map { $0.minY - 10 } ?? safeFrame.maxY
-        let bottomLimit = min(safeFrame.maxY, keyboardTop)
-        let belowY = anchor.maxY + 8
-        let aboveY = anchor.minY - height - 8
-        var y: CGFloat
-        if belowY + height <= bottomLimit {
-            y = belowY
-        } else if aboveY >= safeFrame.minY, aboveY + height <= bottomLimit {
-            y = aboveY
-        } else {
-            y = max(safeFrame.minY, bottomLimit - height)
-        }
+        // Before the probe's first layout its height is 0; treat that as "no keyboard".
+        let keyboardTop = keyboardTopProbe.flatMap { $0.bounds.height > 0 ? $0.bounds.height : nil }
+        var y = ReviewCommentInlineDraftPlacement.originY(
+            anchor: anchor,
+            height: height,
+            safeFrame: safeFrame,
+            keyboardTop: keyboardTop
+        )
         if !y.isFinite { y = safeFrame.minY }
 
         let newFrame = CGRect(x: x, y: y, width: width, height: height).integral
@@ -804,7 +801,6 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
                 self.suppressKeyboard = suppressed
                 self.inputTextView.setKeyboardSuppressed(suppressed)
                 if suppressed {
-                    self.keyboardFrameInHost = nil
                     self.inputTextView.becomeFirstResponder()
                     self.updateFrame(animated: false)
                 }

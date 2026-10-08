@@ -1207,7 +1207,7 @@ final class ExtensionNativeBlockScrollView: UIView, UIGestureRecognizerDelegate 
         guard case .capped = sizing else {
             return CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric)
         }
-        let width = bounds.width > 0 ? bounds.width : (window?.windowScene?.screen.bounds.width ?? 390)
+        let width = bounds.width > 0 ? bounds.width : (superview?.bounds.width ?? 390)
         return CGSize(width: UIView.noIntrinsicMetric, height: viewportHeight(for: width))
     }
 

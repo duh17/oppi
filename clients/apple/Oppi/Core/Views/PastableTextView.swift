@@ -297,7 +297,7 @@ struct PastableTextView: UIViewRepresentable {
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView textView: PastableUITextView, context: Context) -> CGSize? {
         let proposedWidth = proposal.width ?? textView.bounds.width
-        let fallbackWidth = textView.window?.windowScene?.screen.bounds.width ?? 320
+        let fallbackWidth = textView.superview?.bounds.width ?? 320
         let safeFallbackWidth = fallbackWidth.isFinite && fallbackWidth > 0 ? fallbackWidth : 320
         let candidateWidth = proposedWidth > 0 ? proposedWidth : safeFallbackWidth
 

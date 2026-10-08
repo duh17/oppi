@@ -122,6 +122,85 @@ struct ChatTimelineChromeOverlapTests {
 }
 
 @MainActor
+@Suite("Chat timeline row column")
+struct ChatTimelineRowColumnTests {
+    private let margin = ChatTimelineCachedHeightLayout.sectionInsets.leading
+
+    @Test func trailingOnlyInsetNarrowsRowsFromTheTrailingSideOnly() {
+        let column = ChatTimelineCachedHeightLayout.rowColumn(
+            boundsWidth: 700,
+            safeAreaInsets: UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 83)
+        )
+
+        #expect(column.x == margin)
+        #expect(column.x + column.width == 700 - 83 - margin)
+    }
+
+    @Test func leadingOnlyInsetShiftsRowsAndKeepsTheTrailingMargin() {
+        let column = ChatTimelineCachedHeightLayout.rowColumn(
+            boundsWidth: 700,
+            safeAreaInsets: UIEdgeInsets(top: 0, left: 83, bottom: 0, right: 0)
+        )
+
+        #expect(column.x == 83 + margin)
+        #expect(column.x + column.width == 700 - margin)
+    }
+
+    @Test func narrowerThanTheInsetsNeverGoesNegative() {
+        let column = ChatTimelineCachedHeightLayout.rowColumn(
+            boundsWidth: 100,
+            safeAreaInsets: UIEdgeInsets(top: 0, left: 60, bottom: 0, right: 60)
+        )
+
+        #expect(column.width == 0)
+    }
+
+    @Test func collectionRowsFollowTheRailInsetAsItAppearsAndGoes() throws {
+        let host = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 700, height: 400))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        let collectionView = AnchoredCollectionView(
+            frame: host.view.bounds,
+            collectionViewLayout: ChatTimelineCollectionHost.makeTestLayout()
+        )
+        collectionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        collectionView.contentInsetAdjustmentBehavior = .never
+        host.view.addSubview(collectionView)
+        let registration = UICollectionView.CellRegistration<UICollectionViewCell, String> { _, _, _ in }
+        let dataSource = UICollectionViewDiffableDataSource<Int, String>(
+            collectionView: collectionView
+        ) { view, indexPath, id in
+            view.dequeueConfiguredReusableCell(using: registration, for: indexPath, item: id)
+        }
+        var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
+        snapshot.appendSections([0])
+        snapshot.appendItems(["row"])
+        dataSource.apply(snapshot, animatingDifferences: false)
+
+        func rowFrame() throws -> CGRect {
+            host.view.layoutIfNeeded()
+            collectionView.layoutIfNeeded()
+            return try #require(collectionView.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))).frame
+        }
+
+        #expect(try rowFrame().maxX == 700 - margin)
+
+        host.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 83)
+        let withRail = try rowFrame()
+        #expect(withRail.minX == margin)
+        #expect(withRail.maxX == 700 - 83 - margin)
+
+        host.additionalSafeAreaInsets = .zero
+        #expect(try rowFrame().maxX == 700 - margin)
+    }
+}
+
+@MainActor
 private struct ChromeOverlayProbe: View {
     let hugHeader: Bool
     let barHeight: CGFloat

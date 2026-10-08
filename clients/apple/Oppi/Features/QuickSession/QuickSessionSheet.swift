@@ -83,6 +83,44 @@ private enum QuickSessionSlashCommandLoadResult: Sendable {
     case skillFailure(String)
 }
 
+/// Dimmed scrim plus the composer, hosted as an overlay on the app root.
+/// ContentView and the Quick Session screenshot preview share it so both
+/// exercise the same safe-area behavior.
+struct QuickSessionOverlay: View {
+    let onDismiss: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Button(action: onDismiss) {
+                Color.black.opacity(0.34)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHidden(true)
+            .accessibilityIdentifier("quickSession.overlay")
+
+            QuickSessionSheet(onDismiss: onDismiss)
+        }
+        .contentShape(Rectangle())
+        .simultaneousGesture(
+            DragGesture(minimumDistance: NavigationSwipeGesturePolicy.minimumDistance)
+                .onEnded { value in
+                    guard NavigationSwipeGesturePolicy.isSwipe(
+                        translation: value.translation,
+                        direction: .down
+                    ) else { return }
+                    onDismiss()
+                }
+        )
+        // Only the scrim fills edge to edge. The composer stays inside the safe
+        // area so it never sits under a vertical rail on the leading/trailing edge.
+        .accessibilityAddTraits(.isModal)
+        .accessibilityAction(.escape, onDismiss)
+        .accessibilityAction(named: "Dismiss Quick Session", onDismiss)
+    }
+}
+
 /// Compact sheet for starting a new session.
 ///
 /// Presented from Oppi, the Control widget, App Intents, or saved share intake.
@@ -150,7 +188,6 @@ struct QuickSessionSheet: View {
     @State private var showAgentPicker = false
     @State private var measuredComposerHeight: CGFloat = 0
     @State private var measuredAccessibilityActionHeight: CGFloat = 0
-    @State private var keyboardFrame: CGRect = .null
 
     /// All workspaces across all connected servers.
     private var rawServerWorkspaces: [(serverId: String, workspace: Workspace)] {
@@ -284,17 +321,15 @@ struct QuickSessionSheet: View {
     }
 
     var body: some View {
+        // The overlay respects the keyboard safe area, so `proxy.size` already
+        // excludes the keyboard; no frame math or padding of our own.
         GeometryReader { proxy in
-            let rootFrame = proxy.frame(in: .global)
-            let keyboardOverlap = keyboardFrame.isNull
-                ? 0
-                : max(0, rootFrame.intersection(keyboardFrame).height)
             let accessibilityActionHeight = stacksActionControls
                 ? measuredAccessibilityActionHeight
                 : 0
             let viewport = QuickSessionOverlayLayout.viewport(
                 contentHeight: measuredComposerHeight,
-                availableHeight: proxy.size.height - keyboardOverlap - accessibilityActionHeight
+                availableHeight: proxy.size.height - accessibilityActionHeight
             )
 
             VStack(spacing: 0) {
@@ -330,16 +365,9 @@ struct QuickSessionSheet: View {
                         }
                 }
             }
-            .padding(.bottom, keyboardOverlap)
             .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .background(.clear)
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
-            keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect ?? .null
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            keyboardFrame = .null
-        }
         .sheet(isPresented: $showModelPicker) {
             ModelPickerSheet(
                 currentModel: displayedModelId,

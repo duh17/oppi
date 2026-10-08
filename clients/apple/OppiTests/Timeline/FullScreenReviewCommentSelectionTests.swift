@@ -724,43 +724,36 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(expandedRequests.map(\.source.surface) == [.toolExpandedText, .toolExpandedText])
     }
 
-    @Test func inlineCommentComposerStaysAboveKeyboardWhenAnchorIsBehindKeyboard() throws {
-        let hostController = UIViewController()
-        let window = UIWindow(frame: UIScreen.main.bounds)
-        window.rootViewController = hostController
-        window.makeKeyAndVisible()
-        defer { window.isHidden = true }
-        hostController.loadViewIfNeeded()
-        hostController.view.frame = window.bounds
-        let keyboardFrame = CGRect(
-            x: window.bounds.minX,
-            y: window.bounds.maxY - 320,
-            width: window.bounds.width,
-            height: 320
+    @Test func inlineCommentPlacementStaysAboveKeyboardWhenAnchorIsBehindKeyboard() {
+        let safeFrame = CGRect(x: 12, y: 59, width: 800, height: 1000)
+        let keyboardTop: CGFloat = 700
+        let anchor = CGRect(x: 24, y: 760, width: 1, height: 24)
+        let height: CGFloat = 108
+
+        let y = ReviewCommentInlineDraftPlacement.originY(
+            anchor: anchor,
+            height: height,
+            safeFrame: safeFrame,
+            keyboardTop: keyboardTop
         )
-        hostController.view.setNeedsLayout()
-        hostController.view.layoutIfNeeded()
 
-        let sourceView = UIView(frame: window.bounds)
-        hostController.view.addSubview(sourceView)
-        let composer = ReviewCommentInlineDraftView(
-            request: ReviewCommentSelectionRequest(
-                selectedText: "server path",
-                source: ReviewCommentSourceContext(sessionId: "session-1", surface: .fullScreenMarkdown)
-            ),
-            router: ReviewCommentSelectionRouter(dispatch: { _ in }, inlineSave: { _, _ in true }),
-            quickComments: [],
-            sourceView: sourceView,
-            anchorRect: CGRect(x: 24, y: window.bounds.maxY - 96, width: 1, height: 24)
-        )
-        composer.present(in: hostController.view)
+        #expect(y + height <= keyboardTop - ReviewCommentInlineDraftPlacement.keyboardGap)
+        #expect(y >= safeFrame.minY)
+    }
 
-        let convertedKeyboardFrame = hostController.view.convert(keyboardFrame, from: nil)
-        composer.setKeyboardFrameInHostForTesting(convertedKeyboardFrame)
-        hostController.view.layoutIfNeeded()
+    @Test func inlineCommentPlacementPrefersBelowThenAboveTheAnchor() {
+        let safeFrame = CGRect(x: 0, y: 50, width: 400, height: 700)
+        let height: CGFloat = 100
 
-        let keyboardTopInHost = convertedKeyboardFrame.minY
-        #expect(composer.frame.maxY <= keyboardTopInHost - 10, "Inline composer must stay above a docked iPad keyboard")
+        let roomBelow = CGRect(x: 20, y: 200, width: 1, height: 20)
+        #expect(ReviewCommentInlineDraftPlacement.originY(
+            anchor: roomBelow, height: height, safeFrame: safeFrame, keyboardTop: nil
+        ) == roomBelow.maxY + 8)
+
+        let noRoomBelow = CGRect(x: 20, y: 680, width: 1, height: 20)
+        #expect(ReviewCommentInlineDraftPlacement.originY(
+            anchor: noRoomBelow, height: height, safeFrame: safeFrame, keyboardTop: nil
+        ) == noRoomBelow.minY - height - 8)
     }
 
     @Test func nativeFullscreenEditMenuSuppressesFallbackPresentationForSameSelection() throws {

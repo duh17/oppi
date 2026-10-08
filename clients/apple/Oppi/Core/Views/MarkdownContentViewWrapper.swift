@@ -38,7 +38,7 @@ struct MarkdownContentViewWrapper: UIViewRepresentable {
         uiView: AssistantMarkdownContentView,
         context: Context
     ) -> CGSize? {
-        let fallbackWidth = uiView.window?.windowScene?.screen.bounds.width ?? uiView.bounds.width
+        let fallbackWidth = uiView.superview?.bounds.width ?? uiView.bounds.width
         let width = proposal.width ?? fallbackWidth
         guard width > 0 else { return nil }
 

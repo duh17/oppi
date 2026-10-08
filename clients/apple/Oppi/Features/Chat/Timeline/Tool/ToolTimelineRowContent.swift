@@ -545,7 +545,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         guard case .compactMeasured(let minHeight, let maxHeight) = policy.heightBehavior else {
             return 1
         }
-        let fallbackWidth = window?.windowScene?.screen.bounds.width ?? superview?.bounds.width ?? 375
+        let fallbackWidth = superview?.bounds.width ?? 375
         let width = max(1, bounds.width > 0 ? bounds.width - 16 : fallbackWidth - 48)
         let measured = hostedSurface.measuredHeight(width: width)
         let lowerBounded = max(minHeight, ceil(measured))
@@ -673,7 +673,10 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let windowHeight = window?.bounds.height
             ?? superview?.bounds.height
             ?? max(bounds.height, 600)
-        let safeInsets = window?.safeAreaInsets ?? .zero
+        // The row's own safe area, not the window's: a row in a sheet or side
+        // panel carries different insets than its window. The timeline's chrome
+        // overlap is covered by the mode's `closeSafeAreaReserve`.
+        let safeInsets = safeAreaInsets
         let cellWidth = bounds.width > 10
             ? bounds.width
             : (window?.bounds.width ?? 375)

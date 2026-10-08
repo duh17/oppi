@@ -381,6 +381,13 @@ final class AnchoredCollectionView: UICollectionView {
         }
     #endif
 
+    /// A side rail can appear or disappear with no change in size. The row
+    /// column reads this view's horizontal safe area, so re-lay out rows.
+    override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        collectionViewLayout.invalidateLayout()
+    }
+
     override func layoutSubviews() {
         layoutSubviewsDepth += 1
         defer { layoutSubviewsDepth -= 1 }
