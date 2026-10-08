@@ -14,6 +14,7 @@ import {
   watchEvents,
   AgentDoc,
   InboxDoc,
+  LiveDoc,
   defineDocFamily,
   type AgentEventStream,
   type Conversation,
@@ -48,6 +49,8 @@ import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { DurableSandboxTools } from "./durable-sandbox-tools.js";
 import { readDurableInputCards, resolveDurableInputCards } from "./durable-input-cards.js";
 import { DurableEventProjection } from "./durable-event-projection.js";
+import { exportDurableToHtml } from "./durable-export.js";
+import { readDurableSessionEntries } from "./durable-history.js";
 import type { PiMessage, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import type { SdkBackendDisposeResult } from "./sdk-backend.js";
 import {
@@ -229,6 +232,7 @@ export class DurableBackend implements AgentBackend {
   readonly abortClearsQueuedModelTurns = true;
   readonly cancelsExtensionUIOnAbort = true;
   readonly isQueueReconciliationRequired = false;
+  readonly persistsWithoutSessionFile = true;
   readonly showCacheMissNotices = false;
   readonly retainsIdleQueueUntilAdmission = true;
   private queueVersion = 0;
@@ -847,6 +851,8 @@ export class DurableBackend implements AgentBackend {
     await this.owner.abortConversation(this.conversation.id);
     this.onEvent({ type: "queue_update", ...this.queuedMessages() });
   }
+  // Classic aborts only a user-started shell command, which the server never starts on either
+  // engine. A model's bash call is a durable tool task that `abort` already stops.
   abortBash(): never {
     return this.unsupported("abortBash (use abort)");
   }
@@ -1190,12 +1196,15 @@ export class DurableBackend implements AgentBackend {
     throw new DurableNotSupportedError(operation);
   }
 
+  // Classic rebuilds its in-memory queue with these. Durable owns the queue as inbox state and
+  // the queue coordinator uses `nativeMessageQueue`, `withdrawNativeQueue`, and
+  // `abortClearsQueuedModelTurns` instead, so no supported path reaches them.
   replaceQueuedModelTurns(_batch: QueuedModelTurnBatch): never {
-    return this.unsupported("replaceQueuedModelTurns");
+    return this.unsupported("replaceQueuedModelTurns (use the native queue)");
   }
 
   clearQueuedModelTurns(): never {
-    return this.unsupported("clearQueuedModelTurns");
+    return this.unsupported("clearQueuedModelTurns (abort withdraws the inbox)");
   }
 
   private currentInbox(): InboxState | undefined {
@@ -1278,14 +1287,19 @@ export class DurableBackend implements AgentBackend {
       return text ? [{ entryId: String(entry.id), text }] : [];
     });
   }
+  // A durable conversation has no in-place leaf. Navigating would fork the conversation and
+  // rebind this session to the fork, which drops every later turn from the tree, cannot
+  // summarize the abandoned branch, and abandons the old conversation's background work. The
+  // tree view would then misread the session. `get_fork_messages` + `fork` is the supported
+  // way to continue from an earlier turn, as its own session.
   sessionTree(): never {
-    return this.unsupported("sessionTree");
+    return this.unsupported("sessionTree (fork a message instead)");
   }
   leafId(): null {
     return null;
   }
   navigateTree(): never {
-    return this.unsupported("navigateTree");
+    return this.unsupported("navigateTree (fork a message instead)");
   }
   commands(): ReturnType<AgentBackend["commands"]> {
     return {
@@ -1305,27 +1319,63 @@ export class DurableBackend implements AgentBackend {
       ],
     };
   }
-  exportToHtml(): never {
-    return this.unsupported("exportToHtml");
+  /** Pi's exporter over the whole conversation, with the active system prompt and offered tools. */
+  async exportToHtml(outputPath: string): Promise<string> {
+    this.assertOpen();
+    const agent = await this.conversation.agent(BACKGROUND_CONTEXT);
+    return exportDurableToHtml({
+      entries: await readDurableSessionEntries(this.harness, this.conversation.id),
+      cwd: agent.cwd ?? "",
+      state: {
+        systemPrompt: getCurrentSystemPrompt(
+          this.view.value.entries.flatMap((entry) => entry.model ?? []),
+        ),
+        tools: agent.tools.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters,
+        })),
+      },
+      outputPath,
+      themeName: this.owner.runPolicySettings.getTheme(),
+    });
   }
-  setAutoCompactionEnabled(): never {
-    return this.unsupported("setAutoCompactionEnabled");
+  // The four settings below are the Harness's run policy: global user settings it reads at every
+  // use, written exactly as a classic session writes them. They apply to every durable
+  // conversation from its next boundary or attempt, not to this session alone.
+  setAutoCompactionEnabled(enabled: boolean): void {
+    this.assertOpen();
+    this.owner.runPolicySettings.setCompactionEnabled(enabled);
   }
-  setSteeringMode(): never {
-    return this.unsupported("setSteeringMode");
+  setSteeringMode(mode: "all" | "one-at-a-time"): void {
+    this.assertOpen();
+    this.owner.runPolicySettings.setSteeringMode(mode);
   }
-  setFollowUpMode(): never {
-    return this.unsupported("setFollowUpMode");
+  setFollowUpMode(mode: "all" | "one-at-a-time"): void {
+    this.assertOpen();
+    this.owner.runPolicySettings.setFollowUpMode(mode);
   }
-  setAutoRetryEnabled(): never {
-    return this.unsupported("setAutoRetryEnabled");
+  setAutoRetryEnabled(enabled: boolean): void {
+    this.assertOpen();
+    this.owner.runPolicySettings.setRetryEnabled(enabled);
   }
-  abortRetry(): never {
-    return this.unsupported("abortRetry");
+  /**
+   * Cancel a pending retry backoff and nothing else. The failed attempt's error is already
+   * in the transcript; aborting only the generation task ends the run as aborted and leaves
+   * queued inputs in the inbox, as classic does. Outside a backoff this does nothing, as classic.
+   */
+  async abortRetry(): Promise<void> {
+    this.assertOpen();
+    this.owner.assertSchedulingReady();
+    const live = await this.harness.snapshot(LiveDoc, this.conversation.id, BACKGROUND_CONTEXT);
+    if (live?.generation?.retry === undefined || live.run === undefined) return;
+    await this.harness.abortTask(live.run.taskId, BACKGROUND_CONTEXT);
   }
   getEntryRenderers(): undefined {
     return undefined;
   }
+  // Only the E2E UI harness fixture route calls this (OPPI_E2E_UI_HARNESS). It is a synchronous
+  // test seam that forges an assistant turn; a durable transcript has no such edit.
   appendAssistantMessage(): never {
     return this.unsupported("appendAssistantMessage");
   }

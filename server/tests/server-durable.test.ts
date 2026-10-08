@@ -2523,15 +2523,21 @@ describe("server durable managed runtime", () => {
     await runtime.dispose();
   });
 
-  it("fails unsupported commands with a typed error instead of pretending success", async () => {
+  it("fails operations durable cannot honor with a typed error instead of pretending success", async () => {
     const f = await fixture([]);
     await f.manager.startSession(f.session.id, f.workspace);
-    await expect(
-      f.manager.runCommand(f.session.id, { type: "set_steering_mode", mode: "all" }),
-    ).rejects.toMatchObject({
-      code: "server_durable_not_supported",
-      message: "setSteeringMode is not supported for server durable sessions",
-    });
+    for (const [command, operation] of [
+      [{ type: "get_session_tree" }, "sessionTree (fork a message instead)"],
+      [
+        { type: "navigate_tree", targetId: "1" },
+        "navigateTree (fork a message instead)",
+      ],
+      [{ type: "abort_bash" }, "abortBash (use abort)"],
+    ] as const)
+      await expect(f.manager.runCommand(f.session.id, command)).rejects.toMatchObject({
+        code: "server_durable_not_supported",
+        message: `${operation} is not supported for server durable sessions`,
+      });
     await expect(
       f.manager.runCommand(f.session.id, { type: "get_session_tree" }),
     ).rejects.toBeInstanceOf(DurableNotSupportedError);
@@ -2539,6 +2545,153 @@ describe("server durable managed runtime", () => {
       steering: [],
       followUp: [],
     });
+  });
+
+  it("turns durable auto-retry off and on for the next failure, as classic does", async () => {
+    const failure = () =>
+      fauxAssistantMessage("", { stopReason: "error", errorMessage: "429 overloaded" });
+    const f = await fixture([failure(), failure(), fauxAssistantMessage("RECOVERED")], {
+      settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 20 } },
+    });
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+
+    await expect(
+      f.manager.runCommand(f.session.id, { type: "set_auto_retry", enabled: false }),
+    ).resolves.toEqual({ enabled: false });
+    await answer(f, observed, "retry is off");
+    expect(f.faux.state.callCount).toBe(1);
+    expect(observed.messages.filter((message) => message.type === "retry_start")).toHaveLength(0);
+
+    await f.manager.runCommand(f.session.id, { type: "set_auto_retry", enabled: true });
+    await answer(f, observed, "retry is on");
+    expect(f.faux.state.callCount).toBe(3);
+    expect(observed.messages.filter((message) => message.type === "retry_start")).toHaveLength(1);
+    expect(observed.messages.filter((message) => message.type === "retry_end")).toEqual([
+      expect.objectContaining({ success: true }),
+    ]);
+    observed.unsubscribe();
+  });
+
+  it("abort_retry cancels only the pending backoff and keeps queued input", async () => {
+    const f = await fixture(
+      [
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "429 overloaded" }),
+        fauxAssistantMessage("NEVER_REQUESTED"),
+      ],
+      { settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 600_000 } } },
+    );
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+
+    // Nothing is retrying: classic does nothing here, and so does durable.
+    await expect(f.manager.runCommand(f.session.id, { type: "abort_retry" })).resolves.toEqual({
+      success: true,
+    });
+
+    const backoff = observed.next((message) => message.type === "retry_start");
+    await f.manager.sendPrompt(f.session.id, "fail, then wait to retry");
+    await backoff;
+    await f.manager.sendPrompt(f.session.id, "after the retry", { streamingBehavior: "followUp" });
+
+    const ended = observed.next((message) => message.type === "agent_end");
+    await expect(f.manager.runCommand(f.session.id, { type: "abort_retry" })).resolves.toEqual({
+      success: true,
+    });
+    await ended;
+    expect(observed.messages.filter((message) => message.type === "retry_end")).toEqual([
+      expect.objectContaining({ success: false, finalError: "429 overloaded" }),
+    ]);
+    expect(f.faux.state.callCount).toBe(1);
+    // Cancelling the backoff is not Stop: the follow-up the user queued is still queued.
+    expect((await f.manager.getMessageQueue(f.session.id)).followUp).toMatchObject([
+      { message: "after the retry" },
+    ]);
+    observed.unsubscribe();
+  });
+
+  it("exports a durable session to Pi's HTML page with its turns and prompt", async () => {
+    const f = await fixture([fauxAssistantMessage("EXPORT_ANSWER")]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    await answer(f, observed, "EXPORT_QUESTION");
+    observed.unsubscribe();
+
+    const active = (
+      f.manager as unknown as {
+        active: Map<string, { sdkBackend: { exportToHtml(path: string): Promise<string> } }>;
+      }
+    ).active.get(f.session.id)!;
+    const out = join(f.dir, "export.html");
+    expect(await active.sdkBackend.exportToHtml(out)).toBe(out);
+    const encoded = /id="session-data"[^>]*>([^<]+)</.exec(readFileSync(out, "utf8"))?.[1];
+    const data = JSON.parse(Buffer.from(encoded!.trim(), "base64").toString("utf8")) as {
+      entries: Array<{ id: string; parentId: string | null; message?: { role: string } }>;
+      leafId: string;
+      systemPrompt: string;
+      tools: Array<{ name: string }>;
+    };
+    expect(JSON.stringify(data.entries)).toContain("EXPORT_QUESTION");
+    expect(JSON.stringify(data.entries)).toContain("EXPORT_ANSWER");
+    expect(data.entries.map((entry) => entry.message?.role)).toEqual(["user", "assistant"]);
+    expect(data.entries[1]).toMatchObject({ parentId: data.entries[0]!.id });
+    expect(data.leafId).toBe(data.entries[1]!.id);
+    expect(data.systemPrompt).toContain("Working directory:");
+    expect(data.tools.map((tool) => tool.name)).toContain("bash");
+
+    // The phone's Share reaches the same exporter; a durable session has no Pi session file.
+    await expect(
+      f.manager.runCommand(f.session.id, { type: "share_session", action: "prepare" }),
+    ).resolves.toMatchObject({ phase: "prepared", artifact: { format: "html" } });
+  });
+
+  it("exports a compacted durable session without a made-up token count", async () => {
+    const f = await fixture(
+      [
+        fauxAssistantMessage("Earlier context ".repeat(50)),
+        fauxAssistantMessage("Latest context"),
+        fauxAssistantMessage("## Goal\nPreserve names"),
+      ],
+      { settings: compactionSettings },
+    );
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    await answer(f, observed, "first");
+    await answer(f, observed, "second");
+    await f.manager.runCommand(f.session.id, { type: "compact" });
+    observed.unsubscribe();
+
+    const active = (
+      f.manager as unknown as {
+        active: Map<string, { sdkBackend: { exportToHtml(path: string): Promise<string> } }>;
+      }
+    ).active.get(f.session.id)!;
+    const out = join(f.dir, "compacted.html");
+    await active.sdkBackend.exportToHtml(out);
+    const encoded = /id="session-data"[^>]*>([^<]+)</.exec(readFileSync(out, "utf8"))?.[1];
+    const entries = (
+      JSON.parse(Buffer.from(encoded!.trim(), "base64").toString("utf8")) as {
+        entries: Array<Record<string, unknown>>;
+      }
+    ).entries;
+    // Pi's page formats `compaction.tokensBefore` as a number; durable never recorded one.
+    expect(entries.some((entry) => entry.type === "compaction")).toBe(false);
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        type: "custom_message",
+        customType: "compaction",
+        content: "## Goal\nPreserve names",
+      }),
+    );
+    expect(JSON.stringify(entries)).toContain("Earlier context");
+  });
+
+  it("has nothing to export before the first turn", async () => {
+    const f = await fixture([]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    await expect(
+      f.manager.runCommand(f.session.id, { type: "share_session", action: "prepare" }),
+    ).rejects.toThrow("Nothing to export yet");
   });
 
   it("forks a durable session at a user message into an independent durable session that survives restart", async () => {

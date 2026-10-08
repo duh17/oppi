@@ -30,6 +30,8 @@ export interface AgentBackend {
   readonly retainsIdleQueueUntilAdmission?: boolean;
   /** Abort owns UI cancellation; don't answer the waiting tool just before stopping it. */
   readonly cancelsExtensionUIOnAbort?: boolean;
+  /** History lives in a store, not a Pi session file, so share has no file to require. */
+  readonly persistsWithoutSessionFile?: boolean;
   readonly showCacheMissNotices: boolean;
   readonly cacheMissModelPriceSource: CacheMissModelPriceSource;
 
@@ -130,7 +132,7 @@ export interface AgentBackend {
   setSteeringMode(mode: "all" | "one-at-a-time"): void;
   setFollowUpMode(mode: "all" | "one-at-a-time"): void;
   setAutoRetryEnabled(enabled: boolean): void;
-  abortRetry(): void;
+  abortRetry(): void | Promise<void>;
   getEntryRenderers(): LiveEntryRendererSet | undefined;
   appendAssistantMessage(content: string, fallbackModel?: string): void;
   promptCacheRuntime(): {

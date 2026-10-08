@@ -65,6 +65,8 @@ export class DurableHarness {
   private resumeHeld = true;
   private readonly pausedAborts = new Set<Promise<void>>();
   private runSettings?: HarnessSettings;
+  /** The manager `runSettings` reads live. Writes reach every conversation and persist to user settings. */
+  private runPolicy?: SettingsManager;
   private readonly sandboxEnvs = new Map<ConversationId, ExecutionEnv>();
   private registry?: Registry;
   /** Per Oppi session: its MCP connections and registry extension. */
@@ -106,6 +108,16 @@ export class DurableHarness {
 
   get retrySettings(): HarnessSettings["retry"] {
     return this.runSettings?.retry;
+  }
+
+  /**
+   * Classic `set_auto_retry`, `set_auto_compaction`, and the queue modes write global user
+   * settings. The Harness reads the same getters at every use, so writing here is the same
+   * scope: it reaches every durable conversation, and no per-session copy exists.
+   */
+  get runPolicySettings(): SettingsManager {
+    if (!this.runPolicy) throw new Error("Server durable Harness is not open");
+    return this.runPolicy;
   }
 
   installExtension(extension: Extension): void {
@@ -274,6 +286,7 @@ export class DurableHarness {
       }));
     // Run policy is global to the Harness, not the first workspace to open it.
     const settings = SettingsManager.create(homedir(), agentDir, { projectTrusted: false });
+    this.runPolicy = settings;
     this.runSettings = harnessSettings(settings, this.baseExtensions);
     const registry = createRegistry();
     for (const extension of this.baseExtensions) registry.install(extension);

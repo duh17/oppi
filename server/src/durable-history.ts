@@ -101,6 +101,14 @@ async function allEntries(harness: Harness, id: ConversationId): Promise<EntryRe
   return records.reverse();
 }
 
+/** Every entry of the conversation as Pi session entries, oldest first: what traces and exports read. */
+export async function readDurableSessionEntries(
+  harness: Harness,
+  id: ConversationId,
+): Promise<SessionEntry[]> {
+  return projectEntries(harness, await allEntries(harness, id));
+}
+
 /** Read-only history on the process-owned Harness; never resumes scheduling. */
 export async function readDurableTrace(
   harness: Harness,

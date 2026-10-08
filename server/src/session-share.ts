@@ -13,7 +13,10 @@ import { spawn, spawnSync } from "node:child_process";
 
 import type { AgentBackend } from "./agent-backend.js";
 
-type ShareSessionSource = Pick<AgentBackend, "exportToHtml" | "getStateSnapshot">;
+type ShareSessionSource = Pick<
+  AgentBackend,
+  "exportToHtml" | "getStateSnapshot" | "persistsWithoutSessionFile"
+>;
 import {
   autoRedactionEnabled,
   blockOnSecretFindings,
@@ -293,7 +296,7 @@ export async function shareSession(
   const redactionPolicy = normalizeRedactionPolicy(options.redactionPolicy);
 
   const sessionFile = session.getStateSnapshot().sessionFile;
-  if (!sessionFile) {
+  if (!sessionFile && !session.persistsWithoutSessionFile) {
     throw shareError(
       "session_not_persisted",
       "Cannot share this session because it has no persisted session file.",

@@ -227,8 +227,8 @@ export class SessionCommandCoordinator {
 
     [
       "abort_retry",
-      (session) => {
-        session.abortRetry();
+      async (session) => {
+        await session.abortRetry();
         return { success: true };
       },
     ],
