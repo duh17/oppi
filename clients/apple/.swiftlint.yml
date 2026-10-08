@@ -23,6 +23,14 @@ disabled_rules:
   - function_parameter_count
   - nesting
   - blanket_disable_command # Allow file-level suppressions for tests/fixtures
+  # Every hit is `override class` of URLProtocol or UIView.layerClass.
+  # Those superclass methods are class methods; `static` cannot override them.
+  - static_over_final_class
+  # Every hit is intentional lossy UTF-8 (`String(decoding:as:)`), which
+  # replaces invalid bytes. The failable initializer would return nil instead.
+  - optional_data_string_conversion
+  # Every hit is CGRect.intersection(_:).isEmpty. CGRect has no isDisjoint(with:).
+  - is_disjoint
 
 # Opt-in rules worth enabling
 opt_in_rules:
@@ -75,6 +83,29 @@ enum_case_associated_values_count:
   warning: 7
   error: 10
 
+# Three-element tuples are local layout, color, and range helpers. Naming each
+# one would add a type without making the call site clearer.
+large_tuple:
+  warning: 3
+  error: 6
+
+# View and test type names are descriptive on purpose. The longest current
+# name is WorkspaceSplitWorkspaceConfigurationDestinationView (51). Shortening
+# names that identify a screen would make call sites worse. ID is a nested
+# keymap identifier, not a wire or Codable key.
+type_name:
+  min_length:
+    warning: 3
+    error: 0
+  max_length:
+    warning: 55
+    error: 70
+  excluded:
+    - ID
+  allowed_symbols:
+    - "_"
+  validates_start_with_lowercase: error
+
 custom_rules:
   no_force_unwrap_production:
     name: "No force unwrap in production code"
@@ -88,6 +119,8 @@ custom_rules:
     name: "@Observable classes should be @MainActor"
     included: "Oppi|Shared"
     excluded: "OppiTests"
-    regex: "^\\s*@Observable\\s*(?:\\n\\s*@[^\\n]+\\s*)*\\n\\s*(?:final\\s+)?class\\b"
+    # @MainActor on the line above, or between @Observable and class, already
+    # satisfies the rule. NSRegularExpression lookbehind is fixed-width.
+    regex: "(?<!@MainActor\\n)^\\s*@Observable\\s*(?:\\n\\s*@(?!MainActor\\b)[^\\n]+\\s*)*\\n\\s*(?:final\\s+)?class\\b"
     message: "Annotate @Observable classes with @MainActor. See AGENTS.md (Swift)."
     severity: warning
