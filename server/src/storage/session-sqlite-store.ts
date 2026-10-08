@@ -177,8 +177,6 @@ const SESSION_COLUMN_DEFINITIONS = [
   ["launch_lease_owner", "TEXT"],
   ["launch_lease_until_ms", "INTEGER"],
   ["parent_session_id", "TEXT"],
-  ["todo_id", "TEXT"],
-  ["goal_id", "TEXT"],
   ["schedule_id", "TEXT"],
   ["schedule_run_id", "TEXT"],
   ["launch_idempotency_key", "TEXT"],
@@ -293,8 +291,6 @@ export class SessionSqliteStore {
       normalized.launch?.lease?.owner ?? null,
       normalized.launch?.lease?.expiresAt ?? null,
       normalized.launch?.parentSessionId ?? null,
-      normalized.launch?.todoId ?? null,
-      normalized.launch?.goalId ?? null,
       normalized.launch?.schedule?.scheduleId ?? null,
       normalized.launch?.schedule?.runId ?? null,
       normalized.launch?.idempotencyKey ?? null,
@@ -633,8 +629,6 @@ export class SessionSqliteStore {
         launch_lease_owner TEXT,
         launch_lease_until_ms INTEGER,
         parent_session_id TEXT,
-        todo_id TEXT,
-        goal_id TEXT,
         schedule_id TEXT,
         schedule_run_id TEXT,
         launch_idempotency_key TEXT,
@@ -834,8 +828,6 @@ export class SessionSqliteStore {
         launch_lease_owner,
         launch_lease_until_ms,
         parent_session_id,
-        todo_id,
-        goal_id,
         schedule_id,
         schedule_run_id,
         launch_idempotency_key,
@@ -845,7 +837,7 @@ export class SessionSqliteStore {
         session_json,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         workspace_id = excluded.workspace_id,
         workspace_name = excluded.workspace_name,
@@ -882,8 +874,6 @@ export class SessionSqliteStore {
         launch_lease_owner = excluded.launch_lease_owner,
         launch_lease_until_ms = excluded.launch_lease_until_ms,
         parent_session_id = excluded.parent_session_id,
-        todo_id = excluded.todo_id,
-        goal_id = excluded.goal_id,
         schedule_id = excluded.schedule_id,
         schedule_run_id = excluded.schedule_run_id,
         launch_idempotency_key = excluded.launch_idempotency_key,

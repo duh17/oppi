@@ -150,8 +150,6 @@ export interface SessionLaunchMetadata {
   failure?: AgentConfigurationFailure;
   requestedAt: number;
   completedAt?: number;
-  todoId?: string;
-  goalId?: string;
   lease?: {
     owner: string;
     acquiredAt: number;
