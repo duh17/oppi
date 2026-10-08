@@ -96,7 +96,9 @@ struct StatusPill: View {
     var accessibilityLabel: String? = nil
 
     var body: some View {
-        _ = themeID
+        // ViewBuilder treats `_ =` as a Void view. `let _` keeps the theme dependency.
+        // swiftlint:disable:next redundant_discardable_let
+        let _ = themeID
         switch emphasis {
         case .glass:
             content

@@ -1709,7 +1709,8 @@ struct AuthenticatedMediaPlayerView: View {
     var body: some View {
         let model = injectedModel ?? ownedModel
 #if DEBUG
-        _ = AuthenticatedMediaPlayerTesting.record(model, source: source)
+        // swiftlint:disable:next redundant_discardable_let - ViewBuilder needs let _ for the test record
+        let _ = AuthenticatedMediaPlayerTesting.record(model, source: source)
 #endif
         AuthenticatedMediaPlayerHost(
             source: source,

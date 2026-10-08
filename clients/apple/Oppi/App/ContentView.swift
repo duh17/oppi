@@ -263,7 +263,8 @@ private struct E2EWebSocketDiagnosticsView: View {
     @State private var refreshTick = 0
 
     var body: some View {
-        _ = refreshTick
+        // swiftlint:disable:next redundant_discardable_let - ViewBuilder needs let _ to read refreshTick
+        let _ = refreshTick
         VStack(spacing: 0) {
             diagnosticText("e2e.ws.status", value: wsStatusLabel)
             diagnosticText("e2e.ws.connectionID", value: String(connection.wsClient?.diagnosticConnectionID ?? 0))

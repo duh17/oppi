@@ -343,7 +343,8 @@ private struct ThemedListRowBackgroundModifier: ViewModifier {
     @Environment(\.themeID) private var themeID
 
     func body(content: Content) -> some View {
-        _ = themeID
+        // swiftlint:disable:next redundant_discardable_let - ViewBuilder needs let _ to read themeID
+        let _ = themeID
         return content
             .listRowBackground(Rectangle().fill(.themeBg))
     }
