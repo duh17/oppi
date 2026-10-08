@@ -142,7 +142,9 @@ final class AnalyzerInputBuffer: AsyncSequence, @unchecked Sendable {
                 entries[head] = nil
                 head = (head + 1) % Self.maxBuffers
                 count -= 1
-                if closed, isEmpty {
+                // `count` is the queued buffer tally, not a collection.
+                // swiftlint:disable:next empty_count
+                if closed, count == 0 {
                     deadlineTask?.cancel()
                     deadlineTask = nil
                 }
@@ -203,7 +205,8 @@ final class AnalyzerInputBuffer: AsyncSequence, @unchecked Sendable {
             bytes = 0
             seconds = 0
         }
-        if isEmpty {
+        // swiftlint:disable:next empty_count - Int tally, not a collection
+        if count == 0 {
             deadlineTask?.cancel()
             deadlineTask = nil
         }
