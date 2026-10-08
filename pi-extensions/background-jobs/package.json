@@ -7,7 +7,9 @@
   "keywords": ["pi-package", "pi-extension", "oppi"],
   "files": ["index.ts", "jobs.ts", "delivery.ts", "README.md", "package.json"],
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {

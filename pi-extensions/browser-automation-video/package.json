@@ -30,17 +30,16 @@
     "check": "tsc --noEmit --skipLibCheck --module NodeNext --moduleResolution NodeNext --target ES2022 --types node extensions/browser-automation-video.ts",
     "test": "vitest run extensions/browser-automation-video.test.ts"
   },
-  "dependencies": {
-    "typebox": "1.1.28"
-  },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.79.6",
     "@types/node": "^22.0.0",
+    "typebox": "1.1.28",
     "typescript": "^7.0.2",
     "vitest": "^4.0.18"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {
