@@ -995,7 +995,7 @@ struct StickyRefreshReconciliationTests {
         }
         #expect(await waitForTestCondition(timeout: .seconds(1)) { workspaceGate.isStarted })
 
-        connection.distry connectAppEventStream()
+        connection.disconnectAppEventStream()
         workspaceGate.release()
         await repair.value
 
@@ -1141,7 +1141,7 @@ struct StickyRefreshReconciliationTests {
 
     private func cleanup(_ connection: ServerConnection) {
         TestURLProtocol.handler = nil
-        connection.distry connectAppEventStream()
+        connection.disconnectAppEventStream()
         connection.disconnectStream()
     }
 

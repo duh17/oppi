@@ -174,7 +174,7 @@ struct InviteBootstrapServiceTests {
             deviceKeyProvider: { InMemoryP256DeviceKey() }
         )
 
-        #expect(await pairingAPI.lastPairedDeviceNatry me() == "Chen iPhone")
+        #expect(await pairingAPI.lastPairedDeviceName() == "Chen iPhone")
     }
 
     @Test func decodesCredentialsFromInviteURL() throws {

@@ -364,7 +364,7 @@ struct UserTimelineRowContentTests {
 
         let connection = ServerConnection()
         #expect(connection.apiClient == nil)
-        #expect(try !try hasFileReader(connection: connection, workspaceId: "ws-test"))
+        #expect(try !hasFileReader(connection: connection, workspaceId: "ws-test"))
 
         #expect(connection.configure(credentials: ServerCredentials(
             host: "127.0.0.1",
@@ -374,7 +374,7 @@ struct UserTimelineRowContentTests {
             scheme: .https
         )))
         #expect(try hasFileReader(connection: connection, workspaceId: "ws-test"))
-        #expect(try !try hasFileReader(connection: connection, workspaceId: nil))
+        #expect(try !hasFileReader(connection: connection, workspaceId: nil))
     }
 
     @MainActor
