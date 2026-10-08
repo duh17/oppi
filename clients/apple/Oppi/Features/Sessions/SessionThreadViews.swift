@@ -2,12 +2,16 @@ import SwiftUI
 
 // MARK: - Inbox thread strip
 
-/// Labelled Thread control under a thread root row: who is working, optional
-/// lane graph and Agent summary, and totals. The caller makes it the tap
-/// target that opens Thread detail; the root row above it opens the root chat.
+/// Thread control under a thread root row: who is working, optional lane
+/// graph and Agent summary, and totals. The caller makes it the tap target
+/// that opens Thread detail; the root row above it opens the root chat.
+///
+/// Agent summary and totals count every member, root included, so they agree
+/// with the lane graph. The working line names only children: the root row
+/// above already shows its own status.
 ///
 /// Display choices only hide the lane graph, the Agent summary, and the cost
-/// total. The Thread label, a child's question, who is working, and the
+/// total. The chevron, a child's question, who is working, and the
 /// working/done counts always stay.
 struct SessionThreadStrip: View {
     @Environment(\.sessionRowDisplay) private var display
@@ -20,21 +24,8 @@ struct SessionThreadStrip: View {
     var attentionMember: Session?
 
     var body: some View {
-        let working = rollup.workingDescendants
+        let working = rollup.descendants.filter(SessionThreadGrouping.isWorking)
         VStack(alignment: .leading, spacing: display.isCompact ? 2 : 4) {
-            HStack(spacing: 6) {
-                Image(systemName: "point.3.connected.trianglepath.dotted")
-                Text("Thread")
-                Text(sizeLabel)
-                    .fontWeight(.regular)
-                    .foregroundStyle(.themeComment)
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.right")
-                    .foregroundStyle(.themeComment)
-            }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.themeBlue)
-            .lineLimit(1)
             if let attentionMember {
                 Label("Question from \(attentionMember.displayTitle)", systemImage: "questionmark.bubble.fill")
                     .font(.footnote.weight(.semibold))
@@ -52,13 +43,17 @@ struct SessionThreadStrip: View {
             }
             HStack(alignment: .center, spacing: 8) {
                 if display.showsThreadAgentSummary {
-                    SessionThreadAgentCluster(groups: SessionThreadAgentGroup.groups(Array(rollup.descendants)), maxGroups: 3)
+                    SessionThreadAgentCluster(groups: SessionThreadAgentGroup.groups(rollup.members), maxGroups: 3)
                 }
                 Text(summary)
                     .font(.caption)
                     .foregroundStyle(.themeComment)
                     .lineLimit(1)
                     .layoutPriority(1)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.themeComment)
             }
         }
         .padding(.horizontal, 8)
@@ -71,26 +66,22 @@ struct SessionThreadStrip: View {
 
     private var summary: String {
         var parts: [String] = []
-        let working = rollup.workingDescendants.count
+        let working = rollup.workingMemberCount
         if working > 0 { parts.append("\(working) working") }
-        parts.append("\(rollup.finishedDescendantCount) done")
+        parts.append("\(rollup.finishedMemberCount) done")
         // Same rule as a row: unknown or zero cost is absent, never "$0.00".
         if display.showsCost, rollup.totalCost > 0 {
             parts.append(String(format: "$%.2f", rollup.totalCost))
         }
+        if rollup.workspaceCount > 1 {
+            parts.append("\(rollup.workspaceCount) workspaces")
+        }
         return parts.joined(separator: " · ")
-    }
-
-    /// Session count, plus the workspace count when members run in more than one.
-    private var sizeLabel: String {
-        let workspaces = rollup.workspaceCount
-        return "· \(rollup.members.count) sessions" + (workspaces > 1 ? " · \(workspaces) workspaces" : "")
     }
 
     private var accessibilitySummary: String {
         let question = attentionMember.map { "Question from \($0.displayTitle). " } ?? ""
-        let workspaces = rollup.workspaceCount > 1 ? " across \(rollup.workspaceCount) workspaces" : ""
-        return question + "Thread with \(rollup.descendants.count) child sessions\(workspaces), \(summary)"
+        return question + "Thread with \(rollup.members.count) sessions, \(summary)"
     }
 
 }

@@ -11,8 +11,8 @@ struct SessionThreadRollup: Sendable, Equatable {
     var descendants: ArraySlice<Session> { members.dropFirst() }
     var latestActivity: Date { members.lazy.map(\.lastActivity).max() ?? root.lastActivity }
     var totalCost: Double { members.reduce(0) { $0 + $1.cost } }
-    var workingDescendants: [Session] { descendants.filter(SessionThreadGrouping.isWorking) }
-    var finishedDescendantCount: Int { descendants.count { $0.status == .stopped } }
+    var workingMemberCount: Int { members.count(where: SessionThreadGrouping.isWorking) }
+    var finishedMemberCount: Int { members.count { $0.status == .stopped } }
     /// Distinct workspaces the loaded members run in; above 1 marks a cross-workspace thread.
     var workspaceCount: Int { Set(members.compactMap(\.workspaceId)).count }
 }

@@ -487,7 +487,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
         for (name, element) in facts { XCTAssertTrue(waitForNonExistence(element, timeout: 5), "\(name) should be hidden") }
         XCTAssertTrue(previewFact("Done").exists, "Root status must stay")
         XCTAssertTrue(previewFact("shop-app").exists, "Workspace context must stay")
-        XCTAssertTrue(previewStrip.label.contains("Thread with 3 child sessions"), previewStrip.label)
+        XCTAssertTrue(previewStrip.label.contains("Thread with 4 sessions"), previewStrip.label)
         XCTAssertTrue(previewStrip.label.contains("Question from Review API diff"), "Child question hidden: \(previewStrip.label)")
         XCTAssertTrue(previewStrip.label.contains("working"), previewStrip.label)
         // With so little to show, Compact joins context and status on one line; Standard keeps two.
@@ -586,14 +586,14 @@ final class SessionThreadsE2ETests: E2ETestCase {
         // All Sessions: one thread row that names both workspaces.
         let inboxStrip = app.buttons["thread.nav.\(root)"]
         XCTAssertTrue(reveal(inboxStrip, in: inbox, timeout: 20), "Mirror thread strip missing from All Sessions")
-        XCTAssertTrue(inboxStrip.label.contains("across 2 workspaces"), inboxStrip.label)
+        XCTAssertTrue(inboxStrip.label.contains("2 workspaces"), inboxStrip.label)
         XCTAssertFalse(app.buttons["session.nav.\(remoteChild)"].exists, "All Sessions must fold the remote child")
 
         // Root's workspace: the same thread row; its local child folds under it.
         let oppiList = try openWorkspaceList("oppi")
         let workspaceStrip = app.buttons["thread.nav.\(root)"]
         XCTAssertTrue(reveal(workspaceStrip, in: oppiList, timeout: 20), "Workspace list did not draw the Thread strip")
-        XCTAssertTrue(workspaceStrip.label.contains("across 2 workspaces"), workspaceStrip.label)
+        XCTAssertTrue(workspaceStrip.label.contains("2 workspaces"), workspaceStrip.label)
         XCTAssertFalse(
             reveal(app.buttons["session.nav.\(localChild)"], in: oppiList, timeout: 3),
             "Threads layout must fold the child in its root's workspace"
@@ -829,7 +829,7 @@ final class SessionThreadsE2ETests: E2ETestCase {
     private var rowEditor: XCUIElement { app.navigationBars["Session Rows"] }
     private var previewBox: XCUIElement { app.descendants(matching: .any)["sessionRows.preview"] }
     private var previewStrip: XCUIElement {
-        app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Thread with 3 child sessions")).firstMatch
+        app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Thread with 4 sessions")).firstMatch
     }
 
     /// Every optional fact the sample root can show. The relative time drifts while the test runs.
