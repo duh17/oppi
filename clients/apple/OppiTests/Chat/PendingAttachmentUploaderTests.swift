@@ -16,7 +16,7 @@ struct PendingAttachmentUploaderTests {
         var requestCount = 0
         TestURLProtocol.handler = { _ in
             requestCount += 1
-            return Self.response(status: 500, json: "{}")
+            return try Self.response(status: 500, json: "{}")
         }
         let reference = ChatAttachmentRef(
             type: "attachment",
@@ -57,7 +57,7 @@ struct PendingAttachmentUploaderTests {
             if requestCount == 1 {
                 #expect(request.httpMethod == "POST")
                 #expect(request.url?.path == "/workspaces/ws-1/sessions/session-1/attachments")
-                return Self.response(
+                return try Self.response(
                     status: 201,
                     json: """
                     {"uploadId":"upload-1","contentUrl":"/content","maxFileBytes":1024,"expiresAt":999999}
@@ -70,7 +70,7 @@ struct PendingAttachmentUploaderTests {
                 request.url?.path
                     == "/workspaces/ws-1/sessions/session-1/attachments/upload-1/content"
             )
-            return Self.response(
+            return try Self.response(
                 json: """
                 {"attachment":{"type":"attachment","id":"upload-1","source":"upload","name":"notes.txt","mimeType":"text/plain","sizeBytes":5,"kind":"text"}}
                 """
@@ -119,7 +119,7 @@ struct PendingAttachmentUploaderTests {
             if requestCount == 1 {
                 #expect(request.httpMethod == "POST")
                 #expect(request.url?.path == "/workspaces/ws-1/sessions/session-1/attachments")
-                return Self.response(
+                return try Self.response(
                     status: 201,
                     json: """
                     {"uploadId":"upload-video","contentUrl":"/content","maxFileBytes":1024,"expiresAt":999999}
@@ -133,7 +133,7 @@ struct PendingAttachmentUploaderTests {
                     == "/workspaces/ws-1/sessions/session-1/attachments/upload-video/content"
             )
             #expect(request.value(forHTTPHeaderField: "Content-Type") == "video/mp4")
-            return Self.response(
+            return try Self.response(
                 json: """
                 {"attachment":{"type":"attachment","id":"upload-video","source":"upload","name":"clip.mp4","mimeType":"video/mp4","sizeBytes":128,"kind":"video"}}
                 """

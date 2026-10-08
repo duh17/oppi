@@ -1218,7 +1218,7 @@ struct ChatInputBarTests {
             keepComposerClearedForSubmittedRequestID: "ask-1"
         )
 
-        #expect(displayedText.isEmpty)
+        #expect(displayedText?.isEmpty == true)
     }
 
     @Test("Submitted custom ask stays cleared after the server drops the pending request")
@@ -1247,7 +1247,7 @@ struct ChatInputBarTests {
             draftAnswers: transition.answers,
             keepComposerClearedForSubmittedRequestID: request.id
         )
-        #expect(whileVisible.isEmpty)
+        #expect(whileVisible?.isEmpty == true)
 
         let submission = AskResponseSubmission()
         submission.submit(requestID: request.id) { $0(.completed) }
@@ -1283,7 +1283,7 @@ struct ChatInputBarTests {
             activeQuestionID: "q1",
             draftAnswers: ["q1": .custom(submittedText)],
             keepComposerClearedForSubmittedRequestID: submission.submittedRequestID
-        ).isEmpty)
+        )?.isEmpty == true)
 
         submission.applyRequestIDChange(nil)
         let retainedID = submission.submittedRequestID
@@ -1340,14 +1340,14 @@ struct ChatInputBarTests {
             draftAnswers: state.draftAnswers,
             keepComposerClearedForSubmittedRequestID: state.submittedRequestID
         )
-        #expect(nextComposerText.isEmpty)
+        #expect(nextComposerText?.isEmpty == true)
         #expect(state.submittedRequestID == request.id)
 
         state.applyRequestIDChange(nil)
         #expect(state.submittedRequestID == request.id)
         #expect(state.currentPage == 0)
         #expect(state.draftAnswers.isEmpty)
-        #expect(nextComposerText.isEmpty)
+        #expect(nextComposerText?.isEmpty == true)
 
         let afterRequestCleared = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
             request: nil,

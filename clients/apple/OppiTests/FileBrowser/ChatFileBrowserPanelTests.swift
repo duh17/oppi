@@ -24,7 +24,7 @@ struct ChatFileBrowserPanelTests {
         #expect(store.tab(for: "session-2") == .changed)
     }
 
-    @Test func tabStoreFallsBackToChangedForMissingOrInvalidSessionIds() {
+    @Test func tabStoreFallsBackToChangedForMissingOrInvalidSessionIds() throws {
         let fixture = try makeDefaults()
         defer { fixture.cleanup() }
         let store = ChatFileBrowserPanelTabStore(defaults: fixture.defaults)

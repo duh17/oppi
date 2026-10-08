@@ -628,7 +628,7 @@ struct AppEventStreamClientTests {
         leftoverExpiresAtMs: Int64? = nil,
         currentTokenProvider: (@Sendable () async throws -> String)? = nil,
         refreshTokenProvider: (@Sendable () async throws -> String)? = nil
-    ) throws -> AppEventStreamClient {
+    ) -> AppEventStreamClient {
         let url = testUnwrap(URL(string: "ws://127.0.0.1:7749/app/events/stream"))
         return AppEventStreamClient(
             url: url,
