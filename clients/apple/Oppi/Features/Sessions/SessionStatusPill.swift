@@ -25,6 +25,25 @@ extension SessionStatusKind {
     }
 }
 
+/// Unread-style dot on a row's leading icon while the session needs attention,
+/// in the status tint, so Done and Error read from across the list, not only
+/// from the trailing label.
+struct SessionAttentionDot: View {
+    @Environment(\.theme) private var theme
+
+    let status: SessionStatusKind
+
+    var body: some View {
+        if status.needsAttention {
+            Circle()
+                .fill(status.tint(theme))
+                .frame(width: 9, height: 9)
+                .offset(x: 3, y: -3)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
 /// Compact text status aligned to the row's trailing edge.
 struct SessionStatusPill: View {
     @Environment(\.theme) private var theme
@@ -37,7 +56,7 @@ struct SessionStatusPill: View {
 
     var body: some View {
         Text(status.label)
-            .font(.caption2.weight(.medium))
+            .font(.caption2.weight(status.needsAttention ? .semibold : .medium))
             .foregroundStyle(status.tint(theme))
             .multilineTextAlignment(.trailing)
     }

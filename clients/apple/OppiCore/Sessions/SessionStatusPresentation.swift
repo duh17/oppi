@@ -44,6 +44,11 @@ enum SessionStatusKind: Equatable, Hashable, Sendable, CaseIterable {
         case .working, .error, .done, .idle, .stopped: false
         }
     }
+
+    /// The person owes this session a look: it is blocked, or its outcome is unseen.
+    var needsAttention: Bool {
+        isBlocked || self == .done || self == .error
+    }
 }
 
 // MARK: - Program status

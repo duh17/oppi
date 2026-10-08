@@ -5,6 +5,35 @@ struct SessionStoreSyncToken: Equatable, Sendable {
     fileprivate let generation: UInt64
 }
 
+/// Device-local home for each server's `SessionSeenLedger`. Without it, every
+/// relaunch (iOS ends background apps often) reset the baseline and turned each
+/// unopened Done back to Idle.
+struct SessionSeenLedgerStorage {
+    /// Watermarks older than this expire, keeping the stored ledger small.
+    static let retention: TimeInterval = 30 * 24 * 60 * 60
+
+    let defaults: UserDefaults
+
+    private func key(_ serverId: String) -> String {
+        "\(AppIdentifiers.subsystem).sessionSeen.\(serverId)"
+    }
+
+    func load(serverId: String) -> SessionSeenLedger? {
+        guard let data = defaults.data(forKey: key(serverId)) else { return nil }
+        return try? JSONDecoder().decode(SessionSeenLedger.self, from: data)
+    }
+
+    func save(_ ledger: SessionSeenLedger, serverId: String, now: Date = Date()) {
+        var stored = ledger
+        stored.expire(before: now.addingTimeInterval(-Self.retention))
+        defaults.set(try? JSONEncoder().encode(stored), forKey: key(serverId))
+    }
+
+    func remove(serverId: String) {
+        defaults.removeObject(forKey: key(serverId))
+    }
+}
+
 /// Observable store for session list and active session state.
 ///
 /// Internally partitioned by server ID — each server's sessions are stored
@@ -62,9 +91,16 @@ final class SessionStore {
     /// error outcome only while it is newer than this (see `SessionStatusKind`).
     private var serverSeenLedgers: [String: SessionSeenLedger] = [:]
 
-    /// Outcomes that began before this store existed count as seen, so a fresh launch
-    /// does not paint every earlier run Done.
+    /// Outcomes that began before this server's ledger first existed count as seen, so
+    /// the first launch does not paint every earlier run Done.
     private let seenBaseline = Date()
+
+    /// Persists seen ledgers across launches; nil keeps them in memory (tests, previews).
+    @ObservationIgnored private let seenStorage: SessionSeenLedgerStorage?
+
+    init(seenStorage: SessionSeenLedgerStorage? = nil) {
+        self.seenStorage = seenStorage
+    }
 
     // ── Per-server freshness tracking ──
 
@@ -167,6 +203,16 @@ final class SessionStore {
         if serverSessions[serverId] == nil {
             serverSessions[serverId] = []
         }
+        if serverSeenLedgers[serverId] == nil, let seenStorage {
+            if let stored = seenStorage.load(serverId: serverId) {
+                serverSeenLedgers[serverId] = stored
+            } else {
+                // Store the baseline now, so later launches keep this device's first-seen line.
+                let ledger = SessionSeenLedger(baseline: seenBaseline)
+                serverSeenLedgers[serverId] = ledger
+                seenStorage.save(ledger, serverId: serverId)
+            }
+        }
         if serverListProjectionSessions[serverId] == nil {
             serverListProjectionSessions[serverId] = []
         }
@@ -225,6 +271,7 @@ final class SessionStore {
         }
         guard ledger != serverSeenLedgers[key] else { return }
         serverSeenLedgers[key] = ledger
+        if let activeServerId { seenStorage?.save(ledger, serverId: activeServerId) }
     }
 
     private func seenLedger(for key: String) -> SessionSeenLedger {
@@ -922,6 +969,9 @@ final class SessionStore {
         let key = activeServerKey
         serverListAttentionCounts[key]?.removeValue(forKey: id)
         serverSeenLedgers[key]?.forget(id)
+        if let activeServerId, let ledger = serverSeenLedgers[key] {
+            seenStorage?.save(ledger, serverId: activeServerId)
+        }
         if activeSessionId == id {
             activeSessionId = nil
         }

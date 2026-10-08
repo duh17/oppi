@@ -1252,6 +1252,75 @@ struct SessionStoreSeenTrackingTests {
     }
 }
 
+@Suite("SessionStore Seen Persistence")
+@MainActor
+struct SessionStoreSeenPersistenceTests {
+    private func storage() -> SessionSeenLedgerStorage {
+        let suite = "SessionStoreSeenPersistenceTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        return SessionSeenLedgerStorage(defaults: defaults)
+    }
+
+    private func finished(_ id: String, at since: Date) -> Session {
+        makeTestSession(
+            id: id,
+            status: .ready,
+            programStatus: ProgramStatus(state: .done, since: since),
+            messageCount: 2,
+            firstMessage: "go"
+        )
+    }
+
+    private func status(_ id: String, in store: SessionStore) -> SessionStatusKind? {
+        store.session(id: id).map {
+            SessionStatusKind.resolve(session: $0, seenAt: store.seenAt(for: id))
+        }
+    }
+
+    /// The app relaunched: a new store over the same device storage.
+    private func relaunch(_ storage: SessionSeenLedgerStorage, sessions: [Session]) -> SessionStore {
+        let store = SessionStore(seenStorage: storage)
+        store.switchServer(to: "srv1")
+        store.upsertMany(sessions)
+        return store
+    }
+
+    @Test func anUnopenedResultStaysDoneAcrossRelaunchUntilOpened() {
+        let storage = storage()
+        let firstLaunch = relaunch(storage, sessions: [])
+        let result = Date().addingTimeInterval(60)
+        firstLaunch.upsertMany([finished("unopened", at: result), finished("opened", at: result)])
+        firstLaunch.markSeen(sessionId: "opened")
+
+        let secondLaunch = relaunch(storage, sessions: [finished("unopened", at: result), finished("opened", at: result)])
+
+        #expect(status("unopened", in: secondLaunch) == .done)
+        #expect(status("opened", in: secondLaunch) == .idle)
+    }
+
+    @Test func resultsFromBeforeTheFirstLaunchStaySeenAfterRelaunch() {
+        let storage = storage()
+        _ = relaunch(storage, sessions: [])
+
+        let later = relaunch(storage, sessions: [finished("old", at: Date().addingTimeInterval(-3_600))])
+
+        #expect(status("old", in: later) == .idle)
+    }
+}
+
+@Test func seenLedgerExpiryCountsOlderOutcomesSeenAndKeepsNewerWatermarks() {
+    var ledger = SessionSeenLedger(baseline: Date(timeIntervalSince1970: 100))
+    ledger.markSeen("old", at: Date(timeIntervalSince1970: 200))
+    ledger.markSeen("recent", at: Date(timeIntervalSince1970: 900))
+
+    ledger.expire(before: Date(timeIntervalSince1970: 500))
+
+    #expect(ledger.seenAt(for: "old") == Date(timeIntervalSince1970: 500))
+    #expect(ledger.seenAt(for: "never") == Date(timeIntervalSince1970: 500))
+    #expect(ledger.seenAt(for: "recent") == Date(timeIntervalSince1970: 900))
+}
+
 @Test func seenLedgerForgetDropsTheWatermark() {
     let baseline = Date(timeIntervalSince1970: 100)
     var ledger = SessionSeenLedger(baseline: baseline)

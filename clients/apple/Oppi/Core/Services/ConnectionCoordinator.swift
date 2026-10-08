@@ -58,6 +58,8 @@ final class ConnectionCoordinator {
     let serverStore: ServerStore
     private let timelineCache: TimelineCache
     private let fileBrowserCache: FileBrowserCache
+    /// Seen ledgers for each server's connection; nil keeps seen state in memory.
+    private let seenStorage: SessionSeenLedgerStorage?
 
     /// Currently focused server ID (fingerprint). The server whose data
     /// is displayed in the main UI.
@@ -127,11 +129,13 @@ final class ConnectionCoordinator {
         serverStore: ServerStore,
         lanDiscovery: LANDiscovery = LANDiscovery(),
         timelineCache: TimelineCache = .shared,
-        fileBrowserCache: FileBrowserCache = .shared
+        fileBrowserCache: FileBrowserCache = .shared,
+        seenStorage: SessionSeenLedgerStorage? = nil
     ) {
         self.serverStore = serverStore
         self.timelineCache = timelineCache
         self.fileBrowserCache = fileBrowserCache
+        self.seenStorage = seenStorage
         self.lanDiscovery = lanDiscovery
         lanDiscovery.onUpdate = { [weak self] endpoints in
             self?.applyLANDiscovery(endpoints)
@@ -185,7 +189,7 @@ final class ConnectionCoordinator {
             return existing
         }
 
-        let connection = ServerConnection()
+        let connection = ServerConnection(seenStorage: seenStorage)
         guard connection.configure(credentials: server.credentials) else { return disconnectedSentinel }
         initializeStores(for: connection, serverId: serverId)
         connections[serverId] = connection
@@ -236,7 +240,7 @@ final class ConnectionCoordinator {
         if let existing = connections[server.id] {
             return existing
         }
-        let staged = ServerConnection()
+        let staged = ServerConnection(seenStorage: seenStorage)
         initializeStores(for: staged, serverId: server.id)
         connections[server.id] = staged
         return staged
@@ -401,7 +405,7 @@ final class ConnectionCoordinator {
             return existing
         }
 
-        let connection = ServerConnection()
+        let connection = ServerConnection(seenStorage: seenStorage)
         // Feed verified discovery into the HTTPS endpoint selection before initial configuration.
         connection.setDiscoveredLANEndpoint(initialLANEndpoint)
         guard await configureConnection(
@@ -1079,6 +1083,7 @@ final class ConnectionCoordinator {
         timelineCache.markRemoved(serverId)
         fileBrowserCache.markRemoved(serverId)
         connection?.sessionStore.removeServer(serverId)
+        seenStorage?.remove(serverId: serverId)
         connection?.workspaceStore.removeServer(serverId)
         await timelineCache.removeServer(serverId)
         await fileBrowserCache.removeServer(serverId)

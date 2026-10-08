@@ -359,6 +359,9 @@ struct SessionRow: View {
         )
         .frame(width: 20, height: 20)
         .frame(width: 24, height: 24)
+        .overlay(alignment: .topTrailing) {
+            SessionAttentionDot(status: statusKind)
+        }
     }
 
     private func highlightedSearchSnippet(_ snippet: AttributedString) -> AttributedString {

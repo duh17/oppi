@@ -255,7 +255,7 @@ final class ServerConnection {
     private(set) var durableSessionsAvailable = false
 
     // Stores
-    let sessionStore = SessionStore()
+    let sessionStore: SessionStore
     let askRequestStore = AskRequestStore()
     let workspaceStore = WorkspaceStore()
     let serverResourceStore = ServerResourceStore()
@@ -440,7 +440,8 @@ final class ServerConnection {
     @ObservationIgnored var sessionUsageMetricSnapshots: [String: SessionUsageMetricSnapshot] = [:]
     @ObservationIgnored var sessionUsageMetricLastEmittedAt: [String: Date] = [:]
 
-    init() {
+    init(seenStorage: SessionSeenLedgerStorage? = nil) {
+        sessionStore = SessionStore(seenStorage: seenStorage)
         // Wire silence watchdog probe to request a state refresh.
         silenceWatchdog.onProbe = { [weak self] in
             try? await self?.requestState()

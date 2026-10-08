@@ -392,7 +392,10 @@ enum FileLinkOpenPolicy {
 @main
 struct OppiApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var coordinator = ConnectionCoordinator(serverStore: ServerStore())
+    @State private var coordinator = ConnectionCoordinator(
+        serverStore: ServerStore(),
+        seenStorage: SessionSeenLedgerStorage(defaults: .standard)
+    )
     @State private var navigation = AppNavigation()
     @State private var themeStore = ThemeStore()
     @State private var quickCommentTemplateStore = QuickCommentTemplateStore()
