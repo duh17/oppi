@@ -2,6 +2,86 @@ import SwiftUI
 import TipKit
 import UIKit
 
+/// Header-only element. Body controls stay siblings so expansion does not hide them.
+final class ToolTimelineHeaderElement: UIAccessibilityElement {
+    var onActivate: (() -> Bool)?
+
+    override func accessibilityActivate() -> Bool {
+        onActivate?() ?? false
+    }
+
+    func apply(
+        configuration: ToolTimelineRowConfiguration,
+        onActivate: (() -> Bool)?,
+        customActions: [UIAccessibilityCustomAction]?
+    ) {
+        accessibilityIdentifier = "chat.timeline.row.\(configuration.itemID).header"
+        accessibilityLabel = Self.spokenLabel(configuration)
+        let execution = Self.executionState(configuration)
+        if onActivate != nil {
+            let expansion = configuration.isExpanded
+                ? String(localized: "Expanded")
+                : String(localized: "Collapsed")
+            accessibilityValue = "\(execution), \(expansion)"
+            accessibilityTraits = .button
+        } else {
+            accessibilityValue = execution
+            accessibilityTraits = []
+        }
+        self.onActivate = onActivate
+        accessibilityCustomActions = customActions
+        // Frame is measured from the title band. Do not advertise the body here.
+    }
+
+    func reset() {
+        onActivate = nil
+        accessibilityIdentifier = nil
+        accessibilityLabel = nil
+        accessibilityValue = nil
+        accessibilityTraits = []
+        accessibilityCustomActions = nil
+        accessibilityFrameInContainerSpace = .zero
+    }
+
+    func updateMeasuredFrame(
+        borderWidth: CGFloat,
+        titleMaxY: CGFloat,
+        statusMaxY: CGFloat,
+        excludedFrames: [CGRect]
+    ) {
+        // Title band only. Do not clip to the body stack origin: that frame
+        // can start at the border top and erase the header.
+        let bandBottom = max(titleMaxY, statusMaxY)
+        var frame = CGRect(x: 0, y: 0, width: max(0, borderWidth), height: max(0, bandBottom))
+        for excluded in excludedFrames where excluded.width > 1 && excluded.height > 1 && frame.intersects(excluded) {
+            let overlap = frame.intersection(excluded)
+            if overlap.minY > frame.minY + 1 {
+                frame.size.height = max(0, overlap.minY - frame.minY)
+            } else if overlap.minX > frame.minX + 1 {
+                frame.size.width = max(0, overlap.minX - frame.minX)
+            } else if excluded.minX > 1 {
+                frame.size.width = max(0, min(frame.width, excluded.minX - frame.minX))
+            }
+        }
+        accessibilityFrameInContainerSpace = frame
+    }
+
+    private static func spokenLabel(_ configuration: ToolTimelineRowConfiguration) -> String {
+        let summary = configuration.headerAccessibilitySummary
+            ?? configuration.segmentAttributedTitle?.string
+            ?? configuration.title
+        let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? String(localized: "Tool") : trimmed
+    }
+
+    private static func executionState(_ configuration: ToolTimelineRowConfiguration) -> String {
+        if configuration.isInterrupted { return String(localized: "Interrupted") }
+        if configuration.isError { return String(localized: "Failed") }
+        if configuration.isDone { return String(localized: "Completed") }
+        return String(localized: "Running")
+    }
+}
+
 /// Lightweight collapsed tool chrome. Expanded rows and voice-while-collapsed
 /// keep `ToolTimelineRowConfiguration` so they can still render content.
 struct CollapsedToolTimelineRowConfiguration: UIContentConfiguration {
@@ -31,6 +111,7 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
     private let elapsedLabel = UILabel()
     private let bodyStack = UIStackView()
     private let borderView = UIView()
+    private lazy var headerElement = ToolTimelineHeaderElement(accessibilityContainer: borderView)
     private let featureTipPresentationOwnerID = UUID()
 
     private var currentConfiguration: CollapsedToolTimelineRowConfiguration
@@ -95,6 +176,41 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
         ) {
             super.layoutSubviews()
         }
+        updateHeaderAccessibilityFrame()
+    }
+
+    func resetHeaderAccessibility() {
+        headerElement.reset()
+        borderView.accessibilityElements = nil
+        borderView.accessibilityElementsHidden = false
+        accessibilityElementsHidden = false
+        accessibilityCustomActions = nil
+    }
+
+    private func updateHeaderAccessibilityFrame() {
+        headerElement.updateMeasuredFrame(
+            borderWidth: borderView.bounds.width,
+            titleMaxY: titleLabel.frame.maxY,
+            statusMaxY: statusImageView.frame.maxY,
+            excludedFrames: headerExcludedFrames()
+        )
+    }
+
+    private func headerExcludedFrames() -> [CGRect] {
+        guard !bodyStack.isHidden, bodyStack.bounds.height > 1 else { return [] }
+        return [bodyStack.convert(bodyStack.bounds, to: borderView).insetBy(dx: 0, dy: -4)]
+    }
+
+    private func refreshHeaderAccessibility() {
+        let showBody = featureTipView != nil
+        if showBody {
+            bodyStackCollapsedHeightConstraint?.isActive = false
+            bodyStack.isHidden = false
+        }
+        borderView.isAccessibilityElement = false
+        bodyStack.isAccessibilityElement = false
+        borderView.accessibilityElements = showBody ? [headerElement, bodyStack] : [headerElement]
+        updateHeaderAccessibilityFrame()
     }
 
     private func setupViews() {
@@ -127,6 +243,9 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
         borderView.addSubview(titleLabel)
         borderView.addSubview(trailingStack)
         borderView.addSubview(bodyStack)
+        borderView.isAccessibilityElement = false
+        bodyStack.isAccessibilityElement = false
+        isAccessibilityElement = false
 
         let layout = ToolTimelineRowLayoutBuilder.makeCollapsedChromeConstraints(
             containerView: self,
@@ -217,6 +336,8 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
         let showBody = featureTipView != nil
         bodyStackCollapsedHeightConstraint?.isActive = !showBody
         bodyStack.isHidden = !showBody
+        headerElement.apply(configuration: chrome, onActivate: chrome.onHeaderActivate, customActions: nil)
+        refreshHeaderAccessibility()
     }
 
     private func applyToolIcon(toolNamePrefix: String?, toolNameColor: UIColor) {
@@ -328,6 +449,9 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
         featureTipID = descriptor.id
         ToolTimelineRowContentView.activeInlineFeatureTipIDs.insert(descriptor.id)
         bodyStack.insertArrangedSubview(tipView, at: 0)
+        bodyStackCollapsedHeightConstraint?.isActive = false
+        bodyStack.isHidden = false
+        refreshHeaderAccessibility()
         invalidateLayoutForFeatureEducationTipSizeChange()
     }
 
@@ -344,6 +468,9 @@ final class CollapsedToolTimelineRowContentView: UIView, UIContentView {
         }
         self.featureTipView = nil
         featureTipID = nil
+        bodyStackCollapsedHeightConstraint?.isActive = true
+        bodyStack.isHidden = true
+        refreshHeaderAccessibility()
         invalidateLayoutForFeatureEducationTipSizeChange()
     }
 

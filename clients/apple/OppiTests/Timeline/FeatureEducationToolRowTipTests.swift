@@ -59,7 +59,15 @@ struct FeatureEducationToolRowTipTests {
         let rowView = ToolTimelineRowContentView(configuration: initial)
 
         rowView.configuration = done
-        #expect(inlineFeatureTipView(in: rowView) != nil, "Expected the completed tool row to insert its feature education tip")
+        let tip = try #require(inlineFeatureTipView(in: rowView), "Expected the completed tool row to insert its feature education tip")
+        let border = try #require(rowView.subviews.first)
+        let body = try #require(border.accessibilityElements?.compactMap { $0 as? UIStackView }.first)
+        let dismiss = try #require(timelineAllViews(in: body).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "feature-tip.dismiss"
+        })
+        #expect(tip.isDescendant(of: body))
+        #expect(timelineViewIsVisible(dismiss))
+        #expect(dismiss.accessibilityLabel == "Dismiss tip")
 
         #expect(invalidationRequests > 0, "Adding an inline feature tip must request timeline cell remeasurement")
     }

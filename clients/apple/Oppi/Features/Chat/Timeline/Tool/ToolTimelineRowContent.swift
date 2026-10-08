@@ -67,6 +67,10 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var currentFileOpenIntent: ToolCurrentFileOpenIntent? = nil
     var openCurrentFile: (() -> Void)? = nil
     var openFullScreen: ((ChatReaderPayload) -> Void)? = nil
+    /// Same owner as a timeline selection tap. Nil when the row cannot expand.
+    var onHeaderActivate: (() -> Bool)? = nil
+    /// Spoken header summary. Not an identifier.
+    var headerAccessibilitySummary: String? = nil
     var toolOutputSidecarSource: ToolOutputSidecarWindowSource? = nil
     /// Copy/share fetches the complete sidecar. Expand must not use this path.
     var fetchCompleteToolOutput: (() async throws -> String?)? = nil
@@ -192,6 +196,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private let imagePreviewContainer = UIView()
     private let imagePreviewImageView = UIImageView()
     private let borderView = UIView()
+    private lazy var headerElement = ToolTimelineHeaderElement(accessibilityContainer: borderView)
 
     private var currentConfiguration: ToolTimelineRowConfiguration
     private var currentInteractionPolicy: ToolTimelineRowInteractionPolicy?
@@ -395,6 +400,42 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             )
         }
         bashToolRowView.flushDeferredScrollToBottom()
+        updateHeaderAccessibilityFrame()
+    }
+
+    func resetHeaderAccessibility() {
+        headerElement.reset()
+        borderView.accessibilityElements = nil
+        borderView.accessibilityElementsHidden = false
+        accessibilityElementsHidden = false
+        accessibilityCustomActions = nil
+    }
+
+    private func updateHeaderAccessibilityFrame() {
+        headerElement.updateMeasuredFrame(
+            borderWidth: borderView.bounds.width,
+            titleMaxY: titleLabel.frame.maxY,
+            statusMaxY: statusImageView.frame.maxY,
+            excludedFrames: headerExcludedFrames()
+        )
+    }
+
+    private func headerExcludedFrames() -> [CGRect] {
+        var frames: [CGRect] = []
+        if !audioPlaybackButton.isHidden, audioPlaybackButton.bounds.width > 1 {
+            frames.append(
+                audioPlaybackButton.convert(audioPlaybackButton.bounds, to: borderView).insetBy(dx: -4, dy: -1)
+            )
+        }
+        guard case .audioMessage = currentConfiguration.expandedContent,
+              let audioBody = hostedSurface.contentView,
+              !audioBody.isHidden,
+              audioBody.bounds.width > 1,
+              audioBody.bounds.height > 1 else {
+            return frames
+        }
+        frames.append(audioBody.convert(audioBody.bounds, to: borderView).insetBy(dx: -1, dy: -4))
+        return frames
     }
 
     private func collapsedTitleAvailableWidth() -> CGFloat {
@@ -1045,6 +1086,9 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         borderView.addSubview(titleLabel)
         borderView.addSubview(trailingStack)
         borderView.addSubview(bodyStack)
+        borderView.isAccessibilityElement = false
+        bodyStack.isAccessibilityElement = false
+        isAccessibilityElement = false
 
         let layout = ToolTimelineRowLayoutBuilder.makeConstraints(
             containerView: self,
@@ -1222,13 +1266,20 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             isExpandingTransition: isExpandingTransition
         )
 
-        accessibilityCustomActions = currentFileActivationAvailable
+        let currentFileActions: [UIAccessibilityCustomAction]? = currentFileActivationAvailable
             ? [UIAccessibilityCustomAction(
                 name: String(localized: "Open Current File"),
                 target: self,
                 selector: #selector(handleCurrentFileAccessibilityAction)
             )]
             : nil
+        accessibilityCustomActions = currentFileActions
+        headerElement.apply(
+            configuration: configuration,
+            onActivate: configuration.onHeaderActivate,
+            customActions: currentFileActions
+        )
+        updateAccessibilityChildren()
 
         // 6. Status appearance
         ToolTimelineRowDisplayState.applyStatusAppearance(
@@ -1401,7 +1452,37 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         invalidateLayoutForFeatureEducationTipSizeChange()
     }
 
+    private func updateAccessibilityChildren() {
+        let hasBody = featureTipView != nil
+            || !previewLabel.isHidden
+            || !imagePreviewContainer.isHidden
+            || !expandedContainer.isHidden
+            || !bashToolRowView.isHidden
+            || inspectionSupplementView?.isHidden == false
+        if hasBody {
+            bodyStackCollapsedHeightConstraint?.isActive = false
+            bodyStack.isHidden = false
+        }
+        borderView.isAccessibilityElement = false
+        bodyStack.isAccessibilityElement = false
+        expandedContainer.isAccessibilityElement = false
+        bashToolRowView.isAccessibilityElement = false
+        if case .audioMessage = currentConfiguration.expandedContent {
+            hostedSurface.contentView?.isAccessibilityElement = false
+        }
+        var elements: [Any] = [headerElement]
+        if !audioPlaybackButton.isHidden {
+            elements.append(audioPlaybackButton)
+        }
+        if hasBody || !bodyStack.isHidden {
+            elements.append(bodyStack)
+        }
+        borderView.accessibilityElements = elements
+        updateHeaderAccessibilityFrame()
+    }
+
     private func invalidateLayoutForFeatureEducationTipSizeChange() {
+        updateAccessibilityChildren()
 #if DEBUG
         Self.featureEducationTipLayoutInvalidationHookForTesting?()
 #endif

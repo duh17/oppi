@@ -11,6 +11,7 @@ Oppi brings [Pi](https://github.com/badlogic/pi-mono) coding sessions to iPhone,
 - Do not change the Mac app for a feature unless the request explicitly names Mac, macOS, desktop, or OppiMac. Mac is outside feature-implementation scope. Shared code that iOS uses, and that Mac may use later, belongs in `OppiCore`. Do not add Mac UI, Mac tests, or a Mac release only because `OppiCore` changed.
 - Protocol changes follow the "Protocol boundary" checklist in `dev/architecture-server.md`: keep affected server types, Apple models, snapshots, and tests on both sides aligned. Ordinary tests must not rewrite tracked fixtures; regenerate deliberately.
 - Generic extension UI must work for every extension. Read display behavior from protocol metadata; never branch on specific tool, extension, status, widget, or display names.
+- iOS agent-facing controls keep native accessibility semantics: stable scoped identifiers, the same owner action for touch and accessibility activation, and reset semantics on reuse. See `dev/testing/ios-accessibility-testability.md`.
 - Keep agentic-loop evidence inspectable: claims, continuation decisions, blockers, and their reasons. Do not hide or over-truncate that output.
 - Store files by purpose:
   - `.internal/` lasting private work (reports, research, diagrams)

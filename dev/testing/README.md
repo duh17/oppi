@@ -16,6 +16,8 @@ Use these canonical test commands for the Oppi monorepo.
 
 Never pipe `sim-pool.sh` output through `grep`, `tail`, or `head`; read its summary and log paths. Long runs go through `background_job`.
 
+Semantic iOS controls follow [iOS accessibility and agent testability](ios-accessibility-testability.md). The QA driver already refuses `firstMatch` and coordinate fallbacks; see [qa-verification.md](qa-verification.md).
+
 ## Policy as code
 
 - Gate policy: `server/testing-policy.json`
@@ -35,6 +37,7 @@ This page keeps the rules that always apply. Read only the detail page for the a
 | Page | Covers |
 | --- | --- |
 | [Apple](apple.md) | Apple |
+| [iOS accessibility](ios-accessibility-testability.md) | Agent-facing control identity and activation |
 | [Mac](mac.md) | Mac |
 
 ## Server

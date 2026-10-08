@@ -60,6 +60,8 @@ struct SessionToolbar: View {
             }
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Model")
+        .accessibilityValue(modelDisplay)
         .accessibilityIdentifier("session.toolbar.model")
 
         Button {

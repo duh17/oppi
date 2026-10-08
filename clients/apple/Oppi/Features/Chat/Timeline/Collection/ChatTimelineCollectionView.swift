@@ -1618,30 +1618,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             }
 
             switch item {
-            case .toolCall(_, let tool, _, _, let outputByteCount, _, _):
-                // Interactive settlement is independent of manual inspection.
-
-                if presentReadImagePreviewInsteadOfExpanding(
-                    itemID: itemID,
-                    item: item,
-                    indexPath: indexPath,
-                    in: collectionView
-                ) {
-                    if reducer.expandedItemIDs.contains(itemID) {
-                        reducer.expandedItemIDs.remove(itemID)
-                        updateLiveTailItemIDsFromCurrentState(in: collectionView)
-                        anchoredReconfigureToolRow(
-                            itemID: itemID,
-                            anchorIndexPath: indexPath,
-                            in: collectionView,
-                            preserveTopEdge: true
-                        )
-                    }
-                    return
-                }
-
-                toggleOutputRow(itemID: itemID, tool: tool, outputByteCount: outputByteCount,
-                    indexPath: indexPath, in: collectionView)
+            case .toolCall:
+                activateToolHeader(itemID: itemID, in: collectionView)
             case .thinking:
                 // Thinking rows own their long-form entry points (floating
                 // button, context menu, pinch/double-tap) to match tool rows.
@@ -1655,8 +1633,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
             case .customEvent(_, _, let presentation):
                 if presentation.terminalOutput != nil {
-                    toggleOutputRow(itemID: itemID, tool: "", outputByteCount: 0,
-                        indexPath: indexPath, in: collectionView)
+                    activateToolHeader(itemID: itemID, in: collectionView)
                     return
                 }
                 guard let row = systemEventRowConfiguration(itemID: itemID, item: item) as? CustomTimelineRowConfiguration,
@@ -1681,6 +1658,77 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             default:
                 break
             }
+        }
+
+        /// Selection and the header accessibility action both resolve the row
+        /// here, by item ID, at activation time. A captured index path is stale
+        /// after reuse or a snapshot reorder.
+        @discardableResult
+        func activateToolHeader(itemID: String, in collectionView: UICollectionView) -> Bool {
+            guard let index = currentIDs.firstIndex(of: itemID),
+                  let item = currentItemByID[itemID],
+                  reducer != nil else { return false }
+            let indexPath = IndexPath(item: index, section: 0)
+            switch item {
+            case .toolCall(_, let tool, _, _, let outputByteCount, _, _):
+                return activateToolCallHeader(
+                    itemID: itemID,
+                    item: item,
+                    tool: tool,
+                    outputByteCount: outputByteCount,
+                    indexPath: indexPath,
+                    in: collectionView
+                )
+            case .customEvent(_, _, let presentation) where presentation.terminalOutput != nil:
+                toggleOutputRow(
+                    itemID: itemID,
+                    tool: "",
+                    outputByteCount: 0,
+                    indexPath: indexPath,
+                    in: collectionView
+                )
+                return true
+            default:
+                return false
+            }
+        }
+
+        private func activateToolCallHeader(
+            itemID: String,
+            item: ChatItem,
+            tool: String,
+            outputByteCount: Int,
+            indexPath: IndexPath,
+            in collectionView: UICollectionView
+        ) -> Bool {
+            guard let reducer else { return false }
+            // Interactive settlement is independent of manual inspection.
+            if presentReadImagePreviewInsteadOfExpanding(
+                itemID: itemID,
+                item: item,
+                indexPath: indexPath,
+                in: collectionView
+            ) {
+                if reducer.expandedItemIDs.contains(itemID) {
+                    reducer.expandedItemIDs.remove(itemID)
+                    updateLiveTailItemIDsFromCurrentState(in: collectionView)
+                    anchoredReconfigureToolRow(
+                        itemID: itemID,
+                        anchorIndexPath: indexPath,
+                        in: collectionView,
+                        preserveTopEdge: true
+                    )
+                }
+                return true
+            }
+            toggleOutputRow(
+                itemID: itemID,
+                tool: tool,
+                outputByteCount: outputByteCount,
+                indexPath: indexPath,
+                in: collectionView
+            )
+            return true
         }
 
         private func toggleOutputRow(itemID: String, tool: String, outputByteCount: Int,

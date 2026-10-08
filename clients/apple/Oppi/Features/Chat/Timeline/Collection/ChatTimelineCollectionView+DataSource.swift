@@ -48,6 +48,7 @@ final class SafeSizingCell: UICollectionViewCell {
     private var navigationHighlightToken: UInt = 0
     private var preparationItemID: String?
     private var cancelPreparationDemand: (() -> Void)?
+    private weak var toolHeaderContentView: UIView?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -73,6 +74,21 @@ final class SafeSizingCell: UICollectionViewCell {
         isStreamingAssistant = false
         invalidateStreamingHeightCache()
         cancelTimelinePreparationDemand()
+        accessibilityIdentifier = nil
+        accessibilityElementsHidden = false
+        releaseToolHeaderAccessibility()
+    }
+
+    func bindToolHeaderContentView(_ view: UIView?) {
+        toolHeaderContentView = view
+    }
+
+    /// Drop a header that belonged to the previous item, including when the
+    /// next configuration is placeholder or non-tool chrome.
+    func releaseToolHeaderAccessibility() {
+        (toolHeaderContentView as? ToolTimelineRowContentView)?.resetHeaderAccessibility()
+        (toolHeaderContentView as? CollapsedToolTimelineRowContentView)?.resetHeaderAccessibility()
+        toolHeaderContentView = nil
     }
 
     func bindTimelinePreparationDemand(
@@ -551,16 +567,17 @@ extension ChatTimelineCollectionHost.Controller {
             return
         }
 
+        let configured = toolHeaderConfiguration(nativeConfig, item: item, itemID: itemID)
         let toolContext: ChatTimelinePerf.ToolCellContext?
         if case .toolCall(_, let tool, _, _, let outputByteCount, _, _) = item {
-            if let toolConfig = nativeConfig as? ToolTimelineRowConfiguration {
+            if let toolConfig = configured as? ToolTimelineRowConfiguration {
                 toolContext = ChatTimelinePerf.ToolCellContext(
                     tool: tool,
                     isExpanded: toolConfig.isExpanded,
                     contentType: toolConfig.expandedContent.map(Self.contentTypeName) ?? "collapsed",
                     outputBytes: outputByteCount
                 )
-            } else if nativeConfig is CollapsedToolTimelineRowConfiguration {
+            } else if configured is CollapsedToolTimelineRowConfiguration {
                 toolContext = ChatTimelinePerf.ToolCellContext(
                     tool: tool,
                     isExpanded: false,
@@ -576,11 +593,48 @@ extension ChatTimelineCollectionHost.Controller {
 
         applyNativeRow(
             to: cell,
-            configuration: nativeConfig,
+            configuration: configured,
             rowType: "\(rowLabel)_native",
             startNs: configureStartNs,
             toolContext: toolContext
         )
+    }
+
+    private func toolHeaderConfiguration(
+        _ configuration: any UIContentConfiguration,
+        item: ChatItem,
+        itemID: String
+    ) -> any UIContentConfiguration {
+        guard Self.toolHeaderExpandsOnSelection(item) else { return configuration }
+        // Ask rows expand for inspection on the same owner as every other tool
+        // tap. A nil activation is the non-expandable case.
+        let activation: (() -> Bool)? = { [weak self] in
+            guard let self, let collectionView = self.collectionView else { return false }
+            return self.activateToolHeader(itemID: itemID, in: collectionView)
+        }
+        if var toolConfig = configuration as? ToolTimelineRowConfiguration {
+            toolConfig.onHeaderActivate = activation
+            return toolConfig
+        }
+        if let collapsed = configuration as? CollapsedToolTimelineRowConfiguration {
+            var chrome = collapsed.chrome
+            chrome.onHeaderActivate = activation
+            return CollapsedToolTimelineRowConfiguration(chrome: chrome)
+        }
+        return configuration
+    }
+
+    /// Tool-cell chrome whose collection tap expands. Terminal custom events
+    /// use that cell; other custom cards do not.
+    private static func toolHeaderExpandsOnSelection(_ item: ChatItem) -> Bool {
+        switch item {
+        case .toolCall:
+            return true
+        case .customEvent(_, _, let presentation):
+            return presentation.terminalOutput != nil
+        default:
+            return false
+        }
     }
 
     private static func contentTypeName(
@@ -607,7 +661,19 @@ extension ChatTimelineCollectionHost.Controller {
         startNs: UInt64,
         toolContext: ChatTimelinePerf.ToolCellContext? = nil
     ) {
+        cell.releaseToolHeaderAccessibility()
         cell.contentConfiguration = configuration
+        if configuration is ToolTimelineRowConfiguration {
+            cell.bindToolHeaderContentView(Self.firstSubview(
+                ofType: ToolTimelineRowContentView.self, in: cell.contentView
+            ))
+        } else if configuration is CollapsedToolTimelineRowConfiguration {
+            cell.bindToolHeaderContentView(Self.firstSubview(
+                ofType: CollapsedToolTimelineRowContentView.self, in: cell.contentView
+            ))
+        } else {
+            cell.bindToolHeaderContentView(nil)
+        }
         cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
         // Re-enforce clipping immediately — UIKit resets contentView.clipsToBounds
         // when applying content configurations, and layoutSubviews won't fire until
@@ -635,6 +701,7 @@ extension ChatTimelineCollectionHost.Controller {
         fallback.textProperties.color = UIColor(Color.themeOrange)
         fallback.secondaryTextProperties.font = AppFont.mono
         fallback.secondaryTextProperties.color = UIColor(Color.themeComment)
+        cell.releaseToolHeaderAccessibility()
         cell.contentConfiguration = fallback
         cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
         cell.contentView.clipsToBounds = true

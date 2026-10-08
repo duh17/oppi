@@ -3,6 +3,369 @@ import Testing
 import UIKit
 @testable import Oppi
 
+@Suite("Tool header accessibility")
+@MainActor
+struct ToolHeaderAccessibilityTests {
+    @Test func collapsedHeaderActivationAndReuseClearOldAction() throws {
+        var activated: [String] = []
+        var first = makeTimelineToolConfiguration(title: "Read notes", isExpanded: false)
+        first.onHeaderActivate = { activated.append("first"); return true }
+        let view = CollapsedToolTimelineRowContentView(
+            configuration: CollapsedToolTimelineRowConfiguration(chrome: first)
+        )
+        let border = try #require(view.subviews.first)
+        let firstElements = try #require(border.accessibilityElements)
+        let header = try #require(firstElements.first as? ToolTimelineHeaderElement)
+        #expect(firstElements.count == 1)
+        #expect(header.accessibilityIdentifier == "chat.timeline.row.tool-row-test-item.header")
+        #expect(header.accessibilityTraits.contains(.button))
+        #expect(header.accessibilityLabel == "Read notes")
+        #expect(header.accessibilityValue == "Completed, Collapsed")
+        #expect(header.accessibilityActivate())
+        #expect(activated == ["first"])
+
+        view.resetHeaderAccessibility()
+        #expect(!header.accessibilityActivate())
+        #expect(header.accessibilityIdentifier == nil)
+        #expect(header.accessibilityLabel == nil)
+        #expect(header.accessibilityValue == nil)
+        #expect(header.accessibilityTraits.isEmpty)
+        #expect(header.accessibilityCustomActions == nil)
+        #expect(border.accessibilityElements == nil)
+
+        var second = first
+        second.headerAccessibilitySummary = "Read notes"
+        second.onHeaderActivate = { activated.append("second"); return true }
+        view.configuration = CollapsedToolTimelineRowConfiguration(chrome: second)
+        #expect(header.accessibilityIdentifier == "chat.timeline.row.tool-row-test-item.header")
+        #expect(header.accessibilityActivate())
+        #expect(activated == ["first", "second"])
+    }
+
+    @Test func cellReuseClearsHeaderIdentityAndActivation() throws {
+        var config = makeTimelineToolConfiguration(isExpanded: false)
+        var activations = 0
+        config.onHeaderActivate = { activations += 1; return true }
+        let cell = SafeSizingCell(frame: CGRect(x: 0, y: 0, width: 350, height: 80))
+        cell.contentConfiguration = CollapsedToolTimelineRowConfiguration(chrome: config)
+        let view = try #require(ChatTimelineCollectionHost.Controller.firstSubview(
+            ofType: CollapsedToolTimelineRowContentView.self, in: cell.contentView
+        ))
+        let border = try #require(view.subviews.first)
+        let header = try #require(border.accessibilityElements?.first as? ToolTimelineHeaderElement)
+        cell.bindToolHeaderContentView(view)
+        #expect(header.accessibilityActivate())
+        cell.prepareForReuse()
+        #expect(!header.accessibilityActivate())
+        #expect(header.accessibilityIdentifier == nil)
+        #expect(header.accessibilityLabel == nil)
+        #expect(border.accessibilityElements == nil)
+        #expect(cell.accessibilityIdentifier == nil)
+        #expect(activations == 1)
+
+        cell.bindToolHeaderContentView(view)
+        view.configuration = CollapsedToolTimelineRowConfiguration(chrome: config)
+        cell.releaseToolHeaderAccessibility()
+        #expect(header.accessibilityIdentifier == nil)
+        #expect(!header.accessibilityActivate())
+    }
+
+    @Test func registeredToolHeaderUsesCurrentItemIdentityAndResetsOnReuse() throws {
+        let harness = makeTimelineHarness(sessionId: "header-a11y")
+        let item = ChatItem.toolCall(
+            id: "tool-1", tool: "bash", argsSummary: "echo hello", outputPreview: "hello",
+            outputByteCount: 5, isError: false, isDone: true
+        )
+        harness.toolArgsStore.set(["command": .string("echo hello")], for: item.id)
+        harness.applyAndLayout(items: [item])
+        let cell = try #require(harness.collectionView.cellForItem(at: IndexPath(item: 0, section: 0)) as? SafeSizingCell)
+        #expect(cell.accessibilityIdentifier == "chat.timeline.row.tool-1")
+        let view = try #require(timelineFirstView(ofType: CollapsedToolTimelineRowContentView.self, in: cell))
+        let border = try #require(view.subviews.first)
+        let header = try #require(border.accessibilityElements?.first as? ToolTimelineHeaderElement)
+        #expect(header.accessibilityIdentifier == "chat.timeline.row.tool-1.header")
+        #expect(header.accessibilityLabel?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+        #expect(header.accessibilityActivate())
+        #expect(harness.reducer.expandedItemIDs.contains(item.id))
+        cell.prepareForReuse()
+        #expect(!header.accessibilityActivate())
+        #expect(header.accessibilityIdentifier == nil)
+    }
+
+    @Test func terminalCustomEventHeaderActivationMatchesSelection() throws {
+        let harness = makeTimelineHarness(sessionId: "term-custom")
+        let presentation = TraceEventPresentation(
+            kind: "custom",
+            title: "Deploy",
+            subtitle: nil,
+            status: nil,
+            body: nil,
+            fields: nil,
+            accent: nil,
+            output: .init(kind: "terminal", entryId: "out-1", command: "echo hi", truncated: false)
+        )
+        let item = ChatItem.customEvent(id: "term-1", message: "Deploy", presentation: presentation)
+        harness.applyAndLayout(items: [item])
+        let cell = try #require(harness.collectionView.cellForItem(at: IndexPath(item: 0, section: 0)))
+        let header = try #require(timelineHeaderElement(in: cell, identifier: "chat.timeline.row.term-1.header"))
+        #expect(header.accessibilityTraits.contains(.button))
+        #expect(header.accessibilityActivate())
+        #expect(harness.reducer.expandedItemIDs.contains("term-1"))
+    }
+
+    @Test func headerActivationResolvesCurrentItemIDNotCapturedIndex() throws {
+        let harness = makeTimelineHarness(sessionId: "header-reorder")
+        let first = ChatItem.toolCall(
+            id: "tool-a", tool: "bash", argsSummary: "echo a", outputPreview: "a",
+            outputByteCount: 1, isError: false, isDone: true
+        )
+        let second = ChatItem.toolCall(
+            id: "tool-b", tool: "bash", argsSummary: "echo b", outputPreview: "b",
+            outputByteCount: 1, isError: false, isDone: true
+        )
+        harness.applyAndLayout(items: [first, second])
+        harness.applyAndLayout(items: [second, first])
+        let moved = try #require(timelineHeaderElement(
+            in: harness.collectionView,
+            identifier: "chat.timeline.row.\(first.id).header"
+        ))
+        #expect(moved.accessibilityActivate())
+        #expect(harness.reducer.expandedItemIDs.contains(first.id))
+        #expect(!harness.reducer.expandedItemIDs.contains(second.id))
+    }
+
+    @Test func realBuilderSpeaksFileVerbsAndExpandedShellCommand() throws {
+        struct Case {
+            let tool: String
+            let args: [String: JSONValue]
+            let expanded: Bool
+            let expected: String
+        }
+        let cases: [Case] = [
+            Case(tool: "read", args: ["path": .string("src/main.swift")], expanded: false, expected: "Read src/main.swift"),
+            Case(tool: "write", args: ["path": .string("src/main.swift")], expanded: false, expected: "Write src/main.swift"),
+            Case(tool: "edit", args: ["path": .string("src/main.swift")], expanded: true, expected: "Edit src/main.swift"),
+            Case(tool: "bash", args: ["command": .string("echo hello")], expanded: true, expected: "Shell echo hello"),
+        ]
+        for entry in cases {
+            let config = ToolPresentationBuilder.build(
+                itemID: "real-\(entry.tool)", tool: entry.tool,
+                argsSummary: "", outputPreview: "hello", isError: false, isDone: true,
+                context: .init(
+                    args: entry.args,
+                    expandedItemIDs: entry.expanded ? ["real-\(entry.tool)"] : [],
+                    fullOutput: "hello", isLoadingOutput: false
+                )
+            )
+            let view: UIView = entry.expanded
+                ? ToolTimelineRowContentView(configuration: config)
+                : CollapsedToolTimelineRowContentView(configuration: .init(chrome: config))
+            let border = try #require(view.subviews.first)
+            let header = try #require(border.accessibilityElements?.first as? ToolTimelineHeaderElement)
+            #expect(header.accessibilityLabel == entry.expected, "\(entry.tool) spoken summary")
+            #expect(!(header.accessibilityLabel?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true))
+        }
+    }
+
+    @Test func blankExpandedShellTitleStillSpeaksCommand() throws {
+        let config = ToolPresentationBuilder.build(
+            itemID: "shell-blank", tool: "bash",
+            argsSummary: "", outputPreview: "hello", isError: false, isDone: true,
+            context: .init(
+                args: ["command": .string("echo hello")],
+                expandedItemIDs: ["shell-blank"],
+                fullOutput: "hello",
+                isLoadingOutput: false,
+                callSegments: [StyledSegment(text: "bash", style: .bold)]
+            )
+        )
+        #expect(config.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        let view = ToolTimelineRowContentView(configuration: config)
+        let header = try #require(view.subviews.first?.accessibilityElements?.first as? ToolTimelineHeaderElement)
+        #expect(header.accessibilityLabel == "Shell echo hello")
+    }
+
+    @Test func headerWithoutOwnerActionDoesNotAdvertiseExpansion() throws {
+        var config = makeTimelineToolConfiguration(title: "Question", isExpanded: false)
+        config.onHeaderActivate = nil
+        let view = CollapsedToolTimelineRowContentView(
+            configuration: CollapsedToolTimelineRowConfiguration(chrome: config)
+        )
+        let header = try #require(view.subviews.first?.accessibilityElements?.first as? ToolTimelineHeaderElement)
+        #expect(!header.accessibilityTraits.contains(.button))
+        #expect(header.accessibilityValue == "Completed")
+        #expect(!header.accessibilityActivate())
+    }
+
+    @Test func askHeaderActivationMatchesSelectionAndIsNotANoOp() throws {
+        let harness = makeTimelineHarness(sessionId: "ask-a11y")
+        let ask = ChatItem.toolCall(
+            id: "ask-1", tool: "ask", argsSummary: "Proceed?", outputPreview: "",
+            outputByteCount: 0, isError: false, isDone: true
+        )
+        harness.applyAndLayout(items: [ask])
+        let cell = try #require(harness.collectionView.cellForItem(at: IndexPath(item: 0, section: 0)))
+        #expect(cell.accessibilityIdentifier == "chat.timeline.row.ask-1")
+        let view = try #require(timelineFirstView(ofType: CollapsedToolTimelineRowContentView.self, in: cell))
+        let header = try #require(view.subviews.first?.accessibilityElements?.first as? ToolTimelineHeaderElement)
+        #expect(header.accessibilityTraits.contains(.button))
+        #expect(header.accessibilityActivate())
+        #expect(harness.reducer.expandedItemIDs.contains("ask-1"))
+    }
+
+    @Test func sameBoundsReconfigurationNeverExposesExpandedBodyAsHeader() throws {
+        var config = makeTimelineToolConfiguration(
+            title: "Work", expandedContent: .text(text: "Visible body", language: nil),
+            isExpanded: true
+        )
+        config.onHeaderActivate = { true }
+        let view = ToolTimelineRowContentView(configuration: config)
+        view.frame = CGRect(origin: .zero, size: fittedTimelineSize(for: view, width: 370))
+        view.layoutIfNeeded()
+        let border = try #require(view.subviews.first)
+        let header = try #require(border.accessibilityElements?.first as? ToolTimelineHeaderElement)
+        let body = try #require(border.accessibilityElements?.compactMap { $0 as? UIStackView }.first)
+        let originalBounds = border.bounds
+
+        config.isInterrupted = true
+        view.configuration = config
+        let headerFrame = header.accessibilityFrameInContainerSpace
+        #expect(border.bounds == originalBounds)
+        #expect(headerFrame.height > 0)
+        #expect(headerFrame.maxY <= body.frame.minY)
+        #expect(headerFrame.height < border.bounds.height)
+        #expect(!headerFrame.intersects(body.frame))
+    }
+
+    @Test func expandedHeaderRetainsBodyAndReflectsExecutionState() throws {
+        var config = makeTimelineToolConfiguration(
+            title: "Read notes", expandedContent: .text(text: "Visible body", language: nil),
+            isExpanded: true, isDone: false
+        )
+        var activations = 0
+        config.onHeaderActivate = { activations += 1; return true }
+        let view = ToolTimelineRowContentView(configuration: config)
+        let border = try #require(view.subviews.first)
+        let elements = try #require(border.accessibilityElements)
+        let header = try #require(elements.first as? ToolTimelineHeaderElement)
+        let body = try #require(elements.compactMap { $0 as? UIStackView }.first)
+        let visibleText = try #require(timelineAllTextViews(in: body).first {
+            timelineRenderedText(of: $0).contains("Visible body") && timelineViewIsVisible($0)
+        })
+        #expect(visibleText.isDescendant(of: body))
+        #expect(header.accessibilityLabel == "Read notes")
+        #expect(header.accessibilityValue == "Running, Expanded")
+        #expect(header.accessibilityActivate())
+        #expect(activations == 1)
+
+        config.isInterrupted = true
+        config.onHeaderActivate = nil
+        view.configuration = config
+        #expect(header.accessibilityValue == "Interrupted")
+        #expect(!header.accessibilityTraits.contains(.button))
+        #expect(!header.accessibilityActivate())
+        #expect(border.accessibilityElements?.contains { $0 is UIStackView } == true)
+    }
+
+    @Test func expandedHeaderFrameDoesNotOverlapAudioControls() throws {
+        let source = AuthenticatedMediaSource(
+            url: testUnwrap(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-a11y-voice")),
+            authorizationHeaderValue: "Bearer test",
+            tlsCertFingerprint: nil,
+            contentTypeHint: "audio/wav",
+            sourceFileExtension: "wav"
+        )
+        var config = makeTimelineToolConfiguration(
+            title: "Voice message",
+            expandedContent: .audioMessage(
+                text: "Play from the body, not the header.",
+                attachmentId: "att-a11y-voice",
+                mimeType: "audio/wav",
+                durationSeconds: 1.0,
+                playbackBehavior: .tapToPlay
+            ),
+            toolNamePrefix: "voice_speak",
+            toolNameColor: .systemPurple,
+            isExpanded: true
+        )
+        config.onHeaderActivate = { true }
+        config = config.withAudioPlayer(AudioPlayerService())
+            .withSessionAttachmentMediaSourceProvider { _, _, _ in source }
+        let view = ToolTimelineRowContentView(configuration: config)
+        let fitted = fittedTimelineSize(for: view, width: 370)
+        view.translatesAutoresizingMaskIntoConstraints = true
+        view.removeFromSuperview()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        window.addSubview(view)
+        view.frame = CGRect(origin: .zero, size: CGSize(width: 370, height: max(fitted.height, 160)))
+        view.layoutIfNeeded()
+
+        let border = try #require(view.subviews.first)
+        let header = try #require(border.accessibilityElements?.first as? ToolTimelineHeaderElement)
+        let strip = try #require(timelineFirstView(ofType: NativeAudioPlayerStripView.self, in: view))
+        let playButton = try #require(timelineAllViews(in: strip).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "chat.timeline.row.\(config.itemID).audio.play"
+        })
+        let headerFrame = header.accessibilityFrameInContainerSpace
+        let stripFrame = strip.convert(strip.bounds, to: border)
+        let playFrame = playButton.convert(playButton.bounds, to: border)
+        let body = try #require(border.accessibilityElements?.compactMap { $0 as? UIStackView }.first)
+        #expect(headerFrame.height > 0)
+        #expect(playFrame.height > 0)
+        #expect(!headerFrame.intersects(stripFrame))
+        #expect(!headerFrame.intersects(playFrame))
+        #expect(playButton.isAccessibilityElement)
+        #expect(playButton.isDescendant(of: body))
+        #expect(timelineViewIsVisible(playButton))
+        var ancestor = playButton.superview
+        while let current = ancestor, current !== border {
+            #expect(!current.isAccessibilityElement)
+            ancestor = current.superview
+        }
+    }
+
+    @Test func reconfigureReplacesCustomActionAndIdentity() throws {
+        var config = makeTimelineToolConfiguration(
+            expandedContent: .markdown(text: "body", filePath: "docs/current.md"),
+            isExpanded: true
+        )
+        config.currentFileOpenIntent = .init(path: "docs/current.md")
+        config.openCurrentFile = {}
+        config.onHeaderActivate = { true }
+        let view = ToolTimelineRowContentView(configuration: config)
+        let header = try #require(view.subviews.first?.accessibilityElements?.first as? ToolTimelineHeaderElement)
+        #expect(header.accessibilityCustomActions?.first?.name == "Open Current File")
+        #expect(view.accessibilityCustomActions?.first?.name == "Open Current File")
+
+        var replacement = makeTimelineToolConfiguration(itemID: "other-item", title: "Other", isExpanded: false)
+        replacement.onHeaderActivate = nil
+        view.configuration = replacement
+        #expect(header.accessibilityIdentifier == "chat.timeline.row.other-item.header")
+        #expect(header.accessibilityLabel == "Other")
+        #expect(header.accessibilityCustomActions == nil)
+        #expect(view.accessibilityCustomActions == nil)
+        #expect(!header.accessibilityTraits.contains(.button))
+    }
+
+}
+
+@MainActor
+private func timelineHeaderElement(in root: UIView, identifier: String) -> ToolTimelineHeaderElement? {
+    if let border = root.subviews.first,
+       let header = border.accessibilityElements?.compactMap({ $0 as? ToolTimelineHeaderElement }).first,
+       header.accessibilityIdentifier == identifier {
+        return header
+    }
+    for child in root.subviews {
+        if let header = timelineHeaderElement(in: child, identifier: identifier) {
+            return header
+        }
+    }
+    return nil
+}
+
 @Suite("ToolTimelineRowContentView")
 struct ToolTimelineRowContentViewTests {
 
@@ -1509,10 +1872,23 @@ struct ToolTimelineRowContentViewTests {
             .withAudioPlayer(AudioPlayerService())
             .withSessionAttachmentMediaSourceProvider { _, _, _ in source }
         let view = ToolTimelineRowContentView(configuration: config)
-        view.frame = CGRect(origin: .zero, size: fittedTimelineSize(for: view, width: 370))
+        let fitted = fittedTimelineSize(for: view, width: 370)
+        view.translatesAutoresizingMaskIntoConstraints = true
+        view.removeFromSuperview()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        window.addSubview(view)
+        view.frame = CGRect(origin: .zero, size: CGSize(width: 370, height: max(fitted.height, 80)))
         view.layoutIfNeeded()
 
         let button = try #require(timelineAllViews(in: view).compactMap { $0 as? UIButton }.first { !$0.isHidden })
+        let border = try #require(view.subviews.first)
+        let header = try #require(border.accessibilityElements?.first as? ToolTimelineHeaderElement)
+        let buttonFrame = button.convert(button.bounds, to: border)
+        #expect(header.accessibilityFrameInContainerSpace.height > 0)
+        #expect(buttonFrame.height > 0)
+        #expect(!header.accessibilityFrameInContainerSpace.intersects(buttonFrame))
         let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: view)
 
         #expect(view.hitTest(point, with: nil) === button)

@@ -176,6 +176,7 @@ final class NativeAudioMessageView: UIView {
         self.playbackBehavior = playbackBehavior
         self.sessionId = sessionId
         self.durationSeconds = durationSeconds
+        isAccessibilityElement = false
         accessibilityIdentifier = "chat.timeline.row.\(id).audio.message"
         messageLabel.accessibilityIdentifier = "chat.timeline.row.\(id).audio.message.transcript"
         self.decodedData = nil

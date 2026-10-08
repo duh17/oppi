@@ -79,6 +79,9 @@ final class NativeAudioPlayerStripView: UIView {
         progressView.isHidden = isUnavailable
         timeLabel.isHidden = isUnavailable
         expandButton.isHidden = false
+        isAccessibilityElement = false
+        playButton.isAccessibilityElement = !playButton.isHidden
+        expandButton.isAccessibilityElement = true
         expandButton.accessibilityLabel = isUnavailable ? "Open audio file" : "Expand player"
         playButton.accessibilityLabel = playAccessibilityLabel()
         refreshPlaybackChrome()

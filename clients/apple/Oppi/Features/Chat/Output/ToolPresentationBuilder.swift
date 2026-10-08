@@ -227,7 +227,55 @@ enum ToolPresentationBuilder {
         configuration.rawMarkdownText = expanded.rawMarkdownText
         configuration.rawMarkdownOutputPrefix = expanded.rawMarkdownOutputPrefix
         configuration.currentFileOpenIntent = currentFileOpenIntent
+        configuration.headerAccessibilitySummary = headerAccessibilitySummary(
+            tool: tool,
+            title: title,
+            segmentTitle: segmentAttributedTitle?.string,
+            inspection: inspection
+        )
         return configuration
+    }
+
+    /// Icons carry the verb. The spoken summary must keep it, including when
+    /// expanded shell chrome paints an empty title.
+    private static func headerAccessibilitySummary(
+        tool: String,
+        title: String,
+        segmentTitle: String?,
+        inspection: ToolInspection
+    ) -> String {
+        let visible = firstNonEmpty(segmentTitle, title)
+        if inspection.terminalOutput {
+            let command = firstNonEmpty(inspection.commandText, visible)
+            if command.isEmpty { return String(localized: "Shell") }
+            return "\(String(localized: "Shell")) \(command)"
+        }
+        if let file = inspection.file {
+            let verb = switch file.operation {
+            case .content: String(localized: "Read")
+            case .mutation: String(localized: "Write")
+            case .edits: String(localized: "Edit")
+            }
+            // A bare tool name is the icon's unspoken stand-in, not the summary.
+            let spokenVisible = visible.caseInsensitiveCompare(tool) == .orderedSame ? nil : visible
+            let detail = firstNonEmpty(file.path, spokenVisible)
+            return detail.isEmpty ? verb : "\(verb) \(detail)"
+        }
+        if inspection.isInteractive {
+            let spoken = firstNonEmpty(inspection.interactionSummary, visible)
+            return spoken.isEmpty ? String(localized: "Question") : spoken
+        }
+        if !visible.isEmpty { return visible }
+        let fallback = tool.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fallback.isEmpty ? String(localized: "Tool") : fallback
+    }
+
+    private static func firstNonEmpty(_ values: String?...) -> String {
+        for value in values {
+            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return ""
     }
 
     private static func currentFileOpenIntent(

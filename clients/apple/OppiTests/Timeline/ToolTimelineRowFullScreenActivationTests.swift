@@ -66,7 +66,7 @@ struct ToolTimelineRowFullScreenActivationTests {
     }
 
     @Test("eligible current-file activation uses navigation action without presenting output")
-    func currentFileActivationUsesNavigationAction() {
+    func currentFileActivationUsesNavigationAction() throws {
         let harness = makeHostHarness()
         let host = harness.host
         var activationCount = 0
@@ -90,6 +90,13 @@ struct ToolTimelineRowFullScreenActivationTests {
         let menu = view.contextMenu(for: .expanded)
         #expect(menu?.children.map(\.title) == ["Open Current File"])
         #expect(view.accessibilityCustomActions?.first?.name == "Open Current File")
+        let border = try #require(view.subviews.first)
+        let header = try #require(border.accessibilityElements?.first as? ToolTimelineHeaderElement)
+        let headerAction = try #require(header.accessibilityCustomActions?.first)
+        #expect(headerAction.name == "Open Current File")
+        #expect(headerAction.target === view)
+        _ = view.perform(headerAction.selector)
+        #expect(activationCount == 2)
 
         harness.window.isHidden = true
     }
