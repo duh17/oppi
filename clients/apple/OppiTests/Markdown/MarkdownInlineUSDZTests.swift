@@ -6,7 +6,7 @@ import Testing
 struct MarkdownInlineUSDZTests {
     @Test("embed syntax produces USDZ while ordinary wiki syntax stays a link")
     func syntaxAndSourcePolicy() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let segments = FlatSegment.build(
             from: parseCommonMark("![[models/scene.usdz]]\n\n[[models/scene.usdz]]\n\n![[notes/readme.md]]"),
             themeID: .dark,
@@ -35,7 +35,7 @@ struct MarkdownInlineUSDZTests {
 
     @Test("markdown bang USDZ embeds the same native node as wiki bang")
     func markdownBangUSDZEmbedsLikeWikiBang() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let wiki = build("![[scene.usdz]]", baseURL: baseURL)
         let markdown = build("![x](scene.usdz)", baseURL: baseURL)
         let hostMarkdown = build("![x](/tmp/scene.usdz)", baseURL: baseURL)
@@ -56,7 +56,7 @@ struct MarkdownInlineUSDZTests {
 
     @Test("remote USDZ markdown bang, LAN, data, attachment, and HTML make no USDZ and no image fetch URL")
     func remoteAndUnsafeTargetsNeverBecomeUSDZOrLoadableImage() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let markdown = """
         ![x](https://example.com/a.usdz)
 
@@ -91,7 +91,7 @@ struct MarkdownInlineUSDZTests {
 
     @Test("host files are eligible but blend and glb never embed")
     func sourcePolicyRejectsNonUSDZAndUnsafeTargets() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let markdown = """
         ![[/tmp/demo.usdz]]
 
@@ -172,7 +172,7 @@ struct MarkdownInlineUSDZTests {
     }
 
     private func makeEmbed(_ markdown: String) throws -> MarkdownUSDZEmbed {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let embed = usdzEmbeds(in: build(markdown, baseURL: baseURL).segments).first
         return try #require(embed)
     }

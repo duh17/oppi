@@ -30,7 +30,7 @@ struct ExtensionSurfaceURLTests {
         ]
 
         for (rawURL, sessionId) in destinations {
-            let url = try #require(URL(string: rawURL))
+            let url = testUnwrap(URL(string: rawURL))
             let action = ExtensionSurfaceLinkRouting.action(
                 for: url,
                 serverID: serverID,

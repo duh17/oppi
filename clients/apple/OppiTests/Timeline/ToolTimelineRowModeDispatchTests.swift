@@ -1746,7 +1746,7 @@ struct ToolTimelineRowModeDispatchTests {
 struct ToolTextBrowserLinkRoutingTests {
     @Test(arguments: ["https://example.com/tool-text", "mailto:tool@example.com"])
     func textLinksRouteThroughBrowserPreferenceOrSystemDefault(urlString: String) throws {
-        let url = try #require(URL(string: urlString))
+        let url = testUnwrap(URL(string: urlString))
         let view = ToolTimelineRowContentView(configuration: makeToolConfiguration())
         var received: [URL] = []
         let observer = NotificationCenter.default.addObserver(forName: .webLinkTapped, object: nil, queue: .main) {

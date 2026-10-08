@@ -629,7 +629,7 @@ struct AppEventStreamClientTests {
         currentTokenProvider: (@Sendable () async throws -> String)? = nil,
         refreshTokenProvider: (@Sendable () async throws -> String)? = nil
     ) throws -> AppEventStreamClient {
-        let url = try #require(URL(string: "ws://127.0.0.1:7749/app/events/stream"))
+        let url = testUnwrap(URL(string: "ws://127.0.0.1:7749/app/events/stream"))
         return AppEventStreamClient(
             url: url,
             token: token,
@@ -665,7 +665,7 @@ struct AppEventStreamCoordinatorTests {
         )))
         connection.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1", status: .busy))
         let factory = ScriptedAppEventSocketFactory()
-        let url = try #require(URL(string: "ws://127.0.0.1:7749/app/events/stream"))
+        let url = testUnwrap(URL(string: "ws://127.0.0.1:7749/app/events/stream"))
         let client = AppEventStreamClient(
             url: url,
             token: "test-token",
@@ -710,7 +710,7 @@ struct AppEventStreamCoordinatorTests {
         connection.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1"))
         let oldServerId = connection.currentServerId
         let factory = ScriptedAppEventSocketFactory()
-        let oldURL = try #require(URL(string: "wss://server-a.example:7749/app/events/stream"))
+        let oldURL = testUnwrap(URL(string: "wss://server-a.example:7749/app/events/stream"))
         let oldClient = AppEventStreamClient(
             url: oldURL,
             token: "test-token",
@@ -762,7 +762,7 @@ struct StickyRefreshReconciliationTests {
             return Self.reconciliationResponse(for: request)
         }
 
-        _ = try await try connectAppEventStream(
+        _ = try await connectAppEventStream(
             for: connection,
             snapshotRequired: false
         )
@@ -796,7 +796,7 @@ struct StickyRefreshReconciliationTests {
             return Self.reconciliationResponse(for: request)
         }
 
-        let factory = try await try connectAppEventStream(for: connection, snapshotRequired: true)
+        let factory = try await connectAppEventStream(for: connection, snapshotRequired: true)
         #expect(await waitForTestCondition(timeout: .seconds(1)) { workspaceGate.isStarted })
 
         let socket = try #require(factory.sockets.first)
@@ -834,7 +834,7 @@ struct StickyRefreshReconciliationTests {
             await connection.refreshSessionList(force: true)
         }
         #expect(await waitForTestCondition(timeout: .seconds(1)) { requestGate.isStarted })
-        _ = try await try connectAppEventStream(
+        _ = try await connectAppEventStream(
             for: connection,
             snapshotRequired: false
         )
@@ -874,7 +874,7 @@ struct StickyRefreshReconciliationTests {
             await connection.refreshSessionList(force: true)
         }
         #expect(await waitForTestCondition(timeout: .seconds(1)) { requestGate.isStarted })
-        _ = try await try connectAppEventStream(
+        _ = try await connectAppEventStream(
             for: connection,
             snapshotRequired: false
         )
@@ -900,7 +900,7 @@ struct StickyRefreshReconciliationTests {
     @Test func installingAPIClientDisconnectsAppEventStream() async throws {
         let connection = makeReconciliationConnection()
         defer { cleanup(connection) }
-        _ = try await try connectAppEventStream(for: connection, snapshotRequired: false)
+        _ = try await connectAppEventStream(for: connection, snapshotRequired: false)
         #expect(connection.appEventStreamTransportState == .connected)
 
         connection.setAPIClientForTesting(makeReconciliationAPIClient(token: "replacement"))
@@ -925,7 +925,7 @@ struct StickyRefreshReconciliationTests {
                 requestGate.blockUntilReleased()
                 let body = #"{"serverNow":1700000000000,"workspaces":[{"id":"stale","name":"Stale","path":"/stale","createdAt":1}],"summaries":[]}"#
                 let response = (try #require(HTTPURLResponse(
-                    url: (try #require(request.url)),
+                    url: (testUnwrap(request.url)),
                     statusCode: 200,
                     httpVersion: "HTTP/1.1",
                     headerFields: ["Content-Type": "application/json"]
@@ -989,7 +989,7 @@ struct StickyRefreshReconciliationTests {
             return Self.reconciliationResponse(for: request)
         }
 
-        _ = try await try connectAppEventStream(for: connection, snapshotRequired: false)
+        _ = try await connectAppEventStream(for: connection, snapshotRequired: false)
         let repair = Task { @MainActor in
             await connection.reconcileListSnapshotsAfterAppEventConnection(snapshotRequired: true)
         }
@@ -1119,7 +1119,7 @@ struct StickyRefreshReconciliationTests {
         snapshotRequired: Bool
     ) async throws -> ScriptedAppEventSocketFactory {
         let factory = ScriptedAppEventSocketFactory()
-        let url = try #require(URL(string: "ws://127.0.0.1:7749/app/events/stream"))
+        let url = testUnwrap(URL(string: "ws://127.0.0.1:7749/app/events/stream"))
         let client = AppEventStreamClient(
             url: url,
             token: "test-token",
@@ -1322,7 +1322,7 @@ private final class ScriptedAppEventSocket {
         resume: { [weak self] in self?.taskState = .running },
         receive: { [weak self] in
             guard let self else { throw CancellationError() }
-            return try await try self.receive()
+            return try await self.receive()
         },
         sendPing: { [weak self] handler in
             switch self?.pingBehavior {

@@ -52,7 +52,7 @@ struct FullScreenMarkdownStressCorpusTests {
             from: blocks,
             themeID: .dark,
             workspaceID: "ws-markdown-stress",
-            serverBaseURL: try #require(URL(string: "https://server.example.com")),
+            serverBaseURL: testUnwrap(URL(string: "https://server.example.com")),
             sourceDirectory: "docs"
         )
         #expect(!blocks.isEmpty)
@@ -118,7 +118,7 @@ struct FullScreenMarkdownStressCorpusTests {
             resourceAccess: MarkdownResourceAccess(
                 identity: .init(
                     workspaceID: "ws-markdown-stress",
-                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                 ),
                 fetchWorkspaceFile: { workspaceID, path in
                     await imageProbe.record(workspaceID: workspaceID, path: path)
@@ -184,7 +184,7 @@ struct FullScreenMarkdownStressCorpusTests {
             resourceAccess: MarkdownResourceAccess(
                 identity: .init(
                     workspaceID: "ws-markdown-stress",
-                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                 )
             ),
             sourceFilePath: "docs/mixed-markdown-stress-corpus.md"
@@ -235,7 +235,7 @@ struct FullScreenMarkdownStressCorpusTests {
             resourceAccess: MarkdownResourceAccess(
                 identity: .init(
                     workspaceID: "ws-markdown-stress",
-                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                 ),
                 fetchWorkspaceFile: { _, _ in pngData }
             ),
@@ -377,7 +377,7 @@ struct FullScreenMarkdownStressCorpusTests {
             resourceAccess: MarkdownResourceAccess(
                 identity: .init(
                     workspaceID: "ws-markdown-stress",
-                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                 ),
                 fetchWorkspaceFile: { _, _ in pngData }
             ),
@@ -656,7 +656,7 @@ struct FullScreenMarkdownStressCorpusTests {
             resourceAccess: MarkdownResourceAccess(
                 identity: .init(
                     workspaceID: "ws-markdown-interaction",
-                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                 ),
                 fetchWorkspaceFile: { _, _ in
                     await fetchGate.wait()
@@ -745,7 +745,7 @@ struct FullScreenMarkdownStressCorpusTests {
             resourceAccess: MarkdownResourceAccess(
                 identity: .init(
                     workspaceID: "ws-markdown-stress",
-                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                 ),
                 fetchWorkspaceFile: { _, _ in
                     await fetchGate.wait()
@@ -797,7 +797,7 @@ struct FullScreenMarkdownStressCorpusTests {
         )
         await settleReservedHeights(body)
         var anchor = try #require(body.debugVisibleAnchorForTesting(), "missing first-paint visible anchor")
-        try await try assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: "first paint apply")
+        try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: "first paint apply")
 
         let segments = body.debugRenderedSegmentsForTesting
         let mermaidItem = try #require(segments.firstIndex {
@@ -828,7 +828,7 @@ struct FullScreenMarkdownStressCorpusTests {
             await settleReservedHeights(body)
             try assertReservedHeightsMatchFitting(in: body, items: [item], stage: stage)
             anchor = try #require(body.debugVisibleAnchorForTesting(), "missing visible anchor after \(stage)")
-            try await try assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: stage)
+            try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: stage)
         }
 
         body.debugScrollItemIntoViewForTesting(imageItem)
@@ -870,7 +870,7 @@ struct FullScreenMarkdownStressCorpusTests {
         #expect(reservedFromPixels, "workspace image never committed prepared pixel geometry")
         let reservedDuringDecode = try #require(body.debugReservedHeightForTesting(imageItem))
         #expect(reservedDuringDecode > placeholderHeight)
-        try await try assertVisibleAnchorStaysPut(
+        try await assertVisibleAnchorStaysPut(
             in: body,
             expected: growthAnchor,
             stage: "image growth above anchor"
@@ -896,7 +896,7 @@ struct FullScreenMarkdownStressCorpusTests {
         await settleReservedHeights(body)
         try assertReservedHeightsMatchFitting(in: body, items: [imageItem], stage: "image reuse")
         anchor = try #require(body.debugVisibleAnchorForTesting(), "missing visible anchor after image reuse")
-        try await try assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: "image reuse")
+        try await assertVisibleAnchorStaysPut(in: body, expected: anchor, stage: "image reuse")
         #expect(
             collectionView.indexPathsForVisibleItems.allSatisfy {
                 body.debugHasFinalGeometryForTesting($0.item)

@@ -828,7 +828,7 @@ struct ToolTimelineRowContentViewTests {
 
     @MainActor
     @Test func readMediaVideoFileUsesMediaSourceProviderAndHidesReadToolBoilerplate() throws {
-        let videoURL = try #require(URL(string: "https://127.0.0.1:7749/workspaces/ws/raw/clips/demo.mp4"))
+        let videoURL = testUnwrap(URL(string: "https://127.0.0.1:7749/workspaces/ws/raw/clips/demo.mp4"))
         let mediaSource = AuthenticatedMediaSource(
             url: videoURL,
             authorizationHeaderValue: "Bearer test",
@@ -897,7 +897,7 @@ struct ToolTimelineRowContentViewTests {
 
     @MainActor
     @Test func expandedReadMediaVideoViewportStaysCompact() throws {
-        let videoURL = try #require(URL(string: "https://127.0.0.1:7749/workspaces/ws/raw/clips/demo.mp4"))
+        let videoURL = testUnwrap(URL(string: "https://127.0.0.1:7749/workspaces/ws/raw/clips/demo.mp4"))
         let mediaSource = AuthenticatedMediaSource(
             url: videoURL,
             authorizationHeaderValue: "Bearer test",
@@ -1449,7 +1449,7 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func expandedVoiceMessagePlayButtonIsHitTestTarget() throws {
         let source = AuthenticatedMediaSource(
-            url: try #require(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
+            url: testUnwrap(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
             authorizationHeaderValue: "Bearer test",
             tlsCertFingerprint: nil,
             contentTypeHint: "audio/wav",
@@ -1487,7 +1487,7 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func collapsedVoiceMessagePlayButtonIsHitTestTarget() throws {
         let source = AuthenticatedMediaSource(
-            url: try #require(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
+            url: testUnwrap(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
             authorizationHeaderValue: "Bearer test",
             tlsCertFingerprint: nil,
             contentTypeHint: "audio/wav",
@@ -1521,7 +1521,7 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func expandedVoiceMessagePlayLivesOnStripAndKeepsTranscript() throws {
         let source = AuthenticatedMediaSource(
-            url: try #require(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
+            url: testUnwrap(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
             authorizationHeaderValue: "Bearer test",
             tlsCertFingerprint: nil,
             contentTypeHint: "audio/wav",
@@ -1586,7 +1586,7 @@ struct ToolTimelineRowContentViewTests {
         }
 
         let mediaSource = AuthenticatedMediaSource(
-            url: try #require(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
+            url: testUnwrap(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
             authorizationHeaderValue: "Bearer test",
             tlsCertFingerprint: nil,
             contentTypeHint: "audio/wav",
@@ -1627,7 +1627,7 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func expandedVoiceStripShowsKnownDurationBeforePlayback() throws {
         let source = AuthenticatedMediaSource(
-            url: try #require(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
+            url: testUnwrap(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
             authorizationHeaderValue: "Bearer test",
             tlsCertFingerprint: nil,
             contentTypeHint: "audio/wav",
@@ -1691,7 +1691,7 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func expandedVoiceMessageHasOneCardChrome() throws {
         let source = AuthenticatedMediaSource(
-            url: try #require(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
+            url: testUnwrap(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
             authorizationHeaderValue: "Bearer test",
             tlsCertFingerprint: nil,
             contentTypeHint: "audio/wav",
@@ -1729,7 +1729,7 @@ struct ToolTimelineRowContentViewTests {
     @MainActor
     @Test func emptyTranscriptStillInstallsAudioStrip() throws {
         let source = AuthenticatedMediaSource(
-            url: try #require(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
+            url: testUnwrap(URL(string: "https://127.0.0.1:7749/sessions/s1/attachments/att-session-owned-voice")),
             authorizationHeaderValue: "Bearer test",
             tlsCertFingerprint: nil,
             contentTypeHint: "audio/wav",

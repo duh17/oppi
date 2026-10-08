@@ -78,7 +78,7 @@ struct NonChatCollectionInvalidationTests {
         let content = try staticReaderFixture(usingMermaidFrom: gallery)
 
         for width: CGFloat in [375, 393, 430] {
-            try await try assertStaticMermaidSettlementPreservesViewport(
+            try await assertStaticMermaidSettlementPreservesViewport(
                 content: content,
                 width: width
             )

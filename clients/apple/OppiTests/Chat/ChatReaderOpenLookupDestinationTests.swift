@@ -467,7 +467,7 @@ struct ChatReaderOpenLookupDestinationTests {
             .video(
                 ChatReaderVideoContent(
                     source: AuthenticatedMediaSource(
-                        url: try #require(URL(string: "https://example.com/video.mp4")),
+                        url: testUnwrap(URL(string: "https://example.com/video.mp4")),
                         authorizationHeaderValue: "Bearer test",
                         tlsCertFingerprint: nil,
                         contentTypeHint: "video/mp4",

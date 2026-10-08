@@ -96,13 +96,13 @@ struct WorkspaceFileURLTests {
     }
 
     @Test func parseNormalizesMainQueryToNil() throws {
-        let url = try #require(URL(string: "https://server.example.com/workspaces/ws-1/raw/relative.png?worktreeId=main"))
+        let url = testUnwrap(URL(string: "https://server.example.com/workspaces/ws-1/raw/relative.png?worktreeId=main"))
         let parsed = try #require(WorkspaceFileURL.parse(url))
         #expect(parsed.worktreeId == nil)
     }
 
     @Test func parseAcceptsLegacyFilesRouteWithoutWorktree() throws {
-        let url = try #require(URL(string: "https://server.example.com/workspaces/ws-1/files/docs/chart.png"))
+        let url = testUnwrap(URL(string: "https://server.example.com/workspaces/ws-1/files/docs/chart.png"))
         let parsed = try #require(WorkspaceFileURL.parse(url))
         #expect(parsed.workspaceID == "ws-1")
         #expect(parsed.filePath == "docs/chart.png")
@@ -195,7 +195,7 @@ struct FlatSegmentImageWorktreeIdentityTests {
 @MainActor
 struct NativeMarkdownImageWorktreeCacheTests {
     @Test func sameWorkspacePathUnderTwoWorktreesDoesNotReuseCache() async throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let workspaceID = "ws-cache-\(UUID().uuidString)"
         let urlA = try #require(WorkspaceFileURL.make(
             baseURL: baseURL,

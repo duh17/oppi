@@ -9,7 +9,7 @@ import UIKit
 struct MarkdownInlineAudioTests {
     @Test("bang-wiki audio embeds while ordinary wiki stays a link and video stays video")
     func syntaxAndSourcePolicy() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let segments = FlatSegment.build(
             from: parseCommonMark(
                 "![[media/demo.m4a]]\n\n[[media/demo.m4a]]\n\n![[media/demo.mp4]]\n\n![[notes/readme.md]]"
@@ -41,7 +41,7 @@ struct MarkdownInlineAudioTests {
 
     @Test("markdown bang audio embeds the same native strip as wiki bang")
     func markdownBangAudioEmbedsLikeWikiBang() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let wiki = audioEmbeds(in: build("![[clip.m4a]]", baseURL: baseURL).segments)
         let markdown = audioEmbeds(in: build("![x](clip.m4a)", baseURL: baseURL).segments)
         let host = audioEmbeds(in: build("![x](/tmp/clip.m4a)", baseURL: baseURL).segments)
@@ -57,7 +57,7 @@ struct MarkdownInlineAudioTests {
 
     @Test("remote audio markdown bang, LAN, data, attachment, and HTML make no audio segment")
     func remoteAndUnsafeTargetsNeverBecomeAudio() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let markdown = """
         ![x](https://example.com/a.mp3)
 
@@ -87,7 +87,7 @@ struct MarkdownInlineAudioTests {
 
     @Test("recognized audio extensions embed and non-audio bang-wiki does not")
     func recognizedAudioExtensions() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let markdown = """
         ![[a.wav]]
         ![[b.mp3]]
@@ -113,7 +113,7 @@ struct MarkdownInlineAudioTests {
 
     @Test("host files are eligible but remote, HTML audio, and attachment IDs never embed")
     func sourcePolicyRejectsOutsideAuthenticatedFileRoutes() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let markdown = """
         ![[/tmp/demo.m4a]]
 
@@ -140,7 +140,7 @@ struct MarkdownInlineAudioTests {
 
     @Test("audio segments receive stable occurrence identities")
     func segmentIdentityIsStable() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let initial = build("![[one.m4a]] ![[two.wav]]", baseURL: baseURL)
         let appended = build("![[one.m4a]] ![[two.wav]]\n\nTrailing text.", baseURL: baseURL)
         let audioIDs = zip(initial.segments, initial.identities).compactMap { segment, id in
@@ -167,7 +167,7 @@ struct MarkdownInlineAudioTests {
 
     @Test("eligible audio references select the same authenticated routes as video")
     func authenticatedMediaRouteSelection() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let workspaceEmbed = try #require(audioEmbeds(in: build("![[media/demo.m4a]]", baseURL: baseURL).segments).first)
         let hostEmbed = try #require(audioEmbeds(in: build("![[/tmp/demo.wav]]", baseURL: baseURL).segments).first)
 
@@ -377,7 +377,7 @@ struct MarkdownInlineAudioTests {
     @MainActor
     @Test("markdown audio view reserves compact height and does not autoplay")
     func markdownAudioViewDoesNotAutoplay() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let embed = try #require(audioEmbeds(in: build(
             "![[clip.m4a]]",
             baseURL: baseURL
@@ -401,7 +401,7 @@ struct MarkdownInlineAudioTests {
     @MainActor
     @Test("markdown sidecar follows active audio into shared Now Playing")
     func markdownSidecarFollowsActivePlayback() async throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let embed = try #require(audioEmbeds(in: build(
             "![[clip.m4a]]",
             baseURL: baseURL
@@ -430,7 +430,7 @@ struct MarkdownInlineAudioTests {
             sourceProvider: { _ in
                 didResolveSource = true
                 return AuthenticatedMediaSource(
-                    url: try #require(URL(string: "https://server.example.com/media/clip.m4a")),
+                    url: testUnwrap(URL(string: "https://server.example.com/media/clip.m4a")),
                     authorizationHeaderValue: "Bearer test",
                     tlsCertFingerprint: nil,
                     contentTypeHint: "audio/mp4",
@@ -520,7 +520,7 @@ struct MarkdownInlineAudioTests {
     @MainActor
     @Test("visible Markdown loading strip shows and performs cancel")
     func visibleMarkdownLoadingStripCancels() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let embed = try #require(audioEmbeds(in: build(
             "![[clip.m4a]]",
             baseURL: baseURL
@@ -608,7 +608,7 @@ struct MarkdownInlineAudioTests {
                     serverID: "server-a",
                     workspaceID: "workspace-a",
                     sessionID: "session-a",
-                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                 ),
                 makeMarkdownAudioSource: provider,
                 audioPlayer: AudioPlayerService()
@@ -647,7 +647,7 @@ struct MarkdownInlineAudioTests {
                         workspaceID: "workspace-a",
                         worktreeId: worktreeId,
                         sessionID: "session-a",
-                        serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                        serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                     ),
                     makeMarkdownAudioSource: { _ in throw CocoaError(.fileNoSuchFile) },
                     audioPlayer: AudioPlayerService()
@@ -668,8 +668,8 @@ struct MarkdownInlineAudioTests {
             return try #require(strip.accessibilityIdentifier)
         }
 
-        let worktreeA = try await try stripIdentifier(worktreeId: "wt-a")
-        let worktreeB = try await try stripIdentifier(worktreeId: "wt-b")
+        let worktreeA = try await stripIdentifier(worktreeId: "wt-a")
+        let worktreeB = try await stripIdentifier(worktreeId: "wt-b")
         #expect(worktreeA != worktreeB)
         #expect(worktreeA.contains("wt-a"))
         #expect(worktreeB.contains("wt-b"))

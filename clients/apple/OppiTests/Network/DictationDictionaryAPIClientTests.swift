@@ -16,7 +16,7 @@ struct DictationDictionaryAPIClientTests {
             #expect(request.httpMethod == "GET")
             #expect(request.url?.path == "/dictation/dictionary/global")
             let data = Data(#"{"phrases":["Yuwp"],"revision":4,"added":1,"skipped":[{"phrase":"duplicate","reason":"duplicate"}]}"#.utf8)
-            let url = try #require(request.url)
+            let url = testUnwrap(request.url)
             let response = try #require(HTTPURLResponse(
                 url: url, statusCode: 200, httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"]

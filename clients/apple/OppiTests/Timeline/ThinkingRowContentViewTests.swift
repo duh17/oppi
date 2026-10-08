@@ -30,7 +30,7 @@ struct ThinkingRowContentViewTests {
 
     @Test(arguments: ["http://example.com/thinking", "https://example.com/thinking"])
     func doneWebLinkActionPostsNotification(urlString: String) throws {
-        let url = try #require(URL(string: urlString))
+        let url = testUnwrap(URL(string: urlString))
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: true, previewText: "See [details](\(urlString))", fullText: nil
         ))
@@ -45,7 +45,7 @@ struct ThinkingRowContentViewTests {
 
     @Test(arguments: ["mailto:thinking@example.com", "custom-thinking://item", "oppi://session/thinking"])
     func nonWebLinkActionKeepsSystemDefault(urlString: String) throws {
-        let url = try #require(URL(string: urlString))
+        let url = testUnwrap(URL(string: urlString))
         let view = ThinkingTimelineRowContentView(configuration: ThinkingTimelineRowConfiguration(
             isDone: true, previewText: "[Contact](\(urlString))", fullText: nil
         ))
@@ -606,7 +606,7 @@ struct ThinkingRowContentViewTests {
 struct UserContentBrowserLinkRoutingTests {
     @Test(arguments: ["https://example.com/user-content", "mailto:user@example.com"])
     func userMarkdownUsesBrowserRoutingOrSystemDefault(urlString: String) throws {
-        let url = try #require(URL(string: urlString))
+        let url = testUnwrap(URL(string: urlString))
         let context = TimelineInteractionContext()
         context.sessionId = "session-1"
         context.reviewCommentSelectionRouter = ReviewCommentSelectionRouter { _ in }
@@ -627,7 +627,7 @@ struct UserContentBrowserLinkRoutingTests {
 
     @Test(arguments: [false, true])
     func fullScreenWebLinkFallsThroughUnhandledReaderIntercept(installed: Bool) throws {
-        let url = try #require(URL(string: "https://example.com/reader"))
+        let url = testUnwrap(URL(string: "https://example.com/reader"))
         let body = makeReader()
         let textView = UITextView()
         body.addSubview(textView)
@@ -646,7 +646,7 @@ struct UserContentBrowserLinkRoutingTests {
     }
 
     @Test func fullScreenHandledLinkDoesNotAlsoPostWebLink() throws {
-        let url = try #require(URL(string: "https://example.com/handled-reader"))
+        let url = testUnwrap(URL(string: "https://example.com/handled-reader"))
         let body = makeReader()
         let textView = UITextView()
         body.addSubview(textView)
@@ -672,7 +672,7 @@ struct UserContentBrowserLinkRoutingTests {
         let textView = UITextView()
         body.addSubview(textView)
         ChatReaderLinkIntercept.install({ _ in false }, on: body)
-        let url = try #require(URL(string: "mailto:reader@example.com"))
+        let url = testUnwrap(URL(string: "mailto:reader@example.com"))
         var defaultUsed = false
         let action = try #require(body.primaryAction(
             for: url, from: textView, defaultAction: UIAction { _ in defaultUsed = true }
@@ -682,7 +682,7 @@ struct UserContentBrowserLinkRoutingTests {
     }
 
     @Test func assistantUnhandledExtensionWebLinkUsesBrowserRouting() throws {
-        let url = try #require(URL(string: "https://example.com/extension-markdown"))
+        let url = testUnwrap(URL(string: "https://example.com/extension-markdown"))
         let view = AssistantMarkdownContentView()
         var hostCalled = false
         view.linkOpenHandler = { _ in hostCalled = true; return false }

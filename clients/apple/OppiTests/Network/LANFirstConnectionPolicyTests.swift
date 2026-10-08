@@ -126,7 +126,7 @@ struct LANFirstConnectionPolicyTests {
     func discoveryNeverTearsDownARouteDuringActiveWork(work: ActiveWork) async throws {
         let hosts = LANHostLog()
         // The dictation provider owns its client in production; keep it alive here.
-        let (connection, socket, dictation) = try await try deferredPromotion(work: work, hosts: hosts)
+        let (connection, socket, dictation) = try await deferredPromotion(work: work, hosts: hosts)
         defer { cleanup(connection); withExtendedLifetime(dictation) {} }
         await connection.promoteLANAtIdleBoundary()
         await connection.retryLANAtForegroundBoundary()
@@ -140,7 +140,7 @@ struct LANFirstConnectionPolicyTests {
     @Test(arguments: ActiveWork.allCases)
     func deferredPromotionWaitsForForegroundAfterWorkEnds(work: ActiveWork) async throws {
         let hosts = LANHostLog()
-        let (connection, socket, dictation) = try await try deferredPromotion(work: work, hosts: hosts)
+        let (connection, socket, dictation) = try await deferredPromotion(work: work, hosts: hosts)
         defer { cleanup(connection); withExtendedLifetime(dictation) {} }
         let ready = makeTestSession(id: "turn", workspaceId: "w1", status: .ready)
         switch work {
@@ -170,7 +170,7 @@ struct LANFirstConnectionPolicyTests {
     @Test(arguments: ActiveWork.allCases)
     func tailnetRebuildDuringActiveWorkDoesNotPromoteLAN(work: ActiveWork) async throws {
         let hosts = LANHostLog()
-        let (connection, socket, dictation) = try await try deferredPromotion(work: work, hosts: hosts)
+        let (connection, socket, dictation) = try await deferredPromotion(work: work, hosts: hosts)
         defer { cleanup(connection); withExtendedLifetime(dictation) {} }
         let original = TailnetTransportRoute.snapshot
         defer { TailnetTransportRoute.publish(original.proxy, generation: original.generation) }
@@ -434,7 +434,7 @@ private final class LANPolicyURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         do {
-            let response = (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])))
+            let response = (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])))
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             let body: String
             if request.url?.path == "/health" {

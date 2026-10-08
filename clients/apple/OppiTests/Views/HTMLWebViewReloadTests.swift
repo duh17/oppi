@@ -8,7 +8,7 @@ import WebKit
 struct HTMLPreviewBrowserRoutingTests {
     @Test(arguments: ["http://example.com/html", "https://example.com/html"])
     func activatedWebLinkPostsBrowserNotificationAndCancelsEmbeddedNavigation(urlString: String) throws {
-        let url = try #require(URL(string: urlString))
+        let url = testUnwrap(URL(string: urlString))
         let view = HTMLRenderView(htmlString: "<p>Preview</p>")
         var received: [URL] = []
         let observer = NotificationCenter.default.addObserver(forName: .webLinkTapped, object: nil, queue: .main) {
@@ -37,7 +37,7 @@ struct HTMLPreviewBrowserRoutingTests {
         "mailto:preview@example.com",
     ])
     func automaticOrProtectedNavigationDoesNotOpenBrowser(urlString: String) throws {
-        let url = try #require(URL(string: urlString))
+        let url = testUnwrap(URL(string: urlString))
         let view = HTMLRenderView(htmlString: "<p>Preview</p>")
         var posted = false
         let observer = NotificationCenter.default.addObserver(forName: .webLinkTapped, object: nil, queue: .main) {

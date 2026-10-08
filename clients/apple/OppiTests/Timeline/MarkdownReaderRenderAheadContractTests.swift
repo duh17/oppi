@@ -7,7 +7,7 @@ import UIKit
 struct MarkdownReaderRenderAheadContractTests {
     @Test("same-kind segments from one top-level block receive unique stable IDs")
     func sameKindOccurrenceOrdinalsAreUniqueAndAppendStable() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let initial = """
         ![first](images/first.png) ![second](images/second.png)
 
@@ -426,7 +426,7 @@ struct MarkdownReaderRenderAheadContractTests {
                 resourceAccess: MarkdownResourceAccess(
                     identity: .init(
                         workspaceID: "cold-\(fixture.name)",
-                        serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                        serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                     ),
                     fetchWorkspaceFile: { _, path in try await gate.fetch(path: path) }
                 ),
@@ -524,7 +524,7 @@ struct MarkdownReaderRenderAheadContractTests {
         let raster = try #require(Self.pngData(size: CGSize(width: 80, height: 160)))
         let svg = Self.svgData
         let content = Self.allKindsDocument
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
 
         for width: CGFloat in [375, 393, 430] {
             let body = NativeFullScreenMarkdownBody(
@@ -601,7 +601,7 @@ struct MarkdownReaderRenderAheadContractTests {
             resourceAccess: MarkdownResourceAccess(
                 identity: .init(
                     workspaceID: "line-anchor-width",
-                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                 ),
                 fetchWorkspaceFile: { _, path in
                     path.hasSuffix("diagram.svg") ? Self.svgData : raster
@@ -692,7 +692,7 @@ struct MarkdownReaderRenderAheadContractTests {
             resourceAccess: MarkdownResourceAccess(
                 identity: .init(
                     workspaceID: "chat-metadata",
-                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                 ),
                 fetchWorkspaceFile: { _, _ in data }
             ),
@@ -741,7 +741,7 @@ struct MarkdownReaderRenderAheadContractTests {
             resourceAccess: MarkdownResourceAccess(
                 identity: .init(
                     workspaceID: "svg-gate",
-                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                 ),
                 fetchWorkspaceFile: { _, path in try await gate.fetch(path: path) }
             ),
@@ -791,7 +791,7 @@ struct MarkdownReaderRenderAheadContractTests {
         NativeMarkdownImageView.debugResetPreparedArtifactsForTesting()
         let data = try #require(Self.pngData(size: CGSize(width: 80, height: 160)))
         let gate = ReaderImageGate(dataBySuffix: ["joined.png": data])
-        let url = try #require(URL(string: "https://server.example.com/workspaces/join/raw/joined.png"))
+        let url = testUnwrap(URL(string: "https://server.example.com/workspaces/join/raw/joined.png"))
         let runway = NativeMarkdownImageView()
         let display = NativeMarkdownImageView()
         for (view, preparesForDisplay) in [(runway, false), (display, true)] {

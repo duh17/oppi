@@ -10,7 +10,7 @@ private final class CacheableResponseProtocol: URLProtocol, @unchecked Sendable 
     override func startLoading() {
         do {
             let response = (try #require(HTTPURLResponse(
-                url: (try #require(request.url)),
+                url: (testUnwrap(request.url)),
                 statusCode: 200,
                 httpVersion: "HTTP/1.1",
                 headerFields: ["Cache-Control": "max-age=3600", "Content-Type": "application/json"]
@@ -39,7 +39,7 @@ struct LocalCacheAtRestTests {
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
 
-        var request = URLRequest(url: (try #require(URL(string: "https://cache-at-rest.test/\(UUID().uuidString)"))))
+        var request = URLRequest(url: (testUnwrap(URL(string: "https://cache-at-rest.test/\(UUID().uuidString)"))))
         request.setValue("Bearer at_secret", forHTTPHeaderField: "Authorization")
         _ = try await session.data(for: request)
 

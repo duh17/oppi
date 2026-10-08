@@ -10,7 +10,7 @@ struct McpAPIClientTests {
         configuration.protocolClasses = [McpDeadlineURLProtocol.self]
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 30
-        let baseURL = try #require(URL(string: "http://localhost:7749"))
+        let baseURL = testUnwrap(URL(string: "http://localhost:7749"))
         let client = APIClient(baseURL: baseURL, token: "test-token", configuration: configuration)
         defer { McpDeadlineURLProtocol.handler = nil }
 

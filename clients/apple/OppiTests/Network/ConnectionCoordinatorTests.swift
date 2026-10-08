@@ -1675,7 +1675,7 @@ struct ConnectionCoordinatorTests {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [TestURLProtocol.self]
         return APIClient(
-            baseURL: (try #require(URL(string: "http://\(host):7749"))),
+            baseURL: (testUnwrap(URL(string: "http://\(host):7749"))),
             token: "sk_test",
             configuration: configuration
         )

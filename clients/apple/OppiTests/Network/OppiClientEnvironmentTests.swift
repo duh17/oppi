@@ -5,7 +5,7 @@ import Testing
 @Suite("Oppi client environment")
 struct OppiClientEnvironmentTests {
     @Test func clientOnlyEnvironmentDoesNotRequireLocalProcessAdapter() throws {
-        let baseURL = try #require(URL(string: "https://server.example.test"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.test"))
         let environment = OppiClientEnvironment(
             baseURL: baseURL,
             bearerToken: "device-token"
@@ -19,7 +19,7 @@ struct OppiClientEnvironmentTests {
     }
 
     @Test func localProcessEnvironmentKeepsTrustAndOwnershipExplicit() throws {
-        let baseURL = try #require(URL(string: "https://localhost:7749"))
+        let baseURL = testUnwrap(URL(string: "https://localhost:7749"))
         let environment = OppiClientEnvironment(
             baseURL: baseURL,
             bearerToken: "owner-token",
@@ -34,7 +34,7 @@ struct OppiClientEnvironmentTests {
     }
 
     @Test func apiClientInitializesFromSharedEnvironment() async throws {
-        let baseURL = try #require(URL(string: "https://localhost:7749"))
+        let baseURL = testUnwrap(URL(string: "https://localhost:7749"))
         let environment = OppiClientEnvironment(
             baseURL: baseURL,
             bearerToken: "owner-token",

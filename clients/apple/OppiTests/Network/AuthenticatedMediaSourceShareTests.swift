@@ -15,7 +15,7 @@ struct AuthenticatedMediaSourceShareTests {
             return (
                 expected,
                 (try #require(HTTPURLResponse(
-                    url: try #require(request.url),
+                    url: testUnwrap(request.url),
                     statusCode: 200,
                     httpVersion: "HTTP/1.1",
                     headerFields: ["Content-Type": "audio/wav"]
@@ -24,7 +24,7 @@ struct AuthenticatedMediaSourceShareTests {
         }
 
         let source = AuthenticatedMediaSource(
-            url: try #require(URL(string: "https://server.example.com/files/story.wav")),
+            url: testUnwrap(URL(string: "https://server.example.com/files/story.wav")),
             authorizationProvider: { "Bearer fresh-token" },
             tlsCertFingerprint: nil,
             contentTypeHint: "audio/wav",
@@ -39,8 +39,8 @@ struct AuthenticatedMediaSourceShareTests {
 
     @Test("share download rejects redirects")
     func rejectsRedirects() throws {
-        let sourceURL = try #require(URL(string: "https://server.example.com/files/story.wav"))
-        let redirectedURL = try #require(URL(string: "https://other.example.com/story.wav"))
+        let sourceURL = testUnwrap(URL(string: "https://server.example.com/files/story.wav"))
+        let redirectedURL = testUnwrap(URL(string: "https://other.example.com/story.wav"))
         let delegate = AuthenticatedMediaFileDownloadDelegate(
             pinnedLeafFingerprint: nil,
             expectedServerName: nil
@@ -75,7 +75,7 @@ struct AuthenticatedMediaSourceShareTests {
             (
                 Data(),
                 (try #require(HTTPURLResponse(
-                    url: try #require(request.url),
+                    url: testUnwrap(request.url),
                     statusCode: 403,
                     httpVersion: "HTTP/1.1",
                     headerFields: nil
@@ -84,7 +84,7 @@ struct AuthenticatedMediaSourceShareTests {
         }
 
         let source = AuthenticatedMediaSource(
-            url: try #require(URL(string: "https://server.example.com/files/story.wav")),
+            url: testUnwrap(URL(string: "https://server.example.com/files/story.wav")),
             authorizationHeaderValue: "Bearer token",
             tlsCertFingerprint: nil,
             contentTypeHint: "audio/wav",

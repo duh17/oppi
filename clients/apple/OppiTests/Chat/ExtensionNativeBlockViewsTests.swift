@@ -16,7 +16,7 @@ struct ExtensionNativeBlockViewsTests {
 
     @Test(arguments: ["missing", "unhandled", "handled"])
     func webLinkFallbackUsesBrowserRoutingOnlyWhenHostDoesNotHandle(host: String) throws {
-        let url = try #require(URL(string: "https://example.com/extension-native-\(host)"))
+        let url = testUnwrap(URL(string: "https://example.com/extension-native-\(host)"))
         var posted: [URL] = []
         let observer = NotificationCenter.default.addObserver(forName: .webLinkTapped, object: nil, queue: .main) {
             if $0.object as? URL == url { posted.append(url) }

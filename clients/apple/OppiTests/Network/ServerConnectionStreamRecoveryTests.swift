@@ -92,14 +92,14 @@ struct ServerConnectionStreamRecoveryTests {
     }
 
     @Test func networkPathChangeRecomputesPreparedFocusedStreamURL() async throws {
-        let (connection, _) = try await try makeProductionLANConnectionWithFocusedStream()
+        let (connection, _) = try await makeProductionLANConnectionWithFocusedStream()
         defer { cleanup(connection) }
 
         #expect(connection.transportPath == .lan)
         #expect(connection.focusedSessionStreamURLForTesting?.absoluteString == "wss://192.168.1.42:7749/workspaces/w1/sessions/s1/stream")
 
         connection.handleNetworkPathChange()
-        try await try waitForPairedFocusedStream(connection)
+        try await waitForPairedFocusedStream(connection)
 
         #expect(connection.transportPath == .paired)
         #expect(connection.focusedSessionStreamURLForTesting?.absoluteString == "wss://100.64.0.2:7749/workspaces/w1/sessions/s1/stream")
@@ -110,7 +110,7 @@ struct ServerConnectionStreamRecoveryTests {
     /// no consumption task. Recovery must still rebind the prepared session
     /// stream onto paired/Tailscale instead of settling with a dead socket.
     @Test func lanPathLossWithDisconnectedSocketStillReconnectsFocusedStream() async throws {
-        let (connection, connectCalls) = try await try makeProductionLANConnectionWithFocusedStream()
+        let (connection, connectCalls) = try await makeProductionLANConnectionWithFocusedStream()
         defer { cleanup(connection) }
 
         connection.wsClient?._setStatusForTesting(.disconnected)
@@ -118,7 +118,7 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(connection.focusedSessionStreamURLForTesting?.host == "192.168.1.42")
 
         connection.handleNetworkPathChange()
-        try await try waitForPairedFocusedStream(connection, minConnectCalls: 1, connectCalls: connectCalls)
+        try await waitForPairedFocusedStream(connection, minConnectCalls: 1, connectCalls: connectCalls)
 
         #expect(connection.transportPath == .paired)
         #expect(await connection.apiClient?.baseURL.host == "100.64.0.2")
@@ -134,12 +134,12 @@ struct ServerConnectionStreamRecoveryTests {
     /// private IP when Wi‑Fi disappears. Demotion must stop that dead-LAN socket
     /// and reopen the focused stream on paired.
     @Test func lanPathLossWhileReconnectingDoesNotLeaveMissingEndpointSelection() async throws {
-        let (connection, connectCalls) = try await try makeProductionLANConnectionWithFocusedStream()
+        let (connection, connectCalls) = try await makeProductionLANConnectionWithFocusedStream()
         defer { cleanup(connection) }
 
         connection.wsClient?._setStatusForTesting(.reconnecting(attempt: 3))
         connection.handleNetworkPathChange()
-        try await try waitForPairedFocusedStream(connection, minConnectCalls: 1, connectCalls: connectCalls)
+        try await waitForPairedFocusedStream(connection, minConnectCalls: 1, connectCalls: connectCalls)
 
         #expect(connection.transportPath == .paired)
         #expect(await connection.apiClient?.baseURL.host == "100.64.0.2")
@@ -282,7 +282,7 @@ struct ServerConnectionStreamRecoveryTests {
         )
 
         holdFirstDemotion.withLock { $0 = false }
-        try await try waitForPairedFocusedStream(connection, timeoutMs: 2_000)
+        try await waitForPairedFocusedStream(connection, timeoutMs: 2_000)
         #expect(!connection.isTransportDemoting)
         #expect(connection.transportPath == .paired)
     }

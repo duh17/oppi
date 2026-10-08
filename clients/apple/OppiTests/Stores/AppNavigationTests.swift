@@ -120,10 +120,10 @@ struct AppNavigationShellRoutingTests {
     }
 
     @Test func inAppSessionLinkParserAcceptsOnlyCanonicalSessionRoute() throws {
-        let canonical = try #require(URL(string: "oppi://session/child%2D1?workspaceId=ignored"))
-        let extraPath = try #require(URL(string: "oppi://session/child/extra"))
-        let workspace = try #require(URL(string: "oppi://workspace?path=/tmp/project"))
-        let web = try #require(URL(string: "https://example.com/session/child-1"))
+        let canonical = testUnwrap(URL(string: "oppi://session/child%2D1?workspaceId=ignored"))
+        let extraPath = testUnwrap(URL(string: "oppi://session/child/extra"))
+        let workspace = testUnwrap(URL(string: "oppi://workspace?path=/tmp/project"))
+        let web = testUnwrap(URL(string: "https://example.com/session/child-1"))
 
         #expect(InAppSessionLink.parse(canonical) == InAppSessionLink(sessionId: "child-1"))
         #expect(InAppSessionLink.parse(extraPath) == nil)
@@ -147,11 +147,11 @@ struct AppNavigationShellRoutingTests {
         ]
 
         for raw in claimed {
-            let url = try #require(URL(string: raw))
+            let url = testUnwrap(URL(string: raw))
             #expect(InAppInviteLink.claims(url), "\(raw)")
         }
         for raw in declined {
-            let url = try #require(URL(string: raw))
+            let url = testUnwrap(URL(string: raw))
             #expect(!InAppInviteLink.claims(url), "\(raw)")
         }
     }

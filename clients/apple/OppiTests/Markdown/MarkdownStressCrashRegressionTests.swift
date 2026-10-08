@@ -352,7 +352,7 @@ struct MarkdownStressCrashRegressionTests {
                 serverID: "server-a",
                 workspaceID: "workspace-a",
                 sessionID: "session-a",
-                serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
             ),
             fetchWorkspaceFile: { _, _ in Data() },
             makeMarkdownVideoSource: { _ in try await gate.source() }
@@ -428,7 +428,7 @@ struct MarkdownStressCrashRegressionTests {
     }
 
     private func makeEmbed(_ markdown: String) throws -> MarkdownVideoEmbed {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         return try #require(makeSegments(markdown, baseURL: baseURL).compactMap { segment -> MarkdownVideoEmbed? in
             guard case .video(let embed) = segment else { return nil }
             return embed

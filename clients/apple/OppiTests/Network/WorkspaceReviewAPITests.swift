@@ -34,7 +34,7 @@ struct WorkspaceReviewAPITests {
         defer { WorkspaceReviewMockURLProtocol.handler = nil }
 
         WorkspaceReviewMockURLProtocol.handler = { request in
-            let url = try #require(request.url)
+            let url = testUnwrap(request.url)
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
             let path = components?.queryItems?.first(where: { $0.name == "path" })?.value
             let selectedSessionId = components?.queryItems?.first(where: { $0.name == "selectedSessionId" })?.value
@@ -100,7 +100,7 @@ struct WorkspaceReviewAPITests {
 
         WorkspaceReviewMockURLProtocol.handler = { request in
             #expect(request.httpMethod == "GET")
-            let components = URLComponents(url: try #require(request.url), resolvingAgainstBaseURL: false)
+            let components = URLComponents(url: testUnwrap(request.url), resolvingAgainstBaseURL: false)
             let selectedSessionId = components?.queryItems?.first(where: { $0.name == "selectedSessionId" })?.value
 
             #expect(request.url?.path == "/workspaces/w1/quick-actions")

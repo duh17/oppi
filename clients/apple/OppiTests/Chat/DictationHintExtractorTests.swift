@@ -46,7 +46,7 @@ struct DictationHintWiringTests {
         TestURLProtocol.handler = { request in
             #expect(request.httpMethod == "GET")
             #expect(request.url?.path == "/dictation/dictionary/global")
-            let url = try #require(request.url)
+            let url = testUnwrap(request.url)
             let response = try #require(HTTPURLResponse(
                 url: url, statusCode: 200, httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"]
@@ -515,7 +515,7 @@ struct DictationHintWiringTests {
         TestURLProtocol.handler = { request in
             entered.signal()
             release.wait()
-            let url = try #require(request.url)
+            let url = testUnwrap(request.url)
             let response = try #require(HTTPURLResponse(
                 url: url, statusCode: 200, httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"]

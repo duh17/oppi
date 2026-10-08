@@ -60,7 +60,7 @@ struct SessionTouchedFileRoutingTests {
             return
         }
         let routedDestination = try #require(destination)
-        let url = try #require(URL(string: routedDestination))
+        let url = testUnwrap(URL(string: routedDestination))
         let action = MarkdownLinkInteractionSupport.classify(
             url,
             serverID: "server-origin",
@@ -130,7 +130,7 @@ struct SessionTouchedFileRoutingTests {
             return
         }
         let routedDestination = try #require(destination)
-        let url = try #require(URL(string: routedDestination))
+        let url = testUnwrap(URL(string: routedDestination))
         let action = MarkdownLinkInteractionSupport.classify(
             url,
             serverID: "server-origin",
@@ -179,7 +179,7 @@ struct SessionTouchedFileRoutingTests {
             return
         }
         let routedDestination = try #require(destination)
-        let url = try #require(URL(string: routedDestination))
+        let url = testUnwrap(URL(string: routedDestination))
         let action = MarkdownLinkInteractionSupport.classify(
             url,
             serverID: "server-origin",
@@ -232,7 +232,7 @@ struct SessionTouchedFileRoutingTests {
                 return
             }
             let routedDestination = try #require(destination)
-            let url = try #require(URL(string: routedDestination))
+            let url = testUnwrap(URL(string: routedDestination))
             let action = MarkdownLinkInteractionSupport.classify(
                 url,
                 serverID: "server-origin",
@@ -337,7 +337,7 @@ struct SessionTouchedFileRoutingTests {
             identity: .init(
                 serverID: "server-origin", workspaceID: "workspace-origin", sessionID: "session-origin",
                 workspaceRuntime: .host,
-                serverBaseURL: try #require(URL(string: "https://origin.example")),
+                serverBaseURL: testUnwrap(URL(string: "https://origin.example")),
                 routesFileReferencesThroughSession: true
             ),
             fetchWorkspaceFile: { _, _ in Data() }
@@ -369,7 +369,7 @@ struct SessionTouchedFileRoutingTests {
             identity: .init(
                 serverID: "server-origin", workspaceID: "workspace-origin", sessionID: "session-origin",
                 workspaceRuntime: .sandbox,
-                serverBaseURL: try #require(URL(string: "https://origin.example")),
+                serverBaseURL: testUnwrap(URL(string: "https://origin.example")),
                 routesFileReferencesThroughSession: true
             ),
             fetchWorkspaceFile: { _, _ in Data() }
@@ -405,7 +405,7 @@ struct SessionTouchedFileRoutingTests {
             identity: .init(
                 serverID: "server-origin", workspaceID: "workspace-origin", sessionID: "session-origin",
                 workspaceRuntime: .host,
-                serverBaseURL: try #require(URL(string: "https://origin.example")),
+                serverBaseURL: testUnwrap(URL(string: "https://origin.example")),
                 routesFileReferencesThroughSession: true
             ),
             fetchWorkspaceFile: { _, _ in Data() }

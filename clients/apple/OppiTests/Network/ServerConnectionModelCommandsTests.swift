@@ -124,7 +124,7 @@ struct ServerConnectionModelCommandsTests {
             requests.append(request)
             let body = Data(#"{"messages":[{"type":"command_result","command":"set_model","success":true}]}"#.utf8)
             let response = (try #require(HTTPURLResponse(
-                url: (try #require(request.url)),
+                url: (testUnwrap(request.url)),
                 statusCode: 200,
                 httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"]

@@ -1417,7 +1417,7 @@ struct ChatTimelinePreparationRunwayTests {
                 return Data()
             }
         )
-        let external = try #require(URL(string: "https://images.example/photo.png"))
+        let external = testUnwrap(URL(string: "https://images.example/photo.png"))
 
         #expect(broker.request(
             url: external,
@@ -1455,7 +1455,7 @@ struct ChatTimelinePreparationRunwayTests {
                 return png
             }
         )
-        let trustedBase = try #require(URL(string: "https://oppi.example"))
+        let trustedBase = testUnwrap(URL(string: "https://oppi.example"))
         let lookalike = try #require(URL(
             string: "https://evil.example/workspaces/workspace-a/raw/images/lookalike.png"
         ))

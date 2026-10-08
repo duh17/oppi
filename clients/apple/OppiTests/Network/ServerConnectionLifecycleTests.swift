@@ -1008,7 +1008,7 @@ private final class AutomaticProbeURLProtocol: URLProtocol, @unchecked Sendable 
     override func startLoading() {
         do {
             Self.lock.withLock { Self.recorded.append(request) }
-            let response = (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
+            let response = (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: Data(#"{"ok":false,"protocol":2}"#.utf8))
             client?.urlProtocolDidFinishLoading(self)

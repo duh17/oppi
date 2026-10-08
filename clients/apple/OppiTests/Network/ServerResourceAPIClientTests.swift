@@ -33,7 +33,7 @@ struct ServerResourceAPIClientTests {
 
         TestURLProtocol.handler = { request in
             requestCount += 1
-            let url = try #require(request.url)
+            let url = testUnwrap(request.url)
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
             if requestCount == 1 {
                 #expect(components?.percentEncodedPath == "/server/resources/skills/skill%20a%2Fb%3Fc")

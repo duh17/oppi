@@ -199,22 +199,22 @@ struct HTMLContentSecurityTests {
 
     @Test("HTML preview only allows embedded local navigations")
     func htmlPreviewOnlyAllowsEmbeddedLocalNavigations() throws {
-        #expect(HTMLContentSecurity.allowsEmbeddedNavigation(to: try #require(URL(string: "about:blank"))))
-        #expect(HTMLContentSecurity.allowsEmbeddedNavigation(to: try #require(URL(string: "data:text/html,hi"))))
-        #expect(HTMLContentSecurity.allowsEmbeddedNavigation(to: try #require(URL(string: "blob:https://example.com/id"))))
-        #expect(!HTMLContentSecurity.allowsEmbeddedNavigation(to: try #require(URL(string: "file:///tmp/report.html"))))
-        #expect(!HTMLContentSecurity.allowsEmbeddedNavigation(to: try #require(URL(string: "https://example.com"))))
+        #expect(HTMLContentSecurity.allowsEmbeddedNavigation(to: testUnwrap(URL(string: "about:blank"))))
+        #expect(HTMLContentSecurity.allowsEmbeddedNavigation(to: testUnwrap(URL(string: "data:text/html,hi"))))
+        #expect(HTMLContentSecurity.allowsEmbeddedNavigation(to: testUnwrap(URL(string: "blob:https://example.com/id"))))
+        #expect(!HTMLContentSecurity.allowsEmbeddedNavigation(to: testUnwrap(URL(string: "file:///tmp/report.html"))))
+        #expect(!HTMLContentSecurity.allowsEmbeddedNavigation(to: testUnwrap(URL(string: "https://example.com"))))
         #expect(!HTMLContentSecurity.allowsEmbeddedNavigation(
-            to: try #require(URL(string: "https://example.com/files/raw?path=/tmp/report.html"))
+            to: testUnwrap(URL(string: "https://example.com/files/raw?path=/tmp/report.html"))
         ))
         #expect(HTMLContentSecurity.isCurrentFileReadURL(
-            try #require(URL(string: "https://example.com/files/raw?path=/tmp/report.html"))
+            testUnwrap(URL(string: "https://example.com/files/raw?path=/tmp/report.html"))
         ))
         #expect(HTMLContentSecurity.isCurrentFileReadURL(
-            try #require(URL(string: "https://example.com/files/current?origin=host&path=/tmp/report.html"))
+            testUnwrap(URL(string: "https://example.com/files/current?origin=host&path=/tmp/report.html"))
         ))
         #expect(!HTMLContentSecurity.isCurrentFileReadURL(
-            try #require(URL(string: "https://example.com/files/currently"))
+            testUnwrap(URL(string: "https://example.com/files/currently"))
         ))
     }
 

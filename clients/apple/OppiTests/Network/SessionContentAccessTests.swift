@@ -184,11 +184,11 @@ struct SessionContentAccessTests {
             readinessPoll: .milliseconds(1)
         )
 
-        await try expectServerError(status: 503, message: "Server client is not ready") {
+        try await expectServerError(status: 503, message: "Server client is not ready") {
             _ = try await content.fetchSessionAttachment(sessionId: "s1", attachmentId: "a1")
         }
         #expect(polls.count == 50)
-        await try expectServerError(status: 503, message: "Session file client is not ready") {
+        try await expectServerError(status: 503, message: "Session file client is not ready") {
             _ = try await content.fetchSessionFileData(
                 workspaceId: "w1",
                 sessionId: "s1",
@@ -247,7 +247,7 @@ struct SessionContentAccessTests {
         let connection = ServerConnection()
         connection.setAPIClientForTesting(try makeClient(host: "server-a.test"))
 
-        await try expectServerError(status: 404, message: "Host image is unavailable") {
+        try await expectServerError(status: 404, message: "Host image is unavailable") {
             _ = try await connection.sessionContent.fetchHostFile(
                 path: "/tmp/a.png",
                 workspaceId: nil,
@@ -334,7 +334,7 @@ struct SessionContentAccessTests {
             workspaceID: "w1",
             worktreeId: "wt_feature",
             sessionID: "s-bound",
-            serverBaseURL: try #require(URL(string: "http://server-a.test:7749"))
+            serverBaseURL: testUnwrap(URL(string: "http://server-a.test:7749"))
         ))
 
         let readWorkspaceFile = try #require(access.fetchWorkspaceFile)
@@ -603,7 +603,7 @@ struct SessionContentAccessTests {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [RecordingContentProtocol.self]
         return APIClient(
-            baseURL: (try #require(URL(string: "http://\(host):7749"))),
+            baseURL: (testUnwrap(URL(string: "http://\(host):7749"))),
             token: "sk_test",
             configuration: config
         )
@@ -642,7 +642,7 @@ struct SessionContentAccessTests {
     }
 
     private func makeVideoEmbed(_ markdown: String) throws -> MarkdownVideoEmbed {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let result = FlatSegment.buildWithSourceLineRanges(
             from: parseCommonMarkLocated(markdown),
             themeID: .dark,
@@ -718,7 +718,7 @@ private final class RecordingContentProtocol: URLProtocol, @unchecked Sendable {
             Self.lock.unlock()
             let body = Data((request.url?.absoluteString ?? "").utf8)
             let response = try #require(HTTPURLResponse(
-                url: (try #require(request.url)),
+                url: (testUnwrap(request.url)),
                 statusCode: 200,
                 httpVersion: nil,
                 headerFields: ["Content-Length": "\(body.count)"]

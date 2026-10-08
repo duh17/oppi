@@ -677,7 +677,7 @@ struct FullScreenMarkdownCodeBlockWrapHeightTests {
         Following prose must reflow when the fenced command wraps or unwraps.
         """
 
-        let fixture = try await try makeReaderFixture(content: content)
+        let fixture = try await makeReaderFixture(content: content)
         defer { fixture.tearDown() }
 
         let codeItem = try #require(fixture.body.debugRenderedSegmentsForTesting.firstIndex {
@@ -780,7 +780,7 @@ struct FullScreenMarkdownCodeBlockWrapHeightTests {
         Trailing prose after the JSON fence.
         """
 
-        let fixture = try await try makeReaderFixture(content: content)
+        let fixture = try await makeReaderFixture(content: content)
         defer { fixture.tearDown() }
 
         let codeItem = try #require(fixture.body.debugRenderedSegmentsForTesting.firstIndex {
@@ -847,7 +847,7 @@ struct FullScreenMarkdownCodeBlockWrapHeightTests {
         Following prose after the wrapped command.
         """
 
-        let fixture = try await try makeReaderFixture(content: content)
+        let fixture = try await makeReaderFixture(content: content)
         defer {
             fixture.body.debugSetCollectionUserInteractingForTesting(nil)
             fixture.tearDown()

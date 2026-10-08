@@ -71,12 +71,12 @@ struct DeviceAuthAPIClientTests {
             if auth == "Bearer at_expired" {
                 return (
                     Data(#"{"error":"Unauthorized"}"#.utf8),
-                    (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 401, httpVersion: nil, headerFields: nil)))
+                    (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 401, httpVersion: nil, headerFields: nil)))
                 )
             }
             return (
                 Data(#"{"user":"u1","name":"Test"}"#.utf8),
-                (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
+                (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
             )
         }
 
@@ -101,7 +101,7 @@ struct DeviceAuthAPIClientTests {
             requestCount += 1
             return (
                 Data(#"{"error":"Unauthorized"}"#.utf8),
-                (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 401, httpVersion: nil, headerFields: nil)))
+                (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 401, httpVersion: nil, headerFields: nil)))
             )
         }
 
@@ -178,7 +178,7 @@ struct DeviceAuthAPIClientTests {
             seenTokens.append(request.value(forHTTPHeaderField: "Authorization") ?? "")
             return (
                 Data(#"{"user":"u1","name":"Test"}"#.utf8),
-                (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
+                (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
             )
         }
 
@@ -209,7 +209,7 @@ struct DeviceAuthAPIClientTests {
             seenTokens.append(request.value(forHTTPHeaderField: "Authorization") ?? "")
             return (
                 Data(#"{"user":"u1","name":"Test"}"#.utf8),
-                (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
+                (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
             )
         }
 
@@ -236,7 +236,7 @@ struct DeviceAuthAPIClientTests {
             seenTokens.append(request.value(forHTTPHeaderField: "Authorization") ?? "")
             return (
                 Data(#"{"user":"u1","name":"Test"}"#.utf8),
-                (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
+                (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
             )
         }
 
@@ -268,12 +268,12 @@ struct DeviceAuthAPIClientTests {
             if path == "/server/info" {
                 return (
                     Data(#"{"name":"Test","version":"1.0","uptime":1,"os":"darwin","arch":"arm64","hostname":"test","nodeVersion":"22","piVersion":"1","configVersion":1,"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":0,"modelCount":0}}"#.utf8),
-                    (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
+                    (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
                 )
             }
             return (
                 Data(#"{"memory":{"heapUsed":1,"heapTotal":2,"rss":3,"external":0},"activeSessions":[],"daily":[],"modelBreakdown":[],"workspaceBreakdown":[],"totals":{"sessions":0,"cost":0,"tokens":0}}"#.utf8),
-                (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
+                (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
             )
         }
 
@@ -348,26 +348,26 @@ struct DeviceAuthSelfReferentialWiringTests {
                 let body = #"{"nonce":"n1","audience":"oppi:refresh:v1","expiresAt":4102444800000}"#
                 return (
                     Data(body.utf8),
-                    (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
+                    (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
                 )
             case "/auth/refresh":
                 refreshAuthorization.append(auth)
                 let body = #"{"accessToken":"at_fresh","expiresAt":4102444800000,"refreshChallenge":null}"#
                 return (
                     Data(body.utf8),
-                    (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
+                    (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
                 )
             default:
                 meRequests.append(auth ?? "")
                 if auth == "Bearer at_expired" {
                     return (
                         Data(#"{"error":"Unauthorized"}"#.utf8),
-                        (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 401, httpVersion: nil, headerFields: nil)))
+                        (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 401, httpVersion: nil, headerFields: nil)))
                     )
                 }
                 return (
                     Data(#"{"user":"u1","name":"Test"}"#.utf8),
-                    (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
+                    (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil)))
                 )
             }
         }
@@ -375,7 +375,7 @@ struct DeviceAuthSelfReferentialWiringTests {
         // The deadline proves the refresh does not deadlock: with the old
         // `authorizedToken()` re-entry this would suspend forever on its own
         // in-flight refresh and the deadline task would win.
-        let user = try await try withDeadline(seconds: 5) {
+        let user = try await withDeadline(seconds: 5) {
             try await client.me()
         }
 

@@ -164,14 +164,14 @@ struct WorkspaceNavigationServerScopeTests {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [TestURLProtocol.self]
         return APIClient(
-            baseURL: (try #require(URL(string: "http://\(host):7749"))),
+            baseURL: (testUnwrap(URL(string: "http://\(host):7749"))),
             token: "sk_test",
             configuration: config
         )
     }
 
     private static func response(for request: URLRequest) throws -> (Data, HTTPURLResponse) {
-        let url = (try #require(request.url))
+        let url = (testUnwrap(request.url))
         let host = url.host ?? ""
         let path = url.path
 
@@ -259,7 +259,7 @@ struct WorkspaceNavigationServerScopeTests {
     ) throws -> (Data, HTTPURLResponse) {
         let data = Data(body.utf8)
         let response = (try #require(HTTPURLResponse(
-            url: (try #require(request.url)),
+            url: (testUnwrap(request.url)),
             statusCode: status,
             httpVersion: "HTTP/1.1",
             headerFields: ["Content-Type": "application/json"]

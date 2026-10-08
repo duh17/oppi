@@ -10,7 +10,7 @@ import UIKit
 struct MarkdownInlineVideoTests {
     @Test("embed syntax produces video while ordinary wiki syntax stays a link")
     func syntaxAndSourcePolicy() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let segments = FlatSegment.build(
             from: parseCommonMark("![[media/demo.mp4]]\n\n[[media/demo.mp4]]\n\n![[notes/readme.md]]"),
             themeID: .dark,
@@ -39,7 +39,7 @@ struct MarkdownInlineVideoTests {
 
     @Test("markdown bang video embeds the same native player as wiki bang")
     func markdownBangVideoEmbedsLikeWikiBang() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let wiki = build("![[clip.mp4]]", baseURL: baseURL)
         let markdown = build("![x](clip.mp4)", baseURL: baseURL)
         let hostMarkdown = build("![x](/tmp/clip.mp4)", baseURL: baseURL)
@@ -69,7 +69,7 @@ struct MarkdownInlineVideoTests {
 
     @Test("remote AV markdown bang, LAN, data, attachment, and HTML make no video and no image fetch URL")
     func remoteAndUnsafeTargetsNeverBecomeVideoOrLoadableImage() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let markdown = """
         ![x](https://example.com/a.mp4)
 
@@ -103,7 +103,7 @@ struct MarkdownInlineVideoTests {
 
     @Test("host files are eligible but remote and attachment-like targets never embed")
     func sourcePolicyRejectsOutsideAuthenticatedFileRoutes() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let markdown = """
         ![[/tmp/demo.mov]]
 
@@ -133,7 +133,7 @@ struct MarkdownInlineVideoTests {
 
     @Test("eligible references select only authenticated host, session, or workspace routes")
     func authenticatedMediaRouteSelection() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let workspaceEmbed = try #require(build("![[media/demo.mp4]]", baseURL: baseURL).segments.compactMap { segment -> MarkdownVideoEmbed? in
             guard case .video(let embed) = segment else { return nil }
             return embed
@@ -190,7 +190,7 @@ struct MarkdownInlineVideoTests {
 
     @Test("video segments receive stable occurrence identities")
     func segmentIdentityIsStable() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let initial = build("![[one.mp4]] ![[two.mov]]", baseURL: baseURL)
         let appended = build("![[one.mp4]] ![[two.mov]]\n\nTrailing text.", baseURL: baseURL)
         let videoIDs = zip(initial.segments, initial.identities).compactMap { segment, id in
@@ -355,7 +355,7 @@ struct MarkdownInlineVideoTests {
     @MainActor
     @Test("assistant timeline mounts the native video segment")
     func assistantTimelineIntegration() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let row = AssistantTimelineRowContentView(configuration: .init(
             text: "Before\n\n![[movie.mp4]]\n\nAfter",
             isStreaming: false,
@@ -380,7 +380,7 @@ struct MarkdownInlineVideoTests {
     @MainActor
     @Test("export uses a static fallback and never resolves media")
     func exportFallbackDoesNotResolveMedia() async throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let view = AssistantMarkdownContentView()
         var resolutionCount = 0
         view.frame = CGRect(x: 0, y: 0, width: 320, height: 400)
@@ -414,7 +414,7 @@ struct MarkdownInlineVideoTests {
     @MainActor
     @Test("full-screen video is final before reveal and source preparation cannot move the viewport")
     func readerVideoGeometryIsFinalBeforeReveal() async throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let body = NativeFullScreenMarkdownBody(
             content: (0..<12).map { "Paragraph \($0)." }.joined(separator: "\n\n") + "\n\n![[movie.mp4]]\n\nAfter.",
             palette: ThemeID.dark.palette,
@@ -486,7 +486,7 @@ struct MarkdownInlineVideoTests {
     @MainActor
     @Test("in-place streaming apply keeps a revealed timeline video at 16:9")
     func streamingInPlaceApplyKeepsSixteenByNine() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let view = AssistantMarkdownContentView()
         view.frame = CGRect(x: 0, y: 0, width: 320, height: 400)
         view.apply(configuration: .make(
@@ -639,7 +639,7 @@ struct MarkdownInlineVideoTests {
 
     @Test("standalone nested list and quote embeds become players; mixed inlines stay links")
     func nestedEmbedsArePlayersOrActionableLinks() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let list = build("- ![[movie.mp4]]", baseURL: baseURL)
         #expect(list.segments.contains { if case .video = $0 { return true }; return false })
 
@@ -669,7 +669,7 @@ struct MarkdownInlineVideoTests {
     @MainActor
     @Test("session markdown keeps the real source path for relative embeds")
     func sessionMarkdownPreservesSourcePath() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let content = SessionFileFullScreenContentBuilder.content(
             text: "![[./demo.mp4]]",
             filePath: "docs/readme.md",
@@ -1075,7 +1075,7 @@ struct MarkdownInlineVideoTests {
     @MainActor
     @Test("timeline content can hide video playback through the existing applier")
     func timelineContentForwardsPlaybackVisibility() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let view = AssistantMarkdownContentView()
         view.frame = CGRect(x: 0, y: 0, width: 360, height: 400)
         view.apply(configuration: .make(
@@ -1338,7 +1338,7 @@ struct MarkdownInlineVideoTests {
     func fullscreenDismissPreservesSelectedPlayerAmongMultipleEmbeds(
         testCase: FullScreenDismissVideoCase
     ) async throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let source = dummyMediaSource()
         let parent = UIViewController()
         let markdown = AssistantMarkdownContentView()
@@ -1502,7 +1502,7 @@ struct MarkdownInlineVideoTests {
     @MainActor
     @Test("applier clear detaches hosted video controllers from the parent")
     func clearDetachesHostedPlayerFromParent() async throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let source = dummyMediaSource()
         let parent = UIViewController()
         let view = AssistantMarkdownContentView()
@@ -1555,7 +1555,7 @@ struct MarkdownInlineVideoTests {
     @MainActor
     @Test("theme-only reapply keeps the same four video players")
     func themeOnlyReapplyKeepsTheSameFourVideoPlayers() async throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let source = dummyMediaSource()
         let parent = UIViewController()
         let view = AssistantMarkdownContentView()
@@ -1641,7 +1641,7 @@ struct MarkdownInlineVideoTests {
     @MainActor
     @Test("clear after yielding a video off the stack does not destroy its player")
     func clearAfterYieldDoesNotDestroyParkedPlayer() async throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let source = dummyMediaSource()
         let parent = UIViewController()
         let view = AssistantMarkdownContentView()
@@ -1695,7 +1695,7 @@ struct MarkdownInlineVideoTests {
 
     @Test("mixed quote text around a video keeps quote chrome")
     func mixedQuoteVideoKeepsQuoteChrome() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let quote = build("> Watch this ![[movie.mp4]] clip", baseURL: baseURL)
         #expect(quote.segments.contains { if case .video = $0 { return true }; return false })
 
@@ -1710,7 +1710,7 @@ struct MarkdownInlineVideoTests {
 
     @Test("quote chrome keeps the border color on the marker and quote color on the text")
     func quoteChromeKeepsDistinctMarkerAndTextColors() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let palette = ThemeID.dark.palette
         let border = UIColor(palette.mdQuoteBorder)
         let quoteColor = UIColor(palette.mdQuote)
@@ -1739,7 +1739,7 @@ struct MarkdownInlineVideoTests {
 
     @Test("task-list video embeds stay tappable file links")
     func taskListEmbedsStayActionableLinks() throws {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         let task = build("- [ ] ![[movie.mp4]]", baseURL: baseURL)
         let hasPlayer = task.segments.contains { if case .video = $0 { return true }; return false }
         let taskText = task.segments.compactMap { segment -> AttributedString? in
@@ -1823,7 +1823,7 @@ struct MarkdownInlineVideoTests {
     }
 
     private func makeEmbed(_ markdown: String) throws -> MarkdownVideoEmbed {
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
         return try #require(build(markdown, baseURL: baseURL).segments.compactMap { segment -> MarkdownVideoEmbed? in
             guard case .video(let embed) = segment else { return nil }
             return embed

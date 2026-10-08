@@ -107,7 +107,7 @@ enum GeneratedH264Fixture {
         var last: Artifact?
         while frameCount <= 360 {
             let duration = TimeInterval(frameCount) / 15
-            let artifact = try await try make(
+            let artifact = try await make(
                 duration: duration,
                 frameDuration: 1.0 / 15.0,
                 width: 320,
@@ -126,7 +126,7 @@ enum GeneratedH264Fixture {
 
     static func makeLongDuration(duration: TimeInterval = 3_600) async throws -> Artifact {
         let frames = 8
-        return try await try make(
+        return try await make(
             duration: duration,
             frameDuration: duration / TimeInterval(frames),
             width: 16,

@@ -20,7 +20,7 @@ struct ReadySessionScrollToBottomTests {
 
     @MainActor
     @Test func pendingInitialScrollAlreadyTrueBeforeMountShouldScrollToBottom() async throws {
-        let fixture = try await try makeHostedTimeline(
+        let fixture = try await makeHostedTimeline(
             itemCount: 40,
             isBusy: false,
             preloadNeedsInitialScroll: true
@@ -53,7 +53,7 @@ struct ReadySessionScrollToBottomTests {
 
     @MainActor
     @Test func togglingInitialScrollAfterMountScrollsToBottom() async throws {
-        let fixture = try await try makeHostedTimeline(
+        let fixture = try await makeHostedTimeline(
             itemCount: 40,
             isBusy: false,
             preloadNeedsInitialScroll: false
@@ -85,7 +85,7 @@ struct ReadySessionScrollToBottomTests {
 
     @MainActor
     @Test func busySessionWithPendingInitialScrollAlsoStartsAtBottom() async throws {
-        let fixture = try await try makeHostedTimeline(
+        let fixture = try await makeHostedTimeline(
             itemCount: 40,
             isBusy: true,
             preloadNeedsInitialScroll: true
@@ -105,7 +105,7 @@ struct ReadySessionScrollToBottomTests {
 
     @MainActor
     @Test func pendingInitialScrollOverridesStaleDetachedStateOnReentry() async throws {
-        let fixture = try await try makeHostedTimeline(
+        let fixture = try await makeHostedTimeline(
             itemCount: 40,
             isBusy: false,
             preloadNeedsInitialScroll: true,

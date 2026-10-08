@@ -668,7 +668,7 @@ struct MutableFullScreenMarkdownBodyTests {
                 serverID: "server-1",
                 workspaceID: "workspace-1",
                 sessionID: "session-1",
-                serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
             ),
             fetchWorkspaceFile: { _, _ in Data() }
         )
@@ -782,7 +782,7 @@ struct MutableFullScreenMarkdownBodyTests {
                     serverID: "server-1",
                     workspaceID: "workspace-1",
                     sessionID: "session-1",
-                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                 ),
                 fetchWorkspaceFile: { _, _ in try #require(Self.pngData()) }
             ),
@@ -901,7 +901,7 @@ struct MutableFullScreenMarkdownBodyTests {
         let initialContext = MarkdownResourceAccess(
             identity: .init(
                 workspaceID: "workspace-a",
-                serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
             ),
             fetchWorkspaceFile: { _, _ in Data() }
         )
@@ -917,7 +917,7 @@ struct MutableFullScreenMarkdownBodyTests {
         let finalContext = MarkdownResourceAccess(
             identity: .init(
                 workspaceID: "workspace-b",
-                serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
             ),
             fetchWorkspaceFile: { _, _ in Data() }
         )
@@ -1028,7 +1028,7 @@ struct MutableFullScreenMarkdownBodyTests {
             resourceAccess: MarkdownResourceAccess(
                 identity: .init(
                     workspaceID: "workspace-1",
-                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                 ),
                 fetchWorkspaceFile: { workspaceID, path in
                     fetched = (workspaceID, path)
@@ -1079,7 +1079,7 @@ struct MutableFullScreenMarkdownBodyTests {
                     serverID: "server-1",
                     workspaceID: "workspace-1",
                     sessionID: "session-1",
-                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                 ),
                 makeMarkdownVideoSource: provider
             ),
@@ -1109,7 +1109,7 @@ struct MutableFullScreenMarkdownBodyTests {
                     serverID: "server-1",
                     workspaceID: "workspace-1",
                     sessionID: "session-1",
-                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                 ),
                 makeMarkdownVideoSource: provider
             ),
@@ -1137,7 +1137,7 @@ struct MutableFullScreenMarkdownBodyTests {
             serverID: "server-1",
             workspaceID: "workspace-1",
             sessionID: "session-1",
-            serverBaseURL: try #require(URL(string: "https://server.example.com"))
+            serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
         )
         let initialAccess = MarkdownResourceAccess(
             identity: identity,
@@ -1204,7 +1204,7 @@ struct MutableFullScreenMarkdownBodyTests {
                 identity: .init(
                     workspaceID: "workspace-1",
                     worktreeId: "wt_feature",
-                    serverBaseURL: try #require(URL(string: "https://server.example.com"))
+                    serverBaseURL: testUnwrap(URL(string: "https://server.example.com"))
                 )
             ),
             sourceFilePath: "docs/Draft.md"

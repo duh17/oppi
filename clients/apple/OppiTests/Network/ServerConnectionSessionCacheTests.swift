@@ -85,7 +85,7 @@ struct ServerConnectionSessionCacheTests {
         TestURLProtocol.handler = { request in
             if request.url?.path == "/sessions/recent" {
                 let body = try JSONEncoder().encode(["sessions": [String]()] as [String: [String]])
-                return (body, (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil))))
+                return (body, (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 200, httpVersion: nil, headerFields: nil))))
             }
             throw URLError(.unsupportedURL)
         }

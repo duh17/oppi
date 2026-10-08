@@ -388,7 +388,7 @@ struct StreamingMarkdownDifferentialTests {
         let source = AssistantMarkdownSegmentSource()
         let initial = "![diagram](/absolute/diagram.svg)\n\nMutable tail."
         let updated = initial + " More."
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
 
         _ = source.buildSegments(.make(
             content: initial,
@@ -428,7 +428,7 @@ struct StreamingMarkdownDifferentialTests {
         let source = AssistantMarkdownSegmentSource()
         let initial = "![diagram](images/diagram.svg)\n\nMutable tail."
         let updated = initial + " More."
-        let baseURL = try #require(URL(string: "https://server.example.com"))
+        let baseURL = testUnwrap(URL(string: "https://server.example.com"))
 
         _ = source.buildSegments(.make(
             content: initial,

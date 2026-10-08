@@ -25,7 +25,7 @@ struct WorkspaceGitSummaryStoreTests {
         store.workspaceSummaries = ["w1": initial]
 
         TestURLProtocol.handler = { request in
-            let responseURL = try #require(request.url)
+            let responseURL = testUnwrap(request.url)
             let json: String
             switch responseURL.path {
             case "/workspaces":
@@ -47,7 +47,7 @@ struct WorkspaceGitSummaryStoreTests {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [TestURLProtocol.self]
         let api = APIClient(
-            baseURL: try #require(URL(string: "https://preview.oppi")),
+            baseURL: testUnwrap(URL(string: "https://preview.oppi")),
             token: "token",
             configuration: configuration
         )

@@ -180,7 +180,7 @@ struct InviteBootstrapServiceTests {
     @Test func decodesCredentialsFromInviteURL() throws {
         let payload = #"{"v":3,"host":"pairing.example.test","port":7749,"token":"invite-token","name":"Pairing Server"}"#
         let encoded = try #require(payload.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed))
-        let inviteURL = try #require(URL(string: "oppi://connect?v=3&payload=\(encoded)"))
+        let inviteURL = testUnwrap(URL(string: "oppi://connect?v=3&payload=\(encoded)"))
         let decoded = InviteBootstrapService.credentials(from: inviteURL)
 
         #expect(decoded?.host == host)

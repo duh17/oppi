@@ -121,6 +121,15 @@ func suspendUntilCancelledForTesting() async throws {
     }
 }
 
+/// Non-macro unwrap for values nested inside `#require`. Nested `#require`
+/// macros expand recursively and do not compile.
+func testUnwrap<T>(_ value: T?, function: StaticString = #function, line: UInt = #line) -> T {
+    guard let value else {
+        preconditionFailure("Unexpected nil in \(function):\(line)")
+    }
+    return value
+}
+
 actor MessageCounter {
     private var value = 0
 

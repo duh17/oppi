@@ -46,7 +46,7 @@ struct APIClientToolOutputTests {
             #expect(request.value(forHTTPHeaderField: "Range") == "bytes=6-9")
             #expect(request.url?.path == (scope == .control
                 ? "/control-sessions/s1/tool-output/tc-1" : "/workspaces/ws-1/sessions/s1/tool-output/tc-1"))
-            return (bytes, (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 206, httpVersion: nil,
+            return (bytes, (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 206, httpVersion: nil,
                 headerFields: ["Content-Range": "bytes 6-9/10"]))))
         }
         let range = try await client.getTerminalOutputRange(scope: scope, sessionId: "s1", toolCallId: "tc-1", range: 6..<10)
@@ -72,7 +72,7 @@ struct APIClientToolOutputTests {
         var jsonRequests = 0
         MockURLProtocol.handler = { request in
             if request.httpMethod == "HEAD" {
-                return (Data(), try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil,
+                return (Data(), try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 200, httpVersion: nil,
                     headerFields: ["Content-Length": "\(raw.count)"])))
             }
             if let range = request.value(forHTTPHeaderField: "Range") {
@@ -80,12 +80,12 @@ struct APIClientToolOutputTests {
                 let bounds = range.dropFirst(6).split(separator: "-")
                 let start = (try #require(Int(bounds[0])))
                 let end = min((try #require(Int(bounds[1]))) + 1, raw.count)
-                return (raw.subdata(in: start..<end), (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 206,
+                return (raw.subdata(in: start..<end), (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 206,
                     httpVersion: nil, headerFields: ["Content-Range": "bytes \(start)-\(end - 1)/\(raw.count)"]))))
             }
             jsonRequests += 1
             let data = try JSONEncoder().encode(["output": String(decoding: raw, as: UTF8.self)])
-            return (data, (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil,
+            return (data, (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 200, httpVersion: nil,
                 headerFields: ["Content-Type": "application/json"]))))
         }
         let access = SessionToolOutputAccess(apiClient: client, scope: .control, sessionId: "s1")
@@ -122,7 +122,7 @@ struct APIClientToolOutputTests {
         let client = makeClient()
         defer { cleanup() }
         MockURLProtocol.handler = { request in
-            (Data([65]), (try #require(HTTPURLResponse(url: (try #require(request.url)), statusCode: 200, httpVersion: nil,
+            (Data([65]), (try #require(HTTPURLResponse(url: (testUnwrap(request.url)), statusCode: 200, httpVersion: nil,
                 headerFields: ["Content-Range": "bytes 0-0/1"]))))
         }
         do {
@@ -177,7 +177,7 @@ struct APIClientToolOutputTests {
             #expect(request.url?.query == "full=true")
             if request.httpMethod == "HEAD" {
                 let response = (try #require(HTTPURLResponse(
-                    url: (try #require(request.url)),
+                    url: (testUnwrap(request.url)),
                     statusCode: 200,
                     httpVersion: nil,
                     headerFields: [
@@ -190,7 +190,7 @@ struct APIClientToolOutputTests {
             }
             if request.httpMethod == "GET", request.value(forHTTPHeaderField: "Range") != nil {
                 let response = (try #require(HTTPURLResponse(
-                    url: (try #require(request.url)),
+                    url: (testUnwrap(request.url)),
                     statusCode: 206,
                     httpVersion: nil,
                     headerFields: [
@@ -230,7 +230,7 @@ struct APIClientToolOutputTests {
             methods.append(request.httpMethod ?? "")
             if request.httpMethod == "HEAD" {
                 let response = (try #require(HTTPURLResponse(
-                    url: (try #require(request.url)),
+                    url: (testUnwrap(request.url)),
                     statusCode: 200,
                     httpVersion: nil,
                     headerFields: [
@@ -271,7 +271,7 @@ struct APIClientToolOutputTests {
             #expect(request.url?.query == "full=true")
             if request.httpMethod == "HEAD" {
                 let response = (try #require(HTTPURLResponse(
-                    url: (try #require(request.url)),
+                    url: (testUnwrap(request.url)),
                     statusCode: 200,
                     httpVersion: nil,
                     headerFields: [
@@ -283,7 +283,7 @@ struct APIClientToolOutputTests {
             }
             if request.httpMethod == "GET", request.value(forHTTPHeaderField: "Range") != nil {
                 let response = (try #require(HTTPURLResponse(
-                    url: (try #require(request.url)),
+                    url: (testUnwrap(request.url)),
                     statusCode: 206,
                     httpVersion: nil,
                     headerFields: [
@@ -349,7 +349,7 @@ struct APIClientToolOutputTests {
             #expect(request.url?.query == "full=true")
             if request.httpMethod == "HEAD" {
                 let response = (try #require(HTTPURLResponse(
-                    url: (try #require(request.url)),
+                    url: (testUnwrap(request.url)),
                     statusCode: 200,
                     httpVersion: nil,
                     headerFields: [
@@ -362,7 +362,7 @@ struct APIClientToolOutputTests {
             }
             if request.httpMethod == "GET", request.value(forHTTPHeaderField: "Range") != nil {
                 let response = (try #require(HTTPURLResponse(
-                    url: (try #require(request.url)),
+                    url: (testUnwrap(request.url)),
                     statusCode: 206,
                     httpVersion: nil,
                     headerFields: [

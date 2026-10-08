@@ -662,8 +662,8 @@ struct ServerCredentialsInviteSecurityTests {
         let json = try #require(String(data: data, encoding: .utf8))
         let inviteB64 = Data(json.utf8).base64URLEncodedString
 
-        let connectURL = try #require(URL(string: "oppi://connect?v=3&invite=\(inviteB64)"))
-        let pairURL = try #require(URL(string: "oppi://pair?v=3&invite=\(inviteB64)"))
+        let connectURL = testUnwrap(URL(string: "oppi://connect?v=3&invite=\(inviteB64)"))
+        let pairURL = testUnwrap(URL(string: "oppi://pair?v=3&invite=\(inviteB64)"))
 
         let connectCreds = ServerCredentials.decodeInviteURL(connectURL)
         let pairCreds = ServerCredentials.decodeInviteURL(pairURL)
@@ -678,8 +678,8 @@ struct ServerCredentialsInviteSecurityTests {
         let json = try #require(String(data: data, encoding: .utf8))
         let inviteB64 = Data(json.utf8).base64URLEncodedString
 
-        let unsupported = try #require(URL(string: "oppi://connect?v=2&invite=\(inviteB64)"))
-        let retired = try #require(URL(string: "oppi://connect?v=4&invite=\(inviteB64)"))
+        let unsupported = testUnwrap(URL(string: "oppi://connect?v=2&invite=\(inviteB64)"))
+        let retired = testUnwrap(URL(string: "oppi://connect?v=4&invite=\(inviteB64)"))
 
         #expect(ServerCredentials.decodeInviteURL(unsupported) == nil)
         #expect(ServerCredentials.decodeInviteURL(retired) == nil)
@@ -691,7 +691,7 @@ struct ServerCredentialsInviteSecurityTests {
         let json = try #require(String(data: data, encoding: .utf8))
         let inviteB64 = Data(json.utf8).base64URLEncodedString
 
-        let unsupported = try #require(URL(string: "oppi://migrate?invite=\(inviteB64)"))
+        let unsupported = testUnwrap(URL(string: "oppi://migrate?invite=\(inviteB64)"))
         let creds = ServerCredentials.decodeInviteURL(unsupported)
         #expect(creds == nil)
     }

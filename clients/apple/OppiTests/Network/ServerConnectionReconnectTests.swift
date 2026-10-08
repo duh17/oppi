@@ -13,7 +13,7 @@ struct ServerConnectionReconnectTests {
     @Test func threeTransient503sThenAcceptReconnectsWithoutWatchdog() async throws {
         let fixture = try await ReconnectWebSocketFixture.start()
         defer { fixture.stop() }
-        let conn = try await try makeLoopbackConnection(fixture)
+        let conn = try await makeLoopbackConnection(fixture)
         defer { conn.disconnectStream() }
         conn.connectStream()
         #expect(await waitForMainActorCondition(timeout: .seconds(2)) { conn.wsClient?.status == .connected })
@@ -35,7 +35,7 @@ struct ServerConnectionReconnectTests {
     @Test func definitive401EndsSessionSocketWithoutRetry() async throws {
         let fixture = try await ReconnectWebSocketFixture.start()
         defer { fixture.stop() }
-        let conn = try await try makeLoopbackConnection(fixture)
+        let conn = try await makeLoopbackConnection(fixture)
         defer { conn.disconnectStream() }
         let client = try #require(conn.wsClient)
         conn.connectStream()
@@ -60,7 +60,7 @@ struct ServerConnectionReconnectTests {
         conn.prepareFocusedSessionStreamEndpointForTesting(sessionId: "s1", workspaceId: "w1")
         // Only the external fixture is plaintext loopback; route selection,
         // receive/retry/backoff and the owner's health callback are production.
-        try #require(conn.wsClient).setStreamURL((try #require(URL(string: "ws://127.0.0.1:\(fixture.port)/workspaces/w1/sessions/s1/stream"))), sessionId: "s1", workspaceId: "w1")
+        try #require(conn.wsClient).setStreamURL((testUnwrap(URL(string: "ws://127.0.0.1:\(fixture.port)/workspaces/w1/sessions/s1/stream"))), sessionId: "s1", workspaceId: "w1")
         return conn
     }
 

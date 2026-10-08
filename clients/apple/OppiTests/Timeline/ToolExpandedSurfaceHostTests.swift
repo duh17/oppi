@@ -1002,12 +1002,12 @@ struct ToolExpandedSurfaceHostTests {
     @Test func readMediaVerticalAndHorizontalSnapshotsUseExpectedAspectFits() async throws {
         let outputDirectory = try snapshotOutputDirectory("read-media-image-fit")
 
-        let vertical = try await try renderReadMediaSnapshot(
+        let vertical = try await renderReadMediaSnapshot(
             image: makeReadToolTestImage(size: CGSize(width: 80, height: 220)),
             filePath: "/tmp/oppi-screenshots/vertical-read-image.png",
             outputURL: outputDirectory.appendingPathComponent("vertical-read-image.png")
         )
-        let horizontal = try await try renderReadMediaSnapshot(
+        let horizontal = try await renderReadMediaSnapshot(
             image: makeReadToolTestImage(size: CGSize(width: 220, height: 80)),
             filePath: "/tmp/oppi-screenshots/horizontal-read-image.png",
             outputURL: outputDirectory.appendingPathComponent("horizontal-read-image.png")
@@ -1159,7 +1159,7 @@ struct ToolExpandedSurfaceHostTests {
         let outputDirectory = try snapshotOutputDirectory("svg-regression")
         let outputURL = outputDirectory.appendingPathComponent("brent-svg-preview.png")
 
-        let screenshot = try await try renderBrentSVGPreviewSnapshot(outputURL: outputURL)
+        let screenshot = try await renderBrentSVGPreviewSnapshot(outputURL: outputURL)
         let edgeFillPixels = countBrightBackgroundPixelsNearHorizontalEdges(in: screenshot)
         let lowerBandPixels = countNonBackgroundPixels(
             in: screenshot,
@@ -1182,7 +1182,7 @@ struct ToolExpandedSurfaceHostTests {
         let outputDirectory = try snapshotOutputDirectory("svg-regression")
         let outputURL = outputDirectory.appendingPathComponent("brent-svg-read-media-row-preview.png")
 
-        let screenshot = try await try renderBrentSVGReadMediaPreviewSnapshot(outputURL: outputURL)
+        let screenshot = try await renderBrentSVGReadMediaPreviewSnapshot(outputURL: outputURL)
         let edgeFillPixels = countBrightBackgroundPixelsNearHorizontalEdges(in: screenshot)
         let lowerBandPixels = countNonBackgroundPixels(
             in: screenshot,

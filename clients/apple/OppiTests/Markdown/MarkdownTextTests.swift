@@ -2846,7 +2846,7 @@ struct FlatSegmentImageResolutionTests {
 @Suite("Session file full-screen content")
 struct SessionFileFullScreenContentBuilderTests {
     @Test func outsideWorkspaceMarkdownDoesNotExposeAbsoluteFileFetcher() throws {
-        let serverBaseURL = try #require(URL(string: "https://server.example.com"))
+        let serverBaseURL = testUnwrap(URL(string: "https://server.example.com"))
         let content = SessionFileFullScreenContentBuilder.content(
             text: "![Generated chart](/tmp/chart.png)",
             filePath: "/tmp/session-report.md",
@@ -2869,7 +2869,7 @@ struct SessionFileFullScreenContentBuilderTests {
     }
 
     @Test func sessionTouchedMarkdownThreadsFetchHostFile() throws {
-        let serverBaseURL = try #require(URL(string: "https://server.example.com"))
+        let serverBaseURL = testUnwrap(URL(string: "https://server.example.com"))
         let content = SessionFileFullScreenContentBuilder.content(
             text: "![Generated chart](/tmp/chart.png)",
             filePath: "/tmp/session-report.md",
@@ -2887,7 +2887,7 @@ struct SessionFileFullScreenContentBuilderTests {
     }
 
     @Test func hostFileMarkdownKeepsAbsoluteDisplayPath() throws {
-        let serverBaseURL = try #require(URL(string: "https://server.example.com"))
+        let serverBaseURL = testUnwrap(URL(string: "https://server.example.com"))
         let content = SessionFileFullScreenContentBuilder.content(
             text: "# Host note",
             filePath: "/tmp/session-report.md",
@@ -3216,7 +3216,7 @@ struct AssistantMarkdownInlineImageRenderingTests {
         let markdownView = AssistantMarkdownContentView()
         markdownView.frame = CGRect(x: 0, y: 0, width: 320, height: 400)
 
-        let serverBaseURL = try #require(URL(string: "https://server.example.com/api"))
+        let serverBaseURL = testUnwrap(URL(string: "https://server.example.com/api"))
         markdownView.apply(configuration: .make(
             content: "Before ![Red green](fixtures/red-green.\(ext)) after",
             isStreaming: false,
@@ -3255,7 +3255,7 @@ struct AssistantMarkdownInlineImageRenderingTests {
         let markdownView = AssistantMarkdownContentView()
         markdownView.frame = CGRect(x: 0, y: 0, width: 320, height: 400)
 
-        let serverBaseURL = try #require(URL(string: "https://server.example.com/api"))
+        let serverBaseURL = testUnwrap(URL(string: "https://server.example.com/api"))
         markdownView.apply(configuration: .make(
             content: "Before ![Red green](file:///Users/example/workspace/oppi/downloads/red-green.jpeg) after",
             isStreaming: false,
@@ -3287,7 +3287,7 @@ struct AssistantMarkdownInlineImageRenderingTests {
         let imageData = try makeReadSupportedTestImageData(ext: "png")
         let identity = MarkdownResourceAccess.Identity(
             workspaceID: "workspace-1",
-            serverBaseURL: try #require(URL(string: "https://server.example.com/api"))
+            serverBaseURL: testUnwrap(URL(string: "https://server.example.com/api"))
         )
         var loadedBy: [String: String] = [:]
         func access(_ label: String) -> MarkdownResourceAccess {
@@ -3533,7 +3533,7 @@ struct MarkdownBangEmbedUnificationTests {
     }
 
     @Test func hostFileURLIdentityDiffersByServer() throws {
-        let otherBaseURL = try #require(URL(string: "https://other.example.com"))
+        let otherBaseURL = testUnwrap(URL(string: "https://other.example.com"))
         let serverA = FlatSegment.build(
             from: parseCommonMark("![a](/tmp/a.png)"),
             serverID: "server-a",
@@ -3638,7 +3638,7 @@ struct MarkdownBangEmbedUnificationTests {
 struct RemoteMarkdownImagePolicyTests {
 
     @Test func allowsPublicHTTPSHosts() throws {
-        let url = try #require(URL(string: "https://images.example.com/photo.png"))
+        let url = testUnwrap(URL(string: "https://images.example.com/photo.png"))
         #expect(RemoteMarkdownImagePolicy.decision(for: url) == .loadableRemote)
     }
 
@@ -3651,7 +3651,7 @@ struct RemoteMarkdownImagePolicyTests {
     }
 
     @Test func blocksPlainHTTPHosts() throws {
-        let url = try #require(URL(string: "http://images.example.com/photo.png"))
+        let url = testUnwrap(URL(string: "http://images.example.com/photo.png"))
         #expect(RemoteMarkdownImagePolicy.decision(for: url) == .blockedRemote)
     }
 
@@ -3666,12 +3666,12 @@ struct RemoteMarkdownImagePolicyTests {
         "https://[fc00::1]/photo.png",
     ])
     func blocksLocalNetworkTargets(rawURL: String) throws {
-        let url = try #require(URL(string: rawURL))
+        let url = testUnwrap(URL(string: rawURL))
         #expect(RemoteMarkdownImagePolicy.decision(for: url) == .blockedRemote)
     }
 
     @Test func resolvedDecisionBlocksHostnamesThatResolveToLoopback() async throws {
-        let url = try #require(URL(string: "https://avatar.example.com/photo.png"))
+        let url = testUnwrap(URL(string: "https://avatar.example.com/photo.png"))
 
         #expect(RemoteMarkdownImagePolicy.decision(for: url) == .loadableRemote)
 
@@ -3683,7 +3683,7 @@ struct RemoteMarkdownImagePolicyTests {
     }
 
     @Test func resolvedDecisionAllowsPublicResolvedAddresses() async throws {
-        let url = try #require(URL(string: "https://avatar.example.com/photo.png"))
+        let url = testUnwrap(URL(string: "https://avatar.example.com/photo.png"))
 
         let resolved = await RemoteMarkdownImagePolicy.resolvedDecision(for: url) { _ in
             ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"]
@@ -3695,7 +3695,7 @@ struct RemoteMarkdownImagePolicyTests {
     @Test func resolvedDecisionFailsClosedWhenResolutionErrors() async throws {
         enum StubError: Error { case failed }
 
-        let url = try #require(URL(string: "https://avatar.example.com/photo.png"))
+        let url = testUnwrap(URL(string: "https://avatar.example.com/photo.png"))
         let resolved = await RemoteMarkdownImagePolicy.resolvedDecision(for: url) { _ in
             throw StubError.failed
         }
@@ -3723,7 +3723,7 @@ struct NativeMarkdownImageViewTests {
             return imageData
         }
 
-        let url = try #require(URL(string: "https://example.com/image.png"))
+        let url = testUnwrap(URL(string: "https://example.com/image.png"))
         view.apply(url: url, alt: "Test", fetchWorkspaceFile: nil, fetchSessionFile: nil)
 
         #expect(fetchCount == 0, "Remote markdown images should not auto-fetch before user action")
@@ -3747,7 +3747,7 @@ struct NativeMarkdownImageViewTests {
             return Data()
         }
 
-        let url = try #require(URL(string: "http://192.168.1.1/router.png"))
+        let url = testUnwrap(URL(string: "http://192.168.1.1/router.png"))
         view.apply(url: url, alt: "Router", fetchWorkspaceFile: nil, fetchSessionFile: nil)
 
         let labels = timelineAllViews(in: view).compactMap { $0 as? UILabel }
@@ -3865,7 +3865,7 @@ struct NativeMarkdownImageViewTests {
             !$0.isHidden && $0.text == "Loading description"
         })
 
-        let blockedURL = try #require(URL(string: "http://192.168.1.1/blocked.png"))
+        let blockedURL = testUnwrap(URL(string: "http://192.168.1.1/blocked.png"))
         view.apply(url: blockedURL, alt: "Router", fetchWorkspaceFile: nil, fetchSessionFile: nil)
         #expect(!view.isAccessibilityElement)
         #expect(!view.accessibilityElementsHidden)
@@ -3874,7 +3874,7 @@ struct NativeMarkdownImageViewTests {
             !$0.isHidden && $0.text == "[Router — remote image blocked]"
         })
 
-        let exportURL = try #require(URL(string: "https://example.com/export.png"))
+        let exportURL = testUnwrap(URL(string: "https://example.com/export.png"))
         view.apply(
             url: exportURL,
             alt: "Export description",

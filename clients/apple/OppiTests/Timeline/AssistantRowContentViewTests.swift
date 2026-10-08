@@ -1260,7 +1260,7 @@ struct AssistantTimelineRowContentViewTests {
     @MainActor
     @Test func trimsTrailingEncodedBacktickBeforeRoutingInviteLink() throws {
         let markdownView = makeMarkdownView()
-        let url = try #require(URL(string: "oppi://connect?v=3&invite=test-payload%60"))
+        let url = testUnwrap(URL(string: "oppi://connect?v=3&invite=test-payload%60"))
 
         let action = markdownView.classifyLink(url)
         guard case .deepLink(let routed) = action else {
@@ -1273,7 +1273,7 @@ struct AssistantTimelineRowContentViewTests {
     @MainActor
     @Test func interceptsInviteLinksAndRoutesThroughTheAppGlobalHandler() throws {
         let markdownView = makeMarkdownView()
-        let url = try #require(URL(string: "oppi://connect?v=3&invite=test-payload"))
+        let url = testUnwrap(URL(string: "oppi://connect?v=3&invite=test-payload"))
 
         let action = markdownView.classifyLink(url)
         guard case .deepLink(let routed) = action else {
@@ -1286,7 +1286,7 @@ struct AssistantTimelineRowContentViewTests {
     @MainActor
     @Test func classifiesHttpLinksAsWebLinks() throws {
         let markdownView = makeMarkdownView()
-        let url = try #require(URL(string: "https://example.com/docs"))
+        let url = testUnwrap(URL(string: "https://example.com/docs"))
 
         let action = markdownView.classifyLink(url)
         guard case .webLink(let routed) = action else {
@@ -1432,7 +1432,7 @@ struct AssistantTimelineRowContentViewTests {
     @MainActor
     @Test func explicitSessionDeepLinkIsClassifiedAsAnInAppHyperlink() throws {
         let markdownView = makeMarkdownView()
-        let url = try #require(URL(string: "oppi://session/RV97TbYj"))
+        let url = testUnwrap(URL(string: "oppi://session/RV97TbYj"))
 
         #expect(markdownView.classifyLink(url) == .inAppSessionLink(InAppDeepLinkIntent(
             url: url,
@@ -1454,7 +1454,7 @@ struct AssistantTimelineRowContentViewTests {
                 )
             )
         ))
-        let url = try #require(URL(string: "oppi://session/RV97TbYj"))
+        let url = testUnwrap(URL(string: "oppi://session/RV97TbYj"))
         var receivedURL: URL?
         var receivedSourceServerID: String?
         let observer = NotificationCenter.default.addObserver(
@@ -1494,7 +1494,7 @@ struct AssistantTimelineRowContentViewTests {
             )
         ))
 
-        let url = try #require(URL(string: "file:///Users/example/workspace/oppi/server/src/server.ts"))
+        let url = testUnwrap(URL(string: "file:///Users/example/workspace/oppi/server/src/server.ts"))
         let action = markdownView.classifyLink(url)
         guard case .fileLink(let payload) = action else {
             Issue.record("Expected .fileLink, got \(action)")
@@ -1508,7 +1508,7 @@ struct AssistantTimelineRowContentViewTests {
     @MainActor
     @Test func givenNoWorkspaceContextWhenClassifyingFileLinkThenItUsesSystemDefault() throws {
         let markdownView = makeMarkdownView()
-        let url = try #require(URL(string: "file:///Users/example/workspace/oppi/server/src/server.ts"))
+        let url = testUnwrap(URL(string: "file:///Users/example/workspace/oppi/server/src/server.ts"))
 
         let action = markdownView.classifyLink(url)
         #expect(action == .systemDefault)
@@ -1517,7 +1517,7 @@ struct AssistantTimelineRowContentViewTests {
     @MainActor
     @Test func allowsCustomAppLinksToUseSystemDefault() throws {
         let markdownView = makeMarkdownView()
-        let url = try #require(URL(string: "mailto:support@example.com"))
+        let url = testUnwrap(URL(string: "mailto:support@example.com"))
 
         let action = markdownView.classifyLink(url)
         #expect(action == .systemDefault)
@@ -1651,7 +1651,7 @@ struct NativeTableMarkdownLinkRoutingTests {
     }
 
     @Test func httpsClipModeCellTapPostsWebLinkTapped() throws {
-        let url = try #require(URL(string: "https://example.com/docs"))
+        let url = testUnwrap(URL(string: "https://example.com/docs"))
         try expectTableTap(
             on: makeClipTable(linkURL: url.absoluteString),
             url: url,
@@ -1661,7 +1661,7 @@ struct NativeTableMarkdownLinkRoutingTests {
     }
 
     @Test func httpsWrapModeCellTapPostsWebLinkTapped() throws {
-        let url = try #require(URL(string: "https://example.com/docs"))
+        let url = testUnwrap(URL(string: "https://example.com/docs"))
         try expectTableTap(
             on: makeWrapTable(linkURL: url.absoluteString),
             url: url,
@@ -1671,7 +1671,7 @@ struct NativeTableMarkdownLinkRoutingTests {
     }
 
     @Test func sessionCellTapPostsInAppDeepLinkWithSourceServer() throws {
-        let url = try #require(URL(string: "oppi://session/RV97TbYj"))
+        let url = testUnwrap(URL(string: "oppi://session/RV97TbYj"))
         var receivedURL: URL?
         var receivedSourceServerID: String?
         let observer = NotificationCenter.default.addObserver(
@@ -1699,7 +1699,7 @@ struct NativeTableMarkdownLinkRoutingTests {
     }
 
     @Test func fileCellTapPostsFileLinkTapped() throws {
-        let url = try #require(URL(string: "file:///Users/example/workspace/oppi/server/src/server.ts"))
+        let url = testUnwrap(URL(string: "file:///Users/example/workspace/oppi/server/src/server.ts"))
         let tableView = makeClipTable(linkURL: url.absoluteString)
         var received: FileLinkPayload?
         let observer = NotificationCenter.default.addObserver(
@@ -1742,7 +1742,7 @@ struct NativeTableMarkdownLinkRoutingTests {
     }
 
     @Test func inviteCellTapPostsInviteDeepLinkTapped() throws {
-        let url = try #require(URL(string: "oppi://connect?v=3&invite=test-payload"))
+        let url = testUnwrap(URL(string: "oppi://connect?v=3&invite=test-payload"))
         try expectTableTap(
             on: makeClipTable(linkURL: url.absoluteString),
             url: url,
@@ -1752,8 +1752,8 @@ struct NativeTableMarkdownLinkRoutingTests {
     }
 
     @Test func trailingEncodedBacktickIsNormalizedBeforeRouting() throws {
-        let rawURL = try #require(URL(string: "https://example.com/docs%60"))
-        let normalizedURL = try #require(URL(string: "https://example.com/docs"))
+        let rawURL = testUnwrap(URL(string: "https://example.com/docs%60"))
+        let normalizedURL = testUnwrap(URL(string: "https://example.com/docs"))
         try expectTableTap(
             on: makeClipTable(linkURL: rawURL.absoluteString),
             url: rawURL,
@@ -1763,7 +1763,7 @@ struct NativeTableMarkdownLinkRoutingTests {
     }
 
     @Test func mailtoCellTapUsesSystemDefault() throws {
-        let url = try #require(URL(string: "mailto:support@example.com"))
+        let url = testUnwrap(URL(string: "mailto:support@example.com"))
         let tableView = makeClipTable(linkURL: url.absoluteString)
         var defaultUsed = false
         let defaultAction = UIAction { _ in defaultUsed = true }

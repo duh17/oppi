@@ -356,12 +356,12 @@ struct FileBrowserReviewCommentSelectionTests {
     @Test(arguments: [401, 403, 404], [false, true])
     func textReaderReplacesStaleTextAfterDefinitiveFailure(status: Int, coded: Bool) async throws {
         let message = status == 404 ? "File no longer exists" : "File access denied"
-        try await try checkReaderAfterReShow(status: status, message: message, keepsReader: false, coded: coded)
+        try await checkReaderAfterReShow(status: status, message: message, keepsReader: false, coded: coded)
     }
 
     @Test(arguments: [200, 408, 500, 503, URLError.notConnectedToInternet.rawValue, URLError.timedOut.rawValue])
     func textReaderKeepsIdentityAfterUnchangedTextOrTransientFailure(status: Int) async throws {
-        try await try checkReaderAfterReShow(status: status, message: "Temporary failure", keepsReader: true)
+        try await checkReaderAfterReShow(status: status, message: "Temporary failure", keepsReader: true)
     }
 
     private func checkReaderAfterReShow(

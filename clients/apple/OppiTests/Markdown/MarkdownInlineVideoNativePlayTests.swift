@@ -84,7 +84,7 @@ struct MarkdownInlineVideoNativePlayTests {
         let host = try makeHostedMarkdownVideo(source: mediaSource(url: server.url))
         defer { host.window.isHidden = true }
 
-        let video = try await try waitForInstalledVideo(in: host.video)
+        let video = try await waitForInstalledVideo(in: host.video)
         let model = video.debugPlaybackModelForTesting
         let player = try #require(model.player)
         let ready = await waitUntil(timeout: .seconds(8)) {
@@ -126,7 +126,7 @@ struct MarkdownInlineVideoNativePlayTests {
         let host = try makeHostedMarkdownVideo(source: mediaSource(url: server.url))
         defer { host.window.isHidden = true }
 
-        let video = try await try waitForInstalledVideo(in: host.video)
+        let video = try await waitForInstalledVideo(in: host.video)
         let model = video.debugPlaybackModelForTesting
         let player = try #require(model.player)
         let hideRevealReady = await waitUntil(timeout: .seconds(8)) {
@@ -163,7 +163,7 @@ struct MarkdownInlineVideoNativePlayTests {
         let host = try makeHostedMarkdownVideo(source: mediaSource(url: server.url))
         defer { host.window.isHidden = true }
 
-        let video = try await try waitForInstalledVideo(in: host.video)
+        let video = try await waitForInstalledVideo(in: host.video)
         let model = video.debugPlaybackModelForTesting
         let player = try #require(model.player)
         let fullscreenReady = await waitUntil(timeout: .seconds(8)) {
@@ -279,7 +279,7 @@ private func knownGoodH264URL() throws -> URL {
 }
 
 private func makeEmbed(_ markdown: String) throws -> MarkdownVideoEmbed {
-    let baseURL = try #require(URL(string: "https://server.example.com"))
+    let baseURL = testUnwrap(URL(string: "https://server.example.com"))
     let segments = FlatSegment.build(
         from: parseCommonMark(markdown),
         themeID: .dark,

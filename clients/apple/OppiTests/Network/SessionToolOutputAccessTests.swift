@@ -16,7 +16,7 @@ struct SessionToolOutputAccessTests {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [RecordingToolOutputProtocol.self]
         return APIClient(
-            baseURL: (try #require(URL(string: "http://\(host):7749"))),
+            baseURL: (testUnwrap(URL(string: "http://\(host):7749"))),
             token: "sk_test",
             configuration: config
         )
@@ -206,7 +206,7 @@ private final class RecordingToolOutputProtocol: URLProtocol, @unchecked Sendabl
                 ? Data()
                 : Data(#"{"output":"OUT","isError":false}"#.utf8)
             let response = try #require(HTTPURLResponse(
-                url: (try #require(request.url)),
+                url: (testUnwrap(request.url)),
                 statusCode: 200,
                 httpVersion: nil,
                 headerFields: ["Content-Type": "application/json", "Content-Length": "\(body.count)"]

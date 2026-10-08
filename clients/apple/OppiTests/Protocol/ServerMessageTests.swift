@@ -663,7 +663,7 @@ struct ServerMessageTests {
 
         #expect(attributed.string == "Open child code")
 
-        let url = try #require(URL(string: "oppi://session/child-1"))
+        let url = testUnwrap(URL(string: "oppi://session/child-1"))
         let link = attributed.attributes(at: 0, effectiveRange: nil)
         #expect(link[.link] as? URL == url)
         #expect((link[.font] as? UIFont)?.fontDescriptor.symbolicTraits.contains(.traitBold) == true)
@@ -717,7 +717,7 @@ struct ServerMessageTests {
     }
 
     @Test func extensionSurfaceSessionLinkParsesWorkspaceQuery() throws {
-        let url = try #require(URL(string: "oppi://session/child-1?workspaceId=ws-1"))
+        let url = testUnwrap(URL(string: "oppi://session/child-1?workspaceId=ws-1"))
         let link = try #require(ExtensionSurfaceSessionLink.parse(url, defaultWorkspaceId: nil))
 
         #expect(link.sessionId == "child-1")
@@ -725,7 +725,7 @@ struct ServerMessageTests {
     }
 
     @Test func extensionSurfaceSessionLinkFallsBackToCurrentWorkspace() throws {
-        let url = try #require(URL(string: "oppi://session/child-1"))
+        let url = testUnwrap(URL(string: "oppi://session/child-1"))
         let link = try #require(ExtensionSurfaceSessionLink.parse(url, defaultWorkspaceId: " ws-parent "))
 
         #expect(link.sessionId == "child-1")

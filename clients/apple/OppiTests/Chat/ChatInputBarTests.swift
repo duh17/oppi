@@ -247,7 +247,7 @@ struct ChatInputBarTests {
         AppPreferences.Voice.setEngineMode(.onDevice)
         defer { AppPreferences.Voice.setEngineMode(.remote) }
 
-        let (manager, session) = try await try makeRecordingVoiceInputManager(source: .expandedComposer)
+        let (manager, session) = try await makeRecordingVoiceInputManager(source: .expandedComposer)
         session.yieldEvent(.replaceFinalTranscript("rough draft"))
         #expect(await waitForMainActorCondition { manager.finalizedTranscript.contains("rough") })
 
@@ -280,7 +280,7 @@ struct ChatInputBarTests {
         AppPreferences.Voice.setEngineMode(.onDevice)
         defer { AppPreferences.Voice.setEngineMode(.remote) }
 
-        let (manager, session) = try await try makeRecordingVoiceInputManager(source: .inlineComposer)
+        let (manager, session) = try await makeRecordingVoiceInputManager(source: .inlineComposer)
         session.yieldEvent(.replaceFinalTranscript("rough draft"))
         #expect(await waitForMainActorCondition { manager.finalizedTranscript.contains("rough") })
 
@@ -373,7 +373,7 @@ struct ChatInputBarTests {
         AppPreferences.Voice.setEngineMode(.onDevice)
         defer { AppPreferences.Voice.setEngineMode(.remote) }
 
-        let (manager, session) = try await try makeRecordingVoiceInputManager(source: .inlineComposer)
+        let (manager, session) = try await makeRecordingVoiceInputManager(source: .inlineComposer)
         session.yieldEvent(.replaceFinalTranscript("dictated text"))
         #expect(await waitForMainActorCondition { manager.finalizedTranscript.contains("dictated") })
 
@@ -401,7 +401,7 @@ struct ChatInputBarTests {
         AppPreferences.Voice.setEngineMode(.onDevice)
         defer { AppPreferences.Voice.setEngineMode(.remote) }
 
-        let (manager, session) = try await try makeRecordingVoiceInputManager(source: .inlineComposer)
+        let (manager, session) = try await makeRecordingVoiceInputManager(source: .inlineComposer)
         session.stopHandler = { @MainActor [weak session] in
             session?.finishEvents()
         }
@@ -615,7 +615,7 @@ struct ChatInputBarTests {
         AppPreferences.Voice.setEngineMode(.onDevice)
         defer { AppPreferences.Voice.setEngineMode(.remote) }
 
-        let (manager, session) = try await try makeRecordingVoiceInputManager(source: .inlineComposer)
+        let (manager, session) = try await makeRecordingVoiceInputManager(source: .inlineComposer)
         session.yieldEvent(.replaceFinalTranscript(
             "live words",
             committedText: "",
