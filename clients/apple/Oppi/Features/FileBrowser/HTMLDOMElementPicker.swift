@@ -983,7 +983,6 @@ final class HTMLDOMPickController {
     }
 
     var lookupClientForTesting: HTMLDOMWebKitLookupClient { client }
-    var shieldViewForTesting: UIView { shield }
     var highlightViewForTesting: UIView { highlight }
     var commentButtonForTesting: UIButton { chrome.commentButton }
     var parentButtonForTesting: UIButton { chrome.parentButton }

@@ -2454,10 +2454,6 @@ final class AuthenticatedMediaResourceLoaderLifetimeProbe: @unchecked Sendable {
 }
 
 extension AuthenticatedMediaResourceLoader {
-    var debugRetainsSelfUntilNetworkIdle: Bool {
-        lock.withLock { networkLifetime != nil }
-    }
-
     func debugStartInFlightDataTask(url: URL) {
         let task = session.dataTask(with: url)
         lock.lock()
@@ -2477,9 +2473,6 @@ extension AuthenticatedMediaPlaybackSession {
         AuthenticatedMediaResourceLoaderLifetimeProbe(loader: loader)
     }
 
-    var debugRetainsResourceLoaderUntilNetworkIdle: Bool {
-        loader.debugRetainsSelfUntilNetworkIdle
-    }
 }
 
 extension AuthenticatedMediaPlayerModel {

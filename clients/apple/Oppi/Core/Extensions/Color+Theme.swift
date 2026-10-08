@@ -30,9 +30,7 @@ extension Color {
     static var themeRed: Color { palette.red }
     static var themeYellow: Color { palette.yellow }
 
-    static var themeToolPendingBg: Color { palette.toolPendingBg }
     static var themeToolSuccessBg: Color { palette.toolSuccessBg }
-    static var themeToolErrorBg: Color { palette.toolErrorBg }
     static var themeToolTitle: Color { palette.toolTitle }
     static var themeToolOutput: Color { palette.toolOutput }
 
@@ -81,11 +79,9 @@ extension Color {
     static var themeSyntaxComment: Color { palette.syntaxComment }
     static var themeSyntaxKeyword: Color { palette.syntaxKeyword }
     static var themeSyntaxFunction: Color { palette.syntaxFunction }
-    static var themeSyntaxVariable: Color { palette.syntaxVariable }
     static var themeSyntaxString: Color { palette.syntaxString }
     static var themeSyntaxNumber: Color { palette.syntaxNumber }
     static var themeSyntaxType: Color { palette.syntaxType }
-    static var themeSyntaxOperator: Color { palette.syntaxOperator }
     static var themeSyntaxPunctuation: Color { palette.syntaxPunctuation }
 
     // MARK: - Semantic Diff
@@ -220,27 +216,19 @@ extension ShapeStyle where Self == ThemeShapeStyle {
     static var themeDimScrim: ThemeShapeStyle { ThemeShapeStyle(role: .dimScrim) }
     static var themeRecessedInset: ThemeShapeStyle { ThemeShapeStyle(role: .recessedInset) }
     static var themeOnBlue: ThemeShapeStyle { ThemeShapeStyle(role: .onBlue) }
-    // periphery:ignore - used by ChatSubviews through SwiftUI contextual static member lookup
     static var themeOnGreen: ThemeShapeStyle { ThemeShapeStyle(role: .onGreen) }
 
     static var themeSyntaxComment: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxComment) }
     static var themeSyntaxKeyword: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxKeyword) }
     static var themeSyntaxFunction: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxFunction) }
-    static var themeSyntaxVariable: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxVariable) }
     static var themeSyntaxString: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxString) }
     static var themeSyntaxNumber: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxNumber) }
     static var themeSyntaxType: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxType) }
-    static var themeSyntaxOperator: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxOperator) }
     static var themeSyntaxPunctuation: ThemeShapeStyle { ThemeShapeStyle(role: .syntaxPunctuation) }
-    static var themeMdHeading: ThemeShapeStyle { ThemeShapeStyle(role: .markdownHeading) }
     static var themeDiffAdded: ThemeShapeStyle { ThemeShapeStyle(role: .diffAdded) }
     static var themeDiffRemoved: ThemeShapeStyle { ThemeShapeStyle(role: .diffRemoved) }
-    static var themeDiffContext: ThemeShapeStyle { ThemeShapeStyle(role: .diffContext) }
-    static var themeToolPendingBg: ThemeShapeStyle { ThemeShapeStyle(role: .toolPendingBackground) }
     static var themeToolSuccessBg: ThemeShapeStyle { ThemeShapeStyle(role: .toolSuccessBackground) }
-    static var themeToolErrorBg: ThemeShapeStyle { ThemeShapeStyle(role: .toolErrorBackground) }
     static var themeToolTitle: ThemeShapeStyle { ThemeShapeStyle(role: .toolTitle) }
-    static var themeToolOutput: ThemeShapeStyle { ThemeShapeStyle(role: .toolOutput) }
 }
 
 // MARK: - Themed Surface Roles
@@ -479,17 +467,6 @@ enum ThemeColorContrast {
         let lighter = max(first, second)
         let darker = min(first, second)
         return (lighter + 0.05) / (darker + 0.05)
-    }
-
-    static func foreground(
-        for fill: Color,
-        highLuminanceForeground: Color,
-        lowLuminanceForeground: Color
-    ) -> Color {
-        guard let luminance = relativeLuminance(of: fill) else {
-            return lowLuminanceForeground
-        }
-        return luminance > 0.55 ? highLuminanceForeground : lowLuminanceForeground
     }
 
     /// Adaptive opacity for themed glass/surface fills. Production code

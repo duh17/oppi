@@ -3,21 +3,14 @@ import UIKit
 @MainActor
 enum ToolTimelineRowPresentationHelpers {
 #if DEBUG
-    // periphery:ignore - test seam for distinguishing content updates from
-    // outer timeline geometry invalidations.
     static var enclosingLayoutInvalidationHookForTesting: (() -> Void)?
-    // periphery:ignore - test seam for an immediate forced-reflow attempt.
     static var forcedEnclosingLayoutInvalidationHookForTesting: ((UICollectionView) -> Void)?
-    // periphery:ignore - test seam for SwiftUI-hosted markdown remeasure.
     static var swiftUIMarkdownRootInvalidationHookForTesting: ((AssistantMarkdownContentView) -> Void)?
-    // periphery:ignore - counting oracle for apply-time re-entrancy.
     static var debugNestedLayoutInvalidationCountForTesting = 0
     static func debugResetNestedLayoutInvalidationCountForTesting() {
         debugNestedLayoutInvalidationCountForTesting = 0
     }
-    // periphery:ignore - test seam for the anchored 200→620 remeasure.
     static var anchoredRemeasureHookForTesting: ((UICollectionView, String) -> Void)?
-    // periphery:ignore - per-collection timeline-wide invalidateLayout() counts.
     private static var timelineWideInvalidationCountsForTesting: [ObjectIdentifier: Int] = [:]
     static func debugTimelineWideInvalidationCountForTesting(
         _ collectionView: UICollectionView

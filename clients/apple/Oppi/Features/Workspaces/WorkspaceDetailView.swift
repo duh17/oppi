@@ -232,9 +232,6 @@ struct WorkspaceDetailView: View {
             .filter { ($0.worktreeId ?? WorkspaceWorktree.mainId) == selectedWorktreeId }
     }
 
-    private var activeSessions: [Session] {
-        workspaceSessions.filter { $0.status != .stopped }
-    }
 
     /// Importable local pi TUI sessions for this workspace.
     ///

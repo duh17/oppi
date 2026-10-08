@@ -176,7 +176,6 @@ actor TimelineCache {
         )
     }
 
-    // periphery:ignore - used by ChatSessionManagerTests via @testable import
     /// Legacy unscoped trace cache.
     func removeTrace(_ sessionId: String) {
         try? fileManager.removeItem(at: legacyTraceURL(sessionId))

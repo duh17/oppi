@@ -9,7 +9,6 @@ struct OrbTint: Equatable, Sendable {
     var blue: Float
     var isDark: Bool
 
-    static let lightFallback = Self(red: 0.12, green: 0.12, blue: 0.14, isDark: false)
     static let darkFallback = Self(red: 0.92, green: 0.92, blue: 0.94, isDark: true)
 
     func repeatingPalette() -> OrbPalette {

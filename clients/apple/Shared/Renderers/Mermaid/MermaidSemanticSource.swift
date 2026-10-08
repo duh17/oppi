@@ -40,15 +40,6 @@ struct MermaidSourceIndex: Sendable {
         )
     }
 
-    func trimmedStatementRange(on line: Line) -> Range<Int>? {
-        let prefixCount = min(line.commentCut, line.text.utf8.count)
-        let prefix = Self.excerpt(line.text, bytes: 0..<prefixCount)
-        let leading = prefix.prefix(while: { $0 == " " || $0 == "\t" }).utf8.count
-        let trimmed = prefix.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, !trimmed.hasPrefix("%%") else { return nil }
-        return leading..<(leading + trimmed.utf8.count)
-    }
-
     static func stripComment(_ line: String) -> String {
         let cut = commentCut(in: line)
         return String(decoding: Array(line.utf8.prefix(cut)), as: UTF8.self)

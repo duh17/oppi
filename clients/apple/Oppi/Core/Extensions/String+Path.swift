@@ -63,7 +63,6 @@ extension String {
         return components.dropLast().joined(separator: "/")
     }
 
-    // periphery:ignore
     func localizedTreePathCompare(to other: String) -> ComparisonResult {
         let lhsComponents = normalizedTreePathComponents
         let rhsComponents = other.normalizedTreePathComponents
@@ -91,7 +90,6 @@ extension String {
         return normalized
     }
 
-    // periphery:ignore
     private var normalizedTreePathComponents: [String] {
         var normalized = trimmingCharacters(in: .whitespacesAndNewlines)
         while normalized.hasPrefix("./") {

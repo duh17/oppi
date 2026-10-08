@@ -108,7 +108,6 @@ final class QuickCommentTemplateStore {
         }
     }
 
-    // periphery:ignore
     /// Test seam: initialize with specific templates.
     init(templates: [QuickCommentTemplate]) {
         self.templates = Self.normalizedTemplates(templates)

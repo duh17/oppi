@@ -98,7 +98,6 @@ final class OrbMetalView: OrbPlatformView {
     /// Smoothed input last fed into geometry, independent of GPU drawables.
     private(set) var lastPresentedSpectrum: VoiceSpectrumFrame = .zero
     private(set) var lastPresentedGeometryTime: Double = 0
-    var inFlightGPUBuffers: Int { renderer?.inFlightCount ?? 0 }
     var rendererForTests: OrbMetalRenderer? { renderer }
 
     var isFrozen: Bool {

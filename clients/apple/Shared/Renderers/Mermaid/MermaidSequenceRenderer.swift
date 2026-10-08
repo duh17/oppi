@@ -105,8 +105,6 @@ enum MermaidSequenceRenderer {
         var crossSize: CGFloat { fontSize * 0.4 }
         /// Gap between message arrow and label text.
         var labelGap: CGFloat { fontSize * 0.3 }
-        /// Actor stick-figure height.
-        var actorHeight: CGFloat { fontSize * 2.5 }
         /// Horizontal padding inside note boxes.
         var notePadH: CGFloat { fontSize * 1.0 }
         /// Vertical padding inside note boxes.
@@ -1446,57 +1444,6 @@ enum MermaidSequenceRenderer {
     }
 
     // MARK: - Blocks and background rects
-
-    private static func drawSequenceBlock(
-        ctx: CGContext,
-        ox: CGFloat,
-        oy: CGFloat,
-        block: SequenceBlock,
-        messages: [MessageLayout],
-        constants c: Constants,
-        fontSize: CGFloat,
-        theme: RenderTheme,
-        totalWidth: CGFloat
-    ) {
-        guard let startIndex = block.startMessageIndex,
-              let endIndex = block.endMessageIndex,
-              startIndex >= 0,
-              startIndex < messages.count
-        else { return }
-
-        let clampedEnd = min(max(endIndex, startIndex), messages.count - 1)
-        let startY = oy + messages[startIndex].y - c.messageSpacing * 0.55
-        let endMessage = messages[clampedEnd].message
-        let endPadding = endMessage.from == endMessage.to ? c.selfMessageHeight * 0.85 : c.messageSpacing * 0.55
-        let endY = oy + messages[clampedEnd].y + endPadding
-        let rect = CGRect(
-            x: ox + c.sideMargin * 0.35,
-            y: startY,
-            width: max(1, totalWidth - c.sideMargin * 0.7),
-            height: max(c.messageSpacing, endY - startY)
-        )
-
-        ctx.saveGState()
-        ctx.setLineWidth(1.1)
-        ctx.setStrokeColor(sequenceBlockStrokeColor(block.kind, theme: theme))
-        ctx.setFillColor(sequenceBlockFillColor(block, theme: theme))
-        ctx.addPath(CGPath(roundedRect: rect, cornerWidth: 7, cornerHeight: 7, transform: nil))
-        ctx.drawPath(using: .fillStroke)
-        ctx.restoreGState()
-
-        let title = sequenceBlockTitle(block)
-        guard !title.isEmpty else { return }
-        let titleFontSize = fontSize * 0.78
-        let font = CTFontCreateWithName("Helvetica-Bold" as CFString, titleFontSize, nil)
-        MermaidTextUtils.drawText(
-            title,
-            at: CGPoint(x: rect.minX + 8, y: rect.minY + 4),
-            font: font,
-            fontSize: titleFontSize,
-            foregroundColor: theme.foreground,
-            in: ctx
-        )
-    }
 
     private static func sequenceBlockTitle(_ block: SequenceBlock) -> String {
         switch block.kind {

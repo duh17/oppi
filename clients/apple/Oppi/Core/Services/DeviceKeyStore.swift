@@ -71,7 +71,6 @@ struct KeychainDeviceKeyStorage: DeviceKeySealedStorage {
 enum DeviceKeyStoreError: Error, Equatable {
     case keychain(OSStatus)
     case sealedDataCorrupt
-    case enclaveUnavailable
 }
 
 /// Creates and reloads the device P-256 signing key.

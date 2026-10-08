@@ -113,14 +113,8 @@ extension Font {
     /// 10pt semibold — chip labels, workspace details
     static let appChip = Font.system(size: 10, weight: .semibold)
 
-    /// 10pt regular — secondary detail text
-    static let appChipLight = Font.system(size: 10)
-
     /// 11pt semibold — toolbar labels, session titles
     static let appCaption = Font.system(size: 11, weight: .semibold)
-
-    /// 11pt regular — secondary captions
-    static let appCaptionLight = Font.system(size: 11)
 
     /// Configured monospaced — raw/code content in SwiftUI views
     static var appCaptionMono: Font {
@@ -132,19 +126,12 @@ extension Font {
 
     // -- Action / button fonts --
 
-    /// 14pt medium — settings action labels
-    static let appAction = Font.system(size: 14, weight: .medium)
-
     /// 14pt bold — secondary action buttons
     static let appActionBold = Font.system(size: 14, weight: .bold)
 
     /// 15pt bold — primary send buttons
     static let appButton = Font.system(size: 15, weight: .bold)
 
-    /// Configured bold monospaced — workspace home session list
-    static var appButtonMono: Font {
-        Font.system(size: FontPreferences.codePointSize(baseSize: 15), weight: .bold)
-    }
 
     // -- Settings / section headers --
 
@@ -158,9 +145,6 @@ extension Font {
     static let appEmojiCaption = Font.system(size: 8)
 
     // -- Display / hero fonts --
-
-    /// 48pt monospaced bold — hero display (empty state)
-    static let appHeroMono = Font.system(size: 48, design: .monospaced).weight(.bold)
 
     /// 48pt regular — hero display (onboarding)
     static let appHero = Font.system(size: 48)

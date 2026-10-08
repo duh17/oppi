@@ -1285,7 +1285,6 @@ final class ConnectionCoordinator {
     }
 
     #if DEBUG
-    // periphery:ignore - used by the screenshot harness
     /// Install a fixture connection as the focused server without dialing it.
     func installPreviewConnection(_ connection: ServerConnection, serverId: String) {
         connections[serverId] = connection

@@ -10,17 +10,6 @@ enum AskCardShared {
 
     // MARK: - Display Helpers
 
-    static func answerDisplayText(_ answer: AskAnswer?) -> String {
-        guard let answer else { return "(not answered)" }
-        switch answer {
-        case .single(let value):
-            return value
-        case .multi(let values):
-            return Array(values).sorted().joined(separator: ", ")
-        case .custom(let text):
-            return "\"\(text)\""
-        }
-    }
 
     // MARK: - Selection Queries
 

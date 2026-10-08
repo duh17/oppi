@@ -2954,7 +2954,6 @@ final class ServerConnection {
         workspaceStore.setActiveServer(id)
     }
 
-    // periphery:ignore - used by the screenshot harness
     /// Install a fixture-backed client so API-driven pages render without a server.
     func setPreviewAPIClient(_ client: APIClient) {
         apiClient = client
@@ -3006,9 +3005,6 @@ final class ServerConnection {
         transportConfigurationGeneration
     }
 
-    var persistentHealthRecoveryPendingForTesting: Bool {
-        pendingPersistentHealthRecovery != nil
-    }
 
     // periphery:ignore - used by ServerConnectionLifecycleTests via @testable import
     func routeCandidateKindForTesting(
@@ -3017,27 +3013,7 @@ final class ServerConnection {
         routeCandidateKind(for: path)
     }
 
-    /// Wait until fire-and-forget availability recovery has started and finished.
-    func awaitPersistentHealthRecoveryForTesting(timeoutMs: Int = 1_000) async {
-        let attempts = max(1, timeoutMs / 5)
-        for _ in 0..<attempts {
-            if let recovery = persistentHealthRecoveryTask {
-                await recovery.task.value
-                return
-            }
-            await Task.yield()
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        if let recovery = persistentHealthRecoveryTask {
-            await recovery.task.value
-        }
-    }
 
-    func reportFocusedStreamHealthFailureForTesting(
-        _ failure: PersistentStreamHealthFailure
-    ) async {
-        await wsClient?.onTransportHealthFailure?(failure)
-    }
 
     func setSplitStreamCapabilitiesForTesting(
         sessionStream: Bool = true,

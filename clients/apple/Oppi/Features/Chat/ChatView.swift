@@ -2233,9 +2233,6 @@ struct ChatView: View {
         }
     }
 
-    private var composerSendProgressText: String? {
-        attachmentPreparationText ?? actionHandler.sendProgressText
-    }
 
     @MainActor
     private func handleAudioPlayerStateChange(_ notification: Notification) {

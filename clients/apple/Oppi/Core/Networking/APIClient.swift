@@ -402,7 +402,6 @@ actor APIClient: ClientLogUploading {
         )
     }
 
-    // periphery:ignore - used by APIClientTests via @testable import
     /// Test-only init with custom URLSessionConfiguration.
     init(
         baseURL: URL,

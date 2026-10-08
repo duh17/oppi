@@ -226,7 +226,6 @@ struct MainThreadStallRecoveryContext: Sendable {
 final class MainThreadLagWatchdog: @unchecked Sendable {
     var onStall: (@Sendable (MainThreadStallContext) -> Void)?
     var onRecovery: (@Sendable (MainThreadStallRecoveryContext) -> Void)?
-    // periphery:ignore - deterministic signal for MainThreadLagWatchdogTests
     var onDelayedStopEvaluationForTesting: (@Sendable () -> Void)?
 
     private let queue = DispatchQueue(label: "\(AppIdentifiers.subsystem).main-thread-watchdog", qos: .utility)

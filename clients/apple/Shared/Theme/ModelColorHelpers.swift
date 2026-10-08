@@ -516,10 +516,6 @@ func modelProviderLabel(_ model: String?) -> String? {
     modelDisplayIdentity(model).providerDisplayName
 }
 
-func modelAggregationKey(_ model: String?) -> String {
-    modelDisplayIdentity(model).aggregationKey
-}
-
 func providerDisplayLabel(_ provider: String?) -> String {
     guard let provider = normalizedProviderKey(provider), !provider.isEmpty else {
         return "Unknown"

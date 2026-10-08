@@ -585,6 +585,5 @@ final class WorkspaceFileEditSession {
     }
 
 #if DEBUG
-    var hasInFlightWriteForTesting: Bool { inFlight != nil }
 #endif
 }

@@ -137,10 +137,6 @@ enum ChatSessionTelemetry {
 
     // MARK: - App Launch
 
-    static func recordAppLaunch() {
-        let launchMs = Int64(max(0, (CFAbsoluteTimeGetCurrent() - processStartTime) * 1_000))
-        emit(.appLaunchMs, Double(launchMs), .ms)
-    }
 
     // MARK: - Session Switch
 

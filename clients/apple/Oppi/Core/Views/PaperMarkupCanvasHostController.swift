@@ -65,9 +65,6 @@ final class PaperMarkupCanvasHostController: UIViewController {
         paperViewController?.zoomRange
     }
 
-    var contentVisibleFrameForTesting: CGRect? {
-        paperViewController?.contentVisibleFrame
-    }
 
     var toolPickerAccessoryItemForTesting: UIBarButtonItem? {
         toolPicker?.accessoryItem

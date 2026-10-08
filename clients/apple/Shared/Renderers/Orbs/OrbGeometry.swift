@@ -90,10 +90,6 @@ enum OrbGeometry {
 
     static func jsRound(_ x: Double) -> Double { (x + 0.5).rounded(.down) }
 
-    static func frac(_ x: Double) -> Double { x - x.rounded(.down) }
-
-    static func lerp(_ a: Double, _ b: Double, _ f: Double) -> Double { a + (b - a) * f }
-
     static func hashD(_ a: Double, _ b: Double) -> Double {
         let h = sin(a * 12.9898 + b * 78.233) * 43758.5453
         return h - h.rounded(.down)

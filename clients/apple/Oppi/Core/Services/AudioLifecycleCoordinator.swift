@@ -137,15 +137,6 @@ final class AudioLifecycleCoordinator: VoicePlaybackInterrupter {
         }
     }
 
-    func playAudioMessage(itemID: String, transcript: String, attachmentID: String?) {
-        let text = normalizedTranscript(transcript)
-        presentation.mode = .playing(itemID: itemID, source: .audioMessageReplay)
-        presentation.timelineItems[itemID] = .finalCard(
-            transcript: text,
-            attachmentID: attachmentID,
-            replayState: .playing
-        )
-    }
 
     func startDictation() {
         if case .playing(let itemID, _) = presentation.mode {

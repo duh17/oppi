@@ -86,10 +86,6 @@ final class IconPickerModel<Value: Equatable & Sendable> {
         }
     }
 
-    var valueDraft: Value? {
-        guard case .value(let value) = draft else { return nil }
-        return value
-    }
 
     var hasChanges: Bool {
         draft != .value(savedValue)

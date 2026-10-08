@@ -7,7 +7,6 @@ enum GuidedControlSessionInitialPrompt {
         let message: String
         let sentComments: [ReviewComment]
 
-        var sentCommentIds: [String] { sentComments.map(\.id) }
     }
 
     static func make(

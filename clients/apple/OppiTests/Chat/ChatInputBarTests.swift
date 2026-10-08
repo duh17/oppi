@@ -361,7 +361,7 @@ struct ChatInputBarTests {
             .appending(path: "Oppi/Core/Services/AppHaptics.swift")
         let haptics = try String(contentsOf: hapticsURL, encoding: .utf8)
         let activation = try chatInputBarSourceSlice(
-            named: "static func dictationActivated() {", until: "static func longPressThreshold() {", in: haptics
+            named: "static func dictationActivated() {", until: "static func selectionChanged() {", in: haptics
         )
         #expect(activation.contains("success()"), "Dictation must use the same feedback as comment saving")
         #expect(!activation.contains("impact(style:"))

@@ -466,33 +466,8 @@ struct MermaidParser: DocumentParser, Sendable {
 
     // MARK: - Text normalization
 
-    /// Normalize Mermaid label syntax: HTML breaks, quote/backtick wrappers, and entity codes.
-    private func normalize(_ text: String) -> String {
-        inspect(text).text
-    }
-
     private func inspect(_ text: String) -> MermaidTextUtils.LabelInspection {
         MermaidTextUtils.inspectLabel(text)
-    }
-
-    // MARK: - Comment stripping
-
-    /// Remove `%%` comment from a line.
-    private func stripComment(_ line: String) -> String {
-        // Find %% that is not inside quotes
-        var inDoubleQuote = false
-        let chars = Array(line)
-        for i in 0 ..< chars.count {
-            if chars[i] == "\"" { inDoubleQuote.toggle() }
-            if !inDoubleQuote, i + 1 < chars.count, chars[i] == "%", chars[i + 1] == "%" {
-                // Keep `%%{init: ...}%%` so layout config can be read.
-                if i + 2 < chars.count, chars[i + 2] == "{" {
-                    continue
-                }
-                return String(chars[0 ..< i])
-            }
-        }
-        return line
     }
 
     // MARK: - Flowchart parsing
@@ -772,58 +747,6 @@ struct MermaidParser: DocumentParser, Sendable {
             byte += charBytes
         }
         statements.append((current, currentStart))
-        return statements
-    }
-
-    private func expandStatements(_ lines: [String]) -> [String] {
-        var result: [String] = []
-        for line in lines {
-            for part in splitStatements(in: line) {
-                let trimmed = part.trimmingCharacters(in: .whitespaces)
-                if !trimmed.isEmpty {
-                    result.append(trimmed)
-                }
-            }
-        }
-        return result
-    }
-
-    private func splitStatements(in line: String) -> [String] {
-        var statements: [String] = []
-        var current = ""
-        var inDoubleQuote = false
-        var squareDepth = 0
-        var parenDepth = 0
-        var braceDepth = 0
-
-        for char in line {
-            if char == "\"" {
-                inDoubleQuote.toggle()
-                current.append(char)
-                continue
-            }
-
-            if !inDoubleQuote {
-                switch char {
-                case "[": squareDepth += 1
-                case "]": squareDepth = max(0, squareDepth - 1)
-                case "(": parenDepth += 1
-                case ")": parenDepth = max(0, parenDepth - 1)
-                case "{": braceDepth += 1
-                case "}": braceDepth = max(0, braceDepth - 1)
-                case ";" where squareDepth == 0 && parenDepth == 0 && braceDepth == 0:
-                    statements.append(current)
-                    current = ""
-                    continue
-                default:
-                    break
-                }
-            }
-
-            current.append(char)
-        }
-
-        statements.append(current)
         return statements
     }
 

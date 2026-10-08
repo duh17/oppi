@@ -172,13 +172,11 @@ enum StreamingRenderPolicy {
     /// Discriminated content type for policy decisions.
     enum ContentKind: Sendable, Equatable {
         case code(language: CodeLanguageCategory)
-        // periphery:ignore - exhaustive switch coverage; tested in StreamingRenderPolicyTests
         case markdown
         case diff
         case plainText
         case bash
         /// Read-media, plot, and other embedded views — always full.
-        // periphery:ignore - exhaustive switch coverage; tested in StreamingRenderPolicyTests
         case media
     }
 

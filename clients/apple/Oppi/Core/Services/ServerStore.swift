@@ -140,7 +140,6 @@ final class ServerStore {
         servers.first { $0.id == id }
     }
 
-    // periphery:ignore - used by ServerStoreTests via @testable import
     /// Look up which server owns a given host:port combination.
     func server(forHost host: String, port: Int) -> PairedServer? {
         servers.first { $0.host == host && $0.port == port }

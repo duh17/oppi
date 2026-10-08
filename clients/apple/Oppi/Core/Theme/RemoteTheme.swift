@@ -271,7 +271,6 @@ enum CustomThemeStore {
         return palette
     }
 
-    // periphery:ignore - API surface for future theme management UI
     /// Delete a custom theme.
     static func delete(name: String) {
         var themes = loadAll()

@@ -41,6 +41,7 @@ import UIKit
 ///
 /// ``FullScreenCodeViewController``, ``FullScreenImageViewController``, and
 /// ``FullScreenImageDataPreviewViewController`` follow this pattern.
+// periphery:ignore - marker enum; comments grep this name for the fullscreen chrome convention
 enum FullScreenViewerChrome {
     // Marker enum — the convention is documented above.
     // Grep for `FullScreenViewerChrome` to find all adopters.

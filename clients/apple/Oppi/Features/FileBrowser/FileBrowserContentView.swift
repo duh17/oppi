@@ -213,11 +213,6 @@ struct FileBrowserContentView: View {
         (currentFilePath as NSString).pathExtension.lowercased()
     }
 
-    /// Determine preview behavior using Oppi's canonical file-type detector.
-    /// This avoids `.ts` being misclassified as MPEG transport stream video.
-    private var mediaCategory: FilePreviewCategory {
-        FileType.detect(from: currentFilePath).previewCategory
-    }
 
     /// Whether the UIKit file viewer is active (text content loaded).
     /// When true, the SwiftUI navigation bar is hidden and the UIKit

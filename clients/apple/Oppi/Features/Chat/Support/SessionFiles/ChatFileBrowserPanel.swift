@@ -124,16 +124,6 @@ struct ChatFileBrowserPanel: View {
         }
     }
 
-    private var subtitle: String {
-        switch selectedTab {
-        case .changed:
-            let count = changedFiles.count
-            if count == 1 { return "1 file changed in this session" }
-            return "\(count) files changed in this session"
-        case .all:
-            return "Workspace file browser"
-        }
-    }
 
     private var tabPicker: some View {
         Picker("File browser mode", selection: $selectedTab) {

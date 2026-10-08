@@ -40,10 +40,6 @@ enum AppHaptics {
         success()
     }
 
-    /// A crisper confirmation that a long-press threshold has been crossed.
-    static func longPressThreshold() {
-        impact(style: .rigid, intensity: 0.65)
-    }
 
     /// Feedback for changing a selected value or option.
     static func selectionChanged() {

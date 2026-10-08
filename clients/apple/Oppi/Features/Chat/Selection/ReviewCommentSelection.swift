@@ -126,14 +126,6 @@ enum ReviewCommentSurfaceKind: Equatable {
     case fullScreenMarkdown
     case fullScreenThinking
 
-    var prefersCodeBlockInsertion: Bool {
-        switch self {
-        case .assistantCodeBlock, .toolCommand, .toolOutput, .toolExpandedText, .fullScreenCode, .fullScreenDiff, .fullScreenSource, .fullScreenTerminal:
-            true
-        case .assistantProse, .userMessage, .assistantTable, .thinking, .fullScreenMarkdown, .fullScreenThinking:
-            false
-        }
-    }
 
     var usesInlineCommentWidget: Bool {
         switch self {

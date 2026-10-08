@@ -2,12 +2,6 @@ import CoreGraphics
 import CryptoKit
 import Foundation
 
-/// UTF-8 byte offsets into the original source. `endOffset` and `endColumn` are exclusive.
-/// Columns are 1-based UTF-8 byte columns, not UTF-16 code units or grapheme clusters.
-enum SemanticOffsetEncoding {
-    static let utf8Byte = "utf8-byte"
-}
-
 enum SemanticSpanRole: String, Equatable, Sendable, Codable {
     case declaration
     case reference
@@ -20,6 +14,8 @@ enum SemanticSourceOrigin: String, Equatable, Sendable, Codable {
     case dom
 }
 
+/// UTF-8 byte offsets into the original source. `endOffset` and `endColumn` are exclusive.
+/// Columns are 1-based UTF-8 byte columns, not UTF-16 code units or grapheme clusters.
 struct SemanticSourceSpan: Equatable, Sendable, Codable {
     var startOffset: Int
     var endOffset: Int

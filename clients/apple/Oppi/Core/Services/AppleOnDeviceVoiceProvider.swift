@@ -150,28 +150,6 @@ final class AppleOnDeviceVoiceProvider: VoiceTranscriptionProvider {
         }
     }
 
-    static func isModelInstalled(
-        for engine: VoiceInputManager.TranscriptionEngine,
-        locale: Locale
-    ) async -> Bool {
-        switch engine {
-        case .modernSpeech:
-            guard SpeechTranscriber.isAvailable,
-                  let supportedLocale = await SpeechTranscriber.supportedLocale(equivalentTo: locale) else {
-                return false
-            }
-            let installed = await SpeechTranscriber.installedLocales
-            return installed.contains { $0.identifier(.bcp47) == supportedLocale.identifier(.bcp47) }
-        case .classicDictation:
-            guard let supportedLocale = await DictationTranscriber.supportedLocale(equivalentTo: locale) else {
-                return false
-            }
-            let installed = await DictationTranscriber.installedLocales
-            return installed.contains { $0.identifier(.bcp47) == supportedLocale.identifier(.bcp47) }
-        case .serverDictation:
-            return true
-        }
-    }
 
     private static func modelKey(
         engine: VoiceInputManager.TranscriptionEngine,

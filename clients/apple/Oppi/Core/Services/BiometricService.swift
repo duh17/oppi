@@ -15,13 +15,7 @@ final class BiometricService {
         set { AppPreferences.Biometric.setEnabled(newValue) }
     }
 
-    // Cached once on init — biometry type doesn't change during app lifetime.
-    private let cachedBiometricName = DeviceOwnerAuthentication.method().name
-
     private init() {}
-
-    /// Face ID, Touch ID, Optic ID, or Passcode. Cached at init.
-    var biometricName: String { cachedBiometricName }
 
     /// Authenticate via Face ID / Touch ID / device passcode when enabled.
     ///

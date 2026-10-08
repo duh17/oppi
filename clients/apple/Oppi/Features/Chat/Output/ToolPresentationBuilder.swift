@@ -261,7 +261,6 @@ enum ToolPresentationBuilder {
         var editTrailingFallback: String?
     }
 
-    // periphery:ignore:parameters isError,outputPreview
     private static func buildCollapsed(
         isInteractive: Bool,
         tool: String,

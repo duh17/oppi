@@ -262,10 +262,6 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
         pickController.refreshHighlightAfterViewportChange()
     }
 
-    /// Update the review comment handler (e.g., when SwiftUI re-renders).
-    func updateReviewCommentHandler(_ handler: ((String, UIViewController?) -> Void)?) {
-        webView.reviewCommentHandler = handler
-    }
 
     func snapshotRenderedImage() async throws -> UIImage {
         guard isRenderReady else {

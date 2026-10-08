@@ -2723,13 +2723,7 @@ final class NativeFullScreenTerminalBody: UIView, UIScrollViewDelegate, UICollec
         )
     }
 
-    func virtualizedChunkLeadingSGRForTesting() -> [String]? {
-        virtualizedIndex?.chunks.map(\.leadingSGR)
-    }
 
-    func virtualizedTrailingSGRForTesting() -> String? {
-        virtualizedIndex?.trailingSGR
-    }
     #endif
 
     private var virtualizedCommandItemCount: Int { virtualizedCommand == nil ? 0 : 1 }

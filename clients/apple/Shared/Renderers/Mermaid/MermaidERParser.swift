@@ -55,26 +55,6 @@ enum ERCardinality: Equatable, Sendable {
     /// `}o` left / `o{` right — zero or more.
     case zeroOrMore
 
-    /// Marker as written at the first entity's end of the line.
-    var leftMarker: String {
-        switch self {
-        case .exactlyOne: return "||"
-        case .zeroOrOne: return "|o"
-        case .oneOrMore: return "}|"
-        case .zeroOrMore: return "}o"
-        }
-    }
-
-    /// Marker as written at the second entity's end of the line.
-    var rightMarker: String {
-        switch self {
-        case .exactlyOne: return "||"
-        case .zeroOrOne: return "o|"
-        case .oneOrMore: return "|{"
-        case .zeroOrMore: return "o{"
-        }
-    }
-
     /// Normalize any written marker (either side) to a cardinality.
     static func fromMarker(_ marker: String) -> ERCardinality? {
         switch marker {
@@ -251,15 +231,6 @@ enum MermaidERParser {
     private struct Endpoint {
         let name: String
         let alias: String?
-    }
-
-    private struct ParsedRelationship {
-        let from: String
-        let to: String
-        let fromCardinality: ERCardinality
-        let toCardinality: ERCardinality
-        let identifying: Bool
-        let label: String?
     }
 
     /// Parse `first-entity relationship second-entity : label`.

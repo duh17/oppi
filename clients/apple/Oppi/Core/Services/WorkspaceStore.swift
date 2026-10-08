@@ -192,7 +192,6 @@ final class WorkspaceStore {
         }
     }
 
-    // periphery:ignore - store API surface; active-server convenience accessor
     /// Active server syncing flag.
     var isSyncing: Bool {
         get { serverFreshness[activeKey]?.isSyncing ?? false }

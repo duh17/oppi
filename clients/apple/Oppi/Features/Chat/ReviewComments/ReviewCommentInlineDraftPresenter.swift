@@ -926,35 +926,6 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         }
     }
 
-    private static func locationText(for source: ReviewCommentSourceContext) -> String {
-        if let lineRange = source.lineRange {
-            if lineRange.lowerBound == lineRange.upperBound {
-                return "Comment on line \(lineRange.lowerBound)"
-            }
-            return "Comment on lines \(lineRange.lowerBound)-\(lineRange.upperBound)"
-        }
-        if let filePath = source.filePath, !filePath.isEmpty {
-            return filePath
-        }
-        if let sourceLabel = source.sourceLabel, !sourceLabel.isEmpty {
-            return sourceLabel
-        }
-
-        switch source.surface {
-        case .assistantProse: return "Assistant message"
-        case .userMessage: return "User message"
-        case .assistantCodeBlock: return "Code block"
-        case .assistantTable: return "Table"
-        case .thinking, .fullScreenThinking: return "Thinking"
-        case .toolCommand: return "Tool command"
-        case .toolOutput, .toolExpandedText: return "Tool output"
-        case .fullScreenCode: return "Code"
-        case .fullScreenDiff: return "Diff"
-        case .fullScreenSource: return "Source"
-        case .fullScreenTerminal: return "Terminal"
-        case .fullScreenMarkdown: return "Markdown"
-        }
-    }
 }
 
 private final class ReviewCommentInlineInputTextView: PastableUITextView {
