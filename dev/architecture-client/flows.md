@@ -94,6 +94,8 @@ graph TD
 
 The manager loads cached trace first for immediate display, then fetches the latest trace page in the background. On first WebSocket connect it seeds sequence tracking from the server. On reconnect it uses focused-session catch-up; if the server ring cannot serve the gap, it repairs from paged trace history instead of loading the entire trace at once.
 
+Each mounted chat runtime holds a focus claim (`FocusedSessionStore`) for its view's lifetime and releases only that claim. A newer claim supersedes older ones, and a superseded runtime never binds, reconnects, or releases the shared stream. When the current claim is released while an older runtime for the same session is still mounted (an iPad layout swap mounts a transient duplicate chat), `ServerConnection` hands focus back to that runtime and calls `ChatSessionManager.focusClaimRegained()` so it rebinds. A claim on another session drops the held claims, so a background chat claims again only when it re-appears.
+
 Stopped sessions load history without opening the focused WebSocket. Opening the WebSocket can resume server-owned execution, so explicit resume stays a user action. `FocusedSessionConnectionPolicy` encodes that rule: a locally stopped session must refresh history first, and a still-stopped refresh must stay history-only.
 
 Shared policy types live under `clients/apple/OppiCore/Runtime/`:

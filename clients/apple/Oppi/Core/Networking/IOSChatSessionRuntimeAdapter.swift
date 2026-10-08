@@ -147,8 +147,19 @@ final class IOSChatSessionRuntimeAdapter:
 
     var isBindTerminal: Bool { connection?.isFocusedStreamBindTerminal() == true }
 
+    /// Called when focus returns to this runtime's claim after a newer chat for
+    /// the same session released it. The iOS `ChatSessionManager` composition
+    /// routes it to `focusClaimRegained()`.
+    var onFocusRegained: (@MainActor () -> Void)?
+
     func acquireFocus(sessionId: String) -> FocusedSessionContext? {
-        connection?.claimFocusedSession(sessionId)
+        // One adapter per manager, so the adapter identifies the runtime.
+        connection?.claimFocusedSession(
+            sessionId,
+            holder: FocusClaimHolder(id: ObjectIdentifier(self)) { [weak self] in
+                self?.onFocusRegained?()
+            }
+        )
     }
 
     var currentFocusClaim: FocusedSessionContext? {

@@ -21,6 +21,9 @@ extension ChatSessionManager {
             reducer: TimelineReducer(environment: .app()),
             coalescer: DeltaCoalescer(telemetry: .appMetrics)
         )
+        adapter.onFocusRegained = { [weak self] in
+            self?.focusClaimRegained()
+        }
     }
 
     func connect(

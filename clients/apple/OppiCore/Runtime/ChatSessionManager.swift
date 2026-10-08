@@ -2302,10 +2302,21 @@ final class ChatSessionManager {
     }
 
     /// True while this runtime's claim is the store's current focus. A newer
-    /// chat (same or another session) superseding it makes this false for good.
+    /// chat (same or another session) superseding it makes this false; only a
+    /// same-session successor's release can hand it back (`focusClaimRegained`).
     var ownsFocusClaim: Bool {
         guard let focusClaim else { return false }
         return focusedStreamPort.currentFocusClaim == focusClaim
+    }
+
+    /// Focus came back to this runtime's existing claim: a newer runtime for the
+    /// same session superseded it, then was released while this one stayed
+    /// mounted (a layout swap briefly mounts a duplicate chat). Rebind unless
+    /// the loop is still live; a loop mid-bind just sees ownership again. Never
+    /// acquires a claim, so it cannot take focus from another chat.
+    func focusClaimRegained() {
+        guard wantsAutoReconnect, ownsFocusClaim, !isConnectLoopLive else { return }
+        reconnect()
     }
 
     /// Release this runtime's claim, once, from `cleanup()` only. The port

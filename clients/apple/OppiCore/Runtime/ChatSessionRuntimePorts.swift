@@ -162,7 +162,9 @@ protocol ChatSessionFocusedStreamPort: AnyObject {
     var isBindTerminal: Bool { get }
 
     /// Focus `sessionId` and return a new ownership claim, or nil when focus is
-    /// refused. Each call supersedes older claims on the same session.
+    /// refused. Each call supersedes older claims on the same session. A port
+    /// may return focus to a superseded claim when the newer one is released;
+    /// it then calls that runtime's `ChatSessionManager.focusClaimRegained()`.
     func acquireFocus(sessionId: String) -> FocusedSessionContext?
     /// Current focus context: nil when vacant, otherwise the holder's claim.
     var currentFocusClaim: FocusedSessionContext? { get }
@@ -173,8 +175,10 @@ protocol ChatSessionFocusedStreamPort: AnyObject {
         scope: SessionRouteScope,
         claim: FocusedSessionContext
     ) async -> AsyncStream<SessionStreamEvent>?
-    /// Release focus and the stream only while `claim` is still current.
-    /// Stale claims are ignored, including after deferred live-audio drain.
+    /// Release focus and the stream only while `claim` is still current (or
+    /// hand both back to an older same-session claim whose runtime is still
+    /// mounted). Stale claims never touch the stream, including after deferred
+    /// live-audio drain.
     func releaseFocus(_ claim: FocusedSessionContext)
     func focusedStreamLiveness(sessionId: String) -> FocusedStreamLiveness
     func isFocused(sessionId: String) -> Bool

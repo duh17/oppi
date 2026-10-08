@@ -270,6 +270,130 @@ struct ChatFocusOwnershipTests {
         connection.disconnectStream()
     }
 
+    /// A layout swap (iPad rotation into the split shell) mounts a transient
+    /// duplicate chat for the visible session. It claims focus over the visible
+    /// chat and is torn down moments later. The visible chat must get the
+    /// stream back instead of staying disconnected with no live output.
+    /// `transientBound`: the duplicate opened its stream (replacing the visible
+    /// chat's consumer) before leaving, versus leaving before it bound.
+    @Test(arguments: [false, true])
+    func transientSameSessionChatLeavingHandsStreamBackToVisibleChat(transientBound: Bool) async {
+        let sessionId = "remount-\(UUID().uuidString)"
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+        let sessionStore = SessionStore()
+        sessionStore.upsert(makeTestSession(id: sessionId, status: .ready))
+
+        let visible = ChatSessionManager(sessionId: sessionId)
+        let visibleStreams = ScriptedStreamFactory()
+        visible._streamSessionForTesting = { _ in visibleStreams.makeStream() }
+        visible._loadHistoryForTesting = { _, _ in nil }
+        visible._focusedStreamLivenessForTesting = { .connected }
+        visible.markAppeared()
+        visible.claimFocusOnAppear(connection: connection, sessionStore: sessionStore)
+        let visibleClaim = connection.focusedSessionStore.focused
+
+        let transient = ChatSessionManager(sessionId: sessionId)
+        let transientStreams = ScriptedStreamFactory()
+        transient._streamSessionForTesting = { _ in transientStreams.makeStream() }
+        transient._loadHistoryForTesting = { _, _ in nil }
+
+        if transientBound {
+            visible.ensureConnected(connection: connection, sessionStore: sessionStore)
+            #expect(await visibleStreams.waitForCreated(1))
+            visibleStreams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId)))
+            #expect(await waitForTestCondition(timeoutMs: 1_000) {
+                await MainActor.run { visible.entryState == .streaming }
+            })
+            transient.markAppeared()
+            transient.claimFocusOnAppear(connection: connection, sessionStore: sessionStore)
+            transient.ensureConnected(connection: connection, sessionStore: sessionStore)
+            #expect(await transientStreams.waitForCreated(1))
+            // Binding the same session replaces the visible chat's consumer.
+            visibleStreams.finish(index: 0)
+        } else {
+            transient.markAppeared()
+            transient.claimFocusOnAppear(connection: connection, sessionStore: sessionStore)
+            // The visible chat's connect runs while the duplicate owns focus.
+            visible.ensureConnected(connection: connection, sessionStore: sessionStore)
+        }
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                if case .disconnected = visible.entryState { return true }
+                return false
+            }
+        })
+        let streamsBeforeLeave = visibleStreams.streamsCreated
+
+        // The duplicate is torn down.
+        transient.cleanup()
+
+        #expect(connection.focusedSessionStore.focused == visibleClaim, "Focus returns to the visible chat's claim")
+        #expect(visible.ownsFocusClaim)
+        #expect(
+            await visibleStreams.waitForCreated(streamsBeforeLeave + 1, timeoutMs: 2_000),
+            "The visible chat must rebind its stream"
+        )
+        visibleStreams.yield(index: streamsBeforeLeave, message: .connected(session: makeTestSession(id: sessionId)))
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run { visible.isReadyForTurnDispatch }
+        })
+
+        // Leaving the visible chat afterwards still closes the session stream.
+        visible.cleanup()
+        #expect(connection.focusedSessionId == nil)
+        connection.disconnectStream()
+    }
+
+    /// Handing focus back never reaches a chat for another session (a covered
+    /// background chat) or a chat that already released its claim.
+    @Test func releaseNeverHandsFocusToAnotherSessionOrAReleasedChat() async {
+        let harness = await makeStreamingManager()
+        let background = harness.manager
+
+        let other = ChatSessionManager(sessionId: "other-\(UUID().uuidString)")
+        let otherStreams = ScriptedStreamFactory()
+        other._streamSessionForTesting = { _ in otherStreams.makeStream() }
+        other._loadHistoryForTesting = { _, _ in nil }
+        other.markAppeared()
+        other.claimFocusOnAppear(connection: harness.connection, sessionStore: harness.sessionStore)
+        other.ensureConnected(connection: harness.connection, sessionStore: harness.sessionStore)
+        #expect(await otherStreams.waitForCreated(1))
+        harness.streams.finish(index: 0)
+        #expect(await waitForTestCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                if case .disconnected = background.entryState { return true }
+                return false
+            }
+        })
+
+        other.cleanup()
+        try? await Task.sleep(for: .milliseconds(300))
+
+        #expect(harness.connection.focusedSessionId == nil, "Another session's chat must not take the stream")
+        #expect(!background.ownsFocusClaim)
+        #expect(harness.streams.streamsCreated == 1)
+
+        // Same session: a released chat's claim is forgotten, never handed back.
+        var regained: [String] = []
+        let olderRuntime = NSObject()
+        let newerRuntime = NSObject()
+        let older = harness.connection.claimFocusedSession(
+            "s1",
+            holder: FocusClaimHolder(id: ObjectIdentifier(olderRuntime)) { regained.append("older") }
+        )
+        let newer = harness.connection.claimFocusedSession(
+            "s1",
+            holder: FocusClaimHolder(id: ObjectIdentifier(newerRuntime)) { regained.append("newer") }
+        )
+        if let older { harness.connection.releaseFocusedSession(older) }
+        if let newer { harness.connection.releaseFocusedSession(newer) }
+        #expect(regained.isEmpty)
+        #expect(harness.connection.focusedSessionId == nil)
+
+        harness.tearDown()
+    }
+
     // MARK: - Send readiness
 
     /// Exercise the manager -> iOS adapter -> focused socket binding, not a

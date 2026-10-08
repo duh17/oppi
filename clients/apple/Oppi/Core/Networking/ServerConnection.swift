@@ -2391,22 +2391,41 @@ final class ServerConnection {
 
     /// Focus `sessionId` and start a new ownership claim on it. Only the holder
     /// of the returned claim may release the focus with `releaseFocusedSession`;
-    /// an older claim on the same session (a stale chat runtime) stops matching.
-    func claimFocusedSession(_ sessionId: String) -> FocusedSessionContext? {
-        applyFocus(sessionId, startsClaim: true)
+    /// an older claim on the same session (a stale chat runtime) stops matching
+    /// until that newer claim is released (see `releaseFocusedSession`).
+    func claimFocusedSession(
+        _ sessionId: String,
+        holder: FocusClaimHolder? = nil
+    ) -> FocusedSessionContext? {
+        applyFocus(sessionId, startsClaim: true, holder: holder)
     }
 
     /// Release focus and its session stream only if `claim` is still current.
-    /// A stale claim is a no-op, so a destroyed or superseded chat runtime can
-    /// never tear down the stream of a newer owner of the same session.
+    /// A stale claim is a no-op for the stream, so a destroyed or superseded
+    /// chat runtime can never tear down the stream of a newer owner of the same
+    /// session. When an older runtime for the same session is still mounted
+    /// (a layout swap briefly mounted a duplicate chat that is now leaving),
+    /// focus and the stream go back to it instead of being closed.
     func releaseFocusedSession(_ claim: FocusedSessionContext) {
         guard focusedSessionStore.isCurrent(claim) else {
+            focusedSessionStore.forget(claim)
             recordFocusArbitration(
                 outcome: "stale_release_ignored",
                 previousSessionId: claim.sessionId,
                 nextSessionId: focusedSessionId ?? "none",
                 context: "release"
             )
+            return
+        }
+        if !externalSessionOpenClaimBlocks(claim.sessionId),
+           let holder = focusedSessionStore.handBack(from: claim) {
+            recordFocusArbitration(
+                outcome: "handed_back",
+                previousSessionId: claim.sessionId,
+                nextSessionId: claim.sessionId,
+                context: "release"
+            )
+            holder.regain()
             return
         }
         if audioPlayer.activeLiveTransportSessionID == claim.sessionId {
@@ -2437,7 +2456,11 @@ final class ServerConnection {
     }
 
     @discardableResult
-    private func applyFocus(_ sessionId: String, startsClaim: Bool) -> FocusedSessionContext? {
+    private func applyFocus(
+        _ sessionId: String,
+        startsClaim: Bool,
+        holder: FocusClaimHolder? = nil
+    ) -> FocusedSessionContext? {
         guard !externalSessionOpenClaimBlocks(sessionId) else {
             recordExternalSessionOpenClaimRefusal(sessionId, context: "focus")
             return nil
@@ -2460,7 +2483,7 @@ final class ServerConnection {
         }
 
         let context = startsClaim
-            ? focusedSessionStore.claim(sessionId: sessionId)
+            ? focusedSessionStore.claim(sessionId: sessionId, holder: holder)
             : focusedSessionStore.focus(sessionId: sessionId)
         sessionStore.setViewingSession(sessionId)
         // Reset per-connection chat state for the new focused session.
