@@ -355,8 +355,7 @@ export class AgentScheduleStore {
 
   getSchedule(scheduleId: string): AgentSchedule | undefined {
     const row = this.db.prepare("SELECT * FROM agent_schedules WHERE id = ?").get(scheduleId) as
-      | ScheduleRow
-      | undefined;
+      ScheduleRow | undefined;
     return row ? scheduleFromRow(row) : undefined;
   }
 
@@ -401,8 +400,7 @@ export class AgentScheduleStore {
 
   getRun(runId: string): AgentScheduleRun | undefined {
     const row = this.db.prepare("SELECT * FROM agent_schedule_runs WHERE id = ?").get(runId) as
-      | RunRow
-      | undefined;
+      RunRow | undefined;
     return row ? runFromRow(row) : undefined;
   }
 

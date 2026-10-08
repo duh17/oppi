@@ -275,7 +275,7 @@ export function terminalLineToTextSpans(input: string): ExtensionUITextSpan[] {
     buffer = "";
   };
 
-  for (let index = 0; index < input.length; ) {
+  for (let index = 0; index < input.length;) {
     const char = input[index];
 
     if (char === ESC && input[index + 1] === "]") {

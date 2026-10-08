@@ -75,8 +75,7 @@ export const DICTATION_CONTEXT_MAX_PHRASE_BYTES = 256;
 export const DICTATION_CONTEXT_MAX_TOTAL_BYTES = 8192;
 
 export type DictationContextualStringsResult =
-  | { ok: true; contextualStrings?: string[] }
-  | { ok: false; error: string };
+  { ok: true; contextualStrings?: string[] } | { ok: false; error: string };
 
 /** Cc: U+0000–001F and U+007F–009F. Rejected on the raw supplied string. */
 function isDictationContextControlCodePoint(code: number): boolean {
@@ -249,9 +248,7 @@ export interface DictationCancelMessage {
 }
 
 export type DictationClientMessage =
-  | DictationStartMessage
-  | DictationStopMessage
-  | DictationCancelMessage;
+  DictationStartMessage | DictationStopMessage | DictationCancelMessage;
 
 // ─── Server -> Client messages ───
 
@@ -292,7 +289,4 @@ export interface DictationErrorMessage {
 }
 
 export type DictationServerMessage =
-  | DictationReadyMessage
-  | DictationResultMessage
-  | DictationFinalMessage
-  | DictationErrorMessage;
+  DictationReadyMessage | DictationResultMessage | DictationFinalMessage | DictationErrorMessage;

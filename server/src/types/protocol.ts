@@ -112,7 +112,8 @@ export type TurnAckStage = "accepted" | "dispatched" | "started";
  * All messages may include an optional `requestId` for response correlation.
  * Commands return a `command_result` with the same requestId.
  */
-export type ClientMessage = // ── Prompting ──
+export type ClientMessage =
+  // ── Prompting ──
   (
     | {
         type: "prompt";
@@ -338,9 +339,7 @@ export interface ExtensionUIWorkingIndicator {
 // ─── Global App Event Stream Messages ───
 
 export type AppEventSessionLifecycleType =
-  | "session_created"
-  | "session_imported"
-  | "session_discovered";
+  "session_created" | "session_imported" | "session_discovered";
 
 export interface AppEventBase {
   type: string;
@@ -438,7 +437,8 @@ export type AssistantMessageContentPart =
   | { kind: "boundary"; contentIndex: number; id?: string };
 
 // Server → Client
-export type ServerMessage = // ── Connection ──
+export type ServerMessage =
+  // ── Connection ──
   (
     | { type: "connected"; session: Session; currentSeq?: number; runtimeEpoch?: string }
     | { type: "stream_connected"; userName: string; serverDictationAvailable: boolean }

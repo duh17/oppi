@@ -15,8 +15,7 @@ export type CliJsonError = {
 };
 
 export type CliJsonEnvelope =
-  | { ok: true; data: Record<string, unknown> }
-  | { ok: false; error: CliJsonError };
+  { ok: true; data: Record<string, unknown> } | { ok: false; error: CliJsonError };
 
 export function cliJsonErrorFromUnknown(
   err: unknown,

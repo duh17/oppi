@@ -7,13 +7,7 @@ import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-render
 import type { ToolInputPresentation, ToolOutputPresentation, ToolDisplay } from "./types.js";
 
 export type TraceOutlineEntryKind =
-  | "user"
-  | "assistant"
-  | "thinking"
-  | "tool"
-  | "system"
-  | "compaction"
-  | "custom";
+  "user" | "assistant" | "thinking" | "tool" | "system" | "compaction" | "custom";
 
 export interface TraceOutlineEntry {
   id: string;

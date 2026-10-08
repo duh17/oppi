@@ -338,13 +338,7 @@ function normalizeTraceEventsForMobile(events: TraceEvent[]): TraceEvent[] {
 export interface TraceLifecycleEvent {
   id: string;
   event:
-    | "agentStart"
-    | "agentEnd"
-    | "agentSettled"
-    | "turnStart"
-    | "turnEnd"
-    | "toolStart"
-    | "toolEnd";
+    "agentStart" | "agentEnd" | "agentSettled" | "turnStart" | "turnEnd" | "toolStart" | "toolEnd";
   timestamp: string;
   turnIndex?: number;
   toolCallId?: string;

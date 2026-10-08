@@ -57,10 +57,7 @@ export function readShareSessionRedactionPolicy(
 }
 
 export type ClientCommandParseErrorCode =
-  | "not_object"
-  | "missing_type"
-  | "unknown_type"
-  | "invalid_field";
+  "not_object" | "missing_type" | "unknown_type" | "invalid_field";
 
 export type ClientCommandParseResult =
   | { ok: true; message: ClientMessage }

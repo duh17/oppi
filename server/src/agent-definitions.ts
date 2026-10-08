@@ -296,8 +296,7 @@ export class AgentDefinitionStore {
 
   getAgent(agentId: string): StoredAgentDefinition | undefined {
     const row = this.db.prepare("SELECT * FROM agent_definitions WHERE id = ?").get(agentId) as
-      | AgentRow
-      | undefined;
+      AgentRow | undefined;
     return row ? agentFromRow(row) : undefined;
   }
 

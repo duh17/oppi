@@ -4,8 +4,7 @@
  */
 
 export type RequestPrincipal =
-  | { kind: "owner" }
-  | { kind: "device"; deviceId: string; tokenClass: "at_"; expiresAt?: number };
+  { kind: "owner" } | { kind: "device"; deviceId: string; tokenClass: "at_"; expiresAt?: number };
 
 export function isDeviceAccessPrincipal(
   principal: RequestPrincipal | undefined,

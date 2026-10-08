@@ -42,8 +42,7 @@ export class DurableThreads implements DurableSessionsHost {
 
   conversationOf(sessionId: string): ConversationId | undefined {
     return this.deps.storage.getSession(sessionId)?.serverDurable?.conversationId as
-      | ConversationId
-      | undefined;
+      ConversationId | undefined;
   }
 
   private sessionOf(conversationId: ConversationId): Session | undefined {

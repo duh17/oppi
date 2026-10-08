@@ -39,12 +39,10 @@ export function redactCredentialString(value: string): string {
       }
 
       const trimmed = line.trim();
-      if (
-        !(
-          (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-          (trimmed.startsWith("[") && trimmed.endsWith("]"))
-        )
-      ) {
+      if (!(
+        (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+        (trimmed.startsWith("[") && trimmed.endsWith("]"))
+      )) {
         return line;
       }
       try {

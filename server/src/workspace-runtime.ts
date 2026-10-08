@@ -113,9 +113,7 @@ export class WorkspaceRuntimeError extends Error {
   constructor(
     message: string,
     public readonly code:
-      | "SESSION_LIMIT_WORKSPACE"
-      | "SESSION_LIMIT_GLOBAL"
-      | "SESSION_ALREADY_RESERVED",
+      "SESSION_LIMIT_WORKSPACE" | "SESSION_LIMIT_GLOBAL" | "SESSION_ALREADY_RESERVED",
   ) {
     super(message);
     this.name = "WorkspaceRuntimeError";

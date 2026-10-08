@@ -94,12 +94,10 @@ export interface AgentBackend {
   setSessionName(name: string): void;
   getStateSnapshot(): PiStateSnapshot;
   getSessionStats():
-    | (SessionStats & Record<string, unknown>)
-    | Promise<SessionStats & Record<string, unknown>>;
+    (SessionStats & Record<string, unknown>) | Promise<SessionStats & Record<string, unknown>>;
   messages(): PiMessage[];
   forkMessages():
-    | Array<{ entryId: string; text: string }>
-    | Promise<Array<{ entryId: string; text: string }>>;
+    Array<{ entryId: string; text: string }> | Promise<Array<{ entryId: string; text: string }>>;
   sessionTree(): SessionTreeManager & CanonicalSessionTree;
   leafId(): string | null;
   toolDefinition(name: string): BackendToolDefinition | undefined;

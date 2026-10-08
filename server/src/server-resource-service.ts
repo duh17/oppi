@@ -50,12 +50,7 @@ const MAX_WARNINGS = 8;
 const HOST_BUILTIN_EXTENSION_NAMES = availableMcpBuiltinNames({ managed: true, sandbox: false });
 
 export type ResourceProvenanceKind =
-  | "builtIn"
-  | "piAgent"
-  | "agents"
-  | "userSettings"
-  | "package"
-  | "unknown";
+  "builtIn" | "piAgent" | "agents" | "userSettings" | "package" | "unknown";
 
 export interface ResourceProvenance {
   kind: ResourceProvenanceKind;

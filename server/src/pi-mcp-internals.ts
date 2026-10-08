@@ -25,12 +25,7 @@ export interface McpTool {
 }
 
 type McpServerState =
-  | "connecting"
-  | "connected"
-  | "disconnected"
-  | "needs-auth"
-  | "failed"
-  | "closed";
+  "connecting" | "connected" | "disconnected" | "needs-auth" | "failed" | "closed";
 
 /** Pi's `McpServerConnection`: one configured server, reconnecting lazily. */
 export interface McpServerConnection {

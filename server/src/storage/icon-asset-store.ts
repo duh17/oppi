@@ -42,12 +42,7 @@ export interface IconAssetStoreOptions {
 }
 
 export type IconAssetErrorCode =
-  | "oversized"
-  | "unsupported"
-  | "corrupt"
-  | "invalid_id"
-  | "missing"
-  | "quota";
+  "oversized" | "unsupported" | "corrupt" | "invalid_id" | "missing" | "quota";
 
 export class IconAssetStoreError extends Error {
   constructor(

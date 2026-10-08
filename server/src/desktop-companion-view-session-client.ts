@@ -18,11 +18,7 @@ export const DESKTOP_COMPANION_VIEW_DEVICE_ID_HEADER = "X-Oppi-Device-ID";
 export const DESKTOP_COMPANION_VIEW_DEVICE_NAME_HEADER = "X-Oppi-Device-Name";
 
 export type DesktopCompanionViewSessionErrorCode =
-  | "missing_device_id"
-  | "unavailable"
-  | "not_bound"
-  | "companion_unavailable"
-  | "malformed_session";
+  "missing_device_id" | "unavailable" | "not_bound" | "companion_unavailable" | "malformed_session";
 
 export class DesktopCompanionViewSessionError extends Error {
   constructor(

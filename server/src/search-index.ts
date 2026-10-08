@@ -340,8 +340,7 @@ export class SearchIndex {
 
   private schemaVersion(): string | undefined {
     const row = this.db.prepare("SELECT value FROM fts_schema WHERE key = 'version'").get() as
-      | { value: string }
-      | undefined;
+      { value: string } | undefined;
     return row?.value;
   }
 
@@ -657,8 +656,7 @@ export class SearchIndex {
       }
 
       const jsonlPath = (session as unknown as Record<string, unknown>).piSessionFile as
-        | string
-        | undefined;
+        string | undefined;
 
       let fileStat: { mtimeMs: number; size: number } | null = null;
       if (jsonlPath) {
@@ -815,8 +813,7 @@ export class SearchIndex {
       | undefined;
     if (meta?.durable_marker === marker) {
       const indexedRow = this.stmtGetIndexedRow.get(sessionId) as
-        | { user_messages: string; assistant_messages: string; tool_names: string }
-        | undefined;
+        { user_messages: string; assistant_messages: string; tool_names: string } | undefined;
       if (indexedRow) {
         if (meta.workspace_id === workspaceId && meta.title === title) {
           result.skipped = 1;

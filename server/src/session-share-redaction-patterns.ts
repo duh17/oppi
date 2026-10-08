@@ -11,13 +11,7 @@ interface ShareSecretPattern {
 }
 
 type ShareRedactionCategory =
-  | "secrets"
-  | "emails"
-  | "phones"
-  | "userPaths"
-  | "ipAddresses"
-  | "jwtAndBearer"
-  | "namesHeuristic";
+  "secrets" | "emails" | "phones" | "userPaths" | "ipAddresses" | "jwtAndBearer" | "namesHeuristic";
 
 type ShareSampleKind = "secret" | "email" | "path" | "name" | "generic";
 

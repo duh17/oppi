@@ -77,11 +77,7 @@ function withoutWorktreeRebindNotice(warnings: string[] | undefined): string[] |
 }
 
 type WorktreeBindingState =
-  | "main"
-  | "available"
-  | "unavailable"
-  | "main-missing"
-  | "inspection-failed";
+  "main" | "available" | "unavailable" | "main-missing" | "inspection-failed";
 
 const REBIND_BLOCKING_STATUSES = new Set<Session["status"]>(["busy", "starting", "stopping"]);
 

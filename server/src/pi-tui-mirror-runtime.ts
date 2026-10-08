@@ -530,8 +530,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   private readonly bridgeCommandDriver: MirrorBridgeCommandDriver;
   private readonly pendingStopWaiters = new Map<string, Set<PendingBridgeStopWaiter>>();
   private taskRecordRejectionLogState:
-    | { key: string; lastLoggedAt: number; suppressedCount: number }
-    | undefined;
+    { key: string; lastLoggedAt: number; suppressedCount: number } | undefined;
   searchIndex: SearchIndex | null = null;
 
   constructor(

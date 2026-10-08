@@ -174,8 +174,7 @@ export async function cmdSchedule(
       const result = await call<Record<string, unknown>>(`/schedules/${encodeURIComponent(id)}`);
       output(result, () => {
         const schedule = result.schedule as
-          | { id?: string; name?: string; status?: string }
-          | undefined;
+          { id?: string; name?: string; status?: string } | undefined;
         printDetails("Schedule", [
           ["ID", codeValue(schedule?.id ?? id)],
           ["Name", schedule?.name ?? "(unnamed)"],
@@ -258,8 +257,7 @@ export async function cmdSchedule(
       });
       output(result, () => {
         const schedule = result.schedule as
-          | { id?: string; name?: string; status?: string }
-          | undefined;
+          { id?: string; name?: string; status?: string } | undefined;
         printDetails("✓ Schedule updated", [
           ["Schedule", codeValue(schedule?.id ?? id)],
           ["Status", schedule?.status ?? "?"],

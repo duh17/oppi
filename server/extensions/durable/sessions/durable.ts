@@ -125,8 +125,7 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
           );
         if (settled.type !== "input") return next();
         const answer = (await tx.entry(AssistantEntry, settled.answer))?.model?.[0] as
-          | AssistantMessage
-          | undefined;
+          AssistantMessage | undefined;
         return next(`[session ${name} (${sessionId}) finished, no reply needed] ${textOf(answer)}`);
       }, context);
     },

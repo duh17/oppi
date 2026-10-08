@@ -29,10 +29,7 @@ import type { ConfigStore } from "./config-store.js";
 const log = createLogger({ base: { component: "workspace_store" } });
 
 export type WorkspaceMigrationFaultPhase =
-  | "after_temp_write"
-  | "after_temp_fsync"
-  | "before_rename"
-  | "after_rename";
+  "after_temp_write" | "after_temp_fsync" | "before_rename" | "after_rename";
 
 export interface WorkspaceStoreOptions {
   /** Deterministic fault seam for startup migration recovery tests. */

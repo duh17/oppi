@@ -145,18 +145,16 @@ export async function loadWorkspaceQuickActionOptions(
     worktreeId: options.worktreeId,
   });
   const templates = await loadWorkspacePromptTemplates(reviewWorkspace);
-  return templates.map(
-    (template): WorkspaceQuickActionOption => ({
-      id: `prompt:${template.name}`,
-      title: displayTemplateName(template.name),
-      commandName: template.name,
-      description: template.description,
-      argumentHint: template.argumentHint,
-      source: "prompt",
-      sourceScope: template.sourceInfo.scope,
-      promptTemplateName: template.name,
-    }),
-  );
+  return templates.map((template): WorkspaceQuickActionOption => ({
+    id: `prompt:${template.name}`,
+    title: displayTemplateName(template.name),
+    commandName: template.name,
+    description: template.description,
+    argumentHint: template.argumentHint,
+    source: "prompt",
+    sourceScope: template.sourceInfo.scope,
+    promptTemplateName: template.name,
+  }));
 }
 
 export async function prepareWorkspaceQuickActionSession(args: {
