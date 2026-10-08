@@ -129,7 +129,7 @@
     "@vitest/coverage-v8": "^4.1.11",
     "eslint": "10.8.0",
     "eslint-config-prettier": "^10.1.8",
-    "knip": "^5.83.1",
+    "knip": "6.39.0",
     "prettier": "^3.8.1",
     "tsx": "^4.19.0",
     "typescript": "^6.0.3",
@@ -137,6 +137,17 @@
     "vitest": "^4.1.11"
   },
   "knip": {
+    "ignoreBinaries": [
+      "dns-sd",
+      "mkfifo",
+      "openssl",
+      "scutil",
+      "xdg-open",
+      "zbarimg"
+    ],
+    "ignoreUnresolved": [
+      "src/cli.ts"
+    ],
     "ignoreIssues": {
       "src/tts-provider.ts": [
         "exports",

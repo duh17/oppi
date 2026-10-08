@@ -17,7 +17,6 @@ import { resolveWorkspaceUserPath } from "../workspace-user-path.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 export {
-  decodeWorkspaceRoutePath,
   getContentType,
   isBrowseMediaContentType,
   isSensitivePath,
@@ -25,7 +24,6 @@ export {
   SEARCH_IGNORE_DIRS,
   SEARCH_ROOT_IGNORE_DIRS,
   SENSITIVE_FILE_PATTERNS,
-  TEXT_EXTENSIONS,
 } from "../file-serving-policy.js";
 export {
   listDirectoryEntries,

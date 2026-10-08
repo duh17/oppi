@@ -12,10 +12,7 @@ import { terminalLineToTextSpans, terminalLineVisibleText } from "./ansi.js";
 
 export type {
   ExtensionUIActivityRow,
-  ExtensionUIAccessibility,
   ExtensionUINativeBlock,
-  ExtensionUINativeFallback,
-  ExtensionUINativePresentation,
   ExtensionUINativeSurface,
   ExtensionUITextSpan,
 } from "./types.js";

@@ -12,11 +12,7 @@ import {
   SessionAgentEventCoordinator,
   type SessionAgentEventState,
 } from "./session-agent-events.js";
-import {
-  SessionBroadcaster,
-  type SessionBroadcastEvent,
-  type SessionCatchUpResponse,
-} from "./session-broadcast.js";
+import { SessionBroadcaster, type SessionBroadcastEvent } from "./session-broadcast.js";
 import { SessionCommandCoordinator, type CommandSessionState } from "./session-commands.js";
 import { SessionEventProcessor } from "./session-events.js";
 import { SessionInputCoordinator, type SessionInputSessionState } from "./session-input.js";
@@ -41,8 +37,6 @@ import type { WorkspaceRuntime } from "./workspace-runtime.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
 import type { DurableHarness } from "./durable-harness.js";
-
-export type { SessionCatchUpResponse };
 
 export interface SessionCoordinatorBundle {
   broadcaster: SessionBroadcaster;

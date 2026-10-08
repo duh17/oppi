@@ -9,38 +9,17 @@
  */
 
 export type {
-  FetchLike,
-  FetchProviderQuotasOptions,
   ProviderQuota,
   ProviderQuotaAdapter,
   ProviderQuotaPacing,
-  ProviderQuotaPacingSource,
-  ProviderQuotaPacingStatus,
-  ProviderQuotaCredits,
   ProviderQuotasStatus,
   ProviderQuotaWindow,
-  ProviderQuotaWindowKey,
-  QuotaModelRuntime,
 } from "./types.js";
 
-export {
-  clampPercent,
-  deriveProviderQuotaPacing,
-  emptyProviderQuota,
-  finalizeProviderQuota,
-  makeProviderQuotaWindow,
-  normalizeProviderQuotaWindows,
-  parseIsoToUnixSeconds,
-  resolveProviderAccessToken,
-  UPSTREAM_TIMEOUT_MS,
-} from "./shared.js";
+export { deriveProviderQuotaPacing, normalizeProviderQuotaWindows } from "./shared.js";
 
 export { fetchProviderQuotas, quotaAdaptersForProviders } from "./fetch.js";
-export {
-  codexProviderQuotaAdapter,
-  defaultProviderQuotaAdapters,
-  xaiProviderQuotaAdapter,
-} from "./adapters/registry.js";
+export { defaultProviderQuotaAdapters } from "./adapters/registry.js";
 export { fetchCodexProviderQuota } from "./adapters/codex.js";
 export { fetchOpenAIProviderQuota } from "./adapters/openai.js";
 export { fetchOpenCodeGoProviderQuota } from "./adapters/opencode-go.js";

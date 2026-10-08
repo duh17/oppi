@@ -34,12 +34,8 @@ import {
   type ShareSessionRedactionSummary,
 } from "./session-share-redaction.js";
 
-export { ShareSessionError } from "./session-share-redaction.js";
 export type {
-  ShareRedactionFinding,
   ShareSecretFinding,
-  ShareSessionErrorCode,
-  ShareSessionRedactionPolicy,
   ShareSessionRedactionPolicyInput,
   ShareSessionRedactionSummary,
 } from "./session-share-redaction.js";
