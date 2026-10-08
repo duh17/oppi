@@ -328,6 +328,145 @@ struct ChatScrollControllerTests {
                 "after explicit user detach, passive updates may keep controller detached")
     }
 
+    // MARK: - Shell Swap Handoff
+
+    @Test func shellSwapAfterOutgoingChatLeftRestoresItsReadingPosition() {
+        let handoff = ChatScrollShellSwapHandoff()
+        let stackChat = makeDetachedChat(anchor: "anchor", relativeY: -37)
+        handoff.chatDidAppear(sessionId: "s1", controller: stackChat, presentation: .stack)
+
+        stackChat.suspendForNavigation()
+        handoff.chatDidDisappear(
+            sessionId: "s1",
+            controller: stackChat,
+            mountedPresentation: .stack,
+            currentPresentation: .split
+        )
+        let splitChat = makeTestScrollController()
+        handoff.chatDidAppear(sessionId: "s1", controller: splitChat, presentation: .split)
+
+        #expect(firstPlacement(of: splitChat) == .viewport(TimelineViewportRestoration(
+            itemID: "anchor",
+            relativeY: -37
+        )))
+    }
+
+    @Test func shellSwapWhileOutgoingChatIsStillMountedRestoresItsLivePosition() {
+        let handoff = ChatScrollShellSwapHandoff()
+        let splitChat = makeDetachedChat(anchor: "anchor", relativeY: 12)
+        handoff.chatDidAppear(sessionId: "s1", controller: splitChat, presentation: .split)
+
+        let stackChat = makeTestScrollController()
+        handoff.chatDidAppear(sessionId: "s1", controller: stackChat, presentation: .stack)
+        // The outgoing chat leaves after the new one mounted; that must not
+        // replace the new mount, or a quick swap back would read a dead chat.
+        splitChat.suspendForNavigation()
+        handoff.chatDidDisappear(
+            sessionId: "s1",
+            controller: splitChat,
+            mountedPresentation: .split,
+            currentPresentation: .stack
+        )
+        #expect(firstPlacement(of: stackChat) == .viewport(TimelineViewportRestoration(
+            itemID: "anchor",
+            relativeY: 12
+        )))
+
+        // Reading on, then swapping straight back, carries the new position.
+        stackChat.updateTimelineItemOrder(["before", "anchor", "after"])
+        stackChat.detachFromBottomForUserScroll()
+        stackChat.updateViewportAnchor(itemID: "before", relativeY: 5)
+        let splitAgain = makeTestScrollController()
+        handoff.chatDidAppear(sessionId: "s1", controller: splitAgain, presentation: .split)
+
+        #expect(firstPlacement(of: splitAgain) == .viewport(TimelineViewportRestoration(
+            itemID: "before",
+            relativeY: 5
+        )))
+    }
+
+    @Test func shellSwapAtTheTailStaysAtTheTail() {
+        let handoff = ChatScrollShellSwapHandoff()
+        let stackChat = makeTestScrollController()
+        stackChat.updateTimelineItemOrder(["before", "anchor", "after"])
+        stackChat.updateViewportAnchor(itemID: "anchor", relativeY: 40)
+        stackChat.updateNearBottom(true)
+        handoff.chatDidAppear(sessionId: "s1", controller: stackChat, presentation: .stack)
+
+        stackChat.suspendForNavigation()
+        handoff.chatDidDisappear(
+            sessionId: "s1",
+            controller: stackChat,
+            mountedPresentation: .stack,
+            currentPresentation: .split
+        )
+        let splitChat = makeTestScrollController()
+        handoff.chatDidAppear(sessionId: "s1", controller: splitChat, presentation: .split)
+
+        #expect(firstPlacement(of: splitChat) == .bottom(itemID: "after"))
+        #expect(splitChat.isCurrentlyNearBottom)
+    }
+
+    @Test func reopeningAChatInTheSameShellStartsAtTheTail() {
+        let handoff = ChatScrollShellSwapHandoff()
+        let first = makeDetachedChat(anchor: "anchor", relativeY: -37)
+        handoff.chatDidAppear(sessionId: "s1", controller: first, presentation: .stack)
+
+        first.suspendForNavigation()
+        handoff.chatDidDisappear(
+            sessionId: "s1",
+            controller: first,
+            mountedPresentation: .stack,
+            currentPresentation: .stack
+        )
+        let reopened = makeTestScrollController()
+        handoff.chatDidAppear(sessionId: "s1", controller: reopened, presentation: .stack)
+
+        #expect(firstPlacement(of: reopened) == .bottom(itemID: "after"))
+    }
+
+    @Test func shellSwapDepartureExpiresBeforeALaterOpen() {
+        let handoff = ChatScrollShellSwapHandoff()
+        let start = ContinuousClock.now
+        let stackChat = makeDetachedChat(anchor: "anchor", relativeY: -37)
+        handoff.chatDidAppear(sessionId: "s1", controller: stackChat, presentation: .stack, now: start)
+
+        stackChat.suspendForNavigation()
+        handoff.chatDidDisappear(
+            sessionId: "s1",
+            controller: stackChat,
+            mountedPresentation: .stack,
+            currentPresentation: .split,
+            now: start
+        )
+        let later = makeTestScrollController()
+        handoff.chatDidAppear(
+            sessionId: "s1",
+            controller: later,
+            presentation: .split,
+            now: start + ChatScrollShellSwapHandoff.departureWindow + .milliseconds(1)
+        )
+
+        #expect(firstPlacement(of: later) == .bottom(itemID: "after"))
+    }
+
+    private func makeDetachedChat(anchor: String, relativeY: CGFloat) -> ChatScrollController {
+        let controller = makeTestScrollController()
+        controller.updateTimelineItemOrder(["before", anchor, "after"])
+        controller.detachFromBottomForUserScroll()
+        controller.updateViewportAnchor(itemID: anchor, relativeY: relativeY)
+        return controller
+    }
+
+    /// The placement a freshly mounted timeline makes when history first lands.
+    private func firstPlacement(of controller: ChatScrollController) -> TimelineInitialPlacement? {
+        controller.needsInitialScroll = true
+        return controller.initialPlacement(
+            availableFullTimelineItemIDs: ["before", "anchor", "after"],
+            bottomItemID: "after"
+        )
+    }
+
     private func makeTestScrollController() -> ChatScrollController {
         ChatScrollController()
     }

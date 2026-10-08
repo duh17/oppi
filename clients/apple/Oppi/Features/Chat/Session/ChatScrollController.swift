@@ -170,7 +170,7 @@ final class ChatScrollController: NSObject {
     /// Non-reactive anchor — mutations are invisible to SwiftUI observation.
     private let anchor = ScrollAnchorState()
 
-    private enum NavigationRestoration {
+    fileprivate enum NavigationRestoration {
         case liveTail
         case viewport(TimelineViewportSnapshot)
     }
@@ -385,6 +385,25 @@ final class ChatScrollController: NSObject {
         }
     }
 
+    /// What a remount of this chat should restore: the frozen navigation
+    /// intent if one is armed, else the live tail or the live viewport anchor.
+    var reentryIntent: ChatScrollReentryIntent? {
+        if let navigationRestoration {
+            return ChatScrollReentryIntent(restoration: navigationRestoration)
+        }
+        if anchor.isNearBottom {
+            return ChatScrollReentryIntent(restoration: .liveTail)
+        }
+        return latestViewportSnapshot.map { ChatScrollReentryIntent(restoration: .viewport($0)) }
+    }
+
+    /// Arm another controller's re-entry intent for this chat's first
+    /// placement, as if this controller had been suspended for navigation.
+    func adoptReentryIntent(_ intent: ChatScrollReentryIntent) {
+        navigationRestoration = intent.restoration
+        needsInitialScroll = true
+    }
+
     /// Resolve one initial placement after cache/fresh history publication.
     /// Navigation restoration remains armed until the user explicitly moves,
     /// allowing a later authoritative history refresh to restore the same
@@ -503,6 +522,94 @@ final class ChatScrollController: NSObject {
         isDetachedStreamingHintVisible = false
         isJumpToBottomHintVisible = false
         pendingNavigationHighlightItemID = nil
+    }
+}
+
+/// A chat's reading position, carried from one `ChatScrollController` to the
+/// next when the same chat is remounted.
+struct ChatScrollReentryIntent {
+    fileprivate let restoration: ChatScrollController.NavigationRestoration
+}
+
+/// Carries a chat's reading position across a stack/split shell swap.
+///
+/// A fold or rotation that swaps the workspace shell remounts ChatView for the
+/// same session, so its `@State` scroll controller is new and would land on
+/// the tail. The outgoing controller's re-entry intent moves to the incoming
+/// one instead. Depending on the hosting containers, the incoming chat can
+/// appear while the outgoing one is still mounted (its live position is read)
+/// or just after it left (its frozen `suspendForNavigation` intent is read).
+///
+/// Only a remount under a different shell than the outgoing chat's counts, so
+/// popping a chat and reopening it still starts at the tail. A departure is
+/// claimable for `departureWindow` only, so a chat that is not remounted by
+/// the swap cannot restore a stale position when it is opened later.
+@MainActor
+final class ChatScrollShellSwapHandoff {
+    static let shared = ChatScrollShellSwapHandoff()
+
+    static let departureWindow: Duration = .seconds(2)
+
+    private struct Mount {
+        let controller: ChatScrollController
+        let presentation: WorkspaceNavigationPresentation
+        /// Set when the chat left because its shell was swapped away.
+        var departedAt: ContinuousClock.Instant?
+    }
+
+    /// The newest chat mount per session. Only one is visible at a time.
+    private var mounts: [String: Mount] = [:]
+
+    /// A chat for `sessionId` appeared under `presentation`. Returns true
+    /// when it adopted the reading position of the same chat in another shell.
+    @discardableResult
+    func chatDidAppear(
+        sessionId: String,
+        controller: ChatScrollController,
+        presentation: WorkspaceNavigationPresentation,
+        now: ContinuousClock.Instant = .now
+    ) -> Bool {
+        pruneDepartures(now: now)
+        var adopted = false
+        if let previous = mounts[sessionId],
+           previous.controller !== controller,
+           previous.presentation != presentation,
+           let intent = previous.controller.reentryIntent {
+            controller.adoptReentryIntent(intent)
+            adopted = true
+        }
+        mounts[sessionId] = Mount(controller: controller, presentation: presentation)
+        return adopted
+    }
+
+    /// A chat for `sessionId`, mounted under `mountedPresentation`, left while
+    /// `currentPresentation` is showing. Call after `suspendForNavigation()`.
+    func chatDidDisappear(
+        sessionId: String,
+        controller: ChatScrollController,
+        mountedPresentation: WorkspaceNavigationPresentation,
+        currentPresentation: WorkspaceNavigationPresentation,
+        now: ContinuousClock.Instant = .now
+    ) {
+        pruneDepartures(now: now)
+        if mountedPresentation != currentPresentation {
+            // Shell swap. Keep this chat even if a newer mount already took
+            // the slot: that one adopted it while both were mounted.
+            guard mounts[sessionId]?.presentation != currentPresentation else { return }
+            mounts[sessionId] = Mount(
+                controller: controller,
+                presentation: mountedPresentation,
+                departedAt: now
+            )
+        } else if mounts[sessionId]?.controller === controller {
+            mounts[sessionId] = nil
+        }
+    }
+
+    private func pruneDepartures(now: ContinuousClock.Instant) {
+        mounts = mounts.filter { _, mount in
+            mount.departedAt.map { now - $0 <= Self.departureWindow } ?? true
+        }
     }
 }
 

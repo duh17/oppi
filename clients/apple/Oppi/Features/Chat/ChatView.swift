@@ -133,6 +133,9 @@ struct ChatView: View {
     @State private var footerHeight: CGFloat = 0
     @State private var timelineChromeFrame: CGRect = .zero
     @State private var headerChromeFrame: CGRect = .zero
+    /// The workspace shell this chat was mounted under, for the shell-swap
+    /// scroll handoff.
+    @State private var mountedPresentation: WorkspaceNavigationPresentation = .stack
     @State private var visibleAudioStripItemIDs: Set<String> = []
     @State private var nowPlayingDrawerExpanded = false
     @State private var reviewCommentDrawerExpanded = false
@@ -992,7 +995,7 @@ struct ChatView: View {
                 // NavigationStack teardown can report tail geometry before onDisappear.
                 scrollController.suspendForNavigation()
             }
-            .onChange(of: sessionId) { _, newId in
+            .onChange(of: sessionId) { oldId, newId in
                 // Self-healing: when SwiftUI reuses this view at the same
                 // structural position with a different session ID (e.g.
                 // deep-link navigation, quick session switch), @State is
@@ -1005,6 +1008,12 @@ struct ChatView: View {
                 actionHandler.cleanup()
                 sessionManager.cleanup()
                 scrollController.cancel()
+                ChatScrollShellSwapHandoff.shared.chatDidDisappear(
+                    sessionId: oldId,
+                    controller: scrollController,
+                    mountedPresentation: mountedPresentation,
+                    currentPresentation: mountedPresentation
+                )
                 visibleAudioStripItemIDs = []
                 chatReaderPayloadStore?.removeAll()
                 nowPlayingDrawerExpanded = false
@@ -1029,6 +1038,11 @@ struct ChatView: View {
                     sessionManager.coalescer.pause()
                 }
                 scrollController = ChatScrollController()
+                ChatScrollShellSwapHandoff.shared.chatDidAppear(
+                    sessionId: newId,
+                    controller: scrollController,
+                    presentation: mountedPresentation
+                )
                 reviewComments = ChatReviewCommentsController()
                 activeReviewCommentRequest = nil
                 focusedReviewCommentId = nil
@@ -1047,6 +1061,12 @@ struct ChatView: View {
                 // Freeze the viewport before cleanup can publish an empty timeline
                 // and make collection geometry look tail-attached during the push.
                 scrollController.suspendForNavigation()
+                ChatScrollShellSwapHandoff.shared.chatDidDisappear(
+                    sessionId: sessionId,
+                    controller: scrollController,
+                    mountedPresentation: mountedPresentation,
+                    currentPresentation: appNavigation.workspaceNavigationPresentation
+                )
                 guard !appNavigation.isCoveringChat(sessionId: sessionId) else { return }
                 actionHandler.cleanup()
                 // Releases this runtime's focus claim only; a newer chat for the
@@ -1952,6 +1972,15 @@ struct ChatView: View {
 
     @MainActor
     private func handleAppear() {
+        // A stack/split shell swap remounts this chat: pick up the reading
+        // position the same chat had in the other shell before history lands.
+        mountedPresentation = appNavigation.workspaceNavigationPresentation
+        ChatScrollShellSwapHandoff.shared.chatDidAppear(
+            sessionId: sessionId,
+            controller: scrollController,
+            presentation: mountedPresentation
+        )
+
         // Re-establish command routing immediately on re-entry.
         // The async sessionManager.connect() task starts shortly after onAppear,
         // but users can tap toolbar controls before that task has a chance to
