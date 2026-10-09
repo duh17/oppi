@@ -773,8 +773,7 @@ struct ServerConnectionRoutingTests {
         )
 
         #expect(conn.extensionToast == nil)
-        #expect(conn.extensionNotifyChipStore.state(for: "s1")?.newest.message == "Task complete")
-        conn.extensionNotifyChipStore.dismiss(sessionId: "s1")
+        #expect(conn.extensionNotifyChipStore.state(for: "s1") == nil)
     }
 
     @Test func routeUnknownIsNoOp() {

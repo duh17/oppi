@@ -357,6 +357,91 @@ describe("SessionManager extension UI", () => {
     });
   });
 
+  it("emits one app event and the session-socket frame for a startup notify", () => {
+    const storage = {
+      getConfig: () => TEST_CONFIG,
+      listSessions: () => [],
+      saveSession: vi.fn(),
+      addSessionMessage: vi.fn(),
+      getDataDir: vi.fn(() => TEST_CONFIG.dataDir),
+      getWorkspace: vi.fn(() => null),
+      getSession: vi.fn(() => null),
+      clearRestartResume: vi.fn(),
+    } as unknown as Storage;
+    const manager = new SessionManager(storage);
+    (manager as unknown as { resetIdleTimer: (key: string) => void }).resetIdleTimer = () => {};
+    const key = "s1";
+    (manager as unknown as { startupUI: Map<string, unknown> }).startupUI.set(key, {
+      bridge: { respond: () => false },
+      state: { session: { id: key }, pendingUIRequests: new Map() },
+    });
+
+    const socketFrames: ServerMessage[] = [];
+    manager.subscribeStartupUI(key, (msg) => {
+      socketFrames.push(msg);
+    });
+    const appEvents: Array<{ sessionId: string; event: ServerMessage; durable: boolean }> = [];
+    manager.on(
+      "session_event",
+      (payload: { sessionId: string; event: ServerMessage; durable: boolean }) => {
+        appEvents.push(payload);
+      },
+    );
+
+    feedEvent(manager, key, {
+      type: "extension_ui_request",
+      id: "n1",
+      method: "notify",
+      message: "Session starting",
+      notifyType: "info",
+    });
+
+    expect(socketFrames).toHaveLength(1);
+    expect(socketFrames[0]).toMatchObject({
+      type: "extension_ui_notification",
+      method: "notify",
+      message: "Session starting",
+      sessionId: key,
+    });
+    expect(appEvents).toHaveLength(1);
+    expect(appEvents[0]).toMatchObject({
+      sessionId: key,
+      durable: false,
+      event: {
+        type: "extension_ui_notification",
+        method: "notify",
+        message: "Session starting",
+        sessionId: key,
+      },
+    });
+  });
+
+  it("emits one app event for a normal notify", () => {
+    const { manager, events } = makeManagerHarness();
+    const appEvents: Array<{ event: ServerMessage }> = [];
+    manager.on("session_event", (payload: { event: ServerMessage }) => {
+      appEvents.push(payload);
+    });
+
+    feedEvent(manager, "s1", {
+      type: "extension_ui_request",
+      id: "n1",
+      method: "notify",
+      message: "Task complete",
+      notifyType: "info",
+    });
+
+    const notifyAppEvents = appEvents.filter(
+      (payload) =>
+        payload.event.type === "extension_ui_notification" && payload.event.method === "notify",
+    );
+    expect(notifyAppEvents).toHaveLength(1);
+    const notifyFrames = events.filter(
+      (event) => event.type === "extension_ui_notification" && event.method === "notify",
+    );
+    expect(notifyFrames).toHaveLength(1);
+  });
+
   it("replays the latest persistent fire-and-forget surfaces", () => {
     const { manager } = makeManagerHarness();
 

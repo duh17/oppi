@@ -6,15 +6,19 @@ import Testing
 @Suite("Extension notify chip")
 struct ExtensionNotifyChipStoreTests {
     @Test func unknownMethodFeedsTheChipNotTheSheet() {
-        let (conn, pipe) = makeTestConnection()
-        pipe.handle(
-            notifyMessage(
-                method: "future_method",
-                message: "Heads up",
-                notifyType: "warning",
-                displayName: "Review Helper"
-            ),
-            sessionId: "s1"
+        let (conn, _) = makeTestConnection()
+        conn.handleAppEvent(
+            .extensionUINotification(
+                notification: notifyNotification(
+                    method: "future_method",
+                    message: "Heads up",
+                    notifyType: "warning",
+                    displayName: "Review Helper"
+                ),
+                sessionId: "s1",
+                workspaceId: nil,
+                emittedAt: 0
+            )
         )
 
         #expect(conn.extensionToast == nil)
@@ -25,34 +29,68 @@ struct ExtensionNotifyChipStoreTests {
     }
 
     @Test(arguments: ["notify", "future_method"])
-    func boundSessionAppliesChipOnceFromSessionStreamAndAppEvent(method: String) {
+    func sessionStreamNotifyDoesNotInsertChip(method: String) {
         let (conn, pipe) = makeTestConnection()
-        let stream = AsyncStream<SessionStreamEvent> { continuation in
-            conn.sessionEventContinuations["s1"] = continuation
-        }
-        withExtendedLifetime(stream) {
-            let notification = notifyNotification(
-                method: method,
-                message: "Task complete",
-                notifyType: "info",
-                displayName: "Web Search"
-            )
-            pipe.handle(.extensionUINotification(notification), sessionId: "s1")
-            conn.handleAppEvent(
-                .extensionUINotification(
-                    notification: notification,
-                    sessionId: "s1",
-                    workspaceId: nil,
-                    emittedAt: 0
+        pipe.handle(
+            .extensionUINotification(
+                notifyNotification(
+                    method: method,
+                    message: "Task complete",
+                    notifyType: "info",
+                    displayName: "Web Search"
                 )
-            )
+            ),
+            sessionId: "s1"
+        )
 
-            #expect(conn.extensionToast == nil)
-            #expect(conn.extensionNotifyChipStore.state(for: "s1")?.count == 1)
-            #expect(conn.extensionNotifyChipStore.state(for: "s1")?.newest.message == "Task complete")
-            conn.extensionNotifyChipStore.dismiss(sessionId: "s1")
-            conn.sessionEventContinuations.removeValue(forKey: "s1")?.finish()
-        }
+        #expect(conn.extensionToast == nil)
+        #expect(conn.extensionNotifyChipStore.state(for: "s1") == nil)
+    }
+
+    @Test func focusedAppEventInsertsOneChip() {
+        let (conn, _) = makeTestConnection()
+        conn.handleAppEvent(
+            .extensionUINotification(
+                notification: notifyNotification(
+                    message: "Task complete",
+                    notifyType: "info",
+                    displayName: "Web Search"
+                ),
+                sessionId: "s1",
+                workspaceId: nil,
+                emittedAt: 0
+            )
+        )
+
+        #expect(conn.extensionToast == nil)
+        #expect(conn.extensionNotifyChipStore.state(for: "s1")?.count == 1)
+        #expect(conn.extensionNotifyChipStore.state(for: "s1")?.newest.message == "Task complete")
+        conn.extensionNotifyChipStore.dismiss(sessionId: "s1")
+    }
+
+    @Test(arguments: ["notify", "future_method"])
+    func sessionStreamAndAppEventInsertOneChip(method: String) {
+        let (conn, pipe) = makeTestConnection()
+        let notification = notifyNotification(
+            method: method,
+            message: "Task complete",
+            notifyType: "info",
+            displayName: "Web Search"
+        )
+        pipe.handle(.extensionUINotification(notification), sessionId: "s1")
+        conn.handleAppEvent(
+            .extensionUINotification(
+                notification: notification,
+                sessionId: "s1",
+                workspaceId: nil,
+                emittedAt: 0
+            )
+        )
+
+        #expect(conn.extensionToast == nil)
+        #expect(conn.extensionNotifyChipStore.state(for: "s1")?.count == 1)
+        #expect(conn.extensionNotifyChipStore.state(for: "s1")?.newest.message == "Task complete")
+        conn.extensionNotifyChipStore.dismiss(sessionId: "s1")
     }
 
     @Test func backgroundSessionAppEventInsertsOneChip() {
@@ -192,13 +230,69 @@ struct ExtensionNotifyChipStoreTests {
         store.dismiss(sessionId: "s1")
     }
 
-    @Test func clearingExtensionSurfaceDismissesChip() {
-        let (conn, pipe) = makeTestConnection()
-        pipe.handle(notifyMessage(message: "Task complete", notifyType: "info"), sessionId: "s1")
+    @Test func clearingExtensionSurfaceLeavesChip() {
+        let (conn, _) = makeTestConnection()
+        conn.handleAppEvent(
+            .extensionUINotification(
+                notification: notifyNotification(message: "Task complete", notifyType: "info"),
+                sessionId: "s1",
+                workspaceId: nil,
+                emittedAt: 0
+            )
+        )
         conn.extensionNotifyChipStore.setExpanded(true, sessionId: "s1")
         #expect(conn.extensionNotifyChipStore.state(for: "s1")?.isExpanded == true)
 
         conn.clearExtensionSurface(for: "s1")
+        #expect(conn.extensionNotifyChipStore.state(for: "s1")?.newest.message == "Task complete")
+        conn.extensionNotifyChipStore.dismiss(sessionId: "s1")
+    }
+
+    @Test func stopConfirmedLeavesChip() {
+        let (conn, _) = makeTestConnection()
+        conn.handleAppEvent(
+            .extensionUINotification(
+                notification: notifyNotification(message: "Task complete", notifyType: "info"),
+                sessionId: "s1",
+                workspaceId: nil,
+                emittedAt: 0
+            )
+        )
+
+        conn.handleAppEvent(
+            .stopConfirmed(
+                sessionId: "s1",
+                workspaceId: nil,
+                emittedAt: 1,
+                source: "user",
+                reason: nil
+            )
+        )
+
+        #expect(conn.extensionNotifyChipStore.state(for: "s1")?.newest.message == "Task complete")
+        conn.extensionNotifyChipStore.dismiss(sessionId: "s1")
+    }
+
+    @Test func sessionEndedRemovesChip() {
+        let (conn, _) = makeTestConnection()
+        conn.handleAppEvent(
+            .extensionUINotification(
+                notification: notifyNotification(message: "Task complete", notifyType: "info"),
+                sessionId: "s1",
+                workspaceId: nil,
+                emittedAt: 0
+            )
+        )
+
+        conn.handleAppEvent(
+            .sessionEnded(
+                sessionId: "s1",
+                workspaceId: nil,
+                emittedAt: 1,
+                reason: "done"
+            )
+        )
+
         #expect(conn.extensionNotifyChipStore.state(for: "s1") == nil)
     }
 
@@ -250,23 +344,6 @@ private func notifyNotification(
         widgetLines: nil,
         widgetPlacement: nil,
         extensionDisplayName: displayName
-    )
-}
-
-@MainActor
-private func notifyMessage(
-    method: String = "notify",
-    message: String?,
-    notifyType: String?,
-    displayName: String? = nil
-) -> ServerMessage {
-    .extensionUINotification(
-        notifyNotification(
-            method: method,
-            message: message,
-            notifyType: notifyType,
-            displayName: displayName
-        )
     )
 }
 

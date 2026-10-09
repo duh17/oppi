@@ -7,6 +7,7 @@ struct ServerMessageCleanupEffects: Equatable {
     var clearExtensionDialogSessionIds: Set<String> = []
     var clearExtensionDialogRequestIds: Set<String> = []
     var clearExtensionSurfaceSessionIds: Set<String> = []
+    var clearExtensionNotifyChipSessionIds: Set<String> = []
     var clearMessageQueueSessionIds: Set<String> = []
 }
 
@@ -186,6 +187,7 @@ enum ServerMessageEffects {
             effects.clearAskSessionIds.insert(sessionId)
             effects.clearExtensionDialogSessionIds.insert(sessionId)
             effects.clearExtensionSurfaceSessionIds.insert(sessionId)
+            effects.clearExtensionNotifyChipSessionIds.insert(sessionId)
 
         case .extensionUISettled(let id, _):
             effects.clearAskRequestIds.insert(id)
@@ -198,6 +200,7 @@ enum ServerMessageEffects {
             effects.clearAskSessionIds.insert(deletedId)
             effects.clearExtensionDialogSessionIds.insert(deletedId)
             effects.clearExtensionSurfaceSessionIds.insert(deletedId)
+            effects.clearExtensionNotifyChipSessionIds.insert(deletedId)
 
         case .stopConfirmed:
             if isFocusedSession {
@@ -214,13 +217,21 @@ enum ServerMessageEffects {
     }
 
     /// App-event stop/end/delete/fatal-error clear ask, dialogs, surfaces, and the queue.
+    /// Notify chips clear on end, delete, and fatal error — not on stop or surface clear.
     /// Focused `.stopConfirmed` stays narrower: ask + dialogs only.
     /// Screen-awake and usage-metric maps stay in the app-event adapter.
     static func cleanupEffects(for event: AppEventMessage) -> ServerMessageCleanupEffects {
         switch event {
         case .sessionEnded(let sessionId, _, _, _),
-             .stopConfirmed(let sessionId, _, _, _, _),
              .sessionDeleted(let sessionId, _, _):
+            return sessionScopedCleanup(
+                sessionId: sessionId,
+                includeSurfaces: true,
+                includeQueue: true,
+                includeNotifyChip: true
+            )
+
+        case .stopConfirmed(let sessionId, _, _, _, _):
             return sessionScopedCleanup(
                 sessionId: sessionId,
                 includeSurfaces: true,
@@ -231,7 +242,8 @@ enum ServerMessageEffects {
             return sessionScopedCleanup(
                 sessionId: sessionId,
                 includeSurfaces: true,
-                includeQueue: true
+                includeQueue: true,
+                includeNotifyChip: true
             )
 
         case .extensionUISettled(let id, _, _, _):
@@ -248,7 +260,8 @@ enum ServerMessageEffects {
     private static func sessionScopedCleanup(
         sessionId: String,
         includeSurfaces: Bool,
-        includeQueue: Bool
+        includeQueue: Bool,
+        includeNotifyChip: Bool = false
     ) -> ServerMessageCleanupEffects {
         var effects = ServerMessageCleanupEffects()
         effects.clearAskSessionIds.insert(sessionId)
@@ -258,6 +271,9 @@ enum ServerMessageEffects {
         }
         if includeQueue {
             effects.clearMessageQueueSessionIds.insert(sessionId)
+        }
+        if includeNotifyChip {
+            effects.clearExtensionNotifyChipSessionIds.insert(sessionId)
         }
         return effects
     }

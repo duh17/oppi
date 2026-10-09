@@ -253,8 +253,15 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   }
 
   private broadcastStartupUI(key: string, message: ServerMessage): void {
-    for (const send of this.startupUISubscribers.get(key) ?? [])
-      send({ ...message, sessionId: key });
+    const framed: ServerMessage = { ...message, sessionId: key };
+    // Same app-event ingress live notifies use (`emitSessionEvent` → mux).
+    // Startup runs before `active`, so SessionBroadcaster cannot emit this.
+    this.emit("session_event", {
+      sessionId: key,
+      event: framed,
+      durable: false,
+    });
+    for (const send of this.startupUISubscribers.get(key) ?? []) send(framed);
   }
 
   get mobileRenderer(): MobileRendererRegistry {

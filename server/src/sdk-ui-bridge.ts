@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { homedir } from "node:os";
 import { resolve } from "node:path";
 
-import type {
-  ExtensionUIDialogOptions,
-  ExtensionUIContext,
-  WorkingIndicatorOptions,
+import {
+  getAgentDir,
+  type ExtensionUIDialogOptions,
+  type ExtensionUIContext,
+  type WorkingIndicatorOptions,
 } from "@earendil-works/pi-coding-agent";
 
 import { safeErrorMessage } from "./log-utils.js";
@@ -113,9 +113,7 @@ function normalizeScopePath(rawPath: string): string {
 }
 
 function configuredAgentDirPath(): string {
-  const raw = process.env.PI_CODING_AGENT_DIR?.trim();
-  const resolved = raw ? resolve(raw) : resolve(homedir(), ".pi", "agent");
-  return resolved.replaceAll("\\", "/").replace(/\/+$/, "");
+  return resolve(getAgentDir()).replaceAll("\\", "/").replace(/\/+$/, "");
 }
 
 function restUnderPrefix(path: string, prefix: string): string | undefined {

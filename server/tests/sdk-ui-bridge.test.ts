@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { extensionScopeFromPath } from "../src/sdk-ui-bridge.js";
@@ -141,6 +143,22 @@ describe("extensionScopeFromPath", () => {
       ).toEqual({
         extensionScopeId: "git:web-search",
         extensionDisplayName: "Web Search",
+      });
+    } finally {
+      if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previous;
+    }
+  });
+
+  it("expands a tilde PI_CODING_AGENT_DIR when attributing helpers", () => {
+    const previous = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = "~/custom-agent";
+    try {
+      expect(
+        extensionScopeFromPath(join(homedir(), "custom-agent", "extensions", "hello", "helper.ts")),
+      ).toEqual({
+        extensionScopeId: "ext:hello",
+        extensionDisplayName: "Hello",
       });
     } finally {
       if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;

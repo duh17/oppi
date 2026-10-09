@@ -15,6 +15,7 @@ struct ServerMessageEffectsTests {
         #expect(effects.clearAskSessionIds == ["s1"])
         #expect(effects.clearExtensionDialogSessionIds == ["s1"])
         #expect(effects.clearExtensionSurfaceSessionIds == ["s1"])
+        #expect(effects.clearExtensionNotifyChipSessionIds.isEmpty)
         #expect(effects.clearMessageQueueSessionIds.isEmpty)
     }
 
@@ -105,6 +106,7 @@ struct ServerMessageEffectsTests {
         #expect(focused.clearAskSessionIds == ["s1"])
         #expect(focused.clearExtensionDialogSessionIds == ["s1"])
         #expect(focused.clearExtensionSurfaceSessionIds == ["s1"])
+        #expect(focused.clearExtensionNotifyChipSessionIds == ["s1"])
         #expect(focused.clearMessageQueueSessionIds == ["s1"])
 
         let inactive = ServerMessageEffects.cleanupEffects(
@@ -116,6 +118,7 @@ struct ServerMessageEffectsTests {
         #expect(inactive.clearAskSessionIds == ["s2"])
         #expect(inactive.clearExtensionDialogSessionIds == ["s2"])
         #expect(inactive.clearExtensionSurfaceSessionIds == ["s2"])
+        #expect(inactive.clearExtensionNotifyChipSessionIds == ["s2"])
         #expect(inactive.clearMessageQueueSessionIds.isEmpty)
     }
 
@@ -129,6 +132,7 @@ struct ServerMessageEffectsTests {
         #expect(effects.clearAskSessionIds == ["deleted"])
         #expect(effects.clearExtensionDialogSessionIds == ["deleted"])
         #expect(effects.clearExtensionSurfaceSessionIds == ["deleted"])
+        #expect(effects.clearExtensionNotifyChipSessionIds == ["deleted"])
         #expect(effects.clearMessageQueueSessionIds == ["deleted"])
     }
 
@@ -143,6 +147,7 @@ struct ServerMessageEffectsTests {
         #expect(effects.clearAskSessionIds == ["s1"])
         #expect(effects.clearExtensionDialogSessionIds == ["s1"])
         #expect(effects.clearExtensionSurfaceSessionIds.isEmpty)
+        #expect(effects.clearExtensionNotifyChipSessionIds.isEmpty)
         #expect(effects.clearMessageQueueSessionIds.isEmpty)
     }
 
@@ -161,6 +166,7 @@ struct ServerMessageEffectsTests {
         #expect(effects.clearAskSessionIds == ["s2"])
         #expect(effects.clearExtensionDialogSessionIds == ["s2"])
         #expect(effects.clearExtensionSurfaceSessionIds == ["s2"])
+        #expect(effects.clearExtensionNotifyChipSessionIds.isEmpty)
         #expect(effects.clearMessageQueueSessionIds == ["s2"])
     }
 
@@ -178,6 +184,7 @@ struct ServerMessageEffectsTests {
         #expect(effects.clearAskSessionIds == ["s2"])
         #expect(effects.clearExtensionDialogSessionIds == ["s2"])
         #expect(effects.clearExtensionSurfaceSessionIds == ["s2"])
+        #expect(effects.clearExtensionNotifyChipSessionIds == ["s2"])
         #expect(effects.clearMessageQueueSessionIds == ["s2"])
     }
 
@@ -189,6 +196,7 @@ struct ServerMessageEffectsTests {
         #expect(effects.clearAskSessionIds == ["deleted"])
         #expect(effects.clearExtensionDialogSessionIds == ["deleted"])
         #expect(effects.clearExtensionSurfaceSessionIds == ["deleted"])
+        #expect(effects.clearExtensionNotifyChipSessionIds == ["deleted"])
         #expect(effects.clearMessageQueueSessionIds == ["deleted"])
     }
 
@@ -207,6 +215,7 @@ struct ServerMessageEffectsTests {
         #expect(effects.clearAskSessionIds == ["s2"])
         #expect(effects.clearExtensionDialogSessionIds == ["s2"])
         #expect(effects.clearExtensionSurfaceSessionIds == ["s2"])
+        #expect(effects.clearExtensionNotifyChipSessionIds == ["s2"])
         #expect(effects.clearMessageQueueSessionIds == ["s2"])
     }
 
@@ -226,6 +235,7 @@ struct ServerMessageEffectsTests {
         #expect(effects.clearAskSessionIds.isEmpty)
         #expect(effects.clearExtensionDialogSessionIds.isEmpty)
         #expect(effects.clearExtensionSurfaceSessionIds.isEmpty)
+        #expect(effects.clearExtensionNotifyChipSessionIds.isEmpty)
         #expect(effects.clearMessageQueueSessionIds.isEmpty)
     }
 
