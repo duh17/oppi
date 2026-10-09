@@ -216,7 +216,9 @@ final class ReleaseGateE2ETests: E2ETestCase {
         )
         XCTAssertEqual(waitForFocusedSessionId(targetSessionID, timeout: 20), targetSessionID)
 
-        app.swipeRight()
+        // The chat back swipe is a leading-edge pan. XCUITest's swipeRight
+        // starts too far in to claim it, so it never pops the pushed session.
+        swipeBackFromLeadingEdge()
         XCTAssertEqual(
             waitForFocusedSessionId(sourceSessionID, timeout: 20),
             sourceSessionID,
@@ -487,7 +489,7 @@ final class TimelineDocumentPositionE2ETests: E2ETestCase {
         let secondBeforeY = timelineRelativeY(of: afterButtonBack)
         tap(afterButtonBack, named: "workspace document wiki link before swipe back", timeout: 5)
         XCTAssertTrue(waitForElementToExist(backButton, timeout: 20), "Workspace document did not reopen")
-        app.swipeRight()
+        swipeBackFromLeadingEdge()
 
         _ = try waitForRestoredWikiLink(
             label: linkLabel,

@@ -658,6 +658,16 @@ class E2ETestCase: XCTestCase {
         XCTAssertEqual(waitForFocusedSessionId(sessionId, timeout: timeout), sessionId)
     }
 
+    /// Leading-edge pan that the chat and embedded readers treat as Back.
+    ///
+    /// `XCUIElement.swipeRight()` starts inward of the 20pt edge claim, so it
+    /// never pops those destinations.
+    func swipeBackFromLeadingEdge() {
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.50))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.50))
+        start.press(forDuration: 0.05, thenDragTo: end)
+    }
+
     /// Navigates back from a chat session to the workspace detail screen.
     func navigateBackToWorkspace() {
         dismissExtensionSheetIfNeeded(timeout: 1)
