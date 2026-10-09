@@ -55,6 +55,7 @@ import { exportDurableToHtml } from "./durable-export.js";
 import { readDurableSessionEntries } from "./durable-history.js";
 import type { PiMessage, PiStateSnapshot, SessionBackendEvent } from "./pi-events.js";
 import type { SdkBackendDisposeResult } from "./sdk-backend.js";
+import type { ServerMetricCollector } from "./server-metric-collector.js";
 import {
   SdkBackend,
   resolveSandboxGuestCwd,
@@ -147,6 +148,7 @@ interface DurableBackendOptions {
   onEvent: (event: SessionBackendEvent) => void;
   /** Startup dialogs (project trust) before the projection exists, as for SDK sessions. */
   onUIBridgeReady?: (bridge: SdkUiBridge | undefined) => void;
+  metrics?: ServerMetricCollector;
   hasUI?: () => boolean;
 }
 
@@ -312,6 +314,7 @@ export class DurableBackend implements AgentBackend {
             providerToken: (provider) => registry.getApiKeyForProvider(provider),
             install: (extension) => owner.installExtension(extension),
             uninstall: (extension) => owner.uninstallExtension(extension),
+            metrics: options.metrics,
           });
         });
     try {

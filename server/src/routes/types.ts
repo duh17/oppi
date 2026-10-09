@@ -16,6 +16,7 @@ import type { RequestPrincipal } from "../request-principal.js";
 import type { ServerResourceService } from "../server-resource-service.js";
 import type { ServerUpdateService } from "../server-update.js";
 import type { McpService } from "../mcp-service.js";
+import type { ServerMetricCollector } from "../server-metric-collector.js";
 
 /** Services needed by route handlers — injected by Server. */
 export interface RouteContext {
@@ -54,6 +55,8 @@ export interface RouteContext {
   desktopCompanionStillClient?: {
     fetchCurrentStill: (options?: { signal?: AbortSignal }) => Promise<DesktopCompanionStill>;
   };
+  /** Server operational metrics. Optional so route tests can omit it. */
+  metrics?: ServerMetricCollector;
   /** Companion view-session metadata. JSON only. Never starts a capture. */
   desktopCompanionViewSessionClient?: {
     fetchViewSession: (input: {

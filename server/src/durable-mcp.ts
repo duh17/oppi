@@ -31,6 +31,8 @@ import {
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { createLogger } from "./logger.js";
+import { recordMcpConnect } from "./mcp-connect-metrics.js";
+import type { ServerMetricCollector } from "./server-metric-collector.js";
 import {
   loadPiMcpInternals,
   type McpOAuthCredentialStore,
@@ -82,6 +84,7 @@ export interface DurableMcpOptions {
   providerToken: (provider: string) => Promise<string | undefined>;
   install: (extension: Extension) => void;
   uninstall: (extension: Extension) => void;
+  metrics?: ServerMetricCollector;
 }
 
 function exposureOf(entry: McpServerEntry): McpExposure {
@@ -195,6 +198,13 @@ export class DurableMcp {
         ? this.createToolSearch()
         : undefined;
     this.extension = this.buildExtension();
+    if (configErrors.length > 0) {
+      recordMcpConnect(options.metrics, {
+        sessionId: options.sessionId,
+        startedAt: Date.now(),
+        configError: true,
+      });
+    }
   }
 
   /** The extension to select on the conversation; the same name across reinstalls. */
@@ -225,9 +235,22 @@ export class DurableMcp {
         onChange: (changed) => this.onConnectionChange(changed),
       });
       server.connection = connection;
+      const startedAt = Date.now();
       server.ready = connection.getClient().then(
-        () => undefined,
-        () => undefined,
+        () => {
+          recordMcpConnect(this.options.metrics, {
+            sessionId: this.options.sessionId,
+            startedAt,
+            state: "connected",
+          });
+        },
+        () => {
+          recordMcpConnect(this.options.metrics, {
+            sessionId: this.options.sessionId,
+            startedAt,
+            state: connection.state,
+          });
+        },
       );
       return server.ready;
     });

@@ -16,10 +16,8 @@ import type { Storage } from "./storage.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import type { WorkspaceRuntime, WorkspaceSessionIdentity } from "./workspace-runtime.js";
 
-export interface SessionStartActiveSession extends Omit<
-  RuntimeSessionStateScaffold<SessionMessageQueueStore>,
-  "messageQueue"
-> {
+export interface SessionStartActiveSession
+  extends Omit<RuntimeSessionStateScaffold<SessionMessageQueueStore>, "messageQueue"> {
   messageQueue?: SessionMessageQueueStore;
   sdkBackend: AgentBackend;
   workspaceId: string;
@@ -118,6 +116,7 @@ export class SessionStartCoordinator {
                 onEvent: (event) => this.deps.onPiEvent(key, event),
                 onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
                 hasUI: () => this.deps.hasUI?.(key) ?? false,
+                metrics: this.deps.metrics,
               })
             : await SdkBackend.create({
                 session,

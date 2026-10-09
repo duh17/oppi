@@ -85,6 +85,7 @@ describe("SessionEventProcessor", () => {
 
       const expectedTags = {
         sessionId: "sess-1",
+        runtime: "oppi",
         provider: "openrouter",
         model: "z.ai/glm-5",
         thinking: "high",
@@ -141,11 +142,11 @@ describe("SessionEventProcessor", () => {
       expect.arrayContaining([
         expect.objectContaining({
           metric: "server.turn_duration_ms",
-          tags: { sessionId: "sess-1" },
+          tags: { sessionId: "sess-1", runtime: "oppi" },
         }),
         expect.objectContaining({
           metric: "server.turn_error",
-          tags: { sessionId: "sess-1", category: "overloaded" },
+          tags: { sessionId: "sess-1", runtime: "oppi", category: "overloaded" },
         }),
       ]),
     );
@@ -154,6 +155,39 @@ describe("SessionEventProcessor", () => {
       expect(sample.tags).not.toHaveProperty("provider");
       expect(sample.tags).not.toHaveProperty("model");
       expect(sample.tags).not.toHaveProperty("thinking");
+    }
+  });
+
+  it("tags turn metrics with the existing session backend, and mirror wins over durable", () => {
+    const cases = [
+      { session: {}, runtime: "oppi" },
+      { session: { serverDurable: { conversationId: 7 } }, runtime: "durable" },
+      { session: { runtime: "pi-tui" as const }, runtime: "pi-tui" },
+      {
+        session: { runtime: "pi-tui" as const, serverDurable: { conversationId: 7 } },
+        runtime: "pi-tui",
+      },
+    ];
+    for (const { session, runtime } of cases) {
+      const metrics = new MockMetrics();
+      const processor = new SessionEventProcessor({
+        mobileRenderers: new MobileRendererRegistry(),
+        storage: {} as never,
+        broadcast: vi.fn(),
+        persistSessionNow: vi.fn(),
+        markSessionDirty: vi.fn(),
+        metrics: metrics as never,
+      });
+      const active = makeActiveSession({ ...makeSession("sess-1"), ...session });
+      processor.updateSessionFromEvent("sess-1", active, { type: "agent_start" } as never);
+      processor.updateSessionFromEvent("sess-1", active, {
+        type: "agent_end",
+        messages: [{ stopReason: "error", errorMessage: "overloaded" }],
+      } as never);
+      expect(metrics.samples.find((sample) => sample.metric === "server.turn_error")?.tags).toEqual(
+        expect.objectContaining({ runtime, category: "overloaded" }),
+      );
+      expect(metrics.samples.every((sample) => sample.tags?.runtime === runtime)).toBe(true);
     }
   });
 
@@ -208,6 +242,7 @@ describe("SessionEventProcessor", () => {
 
       const routing = {
         sessionId: "sess-1",
+        runtime: "oppi",
         provider: "anthropic",
         model: "claude-sonnet-4-0",
         tool: "bash",
@@ -301,6 +336,7 @@ describe("SessionEventProcessor", () => {
             value: 1,
             tags: {
               sessionId: "sess-1",
+              runtime: "oppi",
               provider: "openai",
               model: "gpt-5.5",
               tool: "edit",
@@ -312,6 +348,7 @@ describe("SessionEventProcessor", () => {
             value: 1,
             tags: {
               sessionId: "sess-1",
+              runtime: "oppi",
               provider: "openai",
               model: "gpt-5.5",
               tool: "unknown",
@@ -378,6 +415,7 @@ describe("SessionEventProcessor", () => {
           value: 100,
           tags: {
             sessionId: "sess-1",
+            runtime: "oppi",
             provider: "xai",
             model: "grok-4.6",
             thinking: "high",
@@ -388,6 +426,7 @@ describe("SessionEventProcessor", () => {
           value: 20_000,
           tags: {
             sessionId: "sess-1",
+            runtime: "oppi",
             provider: "opencode-go",
             model: "glm-5.3",
             thinking: "max",

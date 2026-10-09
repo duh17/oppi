@@ -30,7 +30,7 @@ import { BoundSessionStreamMux, DictationStreamMux } from "./stream.js";
 import { RouteHandler } from "./routes/index.js";
 import { SdkBackend } from "./sdk-backend.js";
 import { normalizeRegisteredPathPattern } from "./routes/registry.js";
-import { shouldRecordHttpRequestMetric } from "./http-request-metrics.js";
+import { httpOpsMetricSamples, observeHttpResponseBody } from "./http-request-metrics.js";
 import { defaultModelRefFromGlobalSettings, ModelCatalog } from "./model-catalog.js";
 import { ExtensionProviderCatalog } from "./extension-model-discovery.js";
 import { LiveActivityBridge } from "./live-activity.js";
@@ -713,6 +713,7 @@ export class Server {
       sessions: this.sessions,
       ensureSessionContextWindow: (session) => this.models.ensureSessionContextWindow(session),
       appEvents: this.appEventStreamMux,
+      metrics: this.opsMetrics,
     });
 
     this.localApiSocket = localApiSocketPath(dataDir);
@@ -915,6 +916,7 @@ export class Server {
       stopWorkspaceVm: (workspaceId) => SdkBackend.stopWorkspaceVm(workspaceId),
       desktopCompanionStillClient: this.desktopCompanionStillClient,
       desktopCompanionViewSessionClient: this.desktopCompanionViewSessionClient,
+      metrics: this.opsMetrics,
     });
   }
 
@@ -1483,21 +1485,23 @@ export class Server {
 
     res.setHeader("X-Oppi-Protocol", "2");
 
-    // Record HTTP request duration when the response finishes. Routine health,
-    // stats, capability, session poll, and telemetry upload routes are
-    // threshold-gated so they do not dominate diagnostics volume while still
-    // surfacing slow/error cases.
+    // Record HTTP duration and body bytes when the response finishes. One
+    // gating decision covers both. Routine health, stats, capability, session
+    // poll, and telemetry upload routes are threshold-gated so they do not
+    // dominate diagnostics volume while still surfacing slow/error cases.
+    const responseBytes = observeHttpResponseBody(req, res);
     res.on("finish", () => {
       const durationMs = Date.now() - startTime;
       const pathPattern = normalizePathPattern(path);
-      if (!shouldRecordHttpRequestMetric(pathPattern, res.statusCode, durationMs)) {
-        return;
-      }
-      this.opsMetrics.record("server.http_request_ms", durationMs, {
+      for (const sample of httpOpsMetricSamples({
         method,
-        path_pattern: pathPattern,
-        status_code: String(res.statusCode),
-      });
+        pathPattern,
+        statusCode: res.statusCode,
+        durationMs,
+        responseBytes: responseBytes(),
+      })) {
+        this.opsMetrics.record(sample.metric, sample.value, sample.tags);
+      }
     });
 
     if (path === "/health") {

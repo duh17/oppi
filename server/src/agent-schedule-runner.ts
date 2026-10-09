@@ -1,5 +1,7 @@
 import { cronMatchesNow } from "./agent-schedule-cron.js";
 import type { AgentSchedule, AgentScheduleTrigger } from "./agent-schedules.js";
+import { recordScheduleRun } from "./schedule-run-metrics.js";
+import type { ServerMetricCollector } from "./server-metric-collector.js";
 import {
   createAgentScheduleDispatchHooks,
   type AgentScheduleDispatchDeps,
@@ -20,6 +22,7 @@ export interface AgentScheduleRunnerDeps extends AgentScheduleDispatchDeps {
   leaseMs?: number;
   limit?: number;
   ownerId?: string;
+  metrics?: ServerMetricCollector;
 }
 
 export class AgentScheduleRunner {
@@ -119,12 +122,26 @@ export class AgentScheduleRunner {
         kinds: ["due"],
       })[0];
       if (!run) break;
+      const startedAt = this.nowMs();
       try {
         await store.dispatchClaimedRun(run.id, hooks, {
           leaseOwner: this.ownerId,
           now: this.nowMs(),
         });
+        recordScheduleRun(this.deps.metrics, {
+          startedAt,
+          now: this.nowMs(),
+          kind: "due",
+          status: "completed",
+        });
       } catch (error) {
+        recordScheduleRun(this.deps.metrics, {
+          startedAt,
+          now: this.nowMs(),
+          kind: "due",
+          status: "failed",
+          error,
+        });
         log.warn("agent_schedule_runner.dispatch.failed", {
           scheduleId: run.scheduleId,
           runId: run.id,

@@ -45,14 +45,12 @@ describe("agent schedule runner", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  function storage(
-    resolvedAgent?: {
-      id: string;
-      version: number;
-      status: "active";
-      definition: AgentDefinition;
-    },
-  ) {
+  function storage(resolvedAgent?: {
+    id: string;
+    version: number;
+    status: "active";
+    definition: AgentDefinition;
+  }) {
     return {
       getAgentScheduleStore: () => store,
       getWorkspace: vi.fn((workspaceId: string) =>
@@ -107,16 +105,29 @@ describe("agent schedule runner", () => {
       },
       500,
     );
+    const samples: Array<{ metric: string; value: number; tags?: Record<string, string> }> = [];
     const runner = new AgentScheduleRunner({
       storage: storage(),
       sessions: { startSession, sendPrompt },
       ensureSessionContextWindow: (session) => session,
       nowMs: () => 2_000,
+      metrics: {
+        record(metric: string, value: number, tags?: Record<string, string>) {
+          samples.push({ metric, value, tags });
+        },
+      } as never,
     });
 
     await runner.runOnce();
     await runner.runOnce();
 
+    expect(samples).toEqual([
+      {
+        metric: "server.schedule_run_ms",
+        value: 0,
+        tags: { status: "completed", kind: "due" },
+      },
+    ]);
     expect(startSession).toHaveBeenCalledTimes(1);
     expect(sendPrompt).toHaveBeenCalledTimes(1);
     expect(store.listRunSummaries(schedule.id)).toEqual([
@@ -274,19 +285,21 @@ describe("agent schedule runner", () => {
       runIds: [run.id],
     })[0];
 
-    await store.dispatchClaimedRun(
-      claimed.id,
-      createAgentScheduleDispatchHooks(
-        {
-          storage: dispatchStorage,
-          sessions: { startSession, sendPrompt },
-          ensureSessionContextWindow: (session) => session,
-          appEvents,
-        },
-        "worker-a",
-      ),
-      { leaseOwner: "worker-a", now: 1_000 },
-    ).catch(() => undefined);
+    await store
+      .dispatchClaimedRun(
+        claimed.id,
+        createAgentScheduleDispatchHooks(
+          {
+            storage: dispatchStorage,
+            sessions: { startSession, sendPrompt },
+            ensureSessionContextWindow: (session) => session,
+            appEvents,
+          },
+          "worker-a",
+        ),
+        { leaseOwner: "worker-a", now: 1_000 },
+      )
+      .catch(() => undefined);
 
     expect(appEvents.emitSessionCreated).not.toHaveBeenCalled();
     expect(appEvents.emitSessionSummary).not.toHaveBeenCalled();

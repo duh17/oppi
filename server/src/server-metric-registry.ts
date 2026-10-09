@@ -1,12 +1,8 @@
 /**
  * Server operational metric registry.
  *
- * Single source-of-truth for every server-side metric. Mirrors the iOS
- * CHAT_METRIC_REGISTRY pattern: define here first, then instrument.
- *
- * All metrics (P0–P2) are defined in the registry type for forward
- * compatibility. Only P0 (network/relay validation) is instrumented
- * in Phase 1.
+ * Define a metric here before emitting it. Retired names stay so archived
+ * dashboard imports still recognize them; they are not emitted.
  */
 
 export type ServerMetricUnit = "ms" | "count" | "bytes" | "ratio";
@@ -89,61 +85,76 @@ export const SERVER_METRIC_REGISTRY = {
   "server.session_active_peak": {
     unit: "count",
     description:
-      "Legacy ops-metric mirror for peak concurrent active sessions. Current sampler writes peak in server resource samples instead.",
+      "Retired. Not emitted. Peak concurrent sessions are sessions.peak on the server resource sample. Kept for archived dashboard import.",
   },
 
   // ── P1: Agent workload / responsiveness ──
   "server.turn_duration_ms": {
     unit: "ms",
     description:
-      "Full agent work duration (agent_start to agent_end). Tagged by the exact session-configured provider/model route and bounded configured thinking when known. Workload telemetry, not accepted-task correctness.",
+      "Full agent work duration (agent_start to agent_end). Tagged by runtime (oppi, durable, or pi-tui), the exact session-configured provider/model route, and bounded configured thinking when known. Workload telemetry, not accepted-task correctness.",
   },
   "server.turn_ttft_ms": {
     unit: "ms",
     description:
-      "Server-side time-to-first-token (agent_start to first text_delta or thinking_delta). Tagged by the exact session-configured provider/model route and bounded configured thinking when known.",
+      "Server-side time-to-first-token (agent_start to first text_delta or thinking_delta). Tagged by runtime (oppi, durable, or pi-tui), the exact session-configured provider/model route, and bounded configured thinking when known.",
   },
   "server.turn_input_tokens": {
     unit: "count",
     description:
-      "Input tokens consumed by turns (from message_end usage). Tagged by the exact session-configured provider/model route when known and aggregated by sum before storage.",
+      "Input tokens consumed by turns (from message_end usage). Tagged by runtime (oppi, durable, or pi-tui) and the exact session-configured provider/model route when known. Aggregated by sum before storage.",
   },
   "server.turn_output_tokens": {
     unit: "count",
     description:
-      "Output tokens produced by turns (from message_end usage). Tagged by the exact session-configured provider/model route when known and aggregated by sum before storage.",
+      "Output tokens produced by turns (from message_end usage). Tagged by runtime (oppi, durable, or pi-tui) and the exact session-configured provider/model route when known. Aggregated by sum before storage.",
   },
   "server.turn_cost": {
     unit: "count",
     description:
-      "Turn cost in microdollars (usage.cost * 1_000_000, integer). Tagged by the exact session-configured provider/model route when known and aggregated by sum before storage.",
+      "Turn cost in microdollars (usage.cost * 1_000_000, integer). Tagged by runtime (oppi, durable, or pi-tui) and the exact session-configured provider/model route when known. Aggregated by sum before storage.",
   },
   "server.turn_tool_calls": {
     unit: "count",
     description:
-      "Tool calls executed in a single turn, tagged by the exact session-configured provider/model route when known; useful for interpreting turn workload.",
+      "Tool calls executed in a single turn. Tagged by runtime (oppi, durable, or pi-tui) and the exact session-configured provider/model route when known. Workload telemetry, not accepted-task correctness.",
   },
   "server.turn_error": {
     unit: "count",
     description:
-      "Turns that ended with an error. Tagged by a bounded error category plus the exact session-configured provider/model route and configured thinking when known. Operational, not accepted-task correctness.",
+      "Turns that ended with an error. Tagged by runtime (oppi, durable, or pi-tui), a bounded error category, and the exact session-configured provider/model route and configured thinking when known. Operational, not accepted-task correctness.",
   },
   "server.tool_duration_ms": {
     unit: "ms",
     description:
-      "Paired tool-call wall time (tool_execution_start to matching tool_execution_end). Tagged by the exact session-configured provider/model route, tool, and status. Omitted when start or end is missing.",
+      "Paired tool-call wall time (tool_execution_start to matching tool_execution_end). Tagged by runtime (oppi, durable, or pi-tui), the exact session-configured provider/model route, tool, and status. Omitted when start or end is missing.",
   },
   "server.tool_result": {
     unit: "count",
     description:
-      "One sample per observed tool_execution_end. Tagged by the exact session-configured provider/model route, sanitized tool name, and status. Operational success is not accepted-task correctness.",
+      "One sample per observed tool_execution_end. Tagged by runtime (oppi, durable, or pi-tui), the exact session-configured provider/model route, sanitized tool name, and status. Operational success is not accepted-task correctness.",
   },
 
   // ── P2: Capacity / Throughput ──
   "server.http_request_ms": {
     unit: "ms",
     description:
-      "HTTP request duration. Tagged by method, path_pattern, status_code. Fast successful routine/navigation routes are threshold-gated.",
+      "HTTP request duration. Tagged by method, path_pattern, status_code. Fast successful routine/navigation routes are threshold-gated. server.http_response_bytes uses the same decision and tags.",
+  },
+  "server.http_response_bytes": {
+    unit: "bytes",
+    description:
+      "HTTP response body bytes actually written. Same tags and gating decision as server.http_request_ms. Omitted for WebSocket upgrades, HTTP 101, unfinished event streams, and unmeasurable chunks.",
+  },
+  "server.mcp_connect_ms": {
+    unit: "ms",
+    description:
+      "First MCP server connect on a durable session. Tagged by sessionId, status (connected, failed, error), and reason (auth, connect, config) when not connected. Config errors record 0. Server names and error text are omitted.",
+  },
+  "server.schedule_run_ms": {
+    unit: "ms",
+    description:
+      "Schedule dispatch duration. Tagged by status (completed, failed), kind (due, manual), and a bounded reason on failure. Not the HTTP request that started a manual run.",
   },
   "server.event_ring_utilization": {
     unit: "ratio",
@@ -175,15 +186,17 @@ export const SERVER_METRIC_REGISTRY = {
   // ── P2: Error Tracking ──
   "server.auto_retry": {
     unit: "count",
-    description: "Auto-retry events. Tagged by attempt number.",
+    description:
+      "Auto-retry events. Tagged by runtime (oppi, durable, or pi-tui) and attempt number.",
   },
   "server.compaction_ms": {
     unit: "ms",
-    description: "Auto-compaction duration.",
+    description: "Auto-compaction duration. Tagged by runtime (oppi, durable, or pi-tui).",
   },
   "server.compaction_result": {
     unit: "count",
-    description: "Compaction outcomes. Tagged by result (success, failed, aborted, will_retry).",
+    description:
+      "Compaction outcomes. Tagged by runtime (oppi, durable, or pi-tui) and result (success, failed, aborted, will_retry).",
   },
   // ── Session Auto-Title ──
   "server.session_title_gen_ms": {
@@ -236,7 +249,7 @@ export const SERVER_METRIC_REGISTRY = {
   },
   "server.dictation_retranscribe_ms": {
     unit: "ms",
-    description: "Retired metric kept for historical dashboard compatibility.",
+    description: "Retired. Not emitted. Kept for archived dashboard import.",
   },
   "server.dictation_finalize_ms": {
     unit: "ms",
@@ -244,11 +257,11 @@ export const SERVER_METRIC_REGISTRY = {
   },
   "server.dictation_retranscribe_count": {
     unit: "count",
-    description: "Retired metric kept for historical dashboard compatibility.",
+    description: "Retired. Not emitted. Kept for archived dashboard import.",
   },
   "server.dictation_retranscribe_skip": {
     unit: "count",
-    description: "Retired metric kept for historical dashboard compatibility.",
+    description: "Retired. Not emitted. Kept for archived dashboard import.",
   },
   "server.dictation_error": {
     unit: "count",

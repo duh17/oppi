@@ -15,6 +15,8 @@ const ZERO_USAGE: Usage = {
 
 export interface AdapterState {
   partial?: AssistantMessage;
+  /** Last projected assistant message in the current run, for agent_end error metrics. */
+  lastAssistant?: AssistantMessage;
   toolOutputs: Map<string, string>;
   toolArgs: Map<string, Record<string, unknown>>;
   toolDetails: Map<string, unknown>;
@@ -31,6 +33,7 @@ export function createAdapterState(): AdapterState {
 /** Re-bind a live turn without inventing another user input. */
 export function snapshotEvents(snapshot: SnapshotEvent, state: AdapterState): AgentSessionEvent[] {
   state.partial = undefined;
+  state.lastAssistant = undefined;
   state.toolArgs.clear();
   state.toolOutputs.clear();
   state.toolDetails.clear();
@@ -70,12 +73,18 @@ export function adaptDurableEvent(event: AgentEvent, state: AdapterState): Agent
     case "snapshot":
       return snapshotEvents(event, state);
     case "run_start":
+      state.lastAssistant = undefined;
       return [asPi({ type: "agent_start" })];
-    case "run_end":
+    case "run_end": {
+      // Durable run_end has no Pi message list. Carry the projected assistant
+      // error so SessionEventProcessor records turn_error on the same path as SDK.
+      const errored = state.lastAssistant?.stopReason === "error" ? [state.lastAssistant] : [];
+      state.lastAssistant = undefined;
       return [
-        asPi({ type: "agent_end", messages: [], willRetry: false }),
+        asPi({ type: "agent_end", messages: errored, willRetry: false }),
         asPi({ type: "agent_settled" }),
       ];
+    }
     case "turn_start":
       return [asPi({ type: "turn_start" })];
     case "turn_end":
@@ -111,7 +120,10 @@ export function adaptDurableEvent(event: AgentEvent, state: AdapterState): Agent
     case "message_end": {
       const message = event.entry.model?.[0];
       if (!message) return [];
-      if (message.role === "assistant") state.partial = undefined;
+      if (message.role === "assistant") {
+        state.partial = undefined;
+        state.lastAssistant = message;
+      }
       return [asPi({ type: "message_end", message, entryId: String(event.entry.id) })];
     }
     case "tool_execution_start":

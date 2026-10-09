@@ -15,6 +15,7 @@ import type {
   CreateAgentScheduleRequest,
 } from "../agent-schedules.js";
 import { safeErrorMessage } from "../log-utils.js";
+import { recordScheduleRun } from "../schedule-run-metrics.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
 const MANUAL_RUN_LEASE_MS = 10 * 60_000;
@@ -208,19 +209,38 @@ export function createScheduleRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     if (!claimed) {
       return schedules.getRun(run.id) ?? run;
     }
-    return schedules.dispatchClaimedRun(
-      claimed.id,
-      createAgentScheduleDispatchHooks(
-        {
-          storage: ctx.storage,
-          sessions: ctx.sessions,
-          ensureSessionContextWindow: ctx.ensureSessionContextWindow,
-          appEvents: ctx.appEvents,
-        },
-        MANUAL_RUN_OWNER,
-      ),
-      { leaseOwner: MANUAL_RUN_OWNER, now },
-    );
+    const startedAt = Date.now();
+    try {
+      const completed = await schedules.dispatchClaimedRun(
+        claimed.id,
+        createAgentScheduleDispatchHooks(
+          {
+            storage: ctx.storage,
+            sessions: ctx.sessions,
+            ensureSessionContextWindow: ctx.ensureSessionContextWindow,
+            appEvents: ctx.appEvents,
+          },
+          MANUAL_RUN_OWNER,
+        ),
+        { leaseOwner: MANUAL_RUN_OWNER, now },
+      );
+      recordScheduleRun(ctx.metrics, {
+        startedAt,
+        now: Date.now(),
+        kind: "manual",
+        status: "completed",
+      });
+      return completed;
+    } catch (error) {
+      recordScheduleRun(ctx.metrics, {
+        startedAt,
+        now: Date.now(),
+        kind: "manual",
+        status: "failed",
+        error,
+      });
+      throw error;
+    }
   }
 
   return async ({ method, path, url, req, res }) => {

@@ -22,6 +22,7 @@ import {
 } from "./session-protocol.js";
 import { extractQueuedUserText } from "./session-queue-utils.js";
 import type { PendingStop } from "./session-stop.js";
+import { sessionMetricRuntime } from "./session-runtime-capabilities.js";
 import type { Storage } from "./storage.js";
 import { isThinkingLevel } from "./thinking-levels.js";
 import { normalizeMutationToolName } from "./tool-mutations.js";
@@ -135,7 +136,10 @@ function classifyTurnError(errorMessage: unknown): string {
 
 /** Session-configured route plus a bounded configured thinking level when known. */
 function routingTags(session: Session, extra?: Record<string, string>): Record<string, string> {
-  const tags: Record<string, string> = { sessionId: session.id };
+  const tags: Record<string, string> = {
+    sessionId: session.id,
+    runtime: sessionMetricRuntime(session),
+  };
   const parsed = splitExactProviderModel(session.model);
   if (parsed) {
     tags.provider = parsed.provider;

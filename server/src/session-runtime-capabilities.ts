@@ -24,6 +24,23 @@ export function runtimeLogTag(session: Pick<Session, "runtime">): SessionRuntime
   return isPiTuiSession(session) ? "pi-tui" : "oppi";
 }
 
+/**
+ * Bounded backend for turn and tool ops metrics.
+ * Reuses `SessionRuntimeKind` (`oppi`, `pi-tui`) and the durable engine name.
+ * Durable sessions are also stored as runtime `oppi` plus `serverDurable`, so
+ * `durable` wins over `oppi`. A terminal mirror stays `pi-tui` even if a
+ * durable binding is present.
+ */
+export type SessionMetricRuntime = "oppi" | "durable" | "pi-tui";
+
+export function sessionMetricRuntime(
+  session: Pick<Session, "runtime" | "serverDurable">,
+): SessionMetricRuntime {
+  if (isPiTuiSession(session)) return "pi-tui";
+  if (isServerDurableSession(session)) return "durable";
+  return "oppi";
+}
+
 export function shouldRecordPromptLocally(session: Pick<Session, "runtime">): boolean {
   // Terminal-owned turns are authoritative in pi-tui; Oppi only projects them.
   return !isPiTuiSession(session);
