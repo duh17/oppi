@@ -239,6 +239,15 @@ function sanitizeString(value: unknown, maxLength: number): string {
   return trimText(value, maxLength);
 }
 
+/** Short SHA, optional `-dirty`, or `unknown`. Anything else is dropped. */
+function sanitizeGitCommit(value: unknown): string | undefined {
+  const raw = sanitizeString(value, 64).trim();
+  if (!raw) return undefined;
+  if (raw === "unknown") return raw;
+  if (/^[0-9a-f]{7,40}(?:-dirty)?$/i.test(raw)) return raw.toLowerCase();
+  return undefined;
+}
+
 function sanitizeRedactedString(value: unknown, maxLength: number): string {
   if (!isString(value)) return "";
   return redactLogString(value, maxLength);
@@ -285,6 +294,7 @@ function parseRequest(body: unknown): MetricKitUploadRequest | null {
     generatedAt,
     appVersion: sanitizeString(raw.appVersion, 96),
     buildNumber: sanitizeString(raw.buildNumber, 64),
+    gitCommit: sanitizeGitCommit(raw.gitCommit),
     osVersion: sanitizeString(raw.osVersion, 128),
     deviceModel: sanitizeString(raw.deviceModel, 128),
     clientKind: rawClientKind === "ios" || rawClientKind === "mac" ? rawClientKind : undefined,
@@ -328,6 +338,7 @@ function appendMetricKitRecord(ctx: RouteContext, request: MetricKitUploadReques
     generatedAt: request.generatedAt,
     appVersion: request.appVersion,
     buildNumber: request.buildNumber,
+    gitCommit: request.gitCommit,
     osVersion: request.osVersion,
     deviceModel: request.deviceModel,
     clientKind: request.clientKind,
@@ -473,6 +484,7 @@ function parseChatMetricRequest(body: unknown): ChatMetricUploadRequest | null {
     generatedAt,
     appVersion: sanitizeString(raw.appVersion, 96),
     buildNumber: sanitizeString(raw.buildNumber, 64),
+    gitCommit: sanitizeGitCommit(raw.gitCommit),
     osVersion: sanitizeString(raw.osVersion, 128),
     deviceModel: sanitizeString(raw.deviceModel, 128),
     samples,
@@ -490,6 +502,7 @@ function appendChatMetricRecord(ctx: RouteContext, request: ChatMetricUploadRequ
     generatedAt: request.generatedAt,
     appVersion: request.appVersion,
     buildNumber: request.buildNumber,
+    gitCommit: request.gitCommit,
     osVersion: request.osVersion,
     deviceModel: request.deviceModel,
     sampleCount: request.samples.length,
@@ -630,6 +643,7 @@ function parseClientLogRequest(body: unknown): ClientLogUploadRequest | null {
     generatedAt,
     appVersion: sanitizeRedactedString(raw.appVersion, 96),
     buildNumber: sanitizeRedactedString(raw.buildNumber, 64),
+    gitCommit: sanitizeGitCommit(raw.gitCommit),
     osVersion: sanitizeRedactedString(raw.osVersion, 128),
     deviceModel: sanitizeRedactedString(raw.deviceModel, 128),
     clientKind: clientKindRaw,
@@ -652,6 +666,7 @@ function appendClientLogRecord(ctx: RouteContext, request: ClientLogUploadReques
     generatedAt: request.generatedAt,
     appVersion: request.appVersion,
     buildNumber: request.buildNumber,
+    gitCommit: request.gitCommit,
     osVersion: request.osVersion,
     deviceModel: request.deviceModel,
     clientKind: request.clientKind,

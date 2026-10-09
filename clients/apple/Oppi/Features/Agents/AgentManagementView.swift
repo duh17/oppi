@@ -1264,7 +1264,7 @@ private struct AgentDetailView: View {
             serverId: serverId,
             agentId: agent.id
         )
-        navigation.showQuickSession = true
+        navigation.presentQuickSession(from: .agents)
     }
 
     @MainActor

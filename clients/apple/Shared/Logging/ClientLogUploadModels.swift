@@ -29,11 +29,38 @@ struct ClientLogUploadRequest: Codable, Sendable, Equatable {
     let buildNumber: String
     let osVersion: String
     let deviceModel: String
+    let gitCommit: String
     let clientKind: AppleClientKind
     let appInstanceId: String
     let bootId: String
     let droppedCount: Int?
     let entries: [ClientLogUploadEntry]
+
+    init(
+        generatedAt: Int64,
+        appVersion: String,
+        buildNumber: String,
+        osVersion: String,
+        deviceModel: String,
+        gitCommit: String = "unknown",
+        clientKind: AppleClientKind,
+        appInstanceId: String,
+        bootId: String,
+        droppedCount: Int?,
+        entries: [ClientLogUploadEntry]
+    ) {
+        self.generatedAt = generatedAt
+        self.appVersion = appVersion
+        self.buildNumber = buildNumber
+        self.osVersion = osVersion
+        self.deviceModel = deviceModel
+        self.gitCommit = gitCommit
+        self.clientKind = clientKind
+        self.appInstanceId = appInstanceId
+        self.bootId = bootId
+        self.droppedCount = droppedCount
+        self.entries = entries
+    }
 }
 
 struct ClientLogUploadMetadata: Sendable, Equatable {
@@ -41,6 +68,21 @@ struct ClientLogUploadMetadata: Sendable, Equatable {
     let buildNumber: String
     let osVersion: String
     let deviceModel: String
+    let gitCommit: String
+
+    init(
+        appVersion: String,
+        buildNumber: String,
+        osVersion: String,
+        deviceModel: String,
+        gitCommit: String = "unknown"
+    ) {
+        self.appVersion = appVersion
+        self.buildNumber = buildNumber
+        self.osVersion = osVersion
+        self.deviceModel = deviceModel
+        self.gitCommit = gitCommit
+    }
 }
 
 protocol ClientLogUploading: Sendable {

@@ -397,6 +397,7 @@ struct OppiApp: App {
         seenStorage: SessionSeenLedgerStorage(defaults: .standard)
     )
     @State private var navigation = AppNavigation()
+    @State private var navigationRouteTelemetry = NavigationRouteTelemetryCoalescer()
     @State private var themeStore = ThemeStore()
     @State private var quickCommentTemplateStore = QuickCommentTemplateStore()
     @State private var composerDraftStore = ComposerDraftStore()
@@ -1632,6 +1633,13 @@ struct OppiApp: App {
             lifecycleEvent: lifecycleEvent,
             lifecycleStep: lifecycleStep
         )
+        noteNavigationRouteIfNeeded(lifecycleEvent: lifecycleEvent)
+    }
+
+    @MainActor
+    private func noteNavigationRouteIfNeeded(lifecycleEvent: String?) {
+        guard lifecycleEvent == "navigation" || lifecycleEvent == "root" else { return }
+        navigationRouteTelemetry.note(navigation.navigationRouteSnapshot)
     }
 
     @MainActor
@@ -1652,36 +1660,17 @@ struct OppiApp: App {
 
     @MainActor
     private func diagnosticVisibleSessionId() -> String? {
-        switch navigation.workspaceNavigationPresentation {
-        case .split:
-            return navigation.visibleSplitDiagnosticContext.sessionId
-        case .stack:
-            return navigation.workspaceStackDiagnosticContext.sessionId
-        }
+        navigation.visibleDiagnosticSessionId()
     }
 
     @MainActor
     private func diagnosticVisibleWorkspaceId() -> String? {
-        switch navigation.workspaceNavigationPresentation {
-        case .split:
-            return navigation.visibleSplitDiagnosticContext.workspaceId
-        case .stack:
-            return navigation.workspaceStackDiagnosticContext.workspaceId
-        }
+        navigation.visibleDiagnosticWorkspaceId()
     }
 
     @MainActor
     private func diagnosticScreenLabel() -> String {
-        guard navigation.launchPhase == .ready else { return "launch_resolving" }
-        if navigation.showOnboarding { return "onboarding" }
-        if navigation.showQuickSession { return "quick_session" }
-
-        switch navigation.workspaceNavigationPresentation {
-        case .stack:
-            return navigation.workspaceStackDiagnosticContext.screen
-        case .split:
-            return navigation.visibleSplitDiagnosticContext.screen
-        }
+        navigation.diagnosticScreenLabel()
     }
 
     private func diagnosticScenePhase(_ phase: ScenePhase) -> String {

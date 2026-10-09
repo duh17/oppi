@@ -34,6 +34,7 @@ scripts/*
 clients/apple/scripts/*
 !clients/apple/scripts/build-tailscalekit.sh
 !clients/apple/scripts/build-ghostty-vt.sh
+!clients/apple/scripts/stamp-git-commit.sh
 !clients/apple/scripts/build-tailscalekit.test.sh
 !clients/apple/scripts/check-coverage.sh
 !clients/apple/scripts/check-privacy-manifests.sh

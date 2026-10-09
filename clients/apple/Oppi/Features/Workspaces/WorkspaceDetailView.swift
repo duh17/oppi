@@ -967,7 +967,7 @@ struct WorkspaceDetailView: View {
             workspaceId: workspace.id,
             worktreeId: selectedWorktreeId
         )
-        navigation.showQuickSession = true
+        navigation.presentQuickSession(from: .workspaceBar)
     }
 
     private var workspaceConfigurationButton: some View {

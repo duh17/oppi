@@ -847,7 +847,7 @@ private struct SessionThreadDetailContentView: View {
                 title: root.displayTitle
             )
         )
-        navigation.showQuickSession = true
+        navigation.presentQuickSession(from: .threadBar)
     }
 
     // MARK: Header

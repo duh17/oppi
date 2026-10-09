@@ -1369,7 +1369,7 @@ struct SessionInboxView: View {
         if dictate {
             navigation.pendingQuickSessionStartDictation = true
         }
-        navigation.showQuickSession = true
+        navigation.presentQuickSession(from: .sessionListBar)
     }
 
     private func applyE2ELaunchHintsIfNeeded() {

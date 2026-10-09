@@ -192,6 +192,90 @@ describe("telemetry routes", () => {
     }
   });
 
+  it("stores a bounded git commit and drops unsafe commit values", async () => {
+    const generatedAt = Date.now();
+    const harness = makeHarness({
+      generatedAt,
+      appVersion: "1.1.2",
+      buildNumber: "54",
+      gitCommit: "ABCDEF123456-dirty",
+      clientKind: "ios",
+      appInstanceId: "app-1",
+      bootId: "boot-1",
+      entries: [
+        {
+          ts: generatedAt,
+          seq: 1,
+          level: "info",
+          category: "Navigation",
+          message: "Route changed",
+          metadata: { screen: "workspace_session", previousScreen: "workspace_inbox_all" },
+        },
+      ],
+    });
+
+    try {
+      const route = createTelemetryRoutes(harness.ctx, harness.helpers);
+      const handled = await route({
+        method: "POST",
+        path: "/telemetry/client-logs",
+        url: new URL("http://localhost/telemetry/client-logs"),
+        req: {} as IncomingMessage,
+        res: {} as ServerResponse,
+      });
+
+      expect(handled).toBe(true);
+      expect(harness.errors).toEqual([]);
+      const path = join(
+        harness.dataDir,
+        "diagnostics",
+        "telemetry",
+        `client-logs-${new Date(generatedAt).toISOString().slice(0, 10)}.jsonl`,
+      );
+      const record = JSON.parse(readFileSync(path, "utf8").trim()) as { gitCommit?: string };
+      expect(record.gitCommit).toBe("abcdef123456-dirty");
+    } finally {
+      rmSync(harness.dataDir, { recursive: true, force: true });
+    }
+
+    const unsafe = makeHarness({
+      generatedAt,
+      gitCommit: "../secrets/id_rsa",
+      clientKind: "ios",
+      appInstanceId: "app-1",
+      bootId: "boot-1",
+      entries: [
+        {
+          ts: generatedAt,
+          seq: 1,
+          level: "info",
+          category: "Navigation",
+          message: "Route changed",
+        },
+      ],
+    });
+    try {
+      const route = createTelemetryRoutes(unsafe.ctx, unsafe.helpers);
+      await route({
+        method: "POST",
+        path: "/telemetry/client-logs",
+        url: new URL("http://localhost/telemetry/client-logs"),
+        req: {} as IncomingMessage,
+        res: {} as ServerResponse,
+      });
+      const path = join(
+        unsafe.dataDir,
+        "diagnostics",
+        "telemetry",
+        `client-logs-${new Date(generatedAt).toISOString().slice(0, 10)}.jsonl`,
+      );
+      const record = JSON.parse(readFileSync(path, "utf8").trim()) as { gitCommit?: string };
+      expect(record.gitCommit).toBeUndefined();
+    } finally {
+      rmSync(unsafe.dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects client log uploads when telemetry is disabled", async () => {
     process.env.OPPI_TELEMETRY_MODE = "off";
     const harness = makeHarness({ entries: [] });

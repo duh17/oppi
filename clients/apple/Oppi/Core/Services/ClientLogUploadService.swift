@@ -138,6 +138,9 @@ enum ClientLogUploadService {
         // Bounded capture-start/first-audio evidence distinguishes HFP from fallback.
         "VoiceInput",
         "WebSocket",
+        // User-driven navigation breadcrumbs. A handful per minute, flushed
+        // so a later crash still has the route that preceded it.
+        "Navigation",
     ]
 
     private static func uploadLevel(for level: ClientLogLevel) -> ClientLogUploadLevel {
@@ -173,7 +176,8 @@ enum ClientLogUploadService {
             appVersion: version,
             buildNumber: build,
             osVersion: osVersion,
-            deviceModel: "iPhone"
+            deviceModel: "iPhone",
+            gitCommit: AppBuildIdentity.gitCommit
         )
     }
 }

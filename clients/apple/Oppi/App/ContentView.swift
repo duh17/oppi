@@ -135,7 +135,7 @@ struct ContentView: View {
         guard navigation.launchPhase == .ready, !navigation.showOnboarding else { return }
         guard !navigation.showQuickSession else { return }
         QuickSessionTrigger.shared.isPresented = true
-        navigation.showQuickSession = true
+        navigation.presentQuickSession(from: .intent)
     }
 
     private func dismissQuickSession() {

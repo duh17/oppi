@@ -60,6 +60,8 @@
 	<string>Oppi uses on-device speech recognition to convert your voice into text.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>OPPIGitCommit</key>
+	<string>unknown</string>
 	<key>OPPITelemetryMode</key>
 	<string>$(OPPI_TELEMETRY_MODE)</string>
 	<key>UIAppFonts</key>

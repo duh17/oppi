@@ -198,7 +198,8 @@ final class MetricKitService: NSObject, MXMetricManagerSubscriber {
             appVersion: version,
             buildNumber: build,
             osVersion: osVersion,
-            deviceModel: model
+            deviceModel: model,
+            gitCommit: AppBuildIdentity.gitCommit
         )
     }
 
@@ -384,6 +385,7 @@ private struct MetricKitUploadMetadata: Sendable {
     let buildNumber: String
     let osVersion: String
     let deviceModel: String
+    let gitCommit: String
 }
 
 private actor MetricKitUploadQueue {
@@ -470,6 +472,7 @@ private actor MetricKitUploadQueue {
                 buildNumber: metadata.buildNumber,
                 osVersion: metadata.osVersion,
                 deviceModel: metadata.deviceModel,
+                gitCommit: metadata.gitCommit,
                 clientKind: .ios,
                 appInstanceId: ClientLogUploadService.appInstanceId,
                 bootId: ClientLogUploadService.bootId,
@@ -1260,6 +1263,7 @@ actor ChatMetricsService {
                 buildNumber: metadata.buildNumber,
                 osVersion: metadata.osVersion,
                 deviceModel: metadata.deviceModel,
+                gitCommit: metadata.gitCommit,
                 samples: batch
             )
 

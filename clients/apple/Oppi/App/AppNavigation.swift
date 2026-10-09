@@ -49,6 +49,13 @@ enum WorkspaceNavigationPresentation: Sendable, Equatable {
         guard horizontalSizeClass == .regular, verticalSizeClass == .regular else { return .stack }
         return size.width >= size.height ? .split : .stack
     }
+
+    var telemetryLabel: String {
+        switch self {
+        case .stack: "stack"
+        case .split: "split"
+        }
+    }
 }
 
 enum SessionNavigationSource: Sendable, Equatable {
@@ -304,9 +311,14 @@ final class AppNavigation {
         }
     }
 
-    func setWorkspaceNavigationPresentation(_ presentation: WorkspaceNavigationPresentation) {
+    func setWorkspaceNavigationPresentation(
+        _ presentation: WorkspaceNavigationPresentation,
+        measurement: WorkspaceNavigationMeasurement? = nil
+    ) {
         guard !isMediaOverlayActive else { return }
         guard workspaceNavigationPresentation != presentation else { return }
+        let from = workspaceNavigationPresentation
+        let fromSessionId = visibleDiagnosticSessionId()
         let preservedStackState = presentation == .stack ? stackStateForCurrentSplitSelection() : nil
         let preservedSplitState = presentation == .split ? splitStateForCurrentStackSelection() : nil
 
@@ -332,6 +344,78 @@ final class AppNavigation {
             replaceWorkspaceStack(path: NavigationPath(), diagnosticContexts: [], routeElements: [])
             splitColumnVisibility = splitVisibility(for: splitDetailTarget)
         }
+        ClientLog.info(
+            "Navigation",
+            "Presentation changed",
+            metadata: NavigationPresentationTelemetry.metadata(
+                from: from.telemetryLabel,
+                to: presentation.telemetryLabel,
+                measurement: measurement,
+                fromSessionId: fromSessionId,
+                toSessionId: visibleDiagnosticSessionId()
+            ),
+            flush: true
+        )
+    }
+
+    /// Present Quick Session and record which control opened it. The screen is
+    /// captured before the flag flips, because the diagnostic label then becomes
+    /// `quick_session`.
+    func presentQuickSession(from source: QuickSessionPresentationSource) {
+        guard !showQuickSession else { return }
+        let screen = diagnosticScreenLabel()
+        let presentation = workspaceNavigationPresentation.telemetryLabel
+        showQuickSession = true
+        ClientLog.info(
+            "Navigation",
+            "Quick Session presented",
+            metadata: [
+                "source": source.rawValue,
+                "screen": screen,
+                "presentation": presentation,
+            ],
+            flush: true
+        )
+    }
+
+    func diagnosticScreenLabel() -> String {
+        guard launchPhase == .ready else { return "launch_resolving" }
+        if showOnboarding { return "onboarding" }
+        if showQuickSession { return "quick_session" }
+        switch workspaceNavigationPresentation {
+        case .stack:
+            return workspaceStackDiagnosticContext.screen
+        case .split:
+            return visibleSplitDiagnosticContext.screen
+        }
+    }
+
+    func visibleDiagnosticSessionId() -> String? {
+        switch workspaceNavigationPresentation {
+        case .split:
+            return visibleSplitDiagnosticContext.sessionId
+        case .stack:
+            return workspaceStackDiagnosticContext.sessionId
+        }
+    }
+
+    func visibleDiagnosticWorkspaceId() -> String? {
+        switch workspaceNavigationPresentation {
+        case .split:
+            return visibleSplitDiagnosticContext.workspaceId
+        case .stack:
+            return workspaceStackDiagnosticContext.workspaceId
+        }
+    }
+
+    var navigationRouteSnapshot: NavigationRouteSnapshot {
+        NavigationRouteSnapshot(
+            screen: diagnosticScreenLabel(),
+            stackDepth: workspacePath.count,
+            presentation: workspaceNavigationPresentation.telemetryLabel,
+            sessionId: visibleDiagnosticSessionId(),
+            workspaceId: visibleDiagnosticWorkspaceId()
+        )
     }
 
     /// Snapshot the visible workspace route and selected server before AVKit

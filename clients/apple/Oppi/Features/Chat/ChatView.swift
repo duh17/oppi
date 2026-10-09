@@ -1057,6 +1057,17 @@ struct ChatView: View {
                 ChatFileBrowserPanelTabStore.shared.setTab(newTab, for: sessionId)
             }
             .onDisappear {
+                let shellSwapRemount = mountedPresentation != appNavigation.workspaceNavigationPresentation
+                ClientLog.info(
+                    "Navigation",
+                    "Chat disappeared",
+                    metadata: ChatMountTelemetry.disappearMetadata(
+                        sessionId: sessionId,
+                        shellSwapRemount: shellSwapRemount,
+                        presentation: mountedPresentation.telemetryLabel
+                    ),
+                    flush: true
+                )
                 // Freeze the viewport before cleanup can publish an empty timeline
                 // and make collection geometry look tail-attached during the push.
                 scrollController.suspendForNavigation()
@@ -1987,10 +1998,20 @@ struct ChatView: View {
         // A stack/split shell swap remounts this chat: pick up the reading
         // position the same chat had in the other shell before history lands.
         mountedPresentation = appNavigation.workspaceNavigationPresentation
-        ChatScrollShellSwapHandoff.shared.chatDidAppear(
+        let shellSwapRemount = ChatScrollShellSwapHandoff.shared.chatDidAppear(
             sessionId: sessionId,
             controller: scrollController,
             presentation: mountedPresentation
+        )
+        ClientLog.info(
+            "Navigation",
+            "Chat appeared",
+            metadata: ChatMountTelemetry.appearMetadata(
+                sessionId: sessionId,
+                shellSwapRemount: shellSwapRemount,
+                presentation: mountedPresentation.telemetryLabel
+            ),
+            flush: true
         )
 
         // Re-establish command routing immediately on re-entry.

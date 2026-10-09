@@ -36,6 +36,7 @@ interface ClientLogRecord {
   generatedAt?: number;
   appVersion?: string;
   buildNumber?: string;
+  gitCommit?: string;
   osVersion?: string;
   deviceModel?: string;
   clientKind?: string;
@@ -89,6 +90,7 @@ export interface ClientLogReviewResult {
   lastTs: number | null;
   levelCounts: Record<string, number>;
   categoryCounts: Record<string, number>;
+  buildCounts: Record<string, number>;
   issues: Array<{
     key: string;
     count: number;
@@ -151,6 +153,12 @@ function formatWindowValue(value: number): string {
 
 function inc(map: Record<string, number>, key: string, by = 1): void {
   map[key] = (map[key] ?? 0) + by;
+}
+
+function buildLabel(record: { buildNumber?: string; gitCommit?: string }): string {
+  const build = record.buildNumber?.trim() || "unknown";
+  const commit = record.gitCommit?.trim();
+  return commit ? `${build}@${commit}` : build;
 }
 
 function signatureParts(entry: ClientLogEntry, normalizedLevel: string): string[] {
@@ -282,6 +290,7 @@ export function buildClientLogReview(options: {
   const levels = options.levels;
   const levelCounts: Record<string, number> = {};
   const categoryCounts: Record<string, number> = {};
+  const buildCounts: Record<string, number> = {};
   const issues = new Map<string, IssueSummary>();
   const recent: RecentEntry[] = [];
 
@@ -306,7 +315,7 @@ export function buildClientLogReview(options: {
         continue;
       }
       parsedRecords += 1;
-      const buildNumber = record.buildNumber ?? "unknown";
+      const build = buildLabel(record);
       const recordFallbackTs = safeNumber(record.generatedAt) ?? safeNumber(record.receivedAt) ?? 0;
       let recordInWindow = false;
 
@@ -323,7 +332,7 @@ export function buildClientLogReview(options: {
         inc(categoryCounts, entry.category || "General");
 
         if (level === "warn" || level === "error") {
-          addIssue(issues, entry, ts, buildNumber);
+          addIssue(issues, entry, ts, build);
           recent.push({
             ts,
             level,
@@ -332,7 +341,7 @@ export function buildClientLogReview(options: {
             metadata: entry.metadata ?? {},
             sessionId: entry.sessionId,
             workspaceId: entry.workspaceId,
-            buildNumber,
+            buildNumber: build,
           });
         }
       }
@@ -343,6 +352,7 @@ export function buildClientLogReview(options: {
       if (recordInWindow) {
         uploads += 1;
         dropped += Math.max(0, safeNumber(record.droppedCount) ?? 0);
+        inc(buildCounts, build);
       }
     }
   }
@@ -373,6 +383,7 @@ export function buildClientLogReview(options: {
     lastTs,
     levelCounts,
     categoryCounts: Object.fromEntries(Object.entries(categoryCounts).sort((a, b) => b[1] - a[1])),
+    buildCounts: Object.fromEntries(Object.entries(buildCounts).sort((a, b) => b[1] - a[1])),
     issues: [...issues.values()]
       .sort((a, b) => {
         const aMatch = options.match?.test(`${a.category} ${a.message} ${a.signature}`) ? 1 : 0;
@@ -410,6 +421,17 @@ function printHuman(result: ClientLogReviewResult): void {
   console.log("Levels");
   for (const [level, count] of Object.entries(result.levelCounts).sort((a, b) => b[1] - a[1])) {
     console.log(`  ${level.padEnd(7)} ${String(count).padStart(7)}`);
+  }
+  console.log();
+
+  console.log("Builds");
+  const builds = Object.entries(result.buildCounts);
+  if (builds.length === 0) {
+    console.log("  (none)");
+  } else {
+    for (const [build, count] of builds) {
+      console.log(`  ${build.padEnd(24)} ${String(count).padStart(7)}`);
+    }
   }
   console.log();
 

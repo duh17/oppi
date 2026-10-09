@@ -179,6 +179,7 @@ actor ClientLogUploadQueue {
                 buildNumber: metadata.buildNumber,
                 osVersion: metadata.osVersion,
                 deviceModel: metadata.deviceModel,
+                gitCommit: metadata.gitCommit,
                 clientKind: clientKind,
                 appInstanceId: appInstanceId,
                 bootId: bootId,

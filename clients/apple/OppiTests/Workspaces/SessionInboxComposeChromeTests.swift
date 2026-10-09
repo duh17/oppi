@@ -124,7 +124,7 @@ struct SessionInboxComposeChromeTests {
         let context = try sourceSlice(
             start,
             start: "QuickSessionLaunchContext(",
-            end: "navigation.showQuickSession"
+            end: "navigation.presentQuickSession"
         )
         #expect(context.contains("worktreeId: selectedWorktreeId"))
         #expect(!context.contains("worktreeId: nil"))

@@ -87,7 +87,7 @@ Allowed diagnostic data:
 | ----------------------- | ------------------------------ | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | Chat metrics            | `POST /telemetry/chat-metrics` | `<OPPI_DATA_DIR>/diagnostics/telemetry/chat-metrics-YYYY-MM-DD.jsonl`       | Client UX, rendering, queueing, dictation, and device metrics.                                      |
 | MetricKit               | `POST /telemetry/metrickit`    | `<OPPI_DATA_DIR>/diagnostics/telemetry/metrickit-YYYY-MM-DD.jsonl`          | Apple crash, hang, CPU, disk, battery, and app-launch diagnostics with bounded correlation context. |
-| Client logs             | `POST /telemetry/client-logs`  | `<OPPI_DATA_DIR>/diagnostics/telemetry/client-logs-YYYY-MM-DD.jsonl`        | Redacted warning/error events plus selected lifecycle, recovery, network, and memory info logs.     |
+| Client logs             | `POST /telemetry/client-logs`  | `<OPPI_DATA_DIR>/diagnostics/telemetry/client-logs-YYYY-MM-DD.jsonl`        | Redacted warning/error events plus selected lifecycle, recovery, network, memory, and navigation info logs. |
 | Server resource metrics | local JSONL writer             | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-metrics-YYYY-MM-DD.jsonl`     | Server CPU, memory, event loop, sessions, and WebSocket counts.                                     |
 | Server ops metrics      | local JSONL writer             | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-ops-metrics-YYYY-MM-DD.jsonl` | Server WebSocket, session, turn, extension UI, dictation, retry, and compaction metrics.            |
 | Server log              | local JSONL/text log           | `<OPPI_DATA_DIR>/server.log`                                                | Structured server events and warnings.                                                              |
@@ -208,6 +208,25 @@ Scene transitions record ordered steps around restoration, background keep-alive
 MetricKit usually delivers crash and hang diagnostics after the affected process has ended. On the first diagnostic-context write in a new process, Oppi rotates the saved context into a previous-process slot. MetricKit diagnostic serialization uses that previous-process context, falling back to the current context only when no previous snapshot exists.
 
 All remote upload rules still apply: public builds upload this context only when **Send Diagnostics to Server** is enabled, and the server stores it only in the telemetry files above. Use `telemetry:client-logs` to review lifecycle and watchdog events. The corresponding MetricKit JSONL record keeps the bounded context in its summary and raw `oppiDiagnosticContext` object.
+
+## Navigation breadcrumbs
+
+Category `Navigation`, level `info`. These are user-driven events, a handful per minute, and they flush so a crash shortly afterward still has the route. They do not include prompt text, file contents, or paths.
+
+| Message | When | Metadata |
+| --- | --- | --- |
+| `Presentation changed` | `AppNavigation.setWorkspaceNavigationPresentation` actually switches stack↔split | `from`, `to`, `horizontalSizeClass`, `verticalSizeClass`, `windowWidth`, `windowHeight`, `sessionRoutePreserved`, and `sessionId` when a session was visible. Size classes are `compact`, `regular`, or `unspecified`. Window size is the measured point size, or `unmeasured`. `sessionRoutePreserved` is `true` only when the same session id is still the visible route after the swap. |
+| `Route changed` | Diagnostic-context hooks in `OppiApp` (`root` appear, launch phase, onboarding, Quick Session, workspace filter, workspace path, stack destination, split destination) | `screen`, `previousScreen` (`none` on the first snapshot), `stackDepth` (`workspacePath.count`), `presentation` (`stack` or `split`), `sessionId`, `workspaceId`. Hooks that fire in the same turn collapse to the final snapshot. An unchanged snapshot does not log. |
+| `Quick Session presented` | A control sets `showQuickSession` | `source` is `session_list_bar`, `workspace_bar`, `thread_bar`, `agents`, or `intent` (App Intent / control). `screen` and `presentation` are the surface underneath, captured before the flag flips. |
+| `Chat appeared` / `Chat disappeared` | `ChatView` mount and unmount | `sessionId`, `presentation`, `shellSwapRemount`. Appear sets `shellSwapRemount` from the existing shell-swap handoff (same session, other shell, within its departure window). Disappear sets it when the chat leaves under a different presentation than it mounted with. Appear also sets `sincePreviousMountMs` when this session mounted earlier in the process. |
+
+`npm run telemetry:client-logs` prints a Builds breakdown. Each upload counts as `buildNumber@gitCommit` when the commit is present.
+
+## Build identity
+
+Debug and Release iOS builds stamp `OPPIGitCommit` into the built Info.plist (`clients/apple/scripts/stamp-git-commit.sh`, wired from `project.yml`). The value is a 12-character git SHA, plus `-dirty` when the worktree is not clean. Missing or unexpanded values upload as `unknown`.
+
+Client-log, chat-metric, and MetricKit upload records store that value next to `appVersion` and `buildNumber`. The server keeps a short SHA, `unknown`, or a SHA with `-dirty`, and drops any other string so a bad stamp cannot store a path. Older clients that omit the field still upload.
 
 ## Informational metrics policy
 

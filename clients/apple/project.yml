@@ -193,6 +193,8 @@ targets:
           - SymbolsNerdFontMono-Regular.ttf
         ITSAppUsesNonExemptEncryption: false
         OPPITelemetryMode: "$(OPPI_TELEMETRY_MODE)"
+        # Overwritten at build time by scripts/stamp-git-commit.sh (short SHA, -dirty).
+        OPPIGitCommit: unknown
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
     preBuildScripts:
@@ -299,6 +301,13 @@ targets:
             touch "$STAMP_FILE"
           fi
         name: ArchitectureBoundaries
+        basedOnDependencyAnalysis: false
+        shell: /bin/bash
+        showEnvVars: false
+    postBuildScripts:
+      - script: |
+          "$SRCROOT/scripts/stamp-git-commit.sh"
+        name: StampGitCommit
         basedOnDependencyAnalysis: false
         shell: /bin/bash
         showEnvVars: false

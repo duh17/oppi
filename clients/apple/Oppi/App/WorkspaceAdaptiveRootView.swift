@@ -82,7 +82,14 @@ struct WorkspaceAdaptiveRootView: View {
     }
 
     private func applyPresentation(_ presentation: WorkspaceNavigationPresentation) {
-        navigation.setWorkspaceNavigationPresentation(presentation)
+        let measurement = windowSize.map {
+            WorkspaceNavigationMeasurement(
+                horizontalSizeClass: horizontalSizeClass,
+                verticalSizeClass: verticalSizeClass,
+                windowSize: $0
+            )
+        }
+        navigation.setWorkspaceNavigationPresentation(presentation, measurement: measurement)
         navigation.routeLegacySelectedTabIfNeeded()
     }
 }

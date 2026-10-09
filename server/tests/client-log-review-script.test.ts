@@ -80,6 +80,8 @@ describe("client-log-review", () => {
     expect(review.entries).toBe(1);
     expect(review.issues).toHaveLength(1);
     expect(review.issues[0]?.message).toBe("recent");
+    expect(review.issues[0]?.builds).toEqual(["36"]);
+    expect(review.buildCounts).toEqual({ "36": 1 });
     expect(review.windowLabel).toBe("3h");
     expect(review.requestedSinceMs).toBe(now - 3 * HOUR_MS);
   });
@@ -115,6 +117,25 @@ describe("client-log-review", () => {
 
     expect(review.issues).toHaveLength(1);
     expect(review.issues[0]?.message).toBe("bridge protocolVersion rejected");
+  });
+
+  it("includes the git commit in the builds breakdown", () => {
+    const now = Date.now();
+    const telemetryDir = join(dataDir, "diagnostics", "telemetry");
+    writeFileSync(
+      join(telemetryDir, "client-logs-2026-05-31.jsonl"),
+      `${JSON.stringify({
+        generatedAt: now,
+        buildNumber: "54",
+        gitCommit: "abcdef123456-dirty",
+        entries: [{ ts: now, level: "error", category: "Navigation", message: "Route changed" }],
+      })}\n`,
+    );
+
+    const review = buildClientLogReview({ dataDir, hours: 1, limit: 10 });
+
+    expect(review.buildCounts).toEqual({ "54@abcdef123456-dirty": 1 });
+    expect(review.issues[0]?.builds).toEqual(["54@abcdef123456-dirty"]);
   });
 
   it("uses an exact since boundary instead of widening to a whole day", () => {

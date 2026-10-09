@@ -49,6 +49,7 @@ export interface MetricKitUploadRequest {
   generatedAt: number;
   appVersion?: string;
   buildNumber?: string;
+  gitCommit?: string;
   osVersion?: string;
   deviceModel?: string;
   clientKind?: "ios" | "mac";
@@ -447,6 +448,7 @@ export interface ChatMetricUploadRequest {
   generatedAt: number;
   appVersion?: string;
   buildNumber?: string;
+  gitCommit?: string;
   osVersion?: string;
   deviceModel?: string;
   samples: ChatMetricSample[];
@@ -472,6 +474,7 @@ export interface ClientLogUploadRequest {
   generatedAt: number;
   appVersion?: string;
   buildNumber?: string;
+  gitCommit?: string;
   osVersion?: string;
   deviceModel?: string;
   clientKind: ClientKind;
