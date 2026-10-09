@@ -607,19 +607,23 @@ actor APIClient: ClientLogUploading {
         let runtimeEpoch: String?
         let session: Session
         let catchUpComplete: Bool
+        /// False when the session exists but has no live event ring.
+        let live: Bool
 
         init(
             events: [SequencedServerEvent],
             currentSeq: Int,
             runtimeEpoch: String? = nil,
             session: Session,
-            catchUpComplete: Bool
+            catchUpComplete: Bool,
+            live: Bool = true
         ) {
             self.events = events
             self.currentSeq = currentSeq
             self.runtimeEpoch = runtimeEpoch
             self.session = session
             self.catchUpComplete = catchUpComplete
+            self.live = live
         }
     }
 
@@ -654,7 +658,8 @@ actor APIClient: ClientLogUploading {
             currentSeq: payload.currentSeq,
             runtimeEpoch: payload.runtimeEpoch,
             session: payload.session,
-            catchUpComplete: payload.catchUpComplete
+            catchUpComplete: payload.catchUpComplete,
+            live: payload.live ?? true
         )
     }
 
@@ -669,6 +674,8 @@ actor APIClient: ClientLogUploading {
         let runtimeEpoch: String?
         let catchUpComplete: Bool
         let session: Session
+        /// Absent on older servers, which only returned this payload for a live ring.
+        let live: Bool?
     }
 
     private struct SequencedEventEntry: Decodable {

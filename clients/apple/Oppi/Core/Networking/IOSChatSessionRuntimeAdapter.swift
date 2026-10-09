@@ -130,7 +130,8 @@ final class IOSChatSessionRuntimeAdapter:
             currentSeq: response.currentSeq,
             runtimeEpoch: response.runtimeEpoch,
             session: response.session,
-            catchUpComplete: response.catchUpComplete
+            catchUpComplete: response.catchUpComplete,
+            live: response.live
         )
     }
 

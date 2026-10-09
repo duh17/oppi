@@ -1,6 +1,5 @@
 import type { ProgramStatus } from "../../types.js";
 import { throwIfAborted, type LocalApiRequestOptions } from "../local-api-client.js";
-import { apiStatus } from "../resources.js";
 import { sleepWithSignal } from "./wait.js";
 
 type SessionListApiCall = <T>(path: string, options?: LocalApiRequestOptions) => Promise<T>;
@@ -244,25 +243,33 @@ async function observeSession(
   const prevMessageCount = state.messageCount;
   const prevTools = state.toolsThisTurn;
   const prevLast = state.last;
-  let status: string | undefined;
-  let programStatus: ProgramStatus | undefined;
-
+  let events: {
+    live?: boolean;
+    session?: WatchSessionSnapshot;
+    events?: Array<Record<string, unknown>>;
+    currentSeq?: number;
+  };
   try {
-    const events = await call<{
-      session?: WatchSessionSnapshot;
-      events?: Array<Record<string, unknown>>;
-      currentSeq?: number;
-    }>(
+    events = await call(
       `/sessions/${encodeURIComponent(id)}/events?since=${state.sinceSeq}`,
       signal ? { signal } : undefined,
     );
-    status = events.session?.status;
-    programStatus = events.session?.programStatus;
-    recordSessionName(state, events.session?.name);
-    if (typeof events.session?.messageCount === "number") {
-      state.messageCount = events.session.messageCount;
-    }
-    if (typeof events.currentSeq === "number") state.sinceSeq = events.currentSeq;
+  } catch (err) {
+    throwIfAborted(signal);
+    throw err;
+  }
+
+  // An inactive session already includes its snapshot. `currentSeq` is 0 then,
+  // not a cursor, and a missing session is a real 404 with no second request.
+  const inactive = events.live === false;
+  const status = events.session?.status;
+  const programStatus = events.session?.programStatus;
+  recordSessionName(state, events.session?.name);
+  if (typeof events.session?.messageCount === "number") {
+    state.messageCount = events.session.messageCount;
+  }
+  if (!inactive && typeof events.currentSeq === "number") state.sinceSeq = events.currentSeq;
+  if (!inactive) {
     for (const event of events.events ?? []) {
       const type = event.type;
       if (type === "agent_start") state.toolsThisTurn = 0;
@@ -275,28 +282,9 @@ async function observeSession(
         }
       }
     }
-    if (!state.assistantEventObserved && typeof events.session?.lastMessage === "string") {
-      recordAssistantOutput(state, events.session.lastMessage);
-    }
-  } catch (err) {
-    throwIfAborted(signal);
-    if (apiStatus(err) === 404) {
-      const snapshot = await call<{ session?: WatchSessionSnapshot }>(
-        `/sessions/${encodeURIComponent(id)}`,
-        signal ? { signal } : undefined,
-      );
-      status = snapshot.session?.status;
-      programStatus = snapshot.session?.programStatus;
-      recordSessionName(state, snapshot.session?.name);
-      if (typeof snapshot.session?.messageCount === "number") {
-        state.messageCount = snapshot.session.messageCount;
-      }
-      if (typeof snapshot.session?.lastMessage === "string") {
-        recordAssistantOutput(state, snapshot.session.lastMessage);
-      }
-    } else {
-      throw err;
-    }
+  }
+  if (!state.assistantEventObserved && typeof events.session?.lastMessage === "string") {
+    recordAssistantOutput(state, events.session.lastMessage);
   }
 
   throwIfAborted(signal);

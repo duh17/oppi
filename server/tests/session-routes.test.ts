@@ -1151,7 +1151,120 @@ describe("sessions module", () => {
     expect(res.statusCode).toBe(200);
     expect(mirrorGetCatchUp).toHaveBeenCalledWith("mirror-1", 3);
     expect(managedGetCatchUp).not.toHaveBeenCalled();
-    expect(JSON.parse(res.body)).toEqual(mirrorCatchUp);
+    expect(JSON.parse(res.body)).toEqual({ ...mirrorCatchUp, live: true });
+  });
+
+  it("returns a not-live snapshot for a stored session with no event ring", async () => {
+    const stored = {
+      id: "stopped-1",
+      workspaceId: "ws-1",
+      status: "stopped",
+      createdAt: 1,
+      lastActivity: 2,
+      messageCount: 4,
+      lastMessage: "done",
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+    };
+    const control = {
+      id: "control-1",
+      status: "stopped" as const,
+      createdAt: 1,
+      lastActivity: 2,
+      messageCount: 4,
+      lastMessage: "done",
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: 0,
+      control: { domain: "agents", intent: "create" },
+    };
+    const getCatchUp = vi.fn(() => null);
+    const ensureSessionContextWindow = vi.fn((session: typeof stored) => ({
+      ...session,
+      contextWindow: 8192,
+    }));
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getSession: vi.fn((id: string) => {
+          if (id === stored.id) return stored;
+          if (id === control.id) return control;
+          return undefined;
+        }),
+      },
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
+      sessionRuntimes: { getCatchUp },
+      ensureSessionContextWindow,
+    } as unknown as RouteContext;
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+
+    const cases = [
+      {
+        path: "/workspaces/ws-1/sessions/stopped-1/events",
+        session: stored,
+      },
+      {
+        path: "/sessions/stopped-1/events",
+        session: stored,
+      },
+      {
+        path: "/control-sessions/control-1/events",
+        session: control,
+      },
+    ];
+    for (const testCase of cases) {
+      const res = makeResponse();
+      const handled = await dispatch({
+        method: "GET",
+        path: testCase.path,
+        url: new URL(`http://localhost${testCase.path}?since=7`),
+        req: {} as never,
+        res: res as never,
+      });
+      expect(handled, testCase.path).toBe(true);
+      expect(res.statusCode, testCase.path).toBe(200);
+      expect(JSON.parse(res.body), testCase.path).toEqual({
+        events: [],
+        currentSeq: 0,
+        catchUpComplete: false,
+        live: false,
+        session: { ...testCase.session, contextWindow: 8192 },
+      });
+    }
+    expect(getCatchUp).toHaveBeenCalledWith("stopped-1", 7);
+    expect(getCatchUp).toHaveBeenCalledWith("control-1", 7);
+    expect(ensureSessionContextWindow).toHaveBeenCalledTimes(cases.length);
+  });
+
+  it("keeps 404 for events when the session does not exist", async () => {
+    const getCatchUp = vi.fn(() => null);
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getSession: vi.fn(() => undefined),
+      },
+      sessions: { mobileRenderer: new MobileRendererRegistry() },
+      sessionRuntimes: { getCatchUp },
+    } as unknown as RouteContext;
+    const dispatch = createSessionRoutes(ctx, createRouteHelpers());
+    const paths = [
+      "/workspaces/ws-1/sessions/missing/events",
+      "/sessions/missing/events",
+      "/control-sessions/missing/events",
+    ];
+    for (const path of paths) {
+      const res = makeResponse();
+      const handled = await dispatch({
+        method: "GET",
+        path,
+        url: new URL(`http://localhost${path}?since=0`),
+        req: {} as never,
+        res: res as never,
+      });
+      expect(handled, path).toBe(true);
+      expect(res.statusCode, path).toBe(404);
+      expect(JSON.parse(res.body), path).toEqual({ error: "Session not found" });
+    }
+    expect(getCatchUp).not.toHaveBeenCalled();
   });
 
   it("validates since param on session events", async () => {

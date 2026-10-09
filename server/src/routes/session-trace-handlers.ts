@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { performance } from "node:perf_hooks";
 import { gzipSync } from "node:zlib";
 import { SessionTraceService, type SessionTraceViewMode } from "../session-trace-service.js";
-import type { Session } from "../types.js";
+import type { Session, SessionEventsResponse } from "../types.js";
 import { getSessionAttachment, streamSessionAttachment } from "../session-attachments.js";
 import { streamFullToolOutputSidecar } from "../tool-output-sidecar.js";
 import { pendingDialogSnapshots } from "../session-attention.js";
@@ -312,7 +312,7 @@ export function createSessionTraceRouteHandlers(
     }
   }
 
-  function writeSessionEvents(sessionId: string, url: URL, res: ServerResponse): void {
+  function writeSessionEvents(session: Session, url: URL, res: ServerResponse): void {
     const sinceParam = url.searchParams.get("since");
     const sinceSeq = sinceParam ? Number.parseInt(sinceParam, 10) : 0;
     if (!Number.isFinite(sinceSeq) || sinceSeq < 0) {
@@ -320,19 +320,26 @@ export function createSessionTraceRouteHandlers(
       return;
     }
 
-    const catchUp = ctx.sessionRuntimes.getCatchUp(sessionId, sinceSeq);
-    if (!catchUp) {
-      helpers.error(res, 404, "Session not active");
-      return;
-    }
-
-    helpers.json(res, {
-      events: catchUp.events,
-      currentSeq: catchUp.currentSeq,
-      ...(catchUp.runtimeEpoch ? { runtimeEpoch: catchUp.runtimeEpoch } : {}),
-      session: ctx.ensureSessionContextWindow(catchUp.session),
-      catchUpComplete: catchUp.catchUpComplete,
-    });
+    const catchUp = ctx.sessionRuntimes.getCatchUp(session.id, sinceSeq);
+    // No ring means the session is stored but not live. 404 stays reserved for a
+    // session that does not exist; callers already checked that.
+    const body: SessionEventsResponse = catchUp
+      ? {
+          events: catchUp.events,
+          currentSeq: catchUp.currentSeq,
+          ...(catchUp.runtimeEpoch ? { runtimeEpoch: catchUp.runtimeEpoch } : {}),
+          session: ctx.ensureSessionContextWindow(catchUp.session),
+          catchUpComplete: catchUp.catchUpComplete,
+          live: true,
+        }
+      : {
+          events: [],
+          currentSeq: 0,
+          session: ctx.ensureSessionContextWindow(session),
+          catchUpComplete: false,
+          live: false,
+        };
+    helpers.json(res, body);
   }
 
   function handleGetSessionEvents(
@@ -341,12 +348,13 @@ export function createSessionTraceRouteHandlers(
     url: URL,
     res: ServerResponse,
   ): void {
-    if (!requireWorkspaceSession(workspaceId, sessionId, res)) return;
-    writeSessionEvents(sessionId, url, res);
+    const session = requireWorkspaceSession(workspaceId, sessionId, res);
+    if (!session) return;
+    writeSessionEvents(session, url, res);
   }
 
   function handleGetSessionEventsForSession(session: Session, url: URL, res: ServerResponse): void {
-    writeSessionEvents(session.id, url, res);
+    writeSessionEvents(session, url, res);
   }
 
   function resolveTraceView(url: URL): SessionTraceViewMode {
@@ -594,8 +602,9 @@ export function createSessionTraceRouteHandlers(
   }
 
   function handleGenericGetSessionEvents(sessionId: string, url: URL, res: ServerResponse): void {
-    if (!requireSession(sessionId, res)) return;
-    writeSessionEvents(sessionId, url, res);
+    const session = requireSession(sessionId, res);
+    if (!session) return;
+    writeSessionEvents(session, url, res);
   }
 
   return {

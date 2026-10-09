@@ -27,19 +27,24 @@ struct ChatSessionCatchUpResponse: Sendable {
     let runtimeEpoch: String?
     let session: Session
     let catchUpComplete: Bool
+    /// False when the session exists but has no live event ring. Distinct from a
+    /// ring miss, which stays live with `catchUpComplete == false`.
+    let live: Bool
 
     init(
         events: [Event],
         currentSeq: Int,
         runtimeEpoch: String? = nil,
         session: Session,
-        catchUpComplete: Bool
+        catchUpComplete: Bool,
+        live: Bool = true
     ) {
         self.events = events
         self.currentSeq = currentSeq
         self.runtimeEpoch = runtimeEpoch
         self.session = session
         self.catchUpComplete = catchUpComplete
+        self.live = live
     }
 }
 

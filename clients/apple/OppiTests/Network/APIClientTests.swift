@@ -1042,6 +1042,7 @@ struct APIClientTests {
         let response = try await client.getSessionEvents(workspaceId: "w1", id: "s1", since: 5)
         #expect(response.currentSeq == 8)
         #expect(response.catchUpComplete)
+        #expect(response.live)
         #expect(response.events.count == 3)
         #expect(response.events.map(\.seq) == [6, 7, 8])
 
@@ -1050,6 +1051,33 @@ struct APIClientTests {
             return
         }
         #expect(content == "Recovered")
+    }
+
+    @Test func getSessionEventsDecodesInactiveSessionWithoutACursor() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.url?.path == "/control-sessions/control-1/events")
+            #expect(request.url?.query == "since=4")
+            return self.mockResponse(json: """
+            {
+              "events": [],
+              "currentSeq": 0,
+              "catchUpComplete": false,
+              "live": false,
+              "session": {"id":"control-1","status":"stopped","createdAt":0,"lastActivity":0,"messageCount":2,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"create"}}
+            }
+            """)
+        }
+
+        let response = try await client.getSessionEvents(scope: .control, id: "control-1", since: 4)
+        #expect(!response.live)
+        #expect(!response.catchUpComplete)
+        #expect(response.currentSeq == 0)
+        #expect(response.events.isEmpty)
+        #expect(response.session.status == .stopped)
+        #expect(response.session.messageCount == 2)
     }
 
     @Test func stopSession() async throws {

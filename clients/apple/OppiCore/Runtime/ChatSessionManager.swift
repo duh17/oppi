@@ -1517,7 +1517,9 @@ final class ChatSessionManager {
     /// Fills the gap in live events between the last seen seq and the
     /// server's current seq. Falls back to a full history reload when
     /// the ring can't serve the gap (ring miss, regression, epoch change,
-    /// or fetch failure). Same-epoch first connect uses the stored seq even
+    /// or fetch failure) or the session exists but is not live. A not-live
+    /// response is the old 404 path: reload history and do not persist the
+    /// sentinel cursor. Same-epoch first connect uses the stored seq even
     /// when a cached timeline exists.
     private func performCatchUpIfNeeded(
         currentSeq: Int,
@@ -1619,6 +1621,17 @@ final class ChatSessionManager {
                     cachedSignature: nil
                 )
                 recordCatchupMs("fetch_failed")
+                return .fullReloadScheduled
+            }
+
+            if !response.live {
+                markSyncFailed()
+                log.warning("Session \(self.sessionId) is not live — scheduling history reload")
+                scheduleHistoryReload(
+                    generation: generation,
+                    cachedSignature: nil
+                )
+                recordCatchupMs("not_live")
                 return .fullReloadScheduled
             }
 

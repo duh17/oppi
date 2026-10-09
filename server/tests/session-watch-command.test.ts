@@ -257,21 +257,48 @@ describe("session wait poller contract", () => {
     ]);
   });
 
-  it("falls back to a session snapshot when the events route is unavailable", async () => {
+  it("reads an inactive session from the events payload without a second request", async () => {
     const paths: string[] = [];
     const outcome = await runSessionWatch(
       ["s"],
       { condition: "idle", requireAll: false, intervalMs: 10, timeoutMs: 100 },
       async <T>(path: string): Promise<T> => {
         paths.push(path);
-        if (path.includes("/events")) throw errorWithStatus("missing", 404);
-        return { session: { status: "stopped", messageCount: 9, lastMessage: "snapshot" } } as T;
+        return {
+          live: false,
+          events: [],
+          currentSeq: 0,
+          catchUpComplete: false,
+          session: { status: "stopped", messageCount: 9, lastMessage: "snapshot" },
+        } as T;
       },
       vi.fn(),
     );
 
-    expect(outcome).toMatchObject({ kind: "session", reason: "idle", status: "stopped" });
-    expect(paths).toEqual(["/sessions/s/events?since=0", "/sessions/s"]);
+    expect(outcome).toMatchObject({
+      kind: "session",
+      reason: "idle",
+      status: "stopped",
+      outputDelta: "snapshot",
+      outputDeltaKind: "latest",
+    });
+    expect(paths).toEqual(["/sessions/s/events?since=0"]);
+  });
+
+  it("does not fetch a session snapshot when events returns 404", async () => {
+    const paths: string[] = [];
+    await expect(
+      runSessionWatch(
+        ["s"],
+        { condition: "idle", requireAll: false, intervalMs: 10, timeoutMs: 100 },
+        async <T>(path: string): Promise<T> => {
+          paths.push(path);
+          throw errorWithStatus("Session not found", 404);
+        },
+        vi.fn(),
+      ),
+    ).rejects.toThrow("Session not found");
+    expect(paths).toEqual(["/sessions/s/events?since=0"]);
   });
 
   it("preserves disconnect failures instead of treating them as state", async () => {

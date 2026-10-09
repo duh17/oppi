@@ -689,6 +689,23 @@ export type ServerMessage =
     sessionId?: string;
   };
 
+/**
+ * `GET /sessions/:id/events`, plus the workspace and control-session equivalents.
+ *
+ * `catchUpComplete` describes only a live ring: false is a ring miss (`live` stays
+ * true, `events` is empty, and `currentSeq` is the ring cursor). `live: false` means
+ * the session exists but has no event ring. That is not a missing session and not a
+ * ring miss. `currentSeq` is then 0 and must not be stored as a cursor.
+ */
+export interface SessionEventsResponse {
+  events: ServerMessage[];
+  currentSeq: number;
+  runtimeEpoch?: string;
+  session: Session;
+  catchUpComplete: boolean;
+  live: boolean;
+}
+
 // ── Durable conversation stream (experimental, capabilities.conversationStream v1) ──
 //
 // A replica of one durable conversation's `{ entries, docs }` on the focused session

@@ -380,7 +380,7 @@ export async function cmdSession(
             id: event.seq ?? "?",
             title: event.type ?? "event",
           })),
-          { empty: "No events returned." },
+          { empty: result.live === false ? "Session is not live." : "No events returned." },
         );
       });
       return;

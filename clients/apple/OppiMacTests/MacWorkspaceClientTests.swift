@@ -723,8 +723,37 @@ struct MacWorkspaceClientTests {
         #expect(catchUp.currentSeq == 13)
         #expect(catchUp.runtimeEpoch == "epoch-1")
         #expect(catchUp.catchUpComplete)
+        #expect(catchUp.live)
         #expect(catchUp.events.map(\.seq) == [13])
         #expect(catchUp.session.id == "sess-1")
+    }
+
+    @Test func decodeSessionCatchUpReadsInactiveSession() throws {
+        let data = try #"""
+        {
+          "events": [],
+          "currentSeq": 0,
+          "catchUpComplete": false,
+          "live": false,
+          "session": {
+            "id": "sess-1",
+            "workspaceId": "ws-1",
+            "status": "stopped",
+            "createdAt": 1760000000000,
+            "lastActivity": 1760000002000,
+            "messageCount": 1,
+            "tokens": { "input": 1, "output": 1 },
+            "cost": 0
+          }
+        }
+        """#.data(using: .utf8).unwrap()
+
+        let catchUp = try MacWorkspaceClient.decodeSessionCatchUp(data)
+
+        #expect(!catchUp.live)
+        #expect(!catchUp.catchUpComplete)
+        #expect(catchUp.events.isEmpty)
+        #expect(catchUp.session.status == .stopped)
     }
 
     @Test func getFullToolOutputUsesOwnerSocketQuery() async throws {

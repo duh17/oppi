@@ -2059,6 +2059,67 @@ struct ChatSessionManagerTests {
         await connectTask.value
     }
 
+    @Test func reconnectCatchUpInactiveSessionReloadsHistoryWithoutPersistingCursor() async {
+        let sessionId = "catch-inactive-\(UUID().uuidString)"
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+        let tracker = HistoryReloadTracker()
+
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._loadHistoryForTesting = { cachedEventCount, cachedLastEventId in
+            _ = await tracker.recordCall(
+                cachedEventCount: cachedEventCount,
+                cachedLastEventId: cachedLastEventId
+            )
+            return (eventCount: 3, lastEventId: "evt-3")
+        }
+
+        var inboundMetaQueue: [WebSocketClient.InboundMeta?] = [
+            .init(seq: nil, currentSeq: 4, runtimeEpoch: "epoch-1"),
+            .init(seq: nil, currentSeq: 4, runtimeEpoch: "epoch-1"),
+        ]
+        manager._consumeInboundMetaForTesting = {
+            guard !inboundMetaQueue.isEmpty else { return nil }
+            return inboundMetaQueue.removeFirst()
+        }
+
+        manager._loadCatchUpForTesting = { _, _ in
+            ChatSessionCatchUpResponse(
+                events: [],
+                currentSeq: 99,
+                session: makeTestSession(id: sessionId, status: .stopped),
+                catchUpComplete: false,
+                live: false
+            )
+        }
+
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        #expect(await tracker.waitForCalls(1))
+
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .stopped)))
+        #expect(await tracker.waitForCalls(2))
+
+        streams.yield(index: 0, message: .connected(session: makeTestSession(id: sessionId, status: .stopped)))
+        #expect(await tracker.waitForCalls(3))
+
+        let snapshot = await tracker.snapshot()
+        #expect(snapshot.calls.count >= 3)
+        #expect(snapshot.calls[1].cachedEventCount == nil)
+        #expect(snapshot.calls[1].cachedLastEventId == nil)
+        #expect(snapshot.calls[2].cachedEventCount == nil)
+        #expect(UserDefaults.standard.integer(forKey: "chat.lastSeenSeq.\(sessionId)") == 0)
+
+        streams.finish(index: 0)
+        await connectTask.value
+    }
+
     @Test func duplicateSeqEventsAreDroppedAfterReconnect() async {
         let sessionId = "seq-dedupe-\(UUID().uuidString)"
         let manager = ChatSessionManager(sessionId: sessionId)
