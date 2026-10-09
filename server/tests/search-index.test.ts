@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { rmSync, unlinkSync, utimesSync, writeFileSync, mkdtempSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -698,7 +706,7 @@ describe("SearchIndex indexes transcript content only", () => {
       const meta = after
         .prepare("SELECT workspace_id, title FROM fts_meta WHERE session_id = ?")
         .get(session.id) as { workspace_id: string; title: string };
-      expect(version.value).toBe("6");
+      expect(version.value).toBe("7");
       expect(columns).toEqual(
         expect.arrayContaining([
           "workspace_id",
@@ -706,6 +714,8 @@ describe("SearchIndex indexes transcript content only", () => {
           "jsonl_path",
           "jsonl_mtime_ms",
           "durable_marker",
+          "jsonl_offset",
+          "jsonl_leaf_id",
         ]),
       );
       expect(ftsCountAfter).toBe(ftsCountBefore);
@@ -1186,7 +1196,7 @@ describe("SearchIndex background sync", () => {
         { name: "live new session title" },
       );
       sessionMap.set(liveCreated.id, liveCreated);
-      index.indexSession(liveCreated.id);
+      await index.indexSession(liveCreated.id);
 
       expect(index.search("liveorphannewtoken", "ws-1", 10)).toHaveLength(1);
 
@@ -1231,7 +1241,7 @@ describe("SearchIndex background sync", () => {
       const result = await index.startBackgroundSync([], {
         yieldToEventLoop: async () => {
           liveSessions.set(recreated.id, recreated);
-          index.indexSession(recreated.id);
+          await index.indexSession(recreated.id);
         },
       });
 
@@ -1470,6 +1480,210 @@ describe("SearchIndex background sync", () => {
       expect(stderrChunks.some((chunk) => chunk.includes("search_index.sync_batch"))).toBe(false);
     } finally {
       process.stderr.write = originalWrite;
+      index.close();
+    }
+  });
+});
+
+function transcriptLine(
+  id: string,
+  parentId: string | null,
+  role: "user" | "assistant",
+  text: string,
+  tool?: string,
+): string {
+  const content =
+    role === "user"
+      ? text
+      : [
+          { type: "text", text },
+          ...(tool
+            ? [{ type: "toolCall" as const, id: `call-${tool}`, name: tool, arguments: {} }]
+            : []),
+        ];
+  return (
+    JSON.stringify({
+      type: "message",
+      id,
+      parentId,
+      timestamp: "2026-01-01T00:00:00.000Z",
+      message: { role, content },
+    }) + "\n"
+  );
+}
+
+function indexedTranscriptFields(dataDir: string, sessionId: string) {
+  const db = openDatabase(join(dataDir, "session-search.db"));
+  try {
+    return db
+      .prepare(
+        "SELECT title, user_messages, assistant_messages, tool_names FROM session_fts WHERE session_id = ?",
+      )
+      .get(sessionId) as
+      | {
+          title: string;
+          user_messages: string;
+          assistant_messages: string;
+          tool_names: string;
+        }
+      | undefined;
+  } finally {
+    db.close();
+  }
+}
+
+/** Independent oracle: a new index that reads the file from the start. */
+function fullIndexFields(session: Session) {
+  const dataDir = mkdtempSync(join(tmpdir(), "search-index-oracle-"));
+  cleanupPaths.add(dataDir);
+  const index = new SearchIndex(dataDir, () => session);
+  try {
+    index.sync([session]);
+    return indexedTranscriptFields(dataDir, session.id);
+  } finally {
+    index.close();
+  }
+}
+
+describe("SearchIndex turn-end indexing", () => {
+  it("matches a full reindex after appended turns, including compaction and fork fallbacks", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-incremental-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    writeFileSync(
+      jsonlPath,
+      JSON.stringify({
+        type: "session",
+        id: "header",
+        cwd: "/tmp/search-test",
+        timestamp: "2026-01-01T00:00:00.000Z",
+      }) +
+        "\n" +
+        transcriptLine("u1", null, "user", "prefix user token alpha") +
+        transcriptLine("a1", "u1", "assistant", "prefix assistant token beta", "prefix_tool"),
+    );
+    const session = makeSession({ id: "sess-incremental", piSessionFile: jsonlPath });
+    const index = new SearchIndex(dataDir, () => session);
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      await index.indexSession(session.id);
+      expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
+
+      appendFileSync(
+        jsonlPath,
+        transcriptLine("u2", "a1", "user", "append user token gamma") +
+          transcriptLine("a2", "u2", "assistant", "append assistant token delta", "append_tool"),
+      );
+      await index.indexSession(session.id);
+      expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
+      expect(index.search("gamma", "ws-1")).toHaveLength(1);
+      expect(index.search("append_tool", "ws-1")).toHaveLength(1);
+
+      appendFileSync(jsonlPath, transcriptLine("u3", "a2", "user", "second append token epsilon"));
+      await index.indexSession(session.id);
+      expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
+
+      appendFileSync(
+        jsonlPath,
+        JSON.stringify({
+          type: "compaction",
+          id: "c1",
+          parentId: "u3",
+          timestamp: "2026-01-01T00:00:05.000Z",
+          summary: "summarycompacttoken should not be indexed",
+          firstKeptEntryId: "u2",
+          tokensBefore: 10,
+        }) +
+          "\n" +
+          transcriptLine("u4", "c1", "user", "post compaction token zeta"),
+      );
+      await index.indexSession(session.id);
+      expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
+      expect(index.search("alpha", "ws-1")).toEqual([]);
+      expect(index.search("zeta", "ws-1")).toHaveLength(1);
+      expect(index.search("summarycompacttoken", "ws-1")).toEqual([]);
+
+      appendFileSync(
+        jsonlPath,
+        transcriptLine("u5-fork", "u2", "user", "forked branch token eta") +
+          transcriptLine("a5-fork", "u5-fork", "assistant", "forked assistant token theta"),
+      );
+      await index.indexSession(session.id);
+      expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
+      expect(index.search("eta", "ws-1")).toHaveLength(1);
+      expect(index.search("zeta", "ws-1")).toEqual([]);
+    } finally {
+      index.close();
+    }
+  });
+
+  it("falls back to a full reindex when the file is rewritten in place or truncated", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-rewrite-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    writeFileSync(
+      jsonlPath,
+      transcriptLine("u1", null, "user", "original rewrite token oldbody") +
+        transcriptLine("a1", "u1", "assistant", "original assistant token"),
+    );
+    const session = makeSession({ id: "sess-rewrite", piSessionFile: jsonlPath });
+    const index = new SearchIndex(dataDir, () => session);
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      await index.indexSession(session.id);
+      const before = statSync(jsonlPath);
+
+      // Longer in-place rewrite: size grows and the inode stays, so a size check alone would append.
+      const rewritten =
+        transcriptLine("n1", null, "user", "rewritten user token newbody") +
+        transcriptLine("n2", "n1", "assistant", "rewritten assistant token", "rewritten_tool") +
+        transcriptLine("n3", "n2", "user", "rewritten follow-up token extra");
+      writeFileSync(jsonlPath, rewritten);
+      const afterRewrite = statSync(jsonlPath);
+      expect(String(afterRewrite.ino)).toBe(String(before.ino));
+      expect(afterRewrite.size).toBeGreaterThan(before.size);
+
+      await index.indexSession(session.id);
+      expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
+      expect(index.search("oldbody", "ws-1")).toEqual([]);
+      expect(index.search("newbody", "ws-1")).toHaveLength(1);
+      expect(index.search("rewritten_tool", "ws-1")).toHaveLength(1);
+
+      writeFileSync(jsonlPath, transcriptLine("t1", null, "user", "truncated user token short"));
+      expect(statSync(jsonlPath).size).toBeLessThan(afterRewrite.size);
+      await index.indexSession(session.id);
+      expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
+      expect(index.search("newbody", "ws-1")).toEqual([]);
+      expect(index.search("short", "ws-1")).toHaveLength(1);
+    } finally {
+      index.close();
+    }
+  });
+
+  it("matches a full reindex when an append crosses the indexed user-message cap", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-cap-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    writeFileSync(
+      jsonlPath,
+      transcriptLine("u1", null, "user", "u".repeat(49_990)) +
+        transcriptLine("a1", "u1", "assistant", "assistant stays under cap"),
+    );
+    const session = makeSession({ id: "sess-cap", piSessionFile: jsonlPath });
+    const index = new SearchIndex(dataDir, () => session);
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      await index.indexSession(session.id);
+      appendFileSync(
+        jsonlPath,
+        transcriptLine("u2", "a1", "user", `cap-cross token ${"z".repeat(100)}`),
+      );
+      await index.indexSession(session.id);
+      expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
+    } finally {
       index.close();
     }
   });

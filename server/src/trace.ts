@@ -1092,6 +1092,23 @@ function parseEntries(content: string): SessionEntry[] {
   return entries;
 }
 
+/** Parse JSONL session text, skipping blank and malformed lines. */
+export function parseSessionEntries(content: string): SessionEntry[] {
+  return parseEntries(content);
+}
+
+/**
+ * Leaf the search extractor walks: last non-header entry with an id.
+ * Empty string is not used; null means the file has no such entry.
+ */
+export function sessionTranscriptLeafId(entries: SessionEntry[]): string | null {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry && entry.type !== "session" && entry.id) return entry.id;
+  }
+  return null;
+}
+
 /**
  * Parse JSONL content and build session context.
  *
@@ -1104,8 +1121,8 @@ export function parseJsonl(content: string, options: TraceReadOptions = {}): Tra
 }
 
 /** Historical search FTS caps. Applied during direct extraction. */
-const SEARCH_USER_MESSAGE_CAP = 50_000;
-const SEARCH_ASSISTANT_MESSAGE_CAP = 100_000;
+export const SEARCH_USER_MESSAGE_CAP = 50_000;
+export const SEARCH_ASSISTANT_MESSAGE_CAP = 100_000;
 
 /**
  * Inline base64 media (`data:<mime>;base64,...`), with the newline that joined
@@ -1203,17 +1220,33 @@ export function extractSearchTranscriptFromEntries(
 }
 
 /**
+ * Read a JSONL session file and extract search transcript fields plus the
+ * leaf id those fields were walked from. Whole-file I/O; live turn-end
+ * indexing does not use this.
+ */
+export function readSearchTranscriptFile(jsonlPath: string): {
+  transcript: SearchTranscriptContent;
+  leafId: string | null;
+} | null {
+  if (!existsSync(jsonlPath)) return null;
+  try {
+    const content = readFileSync(jsonlPath, "utf-8");
+    const entries = parseEntries(content);
+    return {
+      transcript: extractSearchTranscriptFromEntries(entries),
+      leafId: sessionTranscriptLeafId(entries),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Read a JSONL session file and extract search transcript fields.
  * Still whole-file I/O; this only skips mobile TraceEvent construction.
  */
 export function extractSearchTranscriptFromFile(jsonlPath: string): SearchTranscriptContent | null {
-  if (!existsSync(jsonlPath)) return null;
-  try {
-    const content = readFileSync(jsonlPath, "utf-8");
-    return extractSearchTranscriptFromEntries(parseEntries(content));
-  } catch {
-    return null;
-  }
+  return readSearchTranscriptFile(jsonlPath)?.transcript ?? null;
 }
 
 // ─── JSONL File Readers ───

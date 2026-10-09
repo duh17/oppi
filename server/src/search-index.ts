@@ -7,18 +7,32 @@
  *
  * Lifecycle:
  * - Server boot: open db, incremental sync (JSONL state + session metadata)
- * - Live: re-index on agent_end (debounced mark + immediate flush)
+ * - Live: re-index on agent_end. A file-backed session reads only the bytes
+ *   appended since the stored cursor; truncation, rewrite, compaction, or fork
+ *   falls back to a full reindex. The read is async and does not block the
+ *   event loop on the whole file.
  * - Shutdown: close db
  */
 
-import { openDatabase, type SqliteDatabase, type SqliteStatement } from "./sqlite-compat.js";
-import { statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { open, stat } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { Session } from "./types.js";
 import { createLogger } from "./logger.js";
 import { isServerDurableSession } from "./session-runtime-capabilities.js";
-import { extractSearchTranscriptFromFile, type SearchTranscriptContent } from "./trace.js";
+import { openDatabase, type SqliteDatabase, type SqliteStatement } from "./sqlite-compat.js";
+import {
+  extractSearchTranscriptFromEntries,
+  parseSessionEntries,
+  readSearchTranscriptFile,
+  SEARCH_ASSISTANT_MESSAGE_CAP,
+  SEARCH_USER_MESSAGE_CAP,
+  sessionTranscriptLeafId,
+  type SearchTranscriptContent,
+  type SessionEntry,
+} from "./trace.js";
+import type { Session } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -119,6 +133,7 @@ interface TranscriptContent {
   assistantMessages: string;
   toolNames: string;
   bytesRead: number;
+  leafId: string | null;
 }
 
 interface ExtractedContent {
@@ -128,7 +143,43 @@ interface ExtractedContent {
   toolNames: string;
   transcriptBytesRead: number;
   transcriptRead: boolean;
+  leafId: string | null;
 }
+
+/** Byte cursor stored on fts_meta so the next turn reads only the append. */
+interface FileCursor {
+  dev: string;
+  ino: string;
+  offset: number;
+  boundary: string;
+  leafId: string;
+}
+
+interface FileStat {
+  dev: string;
+  ino: string;
+  size: number;
+  mtimeMs: number;
+}
+
+interface FtsMetaRow {
+  jsonl_path: string | null;
+  jsonl_mtime_ms: number;
+  jsonl_size: number;
+  workspace_id: string | null;
+  title: string | null;
+  durable_marker: string | null;
+  jsonl_dev: string | null;
+  jsonl_ino: string | null;
+  jsonl_offset: number | null;
+  jsonl_boundary: string | null;
+  jsonl_leaf_id: string | null;
+}
+
+/** Last bytes of the indexed prefix. In-place rewrite keeps the inode, so size and inode alone do not prove the prefix is unchanged. */
+const FILE_BOUNDARY_BYTES = 64;
+/** Appended entry types that change which earlier lines are visible. */
+const FULL_REINDEX_ENTRY_TYPES = new Set(["compaction", "branch_summary", "session"]);
 
 function extractSessionTitle(session: Session): string {
   return [session.name, session.firstMessage]
@@ -145,12 +196,13 @@ function extractTranscriptContent(jsonlPath: string): TranscriptContent | null {
     return null;
   }
 
-  const transcript = extractSearchTranscriptFromFile(jsonlPath);
-  if (!transcript) return null;
+  const read = readSearchTranscriptFile(jsonlPath);
+  if (!read) return null;
 
   return {
-    ...transcript,
+    ...read.transcript,
     bytesRead,
+    leafId: read.leafId,
   };
 }
 
@@ -164,6 +216,226 @@ function extractIndexedContent(session: Session, jsonlPath?: string): ExtractedC
     toolNames: transcript?.toolNames ?? "",
     transcriptBytesRead: transcript?.bytesRead ?? 0,
     transcriptRead: transcript !== null,
+    leafId: transcript?.leafId ?? null,
+  };
+}
+
+function emptyTranscript(): SearchTranscriptContent {
+  return { userMessages: "", assistantMessages: "", toolNames: "" };
+}
+
+function fileStatFrom(st: {
+  dev: bigint;
+  ino: bigint;
+  size: bigint;
+  mtimeMs: bigint;
+}): FileStat | null {
+  if (st.size > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  return {
+    dev: st.dev.toString(),
+    ino: st.ino.toString(),
+    size: Number(st.size),
+    mtimeMs: Number(st.mtimeMs),
+  };
+}
+
+function boundaryHash(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function readBoundarySync(path: string, offset: number): string {
+  if (offset <= 0) return "";
+  return boundaryHash(readByteRangeSync(path, Math.max(0, offset - FILE_BOUNDARY_BYTES), offset));
+}
+
+function readByteRangeSync(path: string, start: number, end: number): Buffer {
+  const length = end - start;
+  if (length <= 0) return Buffer.alloc(0);
+  const buffer = Buffer.alloc(length);
+  const fd = openSync(path, "r");
+  try {
+    let offset = 0;
+    while (offset < length) {
+      const bytesRead = readSync(fd, buffer, offset, length - offset, start + offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    return offset === length ? buffer : buffer.subarray(0, offset);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Incremental merge is only valid when the stored offset is a line boundary. */
+function offsetIsLineBoundarySync(path: string, offset: number): boolean {
+  if (offset <= 0) return true;
+  return readByteRangeSync(path, offset - 1, offset)[0] === 0x0a;
+}
+
+/**
+ * Leaf id from the end of the file. Used to backfill a cursor without reading
+ * a session that is already indexed and unchanged.
+ */
+function leafIdFromFileTail(path: string, size: number): string {
+  if (size <= 0) return "";
+  let window = 64 * 1024;
+  while (window < size) {
+    const start = size - window;
+    const text = readByteRangeSync(path, start, size).toString("utf8");
+    const newline = text.indexOf("\n");
+    if (newline >= 0) {
+      const leaf = sessionTranscriptLeafId(parseSessionEntries(text.slice(newline + 1)));
+      if (leaf) return leaf;
+    }
+    window *= 4;
+  }
+  return (
+    sessionTranscriptLeafId(
+      parseSessionEntries(readByteRangeSync(path, 0, size).toString("utf8")),
+    ) ?? ""
+  );
+}
+
+async function readByteRange(path: string, start: number, end: number): Promise<Buffer> {
+  const length = end - start;
+  if (length <= 0) return Buffer.alloc(0);
+  const handle = await open(path, "r");
+  try {
+    const buffer = Buffer.alloc(length);
+    let offset = 0;
+    while (offset < length) {
+      const { bytesRead } = await handle.read(buffer, offset, length - offset, start + offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    return offset === length ? buffer : buffer.subarray(0, offset);
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readBoundary(path: string, offset: number): Promise<string> {
+  if (offset <= 0) return "";
+  const start = Math.max(0, offset - FILE_BOUNDARY_BYTES);
+  return boundaryHash(await readByteRange(path, start, offset));
+}
+
+function cursorFromMeta(meta: FtsMetaRow): FileCursor | null {
+  const dev = meta.jsonl_dev;
+  const ino = meta.jsonl_ino;
+  const offset = meta.jsonl_offset;
+  const boundary = meta.jsonl_boundary;
+  const leafId = meta.jsonl_leaf_id;
+  if (dev === null || ino === null || offset === null || boundary === null || leafId === null) {
+    return null;
+  }
+  return {
+    dev,
+    ino,
+    offset,
+    boundary,
+    leafId,
+  };
+}
+
+function cursorForFile(stat: FileStat, boundary: string, leafId: string | null): FileCursor {
+  return {
+    dev: stat.dev,
+    ino: stat.ino,
+    offset: stat.size,
+    boundary,
+    leafId: leafId ?? "",
+  };
+}
+
+function appendCapped(existing: string, addition: string, cap: number): string {
+  if (!addition) return existing.length > cap ? existing.slice(0, cap) : existing;
+  if (!existing || existing.length >= cap) {
+    return existing ? existing.slice(0, cap) : addition.slice(0, cap);
+  }
+  const joined = `${existing}\n${addition}`;
+  return joined.length > cap ? joined.slice(0, cap) : joined;
+}
+
+function mergeToolNames(existing: string, addition: string): string {
+  if (!addition) return existing;
+  if (!existing) return addition;
+  const seen = new Set(existing.split(" ").filter(Boolean));
+  const extra: string[] = [];
+  for (const name of addition.split(" ").filter(Boolean)) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    extra.push(name);
+  }
+  return extra.length === 0 ? existing : `${existing} ${extra.join(" ")}`;
+}
+
+function tailHasUnsafeToolName(entries: SessionEntry[]): boolean {
+  for (const entry of entries) {
+    const content = entry.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (!block || typeof block !== "object") continue;
+      const record = block as { type?: unknown; name?: unknown };
+      if (record.type === "toolCall" && typeof record.name === "string" && /\s/.test(record.name)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * True when the appended entries only extend the indexed leaf. Compaction,
+ * a new session header, a branch summary, or a fork (parent chain misses the
+ * stored leaf) changes visibility of earlier lines, so the caller must reindex.
+ */
+function tailExtendsIndexedLeaf(entries: SessionEntry[], leafId: string): boolean {
+  if (!leafId || tailHasUnsafeToolName(entries)) return false;
+  for (const entry of entries) {
+    if (FULL_REINDEX_ENTRY_TYPES.has(entry.type)) return false;
+  }
+  const leaf = sessionTranscriptLeafId(entries);
+  if (!leaf) return true;
+  const byId = new Map<string, SessionEntry>();
+  for (const entry of entries) {
+    if (entry.id) byId.set(entry.id, entry);
+  }
+  const seen = new Set<string>();
+  let current: SessionEntry | undefined = byId.get(leaf);
+  while (current) {
+    if (!current.id || seen.has(current.id)) return false;
+    seen.add(current.id);
+    if (current.parentId === leafId) return true;
+    if (!current.parentId) return false;
+    current = byId.get(current.parentId);
+  }
+  return false;
+}
+
+function mergeTail(
+  existing: SearchTranscriptContent,
+  tailText: string,
+  storedLeafId: string,
+): { content: SearchTranscriptContent; leafId: string } | null {
+  const entries = parseSessionEntries(tailText);
+  if (!tailExtendsIndexedLeaf(entries, storedLeafId)) return null;
+  const addition = extractSearchTranscriptFromEntries(entries);
+  return {
+    content: {
+      userMessages: appendCapped(
+        existing.userMessages,
+        addition.userMessages,
+        SEARCH_USER_MESSAGE_CAP,
+      ),
+      assistantMessages: appendCapped(
+        existing.assistantMessages,
+        addition.assistantMessages,
+        SEARCH_ASSISTANT_MESSAGE_CAP,
+      ),
+      toolNames: mergeToolNames(existing.toolNames, addition.toolNames),
+    },
+    leafId: sessionTranscriptLeafId(entries) ?? storedLeafId,
   };
 }
 
@@ -270,6 +542,12 @@ export class SearchIndex {
   private backgroundSyncPromise: Promise<SearchIndexBackgroundSyncResult> | null = null;
   /** Per-session tail of queued durable indexing; see syncDurableSession. */
   private durableTails = new Map<string, Promise<void>>();
+  /**
+   * One in-flight file index per session. A request that arrives while it runs
+   * sets rerun so the follow-up reads the latest append instead of starting a
+   * second read.
+   */
+  private fileIndexJobs = new Map<string, { rerun: boolean; done: Promise<void> }>();
 
   /** Set when the server has a durable Harness. Durable sessions are then indexed from it. */
   durableSource?: DurableSearchSource;
@@ -290,6 +568,9 @@ export class SearchIndex {
     this.ensureSchema();
     this.prepareStatements();
     this.migrateToV6();
+    if (this.schemaVersion() === "6") {
+      this.db.prepare("INSERT OR REPLACE INTO fts_schema VALUES ('version', ?)").run("7");
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -340,7 +621,8 @@ export class SearchIndex {
 
   private schemaVersion(): string | undefined {
     const row = this.db.prepare("SELECT value FROM fts_schema WHERE key = 'version'").get() as
-      { value: string } | undefined;
+      | { value: string }
+      | undefined;
     return row?.value;
   }
 
@@ -415,12 +697,19 @@ export class SearchIndex {
       .get();
 
     if (hasSchemaTable) {
-      // v3–v5 upgrade in place to the v6 shape; migrateToV6 finishes the data.
+      // v3–v6 upgrade in place; migrateToV6 finishes v5 data, then the
+      // constructor stamps version 7 once the file cursor columns exist.
       const version = this.schemaVersion();
-      if (version === "6") return;
+      if (version === "7") return;
+      if (version === "6") {
+        this.ensureFileCursorColumns();
+        this.db.prepare("INSERT OR REPLACE INTO fts_schema VALUES ('version', ?)").run("7");
+        return;
+      }
       if (version === "5") {
         if (!this.ftsMetaColumnNames().has("durable_marker")) this.migrateDurableMarkerColumn();
         this.addFtsRowidColumn();
+        this.ensureFileCursorColumns();
         return;
       }
       if (version === "4" || version === "3") {
@@ -430,10 +719,11 @@ export class SearchIndex {
         }
         this.migrateDurableMarkerColumn();
         this.addFtsRowidColumn();
+        this.ensureFileCursorColumns();
         return;
       }
 
-      // Unknown/older versions — drop and recreate at v6.
+      // Unknown/older versions — drop and recreate at v7.
       this.db.exec("DROP TABLE IF EXISTS session_fts");
       this.db.exec("DROP TABLE IF EXISTS fts_meta");
       this.db.exec("DROP TABLE IF EXISTS fts_schema");
@@ -459,7 +749,12 @@ export class SearchIndex {
         workspace_id TEXT,
         title TEXT,
         durable_marker TEXT,
-        fts_rowid INTEGER
+        fts_rowid INTEGER,
+        jsonl_dev TEXT,
+        jsonl_ino TEXT,
+        jsonl_offset INTEGER,
+        jsonl_boundary TEXT,
+        jsonl_leaf_id TEXT
       );
 
       CREATE TABLE IF NOT EXISTS fts_schema (
@@ -467,8 +762,24 @@ export class SearchIndex {
         value TEXT
       );
 
-      INSERT OR REPLACE INTO fts_schema VALUES ('version', '6');
+      INSERT OR REPLACE INTO fts_schema VALUES ('version', '7');
     `);
+  }
+
+  /** v6 → v7: byte cursor for append-only turn-end indexing. Existing rows stay NULL and full-reindex once. */
+  private ensureFileCursorColumns(): void {
+    const columns = this.ftsMetaColumnNames();
+    if (!columns.has("jsonl_dev")) this.db.exec("ALTER TABLE fts_meta ADD COLUMN jsonl_dev TEXT");
+    if (!columns.has("jsonl_ino")) this.db.exec("ALTER TABLE fts_meta ADD COLUMN jsonl_ino TEXT");
+    if (!columns.has("jsonl_offset")) {
+      this.db.exec("ALTER TABLE fts_meta ADD COLUMN jsonl_offset INTEGER");
+    }
+    if (!columns.has("jsonl_boundary")) {
+      this.db.exec("ALTER TABLE fts_meta ADD COLUMN jsonl_boundary TEXT");
+    }
+    if (!columns.has("jsonl_leaf_id")) {
+      this.db.exec("ALTER TABLE fts_meta ADD COLUMN jsonl_leaf_id TEXT");
+    }
   }
 
   private prepareStatements(): void {
@@ -508,9 +819,14 @@ export class SearchIndex {
         indexed_at,
         workspace_id,
         title,
-        durable_marker
+        durable_marker,
+        jsonl_dev,
+        jsonl_ino,
+        jsonl_offset,
+        jsonl_boundary,
+        jsonl_leaf_id
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(session_id) DO UPDATE SET
         jsonl_path = excluded.jsonl_path,
         jsonl_mtime_ms = excluded.jsonl_mtime_ms,
@@ -518,11 +834,16 @@ export class SearchIndex {
         indexed_at = excluded.indexed_at,
         workspace_id = excluded.workspace_id,
         title = excluded.title,
-        durable_marker = excluded.durable_marker
+        durable_marker = excluded.durable_marker,
+        jsonl_dev = excluded.jsonl_dev,
+        jsonl_ino = excluded.jsonl_ino,
+        jsonl_offset = excluded.jsonl_offset,
+        jsonl_boundary = excluded.jsonl_boundary,
+        jsonl_leaf_id = excluded.jsonl_leaf_id
     `);
 
     this.stmtGetMeta = this.db.prepare(
-      "SELECT jsonl_path, jsonl_mtime_ms, jsonl_size, workspace_id, title, durable_marker FROM fts_meta WHERE session_id = ?",
+      "SELECT jsonl_path, jsonl_mtime_ms, jsonl_size, workspace_id, title, durable_marker, jsonl_dev, jsonl_ino, jsonl_offset, jsonl_boundary, jsonl_leaf_id FROM fts_meta WHERE session_id = ?",
     );
 
     // Skip checks only need identity fields. Avoid pulling transcript blobs on
@@ -637,55 +958,365 @@ export class SearchIndex {
   // -------------------------------------------------------------------------
 
   /**
-   * Index a single session from its JSONL file. Server-durable sessions have no
-   * file: their (async) indexing is queued and this returns before it completes.
+   * Index a single session. File-backed sessions resolve when the read finishes;
+   * the read itself does not block the event loop on the whole file. Repeated
+   * calls for one session share one in-flight read and one follow-up.
+   * Server-durable sessions have no file and queue on the durable tail.
    */
-  indexSession(sessionId: string): void {
+  indexSession(sessionId: string): Promise<void> {
     const live = this.getSession(sessionId);
     if (live && this.isIndexedFromDurable(live)) {
-      this.queueDurableIndex(sessionId);
+      return this.syncDurableSession(sessionId).then(
+        () => undefined,
+        (err: unknown) => {
+          log.error("search_index.durable_index.failed", {
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        },
+      );
+    }
+    return this.enqueueFileIndex(sessionId);
+  }
+
+  private enqueueFileIndex(sessionId: string): Promise<void> {
+    const existing = this.fileIndexJobs.get(sessionId);
+    if (existing) {
+      existing.rerun = true;
+      return existing.done;
+    }
+    const job = { rerun: false, done: Promise.resolve() };
+    this.fileIndexJobs.set(sessionId, job);
+    job.done = this.pumpFileIndex(sessionId, job).finally(() => {
+      if (this.fileIndexJobs.get(sessionId) === job) this.fileIndexJobs.delete(sessionId);
+    });
+    return job.done;
+  }
+
+  private async pumpFileIndex(sessionId: string, job: { rerun: boolean }): Promise<void> {
+    try {
+      do {
+        job.rerun = false;
+        await this.runFileIndex(sessionId);
+      } while (job.rerun && !this.closed);
+    } catch (err: unknown) {
+      log.error("search_index.file_index.failed", {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  private async runFileIndex(sessionId: string): Promise<void> {
+    if (this.closed) return;
+    const session = this.getSession(sessionId);
+    if (!session || session.ephemeral) {
+      if (!this.closed) this.deleteSession(sessionId);
       return;
     }
-    this.db.transaction(() => {
-      const session = this.getSession(sessionId);
-      if (!session) return;
+    if (this.isIndexedFromDurable(session)) {
+      await this.syncDurableSession(sessionId);
+      return;
+    }
 
-      if (session.ephemeral) {
-        this.deleteSession(sessionId);
-        return;
-      }
+    const jsonlPath = session.piSessionFile;
+    if (!jsonlPath) {
+      this.writeFileTranscript(session, emptyTranscript(), null);
+      return;
+    }
 
-      const jsonlPath = (session as unknown as Record<string, unknown>).piSessionFile as
-        string | undefined;
+    let fileStat: FileStat | null;
+    try {
+      fileStat = fileStatFrom(await stat(jsonlPath, { bigint: true }));
+    } catch {
+      fileStat = null;
+    }
+    if (this.closed) return;
+    if (!fileStat) {
+      this.writeFileTranscript(session, emptyTranscript(), null);
+      return;
+    }
 
-      let fileStat: { mtimeMs: number; size: number } | null = null;
-      if (jsonlPath) {
-        try {
-          const st = statSync(jsonlPath);
-          fileStat = { mtimeMs: st.mtimeMs, size: st.size };
-        } catch {
-          fileStat = null;
+    const meta = this.getMeta(sessionId);
+    const cursor = meta ? cursorFromMeta(meta) : null;
+    const indexed = this.indexedTranscript(sessionId);
+    if (
+      cursor &&
+      indexed &&
+      meta?.jsonl_path === jsonlPath &&
+      cursor.dev === fileStat.dev &&
+      cursor.ino === fileStat.ino &&
+      fileStat.size >= cursor.offset
+    ) {
+      const boundary = await readBoundary(jsonlPath, cursor.offset);
+      if (this.closed) return;
+      if (boundary === cursor.boundary) {
+        const lineBoundary =
+          cursor.offset === 0 ||
+          (await readByteRange(jsonlPath, cursor.offset - 1, cursor.offset))[0] === 0x0a;
+        if (!lineBoundary) {
+          // Fall through to a full reindex. The stored offset splits a line.
+        } else if (fileStat.size === cursor.offset) {
+          const title = extractSessionTitle(session);
+          const workspaceId = session.workspaceId ?? "";
+          if (
+            meta.title !== title ||
+            meta.workspace_id !== workspaceId ||
+            meta.jsonl_mtime_ms !== Math.floor(fileStat.mtimeMs)
+          ) {
+            this.writeFileTranscript(session, indexed, {
+              path: jsonlPath,
+              stat: fileStat,
+              cursor,
+            });
+          }
+          return;
+        } else {
+          const tail = await readByteRange(jsonlPath, cursor.offset, fileStat.size);
+          if (this.closed) return;
+          const merged = mergeTail(indexed, tail.toString("utf8"), cursor.leafId);
+          if (merged) {
+            const boundaryNow = await readBoundary(jsonlPath, fileStat.size);
+            if (this.closed) return;
+            this.writeFileTranscript(session, merged.content, {
+              path: jsonlPath,
+              stat: fileStat,
+              cursor: cursorForFile(fileStat, boundaryNow, merged.leafId),
+            });
+            return;
+          }
         }
       }
+    }
 
-      const content = extractIndexedContent(session, fileStat ? jsonlPath : undefined);
+    const full = await this.readFullTranscript(jsonlPath, fileStat.size);
+    if (this.closed || !full) return;
+    const after = fileStatFrom(await stat(jsonlPath, { bigint: true }));
+    if (this.closed) return;
+    // Replaced or truncated while we read. The follow-up, if any, reads again.
+    if (
+      !after ||
+      after.dev !== fileStat.dev ||
+      after.ino !== fileStat.ino ||
+      after.size < fileStat.size
+    ) {
+      return;
+    }
+    // Cursor covers the bytes we parsed, not bytes appended during the read.
+    this.writeFileTranscript(session, full.transcript, {
+      path: jsonlPath,
+      stat: fileStat,
+      cursor: cursorForFile(fileStat, await readBoundary(jsonlPath, fileStat.size), full.leafId),
+    });
+  }
 
+  /**
+   * Shutdown path. Prefer the stored cursor so a large session is not re-read
+   * in full while the process is exiting.
+   */
+  private indexFileSessionSync(sessionId: string): void {
+    const session = this.getSession(sessionId);
+    if (!session || session.ephemeral) {
+      this.deleteSession(sessionId);
+      return;
+    }
+    if (this.isIndexedFromDurable(session)) return;
+    const jsonlPath = session.piSessionFile;
+    if (!jsonlPath) {
+      this.writeFileTranscript(session, emptyTranscript(), null);
+      return;
+    }
+    let fileStat: FileStat | null;
+    try {
+      fileStat = fileStatFrom(statSync(jsonlPath, { bigint: true }));
+    } catch {
+      fileStat = null;
+    }
+    if (!fileStat) {
+      this.writeFileTranscript(session, emptyTranscript(), null);
+      return;
+    }
+
+    const meta = this.getMeta(sessionId);
+    const cursor = meta ? cursorFromMeta(meta) : null;
+    const indexed = this.indexedTranscript(sessionId);
+    if (
+      cursor &&
+      indexed &&
+      meta?.jsonl_path === jsonlPath &&
+      cursor.dev === fileStat.dev &&
+      cursor.ino === fileStat.ino &&
+      fileStat.size >= cursor.offset &&
+      readBoundarySync(jsonlPath, cursor.offset) === cursor.boundary &&
+      offsetIsLineBoundarySync(jsonlPath, cursor.offset)
+    ) {
+      if (fileStat.size === cursor.offset) {
+        this.writeFileTranscript(session, indexed, { path: jsonlPath, stat: fileStat, cursor });
+        return;
+      }
+      const tail = readByteRangeSync(jsonlPath, cursor.offset, fileStat.size);
+      const merged = mergeTail(indexed, tail.toString("utf8"), cursor.leafId);
+      if (merged) {
+        this.writeFileTranscript(session, merged.content, {
+          path: jsonlPath,
+          stat: fileStat,
+          cursor: cursorForFile(
+            fileStat,
+            readBoundarySync(jsonlPath, fileStat.size),
+            merged.leafId,
+          ),
+        });
+        return;
+      }
+    }
+
+    const content = extractIndexedContent(session, jsonlPath);
+    this.writeFileTranscript(session, content, {
+      path: jsonlPath,
+      stat: fileStat,
+      cursor: cursorForFile(fileStat, readBoundarySync(jsonlPath, fileStat.size), content.leafId),
+    });
+  }
+
+  private async readFullTranscript(
+    jsonlPath: string,
+    size: number,
+  ): Promise<{ transcript: SearchTranscriptContent; leafId: string | null } | null> {
+    // Small files stay one read. Large files yield between chunks so a cold
+    // reindex cannot stall the event loop for the whole file.
+    if (size < 256 * 1024) {
+      const bytes = await readByteRange(jsonlPath, 0, size);
+      const entries = parseSessionEntries(bytes.toString("utf8"));
+      return {
+        transcript: extractSearchTranscriptFromEntries(entries),
+        leafId: sessionTranscriptLeafId(entries),
+      };
+    }
+
+    const handle = await open(jsonlPath, "r");
+    const entries: SessionEntry[] = [];
+    const decoder = new TextDecoder("utf-8");
+    let leftover = "";
+    const chunkSize = 1024 * 1024;
+    const buffer = Buffer.alloc(chunkSize);
+    try {
+      let position = 0;
+      while (position < size) {
+        if (this.closed) return null;
+        const length = Math.min(chunkSize, size - position);
+        const { bytesRead } = await handle.read(buffer, 0, length, position);
+        if (bytesRead === 0) break;
+        position += bytesRead;
+        leftover += decoder.decode(buffer.subarray(0, bytesRead), { stream: true });
+        const newline = leftover.lastIndexOf("\n");
+        if (newline >= 0) {
+          entries.push(...parseSessionEntries(leftover.slice(0, newline)));
+          leftover = leftover.slice(newline + 1);
+        }
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      leftover += decoder.decode();
+      if (leftover.trim()) entries.push(...parseSessionEntries(leftover));
+    } finally {
+      await handle.close();
+    }
+    if (this.closed) return null;
+    return {
+      transcript: extractSearchTranscriptFromEntries(entries),
+      leafId: sessionTranscriptLeafId(entries),
+    };
+  }
+
+  private getMeta(sessionId: string): FtsMetaRow | undefined {
+    return this.stmtGetMeta.get(sessionId) as FtsMetaRow | undefined;
+  }
+
+  private cursorForIndexedFile(path: string, leafId: string | null): FileCursor | null {
+    try {
+      const fileStat = fileStatFrom(statSync(path, { bigint: true }));
+      if (!fileStat) return null;
+      return cursorForFile(fileStat, readBoundarySync(path, fileStat.size), leafId);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Startup sync uses this when the file grew but the stored prefix is still
+   * the indexed prefix. Returns null when the caller must read the whole file.
+   */
+  private readIncrementalTranscriptSync(
+    sessionId: string,
+    jsonlPath: string,
+  ): {
+    content: SearchTranscriptContent;
+    stat: FileStat;
+    cursor: FileCursor;
+    bytesRead: number;
+  } | null {
+    const meta = this.getMeta(sessionId);
+    const stored = meta ? cursorFromMeta(meta) : null;
+    const indexed = this.indexedTranscript(sessionId);
+    if (!stored || !indexed || meta?.jsonl_path !== jsonlPath) return null;
+    let fileStat: FileStat | null;
+    try {
+      fileStat = fileStatFrom(statSync(jsonlPath, { bigint: true }));
+    } catch {
+      return null;
+    }
+    if (!fileStat || fileStat.size <= stored.offset) return null;
+    if (fileStat.dev !== stored.dev || fileStat.ino !== stored.ino) return null;
+    if (readBoundarySync(jsonlPath, stored.offset) !== stored.boundary) return null;
+    if (!offsetIsLineBoundarySync(jsonlPath, stored.offset)) return null;
+    const tail = readByteRangeSync(jsonlPath, stored.offset, fileStat.size);
+    const merged = mergeTail(indexed, tail.toString("utf8"), stored.leafId);
+    if (!merged) return null;
+    return {
+      content: merged.content,
+      stat: fileStat,
+      cursor: cursorForFile(fileStat, readBoundarySync(jsonlPath, fileStat.size), merged.leafId),
+      bytesRead: tail.length,
+    };
+  }
+
+  private indexedTranscript(sessionId: string): SearchTranscriptContent | null {
+    const row = this.stmtGetIndexedRow.get(sessionId) as
+      | { user_messages: string; assistant_messages: string; tool_names: string }
+      | undefined;
+    if (!row) return null;
+    return {
+      userMessages: row.user_messages,
+      assistantMessages: row.assistant_messages,
+      toolNames: row.tool_names,
+    };
+  }
+
+  private writeFileTranscript(
+    session: Session,
+    content: SearchTranscriptContent,
+    file: { path: string; stat: FileStat; cursor: FileCursor } | null,
+  ): void {
+    if (this.closed) return;
+    const title = extractSessionTitle(session);
+    const workspaceId = session.workspaceId ?? "";
+    this.db.transaction(() => {
       this.upsertRow(
-        sessionId,
-        session.workspaceId ?? "",
-        content.title,
+        session.id,
+        workspaceId,
+        title,
         content.userMessages,
         content.assistantMessages,
         content.toolNames,
       );
-
       this.upsertMeta(
-        sessionId,
-        fileStat ? (jsonlPath ?? null) : null,
-        fileStat ? Math.floor(fileStat.mtimeMs) : 0,
-        fileStat?.size ?? 0,
-        session.workspaceId ?? "",
-        content.title,
+        session.id,
+        file?.path ?? null,
+        file ? Math.floor(file.stat.mtimeMs) : 0,
+        file?.stat.size ?? 0,
+        workspaceId,
+        title,
+        null,
+        file?.cursor ?? null,
       );
     })();
   }
@@ -698,6 +1329,7 @@ export class SearchIndex {
     workspaceId: string,
     title: string,
     durableMarker: string | null = null,
+    cursor: FileCursor | null = null,
   ): void {
     this.stmtUpsertMeta.run(
       sessionId,
@@ -708,6 +1340,11 @@ export class SearchIndex {
       workspaceId,
       title,
       durableMarker,
+      cursor?.dev ?? null,
+      cursor?.ino ?? null,
+      cursor?.offset ?? null,
+      cursor?.boundary ?? null,
+      cursor?.leafId ?? null,
     );
   }
 
@@ -751,15 +1388,6 @@ export class SearchIndex {
       isServerDurableSession(session) &&
       session.serverDurable?.conversationId !== undefined
     );
-  }
-
-  private queueDurableIndex(sessionId: string): void {
-    this.syncDurableSession(sessionId).catch((err: unknown) => {
-      log.error("search_index.durable_index.failed", {
-        sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
   }
 
   /**
@@ -813,7 +1441,8 @@ export class SearchIndex {
       | undefined;
     if (meta?.durable_marker === marker) {
       const indexedRow = this.stmtGetIndexedRow.get(sessionId) as
-        { user_messages: string; assistant_messages: string; tool_names: string } | undefined;
+        | { user_messages: string; assistant_messages: string; tool_names: string }
+        | undefined;
       if (indexedRow) {
         if (meta.workspace_id === workspaceId && meta.title === title) {
           result.skipped = 1;
@@ -886,7 +1515,12 @@ export class SearchIndex {
   flushForSession(sessionId: string): void {
     if (!this.pendingReindex.has(sessionId)) return;
     this.pendingReindex.delete(sessionId);
-    this.indexSession(sessionId);
+    void this.indexSession(sessionId).catch((err: unknown) => {
+      log.error("search_index.file_index.failed", {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
   }
 
   private flushPending(): void {
@@ -895,7 +1529,12 @@ export class SearchIndex {
     this.pendingReindex.clear();
 
     for (const id of batch) {
-      this.indexSession(id);
+      void this.indexSession(id).catch((err: unknown) => {
+        log.error("search_index.file_index.failed", {
+          sessionId: id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
     }
 
     if (batch.length > 0) {
@@ -955,7 +1594,40 @@ export class SearchIndex {
 
     const title = extractSessionTitle(liveSession);
     const workspaceId = liveSession.workspaceId ?? "";
-    return meta.workspace_id === workspaceId && meta.title === title;
+    if (meta.workspace_id !== workspaceId || meta.title !== title) return false;
+    if (fingerprint.jsonlPath) this.ensureFileCursor(liveSession.id, fingerprint.jsonlPath);
+    return true;
+  }
+
+  /**
+   * An unchanged file indexed before the cursor columns existed has no offset.
+   * Record identity and the tail leaf without rewriting FTS, so the next turn
+   * reads only the append.
+   */
+  private ensureFileCursor(sessionId: string, jsonlPath: string): void {
+    const meta = this.getMeta(sessionId);
+    if (!meta || cursorFromMeta(meta)) return;
+    let fileStat: FileStat | null;
+    try {
+      fileStat = fileStatFrom(statSync(jsonlPath, { bigint: true }));
+    } catch {
+      return;
+    }
+    if (!fileStat) return;
+    this.upsertMeta(
+      sessionId,
+      jsonlPath,
+      Math.floor(fileStat.mtimeMs),
+      fileStat.size,
+      meta.workspace_id ?? "",
+      meta.title ?? "",
+      meta.durable_marker,
+      cursorForFile(
+        fileStat,
+        readBoundarySync(jsonlPath, fileStat.size),
+        leafIdFromFileTail(jsonlPath, fileStat.size),
+      ),
+    );
   }
 
   /**
@@ -1046,6 +1718,7 @@ export class SearchIndex {
     const sameIndexedMetadata = !!meta && meta.workspace_id === workspaceId && meta.title === title;
 
     if (sameTranscriptState && sameIndexedMetadata && ftsIds.has(sessionId)) {
+      if (jsonlPath) this.ensureFileCursor(sessionId, jsonlPath);
       result.skipped = 1;
       return result;
     }
@@ -1078,11 +1751,40 @@ export class SearchIndex {
           jsonlSize,
           workspaceId,
           title,
+          null,
+          meta ? cursorFromMeta(meta as FtsMetaRow) : null,
         );
         result.reindexed = 1;
         result.reusedIndexedTranscript = 1;
         return result;
       }
+    }
+
+    const incremental = jsonlPath ? this.readIncrementalTranscriptSync(sessionId, jsonlPath) : null;
+    if (incremental) {
+      this.upsertRow(
+        sessionId,
+        workspaceId,
+        title,
+        incremental.content.userMessages,
+        incremental.content.assistantMessages,
+        incremental.content.toolNames,
+      );
+      this.upsertMeta(
+        sessionId,
+        jsonlPath ?? null,
+        Math.floor(incremental.stat.mtimeMs),
+        incremental.stat.size,
+        workspaceId,
+        title,
+        null,
+        incremental.cursor,
+      );
+      result.reindexed = 1;
+      result.transcriptsRead = 1;
+      result.transcriptsReindexed = 1;
+      result.transcriptBytesRead = incremental.bytesRead;
+      return result;
     }
 
     const content = extractIndexedContent(liveSession, fileStat ? jsonlPath : undefined);
@@ -1107,6 +1809,8 @@ export class SearchIndex {
       jsonlSize,
       workspaceId,
       content.title,
+      null,
+      fileStat && jsonlPath ? this.cursorForIndexedFile(jsonlPath, content.leafId) : null,
     );
 
     if (meta) {
@@ -1516,11 +2220,23 @@ export class SearchIndex {
   // -------------------------------------------------------------------------
 
   close(): void {
-    this.closed = true;
     if (this.reindexTimer) {
       clearTimeout(this.reindexTimer);
-      this.flushPending();
+      this.reindexTimer = null;
     }
+    const pending = new Set([...this.pendingReindex, ...this.fileIndexJobs.keys()]);
+    this.pendingReindex.clear();
+    for (const sessionId of pending) {
+      try {
+        this.indexFileSessionSync(sessionId);
+      } catch (err: unknown) {
+        log.error("search_index.file_index.failed", {
+          sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    this.closed = true;
     this.db.close();
   }
 }
