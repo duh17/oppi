@@ -165,7 +165,8 @@ extension RemoteTheme {
             userMessageBg: Color(hex: c.userMessageBg) ?? bgHighlight,
             userMessageText: Color(hex: c.userMessageText) ?? fg,
             assistantMessageBg: c.assistantMessageBg.flatMap { Color(hex: $0) } ?? .clear,
-            userMessageAccent: c.userMessageAccent.flatMap { Color(hex: $0) } ?? blue,
+            // Opt-in: omitted or "" means no strip on the user card.
+            userMessageAccent: c.userMessageAccent.flatMap { Color(hex: $0) },
 
             toolPendingBg: Color(hex: c.toolPendingBg) ?? blue.opacity(0.12),
             toolSuccessBg: Color(hex: c.toolSuccessBg) ?? green.opacity(0.08),

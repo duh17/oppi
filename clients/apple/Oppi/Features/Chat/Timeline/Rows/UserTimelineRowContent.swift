@@ -222,6 +222,10 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         outerStack.alignment = .fill
         outerStack.spacing = 6
         outerStack.isLayoutMarginsRelativeArrangement = true
+        // The timeline scrolls under the navigation bar and composer. Safe-area
+        // margins would grow this row while it passes under them, stretching
+        // the card as it leaves or enters the screen.
+        outerStack.insetsLayoutMarginsFromSafeArea = false
         outerStack.directionalLayoutMargins = NSDirectionalEdgeInsets(
             top: TimelineSpeakerChrome.userTurnSpacingAbove,
             leading: 0,
@@ -248,11 +252,12 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
             imageStrip.heightAnchor.constraint(equalToConstant: Self.thumbnailSize),
         ])
 
-        // Bubble container — elevated user card with a leading accent bar.
+        // Bubble container — elevated user card; the fill marks it.
         bubbleContainer.translatesAutoresizingMaskIntoConstraints = false
         bubbleContainer.layer.cornerRadius = TimelineBubbleStyle.bubbleCornerRadius
         bubbleContainer.clipsToBounds = true
 
+        // Leading strip, shown only when a custom theme sets userMessageAccent.
         accentBar.translatesAutoresizingMaskIntoConstraints = false
         accentBar.isUserInteractionEnabled = false
         accentBar.isAccessibilityElement = false
@@ -432,18 +437,19 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
     }
 
     private func applySpeakerChrome(palette: ThemePalette) {
-        let accent = TimelineSpeakerChrome.userAccent(from: palette)
         bubbleContainer.backgroundColor = TimelineSpeakerChrome.userFill(
             from: palette,
             increasedContrast: currentConfiguration.increasedContrast
         )
+        let accent = TimelineSpeakerChrome.userAccent(from: palette)
         accentBar.backgroundColor = accent
-        accentBar.isHidden = false
+        accentBar.isHidden = accent == nil
         youCaption.textColor = UIColor(palette.userMessageText)
         youCaption.isHidden = !currentConfiguration.differentiateWithoutColor
         if currentConfiguration.increasedContrast {
             bubbleContainer.layer.borderWidth = TimelineSpeakerChrome.increasedContrastBorderWidth
-            bubbleContainer.layer.borderColor = accent.cgColor
+            bubbleContainer.layer.borderColor = TimelineSpeakerChrome
+                .increasedContrastBorder(from: palette).cgColor
         } else {
             bubbleContainer.layer.borderWidth = 0
             bubbleContainer.layer.borderColor = nil

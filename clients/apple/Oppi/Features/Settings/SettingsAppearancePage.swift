@@ -111,8 +111,9 @@ struct SettingsAppearancePage: View {
     Format and tokens
     - Read docs/themes.md in the Oppi repo (public user docs). It lists every token and what it paints.
     - Required: name, colorScheme ("dark" or "light"), and the color tokens in that doc
-    - Optional: assistantMessageBg (assistant row fill; omit or empty for no fill), userMessageAccent (3 pt bar on user rows; omit to use the theme blue)
-    - Contrast: text on fills ≥ 4.5:1; userMessageAccent versus bg ≥ 3:1
+    - User card: userMessageBg (fill) and userMessageText (text); assistant replies stay full width
+    - Optional: assistantMessageBg (assistant row fill; omit or empty for no fill), userMessageAccent (3 pt leading strip on user cards; omit or empty for no strip)
+    - Contrast: text on fills ≥ 4.5:1; userMessageAccent, when set, at least 3:1 against bg
 
     After writing the file, tell me the theme name so I can import it in Settings → Appearance → Custom Themes.
     """

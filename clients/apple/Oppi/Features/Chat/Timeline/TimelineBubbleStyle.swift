@@ -35,8 +35,9 @@ enum TimelineBubbleStyle {
 
 /// Speaker chrome for user vs assistant timeline rows.
 ///
-/// User rows are the only elevated card (fill + 3 pt leading accent).
-/// Assistant rows recede (clear fill in built-ins). Increase Contrast and
+/// User rows are the only elevated card: `userMessageBg` fill, plus a leading
+/// strip only when a custom theme sets `userMessageAccent`. Assistant rows
+/// stay full width and recede (clear fill in built-ins). Increase Contrast and
 /// Differentiate Without Color are resolved at the timeline controller and
 /// passed into each user row configuration.
 enum TimelineSpeakerChrome {
@@ -73,8 +74,15 @@ enum TimelineSpeakerChrome {
         return UIColor(palette.userMessageBg)
     }
 
-    static func userAccent(from palette: ThemePalette) -> UIColor {
-        UIColor(palette.userMessageAccent)
+    /// Nil unless the theme opts in; built-ins draw no strip.
+    static func userAccent(from palette: ThemePalette) -> UIColor? {
+        palette.userMessageAccent.map { UIColor($0) }
+    }
+
+    /// Increase Contrast outlines the user card in the theme's accent, or in
+    /// the card's own text color, which already clears 4.5:1 on the fill.
+    static func increasedContrastBorder(from palette: ThemePalette) -> UIColor {
+        userAccent(from: palette) ?? UIColor(palette.userMessageText)
     }
 
     static func assistantFill(from palette: ThemePalette) -> UIColor {
@@ -83,7 +91,7 @@ enum TimelineSpeakerChrome {
     }
 
     /// Stronger user fills when Increase Contrast is on. Built-ins only;
-    /// custom themes keep their `userMessageBg` and gain the accent border.
+    /// custom themes keep their `userMessageBg` and gain the border.
     static func increasedContrastFill(for themeID: ThemeID) -> UIColor? {
         switch themeID {
         case .dark: return rgb(0x4A5680)

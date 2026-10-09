@@ -35,8 +35,9 @@ struct ThemePalette: Sendable, ProviderIconTintPalette {
     let userMessageText: Color
     /// Assistant row fill. Built-ins use `Color.clear` (no wash).
     let assistantMessageBg: Color
-    /// Leading accent on the user card. Built-ins use `blue` (Night uses amber).
-    let userMessageAccent: Color
+    /// Optional leading strip on the user card. Built-ins use `nil` (no
+    /// strip); a custom theme opts in with `userMessageAccent`.
+    let userMessageAccent: Color?
 
     // ── Tool state (5) ──
     let toolPendingBg: Color
@@ -260,7 +261,7 @@ enum ThemePalettes {
         userMessageBg: c(0x3A4568),
         userMessageText: c(0xC8D1EB),
         assistantMessageBg: .clear,
-        userMessageAccent: c(0x7AA2F7),
+        userMessageAccent: nil,
         // Tool state
         toolPendingBg: c(0x7AA2F7).opacity(0.13),
         toolSuccessBg: c(0x8FBE78).opacity(0.10),
@@ -326,7 +327,7 @@ enum ThemePalettes {
         userMessageBg: c(0x243044),
         userMessageText: c(0xC5CEEA),
         assistantMessageBg: .clear,
-        userMessageAccent: c(0x7A9DD5),
+        userMessageAccent: nil,
         // Tool state
         toolPendingBg: c(0x7A9DD5).opacity(0.12),
         toolSuccessBg: c(0x85BF8A).opacity(0.08),
@@ -395,7 +396,7 @@ enum ThemePalettes {
         userMessageBg: c(0x3A3226),
         userMessageText: c(0xC8BFB0),
         assistantMessageBg: .clear,
-        userMessageAccent: c(0xC49468),
+        userMessageAccent: nil,
         // Tool state
         toolPendingBg: c(0xC49468).opacity(0.10),
         toolSuccessBg: c(0x7C9C6E).opacity(0.08),
@@ -461,7 +462,7 @@ enum ThemePalettes {
         userMessageBg: c(0xD1CDC6),
         userMessageText: c(0x3A3330),
         assistantMessageBg: .clear,
-        userMessageAccent: c(0x2966A8),
+        userMessageAccent: nil,
         // Tool state
         toolPendingBg: c(0xE2E0DA),
         toolSuccessBg: c(0xE2EADB),

@@ -21,7 +21,7 @@ Create custom color themes for the Oppi iOS app. A theme is one JSON file with 4
 - `colorScheme` — `"dark"` or `"light"`; controls the status bar and system chrome
 - `colors` — object with the 49 required keys below; each is a `#RRGGBB` hex string. `assistantMessageBg` and `userMessageAccent` are optional.
 
-The 49 required keys must be present. Use `""` (an empty string) to use the default for that token. Omit the two optional speaker tokens to get no assistant fill and `blue` as the user accent.
+The 49 required keys must be present. Use `""` (an empty string) to use the default for that token. Omit the two optional speaker tokens to get no assistant fill and no strip on the user card.
 
 ## Color tokens
 
@@ -53,7 +53,7 @@ The foundation. With default values, every other group derives from these tokens
 | `userMessageBg`       | User card fill (the only elevated chat card)                            |
 | `userMessageText`     | Text color in user cards                                                |
 | `assistantMessageBg`  | Optional assistant fill. Omit or empty: no fill                         |
-| `userMessageAccent`   | Optional 3 pt leading bar on the user card. Omit: theme `blue`          |
+| `userMessageAccent`   | Optional 3 pt leading strip on the user card. Omit or empty: no strip   |
 
 ### Tool state (5)
 

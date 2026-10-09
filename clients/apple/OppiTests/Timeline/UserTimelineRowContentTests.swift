@@ -745,8 +745,11 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
-    @Test("user row paints a leading accent bar from userMessageAccent")
-    func userRowPaintsLeadingAccentBar() throws {
+    @Test("built-in themes paint no accent strip on the user card")
+    func builtInUserCardLeadingEdgeIsUserFill() throws {
+        let originalTheme = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(originalTheme) }
+        ThemeRuntimeState.setThemeID(.dark)
         let palette = ThemeRuntimeState.currentPalette()
         let view = UserTimelineRowContentView(
             configuration: UserTimelineRowConfiguration(
@@ -762,16 +765,103 @@ struct UserTimelineRowContentTests {
         view.setNeedsLayout()
         view.layoutIfNeeded()
 
-        let accent = try #require(userMessageAccentBar(in: view))
-        #expect(accent.isHidden == false)
-        #expect(color(accent.backgroundColor, approximatelyEquals: UIColor(palette.userMessageAccent)))
-        let accentWidth = accent.constraints.first { $0.firstAttribute == .width }?.constant
-        #expect(accentWidth == TimelineSpeakerChrome.accentBarWidth)
+        let bubble = try #require(userMessageBubbleContainer(in: view))
+        let fill = TimelineSpeakerChrome.userFill(from: palette, increasedContrast: false)
+            .resolvedColor(with: view.traitCollection)
+        // The retired accent covered x 0..<3 for the full card height.
+        for x in [CGFloat(1), 2, 5] {
+            let pixel = renderedPixel(of: bubble, at: CGPoint(x: x, y: bubble.bounds.midY))
+            #expect(color(pixel, approximatelyEquals: fill, tolerance: 0.02), "x=\(x)")
+        }
+        #expect(bubble.layer.borderWidth == 0)
         #expect(userMessageYouCaption(in: view)?.isHidden == true)
     }
 
     @MainActor
-    @Test("Increase Contrast uses a stronger user fill and accent border")
+    @Test("custom theme userMessageAccent and userMessageBg paint the user card")
+    func customThemeAccentPaintsLeadingStrip() throws {
+        let originalTheme = ThemeRuntimeState.currentThemeID()
+        let name = "speaker-accent-\(UUID().uuidString)"
+        defer {
+            ThemeRuntimeState.setThemeID(originalTheme)
+            CustomThemeStore.delete(name: name)
+        }
+        CustomThemeStore.save(makeSpeakerTheme(
+            name: name,
+            userMessageBg: "#203040",
+            userMessageAccent: "#ff79c6"
+        ))
+        ThemeRuntimeState.setThemeID(.custom(name))
+
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: "Hello",
+                images: [],
+                canFork: false,
+                onFork: nil
+            )
+        )
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 160)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let bubble = try #require(userMessageBubbleContainer(in: view))
+        let midY = bubble.bounds.midY
+        let strip = renderedPixel(of: bubble, at: CGPoint(x: 1, y: midY))
+        let fill = renderedPixel(of: bubble, at: CGPoint(x: 5, y: midY))
+        #expect(color(strip, approximatelyEquals: UIColor(red: 1, green: 121 / 255, blue: 198 / 255, alpha: 1), tolerance: 0.02))
+        #expect(color(fill, approximatelyEquals: UIColor(red: 32 / 255, green: 48 / 255, blue: 64 / 255, alpha: 1), tolerance: 0.02))
+    }
+
+    /// The timeline extends under the navigation bar and composer. A user row
+    /// passing under them must keep its measured layout instead of growing by
+    /// the safe-area overlap (the card stretched as it scrolled off screen).
+    @MainActor
+    @Test("user row layout ignores the safe area it scrolls under")
+    func userRowLayoutIgnoresSafeAreaOverlap() throws {
+        let host = UIViewController()
+        host.additionalSafeAreaInsets = UIEdgeInsets(top: 100, left: 0, bottom: 0, right: 0)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        func bubbleTop(atY y: CGFloat) throws -> (top: CGFloat, height: CGFloat) {
+            let view = UserTimelineRowContentView(
+                configuration: UserTimelineRowConfiguration(
+                    text: "Hello",
+                    images: [],
+                    canFork: false,
+                    onFork: nil
+                )
+            )
+            host.view.addSubview(view)
+            defer { view.removeFromSuperview() }
+            view.frame = CGRect(x: 0, y: y, width: 390, height: 60)
+            let fitted = view.systemLayoutSizeFitting(
+                CGSize(width: 390, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            )
+            view.frame.size.height = fitted.height
+            view.layoutIfNeeded()
+            let bubble = try #require(userMessageBubbleContainer(in: view))
+            return (bubble.convert(bubble.bounds, to: view).minY, fitted.height)
+        }
+
+        let underBar = try bubbleTop(atY: 0)
+        let clear = try bubbleTop(atY: 400)
+        #expect(host.view.safeAreaInsets.top >= 100)
+        #expect(underBar.top == TimelineSpeakerChrome.userTurnSpacingAbove)
+        #expect(underBar.top == clear.top)
+        #expect(underBar.height == clear.height)
+    }
+
+    @MainActor
+    @Test("Increase Contrast uses a stronger user fill and a text-colored border")
     func userRowIncreaseContrastUsesStrongerFillAndBorder() throws {
         let originalTheme = ThemeRuntimeState.currentThemeID()
         defer { ThemeRuntimeState.setThemeID(originalTheme) }
@@ -793,6 +883,11 @@ struct UserTimelineRowContentTests {
         let expected = try #require(TimelineSpeakerChrome.increasedContrastFill(for: .dark))
         #expect(color(bubble.backgroundColor, approximatelyEquals: expected))
         #expect(abs(bubble.layer.borderWidth - TimelineSpeakerChrome.increasedContrastBorderWidth) <= 0.01)
+        let border = try #require(bubble.layer.borderColor)
+        #expect(color(
+            UIColor(cgColor: border),
+            approximatelyEquals: UIColor(ThemePalettes.dark.userMessageText)
+        ))
     }
 
     @MainActor
@@ -816,8 +911,6 @@ struct UserTimelineRowContentTests {
         #expect(caption.isHidden == false)
         #expect(caption.text == "You")
         #expect(color(caption.textColor, approximatelyEquals: UIColor(palette.userMessageText)))
-        let accent = try #require(userMessageAccentBar(in: view))
-        #expect(accent.isHidden == false)
     }
 
     @MainActor
@@ -1695,9 +1788,85 @@ private func userMessageBubbleContainer(in view: UserTimelineRowContentView) -> 
     Mirror(reflecting: view).children.first { $0.label == "bubbleContainer" }?.value as? UIView
 }
 
+/// Full theme JSON for speaker-chrome tests; only the user tokens vary.
+private func makeSpeakerTheme(
+    name: String,
+    userMessageBg: String,
+    userMessageAccent: String?
+) -> RemoteTheme {
+    RemoteTheme(
+        name: name,
+        colorScheme: "dark",
+        colors: RemoteThemeColors(
+            bg: "#1a1b26", bgDark: "#16161e", bgHighlight: "#292e42",
+            fg: "#c0caf5", fgDim: "#565f89", comment: "#565f89",
+            blue: "#7aa2f7", cyan: "#7dcfff", green: "#9ece6a",
+            orange: "#ff9e64", purple: "#bb9af7", red: "#f7768e",
+            yellow: "#e0af68", thinkingText: "#565f89",
+            userMessageBg: userMessageBg, userMessageText: "#f8f8f2",
+            userMessageAccent: userMessageAccent,
+            toolPendingBg: "#292e42", toolSuccessBg: "#1e3a2e",
+            toolErrorBg: "#3a1e1e", toolTitle: "#c0caf5", toolOutput: "#565f89",
+            mdHeading: "#7aa2f7", mdLink: "#7dcfff", mdLinkUrl: "#565f89",
+            mdCode: "#7dcfff", mdCodeBlock: "#9ece6a",
+            mdCodeBlockBorder: "#292e42", mdQuote: "#565f89",
+            mdQuoteBorder: "#292e42", mdHr: "#292e42",
+            mdListBullet: "#ff9e64",
+            toolDiffAdded: "#9ece6a", toolDiffRemoved: "#f7768e",
+            toolDiffContext: "#565f89",
+            syntaxComment: "#565f89", syntaxKeyword: "#bb9af7",
+            syntaxFunction: "#7aa2f7", syntaxVariable: "#c0caf5",
+            syntaxString: "#9ece6a", syntaxNumber: "#ff9e64",
+            syntaxType: "#7dcfff", syntaxOperator: "#c0caf5",
+            syntaxPunctuation: "#565f89",
+            thinkingOff: "#292e42", thinkingMinimal: "#565f89",
+            thinkingLow: "#7aa2f7", thinkingMedium: "#7dcfff",
+            thinkingHigh: "#bb9af7", thinkingXhigh: "#f7768e"
+        )
+    )
+}
+
+/// Renders `view` at 1x and returns the color at `point` (view coordinates).
 @MainActor
-private func userMessageAccentBar(in view: UserTimelineRowContentView) -> UIView? {
-    Mirror(reflecting: view).children.first { $0.label == "accentBar" }?.value as? UIView
+private func renderedPixel(of view: UIView, at point: CGPoint) -> UIColor? {
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    format.opaque = false
+    let image = UIGraphicsImageRenderer(bounds: view.bounds, format: format).image { context in
+        view.layer.render(in: context.cgContext)
+    }
+    guard let cgImage = image.cgImage else { return nil }
+    var rgba = [UInt8](repeating: 0, count: 4)
+    let drewPixel = rgba.withUnsafeMutableBytes { buffer -> Bool in
+        guard let context = CGContext(
+            data: buffer.baseAddress,
+            width: 1,
+            height: 1,
+            bitsPerComponent: 8,
+            bytesPerRow: 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return false }
+        // Shift the image so the requested pixel lands on the 1x1 canvas.
+        let flippedY = CGFloat(cgImage.height) - point.y - 1
+        context.draw(
+            cgImage,
+            in: CGRect(
+                x: -floor(point.x),
+                y: -floor(flippedY),
+                width: CGFloat(cgImage.width),
+                height: CGFloat(cgImage.height)
+            )
+        )
+        return true
+    }
+    guard drewPixel else { return nil }
+    return UIColor(
+        red: CGFloat(rgba[0]) / 255,
+        green: CGFloat(rgba[1]) / 255,
+        blue: CGFloat(rgba[2]) / 255,
+        alpha: CGFloat(rgba[3]) / 255
+    )
 }
 
 @MainActor

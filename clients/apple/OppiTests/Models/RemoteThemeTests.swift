@@ -71,7 +71,8 @@ struct RemoteThemeTests {
             assistantAlpha = resolved.cgColor.alpha
         }
         #expect(assistantAlpha < 0.02)
-        #expect(remoteThemeColor(palette.userMessageAccent, approximatelyEquals: palette.blue))
+        // Opt-in strip: omitting the token means no strip, not the theme blue.
+        #expect(palette.userMessageAccent == nil)
     }
 
     @Test func decodesThemeProvidingOptionalSpeakerTokens() throws {
@@ -84,8 +85,11 @@ struct RemoteThemeTests {
         #expect(theme.colors.assistantMessageBg == "#1b1c28")
         #expect(theme.colors.userMessageAccent == "#ff79c6")
         let palette = try #require(theme.toPalette())
+        let accent = try #require(palette.userMessageAccent)
+        #expect(remoteThemeColor(accent, approximatelyEquals: Color(red: 1, green: 121 / 255, blue: 198 / 255)))
         #expect(remoteThemeColor(palette.assistantMessageBg, approximatelyEquals: Color(red: 27 / 255, green: 28 / 255, blue: 40 / 255)))
-        #expect(remoteThemeColor(palette.userMessageAccent, approximatelyEquals: Color(red: 1, green: 121 / 255, blue: 198 / 255)))
+        #expect(remoteThemeColor(palette.userMessageBg, approximatelyEquals: Color(red: 68 / 255, green: 71 / 255, blue: 90 / 255)))
+        #expect(remoteThemeColor(palette.userMessageText, approximatelyEquals: Color(red: 248 / 255, green: 248 / 255, blue: 242 / 255)))
     }
 
     @Test func toPaletteFallsBackForInvalidSemanticHex() throws {

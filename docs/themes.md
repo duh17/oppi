@@ -76,22 +76,25 @@ Apply a theme: **Settings → Appearance**, then pick it in the theme picker aft
 
 `colorScheme` is `"dark"` or `"light"` and drives status bar and system chrome. Each color is `#RRGGBB`. Use `""` on a required token to take the app default for that key.
 
-Optional speaker tokens (omit both to keep the built-in layout: user card elevated, assistant with no fill):
+Your prompts are a card filled with `userMessageBg` and written in `userMessageText`. Assistant replies always span the full width. Two optional tokens change that look:
 
 ```json
 {
-  "assistantMessageBg": "",
+  "assistantMessageBg": "#1E2233",
   "userMessageAccent": "#7AA2F7"
 }
 ```
 
+`assistantMessageBg` fills assistant replies. `userMessageAccent` adds a 3 pt strip on the leading edge of your prompt card. Omit either, or set `""`, to keep the built-in look: no assistant fill and no strip.
+
 ## Contrast
 
 - Text on a fill (user text on `userMessageBg`, assistant text on `assistantMessageBg` or on `bg` when that fill is empty) must be at least **4.5:1**.
-- `userMessageAccent` versus `bg` must be at least **3:1**. That bar is the graphic that marks the user row; do not rely on fill hue alone.
+- Keep `userMessageBg` visibly apart from `bg` (and from `assistantMessageBg` when you set it) so your prompts stand out.
+- If you set `userMessageAccent`, keep it at least **3:1** against `bg`.
 - Assistant rows recede. Leave `assistantMessageBg` unset or empty unless you want a wash, and keep that wash close to `bg`.
 
-iOS **Increase Contrast** uses a stronger built-in user fill plus a 1.5 pt accent border. **Differentiate Without Color** keeps the accent bar and adds a "You" caption on user rows. Custom themes still get the bar and caption; they do not get the built-in stronger fills.
+iOS **Increase Contrast** uses a stronger built-in user fill plus a 1.5 pt border in `userMessageAccent`, or `userMessageText` when the theme has no accent. **Differentiate Without Color** adds a "You" caption on user rows. Custom themes get the border and caption; they do not get the built-in stronger fills.
 
 ## Token list
 
@@ -105,10 +108,10 @@ iOS **Increase Contrast** uses a stronger built-in user fill plus a 1.5 pt accen
 | `fg` | Primary text, including assistant body |
 | `fgDim` | Secondary text |
 | `comment` | Muted labels, timestamps |
-| `blue` | Accent; default `userMessageAccent` |
+| `blue` | Accent |
 | `cyan` | Types, inline code, teal chrome |
 | `green` | Strings, success |
-| `orange` | Numbers, warnings; Night's user accent |
+| `orange` | Numbers, warnings |
 | `purple` | Keywords |
 | `red` | Errors, removals |
 | `yellow` | Decorators |
@@ -121,7 +124,7 @@ iOS **Increase Contrast** uses a stronger built-in user fill plus a 1.5 pt accen
 | `userMessageBg` | User card fill (the only elevated chat card) |
 | `userMessageText` | User card text |
 | `assistantMessageBg` | Optional assistant fill. Omit or empty: no fill |
-| `userMessageAccent` | Optional 3 pt leading bar on the user card. Omit: `blue` |
+| `userMessageAccent` | Optional 3 pt leading strip on the user card. Omit or empty: no strip |
 
 ### Tool state (5)
 

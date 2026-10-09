@@ -32,11 +32,10 @@ struct ThemePaletteBuiltinTests {
         // Thinking text (1)
         _ = p.thinkingText
 
-        // User / assistant message (4)
+        // User / assistant message (3 + optional accent)
         _ = p.userMessageBg
         _ = p.userMessageText
         _ = p.assistantMessageBg
-        _ = p.userMessageAccent
 
         // Tool state (5)
         _ = p.toolPendingBg
@@ -120,13 +119,25 @@ struct ThemePaletteBuiltinTests {
         }
     }
 
-    @Test func builtInUserAccentVersusBackgroundMeetsNonText() {
+    @Test func builtInThemesDrawNoUserAccentStrip() {
+        for themeID in ThemeID.builtins {
+            #expect(
+                TimelineSpeakerChrome.userAccent(from: themeID.palette) == nil,
+                "\(themeID.rawValue) has a user accent strip"
+            )
+        }
+    }
+
+    /// Built-ins draw no accent strip, so the Increase Contrast border is the
+    /// graphic that outlines the user card against the chat background.
+    @Test func increasedContrastUserBorderVersusBackgroundMeetsNonText() {
         for themeID in ThemeID.builtins {
             let palette = themeID.palette
-            let ratio = wcagContrast(palette.userMessageAccent, palette.bg)
+            let border = Color(TimelineSpeakerChrome.increasedContrastBorder(from: palette))
+            let ratio = wcagContrast(border, palette.bg)
             #expect(
                 ratio + 1e-6 >= 3.0,
-                "\(themeID.rawValue) accent vs bg \(ratio)"
+                "\(themeID.rawValue) IC border vs bg \(ratio)"
             )
         }
     }
