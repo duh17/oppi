@@ -112,12 +112,10 @@ async function harness() {
       ensureSessionContextWindow: (s: Session) => s,
     } as never,
     helpers as never,
-    () => session,
-    () => session,
   );
   const server: Server = createServer((req, res) => {
     void handlers
-      .handleGetFullToolOutput("w1", "sess-1", "tc", req, res, req.method)
+      .handleGetFullToolOutputForSession(session, "tc", req, res, req.method)
       .catch((error) => res.destroy(error));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

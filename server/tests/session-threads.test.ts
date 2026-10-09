@@ -58,9 +58,10 @@ function routes(
     models?: Record<string, { short?: number; long?: number }>;
     live?: Record<string, ReturnType<RouteContext["sessionRuntimes"]["getPromptCacheRuntime"]>>;
   } = {},
+  startSession = vi.fn(async (sessionId: string) => store.getSession(sessionId)!),
 ) {
   const ctx = {
-    sessions: { mobileRenderer: new MobileRendererRegistry() },
+    sessions: { mobileRenderer: new MobileRendererRegistry(), startSession },
     storage: store,
     sessionRuntimes: {
       sendSteer,
@@ -72,7 +73,7 @@ function routes(
     ensureSessionContextWindow: (session: Session) => session,
     getModelPromptCache: (model: string | undefined) => (model ? cache.models?.[model] : undefined),
   } as unknown as RouteContext;
-  return { dispatch: createSessionRoutes(ctx, createRouteHelpers()), sendSteer };
+  return { dispatch: createSessionRoutes(ctx, createRouteHelpers()), sendSteer, startSession };
 }
 
 function withCaller(req: IncomingMessage, callerId?: string): IncomingMessage {
@@ -196,6 +197,39 @@ describe("session interaction recording", () => {
     const [stop] = store.listSessionInteractions([target.id]);
     expect(stop).toMatchObject({ fromSessionId: caller.id, toSessionId: target.id, kind: "stop" });
     expect(stop.at).toBeLessThan(store.getSession(target.id)!.lastActivity);
+  });
+
+  it("records caller interactions on control-session stop and resume", async () => {
+    const caller = seed("Orchestrator", 1_000, undefined, "ready");
+    const target = store.createSession("Control");
+    target.workspaceId = undefined;
+    target.status = "ready";
+    target.runtime = "oppi";
+    target.control = { domain: "agents", intent: "create" };
+    store.saveSession(target);
+    const { dispatch, startSession } = routes();
+
+    const stopRes = await send(dispatch, `/control-sessions/${target.id}/stop`, {}, caller.id);
+    expect(stopRes.statusCode).toBe(200);
+    expect(store.listSessionInteractions([target.id])).toEqual([
+      expect.objectContaining({
+        fromSessionId: caller.id,
+        toSessionId: target.id,
+        kind: "stop",
+      }),
+    ]);
+
+    const resumeRes = await send(dispatch, `/control-sessions/${target.id}/resume`, {}, caller.id);
+    expect(resumeRes.statusCode).toBe(200);
+    expect(startSession).toHaveBeenCalledWith(target.id, undefined);
+    expect(store.listSessionInteractions([target.id])).toEqual([
+      expect.objectContaining({ kind: "stop" }),
+      expect.objectContaining({
+        fromSessionId: caller.id,
+        toSessionId: target.id,
+        kind: "resume",
+      }),
+    ]);
   });
 
   it("keeps a delivered command successful when the audit write fails", () => {

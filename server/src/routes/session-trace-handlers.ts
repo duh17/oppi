@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { performance } from "node:perf_hooks";
 import { gzipSync } from "node:zlib";
 import { SessionTraceService, type SessionTraceViewMode } from "../session-trace-service.js";
+import { admitSessionRoute } from "../session-route-scope.js";
 import type { Session, SessionEventsResponse } from "../types.js";
 import { getSessionAttachment, streamSessionAttachment } from "../session-attachments.js";
 import { streamFullToolOutputSidecar } from "../tool-output-sidecar.js";
@@ -17,13 +18,6 @@ function decodeToolCallId(toolCallId: string): string {
   }
 }
 
-type RequireWorkspaceSession = (
-  workspaceId: string,
-  sessionId: string,
-  res: ServerResponse,
-) => Session | null;
-type RequireSession = (sessionId: string, res: ServerResponse) => Session | null;
-
 type SessionTraceRouteHandlers = {
   handleGetInputCardOutput: (
     session: Session,
@@ -31,14 +25,6 @@ type SessionTraceRouteHandlers = {
     res: ServerResponse,
   ) => Promise<void>;
   sessionFileHandlers: ReturnType<typeof createSessionFileHandlers>;
-  handleGetFullToolOutput: (
-    workspaceId: string,
-    sessionId: string,
-    toolCallId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-    method?: string,
-  ) => Promise<void>;
   handleGetSessionAttachment: (
     sessionId: string,
     attachmentId: string,
@@ -46,45 +32,7 @@ type SessionTraceRouteHandlers = {
     res: ServerResponse,
     method: string,
   ) => Promise<void>;
-  handleGetToolOutput: (
-    workspaceId: string,
-    sessionId: string,
-    toolCallId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ) => Promise<void>;
-  handleGetSessionOverallDiff: (
-    workspaceId: string,
-    sessionId: string,
-    url: URL,
-    res: ServerResponse,
-  ) => Promise<void>;
-  handleGetSessionEvents: (
-    workspaceId: string,
-    sessionId: string,
-    url: URL,
-    res: ServerResponse,
-  ) => void;
-  handleGetSession: (
-    req: IncomingMessage,
-    workspaceId: string,
-    sessionId: string,
-    url: URL,
-    res: ServerResponse,
-  ) => Promise<void>;
-  handleGetSessionTracePage: (
-    req: IncomingMessage,
-    workspaceId: string,
-    sessionId: string,
-    url: URL,
-    res: ServerResponse,
-  ) => Promise<void>;
-  handleGetSessionTraceOutline: (
-    req: IncomingMessage,
-    workspaceId: string,
-    sessionId: string,
-    res: ServerResponse,
-  ) => Promise<void>;
+  handleGetSessionOverallDiff: (session: Session, url: URL, res: ServerResponse) => Promise<void>;
   handleGenericGetSession: (sessionId: string, res: ServerResponse) => Promise<void>;
   handleGenericGetSessionTrace: (
     req: IncomingMessage,
@@ -130,8 +78,6 @@ type SessionTraceRouteHandlers = {
 export function createSessionTraceRouteHandlers(
   ctx: RouteContext,
   helpers: RouteHelpers,
-  requireWorkspaceSession: RequireWorkspaceSession,
-  requireSession: RequireSession,
 ): SessionTraceRouteHandlers {
   const traceService = new SessionTraceService({
     storage: ctx.storage,
@@ -141,6 +87,13 @@ export function createSessionTraceRouteHandlers(
     getMcpServerNames: (session) => ctx.mcp?.configuredServerNames(session.workspaceId) ?? [],
   });
   const sessionFileHandlers = createSessionFileHandlers(ctx, helpers, traceService);
+
+  function requireSession(sessionId: string, res: ServerResponse): Session | null {
+    const result = admitSessionRoute(ctx.storage, { scope: "generic", sessionId });
+    if (result.kind === "ok") return result.session;
+    helpers.error(res, 404, "Session not found");
+    return null;
+  }
 
   async function handleGetInputCardOutput(
     session: Session,
@@ -159,19 +112,6 @@ export function createSessionTraceRouteHandlers(
   }
 
   // ─── Tool Output by ID ───
-
-  async function handleGetFullToolOutput(
-    workspaceId: string,
-    sessionId: string,
-    toolCallId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-    method = "GET",
-  ): Promise<void> {
-    const session = requireWorkspaceSession(workspaceId, sessionId, res);
-    if (!session) return;
-    await handleGetFullToolOutputForSession(session, toolCallId, req, res, method);
-  }
 
   async function handleGetFullToolOutputForSession(
     session: Session,
@@ -218,11 +158,8 @@ export function createSessionTraceRouteHandlers(
     res: ServerResponse,
     method: string,
   ): Promise<void> {
-    const session = ctx.storage.getSession(sessionId);
-    if (!session) {
-      helpers.error(res, 404, "Session not found");
-      return;
-    }
+    const session = requireSession(sessionId, res);
+    if (!session) return;
 
     const attachment = await getSessionAttachment(
       ctx.storage.getDataDir(),
@@ -235,19 +172,6 @@ export function createSessionTraceRouteHandlers(
     }
 
     streamSessionAttachment(attachment, req, res, method);
-  }
-
-  async function handleGetToolOutput(
-    workspaceId: string,
-    sessionId: string,
-    toolCallId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const session = requireWorkspaceSession(workspaceId, sessionId, res);
-    if (!session) return;
-
-    await handleGetToolOutputForSession(session, toolCallId, req, res);
   }
 
   async function handleGetToolOutputForSession(
@@ -266,14 +190,10 @@ export function createSessionTraceRouteHandlers(
   }
 
   async function handleGetSessionOverallDiff(
-    workspaceId: string,
-    sessionId: string,
+    session: Session,
     url: URL,
     res: ServerResponse,
   ): Promise<void> {
-    const session = requireWorkspaceSession(workspaceId, sessionId, res);
-    if (!session) return;
-
     const reqPath = url.searchParams.get("path")?.trim();
     if (!reqPath) {
       helpers.error(res, 400, "path parameter required");
@@ -342,17 +262,6 @@ export function createSessionTraceRouteHandlers(
     helpers.json(res, body);
   }
 
-  function handleGetSessionEvents(
-    workspaceId: string,
-    sessionId: string,
-    url: URL,
-    res: ServerResponse,
-  ): void {
-    const session = requireWorkspaceSession(workspaceId, sessionId, res);
-    if (!session) return;
-    writeSessionEvents(session, url, res);
-  }
-
   function handleGetSessionEventsForSession(session: Session, url: URL, res: ServerResponse): void {
     writeSessionEvents(session, url, res);
   }
@@ -360,19 +269,6 @@ export function createSessionTraceRouteHandlers(
   function resolveTraceView(url: URL): SessionTraceViewMode {
     const view = url.searchParams.get("view");
     return view === "full" ? "full" : "context";
-  }
-
-  async function handleGetSession(
-    req: IncomingMessage,
-    workspaceId: string,
-    sessionId: string,
-    url: URL,
-    res: ServerResponse,
-  ): Promise<void> {
-    const session = requireWorkspaceSession(workspaceId, sessionId, res);
-    if (!session) return;
-
-    await handleGetSessionForSession(req, session, url, res);
   }
 
   async function handleGetSessionForSession(
@@ -420,19 +316,6 @@ export function createSessionTraceRouteHandlers(
     };
   }
 
-  async function handleGetSessionTracePage(
-    req: IncomingMessage,
-    workspaceId: string,
-    sessionId: string,
-    url: URL,
-    res: ServerResponse,
-  ): Promise<void> {
-    const session = requireWorkspaceSession(workspaceId, sessionId, res);
-    if (!session) return;
-
-    await handleGetSessionTracePageForSession(req, session, url, res);
-  }
-
   async function handleGetSessionTracePageForSession(
     req: IncomingMessage,
     session: Session,
@@ -467,18 +350,6 @@ export function createSessionTraceRouteHandlers(
       return;
     }
     helpers.compressedJson(req, res, attachTracePageResponseMetrics(result));
-  }
-
-  async function handleGetSessionTraceOutline(
-    req: IncomingMessage,
-    workspaceId: string,
-    sessionId: string,
-    res: ServerResponse,
-  ): Promise<void> {
-    const session = requireWorkspaceSession(workspaceId, sessionId, res);
-    if (!session) return;
-
-    await handleGetSessionTraceOutlineForSession(req, session, res);
   }
 
   async function handleGetSessionTraceOutlineForSession(
@@ -609,14 +480,8 @@ export function createSessionTraceRouteHandlers(
 
   return {
     sessionFileHandlers,
-    handleGetFullToolOutput,
     handleGetSessionAttachment,
-    handleGetToolOutput,
     handleGetSessionOverallDiff,
-    handleGetSessionEvents,
-    handleGetSession,
-    handleGetSessionTracePage,
-    handleGetSessionTraceOutline,
     handleGenericGetSession,
     handleGenericGetSessionTrace,
     handleGenericGetSessionDialogs,

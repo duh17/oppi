@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute } from "node:path";
 
 import { isControlRouteSession } from "../control-session.js";
+import { admitSessionRoute } from "../session-route-scope.js";
 import {
   listTimedTextSidecars,
   resolveCurrentFilePath,
@@ -59,10 +60,12 @@ export function createHostFileRoutes(
   /** Control sessions share one server-owned cwd; invalid roots fail closed. */
   function controlSessionCwd(sessionId: string | null): string | null {
     if (!sessionId) return null;
-    const session = ctx.storage.getSession(sessionId);
-    if (!session || !isControlRouteSession(session)) return null;
+    const admitted = admitSessionRoute(ctx.storage, { scope: "control", sessionId });
+    if (admitted.kind !== "ok") return null;
     try {
-      return resolveSdkSessionCwd(undefined, session, { dataDir: ctx.storage.getDataDir() });
+      return resolveSdkSessionCwd(undefined, admitted.session, {
+        dataDir: ctx.storage.getDataDir(),
+      });
     } catch {
       // The runtime rejects symlinked/non-directory control roots. File reads
       // must reject the same invalid origin, not follow it to alternate bytes.

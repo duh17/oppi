@@ -8,7 +8,7 @@ import {
   uploadRecordToAttachmentRef,
   writeUploadContent,
 } from "../uploads/local-upload-store.js";
-import { isControlRouteSession } from "../control-session.js";
+import { admitSessionRoute } from "../session-route-scope.js";
 
 async function parseUploadCreateBody(
   req: IncomingMessage,
@@ -28,19 +28,40 @@ export function createUploadRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
     sessionId: string,
     res: ServerResponse,
   ): boolean {
-    const workspace = ctx.storage.getWorkspace(workspaceId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return false;
+    const result = admitSessionRoute(ctx.storage, {
+      scope: "workspace",
+      workspaceId,
+      sessionId,
+    });
+    switch (result.kind) {
+      case "ok":
+        return true;
+      case "workspace-missing":
+        helpers.error(res, 404, "Workspace not found");
+        return false;
+      case "session-missing":
+      case "wrong-workspace":
+        helpers.error(res, 404, "Session not found");
+        return false;
+      case "not-control":
+        return false;
     }
+  }
 
-    const session = ctx.storage.getSession(sessionId);
-    if (!session || session.workspaceId !== workspaceId) {
-      helpers.error(res, 404, "Session not found");
-      return false;
+  function validateControlSession(sessionId: string, res: ServerResponse): boolean {
+    const result = admitSessionRoute(ctx.storage, { scope: "control", sessionId });
+    switch (result.kind) {
+      case "ok":
+        return true;
+      case "session-missing":
+        helpers.error(res, 404, "Session not found");
+        return false;
+      case "not-control":
+        helpers.error(res, 400, "Session is not a control session");
+        return false;
+      default:
+        return false;
     }
-
-    return true;
   }
 
   async function handleCreateUpload(
@@ -51,16 +72,8 @@ export function createUploadRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
   ): Promise<void> {
     if (workspaceId) {
       if (!validateWorkspaceSession(workspaceId, sessionId, res)) return;
-    } else {
-      const session = ctx.storage.getSession(sessionId);
-      if (!session) {
-        helpers.error(res, 404, "Session not found");
-        return;
-      }
-      if (!isControlRouteSession(session)) {
-        helpers.error(res, 400, "Session is not a control session");
-        return;
-      }
+    } else if (!validateControlSession(sessionId, res)) {
+      return;
     }
 
     try {
@@ -114,16 +127,8 @@ export function createUploadRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
   ): Promise<void> {
     if (workspaceId) {
       if (!validateWorkspaceSession(workspaceId, sessionId, res)) return;
-    } else {
-      const session = ctx.storage.getSession(sessionId);
-      if (!session) {
-        helpers.error(res, 404, "Session not found");
-        return;
-      }
-      if (!isControlRouteSession(session)) {
-        helpers.error(res, 400, "Session is not a control session");
-        return;
-      }
+    } else if (!validateControlSession(sessionId, res)) {
+      return;
     }
 
     try {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchFocusedSessionStreamPath } from "../src/server.js";
+import { matchFocusedSessionStreamPath } from "../src/session-route-scope.js";
 
 describe("focused session stream paths", () => {
   it("matches workspace and control paths without conflating their scopes", () => {

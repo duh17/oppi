@@ -33,7 +33,7 @@ import {
 } from "./dictation-types.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
-import { isControlConversation, isDeclaredControlSession } from "./control-session.js";
+import { admitSessionRoute } from "./session-route-scope.js";
 import {
   parseClientCommand,
   parseConversationStreamAttach,
@@ -289,15 +289,18 @@ export class BoundSessionStreamMux {
       ? `/workspaces/${workspaceId}/sessions/${sessionId}/stream`
       : `/control-sessions/${sessionId}/stream`;
 
-    const session = this.ctx.storage.getSession(sessionId);
-    const inScope = workspaceId
-      ? session?.workspaceId === workspaceId
-      : session !== undefined &&
-        (isDeclaredControlSession(session) || isControlConversation(session));
-    if (!session || !inScope) {
+    const admitted = admitSessionRoute(
+      this.ctx.storage,
+      workspaceId
+        ? { scope: "workspace", workspaceId, sessionId }
+        : { scope: "control", sessionId },
+      { workspaceMustExist: false },
+    );
+    if (admitted.kind !== "ok") {
       ws.close(1008, "Session not found");
       return;
     }
+    const session = admitted.session;
 
     if (upgradeReceivedAt && metrics) {
       metrics.record("server.ws_handshake_ms", connectedAt - upgradeReceivedAt, {

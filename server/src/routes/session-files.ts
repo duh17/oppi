@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { sendFileBytes } from "../current-file.js";
+import { admitSessionRoute } from "../session-route-scope.js";
 import { SessionTraceService } from "../session-trace-service.js";
 import type { Session, Workspace } from "../types.js";
 import type { RouteContext, RouteHelpers } from "./types.js";
@@ -36,23 +37,26 @@ export function createSessionFileHandlers(
     sessionId: string,
     res: ServerResponse,
   ): { workspace: Workspace; session: Session } | null {
-    const workspace = ctx.storage.getWorkspace(workspaceId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return null;
+    const result = admitSessionRoute(ctx.storage, {
+      scope: "workspace",
+      workspaceId,
+      sessionId,
+    });
+    switch (result.kind) {
+      case "ok":
+        return { workspace: result.workspace, session: result.session };
+      case "workspace-missing":
+        helpers.error(res, 404, "Workspace not found");
+        return null;
+      case "session-missing":
+        helpers.error(res, 404, "Session not found");
+        return null;
+      case "wrong-workspace":
+        helpers.error(res, 400, "Session does not belong to this workspace");
+        return null;
+      case "not-control":
+        return null;
     }
-
-    const session = ctx.storage.getSession(sessionId);
-    if (!session) {
-      helpers.error(res, 404, "Session not found");
-      return null;
-    }
-    if (session.workspaceId !== workspaceId) {
-      helpers.error(res, 400, "Session does not belong to this workspace");
-      return null;
-    }
-
-    return { workspace, session };
   }
 
   async function handleListSessionChanges(

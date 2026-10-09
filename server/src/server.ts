@@ -51,7 +51,11 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { SkillRegistry } from "./skills.js";
-import { isControlConversation, isDeclaredControlSession } from "./control-session.js";
+import {
+  admitSessionRoute,
+  matchFocusedSessionStreamPath,
+  type FocusedSessionStreamPath,
+} from "./session-route-scope.js";
 import { ServerResourceService } from "./server-resource-service.js";
 import { SessionLifecycleService } from "./session-lifecycle-service.js";
 import {
@@ -130,30 +134,6 @@ import {
   resolveUploadStoreConfig,
   type UploadStoreConfigResolved,
 } from "./uploads/local-upload-store.js";
-
-export type FocusedSessionStreamPath =
-  | { scope: "workspace"; workspaceId: string; sessionId: string }
-  | { scope: "control"; sessionId: string };
-
-export function matchFocusedSessionStreamPath(path: string): FocusedSessionStreamPath | null {
-  const workspaceMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/);
-  const controlMatch = path.match(/^\/control-sessions\/([^/]+)\/stream$/);
-  try {
-    if (workspaceMatch) {
-      return {
-        scope: "workspace",
-        workspaceId: decodeURIComponent(workspaceMatch[1]),
-        sessionId: decodeURIComponent(workspaceMatch[2]),
-      };
-    }
-    if (controlMatch) {
-      return { scope: "control", sessionId: decodeURIComponent(controlMatch[1]) };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
 
 function hasAuthHeader(header: string | string[] | undefined): boolean {
   if (typeof header === "string") {
@@ -1723,13 +1703,10 @@ export class Server {
   ): void {
     if (route.sessionStreamMatch) {
       const sessionId = route.sessionStreamMatch.sessionId;
-      const session = this.storage.getSession(sessionId);
-      const inScope =
-        route.sessionStreamMatch.scope === "workspace"
-          ? session?.workspaceId === route.sessionStreamMatch.workspaceId
-          : session !== undefined &&
-            (isDeclaredControlSession(session) || isControlConversation(session));
-      if (!session || !inScope) {
+      const admitted = admitSessionRoute(this.storage, route.sessionStreamMatch, {
+        workspaceMustExist: false,
+      });
+      if (admitted.kind !== "ok") {
         ws.close(1008, "Session not found");
         return;
       }

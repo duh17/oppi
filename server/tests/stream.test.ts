@@ -366,6 +366,19 @@ describe("BoundSessionStreamMux", () => {
     }
   });
 
+  it("closes workspace streams for a session in another workspace", async () => {
+    const session = makeSession("sess-1", "w1");
+    const { ctx } = createMockContext([session]);
+    const ws = new FakeWebSocket();
+    await new BoundSessionStreamMux(ctx).handleWebSocket(
+      "w2",
+      session.id,
+      ws as unknown as WebSocket,
+    );
+    expect(ws.closeCode).toBe(1008);
+    expect(ws.sent).toEqual([]);
+  });
+
   it("closes terminal Agent configuration failures without timeline errors or retries", async () => {
     const session = makeSession("agent-config-failure", "w1");
     const { ctx } = createMockContext([session]);

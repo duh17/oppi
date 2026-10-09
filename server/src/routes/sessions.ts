@@ -10,6 +10,7 @@ import {
   type ServerMessage,
   type Session,
   type SessionPromptCacheStatus,
+  type Workspace,
 } from "../types.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
@@ -19,11 +20,8 @@ import { createSessionListRouteHandlers, sessionsWithLiveStatus } from "./sessio
 import { createSessionTraceRouteHandlers } from "./session-trace-handlers.js";
 import { WsMessageHandler } from "../ws-message-handler.js";
 import { normalizeSessionWorktreeId, resolveWorkspaceWorktree } from "../worktrees.js";
-import {
-  isControlConversation,
-  isControlRouteSession,
-  isDeclaredControlSession,
-} from "../control-session.js";
+import { isControlConversation, isDeclaredControlSession } from "../control-session.js";
+import { admitSessionRoute } from "../session-route-scope.js";
 import { parseClientCommand } from "../session-command-parse.js";
 import { reservedLaunchKeyError } from "../reserved-launch-keys.js";
 import { isThinkingLevel } from "../thinking-levels.js";
@@ -111,14 +109,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   } = createSessionListRouteHandlers(ctx, helpers);
   const {
     sessionFileHandlers,
-    handleGetFullToolOutput,
     handleGetSessionAttachment,
-    handleGetToolOutput,
     handleGetSessionOverallDiff,
-    handleGetSessionEvents,
-    handleGetSession,
-    handleGetSessionTracePage,
-    handleGetSessionTraceOutline,
     handleGenericGetSession,
     handleGenericGetSessionTrace,
     handleGenericGetSessionDialogs,
@@ -130,43 +122,48 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     handleGetSessionForSession,
     handleGetSessionTracePageForSession,
     handleGetSessionTraceOutlineForSession,
-  } = createSessionTraceRouteHandlers(ctx, helpers, requireWorkspaceSession, requireSession);
+  } = createSessionTraceRouteHandlers(ctx, helpers);
   function requireWorkspaceSession(
     workspaceId: string,
     sessionId: string,
     res: ServerResponse,
-  ): Session | null {
-    const workspace = ctx.storage.getWorkspace(workspaceId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return null;
+  ): { session: Session; workspace: Workspace } | null {
+    const result = admitSessionRoute(ctx.storage, {
+      scope: "workspace",
+      workspaceId,
+      sessionId,
+    });
+    switch (result.kind) {
+      case "ok":
+        return { session: result.session, workspace: result.workspace };
+      case "workspace-missing":
+        helpers.error(res, 404, "Workspace not found");
+        return null;
+      case "session-missing":
+        helpers.error(res, 404, "Session not found");
+        return null;
+      case "wrong-workspace":
+        helpers.error(res, 400, "Session does not belong to this workspace");
+        return null;
+      case "not-control":
+        return null;
     }
-
-    const session = ctx.storage.getSession(sessionId);
-    if (!session) {
-      helpers.error(res, 404, "Session not found");
-      return null;
-    }
-
-    if (session.workspaceId !== workspaceId) {
-      helpers.error(res, 400, "Session does not belong to this workspace");
-      return null;
-    }
-
-    return session;
   }
 
   function requireControlSession(sessionId: string, res: ServerResponse): Session | null {
-    const session = ctx.storage.getSession(sessionId);
-    if (!session) {
-      helpers.error(res, 404, "Session not found");
-      return null;
+    const result = admitSessionRoute(ctx.storage, { scope: "control", sessionId });
+    switch (result.kind) {
+      case "ok":
+        return result.session;
+      case "session-missing":
+        helpers.error(res, 404, "Session not found");
+        return null;
+      case "not-control":
+        helpers.error(res, 400, "Session is not a control session");
+        return null;
+      default:
+        return null;
     }
-    if (!isControlRouteSession(session)) {
-      helpers.error(res, 400, "Session is not a control session");
-      return null;
-    }
-    return session;
   }
 
   async function handleCreateWorkspaceSession(
@@ -456,13 +453,10 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
   }
 
   function requireSession(sessionId: string, res: ServerResponse): Session | null {
-    const session = ctx.storage.getSession(sessionId);
-    if (!session) {
-      helpers.error(res, 404, "Session not found");
-      return null;
-    }
-
-    return session;
+    const result = admitSessionRoute(ctx.storage, { scope: "generic", sessionId });
+    if (result.kind === "ok") return result.session;
+    helpers.error(res, 404, "Session not found");
+    return null;
   }
 
   function requireGenericMutableSession(sessionId: string, res: ServerResponse): Session | null {
@@ -532,39 +526,15 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     helpers.json(res, { messages });
   }
 
-  async function handleSessionCommand(
-    workspaceId: string,
-    sessionId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const session = requireWorkspaceSession(workspaceId, sessionId, res);
-    if (!session) return;
-    await dispatchSessionCommand(session, req, res);
-  }
-
   async function handleResumeWorkspaceSession(
     workspaceId: string,
     sessionId: string,
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const workspace = ctx.storage.getWorkspace(workspaceId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const session = ctx.storage.getSession(sessionId);
-    if (!session) {
-      helpers.error(res, 404, "Session not found");
-      return;
-    }
-
-    if (session.workspaceId !== workspaceId) {
-      helpers.error(res, 400, "Session does not belong to this workspace");
-      return;
-    }
+    const admitted = requireWorkspaceSession(workspaceId, sessionId, res);
+    if (!admitted) return;
+    const { session, workspace } = admitted;
 
     if (session.ephemeral) {
       helpers.error(res, 400, "Incognito sessions cannot be resumed");
@@ -599,22 +569,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const workspace = ctx.storage.getWorkspace(workspaceId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const sourceSession = ctx.storage.getSession(sourceSessionId);
-    if (!sourceSession) {
-      helpers.error(res, 404, "Session not found");
-      return;
-    }
-
-    if (sourceSession.workspaceId !== workspaceId) {
-      helpers.error(res, 400, "Session does not belong to this workspace");
-      return;
-    }
+    const admitted = requireWorkspaceSession(workspaceId, sourceSessionId, res);
+    if (!admitted) return;
+    const { session: sourceSession, workspace } = admitted;
 
     const body = await helpers.parseBody<{ entryId?: string; name?: string }>(req);
     const entryId = body.entryId?.trim() || "";
@@ -669,37 +626,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
   }
 
-  async function handleStopSession(
-    workspaceId: string,
-    sessionId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const session = requireWorkspaceSession(workspaceId, sessionId, res);
-    if (!session) return;
-    await stopKnownSession(session, res, req);
-  }
-
-  async function handleGenericSessionCommand(
-    sessionId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const session = requireGenericMutableSession(sessionId, res);
-    if (!session) return;
-    await dispatchSessionCommand(session, req, res);
-  }
-
-  async function handleGenericStopSession(
-    sessionId: string,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    const session = requireGenericMutableSession(sessionId, res);
-    if (!session) return;
-    await stopKnownSession(session, res, req);
-  }
-
   function promptCacheFor(session: Session): SessionPromptCacheStatus | undefined {
     const retention = promptCacheRetention();
     const live = ctx.sessionRuntimes.getPromptCacheRuntime(session.id);
@@ -736,17 +662,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     helpers.json(res, thread);
   }
 
-  async function handleDeleteSession(
-    workspaceId: string,
-    sessionId: string,
-    res: ServerResponse,
-  ): Promise<void> {
-    const session = requireWorkspaceSession(workspaceId, sessionId, res);
-    if (!session) return;
-
-    await deleteKnownSession(session, res);
-  }
-
   async function deleteKnownSession(session: Session, res: ServerResponse): Promise<void> {
     try {
       const result = await lifecycle.deleteSession(session);
@@ -777,7 +692,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     const controlStopMatch = path.match(/^\/control-sessions\/([^/]+)\/stop$/);
     if (controlStopMatch && method === "POST") {
       const session = requireControlSession(controlStopMatch[1], res);
-      if (session) await stopKnownSession(session, res);
+      if (session) await stopKnownSession(session, res, req);
       return true;
     }
 
@@ -789,6 +704,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         const result = isControlConversation(session)
           ? await lifecycle.resumeControlConversation(session)
           : await lifecycle.resumeControlSession(session);
+        recordCallerInteraction(ctx.storage, req, session, "resume");
         helpers.json(res, { session: result.session });
       } catch (error: unknown) {
         const status = error instanceof SessionLifecycleError ? error.statusCode : 500;
@@ -891,13 +807,15 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const sessionCommandMatch = path.match(/^\/sessions\/([^/]+)\/command$/);
     if (sessionCommandMatch && method === "POST") {
-      await handleGenericSessionCommand(sessionCommandMatch[1], req, res);
+      const session = requireGenericMutableSession(sessionCommandMatch[1], res);
+      if (session) await dispatchSessionCommand(session, req, res);
       return true;
     }
 
     const sessionStopMatch = path.match(/^\/sessions\/([^/]+)\/stop$/);
     if (sessionStopMatch && method === "POST") {
-      await handleGenericStopSession(sessionStopMatch[1], req, res);
+      const session = requireGenericMutableSession(sessionStopMatch[1], res);
+      if (session) await stopKnownSession(session, res, req);
       return true;
     }
 
@@ -969,13 +887,19 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const wsSessionCommandMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/command$/);
     if (wsSessionCommandMatch && method === "POST") {
-      await handleSessionCommand(wsSessionCommandMatch[1], wsSessionCommandMatch[2], req, res);
+      const admitted = requireWorkspaceSession(
+        wsSessionCommandMatch[1],
+        wsSessionCommandMatch[2],
+        res,
+      );
+      if (admitted) await dispatchSessionCommand(admitted.session, req, res);
       return true;
     }
 
     const wsSessionStopMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stop$/);
     if (wsSessionStopMatch && method === "POST") {
-      await handleStopSession(wsSessionStopMatch[1], wsSessionStopMatch[2], req, res);
+      const admitted = requireWorkspaceSession(wsSessionStopMatch[1], wsSessionStopMatch[2], res);
+      if (admitted) await stopKnownSession(admitted.session, res, req);
       return true;
     }
 
@@ -1000,8 +924,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/input-card-output\/([^/]+)$/,
     );
     if (wsCardOutputMatch && method === "GET") {
-      const session = requireWorkspaceSession(wsCardOutputMatch[1], wsCardOutputMatch[2], res);
-      if (session) await handleGetInputCardOutput(session, wsCardOutputMatch[3], res);
+      const admitted = requireWorkspaceSession(wsCardOutputMatch[1], wsCardOutputMatch[2], res);
+      if (admitted) await handleGetInputCardOutput(admitted.session, wsCardOutputMatch[3], res);
       return true;
     }
 
@@ -1009,23 +933,28 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/tool-output\/([^/]+)$/,
     );
     if (wsSessionToolOutputMatch && (method === "GET" || method === "HEAD")) {
-      if (url.searchParams.get("full") === "true" || method === "HEAD") {
-        await handleGetFullToolOutput(
-          wsSessionToolOutputMatch[1],
-          wsSessionToolOutputMatch[2],
-          wsSessionToolOutputMatch[3],
-          req,
-          res,
-          method,
-        );
-      } else {
-        await handleGetToolOutput(
-          wsSessionToolOutputMatch[1],
-          wsSessionToolOutputMatch[2],
-          wsSessionToolOutputMatch[3],
-          req,
-          res,
-        );
+      const admitted = requireWorkspaceSession(
+        wsSessionToolOutputMatch[1],
+        wsSessionToolOutputMatch[2],
+        res,
+      );
+      if (admitted) {
+        if (url.searchParams.get("full") === "true" || method === "HEAD") {
+          await handleGetFullToolOutputForSession(
+            admitted.session,
+            wsSessionToolOutputMatch[3],
+            req,
+            res,
+            method,
+          );
+        } else {
+          await handleGetToolOutputForSession(
+            admitted.session,
+            wsSessionToolOutputMatch[3],
+            req,
+            res,
+          );
+        }
       }
       return true;
     }
@@ -1063,13 +992,19 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const wsSessionDiffMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/diff$/);
     if (wsSessionDiffMatch && method === "GET") {
-      await handleGetSessionOverallDiff(wsSessionDiffMatch[1], wsSessionDiffMatch[2], url, res);
+      const admitted = requireWorkspaceSession(wsSessionDiffMatch[1], wsSessionDiffMatch[2], res);
+      if (admitted) await handleGetSessionOverallDiff(admitted.session, url, res);
       return true;
     }
 
     const wsSessionEventsMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/events$/);
     if (wsSessionEventsMatch && method === "GET") {
-      handleGetSessionEvents(wsSessionEventsMatch[1], wsSessionEventsMatch[2], url, res);
+      const admitted = requireWorkspaceSession(
+        wsSessionEventsMatch[1],
+        wsSessionEventsMatch[2],
+        res,
+      );
+      if (admitted) handleGetSessionEventsForSession(admitted.session, url, res);
       return true;
     }
 
@@ -1077,13 +1012,12 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/trace-page$/,
     );
     if (wsSessionTracePageMatch && method === "GET") {
-      await handleGetSessionTracePage(
-        req,
+      const admitted = requireWorkspaceSession(
         wsSessionTracePageMatch[1],
         wsSessionTracePageMatch[2],
-        url,
         res,
       );
+      if (admitted) await handleGetSessionTracePageForSession(req, admitted.session, url, res);
       return true;
     }
 
@@ -1091,23 +1025,25 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/trace-outline$/,
     );
     if (wsSessionTraceOutlineMatch && method === "GET") {
-      await handleGetSessionTraceOutline(
-        req,
+      const admitted = requireWorkspaceSession(
         wsSessionTraceOutlineMatch[1],
         wsSessionTraceOutlineMatch[2],
         res,
       );
+      if (admitted) await handleGetSessionTraceOutlineForSession(req, admitted.session, res);
       return true;
     }
 
     const wsSessionMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)$/);
     if (wsSessionMatch) {
       if (method === "GET") {
-        await handleGetSession(req, wsSessionMatch[1], wsSessionMatch[2], url, res);
+        const admitted = requireWorkspaceSession(wsSessionMatch[1], wsSessionMatch[2], res);
+        if (admitted) await handleGetSessionForSession(req, admitted.session, url, res);
         return true;
       }
       if (method === "DELETE") {
-        await handleDeleteSession(wsSessionMatch[1], wsSessionMatch[2], res);
+        const admitted = requireWorkspaceSession(wsSessionMatch[1], wsSessionMatch[2], res);
+        if (admitted) await deleteKnownSession(admitted.session, res);
         return true;
       }
     }

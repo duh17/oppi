@@ -93,4 +93,33 @@ describe("uploads module", () => {
 
     rmSync(root, { recursive: true, force: true });
   });
+
+  it("rejects wrong-workspace uploads with 404 Session not found", async () => {
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn((id: string) =>
+          id === "ws-1" ? { id: "ws-1", name: "Workspace" } : undefined,
+        ),
+        getSession: vi.fn(() => ({ id: "sess-1", workspaceId: "ws-2" })),
+      },
+    } as unknown as RouteContext;
+    const dispatch = createUploadRoutes(ctx, createRouteHelpers());
+    const res = makeResponse();
+    const handled = await dispatch({
+      method: "POST",
+      path: "/workspaces/ws-1/sessions/sess-1/attachments",
+      url: new URL("http://localhost/workspaces/ws-1/sessions/sess-1/attachments"),
+      req: makeRequest({
+        name: "note.txt",
+        mimeType: "text/plain",
+        sizeBytes: 5,
+        purpose: "chat_attachment",
+      }) as never,
+      res: res as never,
+    });
+
+    expect(handled).toBe(true);
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body)).toEqual({ error: "Session not found" });
+  });
 });
