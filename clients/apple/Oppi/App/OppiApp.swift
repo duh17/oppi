@@ -650,7 +650,6 @@ struct OppiApp: App {
     @MainActor
     private func performAppStartupWork() async {
         AppFont.rebuild()
-        NerdFontSymbols.shared.load()
         MetricKitService.shared.configure()
         DeviceResourceSampler.shared.configure()
         configureWatchdogHooks()

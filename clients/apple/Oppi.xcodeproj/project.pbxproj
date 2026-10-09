@@ -159,7 +159,6 @@
 		14F849CC18DE4A9341AB9D98 /* DeviceKeyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DF59844CC02911865351D62 /* DeviceKeyProvider.swift */; };
 		1506A5499771368A2D9C99FB /* CrossProcessFileLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81B1D557257E0246F9E92149 /* CrossProcessFileLock.swift */; };
 		15073B03B561880910123676 /* SessionTreeDisplayLayoutChatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 867031F20ADC209533B3952F /* SessionTreeDisplayLayoutChatTests.swift */; };
-		152253D56A074E3A732BFC54 /* OppiAssetDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 254069B2DFB4BDD42CB032B0 /* OppiAssetDownloader.swift */; };
 		1528C307D570E1E1D7EDB5FB /* ImageDecodeCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD8B0F37A606AD550C388FE5 /* ImageDecodeCacheTests.swift */; };
 		15370E00318C7C05002BEF44 /* ToolInspectionPreviewFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B9BC73E6B5440FC4636F4CA /* ToolInspectionPreviewFixture.swift */; };
 		153E0556BA6623B84807CBB8 /* MermaidERRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABF7269A97D1DCF8EEDE7094 /* MermaidERRenderer.swift */; };
@@ -1085,6 +1084,7 @@
 		8A63CEEE08D35E90B6C93C8B /* ServerConnection+Refresh.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3819CA55AD2619675FA70D3 /* ServerConnection+Refresh.swift */; };
 		8AC1234C0A2A7F0911414387 /* SettingsSessionsPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52ED519BD33AFC9FA534BC18 /* SettingsSessionsPage.swift */; };
 		8AEB1C6307230720F40EAE38 /* USDZRenderingPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CACB25826775C877798C26B /* USDZRenderingPreview.swift */; };
+		8B13C4903122C95CA8CE7D74 /* SymbolsNerdFontMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = A3158D2D9998FB647D430634 /* SymbolsNerdFontMono-Regular.ttf */; };
 		8B29D1DBB59E7D2A7A895536 /* WorkspaceFileEditSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDDD67EDAF66A1A47862105F /* WorkspaceFileEditSession.swift */; };
 		8B3A7D3E774541ADAF54BEB1 /* TestTags.swift in Sources */ = {isa = PBXBuildFile; fileRef = 593245FF1B59ABEE29E6CCED /* TestTags.swift */; };
 		8B93FC478FFC17AC141815F4 /* MacSessionShellVisualGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34153812DF8CE83B1FF76C70 /* MacSessionShellVisualGateTests.swift */; };
@@ -1905,7 +1905,6 @@
 		F3033CA1443EE23341AD6603 /* ToolCallPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA1880D688ECE853047D3181 /* ToolCallPresentation.swift */; };
 		F3133D9CB6F75A6ACDA3F60F /* ClientLogUploadQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFB6FF234145BA14C73D8F07 /* ClientLogUploadQueue.swift */; };
 		F32A42EFA3CF806F6F1A3789 /* ModelCodableTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E78C467EE80223936BAEF56D /* ModelCodableTests.swift */; };
-		F3629588C52779A38CA22BC9 /* OppiAssetDownloader.appex in Embed ExtensionKit Extensions */ = {isa = PBXBuildFile; fileRef = 97D8DAC65B8F6FE59EE11DD5 /* OppiAssetDownloader.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		F36970AA0D34F937A8C52060 /* DocumentRenderPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A935A4629E567CE0831DCF1 /* DocumentRenderPipeline.swift */; };
 		F3BFC0C5512B41241FE9DA7D /* InLayoutInvalidationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56D8694E415A626D281587BC /* InLayoutInvalidationTests.swift */; };
 		F3CFAA99D7D62A652FB0A8A0 /* MermaidSemanticSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE47E8A25BF3AB9D9C7D62F3 /* MermaidSemanticSource.swift */; };
@@ -2078,13 +2077,6 @@
 			remoteGlobalIDString = F43B4526F2243911AC8188B9;
 			remoteInfo = Oppi;
 		};
-		FDE42E13E21A237A67071709 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 719AC05877AC66A339D15A75 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 3D5FC5A6A5C0160845ED9404;
-			remoteInfo = OppiAssetDownloader;
-		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -2110,17 +2102,6 @@
 				4FE55BB3C8276D97447A1D6B /* TailscaleKit.xcframework in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		B3C5F6D41C3AC58F798B5B8F /* Embed ExtensionKit Extensions */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "$(EXTENSIONS_FOLDER_PATH)";
-			dstSubfolderSpec = 16;
-			files = (
-				F3629588C52779A38CA22BC9 /* OppiAssetDownloader.appex in Embed ExtensionKit Extensions */,
-			);
-			name = "Embed ExtensionKit Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
@@ -2364,7 +2345,6 @@
 		252668A2818D83CF2622BA9B /* VoiceInputRouting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputRouting.swift; sourceTree = "<group>"; };
 		252E234C474F5A173CD9CFB9 /* TimelineReducerRecoveredThinkingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineReducerRecoveredThinkingTests.swift; sourceTree = "<group>"; };
 		2538F87D78752BAA4B634D5A /* LocalServerTrustDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalServerTrustDelegate.swift; sourceTree = "<group>"; };
-		254069B2DFB4BDD42CB032B0 /* OppiAssetDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OppiAssetDownloader.swift; sourceTree = "<group>"; };
 		2560271BF1E3DF433653661D /* ChatTimelinePreparationRunwayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTimelinePreparationRunwayTests.swift; sourceTree = "<group>"; };
 		256D9FCDB731B72E903ABEBF /* AttentionNotificationPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttentionNotificationPolicy.swift; sourceTree = "<group>"; };
 		25711154EFC224B8FE7389BE /* MathNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathNode.swift; sourceTree = "<group>"; };
@@ -2561,7 +2541,6 @@
 		42471A85F050E9E0351ABE9D /* ServerConnectionReconnectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionReconnectTests.swift; sourceTree = "<group>"; };
 		4249268D95BBF9BBDB0EED05 /* FeatureEducationTipBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeatureEducationTipBanner.swift; sourceTree = "<group>"; };
 		425C05336801043A2E77C18A /* APIClientToolOutputTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientToolOutputTests.swift; sourceTree = "<group>"; };
-		425CF5D2181C2850DD2A9D82 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		42BB6A03DD8FEF3287493701 /* BashToolRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BashToolRowView.swift; sourceTree = "<group>"; };
 		430DC33E08AAC9AECC09AB99 /* ServerAboutPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerAboutPage.swift; sourceTree = "<group>"; };
 		4331E332BD85853950F3E8B4 /* MacRenderableDocumentViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRenderableDocumentViews.swift; sourceTree = "<group>"; };
@@ -3093,7 +3072,6 @@
 		979FDD56F528B3731944F74D /* DeviceCredential.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceCredential.swift; sourceTree = "<group>"; };
 		97CF88AFAA0D532FE5B4AEB2 /* SessionListSearchNavigationPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListSearchNavigationPersistence.swift; sourceTree = "<group>"; };
 		97D7D6B9D6090F1C2ED2E20C /* MacSessionTraceStoreQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSessionTraceStoreQueueTests.swift; sourceTree = "<group>"; };
-		97D8DAC65B8F6FE59EE11DD5 /* OppiAssetDownloader.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.extensionkit-extension"; includeInIndex = 0; path = OppiAssetDownloader.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		97E0DF56422696F777DCEE47 /* PrerequisitesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrerequisitesView.swift; sourceTree = "<group>"; };
 		97E5B2F1A89228B9CA97F2EB /* ChatTimelineCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTimelineCoordinatorTests.swift; sourceTree = "<group>"; };
 		97E643568DD27FF71E2F8C04 /* SyntaxHighlightPerfBench.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyntaxHighlightPerfBench.swift; sourceTree = "<group>"; };
@@ -3169,6 +3147,7 @@
 		A258A67AF49D572F6ACDA472 /* MermaidGanttParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidGanttParser.swift; sourceTree = "<group>"; };
 		A2A0260EABFFFD41FF5505F9 /* MarkdownStressFixtureDisplayMathTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownStressFixtureDisplayMathTests.swift; sourceTree = "<group>"; };
 		A2F279BD3C0388350AEE583E /* BackgroundKeepAlive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundKeepAlive.swift; sourceTree = "<group>"; };
+		A3158D2D9998FB647D430634 /* SymbolsNerdFontMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SymbolsNerdFontMono-Regular.ttf"; sourceTree = "<group>"; };
 		A33BAE1F8B89F619822BFF46 /* AssistantMarkdownSegmentSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantMarkdownSegmentSource.swift; sourceTree = "<group>"; };
 		A378BABF8302362035E9A41F /* ServerInfoVersionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerInfoVersionTests.swift; sourceTree = "<group>"; };
 		A3A3237836C7B1F50DAC360E /* MermaidLineBreakTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidLineBreakTests.swift; sourceTree = "<group>"; };
@@ -3658,7 +3637,6 @@
 		EF6E876295B0135BB1B36066 /* OppiShareExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = OppiShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		EF9922071AFCD6218F98DE49 /* ToolRowViewportPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRowViewportPolicy.swift; sourceTree = "<group>"; };
 		F02D7A5411649B81B30C008C /* MarkdownPrewarmer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPrewarmer.swift; sourceTree = "<group>"; };
-		F04F67E7D6332D62613D6A1F /* OppiAssetDownloader.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OppiAssetDownloader.entitlements; sourceTree = "<group>"; };
 		F08483EB16EB870ECD9B8DC0 /* ServerViewSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerViewSelectionTests.swift; sourceTree = "<group>"; };
 		F0ACDDF6704B026A2DE5B56E /* VoiceInputManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputManager.swift; sourceTree = "<group>"; };
 		F0F24D9B33516A6AD3CE86BB /* ScreenCaptureKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenCaptureKit.framework; path = System/Library/Frameworks/ScreenCaptureKit.framework; sourceTree = SDKROOT; };
@@ -3869,7 +3847,6 @@
 				F8547DE28ECED3B7948D374D /* apple */,
 				319DE540BE8714E80964EFB6 /* Oppi */,
 				D4D8D08BEA82702C7FB56AB6 /* OppiActivityExtension */,
-				2922767E4229C4797ED86EA9 /* OppiAssetDownloader */,
 				92BAFE5A8D99BF6C80EC90E6 /* OppiControlWidget */,
 				4933D414866D3FF18470437A /* OppiCore */,
 				1108E6706E33D692572FA509 /* OppiE2ETests */,
@@ -4181,16 +4158,6 @@
 			path = Capture;
 			sourceTree = "<group>";
 		};
-		2922767E4229C4797ED86EA9 /* OppiAssetDownloader */ = {
-			isa = PBXGroup;
-			children = (
-				425CF5D2181C2850DD2A9D82 /* Info.plist */,
-				F04F67E7D6332D62613D6A1F /* OppiAssetDownloader.entitlements */,
-				254069B2DFB4BDD42CB032B0 /* OppiAssetDownloader.swift */,
-			);
-			path = OppiAssetDownloader;
-			sourceTree = "<group>";
-		};
 		2A3ED4D76F7128528B4862A0 /* Views */ = {
 			isa = PBXGroup;
 			children = (
@@ -4363,6 +4330,14 @@
 				BE432AA0664DBD017C1608D4 /* MacWorkspaceCreationDraft.swift */,
 			);
 			path = Workspaces;
+			sourceTree = "<group>";
+		};
+		334BBD832241203DF1CC0FA3 /* NerdFonts */ = {
+			isa = PBXGroup;
+			children = (
+				A3158D2D9998FB647D430634 /* SymbolsNerdFontMono-Regular.ttf */,
+			);
+			path = NerdFonts;
 			sourceTree = "<group>";
 		};
 		34730CDC0EC5522E7AF2A6B7 /* Support */ = {
@@ -4790,7 +4765,6 @@
 			children = (
 				FCD6978BD5924D1EEB586D75 /* Oppi.app */,
 				15DACAA2E1977138F840C552 /* OppiActivityExtension.appex */,
-				97D8DAC65B8F6FE59EE11DD5 /* OppiAssetDownloader.appex */,
 				BDF3FC48464C4933B0A40EAF /* OppiControlWidget.appex */,
 				DE0751EEC3B2A5FEC0163FF7 /* OppiE2ETests.xctest */,
 				E8FC80819756DF56FDEDED41 /* OppiMac.app */,
@@ -6369,6 +6343,7 @@
 				69A5FC1270C5B7E910744BAD /* FiraCode */,
 				CD343D3B32049844F4ADFDE8 /* JetBrainsMono */,
 				A2569A5FA280A97DA65655F0 /* MonaspaceNeon */,
+				334BBD832241203DF1CC0FA3 /* NerdFonts */,
 				8DFDDAA731B184A487F67BA3 /* SourceCodePro */,
 			);
 			path = Fonts;
@@ -6738,23 +6713,6 @@
 			productReference = BDF3FC48464C4933B0A40EAF /* OppiControlWidget.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
-		3D5FC5A6A5C0160845ED9404 /* OppiAssetDownloader */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 391EC423E287D810C7E89790 /* Build configuration list for PBXNativeTarget "OppiAssetDownloader" */;
-			buildPhases = (
-				7E659EB79A2716F34F0312C6 /* Sources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			name = OppiAssetDownloader;
-			packageProductDependencies = (
-			);
-			productName = OppiAssetDownloader;
-			productReference = 97D8DAC65B8F6FE59EE11DD5 /* OppiAssetDownloader.appex */;
-			productType = "com.apple.product-type.extensionkit-extension";
-		};
 		3E912506C9E99DA9C5400431 /* OppiUITests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 9DBF5C717076500BB2EB08DD /* Build configuration list for PBXNativeTarget "OppiUITests" */;
@@ -6919,7 +6877,6 @@
 				5D39A72D56BCACF186D66A13 /* Resources */,
 				8DCC973FC9A2E9C9A497FEAD /* Frameworks */,
 				025ACBDD88B373E32131E97D /* Embed Foundation Extensions */,
-				B3C5F6D41C3AC58F798B5B8F /* Embed ExtensionKit Extensions */,
 				5E34E5BB49CDED205967C9EF /* Embed Frameworks */,
 			);
 			buildRules = (
@@ -6928,7 +6885,6 @@
 				C4C91F1ED0ACA0B1DDCC0874 /* PBXTargetDependency */,
 				1124660CA237509C363B4B06 /* PBXTargetDependency */,
 				B833F69570C21FD393AD3A1E /* PBXTargetDependency */,
-				781CD6E619E8E38722661C6C /* PBXTargetDependency */,
 			);
 			name = Oppi;
 			packageProductDependencies = (
@@ -6967,10 +6923,6 @@
 				LastUpgradeCheck = 2710;
 				TargetAttributes = {
 					0787AE6D14F92203EAD13D1A = {
-						DevelopmentTeam = AZAQMY4SPZ;
-						ProvisioningStyle = Automatic;
-					};
-					3D5FC5A6A5C0160845ED9404 = {
 						DevelopmentTeam = AZAQMY4SPZ;
 						ProvisioningStyle = Automatic;
 					};
@@ -7035,7 +6987,6 @@
 			projectRoot = "";
 			targets = (
 				F43B4526F2243911AC8188B9 /* Oppi */,
-				3D5FC5A6A5C0160845ED9404 /* OppiAssetDownloader */,
 				894176FCBC0836E1AB8EDFA2 /* OppiActivityExtension */,
 				AC87A5C07D3EED178DBB77BA /* OppiShareExtension */,
 				0787AE6D14F92203EAD13D1A /* OppiControlWidget */,
@@ -7085,6 +7036,7 @@
 				2F7CB7622DB28551C01E9571 /* SourceCodePro-Bold.otf in Resources */,
 				FCBDC99702D80793E616746E /* SourceCodePro-Regular.otf in Resources */,
 				264625CF60222C26FAF5BB1E /* SourceCodePro-Semibold.otf in Resources */,
+				8B13C4903122C95CA8CE7D74 /* SymbolsNerdFontMono-Regular.ttf in Resources */,
 				36F3F7BAA231C5909335B499 /* suzanne-garden.usdz in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -7697,14 +7649,6 @@
 				27A825779FA3B05A7BC9C578 /* WorkspaceReview.swift in Sources */,
 				168CBB80BA438E0685074386 /* WorkspaceReviewDiffPreviewPlan.swift in Sources */,
 				58D5CC5F43280B2EF490EA4A /* WorkspaceWorktree.swift in Sources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		7E659EB79A2716F34F0312C6 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				152253D56A074E3A732BFC54 /* OppiAssetDownloader.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -9242,11 +9186,6 @@
 			target = F43B4526F2243911AC8188B9 /* Oppi */;
 			targetProxy = 04DCCFDF48B1FC2B6F72718C /* PBXContainerItemProxy */;
 		};
-		781CD6E619E8E38722661C6C /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 3D5FC5A6A5C0160845ED9404 /* OppiAssetDownloader */;
-			targetProxy = FDE42E13E21A237A67071709 /* PBXContainerItemProxy */;
-		};
 		83580EA874D654FB726EB033 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = F43B4526F2243911AC8188B9 /* Oppi */;
@@ -9408,22 +9347,6 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
-		};
-		6E455420C7613AEE90AF2A2F /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = OppiAssetDownloader/OppiAssetDownloader.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 54;
-				DEVELOPMENT_TEAM = AZAQMY4SPZ;
-				INFOPLIST_FILE = OppiAssetDownloader/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
-				MARKETING_VERSION = 1.1.2;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.chenda.Oppi.AssetDownloader;
-				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Release;
 		};
 		71A40BC6A6665D49A44E1DB0 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -9626,22 +9549,6 @@
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = Oppi;
-			};
-			name = Debug;
-		};
-		B0C8687860D9333B35374AE6 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = OppiAssetDownloader/OppiAssetDownloader.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 54;
-				DEVELOPMENT_TEAM = AZAQMY4SPZ;
-				INFOPLIST_FILE = OppiAssetDownloader/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
-				MARKETING_VERSION = 1.1.2;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.chenda.Oppi.AssetDownloader;
-				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -9895,15 +9802,6 @@
 			buildConfigurations = (
 				798C9F26EFAA7919008C4A99 /* Debug */,
 				228F2BAE204AAAC25B3926AA /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Debug;
-		};
-		391EC423E287D810C7E89790 /* Build configuration list for PBXNativeTarget "OppiAssetDownloader" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				B0C8687860D9333B35374AE6 /* Debug */,
-				6E455420C7613AEE90AF2A2F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

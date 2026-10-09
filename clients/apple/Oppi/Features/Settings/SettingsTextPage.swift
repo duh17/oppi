@@ -19,10 +19,8 @@ struct SettingsTextPage: View {
                 .onChange(of: selectedCodeFont) { _, newValue in
                     FontPreferences.setCodeFont(newValue)
                 }
-
-                NerdFontSymbolsRow(symbols: NerdFontSymbols.shared)
             } footer: {
-                Text("Nerd Font Icons add prompt and file icons in the terminal and tool output, with any code font.")
+                Text("Nerd Font icons add prompt and file icons in the terminal and tool output, with any code font.")
             }
 
             Section {
@@ -96,38 +94,6 @@ private struct TextScaleSliderRow: View {
     }
 
     private var percent: Int { Int(round(scale * 100)) }
-}
-
-/// Nerd Font icons arrive as an App Store asset pack after install; this row
-/// shows that download and offers a retry when it failed.
-private struct NerdFontSymbolsRow: View {
-    let symbols: NerdFontSymbols
-
-    var body: some View {
-        HStack {
-            Text("Nerd Font Icons")
-            Spacer()
-            status
-        }
-        .accessibilityIdentifier("settings.nerdFontIcons")
-    }
-
-    @ViewBuilder private var status: some View {
-        switch symbols.status {
-        case .checking:
-            ProgressView()
-        case .downloading(let fraction):
-            Text("Downloading \(Int((fraction * 100).rounded()))%")
-                .font(.subheadline.monospacedDigit())
-                .foregroundStyle(.themeComment)
-        case .installed:
-            Text("Installed")
-                .foregroundStyle(.themeComment)
-        case .unavailable(let reason):
-            Button("Retry") { symbols.load() }
-                .accessibilityHint("Download failed: \(reason)")
-        }
-    }
 }
 
 private struct TypographyPreviewCard: View {

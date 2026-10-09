@@ -30,9 +30,9 @@ All bundled fonts are licensed under the SIL Open Font License, Version 1.1.
 
 ## Symbols Nerd Font Mono
 - Copyright Ryan L McIntyre and Nerd Fonts contributors (https://github.com/ryanoasis/nerd-fonts)
+- License: SIL Open Font License 1.1 (Nerd Fonts patched fonts)
 - Version: v3.5.1
-- Not bundled: delivered as the App Store asset pack `NerdFontSymbols`, which
-  includes the full Nerd Fonts LICENSE.
+- File: `NerdFonts/SymbolsNerdFontMono-Regular.ttf` (Symbols Only, Mono)
 - Nerd Fonts project files: MIT. Icon sets keep their own licenses: Powerline,
   Seti-UI, Devicons, Octicons, Font Awesome Extension, IEC Power Symbols (MIT);
   Font Awesome and Codicons (CC BY 4.0); Material Design Icons (Apache 2.0);

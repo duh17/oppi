@@ -160,6 +160,15 @@ struct CodeFontFamilyTests {
         let font = FontPreferences.CodeFontFamily.firaCode.font(size: 14, weight: .light)
         #expect(font.pointSize == 14)
     }
+
+    @Test func nerdFontSymbolsAreBundled() {
+        #expect(UIFont(name: NerdFontSymbols.postScriptName, size: 12) != nil)
+        #expect(NerdFontSymbols.font(size: 13)?.pointSize == 13)
+        #expect(NerdFontSymbols.isPrivateUse(Unicode.Scalar(0xE0B0)!))
+        #expect(!NerdFontSymbols.isPrivateUse("A"))
+        let base = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        #expect(NerdFontSymbols.withFallback(base).pointSize == 12)
+    }
 }
 
 // MARK: - FontPreferences

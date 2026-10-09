@@ -17,26 +17,9 @@ cd clients/apple
 
 Without it, the Oppi target fails with a missing `Vendor/TailscaleKit/TailscaleKit.xcframework`.
 
-### Nerd Font asset pack
+### Nerd Font icons
 
-Nerd Font icons ship as the Apple-hosted Background Assets pack `NerdFontSymbols` (prefetch policy), not in the app binary. `OppiAssetDownloader` (ExtensionKit, `StoreDownloaderExtension`) lets the system download it; `NerdFontSymbols.swift` registers the font and adds it as every code font's cascade fallback. Build the pack from the pinned, SHA-256-checked Symbols Nerd Font Mono:
-
-```bash
-cd clients/apple
-./scripts/build-nerd-font-asset-pack.sh   # -> build/asset-packs/NerdFontSymbols.aar
-```
-
-Before uploading, prove the pack downloads and installs:
-
-```bash
-./scripts/test-nerd-font-asset-pack.sh
-```
-
-It serves the `.aar` with Apple's mock server (`xcrun ba-serve`) over a throwaway CA, points a throwaway simulator at it with the Background Assets URL override, launches the Debug app, and waits for `Nerd Font symbols installed` in the app log. It removes the simulator, temporary keychain, and server on exit.
-
-On a physical device, use the same mock server: trust its CA with a configuration profile, then set **Settings → Developer → Background Assets Testing → Development Overrides → URL Override** to `https://<mac-host>:<port>`, per Apple's "Testing asset packs locally". **Settings → Text → Nerd Font Icons** then shows Installed.
-
-Upload the `.aar` to App Store Connect (Transporter, `altool`, or the App Store Connect API) and submit it with the next TestFlight or App Store build; packs are versioned and reviewed separately from builds. Without a URL override, Xcode and simulator builds show the pack as unavailable: Apple hosting serves only TestFlight and App Store installs.
+Nerd Font icons ship in the app as `Oppi/Resources/Fonts/NerdFonts/SymbolsNerdFontMono-Regular.ttf` (Nerd Fonts v3.5.1 Symbols Only Mono). `NerdFontSymbols.swift` lists that face as every code font's cascade fallback. UIAppFonts registers it at launch.
 
 ### Build the terminal engine
 

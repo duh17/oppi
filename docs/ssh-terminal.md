@@ -24,7 +24,7 @@ After you save a host, **Terminal** appears directly below **MCP Servers** in th
 
 The terminal uses **Settings → Text → Code Font** and **Code Text Size**, like code blocks and tool output. At 100% it is 13 pt. Changing either redraws an open terminal and resizes the remote shell to the new cell size.
 
-Prompt icons from starship, powerlevel10k, oh-my-posh, and similar (Powerline separators, git, folder, and language icons) come from the Nerd Fonts Symbols font, which works with every code font. It is not part of the app download: the App Store delivers it in the background after install or update, and **Settings → Text → Nerd Font Icons** shows its status, with **Retry** if it failed. Until it arrives, those characters show as missing glyphs.
+Prompt icons from starship, powerlevel10k, oh-my-posh, and similar (Powerline separators, git, folder, and language icons) come from the bundled Nerd Fonts Symbols font, which works with every code font.
 
 ## Run on Connect
 

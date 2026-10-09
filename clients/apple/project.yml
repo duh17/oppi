@@ -190,11 +190,8 @@ targets:
           - MonaspaceNeon-Regular.otf
           - MonaspaceNeon-SemiBold.otf
           - MonaspaceNeon-Bold.otf
+          - SymbolsNerdFontMono-Regular.ttf
         ITSAppUsesNonExemptEncryption: false
-        # Apple-hosted Background Assets (OppiAssetDownloader, AssetPacks/).
-        BAHasManagedAssetPacks: true
-        BAUsesAppleHosting: true
-        BAAppGroupID: $(APP_GROUP_IDENTIFIER)
         OPPITelemetryMode: "$(OPPI_TELEMETRY_MODE)"
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
@@ -362,38 +359,6 @@ targets:
         embed: true
       - target: OppiShareExtension
         embed: true
-      - target: OppiAssetDownloader
-        embed: true
-
-  # Background Assets downloader for Apple-hosted asset packs (Nerd Font
-  # symbols, AssetPacks/). ExtensionKit, so it embeds under Extensions/.
-  OppiAssetDownloader:
-    type: extensionkit-extension
-    platform: iOS
-    sources:
-      - path: OppiAssetDownloader
-        type: group
-    entitlements:
-      path: OppiAssetDownloader/OppiAssetDownloader.entitlements
-      properties:
-        com.apple.security.application-groups:
-          - $(APP_GROUP_IDENTIFIER)
-    info:
-      path: OppiAssetDownloader/Info.plist
-      properties:
-        CFBundleDisplayName: Oppi
-        CFBundleShortVersionString: "$(MARKETING_VERSION)"
-        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
-        EXAppExtensionAttributes:
-          EXExtensionPointIdentifier: com.apple.background-asset-downloader-extension
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi.AssetDownloader
-        MARKETING_VERSION: "1.1.2"
-        CURRENT_PROJECT_VERSION: 54
-        CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: AZAQMY4SPZ
-        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"
 
   OppiActivityExtension:
     type: app-extension

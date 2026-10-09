@@ -148,7 +148,7 @@ extension FontPreferenceStore.CodeFontFamily {
     }
 
     /// Create a UIFont for the given size and weight. Falls back to system mono if the font can't be loaded.
-    /// Nerd Font icon glyphs come from `NerdFontSymbols` once its asset pack is local.
+    /// Nerd Font icon glyphs come from the bundled Symbols Nerd Font Mono.
     func font(size: CGFloat, weight: UIFont.Weight) -> UIFont {
         if let psName = postScriptName(weight: weight),
            let font = UIFont(name: psName, size: size) {
