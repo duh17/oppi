@@ -427,8 +427,12 @@ struct AssistantTimelineRowContentViewTests {
             Mirror(reflecting: view).children.first { $0.label == "bubbleContainer" }?.value as? UIView
         )
         let fill = bubble.backgroundColor ?? .clear
+        let resolved = fill.resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
         var alpha: CGFloat = 1
-        fill.getRed(nil, green: nil, blue: nil, alpha: &alpha)
+        let converted = resolved.getRed(nil, green: nil, blue: nil, alpha: &alpha)
+        if !converted {
+            alpha = resolved.cgColor.alpha
+        }
         #expect(alpha < 0.02)
     }
 

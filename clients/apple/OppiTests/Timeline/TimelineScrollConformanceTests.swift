@@ -296,6 +296,75 @@ struct TimelineScrollConformanceTests {
         )
     }
 
+    @Test func differentiateWithoutColorToggleAdjustsOffscreenUserCachedHeightsAndKeepsAnchor() throws {
+        let harness = TimelineScrollConformanceHarness(sessionId: "scroll-conformance-dwc-heights")
+        harness.replaceTimelineItems(makeSpeakerContrastHeightItems())
+        harness.startAttachedAtBottom(isBusy: false)
+        measureEveryTimelineRow(harness.collectionView)
+
+        let offscreenUserID = "user-0"
+        let offscreenAssistantID = "assistant-0"
+        let anchorID = "assistant-8"
+        harness.userScrollsUpToRead(itemID: anchorID)
+
+        let layout = try #require(
+            harness.collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout
+        )
+
+        let userBefore = layout.cachedHeightForTesting(itemID: offscreenUserID)
+        let assistantBefore = layout.cachedHeightForTesting(itemID: offscreenAssistantID)
+        guard let userBefore, let assistantBefore else {
+            Issue.record("Missing cached heights before DWC toggle")
+            return
+        }
+        #expect(userBefore > ChatTimelineCachedHeightLayout.estimatedHeight + 1)
+        #expect(assistantBefore > ChatTimelineCachedHeightLayout.estimatedHeight + 1)
+
+        let anchorBefore = harness.screenY(of: anchorID, edge: .top)
+        harness.coordinator.applySpeakerAccessibilityForTesting(
+            increasedContrast: false,
+            differentiateWithoutColor: true
+        )
+        settleTimelineLayout(harness.collectionView, passes: 3)
+
+        let delta = TimelineSpeakerChrome.differentiateWithoutColorHeightDelta()
+        let userAfterOn = layout.cachedHeightForTesting(itemID: offscreenUserID)
+        let assistantAfterOn = layout.cachedHeightForTesting(itemID: offscreenAssistantID)
+        #expect(
+            abs((userAfterOn ?? 0) - (userBefore + delta)) < 1,
+            "offscreen user cache should grow by caption delta, before=\(userBefore) after=\(String(describing: userAfterOn)) delta=\(delta)"
+        )
+        #expect(
+            abs((assistantAfterOn ?? 0) - assistantBefore) < 0.5,
+            "non-user cache must stay put on DWC toggle"
+        )
+        harness.assertAnchorStable(itemID: anchorID, edge: .top, before: anchorBefore)
+
+        harness.coordinator.applySpeakerAccessibilityForTesting(
+            increasedContrast: true,
+            differentiateWithoutColor: true
+        )
+        settleTimelineLayout(harness.collectionView, passes: 2)
+        #expect(
+            abs((layout.cachedHeightForTesting(itemID: offscreenUserID) ?? 0) - (userBefore + delta)) < 1,
+            "Increase Contrast must not change cached heights"
+        )
+        #expect(
+            abs((layout.cachedHeightForTesting(itemID: offscreenAssistantID) ?? 0) - assistantBefore) < 0.5
+        )
+
+        harness.coordinator.applySpeakerAccessibilityForTesting(
+            increasedContrast: false,
+            differentiateWithoutColor: false
+        )
+        settleTimelineLayout(harness.collectionView, passes: 3)
+        #expect(
+            abs((layout.cachedHeightForTesting(itemID: offscreenUserID) ?? 0) - userBefore) < 1,
+            "turning DWC off should restore the offscreen user cached height"
+        )
+        harness.assertAnchorStable(itemID: anchorID, edge: .top, before: anchorBefore)
+    }
+
     @Test func jumpToBottomReattachesAndRestoresTailVisibility() {
         let harness = TimelineScrollConformanceHarness(sessionId: "scroll-conformance-jump-bottom")
         harness.startAttachedAtBottom(isBusy: false)
@@ -330,6 +399,25 @@ struct TimelineScrollConformanceTests {
         #expect(!harness.scrollController.isJumpToBottomHintVisible)
         harness.assertTailVisible()
     }
+}
+
+@MainActor
+private func makeSpeakerContrastHeightItems() -> [ChatItem] {
+    var items: [ChatItem] = []
+    for index in 0..<16 {
+        items.append(.userMessage(
+            id: "user-\(index)",
+            text: String(repeating: "User prompt \(index). ", count: 14),
+            images: [],
+            timestamp: Date()
+        ))
+        items.append(.assistantMessage(
+            id: "assistant-\(index)",
+            text: String(repeating: "Assistant reply \(index). ", count: 14),
+            timestamp: Date()
+        ))
+    }
+    return items
 }
 
 @MainActor

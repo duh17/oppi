@@ -103,6 +103,9 @@ struct ChatTimelineView: View {
     let bottomOverlap: CGFloat
     var onVisibleAudioStripItemIDsChange: ((Set<String>) -> Void)? = nil
     var outlineAvailability: ChatTimelineOutlineAvailability? = nil
+    /// Screenshot / test injection. Nil uses UIAccessibility and the trait collection.
+    var speakerIncreasedContrastOverride: Bool? = nil
+    var speakerDifferentiateWithoutColorOverride: Bool? = nil
 
     @Environment(TimelineReducer.self) private var reducer
     @Environment(AudioPlayerService.self) private var audioPlayer
@@ -154,7 +157,9 @@ struct ChatTimelineView: View {
                 quietModeEnabled: quietModeEnabled,
                 workStripStyle: workStripStyle,
                 sessionManager: sessionManager,
-                outlineAvailability: outlineAvailability
+                outlineAvailability: outlineAvailability,
+                speakerIncreasedContrastOverride: speakerIncreasedContrastOverride,
+                speakerDifferentiateWithoutColorOverride: speakerDifferentiateWithoutColorOverride
             )
         )
         .background(.themeBg)

@@ -157,12 +157,62 @@ struct ThemePaletteBuiltinTests {
             )
         }
     }
+
+    @Test func builtInUserGlyphOnUserFillMeetsNonText() {
+        for themeID in ThemeID.builtins {
+            let palette = themeID.palette
+            let ratio = wcagContrast(palette.userMessageText, palette.userMessageBg)
+            #expect(
+                ratio + 1e-6 >= 3.0,
+                "\(themeID.rawValue) glyph on fill \(ratio)"
+            )
+        }
+    }
+
+    @Test func increasedContrastUserGlyphOnStrongerFillMeetsNonText() {
+        for themeID in ThemeID.builtins {
+            let palette = themeID.palette
+            guard let fill = TimelineSpeakerChrome.increasedContrastFill(for: themeID) else {
+                Issue.record("missing Increase Contrast fill for \(themeID.rawValue)")
+                continue
+            }
+            let ratio = wcagContrast(palette.userMessageText, Color(fill))
+            #expect(
+                ratio + 1e-6 >= 3.0,
+                "\(themeID.rawValue) IC glyph on fill \(ratio)"
+            )
+        }
+    }
+
+    @Test func builtInYouCaptionOnUserFillMeetsAA() {
+        for themeID in ThemeID.builtins {
+            let palette = themeID.palette
+            let ratio = wcagContrast(palette.userMessageText, palette.userMessageBg)
+            #expect(
+                ratio + 1e-6 >= 4.5,
+                "\(themeID.rawValue) caption on fill \(ratio)"
+            )
+        }
+    }
+
+    @Test func increasedContrastYouCaptionOnStrongerFillMeetsAA() {
+        for themeID in ThemeID.builtins {
+            let palette = themeID.palette
+            guard let fill = TimelineSpeakerChrome.increasedContrastFill(for: themeID) else {
+                Issue.record("missing Increase Contrast fill for \(themeID.rawValue)")
+                continue
+            }
+            let ratio = wcagContrast(palette.userMessageText, Color(fill))
+            #expect(
+                ratio + 1e-6 >= 4.5,
+                "\(themeID.rawValue) IC caption on fill \(ratio)"
+            )
+        }
+    }
 }
 
 private func opaqueFill(_ color: Color) -> Color? {
-    var alpha: CGFloat = 0
-    UIColor(color).getRed(nil, green: nil, blue: nil, alpha: &alpha)
-    return alpha < 0.02 ? nil : color
+    TimelineSpeakerChrome.resolvedAlpha(of: UIColor(color)) < 0.02 ? nil : color
 }
 
 private func wcagContrast(_ foreground: Color, _ background: Color) -> CGFloat {

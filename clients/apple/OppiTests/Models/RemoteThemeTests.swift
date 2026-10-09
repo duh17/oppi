@@ -63,8 +63,13 @@ struct RemoteThemeTests {
         #expect(theme.colors.assistantMessageBg == nil)
         #expect(theme.colors.userMessageAccent == nil)
         let palette = try #require(theme.toPalette())
+        let resolved = UIColor(palette.assistantMessageBg).resolvedColor(
+            with: UITraitCollection(userInterfaceStyle: .dark)
+        )
         var assistantAlpha: CGFloat = 1
-        UIColor(palette.assistantMessageBg).getRed(nil, green: nil, blue: nil, alpha: &assistantAlpha)
+        if !resolved.getRed(nil, green: nil, blue: nil, alpha: &assistantAlpha) {
+            assistantAlpha = resolved.cgColor.alpha
+        }
         #expect(assistantAlpha < 0.02)
         #expect(remoteThemeColor(palette.userMessageAccent, approximatelyEquals: palette.blue))
     }

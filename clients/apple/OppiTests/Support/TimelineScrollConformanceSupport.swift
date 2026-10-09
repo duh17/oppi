@@ -47,6 +47,10 @@ final class TimelineScrollConformanceHarness {
     var reducer: TimelineReducer { windowed.reducer }
     var coordinator: ChatTimelineCollectionHost.Controller { windowed.coordinator }
 
+    func replaceTimelineItems(_ newItems: [ChatItem]) {
+        items = newItems
+    }
+
     func apply(isBusy: Bool = true, streamingID explicitStreamingID: String? = nil) {
         windowed.applyItems(
             items,

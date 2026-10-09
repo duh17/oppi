@@ -2,13 +2,12 @@
 import SwiftUI
 
 /// Short user / assistant / user exchange for speaker-chrome screenshots.
-/// Screens: `chat-speaker-contrast-{dark,oled,night,light}` plus Dark Increase
+/// Screens: `chat-speaker-contrast-{dark,oled,night,light}` plus Increase
 /// Contrast and Differentiate Without Color variants.
 struct ChatSpeakerContrastPreview: View {
     let themeID: ThemeID
     var increasedContrast: Bool = false
     var differentiateWithoutColor: Bool = false
-    var legacyPaint: Bool = false
 
     @State private var connection = ServerConnection()
     @State private var sessionManager = ChatSessionManager(sessionId: "speaker-contrast")
@@ -20,17 +19,12 @@ struct ChatSpeakerContrastPreview: View {
     init(
         themeID: ThemeID,
         increasedContrast: Bool = false,
-        differentiateWithoutColor: Bool = false,
-        legacyPaint: Bool = false
+        differentiateWithoutColor: Bool = false
     ) {
         self.themeID = themeID
         self.increasedContrast = increasedContrast
         self.differentiateWithoutColor = differentiateWithoutColor
-        self.legacyPaint = legacyPaint
         ThemeRuntimeState.setThemeID(themeID)
-        TimelineSpeakerChrome.increasedContrastOverride = increasedContrast
-        TimelineSpeakerChrome.differentiateWithoutColorOverride = differentiateWithoutColor
-        TimelineSpeakerChrome.legacyScreenshotPaint = legacyPaint
     }
 
     var body: some View {
@@ -55,7 +49,9 @@ struct ChatSpeakerContrastPreview: View {
                 onBackSwipe: {},
                 reviewCommentSelectionRouter: nil,
                 topOverlap: 0,
-                bottomOverlap: 0
+                bottomOverlap: 0,
+                speakerIncreasedContrastOverride: increasedContrast ? true : nil,
+                speakerDifferentiateWithoutColorOverride: differentiateWithoutColor ? true : nil
             )
             .ignoresSafeArea(.container, edges: .top)
             .navigationTitle("Chat")
@@ -70,9 +66,6 @@ struct ChatSpeakerContrastPreview: View {
             guard !seeded else { return }
             seeded = true
             ThemeRuntimeState.setThemeID(themeID)
-            TimelineSpeakerChrome.increasedContrastOverride = increasedContrast
-            TimelineSpeakerChrome.differentiateWithoutColorOverride = differentiateWithoutColor
-            TimelineSpeakerChrome.legacyScreenshotPaint = legacyPaint
             NotificationCenter.default.post(name: .oppiThemeDidChange, object: nil)
             seed(sessionManager.reducer)
         }

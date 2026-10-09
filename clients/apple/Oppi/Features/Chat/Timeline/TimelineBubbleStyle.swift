@@ -37,7 +37,8 @@ enum TimelineBubbleStyle {
 ///
 /// User rows are the only elevated card (fill + 3 pt leading accent).
 /// Assistant rows recede (clear fill in built-ins). Increase Contrast and
-/// Differentiate Without Color are read live from UIKit accessibility flags.
+/// Differentiate Without Color are resolved at the timeline controller and
+/// passed into each user row configuration.
 enum TimelineSpeakerChrome {
     static let accentBarWidth: CGFloat = 3
     static let increasedContrastBorderWidth: CGFloat = 1.5
@@ -45,44 +46,31 @@ enum TimelineSpeakerChrome {
     /// + 8 pt = 16 pt before a user row). Applied as the user cell's own top
     /// margin so cached-height layout and scroll anchoring stay unchanged.
     static let userTurnSpacingAbove: CGFloat = 8
+    /// Spacing inside the user bubble stack. The Differentiate Without Color
+    /// caption adds one label plus this spacing to row height.
+    static let userBubbleContentSpacing: CGFloat = 6
 
-    #if DEBUG
-    nonisolated(unsafe) static var increasedContrastOverride: Bool?
-    nonisolated(unsafe) static var differentiateWithoutColorOverride: Bool?
-    /// Screenshot-only: pre-change user fill and purple assistant wash.
-    nonisolated(unsafe) static var legacyScreenshotPaint = false
-
-    static func resetOverridesForTesting() {
-        increasedContrastOverride = nil
-        differentiateWithoutColorOverride = nil
-        legacyScreenshotPaint = false
-    }
-    #endif
-
-    static var increasedContrast: Bool {
-        #if DEBUG
-        if let increasedContrastOverride { return increasedContrastOverride }
-        #endif
+    @MainActor
+    static func increasedContrast(traitCollection: UITraitCollection) -> Bool {
         if UIAccessibility.isDarkerSystemColorsEnabled { return true }
-        return UITraitCollection.current.accessibilityContrast == .high
+        return traitCollection.accessibilityContrast == .high
     }
 
-    static var differentiateWithoutColor: Bool {
-        #if DEBUG
-        if let differentiateWithoutColorOverride { return differentiateWithoutColorOverride }
-        #endif
-        return UIAccessibility.shouldDifferentiateWithoutColor
+    @MainActor
+    static func differentiateWithoutColor() -> Bool {
+        UIAccessibility.shouldDifferentiateWithoutColor
+    }
+
+    /// Caption height + bubble-stack spacing from the caption's font metrics.
+    static func differentiateWithoutColorHeightDelta() -> CGFloat {
+        ceil(AppFont.systemSmall.lineHeight) + userBubbleContentSpacing
     }
 
     static func userFill(
         from palette: ThemePalette,
+        increasedContrast: Bool,
         themeID: ThemeID = ThemeRuntimeState.currentThemeID()
     ) -> UIColor {
-        #if DEBUG
-        if legacyScreenshotPaint {
-            return legacyUserFill(for: themeID) ?? UIColor(palette.userMessageBg)
-        }
-        #endif
         if increasedContrast, let stronger = increasedContrastFill(for: themeID) {
             return stronger
         }
@@ -94,15 +82,8 @@ enum TimelineSpeakerChrome {
     }
 
     static func assistantFill(from palette: ThemePalette) -> UIColor {
-        #if DEBUG
-        if legacyScreenshotPaint {
-            return UIColor(palette.purple).withAlphaComponent(TimelineBubbleStyle.subtleBgAlpha)
-        }
-        #endif
         let color = UIColor(palette.assistantMessageBg)
-        var alpha: CGFloat = 0
-        color.getRed(nil, green: nil, blue: nil, alpha: &alpha)
-        return alpha < 0.02 ? .clear : color
+        return resolvedAlpha(of: color) < 0.02 ? .clear : color
     }
 
     /// Stronger user fills when Increase Contrast is on. Built-ins only;
@@ -112,22 +93,17 @@ enum TimelineSpeakerChrome {
         case .dark: return rgb(0x4A5680)
         case .oled: return rgb(0x2A3850)
         case .night: return rgb(0x44382A)
-        case .light: return rgb(0xA6A299)
+        case .light: return rgb(0xB2AEA5)
         case .custom: return nil
         }
     }
 
-    #if DEBUG
-    private static func legacyUserFill(for themeID: ThemeID) -> UIColor? {
-        switch themeID {
-        case .dark: return rgb(0x252B3D)
-        case .oled: return rgb(0x121822)
-        case .night: return rgb(0x1C1A18)
-        case .light: return rgb(0xE5E3DD)
-        case .custom: return nil
-        }
+    static func resolvedAlpha(
+        of color: UIColor,
+        traitCollection: UITraitCollection = UITraitCollection(userInterfaceStyle: .dark)
+    ) -> CGFloat {
+        color.resolvedColor(with: traitCollection).cgColor.alpha
     }
-    #endif
 
     private static func rgb(_ hex: UInt32) -> UIColor {
         UIColor(

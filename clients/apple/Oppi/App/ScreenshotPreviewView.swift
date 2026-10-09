@@ -51,8 +51,6 @@ struct ScreenshotPreviewView: View {
             SettingsScreenshotPreview()
         case "settings-appearance":
             SettingsScreenshotPreview()
-        case "chat-speaker-contrast-dark-before":
-            ChatSpeakerContrastPreview(themeID: .dark, legacyPaint: true)
         case "chat-speaker-contrast-dark":
             ChatSpeakerContrastPreview(themeID: .dark)
         case "chat-speaker-contrast-oled":
@@ -63,6 +61,8 @@ struct ScreenshotPreviewView: View {
             ChatSpeakerContrastPreview(themeID: .light)
         case "chat-speaker-contrast-dark-increase-contrast":
             ChatSpeakerContrastPreview(themeID: .dark, increasedContrast: true)
+        case "chat-speaker-contrast-light-increase-contrast":
+            ChatSpeakerContrastPreview(themeID: .light, increasedContrast: true)
         case "chat-speaker-contrast-dark-differentiate-without-color":
             ChatSpeakerContrastPreview(themeID: .dark, differentiateWithoutColor: true)
         case "settings-sweep":

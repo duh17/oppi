@@ -733,26 +733,29 @@ struct UserTimelineRowContentTests {
         #expect(
             color(
                 bubble.backgroundColor,
-                approximatelyEquals: TimelineSpeakerChrome.userFill(from: palette)
+                approximatelyEquals: TimelineSpeakerChrome.userFill(
+                    from: palette,
+                    increasedContrast: false
+                )
             )
         )
         #expect(color(textView.textColor, approximatelyEquals: UIColor(palette.userMessageText)))
+        let chevron = try #require(userMessageIconLabel(in: view))
+        #expect(color(chevron.textColor, approximatelyEquals: UIColor(palette.userMessageText)))
     }
 
     @MainActor
     @Test("user row paints a leading accent bar from userMessageAccent")
     func userRowPaintsLeadingAccentBar() throws {
-        TimelineSpeakerChrome.resetOverridesForTesting()
-        TimelineSpeakerChrome.increasedContrastOverride = false
-        TimelineSpeakerChrome.differentiateWithoutColorOverride = false
-        defer { TimelineSpeakerChrome.resetOverridesForTesting() }
         let palette = ThemeRuntimeState.currentPalette()
         let view = UserTimelineRowContentView(
             configuration: UserTimelineRowConfiguration(
                 text: "Hello",
                 images: [],
                 canFork: false,
-                onFork: nil
+                onFork: nil,
+                increasedContrast: false,
+                differentiateWithoutColor: false
             )
         )
         view.frame = CGRect(x: 0, y: 0, width: 390, height: 160)
@@ -770,20 +773,16 @@ struct UserTimelineRowContentTests {
     @MainActor
     @Test("Increase Contrast uses a stronger user fill and accent border")
     func userRowIncreaseContrastUsesStrongerFillAndBorder() throws {
-        TimelineSpeakerChrome.resetOverridesForTesting()
-        TimelineSpeakerChrome.increasedContrastOverride = true
         let originalTheme = ThemeRuntimeState.currentThemeID()
-        defer {
-            TimelineSpeakerChrome.resetOverridesForTesting()
-            ThemeRuntimeState.setThemeID(originalTheme)
-        }
+        defer { ThemeRuntimeState.setThemeID(originalTheme) }
         ThemeRuntimeState.setThemeID(.dark)
         let view = UserTimelineRowContentView(
             configuration: UserTimelineRowConfiguration(
                 text: "Hello",
                 images: [],
                 canFork: false,
-                onFork: nil
+                onFork: nil,
+                increasedContrast: true
             )
         )
         view.frame = CGRect(x: 0, y: 0, width: 390, height: 160)
@@ -799,15 +798,14 @@ struct UserTimelineRowContentTests {
     @MainActor
     @Test("Differentiate Without Color shows a You caption on user rows")
     func userRowDifferentiateWithoutColorShowsYouCaption() throws {
-        TimelineSpeakerChrome.resetOverridesForTesting()
-        TimelineSpeakerChrome.differentiateWithoutColorOverride = true
-        defer { TimelineSpeakerChrome.resetOverridesForTesting() }
+        let palette = ThemeRuntimeState.currentPalette()
         let view = UserTimelineRowContentView(
             configuration: UserTimelineRowConfiguration(
                 text: "Hello",
                 images: [],
                 canFork: false,
-                onFork: nil
+                onFork: nil,
+                differentiateWithoutColor: true
             )
         )
         view.frame = CGRect(x: 0, y: 0, width: 390, height: 160)
@@ -817,6 +815,7 @@ struct UserTimelineRowContentTests {
         let caption = try #require(userMessageYouCaption(in: view))
         #expect(caption.isHidden == false)
         #expect(caption.text == "You")
+        #expect(color(caption.textColor, approximatelyEquals: UIColor(palette.userMessageText)))
         let accent = try #require(userMessageAccentBar(in: view))
         #expect(accent.isHidden == false)
     }
@@ -1650,6 +1649,11 @@ private func userMessageAccentBar(in view: UserTimelineRowContentView) -> UIView
 @MainActor
 private func userMessageYouCaption(in view: UserTimelineRowContentView) -> UILabel? {
     Mirror(reflecting: view).children.first { $0.label == "youCaption" }?.value as? UILabel
+}
+
+@MainActor
+private func userMessageIconLabel(in view: UserTimelineRowContentView) -> UILabel? {
+    Mirror(reflecting: view).children.first { $0.label == "iconLabel" }?.value as? UILabel
 }
 
 @MainActor

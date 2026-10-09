@@ -44,6 +44,8 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     let onFork: (() -> Void)?
     var itemID: String? = nil
     var interactionContext: TimelineInteractionContext? = nil
+    var increasedContrast: Bool = false
+    var differentiateWithoutColor: Bool = false
 
     func makeContentView() -> any UIView & UIContentView {
         UserTimelineRowContentView(configuration: self)
@@ -203,7 +205,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         bubbleStack.translatesAutoresizingMaskIntoConstraints = false
         bubbleStack.axis = .vertical
         bubbleStack.alignment = .fill
-        bubbleStack.spacing = 6
+        bubbleStack.spacing = TimelineSpeakerChrome.userBubbleContentSpacing
 
         attachmentBadgeRow.translatesAutoresizingMaskIntoConstraints = false
         attachmentBadgeRow.axis = .horizontal
@@ -298,37 +300,6 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
             outerStack.topAnchor.constraint(equalTo: topAnchor),
             outerStack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
-
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleSpeakerAccessibilityDidChange),
-            name: UIAccessibility.darkerSystemColorsStatusDidChangeNotification,
-            object: nil
-        )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleSpeakerAccessibilityDidChange),
-            name: UIAccessibility.differentiateWithoutColorDidChangeNotification,
-            object: nil
-        )
-    }
-
-    deinit {
-        NotificationCenter.default.removeObserver(self)
-    }
-
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        guard previousTraitCollection?.accessibilityContrast != traitCollection.accessibilityContrast else {
-            return
-        }
-        handleSpeakerAccessibilityDidChange()
-    }
-
-    @objc
-    private func handleSpeakerAccessibilityDidChange() {
-        applySpeakerChrome(palette: ThemeRuntimeState.currentPalette())
-        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
     // MARK: - Apply
@@ -339,7 +310,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         currentConfiguration = configuration
 
         let palette = ThemeRuntimeState.currentPalette()
-        iconLabel.textColor = UIColor(palette.blue)
+        iconLabel.textColor = UIColor(palette.userMessageText)
         messageTextView.textColor = UIColor(palette.userMessageText)
         messageTextView.font = AppFont.messageBody
         applySpeakerChrome(palette: palette)
@@ -407,18 +378,16 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
     }
 
     private func applySpeakerChrome(palette: ThemePalette) {
-        #if DEBUG
-        let legacy = TimelineSpeakerChrome.legacyScreenshotPaint
-        #else
-        let legacy = false
-        #endif
         let accent = TimelineSpeakerChrome.userAccent(from: palette)
-        bubbleContainer.backgroundColor = TimelineSpeakerChrome.userFill(from: palette)
+        bubbleContainer.backgroundColor = TimelineSpeakerChrome.userFill(
+            from: palette,
+            increasedContrast: currentConfiguration.increasedContrast
+        )
         accentBar.backgroundColor = accent
-        accentBar.isHidden = legacy
-        youCaption.textColor = UIColor(palette.fgDim)
-        youCaption.isHidden = legacy || !TimelineSpeakerChrome.differentiateWithoutColor
-        if !legacy, TimelineSpeakerChrome.increasedContrast {
+        accentBar.isHidden = false
+        youCaption.textColor = UIColor(palette.userMessageText)
+        youCaption.isHidden = !currentConfiguration.differentiateWithoutColor
+        if currentConfiguration.increasedContrast {
             bubbleContainer.layer.borderWidth = TimelineSpeakerChrome.increasedContrastBorderWidth
             bubbleContainer.layer.borderColor = accent.cgColor
         } else {
@@ -426,7 +395,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
             bubbleContainer.layer.borderColor = nil
         }
         outerStack.directionalLayoutMargins = NSDirectionalEdgeInsets(
-            top: legacy ? 0 : TimelineSpeakerChrome.userTurnSpacingAbove,
+            top: TimelineSpeakerChrome.userTurnSpacingAbove,
             leading: 0,
             bottom: 0,
             trailing: 0
@@ -658,7 +627,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         for pill in pathPills {
             let tint: UIColor = switch pill.kind {
             case .uploadedFile:
-                UIColor(palette.blue)
+                UIColor(palette.userMessageText)
             case .reviewFile:
                 UIColor(palette.cyan)
             case .repoFile:

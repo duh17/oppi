@@ -117,7 +117,9 @@ extension ChatTimelineCollectionHost.Controller {
             canFork: canFork,
             onFork: forkAction,
             itemID: itemID,
-            interactionContext: interactionContext
+            interactionContext: interactionContext,
+            increasedContrast: speakerIncreasedContrast,
+            differentiateWithoutColor: speakerDifferentiateWithoutColor
         )
     }
 

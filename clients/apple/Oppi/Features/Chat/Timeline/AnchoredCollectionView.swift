@@ -388,6 +388,15 @@ final class AnchoredCollectionView: UICollectionView {
         collectionViewLayout.invalidateLayout()
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard previousTraitCollection?.accessibilityContrast != traitCollection.accessibilityContrast else {
+            return
+        }
+        (delegate as? ChatTimelineCollectionHost.Controller)?
+            .handleSpeakerAccessibilityDidChange()
+    }
+
     override func layoutSubviews() {
         layoutSubviewsDepth += 1
         defer { layoutSubviewsDepth -= 1 }

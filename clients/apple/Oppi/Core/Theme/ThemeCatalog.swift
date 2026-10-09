@@ -458,7 +458,7 @@ enum ThemePalettes {
         yellow: c(0x7D5F14),
         thinkingText: c(0x5F5650),
         // User / assistant message
-        userMessageBg: c(0xB2AEA5),
+        userMessageBg: c(0xD1CDC6),
         userMessageText: c(0x3A3330),
         assistantMessageBg: .clear,
         userMessageAccent: c(0x2966A8),

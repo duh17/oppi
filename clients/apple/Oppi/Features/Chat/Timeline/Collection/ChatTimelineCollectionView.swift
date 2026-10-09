@@ -76,6 +76,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle
         let sessionManager: ChatSessionManager?
         var outlineAvailability: ChatTimelineOutlineAvailability?
+        /// Nil: resolve Increase Contrast from UIAccessibility / traits.
+        var speakerIncreasedContrastOverride: Bool? = nil
+        /// Nil: resolve Differentiate Without Color from UIAccessibility.
+        var speakerDifferentiateWithoutColorOverride: Bool? = nil
 
         init(
             items: [ChatItem],
@@ -124,7 +128,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             quietModeEnabled: Bool = false,
             workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons,
             sessionManager: ChatSessionManager? = nil,
-            outlineAvailability: ChatTimelineOutlineAvailability? = nil
+            outlineAvailability: ChatTimelineOutlineAvailability? = nil,
+            speakerIncreasedContrastOverride: Bool? = nil,
+            speakerDifferentiateWithoutColorOverride: Bool? = nil
         ) {
             self.items = items
             self.displayRows = displayRows ?? items.map(TimelineDisplayRow.item)
@@ -174,6 +180,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.workStripStyle = workStripStyle
             self.sessionManager = sessionManager
             self.outlineAvailability = outlineAvailability
+            self.speakerIncreasedContrastOverride = speakerIncreasedContrastOverride
+            self.speakerDifferentiateWithoutColorOverride = speakerDifferentiateWithoutColorOverride
         }
     }
 
@@ -312,6 +320,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 name: UIAccessibility.differentiateWithoutColorDidChangeNotification,
                 object: nil
             )
+            let traits = UITraitCollection.current
+            speakerIncreasedContrast = TimelineSpeakerChrome.increasedContrast(traitCollection: traits)
+            speakerDifferentiateWithoutColor = TimelineSpeakerChrome.differentiateWithoutColor()
         }
 
         var sessionId: String {
@@ -509,6 +520,10 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private var previousExtensionWorkingState: ExtensionWorkingState?
         private var previousHiddenThinkingLabel: String?
         private var previousThemeID: ThemeID?
+        var speakerIncreasedContrast = false
+        var speakerDifferentiateWithoutColor = false
+        private var speakerIncreasedContrastOverride: Bool?
+        private var speakerDifferentiateWithoutColorOverride: Bool?
         private var lastHandledScrollCommandNonce = 0
         var lastObservedContentOffsetY: CGFloat?
         var lastObservedContentHeight: CGFloat?
@@ -734,12 +749,110 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         }
 
         @objc
-        private func handleSpeakerAccessibilityDidChange() {
+        func handleSpeakerAccessibilityDidChange() {
             guard let collectionView else { return }
+            let resolved = resolvedSpeakerAccessibility(traitCollection: collectionView.traitCollection)
+            applySpeakerAccessibility(
+                increasedContrast: resolved.increasedContrast,
+                differentiateWithoutColor: resolved.differentiateWithoutColor,
+                collectionView: collectionView
+            )
+        }
+
+        #if DEBUG
+        func applySpeakerAccessibilityForTesting(
+            increasedContrast: Bool,
+            differentiateWithoutColor: Bool
+        ) {
+            speakerIncreasedContrastOverride = increasedContrast
+            speakerDifferentiateWithoutColorOverride = differentiateWithoutColor
+            guard let collectionView else { return }
+            applySpeakerAccessibility(
+                increasedContrast: increasedContrast,
+                differentiateWithoutColor: differentiateWithoutColor,
+                collectionView: collectionView
+            )
+        }
+        #endif
+
+        private func resolvedSpeakerAccessibility(
+            traitCollection: UITraitCollection
+        ) -> (increasedContrast: Bool, differentiateWithoutColor: Bool) {
+            (
+                increasedContrast: speakerIncreasedContrastOverride
+                    ?? TimelineSpeakerChrome.increasedContrast(traitCollection: traitCollection),
+                differentiateWithoutColor: speakerDifferentiateWithoutColorOverride
+                    ?? TimelineSpeakerChrome.differentiateWithoutColor()
+            )
+        }
+
+        private func applySpeakerAccessibility(
+            increasedContrast: Bool,
+            differentiateWithoutColor: Bool,
+            collectionView: UICollectionView
+        ) {
+            let dwcChanged = differentiateWithoutColor != speakerDifferentiateWithoutColor
+            let icChanged = increasedContrast != speakerIncreasedContrast
+            speakerIncreasedContrast = increasedContrast
+            speakerDifferentiateWithoutColor = differentiateWithoutColor
+            guard icChanged || dwcChanged else { return }
+
+            if dwcChanged {
+                let delta = TimelineSpeakerChrome.differentiateWithoutColorHeightDelta()
+                    * (differentiateWithoutColor ? 1 : -1)
+                let userIDs = userMessageIDsAffectingSpeakerHeight()
+                let anchorIndexPath = collectionView.indexPathsForVisibleItems
+                    .min { $0.item < $1.item }
+                let layout = collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout
+                let adjustedIDs = layout?.adjustCachedHeights(for: userIDs, delta: delta) ?? []
+                var offsetDelta: CGFloat = 0
+                if let anchorIndexPath, !adjustedIDs.isEmpty {
+                    for index in 0...anchorIndexPath.item {
+                        guard let itemID = dataSource?.itemIdentifier(
+                            for: IndexPath(item: index, section: 0)
+                        ), adjustedIDs.contains(itemID) else { continue }
+                        offsetDelta += delta
+                    }
+                }
+                // Paint the caption before preferred-size so visible cells do
+                // not write the old height back over the adjusted cache.
+                // Offscreen rows keep the delta; this must run during a drag
+                // because cell layout invalidation is deferred then.
+                let visibleUserIDs = collectionView.indexPathsForVisibleItems.compactMap { indexPath -> String? in
+                    guard let itemID = dataSource?.itemIdentifier(for: indexPath),
+                          userIDs.contains(itemID) else { return nil }
+                    return itemID
+                }
+                if !visibleUserIDs.isEmpty {
+                    reconfigureItems(visibleUserIDs, in: collectionView)
+                }
+                if abs(offsetDelta) > 0.5 {
+                    let targetOffsetY = collectionView.contentOffset.y + offsetDelta
+                    if let anchored = collectionView as? AnchoredCollectionView {
+                        anchored.applyOffsetCorrection(targetOffsetY)
+                    } else {
+                        collectionView.contentOffset.y = targetOffsetY
+                    }
+                }
+                collectionView.layoutIfNeeded()
+            }
+
             reconfigureVisibleRowsAfterAppearanceChange(
                 collectionView: collectionView,
                 expectedThemeID: nil
             )
+        }
+
+        private func userMessageIDsAffectingSpeakerHeight() -> Set<String> {
+            var ids: Set<String> = []
+            for (id, item) in currentItemByID {
+                guard case .userMessage(_, let text, let images, _) = item else { continue }
+                if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, images.isEmpty {
+                    continue
+                }
+                ids.insert(id)
+            }
+            return ids
         }
 
         /// Theme and Increase Contrast / Differentiate Without Color changes
@@ -956,6 +1069,18 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             timelineTopOverlap = configuration.topOverlap
             timelineBottomOverlap = configuration.bottomOverlap
             bindAudioStateObservationIfNeeded(audioPlayer: configuration.audioPlayer)
+
+            if let override = configuration.speakerIncreasedContrastOverride {
+                speakerIncreasedContrastOverride = override
+            }
+            if let override = configuration.speakerDifferentiateWithoutColorOverride {
+                speakerDifferentiateWithoutColorOverride = override
+            }
+            let speaker = resolvedSpeakerAccessibility(
+                traitCollection: collectionView.traitCollection
+            )
+            speakerIncreasedContrast = speaker.increasedContrast
+            speakerDifferentiateWithoutColor = speaker.differentiateWithoutColor
 
             // Detect theme change from runtime state instead of threaded param.
             let currentThemeID = ThemeRuntimeState.currentThemeID()
@@ -2267,6 +2392,23 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
         for itemID in itemIDs {
             cachedHeightByItemID.removeValue(forKey: itemID)
         }
+    }
+
+    /// Shift cached heights for known item ids without dropping the cache.
+    /// Used when Differentiate Without Color adds or removes the user caption.
+    @discardableResult
+    func adjustCachedHeights(for itemIDs: Set<String>, delta: CGFloat) -> Set<String> {
+        guard abs(delta) >= 0.01, !itemIDs.isEmpty else { return [] }
+        var adjustedIDs: Set<String> = []
+        for itemID in itemIDs {
+            guard var cached = cachedHeightByItemID[itemID] else { continue }
+            cached.height = max(cached.height + delta, 1)
+            cachedHeightByItemID[itemID] = cached
+            adjustedIDs.insert(itemID)
+        }
+        guard !adjustedIDs.isEmpty else { return [] }
+        invalidateLayout()
+        return adjustedIDs
     }
 
     #if DEBUG
