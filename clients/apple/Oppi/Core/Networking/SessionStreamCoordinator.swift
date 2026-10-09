@@ -168,9 +168,16 @@ final class SessionStreamCoordinator {
             return perSessionStream
         }
 
-        transition(to: .queueSync(sessionId: sessionId, phase: .initial), event: .transportReady)
-
-        scheduleQueueSync(connection: connection, sessionId: sessionId, transport: transport)
+        // Status flips to connected when the first frame arrives, before that
+        // frame is routed. The first frame is stream_connected, and its handler
+        // schedules the refresh. Scheduling here too sends a get_queue that the
+        // handler cancels; the cancelled waiter is not a failed refresh.
+        // An already-connected socket will not emit another stream_connected,
+        // so that path still schedules here.
+        if waitOutcome == "already_connected" {
+            transition(to: .queueSync(sessionId: sessionId, phase: .initial), event: .transportReady)
+            scheduleQueueSync(connection: connection, sessionId: sessionId, transport: transport)
+        }
 
         let totalMs = Int((ContinuousClock.now - streamStart) / .milliseconds(1))
         let endpointHostKind = connection.streamEndpointHostKindForMetrics()
@@ -308,14 +315,11 @@ final class SessionStreamCoordinator {
         phase: QueueSyncPhase
     ) async -> Bool {
         let queueSyncStart = ContinuousClock.now
-        var queueSyncStatus = "ok"
-        var queueSyncErrorKind: String?
-
+        var queueSyncError: Error?
         do {
             try await connection.requestMessageQueue(timeout: timeout)
         } catch {
-            queueSyncStatus = "error"
-            queueSyncErrorKind = connection.telemetryErrorKind(from: error)
+            queueSyncError = error
             let phaseLabel = phase == .initial ? "Initial" : "Deferred"
             streamCoordinatorLogger.debug(
                 "\(phaseLabel, privacy: .public) queue refresh failed for \(sessionId, privacy: .public): \(error.localizedDescription, privacy: .public)"
@@ -323,27 +327,21 @@ final class SessionStreamCoordinator {
         }
 
         let queueSyncMs = Int((ContinuousClock.now - queueSyncStart) / .milliseconds(1))
-        let metricStatus = queueSyncStatus
-        let metricErrorKind = queueSyncErrorKind
-        let metricPhase = phase.rawValue
-        let metricTransport = transport
+        let metricTags = MessageSender.queueSyncMetricTags(
+            transport: transport,
+            phase: phase.rawValue,
+            error: queueSyncError
+        )
+        let metricStatus = metricTags["status"] ?? "error"
         let metricSessionId = sessionId
 
         Task.detached(priority: .utility) {
-            var tags: [String: String] = [
-                "transport": metricTransport,
-                "status": metricStatus,
-                "phase": metricPhase,
-            ]
-            if let metricErrorKind {
-                tags["error_kind"] = metricErrorKind
-            }
             await ChatMetricsService.shared.record(
                 metric: .queueSyncMs,
                 value: Double(queueSyncMs),
                 unit: .ms,
                 sessionId: metricSessionId,
-                tags: tags
+                tags: metricTags
             )
         }
 

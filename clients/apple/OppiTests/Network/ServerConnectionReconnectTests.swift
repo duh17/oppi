@@ -204,6 +204,112 @@ struct ServerConnectionReconnectTests {
         }
         #expect(sent, "Fresh reconnect queue sync should still run after stale task cancellation")
     }
+
+    @Test func freshConnectSchedulesOneQueueRefreshFromStreamConnected() async {
+        let (conn, _) = makeTestConnection()
+        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        conn.wsClient?._setStatusForTesting(.disconnected)
+        conn.streamConsumptionTask = nil
+
+        let counter = MessageCounter()
+        conn._sendMessageForTesting = { message in
+            guard case .getQueue(let requestId) = message else { return }
+            await counter.increment()
+            conn.routeStreamMessage(StreamMessage(
+                sessionId: "s1",
+                seq: nil,
+                currentSeq: nil,
+                message: .commandResult(
+                    command: "get_queue",
+                    requestId: requestId,
+                    success: true,
+                    data: nil,
+                    error: nil
+                )
+            ))
+        }
+        conn._connectStreamForTesting = {
+            AsyncStream { continuation in
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(40))
+                    conn.wsClient?._setStatusForTesting(.connected)
+                    continuation.yield(StreamFrameEvent(
+                        sessionId: nil,
+                        message: .streamConnected(userName: "test", serverDictationAvailable: false),
+                        meta: nil
+                    ))
+                }
+            }
+        }
+
+        let stream = await conn.sessionStreamCoordinator.streamSession(
+            connection: conn,
+            sessionId: "s1",
+            routeScope: .workspace("w1")
+        )
+        #expect(stream != nil)
+
+        let started = await waitForTestCondition(timeoutMs: 800) {
+            await counter.count() >= 1
+        }
+        #expect(started, "stream_connected should schedule one get_queue")
+        try? await Task.sleep(for: .milliseconds(200))
+        let sent = await counter.count()
+        #expect(sent == 1, "fresh connect must not send a second get_queue that cancels the first; sent \(sent)")
+
+        conn.deferredQueueSyncTask?.cancel()
+        conn.streamConsumptionTask?.cancel()
+        conn.disconnectSession()
+    }
+
+    @Test func alreadyConnectedStreamStillRefreshesQueue() async {
+        let (conn, _) = makeTestConnection()
+        conn.setFocusedSessionStreamEndpointKindForTesting("split_session")
+        // A parked `connected` bootstrap keeps attach from tearing the socket
+        // down. Without it, reopening waits for a new stream_connected.
+        conn.routeStreamMessage(StreamMessage(
+            sessionId: "s1",
+            seq: nil,
+            currentSeq: nil,
+            message: .connected(session: makeTestSession())
+        ))
+        conn.wsClient?._setStatusForTesting(.connected)
+        conn.streamConsumptionTask = makeCancellableNeverCompletingTaskForTesting()
+
+        let counter = MessageCounter()
+        conn._sendMessageForTesting = { message in
+            guard case .getQueue(let requestId) = message else { return }
+            await counter.increment()
+            conn.routeStreamMessage(StreamMessage(
+                sessionId: "s1",
+                seq: nil,
+                currentSeq: nil,
+                message: .commandResult(
+                    command: "get_queue",
+                    requestId: requestId,
+                    success: true,
+                    data: nil,
+                    error: nil
+                )
+            ))
+        }
+
+        let stream = await conn.sessionStreamCoordinator.streamSession(
+            connection: conn,
+            sessionId: "s1",
+            routeScope: .workspace("w1")
+        )
+        #expect(stream != nil)
+        let refreshed = await waitForTestCondition(timeoutMs: 500) {
+            await counter.count() == 1
+        }
+        let sent = await counter.count()
+        #expect(refreshed, "an already-connected socket still refreshes the queue; sent \(sent)")
+
+        conn.deferredQueueSyncTask?.cancel()
+        conn.streamConsumptionTask?.cancel()
+        conn.disconnectSession()
+    }
 }
 
 /// A real loopback HTTP-upgrade peer. It controls only the external server;

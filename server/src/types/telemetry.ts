@@ -135,12 +135,13 @@ export const CHAT_METRIC_REGISTRY = {
   },
   "chat.command_send_ms": {
     unit: "ms",
-    description: "Client command send path duration until WebSocket send returns.",
+    description:
+      "Client command send path duration until WebSocket send returns. Tags: command, transport, outcome (ok, cancelled, or error). outcome=error is a user-visible failure. Cancellation uses outcome=cancelled and error_kind=cancelled.",
   },
   "chat.command_roundtrip_ms": {
     unit: "ms",
     description:
-      "Client command request/response duration until correlated command_result resolves.",
+      "Client command request/response duration until correlated command_result resolves. Tags: command, transport, outcome (ok, cancelled, or error). outcome=error is a user-visible failure; a cancelled or superseded waiter is outcome=cancelled. error_kind is network, timeout, decode, cancelled, not_connected, or other.",
   },
   "chat.command_resolve_lag_ms": {
     unit: "ms",
@@ -157,7 +158,8 @@ export const CHAT_METRIC_REGISTRY = {
   },
   "chat.queue_sync_ms": {
     unit: "ms",
-    description: "Latency for initial queue snapshot refresh (get_queue command).",
+    description:
+      "Latency for initial queue snapshot refresh (get_queue command). Tags: transport, phase, status (ok, cancelled, or error). status=error is a failed refresh, not a cancelled or superseded one.",
   },
   "chat.message_queue_ack_ms": {
     unit: "ms",

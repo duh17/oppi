@@ -33,6 +33,9 @@ final class MessageSender {
     /// A mutation started on one generation must never retry on another.
     private var transportGeneration: UInt64 = 0
 
+    /// Observes command send/roundtrip tags at the recording seam. Nil in production.
+    var _recordCommandMetricForTesting: ((ChatMetricName, [String: String]) -> Void)?
+
     private var targetSessionId: String? {
         focusedSessionProvider?()?.sessionId
     }
@@ -320,26 +323,29 @@ final class MessageSender {
                 outcome: "ok"
             )
         } catch {
-            try requireTransportGeneration(generation)
-            let errorKind = Self.telemetryErrorKind(from: error)
+            let classification = commandFailureClassification(for: error, generation: generation)
+            let elapsed = ContinuousClock.now - roundtripStart
             recordCommandMetric(
                 metric: .commandSendMs,
-                elapsed: ContinuousClock.now - roundtripStart,
+                elapsed: elapsed,
                 command: command,
                 transport: transport,
-                outcome: "error",
-                errorKind: errorKind
+                outcome: classification.outcome,
+                errorKind: classification.errorKind
             )
             recordCommandMetric(
                 metric: .commandRoundtripMs,
-                elapsed: ContinuousClock.now - roundtripStart,
+                elapsed: elapsed,
                 command: command,
                 transport: transport,
-                outcome: "error",
-                errorKind: errorKind
+                outcome: classification.outcome,
+                errorKind: classification.errorKind
             )
             commands.unregisterCommand(requestId: requestId)
             pending.waiter.resolve(.failure(error))
+            if transportGeneration != generation {
+                throw CancellationError()
+            }
             throw error
         }
 
@@ -356,22 +362,40 @@ final class MessageSender {
                 elapsed: ContinuousClock.now - roundtripStart,
                 command: command,
                 transport: transport,
-                outcome: "ok"
+                outcome: CommandMetricClassification.success.outcome
             )
             return response.data
         } catch {
-            try requireTransportGeneration(generation)
+            let classification = commandFailureClassification(for: error, generation: generation)
             recordCommandMetric(
                 metric: .commandRoundtripMs,
                 elapsed: ContinuousClock.now - roundtripStart,
                 command: command,
                 transport: transport,
-                outcome: "error",
-                errorKind: Self.telemetryErrorKind(from: error)
+                outcome: classification.outcome,
+                errorKind: classification.errorKind
             )
             commands.unregisterCommand(requestId: requestId)
+            if transportGeneration != generation {
+                throw CancellationError()
+            }
             throw error
         }
+    }
+
+    /// A transport replacement abandons the attempt. That is cancellation, not a
+    /// user-visible command failure, even when the waiter already failed.
+    private func commandFailureClassification(
+        for error: Error,
+        generation: UInt64
+    ) -> CommandMetricClassification {
+        if transportGeneration != generation {
+            return CommandMetricClassification(
+                outcome: "cancelled",
+                errorKind: "cancelled"
+            )
+        }
+        return CommandMetricClassification.recorded(for: error)
     }
 
     private func recordCommandMetric(
@@ -399,6 +423,7 @@ final class MessageSender {
         if let errorKind {
             tags["error_kind"] = errorKind
         }
+        _recordCommandMetricForTesting?(metric, tags)
         Task.detached(priority: .utility) {
             await ChatMetricsService.shared.record(
                 metric: metric,
@@ -978,14 +1003,26 @@ final class MessageSender {
     // MARK: - Telemetry Helpers
 
     static func telemetryErrorKind(from error: Error) -> String {
-        if let unconfirmed = error as? TurnSendUnconfirmedError {
-            return telemetryErrorKind(from: unconfirmed.underlying)
+        CommandMetricClassification.errorKind(for: error)
+    }
+
+    /// Tags for `chat.queue_sync_ms`. `status=error` is a failed refresh, not a
+    /// cancelled or superseded one.
+    static func queueSyncMetricTags(
+        transport: String,
+        phase: String,
+        error: Error?
+    ) -> [String: String] {
+        let classification = error.map(CommandMetricClassification.recorded(for:)) ?? .success
+        var tags = [
+            "transport": transport,
+            "status": classification.outcome,
+            "phase": phase,
+        ]
+        if let errorKind = classification.errorKind {
+            tags["error_kind"] = errorKind
         }
-        if error is CommandRequestError { return "command_request" }
-        if error is WebSocketError { return "websocket" }
-        if error is URLError { return "url" }
-        if error is CancellationError { return "cancelled" }
-        return "other"
+        return tags
     }
 
     static func recordQueueAckMetric(
@@ -1014,5 +1051,69 @@ final class MessageSender {
                 tags: tags
             )
         }
+    }
+}
+
+/// Mechanical result for command send/roundtrip (`outcome`) and queue sync (`status`).
+///
+/// `outcome`/`status` of `error` is a user-visible failure. Cancellation and
+/// supersession are `cancelled`, matching the telemetry tag vocabulary.
+struct CommandMetricClassification: Equatable, Sendable {
+    var outcome: String
+    var errorKind: String?
+
+    static let success = CommandMetricClassification(outcome: "ok", errorKind: nil)
+
+    static func recorded(for error: Error) -> CommandMetricClassification {
+        let kind = errorKind(for: error)
+        if kind == "cancelled" {
+            return CommandMetricClassification(outcome: "cancelled", errorKind: kind)
+        }
+        return CommandMetricClassification(outcome: "error", errorKind: kind)
+    }
+
+    /// Coarse `error_kind`: `network`, `timeout`, `decode`, `cancelled`,
+    /// `not_connected`, or `other`.
+    static func errorKind(for error: Error) -> String {
+        if let unconfirmed = error as? TurnSendUnconfirmedError {
+            return errorKind(for: unconfirmed.underlying)
+        }
+        if error is CancellationError {
+            return "cancelled"
+        }
+        if let commandError = error as? CommandRequestError {
+            switch commandError {
+            case .timeout:
+                return "timeout"
+            case .rejected:
+                return "other"
+            }
+        }
+        if let socketError = error as? WebSocketError {
+            switch socketError {
+            case .notConnected:
+                return "not_connected"
+            case .sendTimeout:
+                return "timeout"
+            case .encodingFailed:
+                return "other"
+            }
+        }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .cancelled:
+                return "cancelled"
+            case .timedOut:
+                return "timeout"
+            case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost:
+                return "network"
+            default:
+                return "other"
+            }
+        }
+        if error is DecodingError {
+            return "decode"
+        }
+        return "other"
     }
 }
