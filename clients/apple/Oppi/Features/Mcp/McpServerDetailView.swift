@@ -41,7 +41,7 @@ struct McpServerDetailView: View {
         List {
             Section {
                 LabeledContent("Status", value: entry.stateLabel)
-                LabeledContent("Transport", value: entry.transport == "http" ? "URL" : "Command")
+                LabeledContent("Transport", value: entry.transportLabel)
                 if let url = entry.config.url { Text(url).textSelection(.enabled) }
                 if let command = entry.config.command {
                     Text(([command] + (entry.config.args ?? [])).joined(separator: " "))

@@ -35,8 +35,8 @@ struct McpAddServerView: View {
                     LabeledContent("Scope", value: scope.title)
                         .accessibilityIdentifier("mcp.add.scope")
                     Picker("Transport", selection: $mode) {
-                        Text("URL").tag("url")
-                        Text("Command").tag("command")
+                        Text("HTTP").tag("url")
+                        Text("stdio").tag("command")
                     }.pickerStyle(.segmented)
                         .accessibilityIdentifier("mcp.add.transport")
                     Picker("Exposure", selection: $exposure) {

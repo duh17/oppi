@@ -131,7 +131,7 @@ struct McpServersView: View {
     private func serverRow(_ entry: McpServerSummary) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(entry.name).font(.headline)
-            Text("\(entry.transport == "http" ? "URL" : "Command") · \(entry.tools.count) tools · \(entry.exposure.title)")
+            Text("\(entry.transportLabel) · \(entry.tools.count) tools · \(entry.exposure.title)")
                 .font(.subheadline).foregroundStyle(.themeComment)
             Label(entry.stateLabel, systemImage: entry.state == "connected" ? "checkmark.circle" : "circle")
                 .font(.caption).foregroundStyle(statusStyle(entry.state))

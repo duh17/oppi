@@ -55,6 +55,14 @@ struct McpServerSummary: Codable, Sendable, Identifiable, Equatable {
     let error: String?
     let supportsOAuth: Bool
     var id: String { name }
+    /// MCP spec transport names. Unknown future values show raw rather than as a wrong guess.
+    var transportLabel: String {
+        switch transport {
+        case "stdio": "stdio"
+        case "http": "HTTP"
+        default: transport
+        }
+    }
     var stateLabel: String {
         switch state {
         case "needs-auth": "Needs sign-in"
