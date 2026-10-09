@@ -197,13 +197,22 @@ export class WorkspaceStore {
   }
 
   private persistSandboxHostMountIfFilled(
+    path: string,
     raw: Record<string, unknown>,
     sanitized: Workspace,
   ): void {
-    if (sanitized.runtime !== "sandbox" || normalizeHostMount(raw.hostMount)) {
+    if (
+      sanitized.runtime !== "sandbox" ||
+      normalizeHostMount(raw.hostMount) ||
+      !sanitized.hostMount
+    ) {
       return;
     }
-    this.writeWorkspaceFile(sanitized);
+    replaceWorkspaceMigrationFile(
+      path,
+      Buffer.from(JSON.stringify({ ...raw, hostMount: sanitized.hostMount }, null, 2)),
+      this.options.faultInjector,
+    );
   }
 
   getWorkspace(workspaceId: string): Workspace | undefined {
@@ -212,14 +221,16 @@ export class WorkspaceStore {
       return undefined;
     }
 
+    let raw: Record<string, unknown>;
+    let sanitized: Workspace;
     try {
-      const workspace = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
-      const sanitized = this.sanitizeWorkspace(workspace);
-      this.persistSandboxHostMountIfFilled(workspace, sanitized);
-      return sanitized;
+      raw = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+      sanitized = this.sanitizeWorkspace(raw);
     } catch {
       return undefined;
     }
+    this.persistSandboxHostMountIfFilled(path, raw, sanitized);
+    return sanitized;
   }
 
   listWorkspaces(): Workspace[] {
@@ -236,17 +247,20 @@ export class WorkspaceStore {
       }
 
       const path = join(dir, file);
+      let raw: Record<string, unknown>;
+      let sanitized: Workspace;
       try {
-        const workspace = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
-        const sanitized = this.sanitizeWorkspace(workspace);
-        this.persistSandboxHostMountIfFilled(workspace, sanitized);
-        workspaces.push(sanitized);
+        raw = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+        sanitized = this.sanitizeWorkspace(raw);
       } catch (err: unknown) {
         log.error("workspace_store.workspace_file_parse.failed", {
           workspaceFilePath: path,
           error: safeErrorMessage(err),
         });
+        continue;
       }
+      this.persistSandboxHostMountIfFilled(path, raw, sanitized);
+      workspaces.push(sanitized);
     }
 
     return workspaces.sort((a, b) => a.createdAt - b.createdAt);

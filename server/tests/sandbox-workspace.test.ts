@@ -5,10 +5,15 @@
  * sandbox tool wiring path using a mocked Gondolin VM.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Storage } from "../src/storage.js";
+import { ConfigStore } from "../src/storage/config-store.js";
+import {
+  WorkspaceStore,
+  type WorkspaceMigrationFaultPhase,
+} from "../src/storage/workspace-store.js";
 import type { Workspace, CreateWorkspaceRequest } from "../src/types.js";
 import {
   GondolinManager,
@@ -303,6 +308,65 @@ describe("Sandbox empty-folder hostMount persistence", () => {
       "~/sandbox/listed-sandbox",
     );
   });
+
+  it("keeps unknown raw fields when filling sandbox hostMount on load", () => {
+    const ws = storage.createWorkspace({
+      name: "Raw Fields",
+      runtime: "host",
+    } as CreateWorkspaceRequest);
+    const path = workspaceFilePath(ws.id);
+    const raw = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+    raw.runtime = "sandbox";
+    raw.futureField = { nested: true, label: "keep-me" };
+    raw.systemPromptMode = "replace";
+    delete raw.hostMount;
+    writeFileSync(path, JSON.stringify(raw, null, 2));
+
+    const loaded = storage.getWorkspace(ws.id);
+    expect(loaded?.hostMount).toBe("~/sandbox/raw-fields");
+    expect(loaded?.systemPromptMode).toBe("append");
+    expect(JSON.parse(readFileSync(path, "utf-8"))).toEqual({
+      ...raw,
+      hostMount: "~/sandbox/raw-fields",
+    });
+  });
+
+  it.each(["after_temp_write", "after_temp_fsync", "before_rename", "after_rename"] as const)(
+    "preserves the original sandbox workspace file after a %s hostMount fill failure",
+    (faultPhase) => {
+      const ws = storage.createWorkspace({
+        name: "Atomic Fill",
+        runtime: "host",
+      } as CreateWorkspaceRequest);
+      const path = workspaceFilePath(ws.id);
+      const raw = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+      raw.runtime = "sandbox";
+      raw.futureField = "keep-me";
+      delete raw.hostMount;
+      const original = JSON.stringify(raw, null, 2);
+      writeFileSync(path, original, { mode: 0o600 });
+
+      const configStore = new ConfigStore(dataDir);
+      const store = new WorkspaceStore(configStore, undefined, {
+        faultInjector(phase: WorkspaceMigrationFaultPhase) {
+          if (phase === faultPhase) throw new Error(`injected ${phase}`);
+        },
+      });
+
+      expect(() => store.getWorkspace(ws.id)).toThrow(`injected ${faultPhase}`);
+      expect(readFileSync(path, "utf-8")).toBe(original);
+      expect(
+        readdirSync(configStore.getWorkspacesDir()).filter((name) => name.endsWith(".tmp")),
+      ).toEqual([]);
+
+      const recovered = new WorkspaceStore(configStore);
+      expect(recovered.getWorkspace(ws.id)?.hostMount).toBe("~/sandbox/atomic-fill");
+      expect(JSON.parse(readFileSync(path, "utf-8"))).toEqual({
+        ...raw,
+        hostMount: "~/sandbox/atomic-fill",
+      });
+    },
+  );
 });
 
 // ─── GondolinManager lifecycle with secrets ───
