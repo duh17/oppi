@@ -178,8 +178,7 @@ final class MacChatSessionRuntimeAdapter:
             currentSeq: response.currentSeq,
             runtimeEpoch: response.runtimeEpoch,
             session: response.session,
-            catchUpComplete: response.catchUpComplete,
-            live: response.live
+            catchUpComplete: response.catchUpComplete
         )
     }
 

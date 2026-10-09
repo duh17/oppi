@@ -285,6 +285,61 @@ describe("session wait poller contract", () => {
     expect(paths).toEqual(["/sessions/s/events?since=0"]);
   });
 
+  it("keeps the events cursor across a not-live poll", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const paths: string[] = [];
+    let polls = 0;
+    const promise = runSessionWatch(
+      ["s"],
+      { condition: "idle", requireAll: false, intervalMs: 20, timeoutMs: 200 },
+      async <T>(path: string): Promise<T> => {
+        paths.push(path);
+        polls += 1;
+        if (polls === 1) {
+          return {
+            live: true,
+            events: [{ type: "agent_start" }],
+            currentSeq: 7,
+            catchUpComplete: true,
+            session: { status: "busy", messageCount: 1 },
+          } as T;
+        }
+        if (polls === 2) {
+          return {
+            live: false,
+            events: [],
+            currentSeq: 0,
+            catchUpComplete: false,
+            session: { status: "busy", messageCount: 1 },
+          } as T;
+        }
+        return {
+          live: true,
+          events: [],
+          currentSeq: 9,
+          catchUpComplete: true,
+          session: { status: "ready", messageCount: 2, lastMessage: "done" },
+        } as T;
+      },
+      vi.fn(),
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(20);
+    await expect(promise).resolves.toMatchObject({
+      kind: "session",
+      reason: "idle",
+      status: "ready",
+    });
+    expect(paths).toEqual([
+      "/sessions/s/events?since=0",
+      "/sessions/s/events?since=7",
+      "/sessions/s/events?since=7",
+    ]);
+  });
+
   it("does not fetch a session snapshot when events returns 404", async () => {
     const paths: string[] = [];
     await expect(

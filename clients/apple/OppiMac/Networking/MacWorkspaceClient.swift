@@ -53,8 +53,6 @@ actor MacWorkspaceClient {
         let runtimeEpoch: String?
         let session: Session
         let catchUpComplete: Bool
-        /// False when the session exists but has no live event ring.
-        let live: Bool
     }
 
     struct CreateSessionResponse: Decodable, Sendable {
@@ -967,8 +965,7 @@ actor MacWorkspaceClient {
             currentSeq: payload.currentSeq,
             runtimeEpoch: payload.runtimeEpoch,
             session: payload.session,
-            catchUpComplete: payload.catchUpComplete,
-            live: payload.live ?? true
+            catchUpComplete: payload.catchUpComplete
         )
     }
 
@@ -1173,8 +1170,6 @@ private struct SessionCatchUpPayload: Decodable {
     let runtimeEpoch: String?
     let catchUpComplete: Bool
     let session: Session
-    /// Absent on older servers, which only returned this payload for a live ring.
-    let live: Bool?
 }
 
 private struct SequencedCatchUpEvent: Decodable {

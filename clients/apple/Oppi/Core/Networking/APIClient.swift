@@ -659,7 +659,7 @@ actor APIClient: ClientLogUploading {
             runtimeEpoch: payload.runtimeEpoch,
             session: payload.session,
             catchUpComplete: payload.catchUpComplete,
-            live: payload.live ?? true
+            live: payload.live
         )
     }
 
@@ -674,8 +674,8 @@ actor APIClient: ClientLogUploading {
         let runtimeEpoch: String?
         let catchUpComplete: Bool
         let session: Session
-        /// Absent on older servers, which only returned this payload for a live ring.
-        let live: Bool?
+        /// This server always sends `live`. A missing field is a decode failure, not a live ring.
+        let live: Bool
     }
 
     private struct SequencedEventEntry: Decodable {

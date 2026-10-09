@@ -1034,7 +1034,8 @@ struct APIClientTests {
               ],
               "currentSeq": 8,
               "session": {"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
-              "catchUpComplete": true
+              "catchUpComplete": true,
+              "live": true
             }
             """)
         }

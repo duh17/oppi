@@ -89,7 +89,6 @@ struct MacChatSessionRuntimeAdapterTests {
         #expect(!request.path.contains("sk_"))
         #expect(response.currentSeq == 13)
         #expect(response.catchUpComplete)
-        #expect(response.live)
         #expect(response.events.map(\.seq) == [13])
     }
 
