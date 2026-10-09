@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Session-list bottom chrome shared by All Sessions and workspace lists.
 /// Search lives in the navigation-bar drawer and reveals by pulling the list.
@@ -264,6 +265,101 @@ struct SessionInboxFolderToolbarButton: View {
         .disabled(!isEnabled)
         .accessibilityIdentifier("workspace.files.open")
         .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+/// Whether a Message launcher's surface still has a destination pushed over it.
+///
+/// All Sessions is the compact stack root. Durable and thread detail record the
+/// path count when they appear. Pass the stack that surface lives in: compact
+/// `workspacePath`, or the split detail path. Omitting the launcher while covered
+/// is required — hiding the bottom bar on the pushed chat is not enough during
+/// an interactive pop, and the capsule would land on the composer.
+enum QuickSessionLauncherCoverage {
+    static func isCovered(
+        presentation: WorkspaceNavigationPresentation,
+        workspacePathCount: Int,
+        splitDetailPathCount: Int,
+        surfaceDepth: Int,
+        splitDetailReplacesSurface: Bool = false
+    ) -> Bool {
+        switch presentation {
+        case .split:
+            if splitDetailReplacesSurface { return true }
+            return splitDetailPathCount > surfaceDepth
+        case .stack:
+            return workspacePathCount > surfaceDepth
+        }
+    }
+}
+
+/// Ignores a Message action whose touch is the interactive pop itself.
+///
+/// A completed pop can turn the finger lift into a tap on the capsule that
+/// just reappeared at the composer. The recognizer stays `.ended` only until
+/// the next touch begins, so a later tap on the restored bar still starts.
+enum QuickSessionInteractivePop {
+    @MainActor private static weak var gesture: UIGestureRecognizer?
+
+    @MainActor
+    static func attach(_ gesture: UIGestureRecognizer) {
+        self.gesture = gesture
+    }
+
+    @MainActor
+    static var shouldIgnoreLauncherActivation: Bool {
+        shouldIgnore(popGestureState: gesture?.state)
+    }
+
+    static func shouldIgnore(popGestureState: UIGestureRecognizer.State?) -> Bool {
+        switch popGestureState {
+        case .began, .changed, .ended:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
+/// Finds the enclosing navigation controller's interactive pop gesture.
+/// Attached from the list, not the toolbar button: toolbar items on iOS 26
+/// are not in that controller's responder chain.
+struct QuickSessionInteractivePopProbe: UIViewRepresentable {
+    func makeUIView(context: Context) -> ProbeView {
+        ProbeView()
+    }
+
+    func updateUIView(_ uiView: ProbeView, context: Context) {
+        uiView.attachIfNeeded()
+    }
+
+    final class ProbeView: UIView {
+        private weak var pop: UIGestureRecognizer?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            attachIfNeeded()
+        }
+
+        func attachIfNeeded() {
+            guard pop == nil, window != nil else { return }
+            guard let pop = enclosingNavigationController()?.interactivePopGestureRecognizer else { return }
+            self.pop = pop
+            MainActor.assumeIsolated {
+                QuickSessionInteractivePop.attach(pop)
+            }
+        }
+
+        private func enclosingNavigationController() -> UINavigationController? {
+            var responder: UIResponder? = self
+            while let current = responder {
+                if let navigation = current as? UINavigationController {
+                    return navigation
+                }
+                responder = current.next
+            }
+            return nil
+        }
     }
 }
 

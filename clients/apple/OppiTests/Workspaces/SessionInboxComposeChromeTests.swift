@@ -300,6 +300,97 @@ struct SessionInboxComposeChromeTests {
     }
 }
 
+@Suite("Quick Session launcher coverage")
+struct QuickSessionLauncherCoverageTests {
+    @Test func stackRootStaysVisibleUntilADestinationIsPushed() {
+        #expect(
+            !QuickSessionLauncherCoverage.isCovered(
+                presentation: .stack,
+                workspacePathCount: 0,
+                splitDetailPathCount: 0,
+                surfaceDepth: 0
+            )
+        )
+        #expect(
+            QuickSessionLauncherCoverage.isCovered(
+                presentation: .stack,
+                workspacePathCount: 1,
+                splitDetailPathCount: 0,
+                surfaceDepth: 0
+            )
+        )
+    }
+
+    @Test func pushedSurfaceReappearsWhenThePathReturnsToItsDepth() {
+        #expect(
+            QuickSessionLauncherCoverage.isCovered(
+                presentation: .stack,
+                workspacePathCount: 3,
+                splitDetailPathCount: 9,
+                surfaceDepth: 2
+            )
+        )
+        #expect(
+            !QuickSessionLauncherCoverage.isCovered(
+                presentation: .stack,
+                workspacePathCount: 2,
+                splitDetailPathCount: 9,
+                surfaceDepth: 2
+            )
+        )
+    }
+
+    @Test func splitDetailUsesItsOwnPathNotTheSidebarStack() {
+        #expect(
+            !QuickSessionLauncherCoverage.isCovered(
+                presentation: .split,
+                workspacePathCount: 4,
+                splitDetailPathCount: 1,
+                surfaceDepth: 1
+            )
+        )
+        #expect(
+            QuickSessionLauncherCoverage.isCovered(
+                presentation: .split,
+                workspacePathCount: 0,
+                splitDetailPathCount: 2,
+                surfaceDepth: 1
+            )
+        )
+    }
+
+    @Test func interactivePopGestureDoesNotActivateTheLauncher() {
+        #expect(QuickSessionInteractivePop.shouldIgnore(popGestureState: .began))
+        #expect(QuickSessionInteractivePop.shouldIgnore(popGestureState: .changed))
+        #expect(QuickSessionInteractivePop.shouldIgnore(popGestureState: .ended))
+        #expect(!QuickSessionInteractivePop.shouldIgnore(popGestureState: .possible))
+        #expect(!QuickSessionInteractivePop.shouldIgnore(popGestureState: .failed))
+        #expect(!QuickSessionInteractivePop.shouldIgnore(popGestureState: .cancelled))
+        #expect(!QuickSessionInteractivePop.shouldIgnore(popGestureState: nil))
+    }
+
+    @Test func replacedSplitDetailCoversTheSurfaceEvenWithAnEmptyDetailPath() {
+        #expect(
+            QuickSessionLauncherCoverage.isCovered(
+                presentation: .split,
+                workspacePathCount: 0,
+                splitDetailPathCount: 0,
+                surfaceDepth: 0,
+                splitDetailReplacesSurface: true
+            )
+        )
+        #expect(
+            !QuickSessionLauncherCoverage.isCovered(
+                presentation: .stack,
+                workspacePathCount: 0,
+                splitDetailPathCount: 0,
+                surfaceDepth: 0,
+                splitDetailReplacesSurface: true
+            )
+        )
+    }
+}
+
 @Suite("Session inbox search scope")
 struct SessionInboxSearchScopeTests {
     @Test func allSessionsSearchOmitsWorkspaceId() {

@@ -268,3 +268,197 @@ final class QuickSessionE2ETests: E2ETestCase {
         return app.descendants(matching: .any).matching(predicate).firstMatch
     }
 }
+
+/// Message launcher must not sit under a pushed chat, including the interactive
+/// pop that previously turned a composer tap into Quick Session.
+final class QuickSessionCoveredLauncherE2ETests: E2ETestCase {
+    private var rootId = ""
+    private var childId = ""
+
+    override var e2eLaunchesSessionsInboxOnly: Bool { true }
+    override var e2eAutoCreatesSessionOnLaunch: Bool { false }
+    override var e2eRequiresFreshLaunch: Bool { true }
+
+    override func configureE2ELaunch(_ application: XCUIApplication) {
+        application.launchArguments += ["-dev.chenda.Oppi.experiments.sessionThreads", "YES"]
+    }
+
+    override func seedE2EFixtures() throws {
+        let workspaceId = try e2eWorkspaceId()
+        let response = try e2eLabAPIJSON(
+            method: "POST",
+            path: "/e2e/ui/fixtures/session-threads",
+            body: [
+                "workspaceId": workspaceId,
+                "sessions": [
+                    [
+                        "key": "root",
+                        "name": "Covered launcher root",
+                        "status": "stopped",
+                        "createdAtOffsetMs": -120_000,
+                        "lastActivityOffsetMs": -60_000,
+                        "messageCount": 1,
+                    ],
+                    [
+                        "key": "child",
+                        "parentKey": "root",
+                        "name": "Covered launcher child",
+                        "status": "stopped",
+                        "createdAtOffsetMs": -90_000,
+                        "lastActivityOffsetMs": -30_000,
+                        "messageCount": 1,
+                    ],
+                ],
+            ]
+        )
+        let ids = try XCTUnwrap(response["sessionIds"] as? [String: String])
+        rootId = try XCTUnwrap(ids["root"])
+        childId = try XCTUnwrap(ids["child"])
+    }
+
+    @MainActor
+    func testCoveredListsOmitQuickSessionLauncherUntilBack() throws {
+        let inbox = app.collectionViews["workspace.sessionList"]
+        XCTAssertTrue(inbox.waitForExistence(timeout: 20), "All Sessions did not appear")
+        let rootRow = app.descendants(matching: .any)["session.nav.\(rootId)"]
+        XCTAssertTrue(
+            waitForSeededRow(rootRow, in: inbox),
+            "Root session row missing for \(rootId). \(visibleControlIDs())"
+        )
+        rootRow.tap()
+        assertChatPushedWithoutLauncher(from: "all sessions")
+        interactivePopThenComposerTap(from: "all sessions")
+        returnToInbox()
+        assertLauncherPresent(on: "all sessions")
+
+        let thread = app.buttons["thread.nav.\(rootId)"]
+        XCTAssertTrue(thread.waitForExistence(timeout: 15), "Thread strip missing")
+        // Close a row swipe the pop may have revealed, then open the strip.
+        app.collectionViews["workspace.sessionList"].swipeDown()
+        thread.tap()
+        XCTAssertTrue(app.collectionViews["thread.detail"].waitForExistence(timeout: 15), "Thread detail did not open")
+        assertLauncherPresent(on: "thread detail")
+
+        // Stopped children fold into "finished". The root row is always in the outline.
+        let member = app.descendants(matching: .any)["thread.row.\(rootId)"]
+        XCTAssertTrue(member.waitForExistence(timeout: 15), "Thread root row missing")
+        member.tap()
+        assertChatPushedWithoutLauncher(from: "thread detail")
+        interactivePopThenComposerTap(from: "thread detail")
+        XCTAssertTrue(
+            app.collectionViews["thread.detail"].waitForExistence(timeout: 10)
+                || app.buttons["chat.toolbar.back"].waitForExistence(timeout: 2),
+            "Thread detail did not return after the pop"
+        )
+        if app.buttons["chat.toolbar.files"].exists {
+            app.buttons["chat.toolbar.back"].tap()
+        }
+        XCTAssertTrue(app.collectionViews["thread.detail"].waitForExistence(timeout: 10), "Back did not return to thread detail")
+        assertLauncherPresent(on: "thread detail after back")
+    }
+
+    @MainActor
+    private func assertChatPushedWithoutLauncher(from source: String) {
+        XCTAssertTrue(
+            app.buttons["chat.toolbar.files"].waitForExistence(timeout: 20),
+            "Chat did not open from \(source)"
+        )
+        let launcher = app.buttons["workspace.quickSession.start"]
+        XCTAssertFalse(launcher.exists, "Message launcher installed while chat from \(source) is pushed")
+        XCTAssertFalse(app.buttons["quickSession.overlay"].exists, "Quick Session opened with the chat from \(source)")
+    }
+
+    @MainActor
+    private func assertLauncherPresent(on surface: String) {
+        let launcher = app.buttons["workspace.quickSession.start"]
+        XCTAssertTrue(launcher.waitForExistence(timeout: 8), "Message launcher missing on \(surface)")
+        XCTAssertTrue(launcher.isHittable, "Message launcher not hittable on \(surface)")
+    }
+
+    /// Same gesture as the misfire: edge drag out and back, then a tap at the
+    /// composer band. A completed pop may restore the launcher; that tap must
+    /// not open Quick Session while chat is still the surface.
+    @MainActor
+    private func interactivePopThenComposerTap(from source: String) {
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
+        let mid = app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.5))
+        // One completing pop. A second drag after the list is back swipes a row
+        // open and steals the next tap.
+        start.press(forDuration: 0.15, thenDragTo: mid, withVelocity: .slow, thenHoldForDuration: 0.2)
+
+        let overlay = app.buttons["quickSession.overlay"]
+        let liftOpened = overlay.waitForExistence(timeout: 1)
+        print("QSREPORT \(source) after-lift overlay=\(liftOpened) launcher=\(app.buttons["workspace.quickSession.start"].exists) chat=\(app.buttons["chat.toolbar.files"].exists)")
+        XCTAssertFalse(liftOpened, "Interactive pop lift opened Quick Session from \(source)")
+
+        let composer = app.coordinate(withNormalizedOffset: CGVector(dx: 0.425, dy: 0.94))
+        composer.tap()
+        let tapOpened = overlay.waitForExistence(timeout: 2)
+        let chatStillPushed = app.buttons["chat.toolbar.files"].exists
+        let launcher = app.buttons["workspace.quickSession.start"]
+        print(
+            "QSREPORT \(source) after-tap overlay=\(tapOpened) chat=\(chatStillPushed) launcher=\(launcher.exists) hittable=\(launcher.exists && launcher.isHittable) frame=\(launcher.exists ? String(describing: launcher.frame) : "none")"
+        )
+        if chatStillPushed {
+            XCTAssertFalse(tapOpened, "Composer-position tap opened Quick Session while chat from \(source) was still pushed")
+        } else if tapOpened {
+            // Pop completed onto the list. The restored launcher accepted a new
+            // tap; that is not the covered-chat misfire. Dismiss and continue.
+            overlay.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)).tap()
+            XCTAssertTrue(app.buttons["workspace.quickSession.start"].waitForExistence(timeout: 5), "Launcher missing after dismissing a completed-pop tap")
+        }
+    }
+
+    /// Fixture sessions are stored before launch. Pull to refresh if the first
+    /// snapshot raced an empty store, and expand today's stopped group if it is collapsed.
+    @MainActor
+    private func waitForSeededRow(_ row: XCUIElement, in list: XCUIElement) -> Bool {
+        let deadline = Date().addingTimeInterval(30)
+        var refreshed = false
+        while Date() < deadline {
+            if row.exists { return true }
+            if !refreshed {
+                list.swipeDown()
+                refreshed = true
+            }
+            let collapsed = app.buttons.matching(
+                NSPredicate(format: "identifier BEGINSWITH %@ AND value == %@",
+                            "workspace.sessionList.", "Collapsed")
+            ).firstMatch
+            if collapsed.exists {
+                collapsed.tap()
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+        }
+        return row.exists
+    }
+
+    @MainActor
+    private func visibleControlIDs() -> String {
+        let ids = app.descendants(matching: .any)
+            .allElementsBoundByIndex
+            .prefix(40)
+            .map { "\($0.identifier)" }
+            .filter { !$0.isEmpty }
+        return ids.joined(separator: ", ")
+    }
+
+    @MainActor
+    private func returnToInbox() {
+        for _ in 0..<4 {
+            if app.collectionViews["workspace.sessionList"].exists,
+               !app.buttons["chat.toolbar.files"].exists,
+               !app.collectionViews["thread.detail"].exists {
+                return
+            }
+            if app.buttons["chat.toolbar.back"].exists {
+                app.buttons["chat.toolbar.back"].tap()
+            } else if app.navigationBars.buttons["Back"].exists {
+                app.navigationBars.buttons["Back"].tap()
+            } else {
+                break
+            }
+        }
+        XCTAssertTrue(app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 10), "All Sessions did not return")
+    }
+}

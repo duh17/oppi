@@ -417,6 +417,32 @@ struct SessionInboxView: View {
         return scope == .all ? signature : "\(signature):\(navigation.splitDetailPath.count)"
     }
 
+    /// Do not install Message while a destination is pushed over this list.
+    /// The pushed chat hides the bottom bar, but an interactive pop still
+    /// reveals an installed capsule at the composer.
+    private var isQuickSessionLauncherCovered: Bool {
+        let surfaceDepth: Int = switch navigation.workspaceNavigationPresentation {
+        case .split:
+            0
+        case .stack:
+            switch scope {
+            case .all:
+                0
+            case .durable:
+                scopedStackDepth ?? navigation.workspacePath.count
+            }
+        }
+        return QuickSessionLauncherCoverage.isCovered(
+            presentation: navigation.workspaceNavigationPresentation,
+            workspacePathCount: navigation.workspacePath.count,
+            splitDetailPathCount: navigation.splitDetailPath.count,
+            surfaceDepth: surfaceDepth,
+            // All Sessions in split is replaced when a detail target is set.
+            // Durable is that detail root, so a non-nil target is not coverage.
+            splitDetailReplacesSurface: scope == .all && navigation.splitDetailTarget != nil
+        )
+    }
+
     private var viewData: SessionInboxViewData {
         let items = sessionItems()
         var itemsById = Dictionary(uniqueKeysWithValues: items.map { ($0.session.id, $0) })
@@ -570,6 +596,7 @@ struct SessionInboxView: View {
             }
         }
         .accessibilityIdentifier(scope == .all ? "workspace.sessionList" : "durableSessions.list")
+        .background { QuickSessionInteractivePopProbe() }
         .listStyle(.plain)
         .themedListSurface()
         .navigationTitle(scope.title)
@@ -779,8 +806,10 @@ struct SessionInboxView: View {
                     .accessibilityIdentifier("workspace.sidebar.open")
                 }
             }
-            prioritizedRailToolbarItem(joinsVerticalRail: true, priority: .keep) {
-                compactQuickSessionBar(joinsRail: true)
+            if !isQuickSessionLauncherCovered {
+                prioritizedRailToolbarItem(joinsVerticalRail: true, priority: .keep) {
+                    compactQuickSessionBar(joinsRail: true)
+                }
             }
             if scope == .all, let selectedServer {
                 prioritizedRailToolbarItem(
@@ -829,8 +858,10 @@ struct SessionInboxView: View {
                 }
             }
 
-            ToolbarItem(placement: .bottomBar) {
-                compactQuickSessionBar(joinsRail: false)
+            if !isQuickSessionLauncherCovered {
+                ToolbarItem(placement: .bottomBar) {
+                    compactQuickSessionBar(joinsRail: false)
+                }
             }
             if sessionListToolbar.showsNowPlayingPill {
                 ToolbarSpacer(
@@ -1340,9 +1371,11 @@ struct SessionInboxView: View {
             trailingReserve: SessionInboxComposeChrome.messageCapsuleFolderReserve,
             onIncognito: nil,
             onStart: {
+                guard !QuickSessionInteractivePop.shouldIgnoreLauncherActivation else { return }
                 startQuickSession(dictate: false)
             },
             onDictate: {
+                guard !QuickSessionInteractivePop.shouldIgnoreLauncherActivation else { return }
                 startQuickSession(dictate: true)
             }
         )
