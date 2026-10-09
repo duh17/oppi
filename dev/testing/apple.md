@@ -6,16 +6,26 @@ Part of [Testing Guide](README.md). iOS build, unit, coverage, E2E, simulator la
 
 From `clients/apple/`:
 
+### Prebuilt frameworks
+
+The Oppi target links two untracked XCFrameworks under `clients/apple/Vendor/`: TailscaleKit and the terminal engine (below). Xcode checks linked XCFrameworks while it plans the build, before any Run Script phase, so a checkout or worktree without them fails with `There is no XCFramework found at …/Vendor/…` and the target's pre-build phases never get to run. `sim-pool.sh run` and Xcode Cloud run this first; run it yourself before a bare `xcodebuild` or an Xcode GUI build in a new worktree:
+
+```bash
+clients/apple/scripts/ensure-prebuilt-frameworks.sh
+```
+
+It is a no-op when `Vendor/` matches the pins, copies from `~/Library/Caches/oppi-*/<build-id>/` when the host cache matches, and builds from source only on a cache miss.
+
+Xcode caches the failed build plan, error included, so a DerivedData that already failed this way keeps failing after `Vendor/` is filled. `sim-pool.sh run` drops that plan from its slot automatically; for other builds, delete `<DerivedData>/Build/Intermediates.noindex/XCBuildData/*.xcbuilddata` or use a fresh `-derivedDataPath`.
+
 ### Build TailscaleKit
 
-The iOS app embeds the official TailscaleKit framework, which is built locally and not tracked. Run once per checkout, and again after the pinned libtailscale commit or the omitted-feature list (`BUILD_ID`) changes. It needs Go (cgo) and Xcode, and keeps Go caches under `clients/apple/.build/tailscalekit`. A second checkout reuses `~/Library/Caches/oppi-tailscalekit/<build-id>/` without Go or Xcode:
+The iOS app embeds the official TailscaleKit framework, which is built locally and not tracked. A cache miss after the pinned libtailscale commit or the omitted-feature list (`BUILD_ID`) changes needs Go (cgo) and Xcode, and keeps Go caches under `clients/apple/.build/tailscalekit`. Other checkouts reuse `~/Library/Caches/oppi-tailscalekit/<build-id>/` without Go or Xcode:
 
 ```bash
 cd clients/apple
 ./scripts/build-tailscalekit.sh
 ```
-
-Without it, the Oppi target fails with a missing `Vendor/TailscaleKit/TailscaleKit.xcframework`.
 
 ### Nerd Font icons
 
@@ -32,7 +42,7 @@ needs exactly Zig 0.16.0 and Xcode with the iOS device and simulator SDKs:
 clients/apple/scripts/build-ghostty-vt.sh
 ```
 
-The Oppi pre-build phase runs this command. Other checkouts reuse
+`ensure-prebuilt-frameworks.sh` runs this before xcodebuild; the Oppi pre-build phase runs it again to catch pin bumps. Other checkouts reuse
 `~/Library/Caches/oppi-ghostty-vt/<build-id>/` without Zig or network access.
 The source revision and build options live in the script; update both deliberately.
 `Oppi/Resources/GhosttyVt-LICENSE.txt` carries the distributed notices.

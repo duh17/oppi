@@ -5,9 +5,10 @@
 #
 # Shared host cache (xcframework + BUILD_ID + LICENSE):
 #   ~/Library/Caches/oppi-tailscalekit/<build-id>/
-# Override the cache root with OPPI_TAILSCALEKIT_CACHE. The Oppi preBuild
-# phase runs this script so a fresh checkout that already has the cache does
-# not fail the missing-framework link.
+# Override the cache root with OPPI_TAILSCALEKIT_CACHE. Xcode checks linked
+# XCFrameworks before any Run Script phase, so the Oppi preBuild phase cannot
+# restore a missing copy; ensure-prebuilt-frameworks.sh runs this script before
+# xcodebuild starts.
 #
 # Reuse order (cache/vendor hits do not require go, make, or xcodebuild):
 #   1. Vendor stamp matches the pin → exit 0 (seed the cache if it is missing)

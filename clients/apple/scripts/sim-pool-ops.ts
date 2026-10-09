@@ -297,7 +297,45 @@ export function applyRunCheckout(config: PoolConfig): string {
   }
   log(`[sim-pool] Apple checkout ${process.cwd()}`);
   ensureOppiTestsInfoPlist(config.appleDir);
+  ensurePrebuiltFrameworks(config.appleDir);
   return process.cwd();
+}
+
+// Xcode rejects a missing linked XCFramework while planning, before Run Script
+// phases, and Vendor/ is untracked, so a fresh worktree must be hydrated before
+// xcodebuild. This runs before slot acquisition so a cache miss without the
+// build toolchain fails without holding a simulator. A --root checkout based
+// before this script existed keeps its own Vendor/ handling.
+export function ensurePrebuiltFrameworks(appleDir: string): void {
+  const script = join(appleDir, "scripts", "ensure-prebuilt-frameworks.sh");
+  if (!existsSync(script)) {
+    log(`[sim-pool] ${script} not in this checkout; not preparing Vendor/`);
+    return;
+  }
+  const result = spawnSync(script, [], { cwd: appleDir, stdio: ["ignore", 2, 2] });
+  if (result.status !== 0) {
+    const reason = result.error?.message ?? `exited ${result.status ?? result.signal}`;
+    die(`prebuilt frameworks are not ready (${script} ${reason}); see its output above`);
+  }
+}
+
+// Xcode caches each build description in DerivedData, diagnostics included,
+// and reuses it without re-checking XCFrameworks. A pool that planned while
+// Vendor/ was missing keeps failing with "There is no XCFramework found" after
+// Vendor/ is filled. Drop only those descriptions, in the slot this run owns;
+// Xcode re-plans and keeps compiled outputs (build.db sits outside them).
+// appleDir is the physical cwd xcodebuild runs from, which its diagnostics use.
+export function dropBuildDescriptionsMissingVendor(appleDir: string, derivedData: string): void {
+  const descriptions = join(derivedData, "Build", "Intermediates.noindex", "XCBuildData");
+  if (!existsSync(descriptions)) return;
+  const diagnostic = `There is no XCFramework found at '${join(appleDir, "Vendor")}/`;
+  for (const name of readdirSync(descriptions)) {
+    const description = join(descriptions, name, "description.msgpack");
+    if (!name.endsWith(".xcbuilddata") || !existsSync(description)) continue;
+    if (!readFileSync(description).includes(diagnostic)) continue;
+    rmSync(join(descriptions, name), { recursive: true, force: true });
+    log(`[sim-pool] Dropped build description planned without Vendor/: ${join(descriptions, name)}`);
+  }
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: string): PoolConfig {
@@ -1368,6 +1406,7 @@ export async function commandRun(config: PoolConfig, rawArgs: string[]): Promise
     simUdId = await ensureSim(session, config, owned.slot);
     derivedData = join(config.buildBase, `pool-${owned.slot}`);
     mkdirSync(derivedData, { recursive: true });
+    dropBuildDescriptionsMissingVendor(process.cwd(), derivedData);
     log(`[sim-pool] Simulator: ${poolDeviceName(owned.slot)} (${simUdId})`);
     log(`[sim-pool] DerivedData: ${derivedData}`);
     prepStart = nowEpoch();

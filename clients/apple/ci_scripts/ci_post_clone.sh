@@ -141,6 +141,5 @@ export PATH="$TOOL_ROOT/bin:$PATH"
 oppi_ci_select_xcode
 ensure_zig
 ensure_go
-"$ROOT/scripts/build-ghostty-vt.sh"
-"$ROOT/scripts/build-tailscalekit.sh"
+"$ROOT/scripts/ensure-prebuilt-frameworks.sh"
 echo "Vendored iOS frameworks are ready."

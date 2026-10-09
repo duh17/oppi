@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   applyPoolBuildSettings,
   applyRunCheckout,
+  dropBuildDescriptionsMissingVendor,
   ensureOppiTestsInfoPlist,
   extractBuildTimingSummary,
   extractCompilerLinkerErrors,
@@ -349,6 +350,12 @@ describe("sim-pool checkout targeting", () => {
     return root;
   }
 
+  function writeEnsureScript(root: string, body: string): void {
+    const scripts = join(root, "clients", "apple", "scripts");
+    mkdirSync(scripts, { recursive: true });
+    writeFileSync(join(scripts, "ensure-prebuilt-frameworks.sh"), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  }
+
   test("extractPoolFlags peels --root and --device-profile before --", () => {
     expect(extractPoolFlags(["run", "--root", "/wt", "--", "xcodebuild", "build"])).toEqual({
       root: "/wt",
@@ -413,6 +420,7 @@ describe("sim-pool checkout targeting", () => {
   test("applyRunCheckout chdirs to OPPI_ROOT apple dir and writes missing test plist", () => {
     const launchedFrom = tempCheckout("launched");
     const target = tempCheckout("target");
+    writeEnsureScript(target, 'mkdir -p "$PWD/Vendor/Fixture.xcframework"');
     const previous = process.cwd();
     process.chdir(join(launchedFrom, "clients", "apple"));
     try {
@@ -422,6 +430,37 @@ describe("sim-pool checkout targeting", () => {
       expect(cwd).toBe(expected);
       expect(process.cwd()).toBe(expected);
       expect(existsSync(join(target, "clients", "apple", ".build", "OppiTestsInfo.plist"))).toBe(true);
+      expect(existsSync(join(target, "clients", "apple", "Vendor", "Fixture.xcframework"))).toBe(true);
+    } finally {
+      process.chdir(previous);
+    }
+  });
+
+  test("cached build descriptions planned without this checkout's Vendor/ are dropped only in the owned slot", () => {
+    const appleDir = join(tempCheckout("descriptions"), "clients", "apple");
+    const buildBase = join(appleDir, ".build");
+    const description = (pool: string, name: string, text: string) => {
+      const dir = join(buildBase, pool, "Build", "Intermediates.noindex", "XCBuildData", `${name}.xcbuilddata`);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "description.msgpack"), `\x92\xa3msg${text}\x00`);
+      return dir;
+    };
+    const missing = (root: string) => `There is no XCFramework found at '${root}/Vendor/GhosttyVt/ghostty-vt.xcframework'.`;
+    const poisoned = description("pool-0", "aaa", missing(appleDir));
+    const poisonedOtherSlot = description("pool-10", "bbb", missing(appleDir));
+    const healthy = description("pool-0", "ccc", "Build description signature: ccc");
+    const otherCheckout = description("pool-0", "ddd", missing("/elsewhere/clients/apple"));
+    dropBuildDescriptionsMissingVendor(appleDir, join(buildBase, "pool-0"));
+    expect([poisoned, poisonedOtherSlot, healthy, otherCheckout].map(existsSync)).toEqual([false, true, true, true]);
+  });
+
+  test("applyRunCheckout fails before xcodebuild when prebuilt frameworks cannot be prepared", () => {
+    const failing = tempCheckout("ensure-fails");
+    writeEnsureScript(failing, "echo 'error: install Zig 0.16.0' >&2; exit 1");
+    const previous = process.cwd();
+    try {
+      const config = loadConfig({ OPPI_ROOT: failing }, previous, scriptDir);
+      expect(() => applyRunCheckout(config)).toThrow(/prebuilt frameworks are not ready .*exited 1/);
     } finally {
       process.chdir(previous);
     }
