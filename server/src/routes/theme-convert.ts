@@ -2,8 +2,8 @@
  * Pi TUI theme → Oppi iOS theme conversion.
  *
  * Pi TUI uses 51 color tokens with variable references and 256-color integers.
- * Oppi iOS uses 49 flat #RRGGBB tokens. This module resolves vars, converts
- * color formats, and maps the token sets.
+ * Oppi iOS uses 49 required flat #RRGGBB tokens plus 2 optional speaker-chrome
+ * tokens. This module resolves vars, converts color formats, and maps the token sets.
  *
  * Dropped pi tokens (TUI-only): accent, border, borderAccent, borderMuted,
  * selectedBg, customMessageBg, customMessageText, customMessageLabel, bashMode.
@@ -148,6 +148,8 @@ function findDarkestVar(vars: Record<string, string | number>, hints: string[]):
 const SHARED_TOKENS = [
   "userMessageBg",
   "userMessageText",
+  "assistantMessageBg",
+  "userMessageAccent",
   "toolPendingBg",
   "toolSuccessBg",
   "toolErrorBg",
@@ -184,7 +186,8 @@ const SHARED_TOKENS = [
 ] as const;
 
 /**
- * Convert a pi TUI theme (51 tokens + vars) to an Oppi iOS theme (49 flat tokens).
+ * Convert a pi TUI theme (51 tokens + vars) to an Oppi iOS theme (49 required
+ * flat tokens; assistantMessageBg and userMessageAccent copy through when present).
  *
  * Derivation strategy for the 13 Oppi base colors not in pi's token set:
  *

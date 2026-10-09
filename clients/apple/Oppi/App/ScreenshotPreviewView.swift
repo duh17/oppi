@@ -49,6 +49,22 @@ struct ScreenshotPreviewView: View {
             // Real Settings/setup surfaces, not a mocked SSH connection. This
             // makes enrollment/refusal QA reachable without pairing a server.
             SettingsScreenshotPreview()
+        case "settings-appearance":
+            SettingsScreenshotPreview()
+        case "chat-speaker-contrast-dark-before":
+            ChatSpeakerContrastPreview(themeID: .dark, legacyPaint: true)
+        case "chat-speaker-contrast-dark":
+            ChatSpeakerContrastPreview(themeID: .dark)
+        case "chat-speaker-contrast-oled":
+            ChatSpeakerContrastPreview(themeID: .oled)
+        case "chat-speaker-contrast-night":
+            ChatSpeakerContrastPreview(themeID: .night)
+        case "chat-speaker-contrast-light":
+            ChatSpeakerContrastPreview(themeID: .light)
+        case "chat-speaker-contrast-dark-increase-contrast":
+            ChatSpeakerContrastPreview(themeID: .dark, increasedContrast: true)
+        case "chat-speaker-contrast-dark-differentiate-without-color":
+            ChatSpeakerContrastPreview(themeID: .dark, differentiateWithoutColor: true)
         case "settings-sweep":
             SettingsSweepScreenshotPreview()
         case "ssh-terminal":

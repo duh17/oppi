@@ -80,6 +80,8 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
 
     private let outerStack = UIStackView()
     private let bubbleContainer = UIView()
+    private let accentBar = UIView()
+    private let youCaption = UILabel()
     private let bubbleStack = UIStackView()
     private let attachmentBadgeRow = UIStackView()
     private let pathPillRow = UIStackView()
@@ -154,6 +156,13 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         outerStack.axis = .vertical
         outerStack.alignment = .fill
         outerStack.spacing = 6
+        outerStack.isLayoutMarginsRelativeArrangement = true
+        outerStack.directionalLayoutMargins = NSDirectionalEdgeInsets(
+            top: TimelineSpeakerChrome.userTurnSpacingAbove,
+            leading: 0,
+            bottom: 0,
+            trailing: 0
+        )
 
         // Image strip (horizontal scroll of thumbnails).
         imageStrip.translatesAutoresizingMaskIntoConstraints = false
@@ -174,10 +183,22 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
             imageStrip.heightAnchor.constraint(equalToConstant: Self.thumbnailSize),
         ])
 
-        // Bubble container — subtle accent-tinted background.
+        // Bubble container — elevated user card with a leading accent bar.
         bubbleContainer.translatesAutoresizingMaskIntoConstraints = false
         bubbleContainer.layer.cornerRadius = TimelineBubbleStyle.bubbleCornerRadius
         bubbleContainer.clipsToBounds = true
+
+        accentBar.translatesAutoresizingMaskIntoConstraints = false
+        accentBar.isUserInteractionEnabled = false
+        accentBar.isAccessibilityElement = false
+        accentBar.accessibilityIdentifier = "chat.user.accent"
+
+        youCaption.translatesAutoresizingMaskIntoConstraints = false
+        youCaption.text = String(localized: "You")
+        youCaption.font = AppFont.systemSmall
+        youCaption.adjustsFontForContentSizeCategory = false
+        youCaption.isAccessibilityElement = false
+        youCaption.accessibilityIdentifier = "chat.user.you-caption"
 
         bubbleStack.translatesAutoresizingMaskIntoConstraints = false
         bubbleStack.axis = .vertical
@@ -227,15 +248,21 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         textRow.addArrangedSubview(iconLabel)
         textRow.addArrangedSubview(bodyStack)
 
+        bubbleStack.addArrangedSubview(youCaption)
         bubbleStack.addArrangedSubview(attachmentBadgeRow)
         bubbleStack.addArrangedSubview(pathPillRow)
         bubbleStack.addArrangedSubview(textRow)
         bubbleContainer.addSubview(bubbleStack)
+        bubbleContainer.addSubview(accentBar)
         NSLayoutConstraint.activate([
             bubbleStack.topAnchor.constraint(equalTo: bubbleContainer.topAnchor, constant: 8),
             bubbleStack.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor, constant: 10),
             bubbleStack.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -10),
             bubbleStack.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor, constant: -8),
+            accentBar.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor),
+            accentBar.topAnchor.constraint(equalTo: bubbleContainer.topAnchor),
+            accentBar.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor),
+            accentBar.widthAnchor.constraint(equalToConstant: TimelineSpeakerChrome.accentBarWidth),
         ])
 
         outerStack.addArrangedSubview(imageStrip)
@@ -271,6 +298,37 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
             outerStack.topAnchor.constraint(equalTo: topAnchor),
             outerStack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSpeakerAccessibilityDidChange),
+            name: UIAccessibility.darkerSystemColorsStatusDidChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSpeakerAccessibilityDidChange),
+            name: UIAccessibility.differentiateWithoutColorDidChangeNotification,
+            object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard previousTraitCollection?.accessibilityContrast != traitCollection.accessibilityContrast else {
+            return
+        }
+        handleSpeakerAccessibilityDidChange()
+    }
+
+    @objc
+    private func handleSpeakerAccessibilityDidChange() {
+        applySpeakerChrome(palette: ThemeRuntimeState.currentPalette())
+        ToolTimelineRowPresentationHelpers.invalidateEnclosingCollectionViewLayout(startingAt: self)
     }
 
     // MARK: - Apply
@@ -284,10 +342,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         iconLabel.textColor = UIColor(palette.blue)
         messageTextView.textColor = UIColor(palette.userMessageText)
         messageTextView.font = AppFont.messageBody
-
-        // User bubbles get their own semantic surface so theme authors can
-        // push them warmer/cooler than the rest of the chrome.
-        bubbleContainer.backgroundColor = UIColor(palette.userMessageBg)
+        applySpeakerChrome(palette: palette)
 
         let parsed = UserMessageAttachmentPresentation.parse(rawText: configuration.text)
         let displayText = Self.displayText(for: parsed.visibleText)
@@ -349,6 +404,33 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
                 ]
             )
         }
+    }
+
+    private func applySpeakerChrome(palette: ThemePalette) {
+        #if DEBUG
+        let legacy = TimelineSpeakerChrome.legacyScreenshotPaint
+        #else
+        let legacy = false
+        #endif
+        let accent = TimelineSpeakerChrome.userAccent(from: palette)
+        bubbleContainer.backgroundColor = TimelineSpeakerChrome.userFill(from: palette)
+        accentBar.backgroundColor = accent
+        accentBar.isHidden = legacy
+        youCaption.textColor = UIColor(palette.fgDim)
+        youCaption.isHidden = legacy || !TimelineSpeakerChrome.differentiateWithoutColor
+        if !legacy, TimelineSpeakerChrome.increasedContrast {
+            bubbleContainer.layer.borderWidth = TimelineSpeakerChrome.increasedContrastBorderWidth
+            bubbleContainer.layer.borderColor = accent.cgColor
+        } else {
+            bubbleContainer.layer.borderWidth = 0
+            bubbleContainer.layer.borderColor = nil
+        }
+        outerStack.directionalLayoutMargins = NSDirectionalEdgeInsets(
+            top: legacy ? 0 : TimelineSpeakerChrome.userTurnSpacingAbove,
+            leading: 0,
+            bottom: 0,
+            trailing: 0
+        )
     }
 
     private static func displayText(for rawText: String) -> (text: String, wasTruncated: Bool) {

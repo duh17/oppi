@@ -1,6 +1,8 @@
 # Oppi Theme System
 
-Create custom color themes for the Oppi iOS app. A theme is one JSON file with 49 color tokens. Write it to the server's theme directory, then import it from Settings in the app.
+The public user guide is [Custom themes](../../docs/themes.md) (`docs/themes.md`). This page is the contributor copy of the same file format.
+
+Create custom color themes for the Oppi iOS app. A theme is one JSON file with 49 required color tokens plus optional `assistantMessageBg` and `userMessageAccent`. Write it to the server's theme directory, then import it from Settings → Appearance → Custom Themes.
 
 ## File format
 
@@ -17,9 +19,9 @@ Create custom color themes for the Oppi iOS app. A theme is one JSON file with 4
 
 - `name` — display name in the app
 - `colorScheme` — `"dark"` or `"light"`; controls the status bar and system chrome
-- `colors` — object with all 49 keys below; each is a `#RRGGBB` hex string
+- `colors` — object with the 49 required keys below; each is a `#RRGGBB` hex string. `assistantMessageBg` and `userMessageAccent` are optional.
 
-All 49 keys are required. Use `""` (an empty string) to use the default for that token.
+The 49 required keys must be present. Use `""` (an empty string) to use the default for that token. Omit the two optional speaker tokens to get no assistant fill and `blue` as the user accent.
 
 ## Color tokens
 
@@ -44,12 +46,14 @@ The foundation. With default values, every other group derives from these tokens
 | `yellow`       | Accent — decorators, horizontal rules                 |
 | `thinkingText` | Text color inside thinking blocks                     |
 
-### User message (2)
+### User / assistant message (2 required, 2 optional)
 
-| Key               | Purpose                               |
-| ----------------- | ------------------------------------- |
-| `userMessageBg`   | Background of the user's chat bubbles |
-| `userMessageText` | Text color in user chat bubbles       |
+| Key                   | Purpose                                                                 |
+| --------------------- | ----------------------------------------------------------------------- |
+| `userMessageBg`       | User card fill (the only elevated chat card)                            |
+| `userMessageText`     | Text color in user cards                                                |
+| `assistantMessageBg`  | Optional assistant fill. Omit or empty: no fill                         |
+| `userMessageAccent`   | Optional 3 pt leading bar on the user card. Omit: theme `blue`          |
 
 ### Tool state (5)
 
@@ -158,7 +162,7 @@ If the server uses `OPPI_DATA_DIR`, use `$OPPI_DATA_DIR/themes/` instead.
 
 The server picks it up automatically. Then, in the iOS app, choose **Settings > Import Theme > select server > select your theme**.
 
-All 49 color keys must be present. Each value must be `#RRGGBB` or `""` (empty uses the default). The filename should use only `[a-zA-Z0-9_-]`.
+All 49 required color keys must be present. Each value must be `#RRGGBB` or `""` (empty uses the default). `assistantMessageBg` and `userMessageAccent` are optional. The filename should use only `[a-zA-Z0-9_-]`.
 
 ## Agent-friendly theme creation
 
@@ -175,7 +179,7 @@ Bundled themes live in `server/themes/`. User themes live in `~/.config/oppi/the
 
 ## Relationship to pi TUI themes
 
-Oppi's theme tokens are a subset of the [Pi TUI theme system](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/themes.md). Pi's TUI uses 51 color tokens; Oppi uses 49. The shared tokens—Markdown, syntax, diffs, tool state, and thinking—are identical. Oppi drops TUI-only tokens (`border`, `borderAccent`, `borderMuted`, `selectedBg`, `customMessage*`, `bashMode`) and adds mobile equivalents (`bg`, `bgDark`, `bgHighlight`, `fg`, `fgDim`, `comment`).
+Oppi's theme tokens are a subset of the [Pi TUI theme system](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/themes.md). Pi's TUI uses 51 color tokens; Oppi uses 49 required tokens plus optional `assistantMessageBg` and `userMessageAccent`. The shared tokens—Markdown, syntax, diffs, tool state, and thinking—are identical. Oppi drops TUI-only tokens (`border`, `borderAccent`, `borderMuted`, `selectedBg`, `customMessage*`, `bashMode`) and adds mobile equivalents (`bg`, `bgDark`, `bgHighlight`, `fg`, `fgDim`, `comment`).
 
 You can ask Pi to create a theme; point it to this document and describe what you want. If you already have a Pi TUI theme, reuse its color palette: map the overlapping tokens and fill in the Oppi-specific ones.
 

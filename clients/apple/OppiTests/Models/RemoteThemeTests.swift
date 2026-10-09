@@ -1,5 +1,7 @@
 import Foundation
+import SwiftUI
 import Testing
+import UIKit
 @testable import Oppi
 
 /// Tests for RemoteTheme JSON parsing and palette conversion.
@@ -53,6 +55,32 @@ struct RemoteThemeTests {
         let theme = try JSONDecoder().decode(RemoteTheme.self, from: data)
         let palette = theme.toPalette()
         #expect(palette == nil, "toPalette should return nil when a base color is invalid hex")
+    }
+
+    @Test func decodesThemeMissingOptionalSpeakerTokens() throws {
+        let json = makeFullThemeJSON(name: "Legacy", colorScheme: "dark")
+        let theme = try JSONDecoder().decode(RemoteTheme.self, from: json)
+        #expect(theme.colors.assistantMessageBg == nil)
+        #expect(theme.colors.userMessageAccent == nil)
+        let palette = try #require(theme.toPalette())
+        var assistantAlpha: CGFloat = 1
+        UIColor(palette.assistantMessageBg).getRed(nil, green: nil, blue: nil, alpha: &assistantAlpha)
+        #expect(assistantAlpha < 0.02)
+        #expect(remoteThemeColor(palette.userMessageAccent, approximatelyEquals: palette.blue))
+    }
+
+    @Test func decodesThemeProvidingOptionalSpeakerTokens() throws {
+        var jsonString = try makeFullThemeJSONString(name: "Custom", colorScheme: "dark")
+        jsonString = jsonString.replacingOccurrences(
+            of: "\"userMessageText\": \"#f8f8f2\",",
+            with: "\"userMessageText\": \"#f8f8f2\",\"assistantMessageBg\": \"#1b1c28\",\"userMessageAccent\": \"#ff79c6\","
+        )
+        let theme = try JSONDecoder().decode(RemoteTheme.self, from: Data(jsonString.utf8))
+        #expect(theme.colors.assistantMessageBg == "#1b1c28")
+        #expect(theme.colors.userMessageAccent == "#ff79c6")
+        let palette = try #require(theme.toPalette())
+        #expect(remoteThemeColor(palette.assistantMessageBg, approximatelyEquals: Color(red: 27 / 255, green: 28 / 255, blue: 40 / 255)))
+        #expect(remoteThemeColor(palette.userMessageAccent, approximatelyEquals: Color(red: 1, green: 121 / 255, blue: 198 / 255)))
     }
 
     @Test func toPaletteFallsBackForInvalidSemanticHex() throws {
@@ -124,6 +152,17 @@ struct RemoteThemeTests {
     }
 
     // MARK: - Helpers
+
+    private func remoteThemeColor(_ lhs: Color, approximatelyEquals rhs: Color, tolerance: CGFloat = 0.02) -> Bool {
+        var lR: CGFloat = 0, lG: CGFloat = 0, lB: CGFloat = 0, lA: CGFloat = 0
+        var rR: CGFloat = 0, rG: CGFloat = 0, rB: CGFloat = 0, rA: CGFloat = 0
+        UIColor(lhs).getRed(&lR, green: &lG, blue: &lB, alpha: &lA)
+        UIColor(rhs).getRed(&rR, green: &rG, blue: &rB, alpha: &rA)
+        return abs(lR - rR) <= tolerance
+            && abs(lG - rG) <= tolerance
+            && abs(lB - rB) <= tolerance
+            && abs(lA - rA) <= tolerance
+    }
 
     private func makeFullThemeJSONString(name: String, colorScheme: String?) throws -> String {
         try #require(

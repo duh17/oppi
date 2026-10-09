@@ -196,7 +196,7 @@ Start at [docs/index.md](docs/index.md). Public docs are two tracks: daily use a
 - [Config schema](server/docs/config-schema.md)
 - [Dictation / ASR](server/docs/asr.md)
 - [Voice replies / TTS](server/docs/tts.md)
-- [Custom themes](server/docs/themes.md)
+- [Custom themes](docs/themes.md)
 - [Model selection](server/docs/model-selection.md)
 - [Session tree semantics](server/docs/session-tree-semantics.md)
 - [Protocol snapshots](protocol/README.md)

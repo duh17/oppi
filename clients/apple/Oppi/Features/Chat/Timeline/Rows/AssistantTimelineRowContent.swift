@@ -220,7 +220,8 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
     private func setupViews() {
         backgroundColor = .clear
 
-        // Same bubble shape as user messages — just different tint color.
+        // Full-width document layout. Built-in themes leave this fill clear so
+        // the user card is the only elevated surface.
         bubbleContainer.translatesAutoresizingMaskIntoConstraints = false
         bubbleContainer.layer.cornerRadius = TimelineBubbleStyle.bubbleCornerRadius
         bubbleContainer.clipsToBounds = true
@@ -294,7 +295,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             iconAssetCache: configuration.iconAssetCache,
             agentVisualScale: ChatAgentIconStyle.compactVisualScale
         )
-        bubbleContainer.backgroundColor = UIColor(palette.purple).withAlphaComponent(TimelineBubbleStyle.subtleBgAlpha)
+        bubbleContainer.backgroundColor = TimelineSpeakerChrome.assistantFill(from: palette)
 
         // Unified markdown path for both streaming and done states.
         // During streaming, the incremental parser (tail-only CommonMark parse

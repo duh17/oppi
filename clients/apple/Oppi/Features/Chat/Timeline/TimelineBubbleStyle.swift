@@ -1,3 +1,4 @@
+import SwiftUI
 import UIKit
 
 /// Named visual constants for timeline row bubble/chip styling.
@@ -30,4 +31,110 @@ enum TimelineBubbleStyle {
 
     /// User thumbnail border alpha (over comment color).
     static let thumbnailBorderAlpha: CGFloat = 0.3
+}
+
+/// Speaker chrome for user vs assistant timeline rows.
+///
+/// User rows are the only elevated card (fill + 3 pt leading accent).
+/// Assistant rows recede (clear fill in built-ins). Increase Contrast and
+/// Differentiate Without Color are read live from UIKit accessibility flags.
+enum TimelineSpeakerChrome {
+    static let accentBarWidth: CGFloat = 3
+    static let increasedContrastBorderWidth: CGFloat = 1.5
+    /// Extra space above a user row so each exchange groups (8 pt layout gap
+    /// + 8 pt = 16 pt before a user row). Applied as the user cell's own top
+    /// margin so cached-height layout and scroll anchoring stay unchanged.
+    static let userTurnSpacingAbove: CGFloat = 8
+
+    #if DEBUG
+    nonisolated(unsafe) static var increasedContrastOverride: Bool?
+    nonisolated(unsafe) static var differentiateWithoutColorOverride: Bool?
+    /// Screenshot-only: pre-change user fill and purple assistant wash.
+    nonisolated(unsafe) static var legacyScreenshotPaint = false
+
+    static func resetOverridesForTesting() {
+        increasedContrastOverride = nil
+        differentiateWithoutColorOverride = nil
+        legacyScreenshotPaint = false
+    }
+    #endif
+
+    static var increasedContrast: Bool {
+        #if DEBUG
+        if let increasedContrastOverride { return increasedContrastOverride }
+        #endif
+        if UIAccessibility.isDarkerSystemColorsEnabled { return true }
+        return UITraitCollection.current.accessibilityContrast == .high
+    }
+
+    static var differentiateWithoutColor: Bool {
+        #if DEBUG
+        if let differentiateWithoutColorOverride { return differentiateWithoutColorOverride }
+        #endif
+        return UIAccessibility.shouldDifferentiateWithoutColor
+    }
+
+    static func userFill(
+        from palette: ThemePalette,
+        themeID: ThemeID = ThemeRuntimeState.currentThemeID()
+    ) -> UIColor {
+        #if DEBUG
+        if legacyScreenshotPaint {
+            return legacyUserFill(for: themeID) ?? UIColor(palette.userMessageBg)
+        }
+        #endif
+        if increasedContrast, let stronger = increasedContrastFill(for: themeID) {
+            return stronger
+        }
+        return UIColor(palette.userMessageBg)
+    }
+
+    static func userAccent(from palette: ThemePalette) -> UIColor {
+        UIColor(palette.userMessageAccent)
+    }
+
+    static func assistantFill(from palette: ThemePalette) -> UIColor {
+        #if DEBUG
+        if legacyScreenshotPaint {
+            return UIColor(palette.purple).withAlphaComponent(TimelineBubbleStyle.subtleBgAlpha)
+        }
+        #endif
+        let color = UIColor(palette.assistantMessageBg)
+        var alpha: CGFloat = 0
+        color.getRed(nil, green: nil, blue: nil, alpha: &alpha)
+        return alpha < 0.02 ? .clear : color
+    }
+
+    /// Stronger user fills when Increase Contrast is on. Built-ins only;
+    /// custom themes keep their `userMessageBg` and gain the accent border.
+    static func increasedContrastFill(for themeID: ThemeID) -> UIColor? {
+        switch themeID {
+        case .dark: return rgb(0x4A5680)
+        case .oled: return rgb(0x2A3850)
+        case .night: return rgb(0x44382A)
+        case .light: return rgb(0xA6A299)
+        case .custom: return nil
+        }
+    }
+
+    #if DEBUG
+    private static func legacyUserFill(for themeID: ThemeID) -> UIColor? {
+        switch themeID {
+        case .dark: return rgb(0x252B3D)
+        case .oled: return rgb(0x121822)
+        case .night: return rgb(0x1C1A18)
+        case .light: return rgb(0xE5E3DD)
+        case .custom: return nil
+        }
+    }
+    #endif
+
+    private static func rgb(_ hex: UInt32) -> UIColor {
+        UIColor(
+            red: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255,
+            alpha: 1
+        )
+    }
 }

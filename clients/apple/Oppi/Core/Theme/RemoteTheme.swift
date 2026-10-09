@@ -18,7 +18,8 @@ struct RemoteTheme: Codable, Sendable {
     let colors: RemoteThemeColors
 }
 
-/// Theme color tokens — 49 total, matching ThemePalette 1:1.
+/// Theme color tokens — 49 required, matching ThemePalette, plus 2 optional
+/// speaker-chrome tokens (`assistantMessageBg`, `userMessageAccent`).
 /// Base colors use their palette names directly (bg, fg, blue, etc.)
 /// rather than semantic aliases, so imported themes map without derivation.
 struct RemoteThemeColors: Codable, Sendable {
@@ -38,9 +39,11 @@ struct RemoteThemeColors: Codable, Sendable {
     let yellow: String
     let thinkingText: String
 
-    // ── User message (2) ──
+    // ── User / assistant message (2 required, 2 optional) ──
     let userMessageBg: String
     let userMessageText: String
+    let assistantMessageBg: String?
+    let userMessageAccent: String?
 
     // ── Tool state (5) ──
     let toolPendingBg: String
@@ -84,6 +87,46 @@ struct RemoteThemeColors: Codable, Sendable {
     let thinkingMedium: String
     let thinkingHigh: String
     let thinkingXhigh: String
+
+    init(
+        bg: String, bgDark: String, bgHighlight: String,
+        fg: String, fgDim: String, comment: String,
+        blue: String, cyan: String, green: String,
+        orange: String, purple: String, red: String, yellow: String,
+        thinkingText: String,
+        userMessageBg: String, userMessageText: String,
+        assistantMessageBg: String? = nil, userMessageAccent: String? = nil,
+        toolPendingBg: String, toolSuccessBg: String, toolErrorBg: String,
+        toolTitle: String, toolOutput: String,
+        mdHeading: String, mdLink: String, mdLinkUrl: String,
+        mdCode: String, mdCodeBlock: String, mdCodeBlockBorder: String,
+        mdQuote: String, mdQuoteBorder: String, mdHr: String, mdListBullet: String,
+        toolDiffAdded: String, toolDiffRemoved: String, toolDiffContext: String,
+        syntaxComment: String, syntaxKeyword: String, syntaxFunction: String,
+        syntaxVariable: String, syntaxString: String, syntaxNumber: String,
+        syntaxType: String, syntaxOperator: String, syntaxPunctuation: String,
+        thinkingOff: String, thinkingMinimal: String, thinkingLow: String,
+        thinkingMedium: String, thinkingHigh: String, thinkingXhigh: String
+    ) {
+        self.bg = bg; self.bgDark = bgDark; self.bgHighlight = bgHighlight
+        self.fg = fg; self.fgDim = fgDim; self.comment = comment
+        self.blue = blue; self.cyan = cyan; self.green = green
+        self.orange = orange; self.purple = purple; self.red = red; self.yellow = yellow
+        self.thinkingText = thinkingText
+        self.userMessageBg = userMessageBg; self.userMessageText = userMessageText
+        self.assistantMessageBg = assistantMessageBg; self.userMessageAccent = userMessageAccent
+        self.toolPendingBg = toolPendingBg; self.toolSuccessBg = toolSuccessBg; self.toolErrorBg = toolErrorBg
+        self.toolTitle = toolTitle; self.toolOutput = toolOutput
+        self.mdHeading = mdHeading; self.mdLink = mdLink; self.mdLinkUrl = mdLinkUrl
+        self.mdCode = mdCode; self.mdCodeBlock = mdCodeBlock; self.mdCodeBlockBorder = mdCodeBlockBorder
+        self.mdQuote = mdQuote; self.mdQuoteBorder = mdQuoteBorder; self.mdHr = mdHr; self.mdListBullet = mdListBullet
+        self.toolDiffAdded = toolDiffAdded; self.toolDiffRemoved = toolDiffRemoved; self.toolDiffContext = toolDiffContext
+        self.syntaxComment = syntaxComment; self.syntaxKeyword = syntaxKeyword; self.syntaxFunction = syntaxFunction
+        self.syntaxVariable = syntaxVariable; self.syntaxString = syntaxString; self.syntaxNumber = syntaxNumber
+        self.syntaxType = syntaxType; self.syntaxOperator = syntaxOperator; self.syntaxPunctuation = syntaxPunctuation
+        self.thinkingOff = thinkingOff; self.thinkingMinimal = thinkingMinimal; self.thinkingLow = thinkingLow
+        self.thinkingMedium = thinkingMedium; self.thinkingHigh = thinkingHigh; self.thinkingXhigh = thinkingXhigh
+    }
 }
 
 // MARK: - Conversion
@@ -121,6 +164,8 @@ extension RemoteTheme {
 
             userMessageBg: Color(hex: c.userMessageBg) ?? bgHighlight,
             userMessageText: Color(hex: c.userMessageText) ?? fg,
+            assistantMessageBg: c.assistantMessageBg.flatMap { Color(hex: $0) } ?? .clear,
+            userMessageAccent: c.userMessageAccent.flatMap { Color(hex: $0) } ?? blue,
 
             toolPendingBg: Color(hex: c.toolPendingBg) ?? blue.opacity(0.12),
             toolSuccessBg: Color(hex: c.toolSuccessBg) ?? green.opacity(0.08),

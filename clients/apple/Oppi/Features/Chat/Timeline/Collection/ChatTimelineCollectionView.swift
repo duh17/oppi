@@ -300,6 +300,18 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 name: .NSProcessInfoPowerStateDidChange,
                 object: nil
             )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleSpeakerAccessibilityDidChange),
+                name: UIAccessibility.darkerSystemColorsStatusDidChangeNotification,
+                object: nil
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleSpeakerAccessibilityDidChange),
+                name: UIAccessibility.differentiateWithoutColorDidChangeNotification,
+                object: nil
+            )
         }
 
         var sessionId: String {
@@ -606,6 +618,16 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     name: .NSProcessInfoPowerStateDidChange,
                     object: nil
                 )
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: UIAccessibility.darkerSystemColorsStatusDidChangeNotification,
+                    object: nil
+                )
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: UIAccessibility.differentiateWithoutColorDidChangeNotification,
+                    object: nil
+                )
             }
         }
 
@@ -705,17 +727,36 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             guard previousThemeID != currentThemeID else { return }
             previousThemeID = currentThemeID
             collectionView.backgroundColor = UIColor(Color.themeBg)
+            reconfigureVisibleRowsAfterAppearanceChange(
+                collectionView: collectionView,
+                expectedThemeID: currentThemeID
+            )
+        }
 
-            // Theme notifications are posted synchronously while SwiftUI may be
-            // processing a scene update. Reconfiguring the complete timeline in
-            // that callback can hold the main thread past the scene watchdog.
-            // Defer one run-loop turn and refresh only visible rows; reused
-            // offscreen cells pick up the current theme when configured.
+        @objc
+        private func handleSpeakerAccessibilityDidChange() {
+            guard let collectionView else { return }
+            reconfigureVisibleRowsAfterAppearanceChange(
+                collectionView: collectionView,
+                expectedThemeID: nil
+            )
+        }
+
+        /// Theme and Increase Contrast / Differentiate Without Color changes
+        /// are posted while SwiftUI may be in a scene update. Defer one
+        /// run-loop turn and refresh visible rows; reused offscreen cells pick
+        /// up the current chrome when configured.
+        private func reconfigureVisibleRowsAfterAppearanceChange(
+            collectionView: UICollectionView,
+            expectedThemeID: ThemeID?
+        ) {
             DispatchQueue.main.async { [weak self, weak collectionView] in
-                guard let self, let collectionView,
-                      self.previousThemeID == currentThemeID,
-                      ThemeRuntimeState.currentThemeID() == currentThemeID else {
-                    return
+                guard let self, let collectionView else { return }
+                if let expectedThemeID {
+                    guard self.previousThemeID == expectedThemeID,
+                          ThemeRuntimeState.currentThemeID() == expectedThemeID else {
+                        return
+                    }
                 }
                 let visibleIDs = collectionView.indexPathsForVisibleItems.compactMap {
                     self.dataSource?.itemIdentifier(for: $0)

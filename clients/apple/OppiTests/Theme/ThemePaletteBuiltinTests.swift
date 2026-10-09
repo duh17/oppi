@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Testing
+import UIKit
 @testable import Oppi
 
 /// Tests for ThemePalettes built-in definitions — verifies all built-in palettes
@@ -8,7 +9,7 @@ import Testing
 @Suite("ThemePalettes built-ins")
 struct ThemePaletteBuiltinTests {
 
-    // MARK: - All palettes have all 49 tokens
+    // MARK: - All palettes have all tokens
 
     /// Access every token on a palette to verify it was initialized.
     /// This catches accidental omissions in the manual palette definitions.
@@ -31,9 +32,11 @@ struct ThemePaletteBuiltinTests {
         // Thinking text (1)
         _ = p.thinkingText
 
-        // User message (2)
+        // User / assistant message (4)
         _ = p.userMessageBg
         _ = p.userMessageText
+        _ = p.assistantMessageBg
+        _ = p.userMessageAccent
 
         // Tool state (5)
         _ = p.toolPendingBg
@@ -103,4 +106,79 @@ struct ThemePaletteBuiltinTests {
             assertAllTokensPresent(palette, name: builtinID.rawValue)
         }
     }
+
+    // MARK: - Speaker contrast (WCAG 2.2, sRGB, linearize 0.04045)
+
+    @Test func builtInUserTextOnUserFillMeetsAA() {
+        for themeID in ThemeID.builtins {
+            let palette = themeID.palette
+            let ratio = wcagContrast(palette.userMessageText, palette.userMessageBg)
+            #expect(
+                ratio + 1e-6 >= 4.5,
+                "\(themeID.rawValue) user text on fill \(ratio)"
+            )
+        }
+    }
+
+    @Test func builtInUserAccentVersusBackgroundMeetsNonText() {
+        for themeID in ThemeID.builtins {
+            let palette = themeID.palette
+            let ratio = wcagContrast(palette.userMessageAccent, palette.bg)
+            #expect(
+                ratio + 1e-6 >= 3.0,
+                "\(themeID.rawValue) accent vs bg \(ratio)"
+            )
+        }
+    }
+
+    @Test func builtInAssistantTextOnAssistantFillMeetsAA() {
+        for themeID in ThemeID.builtins {
+            let palette = themeID.palette
+            let fill = opaqueFill(palette.assistantMessageBg) ?? palette.bg
+            let ratio = wcagContrast(palette.fg, fill)
+            #expect(
+                ratio + 1e-6 >= 4.5,
+                "\(themeID.rawValue) assistant text on fill \(ratio)"
+            )
+        }
+    }
+
+    @Test func increasedContrastUserTextOnStrongerFillMeetsAA() {
+        for themeID in ThemeID.builtins {
+            let palette = themeID.palette
+            guard let fill = TimelineSpeakerChrome.increasedContrastFill(for: themeID) else {
+                Issue.record("missing Increase Contrast fill for \(themeID.rawValue)")
+                continue
+            }
+            let ratio = wcagContrast(palette.userMessageText, Color(fill))
+            #expect(
+                ratio + 1e-6 >= 4.5,
+                "\(themeID.rawValue) IC user text on fill \(ratio)"
+            )
+        }
+    }
+}
+
+private func opaqueFill(_ color: Color) -> Color? {
+    var alpha: CGFloat = 0
+    UIColor(color).getRed(nil, green: nil, blue: nil, alpha: &alpha)
+    return alpha < 0.02 ? nil : color
+}
+
+private func wcagContrast(_ foreground: Color, _ background: Color) -> CGFloat {
+    let a = relativeLuminance(foreground)
+    let b = relativeLuminance(background)
+    return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+}
+
+private func relativeLuminance(_ color: Color) -> CGFloat {
+    var red: CGFloat = 0
+    var green: CGFloat = 0
+    var blue: CGFloat = 0
+    UIColor(color).getRed(&red, green: &green, blue: &blue, alpha: nil)
+    return 0.2126 * linearize(red) + 0.7152 * linearize(green) + 0.0722 * linearize(blue)
+}
+
+private func linearize(_ channel: CGFloat) -> CGFloat {
+    channel <= 0.04045 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
 }

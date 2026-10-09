@@ -730,8 +730,95 @@ struct UserTimelineRowContentTests {
         let bubble = try #require(userMessageBubbleContainer(in: view))
         let textView = try #require(userMessageTextView(in: view))
 
-        #expect(color(bubble.backgroundColor, approximatelyEquals: UIColor(palette.userMessageBg)))
+        #expect(
+            color(
+                bubble.backgroundColor,
+                approximatelyEquals: TimelineSpeakerChrome.userFill(from: palette)
+            )
+        )
         #expect(color(textView.textColor, approximatelyEquals: UIColor(palette.userMessageText)))
+    }
+
+    @MainActor
+    @Test("user row paints a leading accent bar from userMessageAccent")
+    func userRowPaintsLeadingAccentBar() throws {
+        TimelineSpeakerChrome.resetOverridesForTesting()
+        TimelineSpeakerChrome.increasedContrastOverride = false
+        TimelineSpeakerChrome.differentiateWithoutColorOverride = false
+        defer { TimelineSpeakerChrome.resetOverridesForTesting() }
+        let palette = ThemeRuntimeState.currentPalette()
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: "Hello",
+                images: [],
+                canFork: false,
+                onFork: nil
+            )
+        )
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 160)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let accent = try #require(userMessageAccentBar(in: view))
+        #expect(accent.isHidden == false)
+        #expect(color(accent.backgroundColor, approximatelyEquals: UIColor(palette.userMessageAccent)))
+        let accentWidth = accent.constraints.first { $0.firstAttribute == .width }?.constant
+        #expect(accentWidth == TimelineSpeakerChrome.accentBarWidth)
+        #expect(userMessageYouCaption(in: view)?.isHidden == true)
+    }
+
+    @MainActor
+    @Test("Increase Contrast uses a stronger user fill and accent border")
+    func userRowIncreaseContrastUsesStrongerFillAndBorder() throws {
+        TimelineSpeakerChrome.resetOverridesForTesting()
+        TimelineSpeakerChrome.increasedContrastOverride = true
+        let originalTheme = ThemeRuntimeState.currentThemeID()
+        defer {
+            TimelineSpeakerChrome.resetOverridesForTesting()
+            ThemeRuntimeState.setThemeID(originalTheme)
+        }
+        ThemeRuntimeState.setThemeID(.dark)
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: "Hello",
+                images: [],
+                canFork: false,
+                onFork: nil
+            )
+        )
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 160)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let bubble = try #require(userMessageBubbleContainer(in: view))
+        let expected = try #require(TimelineSpeakerChrome.increasedContrastFill(for: .dark))
+        #expect(color(bubble.backgroundColor, approximatelyEquals: expected))
+        #expect(abs(bubble.layer.borderWidth - TimelineSpeakerChrome.increasedContrastBorderWidth) <= 0.01)
+    }
+
+    @MainActor
+    @Test("Differentiate Without Color shows a You caption on user rows")
+    func userRowDifferentiateWithoutColorShowsYouCaption() throws {
+        TimelineSpeakerChrome.resetOverridesForTesting()
+        TimelineSpeakerChrome.differentiateWithoutColorOverride = true
+        defer { TimelineSpeakerChrome.resetOverridesForTesting() }
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: "Hello",
+                images: [],
+                canFork: false,
+                onFork: nil
+            )
+        )
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 160)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let caption = try #require(userMessageYouCaption(in: view))
+        #expect(caption.isHidden == false)
+        #expect(caption.text == "You")
+        let accent = try #require(userMessageAccentBar(in: view))
+        #expect(accent.isHidden == false)
     }
 
     @MainActor
@@ -1553,6 +1640,16 @@ private func userMessageTextView(in view: UserTimelineRowContentView) -> UITextV
 @MainActor
 private func userMessageBubbleContainer(in view: UserTimelineRowContentView) -> UIView? {
     Mirror(reflecting: view).children.first { $0.label == "bubbleContainer" }?.value as? UIView
+}
+
+@MainActor
+private func userMessageAccentBar(in view: UserTimelineRowContentView) -> UIView? {
+    Mirror(reflecting: view).children.first { $0.label == "accentBar" }?.value as? UIView
+}
+
+@MainActor
+private func userMessageYouCaption(in view: UserTimelineRowContentView) -> UILabel? {
+    Mirror(reflecting: view).children.first { $0.label == "youCaption" }?.value as? UILabel
 }
 
 @MainActor

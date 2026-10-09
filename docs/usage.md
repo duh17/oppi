@@ -78,6 +78,12 @@ Assistant output can open markdown, code, diffs, and other documents in full-scr
 
 **Settings → Chat → Busy Animation** chooses the busy-row animation: **Orbiting**, **Searching**, and **Solving** Metal orbs, plus **Pi** and **GoL**. New installs default to Orbiting; saved Pi or GoL choices stay.
 
+## Appearance
+
+**Settings → Appearance** picks a built-in theme (Dark, OLED, Light, Night) or an imported custom theme, either by hand or matching Light/Dark to iOS Display & Brightness.
+
+Custom themes are JSON files on the server. **Custom Themes…** lists files in the Oppi data-dir `themes` folder and converted Pi TUI themes from `~/.pi/agent/themes`. **Create a Theme with Your Agent** copies a prompt you can paste into a chat. Token list, contrast rules, and a minimal file are in [Custom themes](themes.md).
+
 Those indicators adapt Thinking Orbs geometry; they are not original Oppi artwork. Jakub Antalik created the original [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs) designs and engine. Haplo LLC made the Swift [ThinkingOrbs](https://github.com/haplollc/ThinkingOrbs) port. Oppi adds Metal rasterization and voice-reactive motion. The full MIT notice lives with the orb source in `clients/apple/Shared/Renderers/Orbs/LICENSE`.
 
 Voice replies are produced by the paired server and its configured voice extension. See [Server configuration](server-configuration.md) for ASR and TTS setup.

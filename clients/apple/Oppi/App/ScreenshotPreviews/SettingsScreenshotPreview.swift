@@ -85,9 +85,16 @@ struct SettingsScreenshotPreview: View {
         .accessibilityIdentifier("screenshot.ready")
     }
 
+    private var requestedSettingsPage: String? {
+        if ScreenshotPreviewConfig.screen == "settings-appearance" {
+            return "appearance"
+        }
+        return ProcessInfo.processInfo.environment["SCREENSHOT_SETTINGS_PAGE"]
+    }
+
     @ViewBuilder
     private var page: some View {
-        switch ProcessInfo.processInfo.environment["SCREENSHOT_SETTINGS_PAGE"] {
+        switch requestedSettingsPage {
         case "general": SettingsGeneralPage()
         case "appearance": SettingsAppearancePage()
         case "text": SettingsTextPage()

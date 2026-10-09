@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { color256ToHex, convertPiTheme, resolvePiColors } from "../src/routes/theme-convert.js";
 
-// All 49 Oppi tokens that a converted theme must contain.
+// Required Oppi tokens that a converted theme must contain.
 const REQUIRED_OPPI_KEYS = [
   "bg",
   "bgDark",
@@ -134,6 +134,35 @@ describe("resolvePiColors", () => {
 });
 
 describe("convertPiTheme", () => {
+  test("omits optional speaker tokens when the pi theme lacks them", () => {
+    const theme = requireConvertedTheme(
+      convertPiTheme({
+        name: "No speaker tokens",
+        vars: { bg: "#1a1b26" },
+        colors: { userMessageBg: "#222233", userMessageText: "#c0caf5" },
+      }),
+    );
+    expect(theme.colors).not.toHaveProperty("assistantMessageBg");
+    expect(theme.colors).not.toHaveProperty("userMessageAccent");
+  });
+
+  test("copies optional speaker tokens when the pi theme provides them", () => {
+    const theme = requireConvertedTheme(
+      convertPiTheme({
+        name: "Speaker tokens",
+        vars: { bg: "#1a1b26" },
+        colors: {
+          userMessageBg: "#222233",
+          userMessageText: "#c0caf5",
+          assistantMessageBg: "#1f2230",
+          userMessageAccent: "#7aa2f7",
+        },
+      }),
+    );
+    expect(theme.colors.assistantMessageBg).toBe("#1f2230");
+    expect(theme.colors.userMessageAccent).toBe("#7aa2f7");
+  });
+
   test("returns null for non-objects", () => {
     expect(convertPiTheme(null)).toBeNull();
     expect(convertPiTheme(undefined)).toBeNull();
@@ -416,7 +445,7 @@ describe("convertPiTheme", () => {
     expect(theme.colorScheme).toBe("dark");
     expect(theme.source).toBe("pi");
 
-    // All 49 tokens present and valid
+    // Required tokens present and valid
     for (const key of REQUIRED_OPPI_KEYS) {
       expect(theme.colors, `missing key: ${key}`).toHaveProperty(key);
       expect(isValidHex(theme.colors[key]), `${key}="${theme.colors[key]}" invalid`).toBe(true);

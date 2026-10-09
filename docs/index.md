@@ -9,6 +9,7 @@ Public docs are two tracks: **daily use** and **extension authoring**. Pi still 
 How to pair a server and use Oppi from your phone.
 
 - [Using Oppi](usage.md) — screens, prompt vs steer vs follow-up, Quick Session, files, voice, Server settings, Agents, and what stays Pi
+- [Custom themes](themes.md) — JSON themes on the server, token list, contrast, Pi TUI conversion
 - [Onboarding and pairing](onboarding.md)
 - [Deep links](deeplinks.md)
 - [Document viewers](document-viewers.md)

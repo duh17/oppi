@@ -7,9 +7,9 @@ import UIKit
 import AppKit
 #endif
 
-/// Color palette for the entire app — 49 tokens.
+/// Color palette for the entire app — 51 tokens (49 required, 2 optional on import).
 ///
-/// 13 base colors (used by `Color.theme*` static accessors) plus 36 semantic
+/// 13 base colors (used by `Color.theme*` static accessors) plus 38 semantic
 /// tokens for UI surfaces, syntax highlighting, markdown, diffs, and thinking.
 struct ThemePalette: Sendable, ProviderIconTintPalette {
     // ── Base (13) ──
@@ -30,9 +30,13 @@ struct ThemePalette: Sendable, ProviderIconTintPalette {
     // ── Thinking text (1) ──
     let thinkingText: Color
 
-    // ── User message (2) ──
+    // ── User / assistant message (4) ──
     let userMessageBg: Color
     let userMessageText: Color
+    /// Assistant row fill. Built-ins use `Color.clear` (no wash).
+    let assistantMessageBg: Color
+    /// Leading accent on the user card. Built-ins use `blue` (Night uses amber).
+    let userMessageAccent: Color
 
     // ── Tool state (5) ──
     let toolPendingBg: Color
@@ -252,9 +256,11 @@ enum ThemePalettes {
         red: c(0xE07A8C),
         yellow: c(0xD4B06A),
         thinkingText: c(0x8E98B7),
-        // User message
-        userMessageBg: c(0x252B3D),
+        // User / assistant message
+        userMessageBg: c(0x3A4568),
         userMessageText: c(0xC8D1EB),
+        assistantMessageBg: .clear,
+        userMessageAccent: c(0x7AA2F7),
         // Tool state
         toolPendingBg: c(0x7AA2F7).opacity(0.13),
         toolSuccessBg: c(0x8FBE78).opacity(0.10),
@@ -316,9 +322,11 @@ enum ThemePalettes {
         red: c(0xD87888),
         yellow: c(0xCCAE68),
         thinkingText: c(0x95A0C0),
-        // User message
-        userMessageBg: c(0x121822),
+        // User / assistant message
+        userMessageBg: c(0x243044),
         userMessageText: c(0xC5CEEA),
+        assistantMessageBg: .clear,
+        userMessageAccent: c(0x7A9DD5),
         // Tool state
         toolPendingBg: c(0x7A9DD5).opacity(0.12),
         toolSuccessBg: c(0x85BF8A).opacity(0.08),
@@ -383,9 +391,11 @@ enum ThemePalettes {
         red: c(0xB86C6E),  // muted rose
         yellow: c(0xB4A270),  // wheat gold
         thinkingText: c(0x9C9488),
-        // User message
-        userMessageBg: c(0x1C1A18),
+        // User / assistant message
+        userMessageBg: c(0x3A3226),
         userMessageText: c(0xC8BFB0),
+        assistantMessageBg: .clear,
+        userMessageAccent: c(0xC49468),
         // Tool state
         toolPendingBg: c(0xC49468).opacity(0.10),
         toolSuccessBg: c(0x7C9C6E).opacity(0.08),
@@ -447,9 +457,11 @@ enum ThemePalettes {
         red: c(0xC43520),
         yellow: c(0x7D5F14),
         thinkingText: c(0x5F5650),
-        // User message
-        userMessageBg: c(0xE5E3DD),
+        // User / assistant message
+        userMessageBg: c(0xB2AEA5),
         userMessageText: c(0x3A3330),
+        assistantMessageBg: .clear,
+        userMessageAccent: c(0x2966A8),
         // Tool state
         toolPendingBg: c(0xE2E0DA),
         toolSuccessBg: c(0xE2EADB),

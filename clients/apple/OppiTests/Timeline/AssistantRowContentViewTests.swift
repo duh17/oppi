@@ -416,6 +416,23 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
+    @Test func builtInAssistantRowHasNoFill() throws {
+        let view = AssistantTimelineRowContentView(
+            configuration: makeTimelineAssistantConfiguration(text: "A short reply.")
+        )
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 120)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        let bubble = try #require(
+            Mirror(reflecting: view).children.first { $0.label == "bubbleContainer" }?.value as? UIView
+        )
+        let fill = bubble.backgroundColor ?? .clear
+        var alpha: CGFloat = 1
+        fill.getRed(nil, green: nil, blue: nil, alpha: &alpha)
+        #expect(alpha < 0.02)
+    }
+
+    @MainActor
     @Test func contextMenuUsesCopyAndCopyAsMarkdown() throws {
         let text = "Assistant answer"
         let view = AssistantTimelineRowContentView(configuration: makeTimelineAssistantConfiguration(text: text))

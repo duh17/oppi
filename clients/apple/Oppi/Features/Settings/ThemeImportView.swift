@@ -26,13 +26,15 @@ struct ThemeImportView: View {
                 ContentUnavailableView(
                     "No Custom Themes",
                     systemImage: "paintbrush",
-                    description: Text("Ask the agent to create a theme, then try again.")
+                    description: Text(
+                        "Themes are JSON files in your server's themes directory (usually ~/.config/oppi/themes). Pi TUI themes in ~/.pi/agent/themes are converted automatically. Ask your agent to create one, or copy a prompt from Settings → Appearance."
+                    )
                 )
             } else {
                 themeList
             }
         }
-        .settingsPage("Import Theme")
+        .settingsPage("Custom Themes")
         .task { await loadThemes() }
     }
 
