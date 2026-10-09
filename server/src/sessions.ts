@@ -511,39 +511,66 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return this.stateCoordinator.refreshSessionState(key, active as SessionStateActiveSession);
   }
 
+  /** Conversation id when this session is bound to a durable conversation. */
+  private boundConversationId(sessionId: string): ConversationId | undefined {
+    const session = this.storage.getSession(sessionId);
+    if (!session || !hasServerDurableBinding(session)) return undefined;
+    return session.serverDurable.conversationId as ConversationId;
+  }
+
+  /** Opened Harness for a bound durable conversation, or null. */
+  private async durableConversation(sessionId: string): Promise<{
+    owner: DurableHarness;
+    harness: Harness;
+    conversationId: ConversationId;
+  } | null> {
+    const conversationId = this.boundConversationId(sessionId);
+    const owner = this.durableHarness;
+    if (conversationId === undefined || !owner) return null;
+    const opened = await owner;
+    const { harness } = await opened.open();
+    return { owner: opened, harness, conversationId };
+  }
+
+  private async requireDurableConversation(
+    sessionId: string,
+    message: string,
+  ): Promise<{ owner: DurableHarness; harness: Harness; conversationId: ConversationId }> {
+    const bound = await this.durableConversation(sessionId);
+    if (!bound) throw new Error(message);
+    return bound;
+  }
+
   async getServerDurableInputCardOutput(
     sessionId: string,
     entryId: string,
   ): Promise<{ output: string } | null> {
-    const id = this.storage.getSession(sessionId)?.serverDurable?.conversationId;
-    if (id === undefined || !this.durableHarness) return null;
-    const { harness } = await (await this.durableHarness).open();
+    const bound = await this.durableConversation(sessionId);
+    if (!bound) return null;
     const { readDurableInputCardOutput } = await import("./durable-input-cards.js");
-    return readDurableInputCardOutput(harness, id as ConversationId, entryId);
+    return readDurableInputCardOutput(bound.harness, bound.conversationId, entryId);
   }
 
   async getServerDurableTracePage(
     sessionId: string,
     options: TracePageOptions,
   ): Promise<TracePageResult | null> {
-    const id = this.storage.getSession(sessionId)?.serverDurable?.conversationId;
-    if (id === undefined || !this.durableHarness) return null;
-    const { harness } = await (await this.durableHarness).open();
+    const bound = await this.durableConversation(sessionId);
+    if (!bound) return null;
     const { readDurableTracePage } = await import("./durable-history.js");
-    return readDurableTracePage(harness, id as ConversationId, {
+    return readDurableTracePage(bound.harness, bound.conversationId, {
       ...options,
       entryRenderers: this.getEntryRenderers(sessionId),
     });
   }
 
   async getServerDurableTraceOutline(sessionId: string): Promise<TraceOutlineResult | null> {
-    const id = this.storage.getSession(sessionId)?.serverDurable?.conversationId;
-    if (id === undefined || !this.durableHarness) return null;
-    const { harness } = await (await this.durableHarness).open();
+    const bound = await this.durableConversation(sessionId);
+    if (!bound) return null;
     const { readDurableTraceOutline } = await import("./durable-history.js");
     return readDurableTraceOutline(
-      harness,
-      id as ConversationId,
+      bound.harness,
+      bound.conversationId,
       this.mobileRenderer,
       this.getEntryRenderers(sessionId),
     );
@@ -575,18 +602,18 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     request: ConversationStreamAttach,
     send: (frame: ConversationStreamServerMessage) => void,
   ): Promise<() => void> {
-    const id = session.serverDurable?.conversationId;
-    if (id === undefined || !this.durableHarness)
-      throw new Error("The conversation stream requires a durable session");
+    const { harness, conversationId } = await this.requireDurableConversation(
+      session.id,
+      "The conversation stream requires a durable session",
+    );
     if (request.sessionId !== undefined && request.sessionId !== session.id)
       throw new Error(`The conversation stream cannot target session ${request.sessionId}`);
-    if (request.conversationId !== undefined && request.conversationId !== id)
+    if (request.conversationId !== undefined && request.conversationId !== conversationId)
       throw new Error(`Conversation ${request.conversationId} is not this session's conversation`);
-    const { harness } = await (await this.durableHarness).open();
     const { attachConversationStream } = await import("./durable-conversation-stream.js");
     const subscription = await attachConversationStream({
       harness,
-      conversationId: id as ConversationId,
+      conversationId,
       renderers: this.mobileRenderers,
       ...(request.afterEntryId !== undefined ? { afterEntryId: request.afterEntryId } : {}),
       send,
@@ -617,11 +644,15 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     sessionId: string,
     view: "context" | "full",
   ): Promise<TraceEvent[] | null> {
-    const id = this.storage.getSession(sessionId)?.serverDurable?.conversationId;
-    if (id === undefined || !this.durableHarness) return null;
-    const { harness } = await (await this.durableHarness).open();
+    const bound = await this.durableConversation(sessionId);
+    if (!bound) return null;
     const { readDurableTrace } = await import("./durable-history.js");
-    return readDurableTrace(harness, id as ConversationId, view, this.getEntryRenderers(sessionId));
+    return readDurableTrace(
+      bound.harness,
+      bound.conversationId,
+      view,
+      this.getEntryRenderers(sessionId),
+    );
   }
 
   /**
@@ -632,16 +663,13 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     sessionId: string,
     entryId: string,
   ): Promise<ConversationId | undefined> {
-    const id = this.storage.getSession(sessionId)?.serverDurable?.conversationId;
-    if (id === undefined || !this.durableHarness) {
-      throw new Error("Server durable fork requires a bound conversation");
-    }
+    const { owner, conversationId } = await this.requireDurableConversation(
+      sessionId,
+      "Server durable fork requires a bound conversation",
+    );
     // Trace entry ids are the decimal Durable entry ids.
     if (!/^[1-9]\d*$/.test(entryId) || !Number.isSafeInteger(Number(entryId))) return undefined;
-    return (await this.durableHarness).forkConversation(
-      id as ConversationId,
-      Number(entryId) as EntryId,
-    );
+    return owner.forkConversation(conversationId, Number(entryId) as EntryId);
   }
 
   /**
@@ -798,9 +826,9 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const key = this.sessionKey(sessionId);
     if (!this.isActive(sessionId)) {
       if (!this.durableHarness) return;
-      const id = this.storage.getSession(sessionId)?.serverDurable?.conversationId;
+      const id = this.boundConversationId(sessionId);
       if (id !== undefined) {
-        await (await this.durableHarness).abortConversations(new Set([id as ConversationId]));
+        await (await this.durableHarness).abortConversations(new Set([id]));
       }
       return;
     }
@@ -823,8 +851,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const pending = new Set(this.storage.listRestartResume().map((entry) => entry.sessionId));
     const resumeIds = new Set<ConversationId>();
     for (const sessionId of pending) {
-      const id = this.storage.getSession(sessionId)?.serverDurable?.conversationId;
-      if (id !== undefined) resumeIds.add(id as ConversationId);
+      const id = this.boundConversationId(sessionId);
+      if (id !== undefined) resumeIds.add(id);
     }
     try {
       await Promise.all(
