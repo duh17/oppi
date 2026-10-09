@@ -1266,16 +1266,6 @@ describe("oppi local API commands", () => {
           });
           return;
         }
-        if (method === "GET" && url.pathname === "/sessions/sess-1/read") {
-          json({
-            session: { id: "sess-1", workspaceId: "ws-1", status: "stopped" },
-            trace: [
-              { type: "user", text: "hello" },
-              { type: "assistant", text: "hi" },
-            ],
-          });
-          return;
-        }
         if (method === "GET" && url.pathname === "/sessions/sess-1/events") {
           json({
             events: [{ seq: 5, type: "session_updated" }],
@@ -1648,7 +1638,7 @@ describe("oppi local API commands", () => {
         },
         {
           args: ["session", "read", "sess-1", "--tail", "1", "--json"],
-          expected: ["GET /sessions?idPrefix=sess-1", "GET /sessions/sess-1/read?tail=1"],
+          expected: ["GET /sessions?idPrefix=sess-1", "GET /sessions/sess-1/trace?tail=1"],
         },
         {
           args: ["session", "events", "sess-1", "--since", "4", "--json"],

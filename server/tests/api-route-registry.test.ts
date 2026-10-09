@@ -95,7 +95,6 @@ const sessionOperationIds = [
   "searchSessions",
   "listSessions",
   "getSession",
-  "readSessionTrace",
   "getSessionTrace",
   "getGenericSessionEvents",
   "getSessionDialogs",
@@ -225,7 +224,6 @@ describe("api route registry", () => {
     ).toBe("/workspaces/:workspaceId/sessions/:sessionId/tool-output/:toolCallId");
     expect(normalizeRegisteredPathPattern("/sessions/recent")).toBe("/sessions/recent");
     expect(normalizeRegisteredPathPattern("/sessions/s1")).toBe("/sessions/:sessionId");
-    expect(normalizeRegisteredPathPattern("/sessions/s1/read")).toBe("/sessions/:sessionId/read");
     expect(normalizeRegisteredPathPattern("/sessions/s1/trace")).toBe("/sessions/:sessionId/trace");
     expect(normalizeRegisteredPathPattern("/sessions/s1/events")).toBe(
       "/sessions/:sessionId/events",

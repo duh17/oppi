@@ -350,7 +350,7 @@ describe("CLI app-state API boundary", () => {
           });
           return;
         }
-        if (ctx.path === "/sessions/sess-1/read" || ctx.path === "/sessions/sess-1/trace") {
+        if (ctx.path === "/sessions/sess-1/trace") {
           sendJson(res, {
             session: { id: "sess-1", workspaceId: "ws-1", changeStats: { changedFiles: ["x"] } },
             trace: [{ type: "assistant", text: "done" }],

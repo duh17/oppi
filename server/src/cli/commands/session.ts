@@ -347,7 +347,7 @@ export async function cmdSession(
       if (mode === "read" && flags.tail) params.set("tail", flags.tail);
       if (mode === "trace" && flags.include) params.set("include", flags.include);
       const result = await call<Record<string, unknown>>(
-        `/sessions/${encodeURIComponent(id)}/${mode}${querySuffix(params)}`,
+        `/sessions/${encodeURIComponent(id)}/trace${querySuffix(params)}`,
       );
       output(withoutSessionMetadata(id, result), () => {
         const trace = Array.isArray(result.trace) ? (result.trace as SessionTraceEvent[]) : [];

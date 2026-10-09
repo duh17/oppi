@@ -1078,9 +1078,9 @@ const HELP_TOPICS: HelpTopic[] = [
       { name: "send <id>", summary: "send text; steer a busy turn or queue a follow-up" },
       { name: "abort <id>", summary: "abort the current turn" },
       { name: "wait <id...>", summary: "block until idle or attention" },
-      { name: "read <id>", summary: "show transcript-style trace entries" },
+      { name: "read <id>", summary: "show trace entries (optional --tail)" },
       { name: "events <id>", summary: "read live catch-up events" },
-      { name: "trace <id>", summary: "show raw trace entries" },
+      { name: "trace <id>", summary: "show trace entries (optional --include)" },
       { name: "search <query>", summary: "search session content" },
       { name: "inspect <id>", summary: "inspect selected turns from a session trace" },
       { name: "stop <id>", summary: "stop a session" },
@@ -1256,8 +1256,8 @@ const HELP_TOPICS: HelpTopic[] = [
   },
   {
     path: ["session", "read"],
-    title: "Read session transcript",
-    summary: "Read transcript-style trace entries for a session.",
+    title: "Read session trace",
+    summary: "Read trace entries for a session, optionally tailed with --tail.",
     usage: "oppi session read <id> [--tail <count>] [--json]",
     arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [
@@ -1285,7 +1285,7 @@ const HELP_TOPICS: HelpTopic[] = [
   {
     path: ["session", "trace"],
     title: "Session trace",
-    summary: "Read raw trace entries for a session.",
+    summary: "Read trace entries for a session, optionally filtered with --include.",
     usage: "oppi session trace <id> [--include <parts>] [--json]",
     arguments: [{ name: "<id>", summary: "session id or unique prefix" }],
     flags: [

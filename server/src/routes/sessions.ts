@@ -919,12 +919,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return true;
     }
 
-    const sessionReadMatch = path.match(/^\/sessions\/([^/]+)\/read$/);
-    if (sessionReadMatch && method === "GET") {
-      await handleGenericGetSessionTrace(req, sessionReadMatch[1], url, res);
-      return true;
-    }
-
     const sessionTraceMatch = path.match(/^\/sessions\/([^/]+)\/trace$/);
     if (sessionTraceMatch && method === "GET") {
       await handleGenericGetSessionTrace(req, sessionTraceMatch[1], url, res);

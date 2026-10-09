@@ -291,7 +291,7 @@ describe("session targeting uses Pi-native Session.id", () => {
       {
         action: "read",
         flags: { json: "true" },
-        expected: [`/sessions?idPrefix=${PI_SESSION_ID}`, `/sessions/${PI_SESSION_ID}/read`],
+        expected: [`/sessions?idPrefix=${PI_SESSION_ID}`, `/sessions/${PI_SESSION_ID}/trace`],
       },
       {
         action: "events",
@@ -388,10 +388,7 @@ describe("session targeting uses Pi-native Session.id", () => {
           if (path === `/workspaces/ws-1/sessions/${PI_SESSION_ID}/trace-page`) {
             return { entries: [] };
           }
-          if (
-            path === `/sessions/${PI_SESSION_ID}/read` ||
-            path === `/sessions/${PI_SESSION_ID}/trace`
-          ) {
+          if (path === `/sessions/${PI_SESSION_ID}/trace`) {
             return { trace: [] };
           }
           if (path === `/sessions/${PI_SESSION_ID}/events`) {

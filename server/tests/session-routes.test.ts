@@ -1559,7 +1559,7 @@ describe("sessions module", () => {
     ]);
   });
 
-  it("exposes generic session get/read/events/command/stop routes for CLI use", async () => {
+  it("exposes generic session get/trace/events/command/stop routes for CLI use", async () => {
     const session = {
       id: "s1",
       workspaceId: "ws-1",
@@ -1611,17 +1611,28 @@ describe("sessions module", () => {
     ).toBe(true);
     expect(JSON.parse(getRes.body)).toEqual({ session });
 
-    const readRes = makeResponse();
+    const removedReadRes = makeResponse();
     expect(
       await dispatch({
         method: "GET",
         path: "/sessions/s1/read",
         url: new URL("http://localhost/sessions/s1/read?tail=50"),
         req: {} as never,
-        res: readRes as never,
+        res: removedReadRes as never,
+      }),
+    ).toBe(false);
+
+    const traceRes = makeResponse();
+    expect(
+      await dispatch({
+        method: "GET",
+        path: "/sessions/s1/trace",
+        url: new URL("http://localhost/sessions/s1/trace?tail=50"),
+        req: {} as never,
+        res: traceRes as never,
       }),
     ).toBe(true);
-    expect(JSON.parse(readRes.body)).toMatchObject({ session, trace: [] });
+    expect(JSON.parse(traceRes.body)).toMatchObject({ session, trace: [] });
 
     const eventsRes = makeResponse();
     expect(
