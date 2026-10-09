@@ -620,10 +620,21 @@ export function treeCpuRate(previous: Map<number, number>, current: Map<number, 
 
 /** A silent compile keeps at least this share of a core busy; a hung run sits near zero. */
 export const BUILD_CPU_PROGRESS_RATE = 0.25;
+/**
+ * CPU alone extends a run for at most this many silence windows without log or
+ * DerivedData progress (15 minutes at the 180-second default), so a spinning
+ * process cannot keep a slot forever.
+ */
+export const CPU_ONLY_SILENCE_WINDOWS = 5;
 
-function sampleTreeCpu(rootPid: number): Map<number, number> {
-  const ps = spawnSync("/bin/ps", ["-axo", "pid=,ppid=,time="], { encoding: "utf8" });
-  return ps.status === 0 ? treeCpu(rootPid, ps.stdout) : new Map();
+/** Undefined when ps fails or stalls; the caller keeps its previous sample instead of charging all CPU to one window. */
+function sampleTreeCpu(rootPid: number): Map<number, number> | undefined {
+  const ps = spawnSync("/bin/ps", ["-axo", "pid=,ppid=,time="], {
+    encoding: "utf8",
+    timeout: 5_000,
+    killSignal: "SIGKILL",
+  });
+  return ps.status === 0 ? treeCpu(rootPid, ps.stdout) : undefined;
 }
 
 function log(message: string): void {
@@ -1052,7 +1063,8 @@ function finishedTests(argv: string[], logText: string): TestCompletion | undefi
 
 /** XCTest's top-level result: the run is over, though xcodebuild may keep logging SDK records. */
 function finishedXCTest(logText: string): TestCompletion | undefined {
-  const ends = [...logText.matchAll(/^Test Suite '(?:All tests|Selected tests)' (passed|failed) at .+\r?\n[ \t]+(Executed ([1-9][0-9]*) tests?, with ([0-9]+) failures? \(([0-9]+) unexpected\) in .+ seconds)\r?$/gm)];
+  // XCTSkip adds "with N tests skipped and" before the failure count.
+  const ends = [...logText.matchAll(/^Test Suite '(?:All tests|Selected tests)' (passed|failed) at .+\r?\n[ \t]+(Executed ([1-9][0-9]*) tests?, with (?:[0-9]+ tests? skipped and )?([0-9]+) failures? \(([0-9]+) unexpected\) in .+ seconds)\r?$/gm)];
   if (ends.length !== 1) {
     return undefined;
   }
@@ -1276,6 +1288,8 @@ async function runXcodebuildAttempt(input: {
   const cpuSampleMs = Math.min(Math.max(pollMs, (input.config.silenceTimeout * 1000) / 3), 30_000);
   let cpuSample = sampleTreeCpu(spawned.owned.pid);
   let cpuSampleAt = Date.now();
+  let lastOutputProgressMs = Date.now();
+  let cpuOnly = false;
   while (true) {
     if (input.session.canceled) {
       hung = false;
@@ -1309,22 +1323,32 @@ async function runXcodebuildAttempt(input: {
       lastMtime = current;
       lastProgress = now;
       lastProgressMs = nowMs;
+      lastOutputProgressMs = nowMs;
+      cpuOnly = false;
     }
     if (nowMs - cpuSampleAt >= cpuSampleMs) {
       const next = sampleTreeCpu(spawned.owned.pid);
-      if (treeCpuRate(cpuSample, next, (nowMs - cpuSampleAt) / 1000) >= BUILD_CPU_PROGRESS_RATE) {
+      const outputSilentMs = nowMs - lastOutputProgressMs;
+      if (
+        next && cpuSample &&
+        outputSilentMs < CPU_ONLY_SILENCE_WINDOWS * input.config.silenceTimeout * 1000 &&
+        treeCpuRate(cpuSample, next, (nowMs - cpuSampleAt) / 1000) >= BUILD_CPU_PROGRESS_RATE
+      ) {
         lastProgress = now;
         lastProgressMs = nowMs;
+        cpuOnly = outputSilentMs > 0;
       }
-      cpuSample = next;
-      cpuSampleAt = nowMs;
+      if (next) {
+        cpuSample = next;
+        cpuSampleAt = nowMs;
+      }
     }
     if (
       input.config.heartbeatInterval > 0 &&
       now - lastHeartbeat >= input.config.heartbeatInterval
     ) {
       log(
-        `[sim-pool] heartbeat: elapsed=${now - start}s idle=${now - lastProgress}s log=${fileSize(input.logFile)}B pid=${spawned.owned.pid}`,
+        `[sim-pool] heartbeat: elapsed=${now - start}s idle=${now - lastProgress}s log=${fileSize(input.logFile)}B pid=${spawned.owned.pid}${cpuOnly ? ` alive-on-cpu-only=${Math.round((nowMs - lastOutputProgressMs) / 1000)}s` : ""}`,
       );
       lastHeartbeat = now;
     }

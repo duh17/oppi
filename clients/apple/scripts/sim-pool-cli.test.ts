@@ -148,6 +148,7 @@ function runCompletionFixture(text: string, options: {
   /** Replaces the default unit-lane arguments. */
   args?: string[];
   extraArgs?: string[];
+  env?: Record<string, string>;
   afterLog?: string;
   failQuery?: boolean;
 } = {}) {
@@ -194,6 +195,7 @@ exec /usr/bin/pgrep "$@"
       OPPI_SIM_POOL_COMPLETION_TIMEOUT: "1",
       OPPI_SIM_POOL_PROGRESS_POLL: "0.05",
       ...(options.failQuery ? { OPPI_SIM_POOL_PGREP: join(bin, "pgrep") } : {}),
+      ...options.env,
     },
   });
   const logs = join(root, "clients", "apple", ".build", "logs");
@@ -971,9 +973,10 @@ sleep 30
     }, 15_000);
   }
 
-  for (const [failures, code, outcome] of [[0, 0, "passed"], [1, 65, "failed"]] as const) {
-    test(`finished-then-lingering E2E run (${outcome}) keeps its XCTest result and never re-runs`, () => {
-      const result = runCompletionFixture(xctestE2E(failures), { args: e2eArgs });
+  for (const [failures, code, outcome, skipped] of [[0, 0, "passed", false], [1, 65, "failed", false], [0, 0, "passed", true]] as const) {
+    test(`finished-then-lingering E2E run (${outcome}${skipped ? ", with skipped tests" : ""}) keeps its XCTest result and never re-runs`, () => {
+      const text = skipped ? xctestE2E(failures).replaceAll("with 0 failures", "with 1 test skipped and 0 failures") : xctestE2E(failures);
+      const result = runCompletionFixture(text, { args: e2eArgs });
       expect(result.run.status).toBe(code);
       expect(result.attempts).toHaveLength(1);
       expect(result.calls).not.toMatch(/simctl (shutdown|erase)/);
@@ -988,13 +991,25 @@ sleep 30
     // Like swift-frontend emitting a module: no log output for longer than the
     // silence timeout, in a child process outside xcodebuild's process group.
     const result = runCompletionFixture("", {
-      afterLog: "/usr/bin/perl -e 'my $end = time + 3; 1 while time < $end' & wait; exit 0",
+      env: { OPPI_SIM_POOL_SILENCE_TIMEOUT: "2" },
+      afterLog: "/usr/bin/perl -e 'my $end = time + 5; 1 while time < $end' & wait; exit 0",
     });
     expect(result.run.status).toBe(0);
     expect(result.attempts).toHaveLength(1);
     expect(result.summary.hang_detected).toBe(false);
     expect(result.run.stderr).not.toContain("hang detected");
   }, 15_000);
+
+  test("CPU alone cannot keep a silent run alive past five silence windows", () => {
+    const result = runCompletionFixture("", {
+      env: { OPPI_SIM_POOL_HANG_RETRIES: "0" },
+      afterLog: "exec /usr/bin/perl -e 'my $end = time + 12; 1 while time < $end'",
+    });
+    expect(result.run.status).not.toBe(0);
+    expect(result.summary.hang_detected).toBe(true);
+    // Five 1-second windows of CPU-only life, then the kill; the spinner would run 12 seconds.
+    expect(result.summary.elapsed_seconds).toBeLessThan(11);
+  }, 20_000);
 
   test("completion deadline is not postponed by continuing app log output", () => {
     const result = runCompletionFixture(swiftTestPrelude + swiftPassed, {
