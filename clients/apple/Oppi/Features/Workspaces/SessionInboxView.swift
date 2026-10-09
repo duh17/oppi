@@ -276,8 +276,6 @@ struct SessionInboxView: View {
     @State private var isLoadingDurableHistory = false
     /// Durable scope keeps its own search; All Sessions' lives in `AppNavigation`.
     @State private var scopedSearch = SessionListSearchNavigationPersistence.State()
-    /// Durable scope: compact stack depth where this list sits, so deeper pushes cover it.
-    @State private var scopedStackDepth: Int?
     @State private var error: String?
     @State private var failedRetryServerId: String?
     @State private var pendingDelete: SessionInboxPendingDelete?
@@ -404,11 +402,9 @@ struct SessionInboxView: View {
                 splitDetailReplacesList: navigation.splitDetailTarget != nil
             )
         case .durable:
-            // Durable is the split detail root, or a pushed compact stack entry.
-            if navigation.workspaceNavigationPresentation == .split {
-                return !navigation.splitDetailPath.isEmpty
-            }
-            return navigation.workspacePath.count > (scopedStackDepth ?? navigation.workspacePath.count)
+            // Same route depth as the launcher. A stored path count would treat
+            // a one-shot `[durable, chat]` rebuild as the surface.
+            return isQuickSessionLauncherCovered
         }
     }
 
@@ -421,25 +417,12 @@ struct SessionInboxView: View {
     /// The pushed chat hides the bottom bar, but an interactive pop still
     /// reveals an installed capsule at the composer.
     private var isQuickSessionLauncherCovered: Bool {
-        let surfaceDepth: Int = switch navigation.workspaceNavigationPresentation {
-        case .split:
-            0
-        case .stack:
-            switch scope {
-            case .all:
-                0
-            case .durable:
-                scopedStackDepth ?? navigation.workspacePath.count
-            }
-        }
-        return QuickSessionLauncherCoverage.isCovered(
+        QuickSessionLauncherCoverage.isCovered(
             presentation: navigation.workspaceNavigationPresentation,
-            workspacePathCount: navigation.workspacePath.count,
-            splitDetailPathCount: navigation.splitDetailPath.count,
-            surfaceDepth: surfaceDepth,
-            // All Sessions in split is replaced when a detail target is set.
-            // Durable is that detail root, so a non-nil target is not coverage.
-            splitDetailReplacesSurface: scope == .all && navigation.splitDetailTarget != nil
+            surface: scope == .all ? .allSessions : .durableSessions,
+            workspaceStack: navigation.workspaceStackRouteElements,
+            splitDetailTarget: navigation.splitDetailTarget,
+            splitDetailPath: navigation.splitDetailPathElements
         )
     }
 
@@ -596,7 +579,6 @@ struct SessionInboxView: View {
             }
         }
         .accessibilityIdentifier(scope == .all ? "workspace.sessionList" : "durableSessions.list")
-        .background { QuickSessionInteractivePopProbe() }
         .listStyle(.plain)
         .themedListSurface()
         .navigationTitle(scope.title)
@@ -639,11 +621,6 @@ struct SessionInboxView: View {
             async let providers: () = loadProviderSetupState()
             async let history: () = loadDurableHistory()
             _ = await (refresh, providers, history)
-        }
-        .onAppear {
-            if scope == .durable, scopedStackDepth == nil {
-                scopedStackDepth = navigation.workspacePath.count
-            }
         }
         .task(id: listTaskID) {
             if hasSearchQuery {
@@ -1371,11 +1348,9 @@ struct SessionInboxView: View {
             trailingReserve: SessionInboxComposeChrome.messageCapsuleFolderReserve,
             onIncognito: nil,
             onStart: {
-                guard !QuickSessionInteractivePop.shouldIgnoreLauncherActivation else { return }
                 startQuickSession(dictate: false)
             },
             onDictate: {
-                guard !QuickSessionInteractivePop.shouldIgnoreLauncherActivation else { return }
                 startQuickSession(dictate: true)
             }
         )

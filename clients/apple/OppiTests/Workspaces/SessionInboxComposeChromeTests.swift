@@ -1,7 +1,6 @@
 import Foundation
 import SwiftUI
 import Testing
-import UIKit
 @testable import Oppi
 
 @Suite("Session inbox compose chrome")
@@ -302,91 +301,159 @@ struct SessionInboxComposeChromeTests {
 
 @Suite("Quick Session launcher coverage")
 struct QuickSessionLauncherCoverageTests {
-    @Test func stackRootStaysVisibleUntilADestinationIsPushed() {
-        #expect(
-            !QuickSessionLauncherCoverage.isCovered(
+    private let thread = SessionThreadNavTarget(serverId: "srv", rootSessionId: "root")
+    private let chat = WorkspaceSessionNavTarget(serverId: "srv", sessionId: "chat")
+
+    /// A chat after the owning route hides Message. Removing that chat shows it.
+    /// A missing owner stays covered: the live path count is not the depth.
+    @Test func routeElementsCoverTheLauncherUntilTheChatIsRemoved() {
+        let stackCases: [(String, [WorkspaceStackRouteElement], QuickSessionLauncherSurface)] = [
+            ("durable + chat", [.utility(.durableSessions), .session(chat)], .durableSessions),
+            ("thread + chat", [.sessionThread(thread), .session(chat)], .thread(thread)),
+            (
+                "durable + thread + chat",
+                [.utility(.durableSessions), .sessionThread(thread), .session(chat)],
+                .thread(thread)
+            ),
+        ]
+        for (name, covered, surface) in stackCases {
+            expectCovered(name, presentation: .stack, stack: covered, surface: surface, covered: true)
+            expectCovered(
+                "\(name) without chat",
                 presentation: .stack,
-                workspacePathCount: 0,
-                splitDetailPathCount: 0,
-                surfaceDepth: 0
+                stack: Array(covered.dropLast()),
+                surface: surface,
+                covered: false
             )
+        }
+        expectCovered(
+            "durable still covered by thread",
+            presentation: .stack,
+            stack: [.utility(.durableSessions), .sessionThread(thread)],
+            surface: .durableSessions,
+            covered: true
         )
-        #expect(
-            QuickSessionLauncherCoverage.isCovered(
-                presentation: .stack,
-                workspacePathCount: 1,
-                splitDetailPathCount: 0,
-                surfaceDepth: 0
-            )
+
+        expectCovered(
+            "split durable + chat",
+            presentation: .split,
+            detail: .utility(.durableSessions),
+            path: [.session(chat)],
+            surface: .durableSessions,
+            covered: true
+        )
+        expectCovered(
+            "split durable",
+            presentation: .split,
+            detail: .utility(.durableSessions),
+            path: [],
+            surface: .durableSessions,
+            covered: false
+        )
+        expectCovered(
+            "split thread + chat",
+            presentation: .split,
+            path: [.sessionThread(thread), .session(chat)],
+            surface: .thread(thread),
+            covered: true
+        )
+        expectCovered(
+            "split thread",
+            presentation: .split,
+            path: [.sessionThread(thread)],
+            surface: .thread(thread),
+            covered: false
+        )
+        expectCovered(
+            "split durable + thread + chat",
+            presentation: .split,
+            detail: .utility(.durableSessions),
+            path: [.sessionThread(thread), .session(chat)],
+            surface: .thread(thread),
+            covered: true
+        )
+        expectCovered(
+            "split durable + thread",
+            presentation: .split,
+            detail: .utility(.durableSessions),
+            path: [.sessionThread(thread)],
+            surface: .thread(thread),
+            covered: false
+        )
+        expectCovered(
+            "split durable still covered by thread",
+            presentation: .split,
+            detail: .utility(.durableSessions),
+            path: [.sessionThread(thread)],
+            surface: .durableSessions,
+            covered: true
+        )
+
+        expectCovered(
+            "missing durable",
+            presentation: .stack,
+            stack: [.session(chat)],
+            surface: .durableSessions,
+            covered: true
+        )
+        expectCovered(
+            "missing thread",
+            presentation: .stack,
+            stack: [.session(chat)],
+            surface: .thread(thread),
+            covered: true
+        )
+        expectCovered(
+            "missing split thread",
+            presentation: .split,
+            path: [.session(chat)],
+            surface: .thread(thread),
+            covered: true
+        )
+
+        expectCovered("all sessions", presentation: .stack, stack: [], surface: .allSessions, covered: false)
+        expectCovered(
+            "all sessions + chat",
+            presentation: .stack,
+            stack: [.session(chat)],
+            surface: .allSessions,
+            covered: true
+        )
+        expectCovered(
+            "all sessions replaced in split",
+            presentation: .split,
+            detail: .session(chat),
+            path: [],
+            surface: .allSessions,
+            covered: true
+        )
+        expectCovered(
+            "all sessions split root",
+            presentation: .split,
+            path: [],
+            surface: .allSessions,
+            covered: false
         )
     }
 
-    @Test func pushedSurfaceReappearsWhenThePathReturnsToItsDepth() {
+    private func expectCovered(
+        _ name: String,
+        presentation: WorkspaceNavigationPresentation,
+        stack: [WorkspaceStackRouteElement] = [],
+        detail: WorkspaceSplitDetailTarget? = nil,
+        path: [WorkspaceSplitDetailPathElement] = [],
+        surface: QuickSessionLauncherSurface,
+        covered: Bool
+    ) {
         #expect(
             QuickSessionLauncherCoverage.isCovered(
-                presentation: .stack,
-                workspacePathCount: 3,
-                splitDetailPathCount: 9,
-                surfaceDepth: 2
-            )
-        )
-        #expect(
-            !QuickSessionLauncherCoverage.isCovered(
-                presentation: .stack,
-                workspacePathCount: 2,
-                splitDetailPathCount: 9,
-                surfaceDepth: 2
-            )
-        )
-    }
-
-    @Test func splitDetailUsesItsOwnPathNotTheSidebarStack() {
-        #expect(
-            !QuickSessionLauncherCoverage.isCovered(
-                presentation: .split,
-                workspacePathCount: 4,
-                splitDetailPathCount: 1,
-                surfaceDepth: 1
-            )
-        )
-        #expect(
-            QuickSessionLauncherCoverage.isCovered(
-                presentation: .split,
-                workspacePathCount: 0,
-                splitDetailPathCount: 2,
-                surfaceDepth: 1
-            )
-        )
-    }
-
-    @Test func interactivePopGestureDoesNotActivateTheLauncher() {
-        #expect(QuickSessionInteractivePop.shouldIgnore(popGestureState: .began))
-        #expect(QuickSessionInteractivePop.shouldIgnore(popGestureState: .changed))
-        #expect(QuickSessionInteractivePop.shouldIgnore(popGestureState: .ended))
-        #expect(!QuickSessionInteractivePop.shouldIgnore(popGestureState: .possible))
-        #expect(!QuickSessionInteractivePop.shouldIgnore(popGestureState: .failed))
-        #expect(!QuickSessionInteractivePop.shouldIgnore(popGestureState: .cancelled))
-        #expect(!QuickSessionInteractivePop.shouldIgnore(popGestureState: nil))
-    }
-
-    @Test func replacedSplitDetailCoversTheSurfaceEvenWithAnEmptyDetailPath() {
-        #expect(
-            QuickSessionLauncherCoverage.isCovered(
-                presentation: .split,
-                workspacePathCount: 0,
-                splitDetailPathCount: 0,
-                surfaceDepth: 0,
-                splitDetailReplacesSurface: true
-            )
-        )
-        #expect(
-            !QuickSessionLauncherCoverage.isCovered(
-                presentation: .stack,
-                workspacePathCount: 0,
-                splitDetailPathCount: 0,
-                surfaceDepth: 0,
-                splitDetailReplacesSurface: true
-            )
+                presentation: presentation,
+                surface: surface,
+                workspaceStack: stack,
+                splitDetailTarget: detail,
+                splitDetailPath: path
+            ) == covered,
+            "\(name)"
         )
     }
 }

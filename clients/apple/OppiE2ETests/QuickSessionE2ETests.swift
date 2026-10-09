@@ -327,14 +327,13 @@ final class QuickSessionCoveredLauncherE2ETests: E2ETestCase {
         )
         rootRow.tap()
         assertChatPushedWithoutLauncher(from: "all sessions")
-        interactivePopThenComposerTap(from: "all sessions")
+        assertComposerBandTapDoesNothing(whileChatPushedFrom: "all sessions")
         returnToInbox()
-        assertLauncherPresent(on: "all sessions")
+        assertLauncherTapOpensQuickSession(on: "all sessions")
+        dismissQuickSessionOverlay()
 
         let thread = app.buttons["thread.nav.\(rootId)"]
         XCTAssertTrue(thread.waitForExistence(timeout: 15), "Thread strip missing")
-        // Close a row swipe the pop may have revealed, then open the strip.
-        app.collectionViews["workspace.sessionList"].swipeDown()
         thread.tap()
         XCTAssertTrue(app.collectionViews["thread.detail"].waitForExistence(timeout: 15), "Thread detail did not open")
         assertLauncherPresent(on: "thread detail")
@@ -344,17 +343,9 @@ final class QuickSessionCoveredLauncherE2ETests: E2ETestCase {
         XCTAssertTrue(member.waitForExistence(timeout: 15), "Thread root row missing")
         member.tap()
         assertChatPushedWithoutLauncher(from: "thread detail")
-        interactivePopThenComposerTap(from: "thread detail")
-        XCTAssertTrue(
-            app.collectionViews["thread.detail"].waitForExistence(timeout: 10)
-                || app.buttons["chat.toolbar.back"].waitForExistence(timeout: 2),
-            "Thread detail did not return after the pop"
-        )
-        if app.buttons["chat.toolbar.files"].exists {
-            app.buttons["chat.toolbar.back"].tap()
-        }
-        XCTAssertTrue(app.collectionViews["thread.detail"].waitForExistence(timeout: 10), "Back did not return to thread detail")
-        assertLauncherPresent(on: "thread detail after back")
+        assertComposerBandTapDoesNothing(whileChatPushedFrom: "thread detail")
+        returnToThreadDetail()
+        assertLauncherTapOpensQuickSession(on: "thread detail")
     }
 
     @MainActor
@@ -375,38 +366,65 @@ final class QuickSessionCoveredLauncherE2ETests: E2ETestCase {
         XCTAssertTrue(launcher.isHittable, "Message launcher not hittable on \(surface)")
     }
 
-    /// Same gesture as the misfire: edge drag out and back, then a tap at the
-    /// composer band. A completed pop may restore the launcher; that tap must
-    /// not open Quick Session while chat is still the surface.
+    /// The composer band is where a covered launcher used to land. Chat must
+    /// still be pushed, and the tap must not open Quick Session.
     @MainActor
-    private func interactivePopThenComposerTap(from source: String) {
-        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
-        let mid = app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.5))
-        // One completing pop. A second drag after the list is back swipes a row
-        // open and steals the next tap.
-        start.press(forDuration: 0.15, thenDragTo: mid, withVelocity: .slow, thenHoldForDuration: 0.2)
-
-        let overlay = app.buttons["quickSession.overlay"]
-        let liftOpened = overlay.waitForExistence(timeout: 1)
-        print("QSREPORT \(source) after-lift overlay=\(liftOpened) launcher=\(app.buttons["workspace.quickSession.start"].exists) chat=\(app.buttons["chat.toolbar.files"].exists)")
-        XCTAssertFalse(liftOpened, "Interactive pop lift opened Quick Session from \(source)")
-
+    private func assertComposerBandTapDoesNothing(whileChatPushedFrom source: String) {
+        XCTAssertTrue(app.buttons["chat.toolbar.files"].exists, "Chat was not pushed before the composer-band tap from \(source)")
         let composer = app.coordinate(withNormalizedOffset: CGVector(dx: 0.425, dy: 0.94))
         composer.tap()
-        let tapOpened = overlay.waitForExistence(timeout: 2)
-        let chatStillPushed = app.buttons["chat.toolbar.files"].exists
-        let launcher = app.buttons["workspace.quickSession.start"]
-        print(
-            "QSREPORT \(source) after-tap overlay=\(tapOpened) chat=\(chatStillPushed) launcher=\(launcher.exists) hittable=\(launcher.exists && launcher.isHittable) frame=\(launcher.exists ? String(describing: launcher.frame) : "none")"
+        let overlay = app.buttons["quickSession.overlay"]
+        XCTAssertFalse(
+            overlay.waitForExistence(timeout: 2),
+            "Composer-band tap opened Quick Session while chat from \(source) was still pushed"
         )
-        if chatStillPushed {
-            XCTAssertFalse(tapOpened, "Composer-position tap opened Quick Session while chat from \(source) was still pushed")
-        } else if tapOpened {
-            // Pop completed onto the list. The restored launcher accepted a new
-            // tap; that is not the covered-chat misfire. Dismiss and continue.
-            overlay.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)).tap()
-            XCTAssertTrue(app.buttons["workspace.quickSession.start"].waitForExistence(timeout: 5), "Launcher missing after dismissing a completed-pop tap")
+        XCTAssertTrue(
+            app.buttons["chat.toolbar.files"].exists,
+            "Composer-band tap left the chat pushed from \(source)"
+        )
+        XCTAssertFalse(
+            app.buttons["workspace.quickSession.start"].exists,
+            "Message launcher installed while chat from \(source) stayed pushed"
+        )
+    }
+
+    /// A completed return must restore a launcher that still opens Quick Session.
+    @MainActor
+    private func assertLauncherTapOpensQuickSession(on surface: String) {
+        let launcher = app.buttons["workspace.quickSession.start"]
+        XCTAssertTrue(launcher.waitForExistence(timeout: 8), "Message launcher missing on \(surface) after returning")
+        XCTAssertTrue(launcher.isHittable, "Message launcher not hittable on \(surface) after returning")
+        launcher.tap()
+        XCTAssertTrue(
+            app.buttons["quickSession.overlay"].waitForExistence(timeout: 8),
+            "Tap after returning to \(surface) did not open Quick Session"
+        )
+    }
+
+    @MainActor
+    private func dismissQuickSessionOverlay() {
+        let overlay = app.buttons["quickSession.overlay"]
+        XCTAssertTrue(overlay.waitForExistence(timeout: 5), "Quick Session overlay missing before dismiss")
+        let start = overlay.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+        let end = overlay.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
+        start.press(forDuration: 0.05, thenDragTo: end)
+        let dismissed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: overlay
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed, "Quick Session did not dismiss")
+    }
+
+    @MainActor
+    private func returnToThreadDetail() {
+        if app.buttons["chat.toolbar.files"].exists {
+            app.buttons["chat.toolbar.back"].tap()
         }
+        XCTAssertTrue(
+            app.collectionViews["thread.detail"].waitForExistence(timeout: 10),
+            "Back did not return to thread detail"
+        )
+        XCTAssertFalse(app.buttons["chat.toolbar.files"].exists, "Chat stayed pushed over thread detail")
     }
 
     /// Fixture sessions are stored before launch. Pull to refresh if the first

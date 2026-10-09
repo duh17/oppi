@@ -126,7 +126,10 @@ struct WorkspaceConfigurationNavTarget: Hashable {
     let workspaceTarget: WorkspaceNavTarget
 }
 
-private enum WorkspaceStackRouteElement: Hashable {
+/// Compact workspace-stack route, parallel to `workspacePath`.
+/// Launcher coverage reads these elements instead of a path count captured
+/// when a screen appeared.
+enum WorkspaceStackRouteElement: Hashable {
     case workspace(WorkspaceNavTarget)
     case session(WorkspaceSessionNavTarget)
     case fileBrowser(FileBrowserNavTarget)
@@ -196,7 +199,9 @@ final class AppNavigation {
             trimSplitDetailElementsToPathCount()
         }
     }
-    private var splitDetailPathElements: [WorkspaceSplitDetailPathElement] = []
+    /// Parallel to `splitDetailPath`. Readable so launcher coverage can find
+    /// the route that owns a screen without snapshotting the path count.
+    private(set) var splitDetailPathElements: [WorkspaceSplitDetailPathElement] = []
 
     /// Column visibility backing the regular-width split shell. The system
     /// sidebar affordance and edge gestures update this binding, so iPad users
@@ -259,7 +264,9 @@ final class AppNavigation {
         }
     }
     private var workspaceStackDiagnosticContexts: [WorkspaceStackDiagnosticContext] = []
-    private var workspaceStackRouteElements: [WorkspaceStackRouteElement] = []
+    /// Parallel to `workspacePath`. Readable so launcher coverage can find
+    /// the route that owns a screen without snapshotting the path count.
+    private(set) var workspaceStackRouteElements: [WorkspaceStackRouteElement] = []
 
     var workspaceStackDiagnosticContext: WorkspaceStackDiagnosticContext {
         workspaceStackDiagnosticContexts.last ?? .inboxAll

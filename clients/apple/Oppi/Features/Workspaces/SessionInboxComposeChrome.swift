@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 /// Session-list bottom chrome shared by All Sessions and workspace lists.
 /// Search lives in the navigation-bar drawer and reveals by pulling the list.
@@ -268,97 +267,113 @@ struct SessionInboxFolderToolbarButton: View {
     }
 }
 
+/// Which screen owns a Message launcher.
+enum QuickSessionLauncherSurface: Equatable {
+    case allSessions
+    case durableSessions
+    case thread(SessionThreadNavTarget)
+}
+
 /// Whether a Message launcher's surface still has a destination pushed over it.
 ///
-/// All Sessions is the compact stack root. Durable and thread detail record the
-/// path count when they appear. Pass the stack that surface lives in: compact
-/// `workspacePath`, or the split detail path. Omitting the launcher while covered
-/// is required — hiding the bottom bar on the pushed chat is not enough during
-/// an interactive pop, and the capsule would land on the composer.
+/// Depth is the route that owns the screen, evaluated every time. A size-class
+/// change rebuilds `[durable, chat]` or `[thread, chat]` in one shot; a path
+/// count captured on appear would treat that covered count as the surface.
+///
+/// All Sessions is the stack root (depth 0) and is replaced in split only when
+/// a detail target is set. Durable in split is the detail root (depth 0). Durable
+/// in the compact stack is the index of `.utility(.durableSessions)` plus one.
+/// A thread is the index of its `SessionThreadNavTarget` in the active path
+/// (`workspaceStackRouteElements`, or the split detail path) plus one.
+///
+/// A missing owner is covered. Falling back to the live path count would report
+/// `count > count` and install Message on a composer.
 enum QuickSessionLauncherCoverage {
     static func isCovered(
         presentation: WorkspaceNavigationPresentation,
-        workspacePathCount: Int,
-        splitDetailPathCount: Int,
-        surfaceDepth: Int,
-        splitDetailReplacesSurface: Bool = false
+        surface: QuickSessionLauncherSurface,
+        workspaceStack: [WorkspaceStackRouteElement],
+        splitDetailTarget: WorkspaceSplitDetailTarget?,
+        splitDetailPath: [WorkspaceSplitDetailPathElement]
     ) -> Bool {
         switch presentation {
         case .split:
-            if splitDetailReplacesSurface { return true }
-            return splitDetailPathCount > surfaceDepth
+            if surface == .allSessions, splitDetailTarget != nil {
+                return true
+            }
+            guard let depth = depth(
+                presentation: .split,
+                surface: surface,
+                workspaceStack: workspaceStack,
+                splitDetailPath: splitDetailPath
+            ) else {
+                return true
+            }
+            return splitDetailPath.count > depth
         case .stack:
-            return workspacePathCount > surfaceDepth
+            guard let depth = depth(
+                presentation: .stack,
+                surface: surface,
+                workspaceStack: workspaceStack,
+                splitDetailPath: splitDetailPath
+            ) else {
+                return true
+            }
+            return workspaceStack.count > depth
         }
     }
-}
 
-/// Ignores a Message action whose touch is the interactive pop itself.
-///
-/// A completed pop can turn the finger lift into a tap on the capsule that
-/// just reappeared at the composer. The recognizer stays `.ended` only until
-/// the next touch begins, so a later tap on the restored bar still starts.
-enum QuickSessionInteractivePop {
-    @MainActor private static weak var gesture: UIGestureRecognizer?
-
-    @MainActor
-    static func attach(_ gesture: UIGestureRecognizer) {
-        self.gesture = gesture
+    /// `nil` when this surface's route is not in the active path.
+    private static func depth(
+        presentation: WorkspaceNavigationPresentation,
+        surface: QuickSessionLauncherSurface,
+        workspaceStack: [WorkspaceStackRouteElement],
+        splitDetailPath: [WorkspaceSplitDetailPathElement]
+    ) -> Int? {
+        switch surface {
+        case .allSessions:
+            return 0
+        case .durableSessions:
+            switch presentation {
+            case .split:
+                return 0
+            case .stack:
+                return indexOfDurableSessions(in: workspaceStack).map { $0 + 1 }
+            }
+        case .thread(let target):
+            switch presentation {
+            case .split:
+                return index(of: target, in: splitDetailPath).map { $0 + 1 }
+            case .stack:
+                return index(of: target, in: workspaceStack).map { $0 + 1 }
+            }
+        }
     }
 
-    @MainActor
-    static var shouldIgnoreLauncherActivation: Bool {
-        shouldIgnore(popGestureState: gesture?.state)
-    }
-
-    static func shouldIgnore(popGestureState: UIGestureRecognizer.State?) -> Bool {
-        switch popGestureState {
-        case .began, .changed, .ended:
-            return true
-        default:
+    private static func indexOfDurableSessions(in stack: [WorkspaceStackRouteElement]) -> Int? {
+        stack.lastIndex { element in
+            if case .utility(.durableSessions) = element { return true }
             return false
         }
     }
-}
 
-/// Finds the enclosing navigation controller's interactive pop gesture.
-/// Attached from the list, not the toolbar button: toolbar items on iOS 26
-/// are not in that controller's responder chain.
-struct QuickSessionInteractivePopProbe: UIViewRepresentable {
-    func makeUIView(context: Context) -> ProbeView {
-        ProbeView()
+    private static func index(
+        of target: SessionThreadNavTarget,
+        in stack: [WorkspaceStackRouteElement]
+    ) -> Int? {
+        stack.lastIndex { element in
+            if case .sessionThread(let stacked) = element { return stacked == target }
+            return false
+        }
     }
 
-    func updateUIView(_ uiView: ProbeView, context: Context) {
-        uiView.attachIfNeeded()
-    }
-
-    final class ProbeView: UIView {
-        private weak var pop: UIGestureRecognizer?
-
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            attachIfNeeded()
-        }
-
-        func attachIfNeeded() {
-            guard pop == nil, window != nil else { return }
-            guard let pop = enclosingNavigationController()?.interactivePopGestureRecognizer else { return }
-            self.pop = pop
-            MainActor.assumeIsolated {
-                QuickSessionInteractivePop.attach(pop)
-            }
-        }
-
-        private func enclosingNavigationController() -> UINavigationController? {
-            var responder: UIResponder? = self
-            while let current = responder {
-                if let navigation = current as? UINavigationController {
-                    return navigation
-                }
-                responder = current.next
-            }
-            return nil
+    private static func index(
+        of target: SessionThreadNavTarget,
+        in path: [WorkspaceSplitDetailPathElement]
+    ) -> Int? {
+        path.lastIndex { element in
+            if case .sessionThread(let stacked) = element { return stacked == target }
+            return false
         }
     }
 }

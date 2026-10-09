@@ -575,8 +575,6 @@ private struct SessionThreadDetailContentView: View {
     /// Only the newest load may replace the snapshot.
     @State private var loadGeneration = 0
     @State private var composeBarColumnWidth: CGFloat = 0
-    /// Path count when this thread is the top of the stack it was pushed onto.
-    @State private var quickSessionLauncherSurfaceDepth: Int?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var connection: ServerConnection? {
@@ -671,15 +669,6 @@ private struct SessionThreadDetailContentView: View {
             }
         }
         .accessibilityIdentifier("thread.detail")
-        .background { QuickSessionInteractivePopProbe() }
-        .onAppear {
-            recordQuickSessionLauncherSurfaceDepthIfNeeded()
-        }
-        .onChange(of: navigation.workspaceNavigationPresentation) { _, _ in
-            // Stack and split are different paths. A depth recorded on one
-            // must not be compared with the other after a size-class change.
-            quickSessionLauncherSurfaceDepth = quickSessionLauncherPathCount
-        }
         .onChange(of: mode) { _, newMode in
             AppPreferences.SessionRows.setThreadDetailMode(newMode)
         }
@@ -808,30 +797,16 @@ private struct SessionThreadDetailContentView: View {
         liveSnapshot.flatMap { thread in thread.sessions.first { $0.id == thread.rootSessionId } }
     }
 
-    private func recordQuickSessionLauncherSurfaceDepthIfNeeded() {
-        guard quickSessionLauncherSurfaceDepth == nil else { return }
-        quickSessionLauncherSurfaceDepth = quickSessionLauncherPathCount
-    }
-
-    /// Count of the navigation path this thread was pushed onto.
-    private var quickSessionLauncherPathCount: Int {
-        switch navigation.workspaceNavigationPresentation {
-        case .split:
-            navigation.splitDetailPath.count
-        case .stack:
-            navigation.workspacePath.count
-        }
-    }
-
     /// A chat pushed over this thread must not leave the Message capsule
     /// installed. The chat hides the bottom bar, but an interactive pop still
     /// reveals an installed capsule at the composer.
     private var isQuickSessionLauncherCovered: Bool {
         QuickSessionLauncherCoverage.isCovered(
             presentation: navigation.workspaceNavigationPresentation,
-            workspacePathCount: navigation.workspacePath.count,
-            splitDetailPathCount: navigation.splitDetailPath.count,
-            surfaceDepth: quickSessionLauncherSurfaceDepth ?? quickSessionLauncherPathCount
+            surface: .thread(target),
+            workspaceStack: navigation.workspaceStackRouteElements,
+            splitDetailTarget: navigation.splitDetailTarget,
+            splitDetailPath: navigation.splitDetailPathElements
         )
     }
 
@@ -849,11 +824,9 @@ private struct SessionThreadDetailContentView: View {
             trailingReserve: SessionInboxComposeChrome.messageCapsuleSoloReserve,
             placeholder: "New session in thread",
             onStart: {
-                guard !QuickSessionInteractivePop.shouldIgnoreLauncherActivation else { return }
                 startThreadSession(root: root, dictate: false)
             },
             onDictate: {
-                guard !QuickSessionInteractivePop.shouldIgnoreLauncherActivation else { return }
                 startThreadSession(root: root, dictate: true)
             }
         )
