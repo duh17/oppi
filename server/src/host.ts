@@ -159,9 +159,9 @@ export function hostMountValidationError(hostMount: unknown): string | undefined
 
   switch (status.issue) {
     case "missing":
-      return `Host working directory does not exist: ${status.resolvedPath}. Choose an existing folder, clear Host Working Directory for a blank workspace, or create the folder on the server.`;
+      return `Host working directory does not exist: ${status.resolvedPath}. Choose an existing folder, clear Host Working Directory to let Oppi create a folder, or create the folder on the server.`;
     case "not_directory":
-      return `Host working directory is not a directory: ${status.resolvedPath}. Choose an existing folder or clear Host Working Directory for a blank workspace.`;
+      return `Host working directory is not a directory: ${status.resolvedPath}. Choose an existing folder or clear Host Working Directory to let Oppi create a folder.`;
     case "inaccessible":
       return `Host working directory is not accessible: ${status.resolvedPath}. Choose a different folder or fix permissions on the server.`;
   }

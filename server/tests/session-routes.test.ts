@@ -68,7 +68,12 @@ describe("sessions module", () => {
   it("handles GET workspace sessions in isolation", async () => {
     const ctx = {
       storage: {
-        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getWorkspace: vi.fn(() => ({
+          id: "ws-1",
+          name: "Test",
+          hostMount: tmpdir(),
+          runtime: "host",
+        })),
         listAllWorkspaceSessionSnapshots: vi.fn(() => [
           {
             id: "s1",
@@ -151,7 +156,12 @@ describe("sessions module", () => {
     const ctx = {
       sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
-        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getWorkspace: vi.fn(() => ({
+          id: "ws-1",
+          name: "Test",
+          hostMount: tmpdir(),
+          runtime: "host",
+        })),
         getSession: vi.fn(() => session),
       },
       sessionRuntimes: {
@@ -239,7 +249,12 @@ describe("sessions module", () => {
     const ctx = {
       sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
-        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getWorkspace: vi.fn(() => ({
+          id: "ws-1",
+          name: "Test",
+          hostMount: tmpdir(),
+          runtime: "host",
+        })),
         getSession: vi.fn(() => session),
       },
       sessionRuntimes: {},
@@ -284,7 +299,12 @@ describe("sessions module", () => {
     const ctx = {
       sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
-        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getWorkspace: vi.fn(() => ({
+          id: "ws-1",
+          name: "Test",
+          hostMount: tmpdir(),
+          runtime: "host",
+        })),
         getSession: vi.fn(() => session),
         saveSession,
         clearRestartResume: vi.fn(),
@@ -331,7 +351,12 @@ describe("sessions module", () => {
     };
     const ctx = {
       storage: {
-        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getWorkspace: vi.fn(() => ({
+          id: "ws-1",
+          name: "Test",
+          hostMount: tmpdir(),
+          runtime: "host",
+        })),
         listAllWorkspaceSessionSnapshots: vi.fn(() => []),
         listSessions: vi.fn(() => []),
         getDataDir: vi.fn(() => tmpdir()),
@@ -450,7 +475,12 @@ describe("sessions module", () => {
     const emitSessionCreated = vi.fn();
     const ctx = {
       storage: {
-        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getWorkspace: vi.fn(() => ({
+          id: "ws-1",
+          name: "Test",
+          hostMount: tmpdir(),
+          runtime: "host",
+        })),
         getDataDir: vi.fn(() => tmpdir()),
         createSession: vi.fn((name?: string, model?: string) => {
           session.name = name;
@@ -724,7 +754,7 @@ describe("sessions module", () => {
   it("does not expose a public migrate route", async () => {
     const ctx = {
       storage: {
-        getWorkspace: vi.fn(() => ({ id: "ws-1" })),
+        getWorkspace: vi.fn(() => ({ id: "ws-1", hostMount: tmpdir(), runtime: "host" })),
         getSession: vi.fn(() => ({ id: "ready-1", workspaceId: "ws-1" })),
       },
       sessions: {
@@ -814,7 +844,12 @@ describe("sessions module", () => {
     const ctx = {
       sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
-        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getWorkspace: vi.fn(() => ({
+          id: "ws-1",
+          name: "Test",
+          hostMount: tmpdir(),
+          runtime: "host",
+        })),
         getSession: vi.fn(() => undefined),
       },
     } as unknown as RouteContext;
@@ -858,7 +893,12 @@ describe("sessions module", () => {
       const ctx = {
         sessions: { mobileRenderer: new MobileRendererRegistry() },
         storage: {
-          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+          getWorkspace: vi.fn(() => ({
+            id: "ws-1",
+            name: "Test",
+            hostMount: tmpdir(),
+            runtime: "host",
+          })),
           getSession: vi.fn(() => ({
             id: "s1",
             workspaceId: "ws-1",
@@ -908,7 +948,12 @@ describe("sessions module", () => {
 
       const ctx = {
         storage: {
-          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+          getWorkspace: vi.fn(() => ({
+            id: "ws-1",
+            name: "Test",
+            hostMount: tmpdir(),
+            runtime: "host",
+          })),
           getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
         },
         sessions: {
@@ -954,7 +999,12 @@ describe("sessions module", () => {
 
       const ctx = {
         storage: {
-          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+          getWorkspace: vi.fn(() => ({
+            id: "ws-1",
+            name: "Test",
+            hostMount: tmpdir(),
+            runtime: "host",
+          })),
           getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
         },
         sessions: {
@@ -998,7 +1048,12 @@ describe("sessions module", () => {
 
       const ctx = {
         storage: {
-          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+          getWorkspace: vi.fn(() => ({
+            id: "ws-1",
+            name: "Test",
+            hostMount: tmpdir(),
+            runtime: "host",
+          })),
           getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
         },
         sessions: {
@@ -1045,7 +1100,12 @@ describe("sessions module", () => {
 
       const ctx = {
         storage: {
-          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+          getWorkspace: vi.fn(() => ({
+            id: "ws-1",
+            name: "Test",
+            hostMount: tmpdir(),
+            runtime: "host",
+          })),
           getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
         },
         sessions: {
@@ -1083,7 +1143,12 @@ describe("sessions module", () => {
     const ctx = {
       sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
-        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getWorkspace: vi.fn(() => ({
+          id: "ws-1",
+          name: "Test",
+          hostMount: tmpdir(),
+          runtime: "host",
+        })),
         getSession: vi.fn(() => ({
           id: "s1",
           workspaceId: "ws-1",
@@ -1228,7 +1293,12 @@ describe("sessions module", () => {
       const ctx = {
         sessions: { mobileRenderer: new MobileRendererRegistry() },
         storage: {
-          getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+          getWorkspace: vi.fn(() => ({
+            id: "ws-1",
+            name: "Test",
+            hostMount: tmpdir(),
+            runtime: "host",
+          })),
           getSession: vi.fn(() => session),
           getDataDir: vi.fn(() => dataDir),
         },
@@ -1287,7 +1357,12 @@ describe("sessions module", () => {
     const mirrorGetCatchUp = vi.fn(() => mirrorCatchUp);
     const ctx = {
       storage: {
-        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getWorkspace: vi.fn(() => ({
+          id: "ws-1",
+          name: "Test",
+          hostMount: tmpdir(),
+          runtime: "host",
+        })),
         getSession: vi.fn(() => session),
       },
       sessions: {
@@ -1348,7 +1423,12 @@ describe("sessions module", () => {
     }));
     const ctx = {
       storage: {
-        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getWorkspace: vi.fn(() => ({
+          id: "ws-1",
+          name: "Test",
+          hostMount: tmpdir(),
+          runtime: "host",
+        })),
         getSession: vi.fn((id: string) => {
           if (id === stored.id) return stored;
           if (id === control.id) return control;
@@ -1403,7 +1483,12 @@ describe("sessions module", () => {
     const getCatchUp = vi.fn(() => null);
     const ctx = {
       storage: {
-        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getWorkspace: vi.fn(() => ({
+          id: "ws-1",
+          name: "Test",
+          hostMount: tmpdir(),
+          runtime: "host",
+        })),
         getSession: vi.fn(() => undefined),
       },
       sessions: { mobileRenderer: new MobileRendererRegistry() },
@@ -1435,7 +1520,12 @@ describe("sessions module", () => {
     const ctx = {
       sessions: { mobileRenderer: new MobileRendererRegistry() },
       storage: {
-        getWorkspace: vi.fn(() => ({ id: "ws-1", name: "Test" })),
+        getWorkspace: vi.fn(() => ({
+          id: "ws-1",
+          name: "Test",
+          hostMount: tmpdir(),
+          runtime: "host",
+        })),
         getSession: vi.fn(() => ({ id: "s1", workspaceId: "ws-1" })),
       },
     } as unknown as RouteContext;

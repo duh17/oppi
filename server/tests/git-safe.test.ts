@@ -490,12 +490,4 @@ describe("sandbox git: confinement to the mount", () => {
 
     expect(isGitRepository(gitTrustForWorkspace(sandboxWorkspace(mount)), mount)).toBe(false);
   });
-
-  it("refuses every command for a sandbox workspace without a mount", async () => {
-    const trust = gitTrustForWorkspace({ runtime: "sandbox", hostMount: undefined });
-    const dir = tempDir("oppi-git-safe-nomount-");
-    git(dir, ["init", "--initial-branch=main"]);
-
-    expect(isGitRepository(trust, dir)).toBe(false);
-  });
 });

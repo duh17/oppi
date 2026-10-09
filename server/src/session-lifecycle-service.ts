@@ -594,10 +594,6 @@ export class SessionLifecycleService {
       throw new SessionLifecycleError("Cannot read session CWD from file", 400);
     }
 
-    if (!params.workspace.hostMount) {
-      throw new SessionLifecycleError("Workspace has no hostMount configured", 400);
-    }
-
     if (!validateCwdAlignment(localHeader.cwd, params.workspace.hostMount)) {
       throw new SessionLifecycleError(
         `Session CWD (${localHeader.cwd}) is not within workspace path (${params.workspace.hostMount})`,

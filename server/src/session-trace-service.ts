@@ -503,7 +503,7 @@ export class SessionTraceService {
       ? this.deps.storage.getWorkspace(session.workspaceId)
       : undefined;
 
-    if (workspace?.runtime === "sandbox" || workspace?.hostMount) {
+    if (workspace) {
       const resolved = await this.resolveSdkCwdOrNull(workspace, session);
       return resolved && (await pathExists(resolved)) ? resolved : null;
     }

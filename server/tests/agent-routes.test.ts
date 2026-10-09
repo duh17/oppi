@@ -907,7 +907,9 @@ describe("agent routes", () => {
         storage: {
           getAgentDefinitionStore: () => store,
           getWorkspace: vi.fn((workspaceId: string) =>
-            workspaceId === "ws-1" ? { id: "ws-1", name: "Oppi" } : undefined,
+            workspaceId === "ws-1"
+              ? { id: "ws-1", name: "Oppi", hostMount: tmpdir(), runtime: "host" }
+              : undefined,
           ),
           getDataDir: vi.fn(() => dataDir),
           createSession: vi.fn((name?: string, model?: string) => {
@@ -1039,6 +1041,8 @@ describe("agent routes", () => {
       expect(startSession).toHaveBeenCalledWith(body.receipt.sessionId, {
         id: "ws-1",
         name: "Oppi",
+        hostMount: tmpdir(),
+        runtime: "host",
       });
       expect(sendPrompt).toHaveBeenCalledWith(body.receipt.sessionId, "Review this", {});
 
@@ -1244,7 +1248,9 @@ describe("agent routes", () => {
         storage: {
           getAgentDefinitionStore: () => store,
           getWorkspace: vi.fn((workspaceId: string) =>
-            workspaceId === "ws-1" ? { id: "ws-1", name: "Oppi" } : undefined,
+            workspaceId === "ws-1"
+              ? { id: "ws-1", name: "Oppi", hostMount: tmpdir(), runtime: "host" }
+              : undefined,
           ),
           getDataDir: vi.fn(() => dataDir),
           createSession: vi.fn((name?: string, model?: string) => {
@@ -1361,7 +1367,9 @@ describe("agent routes", () => {
         storage: {
           getAgentDefinitionStore: () => store,
           getWorkspace: vi.fn((workspaceId: string) =>
-            workspaceId === "ws-1" ? { id: "ws-1", name: "Oppi" } : undefined,
+            workspaceId === "ws-1"
+              ? { id: "ws-1", name: "Oppi", hostMount: tmpdir(), runtime: "host" }
+              : undefined,
           ),
           getDataDir: vi.fn(() => dataDir),
           createSession: vi.fn((name?: string, model?: string) => {
@@ -1433,7 +1441,9 @@ describe("agent routes", () => {
         storage: {
           getAgentDefinitionStore: () => store,
           getWorkspace: vi.fn((workspaceId: string) =>
-            workspaceId === "ws-1" ? { id: "ws-1", name: "Oppi" } : undefined,
+            workspaceId === "ws-1"
+              ? { id: "ws-1", name: "Oppi", hostMount: tmpdir(), runtime: "host" }
+              : undefined,
           ),
           getDataDir: vi.fn(() => dataDir),
           createSession: vi.fn((name?: string, model?: string) =>
@@ -1536,7 +1546,9 @@ describe("agent routes", () => {
         storage: {
           getAgentDefinitionStore: () => store,
           getWorkspace: vi.fn((workspaceId: string) =>
-            workspaceId === "ws-1" ? { id: "ws-1", name: "Oppi" } : undefined,
+            workspaceId === "ws-1"
+              ? { id: "ws-1", name: "Oppi", hostMount: tmpdir(), runtime: "host" }
+              : undefined,
           ),
           getDataDir: vi.fn(() => dataDir),
           createSession,
@@ -1581,7 +1593,9 @@ describe("agent routes", () => {
         storage: {
           getAgentDefinitionStore: () => store,
           getWorkspace: vi.fn((workspaceId: string) =>
-            workspaceId === "ws-1" ? { id: "ws-1", name: "Oppi" } : undefined,
+            workspaceId === "ws-1"
+              ? { id: "ws-1", name: "Oppi", hostMount: tmpdir(), runtime: "host" }
+              : undefined,
           ),
           getDataDir: vi.fn(() => dataDir),
           createSession: vi.fn(),

@@ -29,6 +29,8 @@ function makeWorkspace(overrides?: Partial<Workspace>): Workspace {
   return {
     id: "ws-1",
     name: "test-workspace",
+    hostMount: tmpdir(),
+    runtime: "host",
     ...overrides,
   } as Workspace;
 }

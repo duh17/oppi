@@ -538,7 +538,7 @@ const HELP_TOPICS: HelpTopic[] = [
       {
         name: "--host-mount",
         value: "<path>",
-        summary: "host directory mounted as the workspace root",
+        summary: "host directory mounted as the workspace root; omit to let Oppi create one",
       },
       { name: "--description", value: "<text>", summary: "workspace description" },
       { name: "--icon", value: "<text>", summary: "SF Symbol name or emoji" },

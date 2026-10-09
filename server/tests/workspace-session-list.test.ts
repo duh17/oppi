@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,6 +32,8 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
   return {
     id: "ws-1",
     name: "Oppi",
+    hostMount: tmpdir(),
+    runtime: "host",
     createdAt: Date.now(),
     updatedAt: Date.now(),
     ...overrides,

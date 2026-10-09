@@ -41,6 +41,8 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
   return {
     id: "ws-1",
     name: "Workspace",
+    hostMount: tmpdir(),
+    runtime: "host",
     ...overrides,
   } as Workspace;
 }
@@ -1055,7 +1057,9 @@ describe("SessionLifecycleService", () => {
       await expect(
         service.resumeWorkspaceSession({
           session,
-          workspace: makeWorkspace(),
+          workspace: makeWorkspace({
+            hostMount: join(tmpdir(), "oppi-lifecycle-missing-checkout"),
+          }),
         }),
       ).rejects.toMatchObject({
         name: "SessionLifecycleError",

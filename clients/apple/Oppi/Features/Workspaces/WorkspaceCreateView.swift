@@ -191,7 +191,7 @@ struct WorkspaceCreateView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Create your first workspace")
                             .font(.headline)
-                        Text("A workspace tells Oppi which folder to work in. Pick a project on \(server.name), enter a folder path manually, or use the server home folder if you just want to explore the app.")
+                        Text("A workspace tells Oppi which folder to work in. Pick a project on \(server.name), enter a folder path manually, or leave the folder empty and Oppi creates one if you just want to explore the app.")
                             .font(.subheadline)
                             .foregroundStyle(.themeComment)
                     }
@@ -249,7 +249,7 @@ struct WorkspaceCreateView: View {
                         .foregroundStyle(.themeOrange)
                 } footer: {
                     if isGuidedFirstWorkspace {
-                        Text("You can still enter an existing folder path or use the server home folder.")
+                        Text("You can still enter an existing folder path or leave the folder empty and Oppi creates one.")
                     }
                 }
             } else if directories.isEmpty {
@@ -260,7 +260,7 @@ struct WorkspaceCreateView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Checked: ~/workspace, ~/projects, ~/src, ~/code, ~/Developer")
                         if isGuidedFirstWorkspace {
-                            Text("That’s okay. Enter an existing folder path or use the server home folder.")
+                            Text("That’s okay. Enter an existing folder path or leave the folder empty and Oppi creates one.")
                         }
                     }
                 }
@@ -419,7 +419,7 @@ struct WorkspaceCreateView: View {
                         Text(
                             sandboxMode
                                 ? "Leave empty to let Oppi create a sandbox folder. Network follows Gondolin’s default; edit the workspace later to restrict or deny hosts. For a custom folder, use Create This Folder when the folder is missing."
-                                : "Leave empty to use the server home folder. If the folder doesn’t exist, use Create This Folder; Oppi asks before creating one directory."
+                                : "Leave empty to let Oppi create a folder. If the folder doesn’t exist, use Create This Folder; Oppi asks before creating one directory."
                         )
                     }
                     if sandboxMode && hostMount.trimmingCharacters(in: .whitespaces).isEmpty {

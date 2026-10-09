@@ -305,12 +305,7 @@ async function fallbackMainWorktree(
 
 async function requireWorkspaceGitRoot(workspace: Workspace): Promise<string> {
   assertWorkspaceSupportsWorktrees(workspace);
-  const hostMount = workspace.hostMount?.trim();
-  if (!hostMount) {
-    throw new WorkspaceWorktreeError(400, "Workspace has no host mount");
-  }
-
-  const hostPath = resolveHostPath(hostMount);
+  const hostPath = resolveHostPath(workspace.hostMount);
   if (!existsSync(hostPath)) {
     throw new WorkspaceWorktreeError(400, "Workspace host mount does not exist");
   }
@@ -327,10 +322,7 @@ export async function listWorkspaceWorktrees(
   workspace: Workspace,
   options: ListWorkspaceWorktreesOptions = {},
 ): Promise<WorkspaceWorktree[]> {
-  const hostMount = workspace.hostMount?.trim();
-  if (!hostMount) return [];
-
-  const hostPath = resolveHostPath(hostMount);
+  const hostPath = resolveHostPath(workspace.hostMount);
   if (!existsSync(hostPath)) return [];
 
   const workspacePath = safeRealpath(hostPath);
@@ -890,10 +882,6 @@ export async function normalizeSessionWorktreeId(
   options: Pick<ListWorkspaceWorktreesOptions, "dataDir"> = {},
 ): Promise<{ worktreeId: string; error?: string }> {
   const requestedId = requestedWorktreeId?.trim() || MAIN_WORKTREE_ID;
-  if (requestedId === MAIN_WORKTREE_ID && !workspace.hostMount) {
-    return { worktreeId: MAIN_WORKTREE_ID };
-  }
-
   const worktree = await resolveWorkspaceWorktree(workspace, requestedId, options);
   if (!worktree) {
     return { worktreeId: requestedId, error: "Unknown worktree" };

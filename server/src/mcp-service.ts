@@ -136,8 +136,8 @@ export class McpService {
               allowedHosts: workspace.sandboxConfig?.allowedHosts,
             },
           ];
-        // Every host workspace, folder or not, gets the cwd its sessions (and its
-        // Extensions settings) use, so the project file matches.
+        // Every host workspace gets the cwd its sessions (and its Extensions settings)
+        // use, so the project file matches.
         const cwd = resolveSdkSessionCwd(workspace);
         return [
           {

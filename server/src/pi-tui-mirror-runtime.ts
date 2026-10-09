@@ -868,7 +868,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   private async resolveWorkspaceRoot(session: Session): Promise<string | null> {
     if (!session.workspaceId) return null;
     const workspace = this.storage.getWorkspace(session.workspaceId);
-    if (!workspace?.hostMount) return null;
+    if (!workspace) return null;
     return normalizePath(
       await resolveSdkSessionCwdAsync(workspace, session, { dataDir: this.storage.getDataDir() }),
     );
@@ -1585,9 +1585,6 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         if (!cwd) {
           throw new Error("Bridge hello must include cwd when workspaceId is supplied");
         }
-        if (!workspace.hostMount) {
-          throw new Error(`Oppi workspace ${workspace.id} has no hostMount for pi-tui`);
-        }
         if (pathContains(workspace.hostMount, cwd)) return workspace;
         return resolveWorkspaceWorktreeForPath(workspace, cwd, {
           dataDir: this.storage.getDataDir(),
@@ -1605,7 +1602,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     }
 
     const contained = this.storage.listWorkspaces().flatMap((workspace) => {
-      if (!workspace.hostMount || !pathContains(workspace.hostMount, cwd)) return [];
+      if (!pathContains(workspace.hostMount, cwd)) return [];
       return [{ workspace, matchPath: workspace.hostMount }];
     });
     if (contained.length > 0) {
@@ -1655,7 +1652,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   ): Promise<Workspace> {
     const candidates = [];
     for (const workspace of this.storage.listWorkspaces()) {
-      if (!workspace.hostMount || pathContains(workspace.hostMount, cwd)) continue;
+      if (pathContains(workspace.hostMount, cwd)) continue;
       const worktree = await resolveWorkspaceWorktreeForPath(workspace, cwd, {
         dataDir: this.storage.getDataDir(),
       });

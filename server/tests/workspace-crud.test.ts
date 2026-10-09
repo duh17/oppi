@@ -94,18 +94,18 @@ describe("Storage.createWorkspace", () => {
 
     expect(ws.description).toBe("A coding workspace");
     expect(ws.icon).toEqual({ kind: "symbol", name: "terminal" });
-    expect(ws.runtime).toBeUndefined();
+    expect(ws.runtime).toBe("host");
     expect(ws.systemPrompt).toBe("Be helpful");
     expect(ws.systemPromptMode).toBe("append");
     expect(ws.hostMount).toBe("~/workspace/oppi");
   });
 
-  it("trims hostMount and treats blank values as unset", () => {
+  it("trims hostMount and gives blank values the default folder", () => {
     const ws = storage.createWorkspace(createReq({ hostMount: "  ~/workspace/oppi  " }));
     expect(ws.hostMount).toBe("~/workspace/oppi");
 
-    const blank = storage.createWorkspace(createReq({ hostMount: "   " }));
-    expect(blank.hostMount).toBeUndefined();
+    const blank = storage.createWorkspace(createReq({ name: "Blank One", hostMount: "   " }));
+    expect(blank.hostMount).toBe(join(dataDir, "workspaces", "blank-one"));
   });
 
   it("persists to disk as JSON", () => {
@@ -126,12 +126,12 @@ describe("Storage.createWorkspace", () => {
     expect(ids.size).toBe(3);
   });
 
-  it("defaults runtime to undefined when not specified", () => {
+  it("defaults runtime to host when not specified", () => {
     const ws = storage.createWorkspace({
       name: "no-runtime",
     });
 
-    expect(ws.runtime).toBeUndefined();
+    expect(ws.runtime).toBe("host");
   });
 
   it("keeps workspace directory available", () => {
@@ -181,7 +181,8 @@ describe("Storage.getWorkspace", () => {
 
     const loaded = storage.getWorkspace(ws.id);
     expect(loaded).toBeDefined();
-    expect(loaded!.runtime).toBeUndefined();
+    expect(loaded!.runtime).toBe("host");
+    expect(JSON.parse(readFileSync(path, "utf-8")).runtime).toBe("host");
   });
 
   it("ignores stored defaultModel keys and removes them on the next save", () => {
@@ -297,9 +298,7 @@ describe("Storage.updateWorkspace", () => {
   });
 
   it("updates icon", () => {
-    const ws = storage.createWorkspace(
-      createReq({ icon: { kind: "symbol", name: "terminal" } }),
-    );
+    const ws = storage.createWorkspace(createReq({ icon: { kind: "symbol", name: "terminal" } }));
     const updated = storage.updateWorkspace(ws.id, {
       icon: { kind: "symbol", name: "magnifyingglass" },
     });
@@ -571,12 +570,12 @@ describe("Workspace full lifecycle", () => {
     expect(storage.listWorkspaces().find((w) => w.id === ws.id)).toBeUndefined();
   });
 
-  it("create workspace defaults runtime to undefined", () => {
+  it("create workspace defaults runtime to host", () => {
     const ws = storage.createWorkspace(createReq({ name: "Admin" }));
     const reloaded = storage.getWorkspace(ws.id);
 
-    expect(ws.runtime).toBeUndefined();
-    expect(reloaded!.runtime).toBeUndefined();
+    expect(ws.runtime).toBe("host");
+    expect(reloaded!.runtime).toBe("host");
   });
 
   it("multiple users, independent lifecycle", () => {

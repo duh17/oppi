@@ -194,13 +194,10 @@ export class Storage {
       if (!cwd) continue;
 
       const candidates = workspaces
-        .filter((candidate) => candidate.hostMount && pathContains(candidate.hostMount, cwd))
-        .sort(
-          (a, b) =>
-            normalizedPath(b.hostMount ?? "").length - normalizedPath(a.hostMount ?? "").length,
-        );
+        .filter((candidate) => pathContains(candidate.hostMount, cwd))
+        .sort((a, b) => normalizedPath(b.hostMount).length - normalizedPath(a.hostMount).length);
       const workspace = candidates[0];
-      const workspaceMountLength = workspace ? normalizedPath(workspace.hostMount ?? "").length : 0;
+      const workspaceMountLength = workspace ? normalizedPath(workspace.hostMount).length : 0;
       const hasAmbiguousTie =
         candidates.length > 1 &&
         normalizedPath(candidates[1]?.hostMount ?? "").length === workspaceMountLength;

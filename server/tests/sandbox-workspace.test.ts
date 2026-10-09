@@ -122,12 +122,12 @@ describe("Sandbox workspace CRUD", () => {
     expect(ws.sandboxConfig).toBeUndefined();
   });
 
-  it("creates workspace without runtime (backwards compat)", () => {
+  it("creates a host workspace when the request names no runtime", () => {
     const ws = storage.createWorkspace({
       name: "legacy-test",
     } as CreateWorkspaceRequest);
 
-    expect(ws.runtime).toBeUndefined();
+    expect(ws.runtime).toBe("host");
     expect(ws.sandboxConfig).toBeUndefined();
   });
 
@@ -226,21 +226,6 @@ describe("Sandbox empty-folder hostMount persistence", () => {
     };
     expect(raw.hostMount).toBe("~/sandbox/empty-sandbox");
     expect(storage.getWorkspace(ws.id)?.hostMount).toBe("~/sandbox/empty-sandbox");
-  });
-
-  it("keeps a host workspace with an empty folder unset", () => {
-    const blank = storage.createWorkspace({
-      name: "Blank Host",
-      runtime: "host",
-      hostMount: "   ",
-    } as CreateWorkspaceRequest);
-    expect(blank.hostMount).toBeUndefined();
-
-    const omitted = storage.createWorkspace({
-      name: "Omitted Host",
-    } as CreateWorkspaceRequest);
-    expect(omitted.hostMount).toBeUndefined();
-    expect(omitted.runtime).toBeUndefined();
   });
 
   it("keeps the persisted folder when the sandbox workspace is renamed", () => {

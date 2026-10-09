@@ -394,7 +394,7 @@ export class AgentLaunchService {
   ): AgentConfigurationFailure | undefined {
     const constraints = request.agent.launchConstraints;
     if (!constraints) return undefined;
-    const actualRuntime = request.target.workspace.runtime === "sandbox" ? "sandbox" : "host";
+    const actualRuntime = request.target.workspace.runtime;
     const workspaceAllowed =
       !constraints.allowedWorkspaceIds ||
       constraints.allowedWorkspaceIds.includes(request.target.workspace.id);

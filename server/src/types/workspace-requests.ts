@@ -6,9 +6,13 @@ import type {
 
 export interface CreateWorkspaceRequest extends Omit<
   WorkspaceMutableConfig,
-  "systemPromptMode" | "icon"
+  "systemPromptMode" | "icon" | "hostMount" | "runtime"
 > {
   icon?: WorkspaceMutableConfig["icon"];
+  /** Empty or omitted: Oppi creates and stores a folder for the workspace. */
+  hostMount?: string;
+  /** Omitted: "host". */
+  runtime?: WorkspaceMutableConfig["runtime"];
   /** Ignored compatibility field from older Oppi clients. Pi settings own skill discovery. */
   skills?: string[];
   /** Ignored compatibility field from older Oppi clients. Pi settings own extension discovery. */

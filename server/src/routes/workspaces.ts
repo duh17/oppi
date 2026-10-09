@@ -30,7 +30,6 @@ import {
 import type {
   CreateWorkspaceRequest,
   CreateWorkspaceQuickActionSessionRequest,
-  GitStatus,
   Session,
   UpdateWorkspaceRequest,
   Workspace,
@@ -98,7 +97,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       const batch = workspaces.slice(index, index + concurrency);
       const batchSummaries = await Promise.all(
         batch.map(async (workspace) => {
-          if (workspace.gitStatusEnabled === false || !workspace.hostMount) {
+          if (workspace.gitStatusEnabled === false) {
             return { isGitRepo: false, changedCount: 0, ahead: null, behind: null };
           }
           return getWorkspaceGitSummary(workspace.hostMount, gitTrustForWorkspace(workspace));
@@ -281,27 +280,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       stopWorkspaceVm: ctx.stopWorkspaceVm,
     });
     helpers.json(res, { ok: true });
-  }
-
-  function emptyGitStatus(): GitStatus {
-    return {
-      isGitRepo: false,
-      branch: null,
-      headSha: null,
-      ahead: null,
-      behind: null,
-      dirtyCount: 0,
-      untrackedCount: 0,
-      stagedCount: 0,
-      files: [],
-      totalFiles: 0,
-      addedLines: 0,
-      removedLines: 0,
-      stashCount: 0,
-      lastCommitMessage: null,
-      lastCommitDate: null,
-      recentCommits: [],
-    };
   }
 
   function isObjectBody(value: unknown): value is Record<string, unknown> {
@@ -573,7 +551,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     workspaceId: string,
     url: URL,
     res: ServerResponse,
-  ): Promise<{ path?: string; selectedSession?: Session } | undefined> {
+  ): Promise<{ path: string; selectedSession?: Session } | undefined> {
     const selected = selectedSessionFromQuery(workspaceId, url, res);
     if (!selected.ok) return undefined;
 
@@ -603,7 +581,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    if (workspace.gitStatusEnabled === false || !workspace.hostMount) {
+    if (workspace.gitStatusEnabled === false) {
       helpers.json(res, { isGitRepo: false, changedCount: 0, ahead: null, behind: null });
       return;
     }
@@ -633,11 +611,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const checkout = await workspaceCheckoutFromQuery(workspace, wsId, url, res);
     if (!checkout) return;
 
-    if (!checkout.path) {
-      helpers.json(res, emptyGitStatus());
-      return;
-    }
-
     const status = await getGitStatus(checkout.path, gitTrustForWorkspace(workspace));
     helpers.json(res, status);
   }
@@ -650,11 +623,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const workspace = ctx.storage.getWorkspace(wsId);
     if (!workspace) {
       helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    if (!workspace.hostMount) {
-      helpers.json(res, { commits: [], total: 0, hasMore: false });
       return;
     }
 
@@ -684,11 +652,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    if (!workspace.hostMount) {
-      helpers.error(res, 404, "Workspace has no host mount");
-      return;
-    }
-
     try {
       const detail = await getCommitDetail(
         workspace.hostMount,
@@ -712,11 +675,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const workspace = ctx.storage.getWorkspace(wsId);
     if (!workspace) {
       helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    if (!workspace.hostMount) {
-      helpers.error(res, 404, "Workspace has no host mount");
       return;
     }
 
@@ -762,11 +720,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     const checkout = await workspaceCheckoutFromQuery(workspace, wsId, url, res);
     if (!checkout) return;
-
-    if (!checkout.path) {
-      helpers.error(res, 404, "Workspace review unavailable");
-      return;
-    }
 
     try {
       const diff = await buildWorkspaceReviewDiff({

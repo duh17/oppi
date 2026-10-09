@@ -353,24 +353,24 @@ describe("MCP configuration boundary", () => {
       run.mockRestore();
     }
   });
-  it("gives a folderless host workspace the project file in its sessions' home cwd", async () => {
+  it("gives a host workspace the project file in its own folder", async () => {
     const { agentDir, dir } = fixture();
-    const home = join(dir, "home");
-    mkdirSync(home);
-    vi.stubEnv("HOME", home);
+    const folder = join(dir, "workspaces", "loose");
+    mkdirSync(folder, { recursive: true });
     const run = vi.spyOn(McpCli.prototype, "run").mockResolvedValue({ code: 0, stdout: "" });
     const service = new McpService({
       agentDir,
-      listWorkspaces: () => [{ id: "loose", name: "Loose", runtime: "host" } as Workspace],
+      listWorkspaces: () => [
+        { id: "loose", name: "Loose", runtime: "host", hostMount: folder } as Workspace,
+      ],
     });
     services.push(service);
     try {
       await service.add("loose", { name: "echo", command: "echo" });
       expect(run.mock.calls[0]?.[0].slice(0, 2)).toEqual(["add", "--local"]);
-      expect(run.mock.calls[0]?.[1]).toBe(home);
+      expect(run.mock.calls[0]?.[1]).toBe(folder);
     } finally {
       run.mockRestore();
-      vi.unstubAllEnvs();
     }
   });
   it("adds the default exposure without storing an explicit codemode field", async () => {

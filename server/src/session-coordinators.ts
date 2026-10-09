@@ -209,7 +209,7 @@ export function createSessionCoordinatorBundle(
         : null;
     }
     const workspace = deps.storage.getWorkspace(session.workspaceId);
-    if (!workspace?.hostMount) {
+    if (!workspace) {
       return null;
     }
     return resolveSdkSessionCwdAsync(workspace, session, { dataDir: deps.storage.getDataDir() });

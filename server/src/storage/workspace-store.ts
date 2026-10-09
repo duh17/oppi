@@ -17,7 +17,7 @@ import { generateId } from "../id.js";
 import { DEFAULT_ICON_CHOICE, migrateIconChoice, validateIconChoice } from "../icon-choice.js";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
-import { defaultSandboxHostMount } from "../sandbox-workspace-folder.js";
+import { resolveHostPath } from "../host.js";
 import type {
   CreateWorkspaceRequest,
   UpdateWorkspaceRequest,
@@ -25,6 +25,7 @@ import type {
   WorkspaceSandboxConfig,
   WorkspaceSystemPromptMode,
 } from "../types.js";
+import { defaultHostWorkspaceFolder, defaultSandboxHostMount } from "../workspace-folder.js";
 import type { ConfigStore } from "./config-store.js";
 
 const log = createLogger({ base: { component: "workspace_store" } });
@@ -123,6 +124,7 @@ export class WorkspaceStore {
     private readonly options: WorkspaceStoreOptions = {},
   ) {
     this.migrateStoredIconChoices();
+    this.migrateMissingHostMounts();
   }
 
   private getWorkspacePath(workspaceId: string): string {
@@ -132,6 +134,7 @@ export class WorkspaceStore {
   createWorkspace(req: CreateWorkspaceRequest): Workspace {
     const id = generateId(8);
     const now = Date.now();
+    const runtime = req.runtime === "sandbox" ? "sandbox" : "host";
 
     const workspace: Workspace = {
       id,
@@ -140,10 +143,10 @@ export class WorkspaceStore {
       icon: this.validateWorkspaceIcon(req.icon),
       systemPrompt: normalizeOptionalString(req.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(req.systemPromptMode),
-      hostMount: normalizeHostMount(req.hostMount),
+      hostMount: this.storedHostMount(req.hostMount, { id, name: req.name, runtime }),
       tools: normalizeTools(req.tools),
       gitStatusEnabled: req.gitStatusEnabled,
-      runtime: req.runtime,
+      runtime,
       sandboxConfig: normalizeSandboxConfig(req.sandboxConfig),
       createdAt: now,
       updatedAt: now,
@@ -172,11 +175,9 @@ export class WorkspaceStore {
   private sanitizeWorkspace(raw: Workspace | Record<string, unknown>): Workspace {
     const id = typeof raw.id === "string" ? raw.id : "unknown";
     const name = typeof raw.name === "string" ? raw.name : "";
-    const runtime = raw.runtime === "host" || raw.runtime === "sandbox" ? raw.runtime : undefined;
-    let hostMount = normalizeHostMount(raw.hostMount);
-    if (!hostMount && runtime === "sandbox") {
-      hostMount = defaultSandboxHostMount({ id, name });
-    }
+    const runtime = raw.runtime === "sandbox" ? "sandbox" : "host";
+    const hostMount =
+      normalizeHostMount(raw.hostMount) ?? this.defaultHostMount({ id, name, runtime });
 
     return {
       id,
@@ -196,21 +197,119 @@ export class WorkspaceStore {
     };
   }
 
-  private persistSandboxHostMountIfFilled(
+  /**
+   * The folder Oppi picks for a workspace whose folder is empty: `~/sandbox/<slug>` for a
+   * sandbox, `<dataDir>/workspaces/<slug>` for host. Pure; callers that store a host default
+   * also create it (`storedHostMount`, `persistFilledDefaults`). Never `~` itself: longest-prefix
+   * cwd matching would let such a workspace claim every session under home.
+   */
+  private defaultHostMount(workspace: Pick<Workspace, "id" | "name" | "runtime">): string {
+    if (workspace.runtime === "sandbox") {
+      return defaultSandboxHostMount(workspace);
+    }
+    return defaultHostWorkspaceFolder(
+      this.configStore.getWorkspacesDir(),
+      workspace,
+      this.ownedHostFolders(workspace.id),
+    );
+  }
+
+  /** Resolved folders other workspaces already store. Records without one own nothing yet. */
+  private ownedHostFolders(exceptWorkspaceId: string): Set<string> {
+    const owned = new Set<string>();
+    for (const { raw } of this.readWorkspaceRecords()) {
+      const hostMount = normalizeHostMount(raw.hostMount);
+      if (hostMount && raw.id !== exceptWorkspaceId) {
+        owned.add(resolveHostPath(hostMount));
+      }
+    }
+    return owned;
+  }
+
+  /** The stored folder for a create or update: the owner's choice, else the default, created now. */
+  private storedHostMount(
+    requested: unknown,
+    workspace: Pick<Workspace, "id" | "name" | "runtime">,
+  ): string {
+    const chosen = normalizeHostMount(requested);
+    if (chosen) {
+      return chosen;
+    }
+    const hostMount = this.defaultHostMount(workspace);
+    ensureDefaultHostFolder(hostMount, workspace.runtime);
+    return hostMount;
+  }
+
+  private readWorkspaceRecords(): Array<{ path: string; raw: Record<string, unknown> }> {
+    const dir = this.configStore.getWorkspacesDir();
+    if (!existsSync(dir)) {
+      return [];
+    }
+    const records: Array<{ path: string; raw: Record<string, unknown> }> = [];
+    for (const file of readdirSync(dir)) {
+      if (!file.endsWith(".json")) {
+        continue;
+      }
+      const path = join(dir, file);
+      try {
+        const raw: unknown = JSON.parse(readFileSync(path, "utf-8"));
+        if (isWorkspaceRecord(raw)) {
+          records.push({ path, raw });
+        }
+      } catch {
+        // An unreadable record owns nothing; the list path logs it.
+      }
+    }
+    return records;
+  }
+
+  /**
+   * One-time upgrade of older records: a missing `hostMount` gets the default folder and a
+   * missing `runtime` becomes "host", written atomically with every other raw field preserved.
+   * Oldest workspace first, so two same-named legacy workspaces always split the same way.
+   */
+  private migrateMissingHostMounts(): void {
+    const stale = this.readWorkspaceRecords()
+      .filter(({ raw }) => !normalizeHostMount(raw.hostMount) || !isRuntimeMode(raw.runtime))
+      .sort(
+        (a, b) =>
+          Number(a.raw.createdAt ?? 0) - Number(b.raw.createdAt ?? 0) ||
+          String(a.raw.id).localeCompare(String(b.raw.id)),
+      );
+    for (const { path, raw } of stale) {
+      try {
+        this.persistFilledDefaults(path, raw, this.sanitizeWorkspace(raw));
+      } catch (err: unknown) {
+        log.error("workspace_store.host_mount_migration.failed", {
+          workspaceFilePath: path,
+          error: safeErrorMessage(err),
+        });
+      }
+    }
+  }
+
+  /** Writes the defaults `sanitizeWorkspace` filled in back to a record that lacked them. */
+  private persistFilledDefaults(
     path: string,
     raw: Record<string, unknown>,
     sanitized: Workspace,
   ): void {
-    if (
-      sanitized.runtime !== "sandbox" ||
-      normalizeHostMount(raw.hostMount) ||
-      !sanitized.hostMount
-    ) {
+    const filled: Record<string, unknown> = {};
+    if (!normalizeHostMount(raw.hostMount)) {
+      filled.hostMount = sanitized.hostMount;
+    }
+    if (!isRuntimeMode(raw.runtime)) {
+      filled.runtime = sanitized.runtime;
+    }
+    if (Object.keys(filled).length === 0) {
       return;
+    }
+    if (filled.hostMount) {
+      ensureDefaultHostFolder(sanitized.hostMount, sanitized.runtime);
     }
     replaceWorkspaceMigrationFile(
       path,
-      Buffer.from(JSON.stringify({ ...raw, hostMount: sanitized.hostMount }, null, 2)),
+      Buffer.from(JSON.stringify({ ...raw, ...filled }, null, 2)),
       this.options.faultInjector,
     );
   }
@@ -229,7 +328,7 @@ export class WorkspaceStore {
     } catch {
       return undefined;
     }
-    this.persistSandboxHostMountIfFilled(path, raw, sanitized);
+    this.persistFilledDefaults(path, raw, sanitized);
     return sanitized;
   }
 
@@ -259,7 +358,7 @@ export class WorkspaceStore {
         });
         continue;
       }
-      this.persistSandboxHostMountIfFilled(path, raw, sanitized);
+      this.persistFilledDefaults(path, raw, sanitized);
       workspaces.push(sanitized);
     }
 
@@ -280,12 +379,13 @@ export class WorkspaceStore {
       workspace.systemPrompt = normalizeOptionalString(updates.systemPrompt);
     if (updates.systemPromptMode !== undefined)
       workspace.systemPromptMode = normalizeSystemPromptMode(updates.systemPromptMode);
-    if (updates.hostMount !== undefined)
-      workspace.hostMount = normalizeHostMount(updates.hostMount);
     if (updates.tools !== undefined) workspace.tools = normalizeTools(updates.tools);
     if (updates.gitStatusEnabled !== undefined)
       workspace.gitStatusEnabled = updates.gitStatusEnabled;
     if (updates.runtime !== undefined) workspace.runtime = updates.runtime;
+    // Last, so clearing the folder picks the default for the runtime and name just applied.
+    if (updates.hostMount !== undefined)
+      workspace.hostMount = this.storedHostMount(updates.hostMount, workspace);
     if (updates.sandboxConfig !== undefined)
       workspace.sandboxConfig =
         updates.sandboxConfig === null ? undefined : normalizeSandboxConfig(updates.sandboxConfig);
@@ -339,6 +439,17 @@ export class WorkspaceStore {
 
     rmSync(path);
     return true;
+  }
+}
+
+function isRuntimeMode(value: unknown): value is Workspace["runtime"] {
+  return value === "host" || value === "sandbox";
+}
+
+/** Host defaults live under Oppi's own data dir, so Oppi creates them. Sandbox folders appear at session start. */
+function ensureDefaultHostFolder(hostMount: string, runtime: Workspace["runtime"]): void {
+  if (runtime === "host") {
+    mkdirSync(resolveHostPath(hostMount), { recursive: true, mode: 0o755 });
   }
 }
 

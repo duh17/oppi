@@ -604,8 +604,7 @@ export class SessionEventProcessor {
   ): Promise<void> {
     if (this.gitStatusGeneration.get(timerKey) !== generation) return;
     const workspace = this.deps.storage.getWorkspace(wsId);
-    if (!workspace?.hostMount) return;
-    if (workspace.gitStatusEnabled === false) return;
+    if (!workspace || workspace.gitStatusEnabled === false) return;
 
     const worktreePath = (
       await resolveWorkspaceWorktree(workspace, worktreeId, {

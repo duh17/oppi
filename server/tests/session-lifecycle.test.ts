@@ -1544,6 +1544,44 @@ describe("SessionManager prompt", () => {
     }
   });
 
+  it("materializes attachments for a host workspace created with an empty folder", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "oppi-host-attach-"));
+    const notes = Buffer.from("host notes", "utf8");
+    try {
+      const storage = new Storage(dataDir);
+      const workspace = storage.createWorkspace({ name: "Empty Attach Host" });
+      expect(workspace.hostMount).toBe(join(dataDir, "workspaces", "empty-attach-host"));
+
+      const { manager, sdkBackend } = makeManagerHarness(
+        { id: "host-attach", workspaceId: workspace.id, status: "ready" },
+        { workspace, dataDir },
+      );
+
+      await writeFile(join(workspace.hostMount, "notes.txt"), notes);
+      await manager.sendPrompt("host-attach", "look at this", {
+        attachments: [
+          {
+            type: "attachment",
+            id: "att-notes",
+            source: "workspace",
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: notes.byteLength,
+            workspacePath: "notes.txt",
+          },
+        ],
+      });
+
+      expect(sdkBackend.prompt).toHaveBeenCalledTimes(1);
+      expect(sdkBackend.prompt).toHaveBeenCalledWith(
+        expect.stringContaining("notes.txt:"),
+        expect.any(Object),
+      );
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects an attachment prompt when the session has neither a workspace nor a control role", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "oppi-plain-attach-"));
     const sessionId = "plain-attach";

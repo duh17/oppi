@@ -166,17 +166,6 @@ describe("resolveSdkSessionDisplayCwd", () => {
     }
   });
 
-  it("does not derive a sandbox cwd from the current name when hostMount is missing", async () => {
-    const workspace = {
-      id: "ws-sandbox",
-      name: "Missing Mount",
-      runtime: "sandbox",
-    } as Workspace;
-
-    expect(() => resolveSdkSessionCwd(workspace)).toThrow("Sandbox workspace is missing hostMount");
-    expect(resolveSandboxGuestCwd(workspace)).toBe("/workspace/missing-mount");
-  });
-
   it("keeps a persisted sandbox hostMount after the workspace is renamed", async () => {
     const hostBackingDir = resolvePath(homedir(), "sandbox", "original-name");
     const workspace = {
@@ -220,7 +209,7 @@ describe("hostMountValidationError", () => {
 
     expect(message).toContain("Host working directory does not exist");
     expect(message).toContain(missing);
-    expect(message).toContain("clear Host Working Directory for a blank workspace");
+    expect(message).toContain("clear Host Working Directory to let Oppi create a folder");
   });
 
   it("rejects a file path", async () => {

@@ -796,7 +796,7 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
   function sandboxMountMatcher(): (dir: string) => boolean {
     const mounts = new Set<string>();
     for (const workspace of ctx.storage.listWorkspaces()) {
-      if (workspace.runtime !== "sandbox" || !workspace.hostMount) continue;
+      if (workspace.runtime !== "sandbox") continue;
       const mount = resolveHostPath(workspace.hostMount);
       mounts.add(mount);
       try {

@@ -31,7 +31,12 @@ export interface WorkspaceMutableConfig {
   // Context
   systemPrompt?: string; // Workspace prompt text appended to the Pi prompt
   systemPromptMode: WorkspaceSystemPromptMode;
-  hostMount?: string; // Host directory to mount as /work (e.g. "~/workspace/oppi")
+  /**
+   * Host directory this workspace owns, always stored (e.g. "~/workspace/oppi"). When the
+   * owner leaves it empty, Oppi creates `<dataDir>/workspaces/<slug>` (host) or
+   * `~/sandbox/<slug>` (sandbox) and stores that path at create time. Never `~` itself.
+   */
+  hostMount: string;
 
   // Tool allowlist is only a sandbox VM security policy. Host runtime uses Pi defaults.
   tools?: string[];
@@ -41,7 +46,7 @@ export interface WorkspaceMutableConfig {
 
   // Runtime
   /** Workspace runtime mode. "host" = direct execution, "sandbox" = Gondolin micro-VM. */
-  runtime?: WorkspaceRuntimeMode;
+  runtime: WorkspaceRuntimeMode;
   /** Sandbox configuration (only used when runtime is "sandbox"). */
   sandboxConfig?: WorkspaceSandboxConfig;
 }

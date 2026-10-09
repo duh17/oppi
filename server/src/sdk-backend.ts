@@ -87,7 +87,7 @@ import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
-import { sandboxWorkspaceSlug } from "./sandbox-workspace-folder.js";
+import { workspaceSlug } from "./workspace-folder.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
 import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "./oppi-docs.js";
 import type { ReadonlyMount, ReadonlyMountSpec, VmSecretDefinition } from "./gondolin-manager.js";
@@ -326,7 +326,7 @@ export function resolveSessionSeedModel(
  * before passing cwd into SDK components.
  */
 export function resolveSandboxGuestCwd(workspace: Workspace): string {
-  return posix.join("/workspace", sandboxWorkspaceSlug(workspace));
+  return posix.join("/workspace", workspaceSlug(workspace));
 }
 
 function ensureOwnerOnlyRealDirectory(path: string, errorMessage: string): void {
@@ -388,16 +388,11 @@ export function resolveSdkSessionCwd(
     throw new Error("Host worktree cwd is resolved by resolveSdkSessionCwdAsync");
   }
 
-  const rawHostMount = workspace?.hostMount?.trim();
-  if (!rawHostMount) {
-    if (workspace?.runtime === "sandbox") {
-      throw new Error("Sandbox workspace is missing hostMount");
-    }
-    return homedir();
-  }
+  // A session with no workspace has no folder of its own.
+  if (!workspace) return homedir();
 
-  const resolved = resolveHostPath(rawHostMount);
-  if (workspace?.runtime === "sandbox") {
+  const resolved = resolveHostPath(workspace.hostMount);
+  if (workspace.runtime === "sandbox") {
     // The host path is never exposed to the sandboxed agent; it only backs
     // the VM mount at resolveSandboxGuestCwd(workspace). Create it lazily so
     // an empty-folder sandbox still has a real cwd on first session.

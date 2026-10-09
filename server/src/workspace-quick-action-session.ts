@@ -45,10 +45,6 @@ type QuickActionSessionSelection = {
 export async function loadWorkspacePromptTemplates(
   workspace: Workspace,
 ): Promise<PromptTemplate[]> {
-  if (!workspace.hostMount) {
-    return [];
-  }
-
   const cwd = resolveSdkSessionCwd(workspace);
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(cwd, agentDir);
@@ -180,17 +176,10 @@ export async function prepareWorkspaceQuickActionSession(args: {
     throw new WorkspaceQuickActionSessionError(400, "promptTemplateName required");
   }
 
-  if (!workspace.hostMount) {
-    throw new WorkspaceQuickActionSessionError(404, "Workspace quick actions unavailable");
-  }
-
   const reviewWorkspace = await resolveQuickActionReviewWorkspace(workspace, selectedSession, {
     dataDir: args.dataDir,
     worktreeId: args.worktreeId,
   });
-  if (!reviewWorkspace.hostMount) {
-    throw new WorkspaceQuickActionSessionError(404, "Workspace quick actions unavailable");
-  }
 
   // reviewWorkspace.hostMount may be a worktree checkout; trust follows the workspace.
   const gitTrust = gitTrustForWorkspace(workspace);

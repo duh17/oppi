@@ -310,25 +310,6 @@ describe("sandbox user browse of host-mount artifacts", () => {
       expect(body.entries.map((entry) => entry.name)).toContain("only-on-host-mount.txt");
     });
 
-    it("does not treat a mountless host workspace main id as the user home", async () => {
-      const workspace = makeWorkspace("/tmp/unused-mountless-host", {
-        id: "ws-host-mountless",
-        name: "mountless-host",
-        runtime: "host",
-        hostMount: undefined,
-      });
-
-      const listing = await dispatchWorkspace(
-        workspace,
-        "GET",
-        `/workspaces/${workspace.id}/contents/`,
-        "?worktreeId=main",
-      );
-      expect(listing.handled).toBe(true);
-      expect(listing.res.statusCode).toBe(404);
-      expect(JSON.parse(listing.res.body)).toEqual({ error: "Worktree not found" });
-    });
-
     it("does not follow file or directory symlinks out of the sandbox mount", async () => {
       const { hostMount, workspace } = seedSandboxMount();
       const outside = tempDir("oppi-sandbox-outside-");

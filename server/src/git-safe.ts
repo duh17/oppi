@@ -58,8 +58,8 @@ export type GitTrust =
   | { readonly kind: "host" }
   | {
       readonly kind: "sandbox";
-      /** Workspace mount. Null when a sandbox workspace has none: nothing is a repo. */
-      readonly root: string | null;
+      /** Workspace mount: the only tree a sandbox repository may live in. */
+      readonly root: string;
     };
 
 export const HOST_GIT_TRUST: GitTrust = { kind: "host" };
@@ -74,8 +74,7 @@ export function gitTrustForWorkspace(
   workspace: Pick<Workspace, "runtime" | "hostMount">,
 ): GitTrust {
   if (workspace.runtime !== "sandbox") return HOST_GIT_TRUST;
-  const mount = workspace.hostMount?.trim();
-  return { kind: "sandbox", root: mount ? resolve(resolveHomePath(mount)) : null };
+  return { kind: "sandbox", root: resolve(resolveHomePath(workspace.hostMount)) };
 }
 
 export interface GitExecOptions {
@@ -355,7 +354,6 @@ function resolveSandboxRepo(
   trust: Extract<GitTrust, { kind: "sandbox" }>,
   cwd: string,
 ): SandboxRepo | null {
-  if (!trust.root) return null;
   const mountRoot = realpathOrNull(trust.root);
   const realCwd = realpathOrNull(resolveHomePath(cwd));
   if (!mountRoot || !realCwd || !isPathWithinRoot(realCwd, mountRoot)) return null;

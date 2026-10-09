@@ -332,6 +332,7 @@ export class SessionListService {
           })
         )?.path
       : workspace.hostMount;
+    // An unresolvable worktree has no folder to match; nothing imports from it.
     if (!hostMount) {
       return { ...snapshot, sessions: [] };
     }

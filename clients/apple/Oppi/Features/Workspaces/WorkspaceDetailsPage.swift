@@ -92,7 +92,7 @@ struct WorkspaceDetailsPage: View {
             } header: {
                 Text("Workspace Folder")
             } footer: {
-                Text("Leave empty to use the server home folder. If the folder doesn\u{2019}t exist, use Create This Folder; Oppi asks before creating one directory.")
+                Text("Leave empty to let Oppi create a folder. If the folder doesn\u{2019}t exist, use Create This Folder; Oppi asks before creating one directory.")
             }
 
             if let error {
