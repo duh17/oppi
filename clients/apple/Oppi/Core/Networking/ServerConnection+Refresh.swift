@@ -13,24 +13,13 @@ extension ServerConnection {
         max(0, Int((Date().timeIntervalSince(startedAt) * 1_000.0).rounded()))
     }
 
+    /// Refresh breadcrumbs use the workspace catalog's failure vocabulary (url, http,
+    /// invalid_response, other), not the coarse command-metric error_kind, so
+    /// session_list.end and workspace_catalog.end classify the same error alike.
     static func refreshErrorMetadata(_ error: Error) -> [String: String] {
-        var metadata = [
-            "errorKind": MessageSender.telemetryErrorKind(from: error),
-        ]
-        // Refresh breadcrumbs share WorkspaceStore's catalog vocabulary (url, http,
-        // invalid_response, other), not the coarse command-metric error_kind.
+        var metadata = WorkspaceCatalogLoadFailure(error: error).telemetryMetadata
         if error is URLError {
-            metadata["errorKind"] = "url"
             metadata.merge(ClientLog.networkErrorMetadata(error)) { current, _ in current }
-        }
-        if let apiError = error as? APIError {
-            switch apiError {
-            case .server(let status, _), .codedServer(let status, _, _):
-                metadata["errorKind"] = "http"
-                metadata["statusCode"] = String(status)
-            case .invalidResponse:
-                metadata["errorKind"] = "invalid_response"
-            }
         }
         return metadata
     }
