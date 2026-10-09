@@ -148,6 +148,11 @@ function pickUIFields(
   return result;
 }
 
+// Warm replay is ~1.6 ms per 1,000 deltas (12,689 took ~20 ms warm / ~60 ms cold).
+// 500 keeps that tail near 1 ms. The next write of an over-threshold document
+// stores a base and drops the chain; history is latest, so no migration is required.
+const EXTENSION_UI_CHECKPOINT_DELTAS = 500;
+
 export const DurableUI = defineDoc<UIState>({
   kind: "oppi.extension-ui",
   version: 1,
@@ -155,6 +160,8 @@ export const DurableUI = defineDoc<UIState>({
   history: "latest",
   fork: "initial",
   initial: () => ({ requests: {}, notifications: {} }),
+  checkpointWhen: (_value, _ops, info) =>
+    info.deltasSinceBase >= EXTENSION_UI_CHECKPOINT_DELTAS,
 });
 
 /**
