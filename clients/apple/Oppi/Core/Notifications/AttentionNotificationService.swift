@@ -208,7 +208,10 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
     }
 
     private func ensureAuthorizationForNotification() async -> Bool {
+        #if DEBUG
+        // Screenshot previews must not raise the system permission alert.
         if ScreenshotPreviewConfig.isEnabled { return false }
+        #endif
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
 

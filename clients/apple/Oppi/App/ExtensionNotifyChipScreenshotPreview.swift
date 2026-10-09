@@ -104,13 +104,19 @@ struct ExtensionNotifyChipScreenshotPreview: View {
         }
     }
 
+    /// Deterministic entry ID `AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAA<n>` (n in 1...9).
+    private static func entryID(_ n: UInt8) -> UUID {
+        let a: UInt8 = 0xAA
+        return UUID(uuid: (a, a, a, a, a, a, a, a, a, a, a, a, a, a, a, 0xA0 | n))
+    }
+
     private var chipState: ExtensionNotifyChipStore.SessionState {
         switch mode {
         case .collapsedInfo:
             return ExtensionNotifyChipStore.SessionState(
                 entries: [
                     ExtensionNotifyChipStore.Entry(
-                        id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAA1")!,
+                        id: Self.entryID(1),
                         message: "search_web: SearXNG is reachable",
                         notifyType: "info",
                         extensionDisplayName: "Web Search"
@@ -122,7 +128,7 @@ struct ExtensionNotifyChipScreenshotPreview: View {
             return ExtensionNotifyChipStore.SessionState(
                 entries: [
                     ExtensionNotifyChipStore.Entry(
-                        id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAA2")!,
+                        id: Self.entryID(2),
                         message: "Provider returned 502",
                         notifyType: "error",
                         extensionDisplayName: "Web Search"
@@ -134,31 +140,31 @@ struct ExtensionNotifyChipScreenshotPreview: View {
             return ExtensionNotifyChipStore.SessionState(
                 entries: [
                     ExtensionNotifyChipStore.Entry(
-                        id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAA3")!,
+                        id: Self.entryID(3),
                         message: "See https://example.com/one and https://example.org/two for the retry notes after both links. The helper kept both URLs in one status line so the expanded card can open each separately.",
                         notifyType: "info",
                         extensionDisplayName: "Web Search"
                     ),
                     ExtensionNotifyChipStore.Entry(
-                        id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAA4")!,
+                        id: Self.entryID(4),
                         message: "Provider returned 502 while fetching the long status payload; the helper is still retrying the same query and will keep the previous ranking window until the next successful page.",
                         notifyType: "error",
                         extensionDisplayName: "Web Search"
                     ),
                     ExtensionNotifyChipStore.Entry(
-                        id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAA5")!,
+                        id: Self.entryID(5),
                         message: "Indexed 128 documents and queued another pass because the ranking window is still open for this session. Extra rows exist so the expanded list has to scroll inside the capped card.",
                         notifyType: "info",
                         extensionDisplayName: "Web Search"
                     ),
                     ExtensionNotifyChipStore.Entry(
-                        id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAA6")!,
+                        id: Self.entryID(6),
                         message: "Rate limit approaching. Backing off for a few seconds before the next search_web call so the provider can recover, then the helper will resume the same query without opening a sheet.",
                         notifyType: "warning",
                         extensionDisplayName: "Web Search"
                     ),
                     ExtensionNotifyChipStore.Entry(
-                        id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAA7")!,
+                        id: Self.entryID(7),
                         message: "search_web: SearXNG is reachable, but the previous page took long enough that this fifth entry should sit below the fold in the expanded card and only appear after a scroll.",
                         notifyType: "info",
                         extensionDisplayName: "Web Search"
