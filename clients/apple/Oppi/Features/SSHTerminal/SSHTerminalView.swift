@@ -29,6 +29,10 @@ struct SSHTerminalView: View {
     /// Focus the chat bar once the raw keyboard is down and the bar is mounted.
     @State private var focusComposerAfterRaw = false
     @State private var topBarHidden = false
+    /// The background closed a live terminal; returning reconnects it.
+    @State private var reconnectOnReturn = false
+    /// Floats over the grid: a row in the stack would resize the remote terminal.
+    @State private var copyNotice: String?
 
     private var detectedMode: SSHTerminalInputMode? { detector.mode(herdr: herdr.snapshot) }
     /// A shell gets direct typing until a probe finds an agent.
@@ -66,7 +70,9 @@ struct SSHTerminalView: View {
         }
     }
 
-    var body: some View {
+    /// The grid, its rows and overlays, and the toolbar. Split from `body` so
+    /// the type checker handles each half.
+    private var terminalScreen: some View {
         VStack(spacing: 0) {
             // A healthy connection shows no status row; the terminal gets the space.
             if channel.connecting || !channel.connected || channel.networkChanged {
@@ -109,6 +115,18 @@ struct SSHTerminalView: View {
                         SSHTerminalTopBarHandle(show: { setTopBarHidden(false) })
                     }
                 }
+                .overlay(alignment: .bottom) {
+                    if let copyNotice {
+                        Label(copyNotice, systemImage: "doc.on.clipboard")
+                            .font(.footnote).foregroundStyle(.themeFg)
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .themedSurface(.floatingControl, in: Capsule())
+                            .padding(8)
+                            .transition(.opacity)
+                            .accessibilityIdentifier("sshTerminal.copyNotice")
+                    }
+                }
+                .animation(ThemeMotion.easeInOut(duration: 0.2, reduceMotion: reduceMotion), value: copyNotice)
                 .overlay(alignment: .bottomTrailing) {
                     if detached {
                         Button("Back to Live", systemImage: "arrow.down.to.line") {
@@ -161,6 +179,10 @@ struct SSHTerminalView: View {
                 }
             }
         }
+    }
+
+    var body: some View {
+        terminalScreen
         .sheet(isPresented: $showsHerdr) {
             HerdrAgentsView(monitor: herdr, channel: channel)
                 .presentationDetents([.medium, .large])
@@ -207,10 +229,16 @@ struct SSHTerminalView: View {
             pasteNoticeTask?.cancel()
             channel.close(reason: "Terminal dismissed.")
         }
-        .onChange(of: scenePhase) { _, phase in
-            // Explicit background recovery: close rather than silently losing
-            // bytes while suspended. Host tmux can preserve the remote work.
-            if phase == .background { channel.close(reason: "Oppi went to the background.") }
+        .onChange(of: scenePhase) { _, phase in scenePhaseChanged(phase) }
+        // App Lock's cover can come and go (cancel, leave again) before the
+        // unlock that lets the reconnect run, so the flag waits for it here.
+        .onChange(of: AppLockService.shared.isLocked) { _, locked in
+            if !locked { reconnectAfterReturn() }
+        }
+        .onChange(of: channel.copies) { _, _ in showCopyNotice() }
+        .task(id: channel.copies) {
+            try? await Task.sleep(for: .seconds(2))
+            if !Task.isCancelled { copyNotice = nil }
         }
         .alert("Paste \(pasteLineCount) \(pasteLineCount == 1 ? "line" : "lines")?", isPresented: $pasteConfirmation) {
             Button("Cancel", role: .cancel) { pendingPaste = nil }
@@ -237,6 +265,34 @@ struct SSHTerminalView: View {
     private func showTerminalKeyboard() {
         modeOverride = .terminal
         keyboardRequest += 1
+    }
+
+    private func scenePhaseChanged(_ phase: ScenePhase) {
+        switch phase {
+        case .background:
+            // Close rather than silently losing bytes while suspended.
+            // Host tmux or Herdr preserves the remote work.
+            guard channel.connected else { return }
+            reconnectOnReturn = true
+            channel.close(reason: "Oppi went to the background.")
+        case .active:
+            reconnectAfterReturn()
+        default:
+            break
+        }
+    }
+
+    private func showCopyNotice() {
+        let count = channel.lastCopyLength
+        copyNotice = "Copied \(count) \(count == 1 ? "character" : "characters")"
+    }
+
+    /// A fresh sign-in, with the same Face ID or password approval as
+    /// Reconnect. The flag stays set until App Lock no longer covers Oppi.
+    private func reconnectAfterReturn() {
+        guard reconnectOnReturn, scenePhase == .active, !AppLockService.shared.requiresUnlock() else { return }
+        reconnectOnReturn = false
+        reconnect()
     }
 
     private func setTopBarHidden(_ hidden: Bool) {

@@ -8,14 +8,41 @@ import UIKit
 @Suite("Interactive SSH terminal", .serialized, .timeLimit(.minutes(1)))
 @MainActor
 struct SSHTerminalTests {
-    @Test func clipboardSequencesHaveNoAuthority() throws {
+    @Test func remoteCopyIsWriteOnlyStandardClipboardText() throws {
         var sent = [Data]()
+        var copies = [String]()
         let engine = try SSHTerminalEngine { sent.append($0) }
-        UIPasteboard.general.string = "local-only"
-        engine.receive(Data("\u{1b}]52;c;cmVtb3Rl\u{7}\u{1b}]52;c;?\u{7}\u{1b}]1337;Copy=cmVtb3Rl\u{7}\u{1b}]5522;type=read\u{7}".utf8))
-        #expect(UIPasteboard.general.string == "local-only")
+        engine.copied = { copies.append($0) }
+        // Reads, the X11 selection/primary buffers, clearing, and non-UTF-8 bytes.
+        engine.receive(Data(("\u{1b}]52;c;?\u{7}\u{1b}]52;p;cmVtb3Rl\u{7}\u{1b}]52;s;cmVtb3Rl\u{7}"
+            + "\u{1b}]52;c;\u{7}\u{1b}]52;c;/w==\u{7}\u{1b}]5522;type=read\u{7}").utf8))
+        #expect(copies.isEmpty)
         #expect(sent.isEmpty)
+        // Herdr forwards a pane's copy as `ESC ] 52 ; c ; base64 BEL`. Only the
+        // newest copy of one write is delivered.
+        engine.receive(Data("\u{1b}]52;c;b25l\u{7}\u{1b}]52;c;aMOpbGxv\u{1b}\\".utf8))
+        #expect(copies == ["héllo"])
+        #expect(sent.isEmpty)
+        engine.close()
+        engine.receive(Data("\u{1b}]52;c;b25l\u{7}".utf8))
+        #expect(copies == ["héllo"])
     }
+
+    @Test func remoteCopyLandsOnTheDeviceClipboardOnlyWhileConnected() throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture())
+        UIPasteboard.general.string = "local-only"
+        channel.event(.data(Data("\u{1b}]52;c;aMOpbGxv\u{7}".utf8)))
+        #expect(UIPasteboard.general.string == "héllo")
+        #expect(channel.copies == 1)
+        #expect(channel.lastCopyLength == 5)
+        channel.close(reason: "done")
+        UIPasteboard.general.string = "local-only"
+        channel.event(.data(Data("\u{1b}]52;c;b25l\u{7}".utf8)))
+        #expect(UIPasteboard.general.string == "local-only")
+        #expect(channel.copies == 1)
+    }
+
 
     @Test func statusAndDeviceRepliesReachTheSamePTYSinkInOrder() throws {
         var sent = Data()

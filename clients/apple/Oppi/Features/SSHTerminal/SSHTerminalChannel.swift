@@ -3,6 +3,8 @@ import GhosttyVt
 import Observation
 import Network
 import Synchronization
+import UIKit
+import UniformTypeIdentifiers
 
 protocol SSHTerminalConnection: Sendable {
     func send(_ bytes: Data) async throws
@@ -170,6 +172,10 @@ final class SSHTerminalChannel {
     private(set) var title = ""
     /// True while a network path change is being checked.
     private(set) var networkChanged = false
+    /// Bumped each time a remote program put text on this device's clipboard.
+    private(set) var copies = 0
+    /// Characters in the latest remote copy.
+    private(set) var lastCopyLength = 0
 
     /// A path change is a hint, not proof the SSH stream failed: one SSH round
     /// trip decides. A live connection clears the notice; a dead one closes
@@ -218,6 +224,7 @@ final class SSHTerminalChannel {
     init() throws {
         weak var target: SSHTerminalChannel?
         engine = try SSHTerminalEngine { reply in target?.send(reply) }
+        engine.copied = { text in target?.copyToClipboard(text) }
         target = self
     }
 
@@ -228,6 +235,16 @@ final class SSHTerminalChannel {
         connecting = false
         reason = "Connected"
         resize(engine.geometry)
+    }
+
+    /// A remote copy (Herdr's copy-on-select, tmux, an agent's /copy) lands on
+    /// this device's clipboard, as it would on the host terminal's. Local only:
+    /// a host program must not reach other devices through Universal Clipboard.
+    private func copyToClipboard(_ text: String) {
+        guard connected else { return }
+        UIPasteboard.general.setItems([[UTType.utf8PlainText.identifier: text]], options: [.localOnly: true])
+        lastCopyLength = text.count
+        copies &+= 1
     }
 
     func event(_ event: SSHPTYEvent) {

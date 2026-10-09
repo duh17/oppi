@@ -27,11 +27,19 @@ struct SSHTerminalFrame {
 /// Separate from the passive log owner. All C access (including callbacks and
 /// borrowed render data) runs synchronously on MainActor. Frames own their text
 /// and value structs; no borrowed pointer escapes to UIKit. Paint is coalesced
-/// by the surface, never interpretation. Effects start NULL and only the ten
-/// entries below gain authority; in particular there is no clipboard callback.
+/// by the surface, never interpretation. Effects start NULL and only the
+/// entries below gain authority. Clipboard access is write-only: a remote
+/// copy (OSC 52, as Herdr and tmux forward it) of UTF-8 text to the standard
+/// clipboard reaches `copied`; there is no read callback, so the host can never
+/// see this device's clipboard.
 @MainActor
 final class SSHTerminalEngine {
     static let maximumPasteBytes = 64 * 1024
+    static let maximumCopyBytes = 1024 * 1024
+    /// Receives a remote copy after the triggering write has been interpreted.
+    var copied: (String) -> Void = { _ in }
+    /// The last copy of the current write; only the newest one matters.
+    private var pendingCopy: String?
     private var terminal: GhosttyTerminal?
     private var render: GhosttyRenderState?
     private var rowIterator: GhosttyRenderStateRowIterator?
@@ -84,6 +92,7 @@ final class SSHTerminalEngine {
     func close() {
         live = false
         replies.removeAll()
+        pendingCopy = nil
         programStatus.processEnded()
     }
 
@@ -108,6 +117,10 @@ final class SSHTerminalEngine {
         // Callbacks copy only. No channel write, await, blocking or vt reentry
         // occurs until the triggering vt_write has returned.
         flushReplies()
+        if let text = pendingCopy {
+            pendingCopy = nil
+            if live { copied(text) }
+        }
     }
 
     func resize(_ value: SSHTerminalGeometry) {
@@ -308,8 +321,8 @@ final class SSHTerminalEngine {
     }
 
     /// The only bytes that may reach the PTY from the terminal's own replies.
-    /// NULL clipboard callbacks can still generate an empty OSC 52 or denied
-    /// Kitty reply upstream, so the families are fixed: CSI status/size/mode
+    /// The NULL clipboard read callback can still generate an empty OSC 52 or
+    /// denied Kitty reply upstream, so the families are fixed: CSI status/size/mode
     /// reports, DCS DA/version reports, and exactly the OSC 7501 support reply
     /// `ESC ] 7501 ; ? ST` (ST = `ESC \` or BEL). No other OSC response
     /// (including clipboard, and no 7501 reply with anything after the `?`)
@@ -412,6 +425,36 @@ final class SSHTerminalEngine {
                 Unmanaged<SSHTerminalEngine>.fromOpaque(context).takeUnretainedValue().programStatus.promptStarted()
             }
         }
+        // Standard clipboard, non-empty UTF-8 text only. Clearing, the X11
+        // selection/primary buffers, and other MIME types are refused, so a
+        // remote program cannot wipe the clipboard or write binary to it.
+        let clipboard: GhosttyTerminalClipboardWriteFn = { _, context, write in
+            MainActor.assumeIsolated {
+                guard let context, let write else { return }
+                let request = write.pointee
+                var reply = GhosttyClipboardWriteReply()
+                reply.size = MemoryLayout<GhosttyClipboardWriteReply>.size
+                reply.result = GHOSTTY_CLIPBOARD_WRITE_RESULT_DENIED
+                defer { request.reply?(write, &reply) }
+                guard request.location == GHOSTTY_CLIPBOARD_LOCATION_STANDARD, let contents = request.contents else { return }
+                // swiftlint:disable:next prefer_self_in_static_references
+                let text = UnsafeBufferPointer(start: contents, count: request.contents_len).first { SSHTerminalEngine.copy($0.mime) == "text/plain" }
+                guard let text else {
+                    reply.result = GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED
+                    return
+                }
+                // swiftlint:disable:next prefer_self_in_static_references
+                guard let ptr = text.data.ptr, text.data.len > 0, text.data.len <= SSHTerminalEngine.maximumCopyBytes,
+                      let value = String(bytes: UnsafeBufferPointer(start: ptr, count: text.data.len), encoding: .utf8) else {
+                    reply.result = GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA
+                    return
+                }
+                let owner = Unmanaged<SSHTerminalEngine>.fromOpaque(context).takeUnretainedValue()
+                guard owner.live else { return }
+                owner.pendingCopy = value
+                reply.result = GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS
+            }
+        }
         // A full reset also reports a status clear first; this keeps RIS clearing
         // records even if that report were ever missing. libghostty clears its
         // title on RIS without calling TITLE_CHANGED, so the shown title resets here.
@@ -434,6 +477,11 @@ final class SSHTerminalEngine {
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME, unsafeBitCast(scheme, to: UnsafeRawPointer.self))
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED, unsafeBitCast(title, to: UnsafeRawPointer.self))
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_RENDER_HOLD, unsafeBitCast(hold, to: UnsafeRawPointer.self))
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE, unsafeBitCast(clipboard, to: UnsafeRawPointer.self))
+        // The write callback enables Kitty clipboard (OSC 5522) writes, which
+        // buffer up to 64 MiB by default before the callback sees them.
+        var copyLimit = Self.maximumCopyBytes
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES, &copyLimit)
     }
 }
 

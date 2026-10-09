@@ -63,6 +63,10 @@ A healthy connection shows no status row. **Edit Host**, **Disconnect**, and **R
 
 When `herdr` is on the host, the terminal checks Herdr's API (`herdr api snapshot`) every few seconds over the same SSH connection, in a separate command channel. A grid button appears in the navigation bar, with a count of agents waiting at an approval or question prompt. It opens a list of workspaces and agents showing whether each is working, needs you, done, or idle. Tapping a row runs `herdr workspace focus` or `herdr agent focus` on the host. Hosts without `herdr` are checked once per connection and then left alone.
 
+## Clipboard
+
+When a program on the host copies text to the terminal's clipboard (OSC 52), the text goes on this device's clipboard and a short **Copied N characters** note appears over the terminal. Herdr forwards a pane's copy this way (copy-on-select, an agent's `/copy`), as does tmux with `set-clipboard on`. Only UTF-8 text of up to 1 MB, sent to the standard clipboard (`c`), is copied. Requests to clear the clipboard and writes to the X11 selection or primary buffer are ignored. Copying is write-only: the host can never read this device's clipboard, and clipboard queries get no reply. Paste is always your action, through **Paste** or ⌘V.
+
 ## Program status (OSC 7501)
 
 The terminal answers the Program Status Protocol support query (`ESC ] 7501 ; ? ST`), so programs that detect support first, such as Pi 1.1.0, start reporting. Reports (idle, working, done, blocked, error, with an optional app, title, and message) are kept per terminal following the [specification](https://www.superlogical.com/rex/docs/build/program-status): one record per id, a `clear` removes a record and its children, at most 256 records. `working` and `blocked` records are dropped when the shell shows its next prompt (OSC 133 A) or the shell or connection ends; `done` and `error` stay. Reset (RIS) clears everything. Records do not appear anywhere yet. This reply is the only OSC reply the terminal sends; clipboard queries still get none.
@@ -83,7 +87,7 @@ When Oppi’s in-app Tailscale node is running, `*.ts.net` hosts use that node. 
 
 Oppi checks SSH round-trip liveness every 60 seconds by opening and closing an empty session channel, with a 15-second reply timeout. It requests no shell, command, or PTY on that probe. Direct TCP also uses kernel keepalive probes. Failure closes the connection and shows **Disconnected** with **Reconnect**.
 
-Entering the background disconnects the shell. On return, tap **Reconnect**. After a Wi-Fi or cellular path change, Oppi checks the connection with one SSH round trip: a live shell carries on, and a dead one shows **Disconnected** with **Reconnect**. Reconnect always opens a fresh shell; it does not replay input. Use `tmux` on the host if work must survive a disconnect.
+Entering the background disconnects the shell. When you return, a terminal that was connected reconnects on its own, with the same Face ID, Touch ID, or password approval as **Reconnect**; with App Lock on, after you unlock. If that sign-in is cancelled or fails, the terminal shows **Disconnected** with **Reconnect**. After a Wi-Fi or cellular path change, Oppi checks the connection with one SSH round trip: a live shell carries on, and a dead one shows **Disconnected** with **Reconnect**. Reconnect always opens a fresh shell; it does not replay input. Use `tmux` on the host if work must survive a disconnect.
 
 ## Limits
 
