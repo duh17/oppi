@@ -67,7 +67,6 @@ struct UserTimelineBubbleContent {
 
     var showsTextRow: Bool { !displayText.isEmpty }
     var showsBadgeRow: Bool { !visibleBadges.isEmpty }
-    var showsPathPillRow: Bool { !nonImagePathPills.isEmpty }
 
     func showsBubble(hasImages: Bool) -> Bool {
         showsTextRow || hasImages || showsBadgeRow || !allPathPills.isEmpty
