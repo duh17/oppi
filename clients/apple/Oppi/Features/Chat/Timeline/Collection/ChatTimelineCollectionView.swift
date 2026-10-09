@@ -797,49 +797,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             speakerDifferentiateWithoutColor = differentiateWithoutColor
             guard icChanged || dwcChanged else { return }
 
-            if dwcChanged {
-                let anchored = collectionView as? AnchoredCollectionView
-                let readingY = anchored?.snapshotDetachedAnchorScreenY()
-                let sign: CGFloat = differentiateWithoutColor ? 1 : -1
-                var deltasByItemID: [String: CGFloat] = [:]
-                for (id, item) in currentItemByID {
-                    guard case .userMessage(_, let text, let images, _) = item else { continue }
-                    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                       images.isEmpty {
-                        continue
-                    }
-                    let hasBelow = UserTimelineBubbleContent.resolve(
-                        text: text,
-                        images: images
-                    ).hasVisibleContentBelowCaption
-                    deltasByItemID[id] = TimelineSpeakerChrome.differentiateWithoutColorHeightDelta(
-                        hasVisibleContentBelowCaption: hasBelow
-                    ) * sign
-                }
-                let userIDs = Set(deltasByItemID.keys)
-                let layout = collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout
-                _ = layout?.adjustCachedHeights(deltasByItemID)
-                // Paint the caption before preferred-size so visible cells do
-                // not write the old height back over the adjusted cache.
-                // Offscreen rows keep the delta; this must run during a drag
-                // because cell layout invalidation is deferred then.
-                let visibleUserIDs = collectionView.indexPathsForVisibleItems.compactMap { indexPath -> String? in
-                    guard let itemID = dataSource?.itemIdentifier(for: indexPath),
-                          userIDs.contains(itemID) else { return nil }
-                    return itemID
-                }
-                if !visibleUserIDs.isEmpty {
-                    reconfigureItems(visibleUserIDs, in: collectionView)
-                }
-                collectionView.layoutIfNeeded()
-                // Absolute restore of the pre-change reading Y. Additive
-                // offsetDelta double-shifts when layout already restored;
-                // tracking skips sticky Y so layout may restore nothing.
-                if let readingY {
-                    anchored?.restoreDetachedAnchor(toScreenY: readingY)
-                }
-            }
-
             reconfigureVisibleRowsAfterAppearanceChange(
                 collectionView: collectionView,
                 expectedThemeID: nil
@@ -2383,26 +2340,6 @@ final class ChatTimelineCachedHeightLayout: UICollectionViewLayout {
         for itemID in itemIDs {
             cachedHeightByItemID.removeValue(forKey: itemID)
         }
-    }
-
-    /// Shift cached heights for known item ids without dropping the cache.
-    /// Used when Differentiate Without Color adds or removes the user caption.
-    /// Deltas are per-row because image-only bubbles grow by caption height
-    /// alone while text/badge/pill rows also add stack spacing.
-    @discardableResult
-    func adjustCachedHeights(_ deltasByItemID: [String: CGFloat]) -> Set<String> {
-        var adjustedIDs: Set<String> = []
-        for (itemID, delta) in deltasByItemID {
-            guard abs(delta) >= 0.01, var cached = cachedHeightByItemID[itemID] else {
-                continue
-            }
-            cached.height = max(cached.height + delta, 1)
-            cachedHeightByItemID[itemID] = cached
-            adjustedIDs.insert(itemID)
-        }
-        guard !adjustedIDs.isEmpty else { return [] }
-        invalidateLayout()
-        return adjustedIDs
     }
 
     #if DEBUG

@@ -62,17 +62,6 @@ enum TimelineSpeakerChrome {
         UIAccessibility.shouldDifferentiateWithoutColor
     }
 
-    /// Caption height, plus bubble-stack spacing only when another arranged
-    /// subview will be visible (text, badge, or path pill). Image-only rows
-    /// grow by the caption alone.
-    static func differentiateWithoutColorHeightDelta(
-        hasVisibleContentBelowCaption: Bool
-    ) -> CGFloat {
-        let captionHeight = ceil(AppFont.systemSmall.lineHeight)
-        guard hasVisibleContentBelowCaption else { return captionHeight }
-        return captionHeight + userBubbleContentSpacing
-    }
-
     static func userFill(
         from palette: ThemePalette,
         increasedContrast: Bool,

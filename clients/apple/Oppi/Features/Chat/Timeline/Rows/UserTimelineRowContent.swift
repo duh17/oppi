@@ -56,8 +56,7 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     }
 }
 
-/// Layout facts for the user bubble stack. Row apply and DWC height-cache
-/// math share this so caption spacing cannot drift from visibility.
+/// Layout facts for the user bubble stack.
 struct UserTimelineBubbleContent {
     let displayText: String
     let displayWasTruncated: Bool
@@ -69,9 +68,6 @@ struct UserTimelineBubbleContent {
     var showsTextRow: Bool { !displayText.isEmpty }
     var showsBadgeRow: Bool { !visibleBadges.isEmpty }
     var showsPathPillRow: Bool { !nonImagePathPills.isEmpty }
-    var hasVisibleContentBelowCaption: Bool {
-        showsTextRow || showsBadgeRow || showsPathPillRow
-    }
 
     func showsBubble(hasImages: Bool) -> Bool {
         showsTextRow || hasImages || showsBadgeRow || !allPathPills.isEmpty

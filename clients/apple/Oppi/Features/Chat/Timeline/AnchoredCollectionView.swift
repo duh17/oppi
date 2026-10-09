@@ -160,45 +160,6 @@ final class AnchoredCollectionView: UICollectionView {
     /// Whether a detached anchor is currently captured.
     var detachedAnchorIsActive: Bool { detachedAnchorIP != nil || detachedAnchorItemID != nil }
 
-    /// Live screen-relative Y of the detached reading item, if one is pinned.
-    func snapshotDetachedAnchorScreenY() -> CGFloat? {
-        guard isDetachedFromBottom else { return nil }
-        if let indexPath = currentDetachedAnchorIndexPath(),
-           let attrs = layoutAttributesForItem(at: indexPath) {
-            return attrs.frame.origin.y - contentOffset.y
-        }
-        guard let firstIP = indexPathsForVisibleItems.min(by: { $0.item < $1.item }),
-              let attrs = layoutAttributesForItem(at: firstIP) else {
-            return nil
-        }
-        return attrs.frame.origin.y - contentOffset.y
-    }
-
-    /// Put the detached reading item back at `screenY` after a height-changing
-    /// layout. Absolute, so it is a no-op when layout already restored and
-    /// cannot double-shift the way an additive offset delta can.
-    func restoreDetachedAnchor(toScreenY screenY: CGFloat) {
-        guard isDetachedFromBottom, screenY.isFinite else { return }
-        let indexPath = currentDetachedAnchorIndexPath()
-            ?? indexPathsForVisibleItems.min(by: { $0.item < $1.item })
-        guard let indexPath, let attributes = layoutAttributesForItem(at: indexPath) else {
-            return
-        }
-        let minOffsetY = -adjustedContentInset.top
-        let maxOffsetY = max(
-            minOffsetY,
-            contentSize.height - bounds.height + adjustedContentInset.bottom
-        )
-        let targetOffsetY = min(
-            max(attributes.frame.minY - screenY, minOffsetY),
-            maxOffsetY
-        )
-        guard targetOffsetY.isFinite else { return }
-        applyOffsetCorrection(targetOffsetY)
-        detachedAnchorScreenY = screenY
-        detachedSavedOffsetY = contentOffset.y
-    }
-
     /// Capture the detached anchor for subsequent contentOffset corrections.
     /// Called before snapshot apply when the user is scrolled away from bottom.
     func captureDetachedAnchor() {

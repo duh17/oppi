@@ -296,145 +296,75 @@ struct TimelineScrollConformanceTests {
         )
     }
 
-    @Test func differentiateWithoutColorToggleAdjustsOffscreenUserCachedHeightsAndKeepsAnchor() throws {
-        let harness = TimelineScrollConformanceHarness(sessionId: "scroll-conformance-dwc-heights")
+    @Test func differentiateWithoutColorToggleDoesNotResetCachedHeightsAndKeepsLiveTail() async throws {
+        let harness = TimelineScrollConformanceHarness(sessionId: "scroll-conformance-dwc-lazy-remeasure")
         harness.replaceTimelineItems(makeSpeakerContrastHeightItems())
         harness.startAttachedAtBottom(isBusy: false)
         measureEveryTimelineRow(harness.collectionView)
-
-        let offscreenUserID = "user-0"
-        let offscreenAssistantID = "assistant-0"
-        let anchorID = "assistant-8"
-        harness.userScrollsUpToRead(itemID: anchorID)
+        pinConformanceHarnessToBottom(harness)
 
         let layout = try #require(
             harness.collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout
         )
-
-        let userBefore = layout.cachedHeightForTesting(itemID: offscreenUserID)
-        let assistantBefore = layout.cachedHeightForTesting(itemID: offscreenAssistantID)
-        guard let userBefore, let assistantBefore else {
-            Issue.record("Missing cached heights before DWC toggle")
+        // Measuring every row can leave the first screen in
+        // `indexPathsForVisibleItems`. Use a cached user row outside that set
+        // so (a) is a row the lazy reconfigure will not touch.
+        let uiKitVisibleBefore = visibleTimelineIDsFromIndexPaths(in: harness)
+        let offscreenUserID = harness.coordinator.currentIDs.first { id in
+            id.hasPrefix("user-")
+                && !uiKitVisibleBefore.contains(id)
+                && layout.cachedHeightForTesting(itemID: id) != nil
+        }
+        guard let offscreenUserID,
+              let offscreenBefore = layout.cachedHeightForTesting(itemID: offscreenUserID) else {
+            Issue.record(
+                "Missing cached offscreen user row, visible=\(uiKitVisibleBefore)"
+            )
             return
         }
-        #expect(userBefore > ChatTimelineCachedHeightLayout.estimatedHeight + 1)
-        #expect(assistantBefore > ChatTimelineCachedHeightLayout.estimatedHeight + 1)
+        #expect(
+            offscreenBefore > ChatTimelineCachedHeightLayout.estimatedHeight + 1,
+            "off-screen user row should already be measured, id=\(offscreenUserID) height=\(offscreenBefore)"
+        )
 
-        let anchorBefore = harness.screenY(of: anchorID, edge: .top)
+        let visibleUser = visibleUserRow(in: harness, excluding: offscreenUserID)
+        guard let visibleUser else {
+            Issue.record("Missing visible user row after pinning to bottom, visible=\(uiKitVisibleBefore)")
+            return
+        }
+        let visibleHeightBefore = visibleUser.height
+
         harness.coordinator.applySpeakerAccessibilityForTesting(
             increasedContrast: false,
             differentiateWithoutColor: true
         )
-        settleTimelineLayout(harness.collectionView, passes: 3)
+        await drainMainQueueHop()
+        harness.collectionView.layoutIfNeeded()
 
-        let delta = TimelineSpeakerChrome.differentiateWithoutColorHeightDelta(
-            hasVisibleContentBelowCaption: true
-        )
-        let userAfterOn = layout.cachedHeightForTesting(itemID: offscreenUserID)
-        let assistantAfterOn = layout.cachedHeightForTesting(itemID: offscreenAssistantID)
+        let offscreenAfterOn = layout.cachedHeightForTesting(itemID: offscreenUserID)
+        #expect(offscreenAfterOn != nil, "DWC must not drop the height cache in one shot")
         #expect(
-            abs((userAfterOn ?? 0) - (userBefore + delta)) < 1,
-            "offscreen user cache should grow by caption delta, before=\(userBefore) after=\(String(describing: userAfterOn)) delta=\(delta)"
+            abs((offscreenAfterOn ?? 0) - offscreenBefore) < 0.5,
+            "offscreen user cache must survive DWC toggle before remesure, id=\(offscreenUserID) before=\(offscreenBefore) after=\(String(describing: offscreenAfterOn)) visible=\(uiKitVisibleBefore) offset=\(harness.collectionView.contentOffset.y) content=\(harness.collectionView.contentSize.height)"
         )
-        #expect(
-            abs((assistantAfterOn ?? 0) - assistantBefore) < 0.5,
-            "non-user cache must stay put on DWC toggle"
-        )
-        harness.assertAnchorStable(itemID: anchorID, edge: .top, before: anchorBefore)
 
-        harness.coordinator.applySpeakerAccessibilityForTesting(
-            increasedContrast: true,
-            differentiateWithoutColor: true
-        )
-        settleTimelineLayout(harness.collectionView, passes: 2)
+        guard let visibleHeightAfterOn = timelineRowHeight(harness, itemID: visibleUser.id) else {
+            Issue.record("Missing visible user row \(visibleUser.id) after DWC on")
+            return
+        }
         #expect(
-            abs((layout.cachedHeightForTesting(itemID: offscreenUserID) ?? 0) - (userBefore + delta)) < 1,
-            "Increase Contrast must not change cached heights"
+            visibleHeightAfterOn > visibleHeightBefore + 1,
+            "visible user row must grow when the You caption paints, id=\(visibleUser.id) before=\(visibleHeightBefore) after=\(visibleHeightAfterOn)"
         )
-        #expect(
-            abs((layout.cachedHeightForTesting(itemID: offscreenAssistantID) ?? 0) - assistantBefore) < 0.5
-        )
+        assertAttachedLiveTail(harness.collectionView, label: "DWC on")
 
         harness.coordinator.applySpeakerAccessibilityForTesting(
             increasedContrast: false,
             differentiateWithoutColor: false
         )
-        settleTimelineLayout(harness.collectionView, passes: 3)
-        #expect(
-            abs((layout.cachedHeightForTesting(itemID: offscreenUserID) ?? 0) - userBefore) < 1,
-            "turning DWC off should restore the offscreen user cached height"
-        )
-        harness.assertAnchorStable(itemID: anchorID, edge: .top, before: anchorBefore)
-    }
-
-    @Test func differentiateWithoutColorToggleUsesCaptionOnlyDeltaForImageOnlyUserRows() throws {
-        let harness = TimelineScrollConformanceHarness(sessionId: "scroll-conformance-dwc-image-only")
-        harness.replaceTimelineItems(makeSpeakerContrastMixedHeightItems())
-        harness.startAttachedAtBottom(isBusy: false)
-        measureEveryTimelineRow(harness.collectionView)
-
-        let imageOnlyID = "user-image-0"
-        let textID = "user-text-1"
-        let anchorID = "assistant-8"
-        harness.userScrollsUpToRead(itemID: anchorID)
-
-        let layout = try #require(
-            harness.collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout
-        )
-        let imageBefore = layout.cachedHeightForTesting(itemID: imageOnlyID)
-        let textBefore = layout.cachedHeightForTesting(itemID: textID)
-        guard let imageBefore, let textBefore else {
-            Issue.record("Missing cached heights before DWC toggle")
-            return
-        }
-
-        harness.coordinator.applySpeakerAccessibilityForTesting(
-            increasedContrast: false,
-            differentiateWithoutColor: true
-        )
-        settleTimelineLayout(harness.collectionView, passes: 3)
-
-        let captionOnly = TimelineSpeakerChrome.differentiateWithoutColorHeightDelta(
-            hasVisibleContentBelowCaption: false
-        )
-        let captionAndSpacing = TimelineSpeakerChrome.differentiateWithoutColorHeightDelta(
-            hasVisibleContentBelowCaption: true
-        )
-        #expect(abs(captionAndSpacing - captionOnly - TimelineSpeakerChrome.userBubbleContentSpacing) < 0.01)
-        #expect(
-            abs((layout.cachedHeightForTesting(itemID: imageOnlyID) ?? 0) - (imageBefore + captionOnly)) < 1,
-            "image-only cache should grow by caption height only"
-        )
-        #expect(
-            abs((layout.cachedHeightForTesting(itemID: textID) ?? 0) - (textBefore + captionAndSpacing)) < 1,
-            "text row cache should grow by caption plus stack spacing"
-        )
-    }
-
-    @Test func differentiateWithoutColorToggleWhileTrackingKeepsAnchor() throws {
-        let harness = TimelineScrollConformanceHarness(sessionId: "scroll-conformance-dwc-tracking")
-        harness.replaceTimelineItems(makeSpeakerContrastHeightItems())
-        harness.startAttachedAtBottom(isBusy: false)
-        measureEveryTimelineRow(harness.collectionView)
-
-        let anchorID = "assistant-8"
-        harness.userScrollsUpToRead(itemID: anchorID)
-        let anchored = try #require(harness.collectionView as? AnchoredCollectionView)
-        let anchorBefore = harness.screenY(of: anchorID, edge: .top)
-
-        anchored.testIsTracking = true
-        anchored.testIsDragging = true
-        harness.coordinator.applySpeakerAccessibilityForTesting(
-            increasedContrast: false,
-            differentiateWithoutColor: true
-        )
-        settleTimelineLayout(harness.collectionView, passes: 3)
-        harness.assertAnchorStable(itemID: anchorID, edge: .top, before: anchorBefore)
-
-        anchored.testIsTracking = false
-        anchored.testIsDragging = false
-        settleTimelineLayout(harness.collectionView, passes: 3)
-        harness.assertAnchorStable(itemID: anchorID, edge: .top, before: anchorBefore)
+        await drainMainQueueHop()
+        harness.collectionView.layoutIfNeeded()
+        assertAttachedLiveTail(harness.collectionView, label: "DWC off")
     }
 
     @Test func jumpToBottomReattachesAndRestoresTailVisibility() {
@@ -483,35 +413,6 @@ private func makeSpeakerContrastHeightItems() -> [ChatItem] {
             images: [],
             timestamp: Date()
         ))
-        items.append(.assistantMessage(
-            id: "assistant-\(index)",
-            text: String(repeating: "Assistant reply \(index). ", count: 14),
-            timestamp: Date()
-        ))
-    }
-    return items
-}
-
-@MainActor
-private func makeSpeakerContrastMixedHeightItems() -> [ChatItem] {
-    let image = ImageAttachment(data: "AAAA", mimeType: "image/png")
-    var items: [ChatItem] = []
-    for index in 0..<16 {
-        if index.isMultiple(of: 2) {
-            items.append(.userMessage(
-                id: "user-image-\(index)",
-                text: "",
-                images: [image],
-                timestamp: Date()
-            ))
-        } else {
-            items.append(.userMessage(
-                id: "user-text-\(index)",
-                text: String(repeating: "User prompt \(index). ", count: 14),
-                images: [],
-                timestamp: Date()
-            ))
-        }
         items.append(.assistantMessage(
             id: "assistant-\(index)",
             text: String(repeating: "Assistant reply \(index). ", count: 14),
@@ -600,4 +501,73 @@ private func pinConformanceHarnessToBottom(_ harness: TimelineScrollConformanceH
     settleTimelineLayout(harness.collectionView, passes: 3)
     harness.scrollController.updateNearBottom(true)
     harness.coordinator.updateScrollState(harness.collectionView)
+}
+
+@MainActor
+private func drainMainQueueHop() async {
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        DispatchQueue.main.async {
+            continuation.resume()
+        }
+    }
+}
+
+@MainActor
+private func timelineViewportRect(_ collectionView: UICollectionView) -> CGRect {
+    CGRect(origin: collectionView.contentOffset, size: collectionView.bounds.size)
+}
+
+@MainActor
+private func visibleTimelineIDsFromIndexPaths(
+    in harness: TimelineScrollConformanceHarness
+) -> [String] {
+    let ids = harness.coordinator.currentIDs
+    return harness.collectionView.indexPathsForVisibleItems
+        .sorted { $0.item < $1.item }
+        .compactMap { indexPath in
+            guard indexPath.item < ids.count else { return nil }
+            return ids[indexPath.item]
+        }
+}
+
+@MainActor
+private func geometricallyVisibleTimelineIDs(
+    in harness: TimelineScrollConformanceHarness
+) -> [String] {
+    let viewport = timelineViewportRect(harness.collectionView)
+    return harness.coordinator.currentIDs.enumerated().compactMap { index, id in
+        guard let attrs = harness.collectionView.layoutAttributesForItem(
+            at: IndexPath(item: index, section: 0)
+        ), attrs.frame.intersects(viewport) else {
+            return nil
+        }
+        return id
+    }
+}
+
+@MainActor
+private func visibleUserRow(
+    in harness: TimelineScrollConformanceHarness,
+    excluding excludedID: String
+) -> (id: String, height: CGFloat)? {
+    let visible = geometricallyVisibleTimelineIDs(in: harness).compactMap { id -> (id: String, height: CGFloat)? in
+        guard id.hasPrefix("user-"), id != excludedID,
+              let height = timelineRowHeight(harness, itemID: id) else {
+            return nil
+        }
+        return (id, height)
+    }
+    return visible.last
+}
+
+@MainActor
+private func assertAttachedLiveTail(_ collectionView: UICollectionView, label: String) {
+    let expected = collectionView.contentSize.height
+        - collectionView.bounds.height
+        + collectionView.adjustedContentInset.bottom
+    let offset = collectionView.contentOffset.y
+    #expect(
+        abs(offset - expected) < 1,
+        "\(label): live tail lost, offset=\(offset) expected=\(expected) content=\(collectionView.contentSize.height) bounds=\(collectionView.bounds.height) insetBottom=\(collectionView.adjustedContentInset.bottom)"
+    )
 }

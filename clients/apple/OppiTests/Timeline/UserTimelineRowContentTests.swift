@@ -821,59 +821,6 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
-    @Test("Differentiate Without Color grows image-only rows by caption height only")
-    func differentiateWithoutColorHeightDeltaMatchesVisibleBubbleContent() throws {
-        let textOff = UserTimelineRowConfiguration(
-            text: "Hello",
-            images: [],
-            canFork: false,
-            onFork: nil,
-            differentiateWithoutColor: false
-        )
-        let textView = UserTimelineRowContentView(configuration: textOff)
-        let textHeightOff = fittedUserRowHeight(textView)
-        textView.configuration = UserTimelineRowConfiguration(
-            text: "Hello",
-            images: [],
-            canFork: false,
-            onFork: nil,
-            differentiateWithoutColor: true
-        )
-        let textDelta = fittedUserRowHeight(textView) - textHeightOff
-
-        let pngData = try #require(makeTestImage().pngData())
-        let image = ImageAttachment(data: pngData.base64EncodedString(), mimeType: "image/png")
-        let imageOff = UserTimelineRowConfiguration(
-            text: "",
-            images: [image],
-            canFork: false,
-            onFork: nil,
-            differentiateWithoutColor: false
-        )
-        let imageView = UserTimelineRowContentView(configuration: imageOff)
-        let imageHeightOff = fittedUserRowHeight(imageView)
-        imageView.configuration = UserTimelineRowConfiguration(
-            text: "",
-            images: [image],
-            canFork: false,
-            onFork: nil,
-            differentiateWithoutColor: true
-        )
-        let imageDelta = fittedUserRowHeight(imageView) - imageHeightOff
-
-        let captionOnly = TimelineSpeakerChrome.differentiateWithoutColorHeightDelta(
-            hasVisibleContentBelowCaption: false
-        )
-        let captionAndSpacing = TimelineSpeakerChrome.differentiateWithoutColorHeightDelta(
-            hasVisibleContentBelowCaption: true
-        )
-        #expect(abs(textDelta - captionAndSpacing) < 1)
-        #expect(abs(imageDelta - captionOnly) < 1)
-        #expect(!UserTimelineBubbleContent.resolve(text: "", images: [image]).hasVisibleContentBelowCaption)
-        #expect(UserTimelineBubbleContent.resolve(text: "Hello", images: []).hasVisibleContentBelowCaption)
-    }
-
-    @MainActor
     @Test("Review Repo and Commit pills use userMessageText for icon and prefix")
     func userCardPathPillsUseUserMessageTextForGlyphAndPrefix() throws {
         let palette = ThemeRuntimeState.currentPalette()
@@ -1736,15 +1683,6 @@ private func makeImagePreviewTimelineItems(prefix: String, count: Int) -> [ChatI
             timestamp: Date(timeIntervalSince1970: TimeInterval(index))
         )
     }
-}
-
-@MainActor
-private func fittedUserRowHeight(_ view: UserTimelineRowContentView, width: CGFloat = 390) -> CGFloat {
-    view.systemLayoutSizeFitting(
-        CGSize(width: width, height: 0),
-        withHorizontalFittingPriority: .required,
-        verticalFittingPriority: .fittingSizeLevel
-    ).height
 }
 
 @MainActor
