@@ -513,9 +513,8 @@ export interface PiTuiMirrorRuntimeOptions {
 export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTransport {
   private readonly active = new Map<string, MirrorActiveSession>();
   private readonly bridges = new Map<string, BridgeConnection>();
-  /** Latest hello whose worktree lookup may still be applied. */
+  /** Latest hello that may register the bridge or apply its worktree lookup. */
   private readonly worktreeHelloGeneration = new Map<string, number>();
-  private readonly helloGenerationBySession = new WeakMap<Session, number>();
   private readonly bridgeBySession = new Map<string, string>();
   private readonly broadcaster: SessionBroadcaster;
   private readonly eventProcessor: SessionEventProcessor;
@@ -1171,14 +1170,18 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     workspace: Workspace,
     state: PiBridgeStateSnapshot,
     registration: { now: number; bridgeId: string; protocolVersion: number },
-  ): BridgeConnection | Promise<BridgeConnection> {
-    const session = this.resolveOrCreateSession(workspace, state, hello);
-    if (session instanceof Promise) {
-      return session.then((resolvedSession) =>
-        this.finishBridgeRegistration(ws, hello, resolvedSession, workspace, state, registration),
-      );
-    }
-    return this.finishBridgeRegistration(ws, hello, session, workspace, state, registration);
+  ): Promise<BridgeConnection> {
+    return this.resolveOrCreateSession(workspace, state, hello).then((resolved) =>
+      this.finishBridgeRegistration(
+        ws,
+        hello,
+        resolved.session,
+        workspace,
+        state,
+        registration,
+        resolved.helloGeneration,
+      ),
+    );
   }
 
   private finishBridgeRegistration(
@@ -1188,37 +1191,18 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     workspace: Workspace,
     state: PiBridgeStateSnapshot,
     registration: { now: number; bridgeId: string; protocolVersion: number },
+    helloGeneration: number,
   ): BridgeConnection {
     const { now, bridgeId, protocolVersion } = registration;
-    const helloGeneration = this.helloGenerationBySession.get(session);
-    const staleHello =
-      helloGeneration !== undefined &&
-      this.worktreeHelloGeneration.get(session.id) !== helloGeneration;
-    if (staleHello && this.bridgeBySession.has(session.id)) {
-      // A newer hello already owns this session. Ack without replacing its
-      // bridge or rewriting cwd/worktreeId from this lookup.
-      ws.send(
-        JSON.stringify({
-          type: "hello_ack",
-          protocolVersion: PI_TUI_MIRROR_BRIDGE_PROTOCOL_VERSION,
-          bridgeId,
-          sessionId: session.id,
-          workspaceId: workspace.id,
-          serverHostname: hostname(),
-        }),
+    if (this.worktreeHelloGeneration.get(session.id) !== helloGeneration) {
+      // The numeric generation belongs to this hello, not the shared session
+      // object. A newer hello may not have registered yet; do not fall through
+      // and become the bridge, and do not ack as owner.
+      ws.close(4000, "Mirror bridge hello superseded by a newer terminal connection");
+      throw new BridgeRegistrationError(
+        "Mirror bridge hello superseded by a newer terminal connection",
+        "mirror_hello_superseded",
       );
-      return {
-        bridgeId,
-        sessionId: session.id,
-        ws,
-        cwd: hello.cwd,
-        capabilities: [...hello.capabilities],
-        protocolVersion,
-        connectedAt: now,
-        lastSeenAt: now,
-        pendingCommands: new Map(),
-        fireAndForgetCommandIds: new Set(),
-      };
     }
 
     const existingSameBridge = this.bridges.get(bridgeId);
@@ -1620,12 +1604,10 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       throw new Error("Bridge hello must include cwd or workspaceId");
     }
 
-    const contained = this.storage
-      .listWorkspaces()
-      .flatMap((workspace) => {
-        if (!workspace.hostMount || !pathContains(workspace.hostMount, cwd)) return [];
-        return [{ workspace, matchPath: workspace.hostMount }];
-      });
+    const contained = this.storage.listWorkspaces().flatMap((workspace) => {
+      if (!workspace.hostMount || !pathContains(workspace.hostMount, cwd)) return [];
+      return [{ workspace, matchPath: workspace.hostMount }];
+    });
     if (contained.length > 0) {
       return this.finishWorkspaceMatch(contained, cwd, hello);
     }
@@ -1708,7 +1690,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     workspace: Workspace,
     state: PiBridgeStateSnapshot,
     hello: PiBridgeHelloMessage,
-  ): Session | Promise<Session> {
+  ): Promise<{ session: Session; helloGeneration: number }> {
     const piSessionFile = canonicalSessionFilePath(state.sessionFile);
     const piSessionId = state.piSessionId?.trim();
     const existing = this.storage.listSessions().find((session) => {
@@ -1800,7 +1782,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     piSessionFile: string | undefined,
     piSessionId: string | undefined,
     existing: Session | undefined,
-  ): Promise<Session> {
+  ): Promise<{ session: Session; helloGeneration: number }> {
     const model = normalizeModelId(state.model);
     const sessionName = meaningfulSessionName(state.sessionName);
     const session = existing ?? this.storage.createSession(sessionName, model, { id: piSessionId });
@@ -1815,17 +1797,19 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     if (state.thinkingLevel?.trim()) session.thinkingLevel = state.thinkingLevel.trim();
     const generation = (this.worktreeHelloGeneration.get(session.id) ?? 0) + 1;
     this.worktreeHelloGeneration.set(session.id, generation);
-    this.helloGenerationBySession.set(session, generation);
     // Await the lookup before save and hello_ack. execFile yields the loop;
     // a newer hello bumps the generation and this lookup must not persist.
     const worktree = await resolveWorkspaceWorktreeForPath(workspace, state.cwd, {
       dataDir: this.storage.getDataDir(),
     });
     if (this.worktreeHelloGeneration.get(session.id) !== generation) {
-      return session;
+      return { session, helloGeneration: generation };
     }
     if (worktree) session.worktreeId = worktree.id;
-    return this.finishPromotedBridgeSession(session, state, piSessionFile);
+    return {
+      session: this.finishPromotedBridgeSession(session, state, piSessionFile),
+      helloGeneration: generation,
+    };
   }
 
   private finishPromotedBridgeSession(

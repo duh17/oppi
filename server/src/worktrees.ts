@@ -597,18 +597,35 @@ export async function createWorkspaceWorktree(
   const target = managedCreatePath(workspace, options.dataDir, branch, request.path);
   await requireAvailableCreateTarget(workspace, target.id, options);
 
-  const args = (await branchExists(workspaceRoot, branch))
-    ? ["worktree", "add", target.path, branch]
-    : ["worktree", "add", "-b", branch, target.path, base];
-  await runGitOrThrow(workspaceRoot, args);
-
-  const created = (await listWorkspaceWorktrees(workspace, { dataDir: options.dataDir })).find(
-    (worktree) => worktree.id === target.id,
-  );
-  if (!created) {
-    throw new WorkspaceWorktreeError(500, "Created worktree was not discoverable");
+  const branchAlreadyExists = await branchExists(workspaceRoot, branch);
+  const removalKey = pendingRemovalKey(workspace.id, target.id);
+  // The catalog await can hide a worktree whose removal claimed this key.
+  // Check and claim synchronously so git worktree add cannot run on that path.
+  if (pendingWorktreeRemovalKeys.has(removalKey)) {
+    throw new WorkspaceWorktreeError(409, "Worktree id already exists");
   }
-  return created;
+  pendingWorktreeRemovalKeys.add(removalKey);
+  pendingWorktreeRemovals.add(target.path);
+  try {
+    const args = branchAlreadyExists
+      ? ["worktree", "add", target.path, branch]
+      : ["worktree", "add", "-b", branch, target.path, base];
+    await runGitOrThrow(workspaceRoot, args);
+
+    const created = (
+      await listWorkspaceWorktrees(workspace, {
+        dataDir: options.dataDir,
+        includePendingRemovals: true,
+      })
+    ).find((worktree) => worktree.id === target.id);
+    if (!created) {
+      throw new WorkspaceWorktreeError(500, "Created worktree was not discoverable");
+    }
+    return created;
+  } finally {
+    pendingWorktreeRemovalKeys.delete(removalKey);
+    pendingWorktreeRemovals.delete(target.path);
+  }
 }
 
 export async function openWorkspaceWorktree(
@@ -682,11 +699,11 @@ export async function previewWorkspaceWorktree(
   };
 }
 
-// Paths and workspace-scoped ids whose removal has passed validation.
+// Paths and workspace-scoped ids claimed by an in-flight create or removal.
 // The key includes workspaceId: managed ids are derived from the branch name
-// and would otherwise collide across workspaces. It is inserted only after
-// main/unmanaged/active-session rejection, and held through the dirty check
-// and git worktree remove.
+// and would otherwise collide across workspaces. Removal inserts it only after
+// main/unmanaged/active-session rejection. Create inserts it immediately before
+// git worktree add, with no await between the check and the claim.
 const pendingWorktreeRemovals = new Set<string>();
 const pendingWorktreeRemovalKeys = new Set<string>();
 

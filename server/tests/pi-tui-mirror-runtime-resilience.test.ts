@@ -1,10 +1,10 @@
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
@@ -153,8 +153,8 @@ function makeHarness(root: string) {
     },
     listSessions: () => Array.from(sessions.values()),
     getSession: (id: string) => sessions.get(id) ?? null,
-    createSession: (name?: string, model?: string) => {
-      const session = makeSession(`sess-${nextSessionId++}`);
+    createSession: (name?: string, model?: string, options?: { id?: string }) => {
+      const session = makeSession(options?.id ?? `sess-${nextSessionId++}`);
       if (name) session.name = name;
       if (model) session.model = model;
       sessions.set(session.id, session);
@@ -276,6 +276,62 @@ function commandMessage(command: Record<string, unknown>): string | undefined {
 async function drain(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
+}
+
+function installDelayedWorktreeLookup(bin: string, cwd: string, stateDir: string): void {
+  const realGit = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const state = JSON.stringify(stateDir);
+  writeFileSync(
+    join(bin, "git"),
+    `#!/bin/sh
+expected=${JSON.stringify(cwd)}
+expected_p=$(cd "$expected" && pwd -P)
+pwd_p=$(pwd -P)
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ] && [ "$pwd_p" = "$expected_p" ]; then
+  nfile=${state}/count
+  n=$(cat "$nfile" 2>/dev/null || echo 0)
+  n=$((n + 1))
+  printf '%s\n' "$n" > "$nfile"
+  touch ${state}/started-$n
+  while [ ! -f ${state}/release-$n ]; do
+    sleep 0.02
+  done
+fi
+exec ${JSON.stringify(realGit)} "$@"
+`,
+  );
+  chmodSync(join(bin, "git"), 0o755);
+}
+
+function sendOverlappingHello(
+  mirror: PiTuiMirrorRuntime,
+  bridgeId: string,
+  cwd: string,
+): FakeBridgeWebSocket {
+  const ws = new FakeBridgeWebSocket();
+  mirror.handleBridgeWebSocket(ws as unknown as WebSocket);
+  ws.receive({
+    type: "hello",
+    protocolVersion: 2,
+    bridgeId,
+    workspaceId: "w1",
+    cwd,
+    capabilities: ["input_preflight:v1"],
+    state: {
+      piSessionId: "pi-overlap",
+      sessionFile: join(cwd, "overlap.jsonl"),
+      sessionName: "Overlap terminal session",
+    },
+  });
+  return ws;
+}
+
+async function releaseLookup(stateDir: string, generation: number): Promise<void> {
+  writeFileSync(join(stateDir, `release-${generation}`), "1");
+}
+
+function acked(ws: FakeBridgeWebSocket): boolean {
+  return ws.sent.some((message) => message.type === "hello_ack");
 }
 
 function git(cwd: string, args: string[]): string {
@@ -669,6 +725,112 @@ describe("PiTuiMirrorRuntime resilience", () => {
       expect(mirror.getActiveSessionIds()).toEqual(new Set());
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the newest mirror hello when an older worktree lookup finishes last", async () => {
+    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-hello-race-"));
+    const stateDir = await mkdtemp(join(tmpdir(), "oppi-mirror-hello-race-state-"));
+    const bin = await mkdtemp(join(tmpdir(), "oppi-mirror-hello-race-bin-"));
+    const previousPath = process.env.PATH;
+    try {
+      installDelayedWorktreeLookup(bin, root, stateDir);
+      process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
+      const { mirror, runtimes } = makeHarness(root);
+      const older = sendOverlappingHello(mirror, "bridge-older", root);
+      await vi.waitFor(() => expect(existsSync(join(stateDir, "started-1"))).toBe(true));
+      const newer = sendOverlappingHello(mirror, "bridge-newer", root);
+      await vi.waitFor(() => expect(existsSync(join(stateDir, "started-2"))).toBe(true));
+
+      await releaseLookup(stateDir, 2);
+      await vi.waitFor(() => expect(acked(newer)).toBe(true));
+      const sessionId = String(
+        newer.sent.find((message) => message.type === "hello_ack")?.sessionId,
+      );
+
+      await releaseLookup(stateDir, 1);
+      await vi.waitFor(() => expect(older.closeCode).toBe(4000));
+
+      expect(older.closeReason).toBe(
+        "Mirror bridge hello superseded by a newer terminal connection",
+      );
+      expect(acked(older)).toBe(false);
+      expect(newer.closeCode).toBeUndefined();
+      expect(mirror.isSessionConnected(sessionId)).toBe(true);
+
+      const pending = runtimes.sendPrompt(sessionId, "who is the bridge", {
+        timestamp: Date.now(),
+        requestId: "req-newest-hello",
+      });
+      const command = await waitForLatestCommand(newer);
+      expect(commandMessage(command)).toBe("who is the bridge");
+      expect(older.sent.some((message) => message.type === "command")).toBe(false);
+      newer.receive({
+        type: "command_result",
+        id: String(command.id),
+        success: true,
+        state: { isIdle: true },
+      });
+      await pending;
+    } finally {
+      process.env.PATH = previousPath;
+      await rm(root, { recursive: true, force: true });
+      await rm(stateDir, { recursive: true, force: true });
+      await rm(bin, { recursive: true, force: true });
+    }
+  });
+
+  it("closes an older mirror hello that finishes before the newer bridge exists", async () => {
+    const root = await mkdtemp(join(tmpdir(), "oppi-mirror-hello-empty-"));
+    const stateDir = await mkdtemp(join(tmpdir(), "oppi-mirror-hello-empty-state-"));
+    const bin = await mkdtemp(join(tmpdir(), "oppi-mirror-hello-empty-bin-"));
+    const previousPath = process.env.PATH;
+    try {
+      installDelayedWorktreeLookup(bin, root, stateDir);
+      process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
+      const { mirror, runtimes } = makeHarness(root);
+      const older = sendOverlappingHello(mirror, "bridge-older-empty", root);
+      await vi.waitFor(() => expect(existsSync(join(stateDir, "started-1"))).toBe(true));
+      const newer = sendOverlappingHello(mirror, "bridge-newer-empty", root);
+      await vi.waitFor(() => expect(existsSync(join(stateDir, "started-2"))).toBe(true));
+
+      await releaseLookup(stateDir, 1);
+      await vi.waitFor(() => expect(older.closeCode).toBe(4000));
+      expect(acked(older)).toBe(false);
+      expect(newer.closeCode).toBeUndefined();
+      expect(acked(newer)).toBe(false);
+      expect(mirror.getActiveSessionIds()).toEqual(new Set());
+
+      await releaseLookup(stateDir, 2);
+      await vi.waitFor(() => expect(acked(newer)).toBe(true));
+      const sessionId = String(
+        newer.sent.find((message) => message.type === "hello_ack")?.sessionId,
+      );
+      expect(older.closeReason).toBe(
+        "Mirror bridge hello superseded by a newer terminal connection",
+      );
+      expect(newer.closeCode).toBeUndefined();
+      expect(mirror.isSessionConnected(sessionId)).toBe(true);
+
+      const pending = runtimes.sendPrompt(sessionId, "newer still owns the bridge", {
+        timestamp: Date.now(),
+        requestId: "req-empty-bridge",
+      });
+      const command = await waitForLatestCommand(newer);
+      expect(commandMessage(command)).toBe("newer still owns the bridge");
+      expect(older.sent.some((message) => message.type === "command")).toBe(false);
+      newer.receive({
+        type: "command_result",
+        id: String(command.id),
+        success: true,
+        state: { isIdle: true },
+      });
+      await pending;
+    } finally {
+      process.env.PATH = previousPath;
+      await rm(root, { recursive: true, force: true });
+      await rm(stateDir, { recursive: true, force: true });
+      await rm(bin, { recursive: true, force: true });
     }
   });
 });

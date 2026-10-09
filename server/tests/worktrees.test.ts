@@ -51,6 +51,42 @@ exec ${JSON.stringify(realGit)} "$@"
   chmodSync(join(bin, "git"), 0o755);
 }
 
+function installCreateRemovalRaceGit(bin: string, cwd: string, stateDir: string): void {
+  const realGit = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const state = JSON.stringify(stateDir);
+  writeFileSync(
+    join(bin, "git"),
+    `#!/bin/sh
+expected=${JSON.stringify(cwd)}
+expected_p=$(cd "$expected" && pwd -P)
+pwd_p=$(pwd -P)
+if [ "$pwd_p" = "$expected_p" ] && [ "$1" = "worktree" ] && [ "$2" = "list" ]; then
+  nfile=${state}/list-count
+  n=$(cat "$nfile" 2>/dev/null || echo 0)
+  n=$((n + 1))
+  printf '%s\n' "$n" > "$nfile"
+  if [ "$n" = "1" ]; then
+    touch ${state}/list-started
+    while [ ! -f ${state}/release-list ]; do
+      sleep 0.02
+    done
+  fi
+fi
+if [ "$pwd_p" = "$expected_p" ] && [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
+  touch ${state}/remove-started
+  while [ ! -f ${state}/release-remove ]; do
+    sleep 0.02
+  done
+fi
+if [ "$pwd_p" = "$expected_p" ] && [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
+  printf '%s\n' "$*" >> ${state}/add-log
+fi
+exec ${JSON.stringify(realGit)} "$@"
+`,
+  );
+  chmodSync(join(bin, "git"), 0o755);
+}
+
 function makeGitWorkspace(): { root: string; linkedPath: string; workspace: Workspace } {
   const root = mkdtempSync(join(tmpdir(), "oppi-worktrees-test-"));
   roots.push(root);
@@ -501,6 +537,52 @@ describe("workspace worktrees", async () => {
         removeWorkspaceWorktree(right.workspace, { dataDir, worktreeId: rightTree.id }),
       ).resolves.toMatchObject({ id: rightTree.id });
       expect((await removal).id).toBe(leftTree.id);
+    } finally {
+      process.env.PATH = previousPath;
+    }
+  });
+
+  it("does not add a worktree when removal claims the key during the catalog check", async () => {
+    const { workspace, root } = makeGitWorkspace();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-create-race-"));
+    roots.push(dataDir);
+    const created = await createWorkspaceWorktree(
+      workspace,
+      { branch: "feature/create-race" },
+      { dataDir },
+    );
+    const stateDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-create-race-state-"));
+    roots.push(stateDir);
+    const bin = mkdtempSync(join(tmpdir(), "oppi-worktrees-create-race-bin-"));
+    roots.push(bin);
+    installCreateRemovalRaceGit(bin, root, stateDir);
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
+    try {
+      const creating = createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/create-race" },
+        { dataDir },
+      );
+      await vi.waitFor(() => {
+        expect(existsSync(join(stateDir, "list-started"))).toBe(true);
+      });
+      const removal = removeWorkspaceWorktree(workspace, {
+        dataDir,
+        worktreeId: created.id,
+        force: true,
+      });
+      await vi.waitFor(async () => {
+        expect(await resolveWorkspaceWorktree(workspace, created.id, { dataDir })).toBeUndefined();
+      });
+      writeFileSync(join(stateDir, "release-list"), "1");
+      await expect(creating).rejects.toMatchObject({
+        statusCode: 409,
+        message: "Worktree id already exists",
+      });
+      expect(existsSync(join(stateDir, "add-log"))).toBe(false);
+      writeFileSync(join(stateDir, "release-remove"), "1");
+      await expect(removal).resolves.toMatchObject({ id: created.id });
     } finally {
       process.env.PATH = previousPath;
     }
