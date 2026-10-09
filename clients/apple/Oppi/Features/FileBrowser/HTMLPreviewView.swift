@@ -168,7 +168,7 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
     var onRenderStateChange: (() -> Void)?
     var elementPicker: HTMLDOMPickController { pickController }
 
-    init(htmlString: String, reviewCommentHandler: ((String, UIViewController?) -> Void)? = nil) {
+    init(htmlString: String) {
         let wv = ReviewCommentWKWebView(frame: .zero, configuration: HTMLContentSecurity.makeConfiguration())
         wv.isInspectable = false
         wv.allowsBackForwardNavigationGestures = false
@@ -176,7 +176,6 @@ final class HTMLRenderView: UIView, WKNavigationDelegate, FullScreenReaderConfig
         wv.isOpaque = false
         wv.backgroundColor = .clear
         wv.scrollView.backgroundColor = .clear
-        wv.reviewCommentHandler = reviewCommentHandler
         self.webView = wv
         self.pickController = HTMLDOMPickController(webView: wv)
 

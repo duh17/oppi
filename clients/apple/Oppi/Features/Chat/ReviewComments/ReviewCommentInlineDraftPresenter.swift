@@ -251,7 +251,14 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
 
         Task { @MainActor [weak self] in
             await Task.yield()
-            self?.inputTextView.becomeFirstResponder()
+            guard let self else { return }
+            // Dictation focuses the field itself, with the keyboard suppressed.
+            if request.startsDictation, router.voiceInputManager != nil {
+                await handleMicTap()
+            }
+            if !isTornDown, !inputTextView.isFirstResponder {
+                inputTextView.becomeFirstResponder()
+            }
         }
     }
 

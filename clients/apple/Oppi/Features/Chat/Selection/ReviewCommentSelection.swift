@@ -336,6 +336,8 @@ struct ReviewCommentSelectionRequest: Equatable {
     var htmlDOMAnchor: HTMLDOMElementAnchor? = nil
     /// Diagram-object anchor. Absent for selected-text and DOM comments.
     var semanticAnchor: ReviewCommentSemanticAnchor? = nil
+    /// Edit-menu mic: the receiving composer starts dictation once it opens.
+    var startsDictation = false
 }
 
 @MainActor
@@ -382,56 +384,71 @@ enum ReviewCommentSelectionMenuBuilder {
         textView: UITextView? = nil,
         selectedRange: NSRange? = nil
     ) -> UIMenu? {
-        guard let commentAction = commentAction(
-            selectedText: selectedText,
-            sourceContext: sourceContext,
-            router: router,
-            presentingViewController: presentingViewController,
-            textView: textView,
-            selectedRange: selectedRange
-        ) else {
-            return nil
-        }
-
-        return UIMenu(children: [commentAction] + suggestedActions)
-    }
-
-    @MainActor
-    static func commentAction(
-        selectedText: String,
-        sourceContext: ReviewCommentSourceContext,
-        router: ReviewCommentSelectionRouter,
-        presentingViewController: UIViewController? = nil,
-        textView: UITextView? = nil,
-        selectedRange: NSRange? = nil
-    ) -> UIAction? {
         let normalized = ReviewCommentSelectionTextFormatter.normalizedSelectedText(selectedText)
         guard !normalized.isEmpty else { return nil }
 
-        let request = ReviewCommentSelectionRequest(
-            selectedText: normalized,
-            source: sourceContext
-        )
+        let actions = commentActions(router: router) { startsDictation in
+            let request = ReviewCommentSelectionRequest(
+                selectedText: normalized,
+                source: sourceContext,
+                startsDictation: startsDictation
+            )
+            openComment(
+                request,
+                router: router,
+                presentingViewController: presentingViewController,
+                textView: textView,
+                selectedRange: selectedRange
+            )
+        }
+        return UIMenu(children: actions + suggestedActions)
+    }
 
-        return UIAction(
+    /// Comment, plus an icon-only mic that opens the same composer already
+    /// dictating. Every selection edit menu (native text and web) uses this pair.
+    @MainActor
+    static func commentActions(
+        router: ReviewCommentSelectionRouter,
+        open: @escaping (_ startsDictation: Bool) -> Void
+    ) -> [UIAction] {
+        let comment = UIAction(
             title: "Comment",
             image: UIImage(systemName: "text.bubble")
-        ) { _ in
-            FeatureEducationTips.markReviewCommentCreated()
-            (textView as? FullScreenReviewCommentTextView)?.dismissReviewCommentSelectionTip()
-            if router.supportsInlineCommentComposer,
-               sourceContext.surface.usesInlineCommentWidget,
-               let textView,
-               let selectedRange {
-                ReviewCommentInlineDraftPresenter.present(
-                    textView: textView,
-                    selectedRange: selectedRange,
-                    request: request,
-                    router: router
-                )
-            } else {
-                router.dispatch(request, presentingViewController: presentingViewController)
-            }
+        ) { _ in open(false) }
+        guard router.voiceInputManager != nil else {
+            return [comment]
+        }
+        // Edit menus show the image only when the title is empty, and VoiceOver
+        // reads the image's label there, not the action's.
+        let micImage = UIImage(systemName: "mic")
+        micImage?.accessibilityLabel = "Dictate Comment"
+        let dictate = UIAction(title: "", image: micImage) { _ in open(true) }
+        dictate.accessibilityIdentifier = "review-comment.dictate"
+        return [comment, dictate]
+    }
+
+    @MainActor
+    private static func openComment(
+        _ request: ReviewCommentSelectionRequest,
+        router: ReviewCommentSelectionRouter,
+        presentingViewController: UIViewController?,
+        textView: UITextView?,
+        selectedRange: NSRange?
+    ) {
+        FeatureEducationTips.markReviewCommentCreated()
+        (textView as? FullScreenReviewCommentTextView)?.dismissReviewCommentSelectionTip()
+        if router.supportsInlineCommentComposer,
+           request.source.surface.usesInlineCommentWidget,
+           let textView,
+           let selectedRange {
+            ReviewCommentInlineDraftPresenter.present(
+                textView: textView,
+                selectedRange: selectedRange,
+                request: request,
+                router: router
+            )
+        } else {
+            router.dispatch(request, presentingViewController: presentingViewController)
         }
     }
 }

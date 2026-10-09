@@ -23,11 +23,16 @@ enum ComposerShared {
         case inlineComposer = "inline_mic_tap"
         case expandedComposer = "expanded_mic_tap"
         case inboxComposer = "inbox_mic_tap"
+        /// Edit-menu mic that dictates a review comment into the chat composer.
+        case reviewCommentMenu = "review_comment_menu_mic_tap"
         case askCard = "ask_card_mic_tap"
         case reviewCommentInline = "review_comment_inline_mic_tap"
 
         var isMessageComposer: Bool {
-            self == .inlineComposer || self == .expandedComposer || self == .inboxComposer
+            switch self {
+            case .inlineComposer, .expandedComposer, .inboxComposer, .reviewCommentMenu: true
+            case .askCard, .reviewCommentInline: false
+            }
         }
     }
 

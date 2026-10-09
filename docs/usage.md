@@ -74,6 +74,8 @@ Assistant output can open markdown, code, diffs, and other documents in full-scr
 - **On-device** uses Apple's speech APIs on the phone. Audio stays on the device. Submitting the transcript still sends the prompt to the paired server.
 - **Server** streams audio to the paired server, which forwards it to the configured speech-to-text backend.
 
+Selecting text shows **Comment** in the edit menu, followed by a microphone. The microphone opens the same comment draft (the chat input bar, or the inline comment box in full-screen viewers) and starts dictating into it.
+
 **Settings → Voice & Dictation → Dictation Animation** chooses the listening control: **Composing** and **Breathing** are voice-reactive Metal orbs, and **Ring** is the older stroke. New installs default to Ring; a saved choice stays. The button size does not change.
 
 **Settings → Chat → Busy Animation** chooses the busy-row animation: **Orbiting**, **Searching**, and **Solving** Metal orbs, plus **Pi** and **GoL**. New installs default to Orbiting; saved Pi or GoL choices stay.

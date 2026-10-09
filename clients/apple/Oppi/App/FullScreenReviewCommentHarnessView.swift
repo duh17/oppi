@@ -145,6 +145,7 @@ final class FullScreenReviewCommentHarnessViewController: UIViewController {
                 return didSave
             },
             inlineQuickComments: [.fix],
+            voiceInputManager: VoiceInputManager.shared,
             stash: comments
         )
         let content: FullScreenCodeContent

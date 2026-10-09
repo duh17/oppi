@@ -142,6 +142,7 @@ struct ChatView: View {
     @State private var extensionDrawerCollapseRequestID = 0
     @State private var reviewCommentStashPresentation: ReviewCommentStripChrome.StashPresentation?
     @State private var composerExternalFocusRequestID = 0
+    @State private var composerDictationRequestID = 0
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
     @State private var reviewComments = ChatReviewCommentsController()
@@ -1513,6 +1514,11 @@ struct ChatView: View {
                     },
                     onExpand: presentComposer,
                     externalFocusRequestID: composerExternalFocusRequestID,
+                    externalDictationRequestID: composerDictationRequestID,
+                    externalDictationOwner: .reviewCommentMenu,
+                    onExternalDictationHandled: { handledID in
+                        if composerDictationRequestID == handledID { composerDictationRequestID = 0 }
+                    },
                     appliesOuterPadding: true,
                     alwaysShowActionRow: false,
                     allowsExpansion: composerAskRequest == nil,
@@ -1841,6 +1847,7 @@ struct ChatView: View {
         composerTextBeforeRecording = nil
         pendingAttachments = []
         composerExternalFocusRequestID &+= 1
+        if request.startsDictation { composerDictationRequestID &+= 1 }
         contextBarCollapseToken &+= 1
     }
 

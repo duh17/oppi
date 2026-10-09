@@ -75,8 +75,13 @@ struct ChatInputBar<ActionRow: View>: View {
     let onForceStop: () -> Void
     let onExpand: () -> Void
     let externalFocusRequestID: Int
-    /// All Sessions mic: start inbox dictation once the bar is on screen.
+    /// Bumped by an outside mic (All Sessions, the review-comment edit menu)
+    /// to start dictation once the bar is on screen.
     var externalDictationRequestID: Int = 0
+    var externalDictationOwner: ComposerShared.VoiceInputOwner = .inboxComposer
+    /// Called once the request was attempted. A parent whose bar can remount
+    /// (stop/resume) clears its request ID here so remounting never re-arms the mic.
+    var onExternalDictationHandled: ((_ requestID: Int) -> Void)? = nil
     let appliesOuterPadding: Bool
     var alwaysShowActionRow: Bool = false
     var allowsExpansion: Bool = true
@@ -971,15 +976,17 @@ struct ChatInputBar<ActionRow: View>: View {
     }
 
     private func startExternalDictationIfRequested() async {
-        guard externalDictationRequestID > 0 else { return }
+        let requestID = externalDictationRequestID
+        guard requestID > 0 else { return }
+        defer { onExternalDictationHandled?(requestID) }
         guard let manager = voiceInputManager else { return }
-        guard ComposerShared.canControlVoiceInput(manager, owner: .inboxComposer) else { return }
+        guard ComposerShared.canControlVoiceInput(manager, owner: externalDictationOwner) else { return }
         guard ComposerShared.micTapAction(for: manager.state) == .start else { return }
         do {
             try await ComposerShared.startVoiceInput(
                 manager: manager,
                 keyboardLanguage: keyboardLanguage,
-                owner: .inboxComposer,
+                owner: externalDictationOwner,
                 baseText: text,
                 text: $text,
                 textBeforeRecording: $textBeforeRecording,

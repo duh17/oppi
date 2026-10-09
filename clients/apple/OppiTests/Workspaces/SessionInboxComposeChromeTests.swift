@@ -96,7 +96,6 @@ struct SessionInboxComposeChromeTests {
         let bar = try appleSource("Oppi/Features/Chat/Composer/ChatInputBar.swift")
         #expect(bar.contains(".task(id: externalDictationRequestID)"))
         #expect(bar.contains("startExternalDictationIfRequested"))
-        #expect(bar.contains("VoiceInputOwner.inboxComposer") || bar.contains("owner: .inboxComposer"))
         #expect(sheet.contains(".onDisappear"))
         #expect(sheet.contains("cancelVoiceInputOnDismiss"))
         #expect(sheet.contains("VoiceInputManager.shared"))

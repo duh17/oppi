@@ -44,6 +44,13 @@ final class FullScreenReviewCommentUITests: XCTestCase {
             waitForActionBarElement(named: "Copy", timeout: 2),
             "Native selection action bar did not expose Copy"
         )
+        let dictateAction = app.menuItems["review-comment.dictate"]
+        XCTAssertTrue(
+            dictateAction.waitForExistence(timeout: 2),
+            "Native selection action bar did not expose the dictate-comment mic"
+        )
+        XCTAssertEqual(dictateAction.label, "Dictate Comment")
+        XCTAssertLessThan(commentAction.frame.minX, dictateAction.frame.minX)
         XCTAssertTrue(commentAction.exists)
         XCTAssertTrue(copyAction.exists)
         saveScreenshot(name: "fullscreen-review-comment-action-bar")

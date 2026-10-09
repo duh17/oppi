@@ -886,7 +886,7 @@ struct HTMLDOMElementAnnotationTests {
         controller.exitButtonForTesting.sendActions(for: .touchUpInside)
         #expect(controller.isPicking == false)
         #expect(fixture.view.webViewForTesting.isUserInteractionEnabled == true)
-        #expect(fixture.view.webViewForTesting.reviewCommentHandler != nil)
+        #expect(fixture.view.webViewForTesting.reviewCommentRouter != nil)
         let hit = fixture.view.hitTest(try await viewPoint(for: leaf, in: fixture.view), with: nil)
         #expect(!(hit is HTMLDOMPickShieldView))
     }
