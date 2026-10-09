@@ -12,8 +12,17 @@ private let worktreeBranchName = "feature/native-worktree-e2e"
 final class WorkspaceWorktreeE2ETests: E2ETestCase {
     nonisolated(unsafe) private static var workspaceId: String?
 
-    override var e2eLaunchesWorkspaceHomeOnly: Bool {
-        true
+    override var e2eAutoCreatesSessionOnLaunch: Bool { false }
+
+    /// The fixture is created in setUp. Relaunch so the catalog includes it.
+    /// The old `workspace.list` home is gone; the launch hint opens this workspace
+    /// the same way other paired labs do. Sidebar row taps currently dismiss the
+    /// drawer without running the row action, so they are not the setup path.
+    override var e2eRequiresFreshLaunch: Bool { true }
+    override var e2eSkipsLaunchNavigation: Bool { true }
+
+    override func configureE2ELaunch(_ application: XCUIApplication) {
+        application.launchEnvironment["OPPI_E2E_AUTO_OPEN_WORKSPACE"] = worktreeWorkspaceName
     }
 
     override func seedE2EFixtures() throws {
@@ -29,32 +38,15 @@ final class WorkspaceWorktreeE2ETests: E2ETestCase {
 
     func testWorktreeSelectionCreatesSessionInLinkedWorktree() throws {
         let workspaceId = try XCTUnwrap(Self.workspaceId, "Worktree fixture workspace was not seeded")
-        let workspaceList = app.collectionViews["workspace.list"]
-        XCTAssertTrue(workspaceList.waitForExistence(timeout: 10), "Workspace home list not visible")
         dismissExtensionSheetIfNeeded(timeout: 3)
-        workspaceList.swipeDown()
-
         XCTAssertTrue(
-            revealWorkspace(named: worktreeWorkspaceName, timeout: 25),
-            "Worktree fixture workspace did not appear after refresh"
+            app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 20),
+            "Fixture workspace detail did not open"
         )
-
-        let openWorkspaceButton = app.buttons["workspace.open.\(worktreeWorkspaceName)"]
         XCTAssertTrue(
-            openWorkspaceButton.waitForExistence(timeout: 10),
-            "Worktree fixture workspace open button did not appear"
+            app.staticTexts[worktreeWorkspaceName].waitForExistence(timeout: 10),
+            "Fixture workspace title did not appear"
         )
-        openWorkspaceButton.coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.50)).tap()
-
-        let sessionList = app.collectionViews["workspace.sessionList"]
-        if !sessionList.waitForExistence(timeout: 8) {
-            // In the full release suite this test can run after another UI test
-            // has just recovered from a sheet or navigation reset. The row body
-            // also opens workspaces in E2E invite mode, so tap the stable title
-            // as a fallback when the trailing affordance tap is swallowed.
-            app.staticTexts[worktreeWorkspaceName].tap()
-        }
-        XCTAssertTrue(sessionList.waitForExistence(timeout: 15), "Workspace detail did not load")
 
         let linkedWorktreeId = try linkedWorktreeId(workspaceId: workspaceId)
         let worktreeMenu = app.buttons["workspace.worktree.menu"]
@@ -64,15 +56,20 @@ final class WorkspaceWorktreeE2ETests: E2ETestCase {
         )
         try saveLabScreenshot(name: "workspace-worktrees-compact-title-main-e2e")
 
-        tap(worktreeMenu, named: "worktree title menu")
-        let linkedWorktreeButton = app.buttons["workspace.worktree.\(linkedWorktreeId)"]
+        // Accessibility activate does not open this menu. A touch does.
+        // The row's identifier is the checkout path, longer than XCUITest's
+        // 128-character subscript limit, so match the branch the menu shows.
+        worktreeMenu.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let linkedWorktreeButton = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", worktreeBranchName)
+        ).firstMatch
         XCTAssertTrue(
             linkedWorktreeButton.waitForExistence(timeout: 10),
             "Linked worktree menu item did not appear"
         )
         try saveLabScreenshot(name: "workspace-worktrees-title-menu-e2e")
 
-        tap(linkedWorktreeButton, named: "linked worktree menu item")
+        linkedWorktreeButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         try saveLabScreenshot(name: "workspace-worktrees-compact-title-feature-e2e")
 
         tap(app.buttons["workspace.quickSession.start"], named: "quick session compose capsule")

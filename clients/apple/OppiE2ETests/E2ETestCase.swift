@@ -61,6 +61,11 @@ class E2ETestCase: XCTestCase {
         false
     }
 
+    /// Override when launch environment already placed the app on the route under test.
+    var e2eSkipsLaunchNavigation: Bool {
+        false
+    }
+
     /// Override to add launch environment or arguments before the app starts.
     func configureE2ELaunch(_ application: XCUIApplication) {}
 
@@ -85,7 +90,9 @@ class E2ETestCase: XCTestCase {
         }
         dismissExtensionSheetIfNeeded(timeout: 0.2)
 
-        if e2eLaunchesWorkspaceHomeOnly {
+        if e2eSkipsLaunchNavigation {
+            return
+        } else if e2eLaunchesWorkspaceHomeOnly {
             try ensureAtWorkspaceHome()
         } else if e2eLaunchesSessionsInboxOnly {
             try ensureAtSessionsInbox()
@@ -161,6 +168,9 @@ class E2ETestCase: XCTestCase {
                 ?? "Workspace surface did not appear after pairing"
         )
         guard paired else { return }
+        if e2eSkipsLaunchNavigation {
+            return
+        }
 
         if e2eStartsInAutoCreatedChat {
             // The debug launch fixture can lose its first-simulator-boot race.
