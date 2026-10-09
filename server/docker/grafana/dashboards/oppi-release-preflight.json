@@ -2626,7 +2626,51 @@
       ],
       "title": "App Launch, Workspace Load, Session Switch",
       "type": "timeseries",
-      "description": "Front-page session responsiveness. workspace_load_ms is time until the workspace screen is usable; session_switch_ms is row tap-to-content."
+      "description": "Front-page session responsiveness. workspace_load_ms is time until the workspace screen is usable; session_switch_ms is row tap-to-content. chat.thread_load_ms p50/p90 by phase is the table below."
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "oppi-telemetry-sqlite"
+      },
+      "description": "Raw chat.thread_load_ms beside workspace load and session switch. p50/p90 use nearest-rank ceil(p * n) by phase (initial or refresh). errors is status=error. No release SLO: no installed-app samples yet, so there is no TM99 to gate.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 157
+      },
+      "id": 102,
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "WITH ranked AS (\n  SELECT\n    COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.phase')), ''), '?') AS phase,\n    COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.status')), ''), '?') AS status,\n    value,\n    ROW_NUMBER() OVER (\n      PARTITION BY COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.phase')), ''), '?')\n      ORDER BY value\n    ) AS rn,\n    COUNT(*) OVER (\n      PARTITION BY COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.phase')), ''), '?')\n    ) AS n\n  FROM chat_metric_samples\n  WHERE metric = 'chat.thread_load_ms'\n    AND ts_ms BETWEEN $__from AND $__to\n)\nSELECT\n  phase,\n  n AS samples,\n  ROUND(MAX(CASE WHEN rn = ((n * 50 + 99) / 100) THEN value END), 1) AS p50_ms,\n  ROUND(MAX(CASE WHEN rn = ((n * 90 + 99) / 100) THEN value END), 1) AS p90_ms,\n  SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors\nFROM ranked\nGROUP BY phase, n\nORDER BY phase",
+          "queryText": "WITH ranked AS (\n  SELECT\n    COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.phase')), ''), '?') AS phase,\n    COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.status')), ''), '?') AS status,\n    value,\n    ROW_NUMBER() OVER (\n      PARTITION BY COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.phase')), ''), '?')\n      ORDER BY value\n    ) AS rn,\n    COUNT(*) OVER (\n      PARTITION BY COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.phase')), ''), '?')\n    ) AS n\n  FROM chat_metric_samples\n  WHERE metric = 'chat.thread_load_ms'\n    AND ts_ms BETWEEN $__from AND $__to\n)\nSELECT\n  phase,\n  n AS samples,\n  ROUND(MAX(CASE WHEN rn = ((n * 50 + 99) / 100) THEN value END), 1) AS p50_ms,\n  ROUND(MAX(CASE WHEN rn = ((n * 90 + 99) / 100) THEN value END), 1) AS p90_ms,\n  SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors\nFROM ranked\nGROUP BY phase, n\nORDER BY phase",
+          "timeColumns": [],
+          "refId": "A"
+        }
+      ],
+      "title": "Thread load by phase",
+      "type": "table"
     },
     {
       "datasource": {
@@ -2652,7 +2696,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 157
+        "y": 165
       },
       "id": 34,
       "options": {
@@ -2706,7 +2750,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 157
+        "y": 165
       },
       "id": 35,
       "options": {
@@ -2798,7 +2842,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 173
+        "y": 181
       },
       "id": 37,
       "options": {
@@ -2876,7 +2920,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 181
+        "y": 189
       },
       "id": 38,
       "options": {
@@ -2931,7 +2975,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 181
+        "y": 189
       },
       "id": 39,
       "options": {
@@ -2986,7 +3030,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 189
+        "y": 197
       },
       "id": 40,
       "options": {
@@ -3115,7 +3159,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 189
+        "y": 197
       },
       "id": 41,
       "options": {
@@ -3253,7 +3297,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 197
+        "y": 205
       },
       "id": 42,
       "options": {
@@ -3395,7 +3439,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 197
+        "y": 205
       },
       "id": 43,
       "options": {
@@ -3540,7 +3584,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 205
+        "y": 213
       },
       "id": 44,
       "options": {
@@ -3678,7 +3722,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 205
+        "y": 213
       },
       "id": 45,
       "options": {
@@ -3740,7 +3784,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 213
+        "y": 221
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -3815,7 +3859,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 213
+        "y": 221
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -3895,7 +3939,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 221
+        "y": 229
       },
       "panels": []
     },
@@ -3908,7 +3952,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 222
+        "y": 230
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4007,7 +4051,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 222
+        "y": 230
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4063,7 +4107,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 230
+        "y": 238
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4167,7 +4211,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 230
+        "y": 238
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4223,7 +4267,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 238
+        "y": 246
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4385,7 +4429,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 238
+        "y": 246
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4489,7 +4533,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 246
+        "y": 254
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4593,7 +4637,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 254
+        "y": 262
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4646,7 +4690,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 262
+        "y": 270
       },
       "collapsed": false,
       "panels": []
@@ -4659,7 +4703,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 263
+        "y": 271
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4714,7 +4758,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 263
+        "y": 271
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4769,7 +4813,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 271
+        "y": 279
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4824,7 +4868,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 271
+        "y": 279
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4883,7 +4927,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 279
+        "y": 287
       },
       "fieldConfig": {
         "defaults": {
@@ -4920,7 +4964,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 279
+        "y": 287
       },
       "fieldConfig": {
         "defaults": {
@@ -4951,7 +4995,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 287
+        "y": 295
       },
       "id": 92,
       "panels": [
@@ -4976,7 +5020,7 @@
             "h": 8,
             "w": 24,
             "x": 0,
-            "y": 288
+            "y": 296
           },
           "id": 93,
           "options": {
@@ -5009,7 +5053,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 288
+        "y": 296
       },
       "id": 94,
       "panels": [
@@ -5039,7 +5083,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 289
+            "y": 297
           },
           "id": 95,
           "options": {
@@ -5090,7 +5134,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 289
+            "y": 297
           },
           "id": 96,
           "options": {
@@ -5139,7 +5183,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 297
+            "y": 305
           },
           "id": 97,
           "options": {
@@ -5179,7 +5223,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 289
+        "y": 297
       },
       "id": 98,
       "panels": [
@@ -5209,7 +5253,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 290
+            "y": 298
           },
           "id": 99,
           "options": {
@@ -5271,7 +5315,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 290
+            "y": 298
           },
           "id": 100,
           "options": {
@@ -5314,7 +5358,7 @@
   "timezone": "browser",
   "title": "Oppi Release Preflight",
   "uid": "oppi-release-preflight",
-  "version": 11,
+  "version": 12,
   "weekStart": "",
-  "description": "Release and quality view. Front page covers UX latency, connection readiness, dictation, and client network. Collapsed rows hold command, quick-session, and share-publish drill-down. Sum-aggregated server counters use SUM(value); max-aggregated gauges use MAX(value); timings are raw samples."
+  "description": "Release and quality view. Front page covers UX latency, connection readiness, dictation, client network, and thread load beside workspace load and session switch. Collapsed rows hold command, quick-session, and share-publish drill-down. Sum-aggregated server counters use SUM(value); max-aggregated gauges use MAX(value); timings are raw samples."
 }

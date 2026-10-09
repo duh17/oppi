@@ -307,7 +307,7 @@ Importer behavior:
 - continues in watch mode; `OPPI_TELEMETRY_IMPORT_INTERVAL_MS` defaults to `15000`
 - ingests append-only daily JSONL files incrementally instead of reimporting the whole hot file each cycle
 - normalizes source-file keys so Docker and host imports target the same rows
-- flattens common server-ops tags (`path`, `type`, `level`, `lane`, `ring`, `code`, `outcome`) for split-stream Grafana panels
+- flattens common server-ops tags (`path`, `type`, `level`, `lane`, `ring`, `code`, `outcome`) for split-stream Grafana panels. `provider`, `model`, and `runtime` stay in `tags_json`
 - copies resource-sample `eventLoop.p50`, `p95`, `p99`, and `max` into `event_loop_p50`, `event_loop_p95`, `event_loop_p99`, and `event_loop_max`; missing values stay NULL
 - reimports a JSONL file when the importer parser version changes, so new columns fill in on the next import
 - keeps at most `OPPI_TELEMETRY_BROKEN_DB_KEEP_COUNT` malformed-db backups; the default is `1`
@@ -322,10 +322,10 @@ The stack provisions this datasource and these dashboards automatically:
 
 - datasource: `Oppi Telemetry SQLite`
 - dashboards: `Oppi Release Preflight`, `Oppi Server Health`, and `Oppi Model Routing` (folder: `Oppi`)
-- Release Preflight: experience metrics, including workspace load, client network handshake and ping RTT, server STT latency, and collapsed command, quick-session, and share-publish drill-down
-- Server Health: event-loop p99 and max, per-route HTTP latency, and collapsed session-create, push, event-ring, and server-dictation drill-down
-- Model Routing: provider and model workload
-- Sum-aggregated counters use `SUM(value)`. Max-aggregated gauges (`broadcast_fanout`, `event_ring_utilization`) use `MAX(value)`. HTTP and other timings are raw samples; `telemetry:review -- --http` prints the per-route table
+- Release Preflight: experience metrics, including workspace load, session switch, thread load by phase, client network handshake and ping RTT, server STT latency, and collapsed command, quick-session, and share-publish drill-down
+- Server Health: event-loop p99 trend and max gate, per-route HTTP latency and response bytes, and collapsed session-create, push, event-ring, MCP connect, schedule-run, and server-dictation drill-down
+- Model Routing: provider, model, and runtime workload. Missing runtime is an explicit untagged bucket. The Runtime dropdown filters the panels.
+- Sum-aggregated counters use `SUM(value)`. Max-aggregated gauges (`broadcast_fanout`, `event_ring_utilization`) use `MAX(value)`. HTTP timings and response bytes are raw samples; `telemetry:review -- --http` prints latency and byte columns. `telemetry:review -- --models` includes the runtime breakdown.
 
 ### 2) Stop telemetry stack
 

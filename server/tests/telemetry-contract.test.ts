@@ -37,7 +37,7 @@ describe("shared telemetry constants", () => {
     expect(dashboard.uid).toBe("oppi-model-routing");
     expect(dashboard.title).toBe("Oppi Model Routing");
     expect(dashboard.templating?.list?.map((item) => item.name)).toEqual(
-      expect.arrayContaining(["provider", "route"]),
+      expect.arrayContaining(["provider", "route", "runtime"]),
     );
     expect(dashboard.panels.map((panel) => panel.title)).toEqual(
       expect.arrayContaining([
@@ -46,6 +46,7 @@ describe("shared telemetry constants", () => {
         "Turn errors by model",
         "$ / 1k output by model",
         "By provider",
+        "By runtime",
         "By provider / model",
         "By provider / model + tool",
         "Tool errors",
@@ -61,6 +62,8 @@ describe("shared telemetry constants", () => {
     expect(text).toContain("usd_per_1k_out");
     expect(text).toContain("${provider:sqlstring}");
     expect(text).toContain("${route:sqlstring}");
+    expect(text).toContain("${runtime:sqlstring}");
+    expect(text).toContain("json_extract(tags_json, '$.runtime')");
     expect(text).toContain("json_extract(tags_json, '$.provider')");
     expect(text).toContain("json_extract(tags_json, '$.status') = 'error'");
   });
@@ -80,6 +83,23 @@ describe("shared telemetry constants", () => {
     const dashboard = readFileSync(dashboardPath, "utf8");
     expect(dashboard).toContain("chat.trace_fetch_ms");
     expect(dashboard).not.toContain("chat.full_reload_ms");
+    expect(dashboard).toContain("chat.thread_load_ms");
+    expect(dashboard).toContain("Thread load by phase");
+  });
+
+  it("charts new server-health drill-downs and the event-loop gate", () => {
+    const dashboard = readFileSync(
+      join(process.cwd(), "docker", "grafana", "dashboards", "oppi-server-health.json"),
+      "utf8",
+    );
+    expect(dashboard).toContain("server.http_response_bytes");
+    expect(dashboard).toContain("server.mcp_connect_ms");
+    expect(dashboard).toContain("server.schedule_run_ms");
+    expect(dashboard).toContain("server.event_loop_max_ms");
+    expect(dashboard).toContain("ungated trend");
+    expect(dashboard).toContain("HTTP response bytes by route");
+    expect(dashboard).toContain("Drill-down: MCP connect");
+    expect(dashboard).toContain("Drill-down: schedule runs");
   });
 
   it("keeps iOS metric enum in parity with server metric names", () => {

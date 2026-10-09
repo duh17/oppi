@@ -9,8 +9,8 @@
   "links": [],
   "panels": [
     {
-      "title": "Event Loop Lag (p99 and max)",
-      "description": "Sampler-interval event-loop delay from server resource samples. p99 is the typical delay in the interval; max is the stall spike. These are raw sampler fields, not ops-metric aggregates.",
+      "title": "Event Loop Lag (p99 trend, max gate)",
+      "description": "Sampler-interval event-loop delay from server resource samples. p99 is server.event_loop_lag_ms, an ungated trend. max is server.event_loop_max_ms, the stall spike and the release gate (TM99 100ms). These are raw sampler fields, not ops-metric aggregates.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1624,6 +1624,43 @@
       }
     },
     {
+      "title": "HTTP response bytes by route",
+      "description": "Raw server.http_response_bytes samples grouped by method and path_pattern. Same tags and gating as server.http_request_ms; unregistered routes record path_pattern=unregistered. p50/p90 use nearest-rank ceil(p * n). max_bytes is MAX(value). samples is row count, not request volume.",
+      "type": "table",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 114
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawQueryText": "WITH ranked AS (\n  SELECT\n    COALESCE(json_extract(tags_json, '$.method'), '?') AS method,\n    COALESCE(json_extract(tags_json, '$.path_pattern'), '?') AS path_pattern,\n    value,\n    ROW_NUMBER() OVER (\n      PARTITION BY COALESCE(json_extract(tags_json, '$.method'), '?'), COALESCE(json_extract(tags_json, '$.path_pattern'), '?')\n      ORDER BY value\n    ) AS rn,\n    COUNT(*) OVER (\n      PARTITION BY COALESCE(json_extract(tags_json, '$.method'), '?'), COALESCE(json_extract(tags_json, '$.path_pattern'), '?')\n    ) AS n\n  FROM server_ops_metric_samples\n  WHERE metric = 'server.http_response_bytes'\n    AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n)\nSELECT\n  method,\n  path_pattern,\n  n AS samples,\n  ROUND(MAX(CASE WHEN rn = ((n * 50 + 99) / 100) THEN value END), 0) AS p50_bytes,\n  ROUND(MAX(CASE WHEN rn = ((n * 90 + 99) / 100) THEN value END), 0) AS p90_bytes,\n  ROUND(MAX(value), 0) AS max_bytes\nFROM ranked\nGROUP BY method, path_pattern, n\nORDER BY samples DESC",
+          "queryType": "table",
+          "timeColumns": []
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
       "title": "Compaction Duration (ms)",
       "description": "Time spent compacting session event history.",
       "type": "timeseries",
@@ -1635,7 +1672,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 114
+        "y": 124
       },
       "fieldConfig": {
         "defaults": {
@@ -1699,7 +1736,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 114
+        "y": 124
       },
       "fieldConfig": {
         "defaults": {
@@ -1764,7 +1801,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 122
+        "y": 132
       },
       "fieldConfig": {
         "defaults": {
@@ -1814,7 +1851,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 122
+        "y": 132
       },
       "fieldConfig": {
         "defaults": {
@@ -1864,7 +1901,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 130
+        "y": 140
       },
       "fieldConfig": {
         "defaults": {
@@ -1901,7 +1938,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 130
+        "y": 140
       },
       "fieldConfig": {
         "defaults": {
@@ -1951,7 +1988,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 138
+        "y": 148
       },
       "fieldConfig": {
         "defaults": {
@@ -1988,7 +2025,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 138
+        "y": 148
       },
       "fieldConfig": {
         "defaults": {
@@ -2034,7 +2071,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 146
+        "y": 156
       },
       "panels": [
         {
@@ -2049,7 +2086,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 147
+            "y": 157
           },
           "fieldConfig": {
             "defaults": {
@@ -2099,7 +2136,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 147
+            "y": 157
           },
           "fieldConfig": {
             "defaults": {
@@ -2134,7 +2171,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 147
+        "y": 157
       },
       "panels": [
         {
@@ -2149,7 +2186,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 148
+            "y": 158
           },
           "fieldConfig": {
             "defaults": {
@@ -2199,7 +2236,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 148
+            "y": 158
           },
           "fieldConfig": {
             "defaults": {
@@ -2234,7 +2271,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 148
+        "y": 158
       },
       "panels": [
         {
@@ -2249,7 +2286,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 149
+            "y": 159
           },
           "fieldConfig": {
             "defaults": {
@@ -2299,7 +2336,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 149
+            "y": 159
           },
           "fieldConfig": {
             "defaults": {
@@ -2334,7 +2371,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 149
+        "y": 159
       },
       "panels": [
         {
@@ -2349,7 +2386,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 150
+            "y": 160
           },
           "fieldConfig": {
             "defaults": {
@@ -2399,7 +2436,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 150
+            "y": 160
           },
           "fieldConfig": {
             "defaults": {
@@ -2449,7 +2486,7 @@
             "h": 8,
             "w": 24,
             "x": 0,
-            "y": 158
+            "y": 168
           },
           "fieldConfig": {
             "defaults": {
@@ -2465,6 +2502,210 @@
           "targets": [
             {
               "rawQueryText": "SELECT\n  metric,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 2) AS avg_value,\n  ROUND(MIN(value), 2) AS min_value,\n  ROUND(MAX(value), 2) AS max_value\nFROM server_ops_metric_samples\nWHERE metric IN ('server.dictation_session_ms', 'server.dictation_audio_duration_ms', 'server.dictation_first_audio_ms', 'server.dictation_first_result_ms', 'server.dictation_first_result_audio_ms', 'server.dictation_result_updates', 'server.dictation_stt_ms', 'server.dictation_stt_audio_ratio', 'server.dictation_finalize_ms', 'server.dictation_error')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY metric\nORDER BY samples DESC",
+              "queryType": "table",
+              "timeColumns": []
+            }
+          ],
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm"
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Drill-down: MCP connect",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 160
+      },
+      "panels": [
+        {
+          "title": "MCP connect latency (ms)",
+          "description": "Raw server.mcp_connect_ms samples over time, split by status. Config errors record 0. A connected sample is not a failure.",
+          "type": "timeseries",
+          "datasource": {
+            "uid": "oppi-telemetry-sqlite",
+            "type": "frser-sqlite-datasource"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 161
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "ms",
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "pointSize": 3,
+                "showPoints": "auto",
+                "spanNulls": false
+              },
+              "unit": "ms",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "rawQueryText": "SELECT ts_ms / 1000 AS time,\n  CASE WHEN json_extract(tags_json, '$.status') = 'connected' THEN value END AS connected_ms,\n  CASE WHEN json_extract(tags_json, '$.status') = 'failed' THEN value END AS failed_ms,\n  CASE WHEN json_extract(tags_json, '$.status') = 'error' THEN value END AS error_ms\nFROM server_ops_metric_samples\nWHERE metric = 'server.mcp_connect_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
+              "queryType": "table",
+              "timeColumns": [
+                "time"
+              ]
+            }
+          ],
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "title": "MCP connect by status and reason",
+          "description": "Count of raw server.mcp_connect_ms samples by status and reason. COUNT(*) is the sample count; value is duration, not a counter. (none) means reason was omitted, including connected samples.",
+          "type": "table",
+          "datasource": {
+            "uid": "oppi-telemetry-sqlite",
+            "type": "frser-sqlite-datasource"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 161
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.status'), '?') AS status,\n  COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.reason')), ''), '(none)') AS reason,\n  COUNT(*) AS samples\nFROM server_ops_metric_samples\nWHERE metric = 'server.mcp_connect_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY status, reason\nORDER BY samples DESC",
+              "queryType": "table",
+              "timeColumns": []
+            }
+          ],
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm"
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Drill-down: schedule runs",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 161
+      },
+      "panels": [
+        {
+          "title": "Schedule run duration (ms)",
+          "description": "Raw server.schedule_run_ms duration, split by status. Not the HTTP request that started a manual run.",
+          "type": "timeseries",
+          "datasource": {
+            "uid": "oppi-telemetry-sqlite",
+            "type": "frser-sqlite-datasource"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 162
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "ms",
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "pointSize": 3,
+                "showPoints": "auto",
+                "spanNulls": false
+              },
+              "unit": "ms",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "rawQueryText": "SELECT ts_ms / 1000 AS time,\n  CASE WHEN json_extract(tags_json, '$.status') = 'completed' THEN value END AS completed_ms,\n  CASE WHEN json_extract(tags_json, '$.status') = 'failed' THEN value END AS failed_ms\nFROM server_ops_metric_samples\nWHERE metric = 'server.schedule_run_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
+              "queryType": "table",
+              "timeColumns": [
+                "time"
+              ]
+            }
+          ],
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "title": "Schedule runs by status, kind, and reason",
+          "description": "Count of raw server.schedule_run_ms samples by status, kind, and reason. A completed run is not a failure. (none) means reason was omitted.",
+          "type": "table",
+          "datasource": {
+            "uid": "oppi-telemetry-sqlite",
+            "type": "frser-sqlite-datasource"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 162
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.status'), '?') AS status,\n  COALESCE(json_extract(tags_json, '$.kind'), '?') AS kind,\n  COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.reason')), ''), '(none)') AS reason,\n  COUNT(*) AS samples\nFROM server_ops_metric_samples\nWHERE metric = 'server.schedule_run_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY status, kind, reason\nORDER BY samples DESC",
               "queryType": "table",
               "timeColumns": []
             }
@@ -2493,6 +2734,6 @@
   "timezone": "browser",
   "title": "Oppi Server Health",
   "uid": "oppi-server-health",
-  "version": 3,
-  "description": "Server resource health, connection and agent workload, plus collapsed drill-down for session lifecycle, push, event ring, and dictation. Sum-aggregated counters use SUM(value). Max-aggregated gauges use MAX(value). HTTP timings are raw samples."
+  "version": 4,
+  "description": "Server resource health, connection and agent workload, plus collapsed drill-down for session lifecycle, push, event ring, MCP connect, schedule runs, and dictation. Event-loop p99 is the ungated trend; max is the stall gate. Sum-aggregated counters use SUM(value). Max-aggregated gauges use MAX(value). HTTP timings and response bytes are raw samples."
 }

@@ -48,7 +48,7 @@ npm run telemetry:grafana:up
 # Dashboards: Release Preflight, Server Health, Model Routing
 ```
 
-Release Preflight is the experience view: UX latency, connection readiness, client network, dictation, and collapsed command, quick-session, and share-publish drill-down. Server Health is resource and server-ops health: event-loop lag, per-route HTTP, and collapsed session, push, event-ring, and dictation drill-down. Model Routing compares provider and model workload.
+Release Preflight is the experience view: UX latency, connection readiness, client network, dictation, thread load beside workspace load and session switch, and collapsed command, quick-session, and share-publish drill-down. Server Health is resource and server-ops health: event-loop p99 trend and max gate, per-route HTTP latency and response bytes, and collapsed session, push, event-ring, MCP connect, schedule run, and dictation drill-down. Model Routing compares provider, model, and runtime workload.
 
 ## Privacy model
 
@@ -116,7 +116,7 @@ Use this split when reading dashboards or telemetry reviews:
 
 `server.turn_duration_ms` is workload telemetry. It measures the full wall-clock duration of an agent turn. A long turn can mean the agent is handling a large task, running tools, editing files, waiting on tests, or processing a large context. Treat it as a problem only when it combines with missing progress signals, high first-token latency, stuck tool calls, errors, blocked asks, or disconnected clients.
 
-Turn and tool ops metrics carry a bounded `runtime` tag: `oppi` (classic SDK), `durable` (live durable engine: `serverDurable` and no Pi session file), or `pi-tui` (terminal mirror). They also carry the exact session-configured `provider` and `model` route when the session already has a canonical `provider/modelId`. A bounded `thinking` tag records the session-configured reasoning level when it is one of Pi's known levels. Provider fallback or per-response reasoning changes can differ from those configured-route tags. Per-tool `server.tool_duration_ms` and `server.tool_result` pair concurrent calls by `toolCallId`. An end event without a matching start records a result without duration; starts without an end are discarded at turn end. These samples never include tool arguments, output, or file paths. Use `npm run telemetry:review -- --models` to compare observed TTFT, turn and tool latency, call frequency, token use, total observed cost/output divided by tool starts, and mechanical error rates. The cost/output ratios are route-level efficiency indicators across all observed turns, not costs attributable to individual tools. Historical samples without provider/model tags stay in an explicit untagged bucket. A `status=ok` tool result means the tool finished without a mechanical error; it does not mean the agent completed the accepted task correctly.
+Turn and tool ops metrics carry a bounded `runtime` tag: `oppi` (classic SDK), `durable` (live durable engine: `serverDurable` and no Pi session file), or `pi-tui` (terminal mirror). They also carry the exact session-configured `provider` and `model` route when the session already has a canonical `provider/modelId`. A bounded `thinking` tag records the session-configured reasoning level when it is one of Pi's known levels. Provider fallback or per-response reasoning changes can differ from those configured-route tags. Per-tool `server.tool_duration_ms` and `server.tool_result` pair concurrent calls by `toolCallId`. An end event without a matching start records a result without duration; starts without an end are discarded at turn end. These samples never include tool arguments, output, or file paths. Use `npm run telemetry:review -- --models` to compare observed TTFT, turn and tool latency, call frequency, token use, total observed cost/output divided by tool starts, and mechanical error rates. The cost/output ratios are route-level efficiency indicators across all observed turns, not costs attributable to individual tools. Historical samples without provider/model or runtime tags stay in an explicit untagged bucket. `npm run telemetry:review -- --models` includes the runtime breakdown. A `status=ok` tool result means the tool finished without a mechanical error; it does not mean the agent completed the accepted task correctly.
 
 ## Experience metrics that belong on the front page
 
@@ -270,7 +270,9 @@ Query stored rows by how they were written:
 - Max-aggregated gauges (`server.broadcast_fanout`, `server.event_ring_utilization`): `value` is the flush-bucket peak. Use `MAX(value)`.
 - Raw samples, including `server.http_request_ms`, session-create timings, dictation timings, and chat metrics: `value` is one measurement. Use percentiles or `AVG`/`MAX` of `value`, and `COUNT(*)` for sample count. Do not treat that count as request volume when the emitter omits fast successful routine routes.
 
-`telemetry:review -- --http` uses the same raw-sample rule for `server.http_request_ms`: p50/p90/p99, sample count, and `status_code >= 400` rate by method and `path_pattern`.
+`telemetry:review -- --http` uses the same raw-sample rule for `server.http_request_ms` and `server.http_response_bytes`: latency p50/p90/p99, sample count, and `status_code >= 400` rate, plus response-byte p50/p90/max, by method and `path_pattern`. Percentiles are nearest-rank.
+
+`chat.thread_load_ms` has no release SLO. `chat.workspace_load_ms` (TM99 1000ms) and `chat.session_switch_ms` (TM99 600ms) were gated from observed headroom. Retained chat JSONL through 2026-10-09 has no `chat.thread_load_ms` samples; those samples start only after the iOS app that emits the metric is installed, so there is no TM99 to set a threshold against.
 
 Importer notes:
 
@@ -278,8 +280,8 @@ Importer notes:
 - writes SQLite into a Docker-managed volume for Grafana; Grafana opens it read-write so SQLite WAL-mode read queries can create sidecar shared-memory files
 - can also run manually with `npm run telemetry:import`
 - normalizes append-only daily JSONL files incrementally, and reimports a file when the importer parser version changes
-- flattens common server-op tags for split-stream panels
-- copies resource-sample `eventLoop` `p50`, `p95`, `p99`, and `max` into `server_metric_samples` (`event_loop_p50`, `event_loop_p95`, `event_loop_p99`, `event_loop_max`). Missing values stay NULL. Server Health plots p99 and max.
+- flattens common server-op tags for split-stream panels. `provider`, `model`, and `runtime` stay in `tags_json`; dashboards read them with `json_extract`. The importer parser version stays 6.
+- copies resource-sample `eventLoop` `p50`, `p95`, `p99`, and `max` into `server_metric_samples` (`event_loop_p50`, `event_loop_p95`, `event_loop_p99`, `event_loop_max`). Missing values stay NULL. Server Health plots p99 as the ungated trend and max as the stall gate.
 - `telemetry:review` derives `server.event_loop_lag_ms` from the sampler p99 and `server.event_loop_max_ms` from the sampler max. The release gate uses only `server.event_loop_max_ms` (TM99 SLO 100ms). That threshold sits between the 2026-10-06 TM99 of 50ms and the 2026-10-07 TM99 of 111ms. The p99 series is a trend, not a second gate.
 
 See `server/README.md` for the full dashboard runbook.

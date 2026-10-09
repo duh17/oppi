@@ -2,7 +2,7 @@
   "annotations": {
     "list": []
   },
-  "description": "Compare and focus observed provider/model routes. Operational success is not accepted-task correctness. Use the Provider and Model dropdowns to isolate a set.",
+  "description": "Compare and focus observed provider/model routes and runtime (oppi, durable, pi-tui). Missing provider, model, or runtime tags are untagged. Operational success is not accepted-task correctness. Use the Provider, Model, and Runtime dropdowns to isolate a set.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -18,7 +18,7 @@
       "id": 1,
       "options": {
         "code": { "language": "markdown", "showLineNumbers": false, "showMiniMap": false },
-        "content": "Use **Provider** and **Model** at the top to compare a set or focus one route. Missing `provider`+`model` tags are **untagged**.\n\nBars and tables are mechanical: TTFT, cost, turn/tool errors, USD per 1k output tokens. `status=ok` is not accepted-task correctness. Do not read these as TPS or quality. Pair with `npm run telemetry:review -- --models` for p50/p95.",
+        "content": "Use **Provider**, **Model**, and **Runtime** at the top to compare a set or focus one route. Missing `provider`+`model` tags, and missing `runtime`, are **untagged**.\n\nBars and tables are mechanical: TTFT, cost, turn/tool errors, USD per 1k output tokens. The runtime table breaks those down by oppi, durable, and pi-tui. `status=ok` is not accepted-task correctness. Do not read these as TPS or quality. Pair with `npm run telemetry:review -- --models` for p50/p95 and the runtime breakdown.",
         "mode": "markdown"
       },
       "title": "",
@@ -47,7 +47,7 @@
       "targets": [
         {
           "queryType": "table",
-          "rawQueryText": "SELECT COUNT(*) AS value\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_duration_ms'\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})",
+          "rawQueryText": "SELECT COUNT(*) AS value\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_duration_ms'\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') IN (${runtime:sqlstring})",
           "refId": "A",
           "timeColumns": []
         }
@@ -77,7 +77,7 @@
       "targets": [
         {
           "queryType": "table",
-          "rawQueryText": "SELECT COUNT(*) AS value\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_ttft_ms','server.turn_duration_ms','server.turn_error','server.turn_tool_calls','server.turn_input_tokens','server.turn_output_tokens','server.turn_cost','server.tool_duration_ms','server.tool_result')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND (\n    NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL\n    OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL\n  )",
+          "rawQueryText": "SELECT COUNT(*) AS value\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_ttft_ms','server.turn_duration_ms','server.turn_error','server.turn_tool_calls','server.turn_input_tokens','server.turn_output_tokens','server.turn_cost','server.tool_duration_ms','server.tool_result')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') IN (${runtime:sqlstring})\n  AND (\n    NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL\n    OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL\n  )",
           "refId": "A",
           "timeColumns": []
         }
@@ -108,7 +108,7 @@
       "targets": [
         {
           "queryType": "table",
-          "rawQueryText": "SELECT ROUND(COALESCE(SUM(value), 0) / 1000000.0, 2) AS value\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_cost'\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})",
+          "rawQueryText": "SELECT ROUND(COALESCE(SUM(value), 0) / 1000000.0, 2) AS value\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_cost'\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') IN (${runtime:sqlstring})",
           "refId": "A",
           "timeColumns": []
         }
@@ -146,7 +146,7 @@
       "targets": [
         {
           "queryType": "table",
-          "rawQueryText": "SELECT ROUND(\n  100.0 * COALESCE(SUM(CASE WHEN metric = 'server.turn_error' THEN value ELSE 0 END), 0)\n  / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n  1\n) AS value\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_error', 'server.turn_duration_ms')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})",
+          "rawQueryText": "SELECT ROUND(\n  100.0 * COALESCE(SUM(CASE WHEN metric = 'server.turn_error' THEN value ELSE 0 END), 0)\n  / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n  1\n) AS value\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_error', 'server.turn_duration_ms')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') IN (${runtime:sqlstring})",
           "refId": "A",
           "timeColumns": []
         }
@@ -184,7 +184,7 @@
       "targets": [
         {
           "queryType": "table",
-          "rawQueryText": "SELECT ROUND(\n  100.0 * COALESCE(SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END), 0)\n  / MAX(1, SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END)),\n  1\n) AS value\nFROM server_ops_metric_samples\nWHERE metric = 'server.tool_result'\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})",
+          "rawQueryText": "SELECT ROUND(\n  100.0 * COALESCE(SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END), 0)\n  / MAX(1, SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END)),\n  1\n) AS value\nFROM server_ops_metric_samples\nWHERE metric = 'server.tool_result'\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') IN (${runtime:sqlstring})",
           "refId": "A",
           "timeColumns": []
         }
@@ -216,7 +216,7 @@
       "targets": [
         {
           "queryType": "table",
-          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  ROUND(SUM(value) / 1000000.0, 2) AS cost_usd\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_cost'\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1\nORDER BY cost_usd DESC",
+          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  ROUND(SUM(value) / 1000000.0, 2) AS cost_usd\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_cost'\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') IN (${runtime:sqlstring})\nGROUP BY 1\nORDER BY cost_usd DESC",
           "refId": "A",
           "timeColumns": []
         }
@@ -248,7 +248,7 @@
       "targets": [
         {
           "queryType": "table",
-          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  ROUND(AVG(value), 0) AS ttft_avg_ms\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_ttft_ms'\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1\nORDER BY ttft_avg_ms DESC",
+          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  ROUND(AVG(value), 0) AS ttft_avg_ms\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_ttft_ms'\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') IN (${runtime:sqlstring})\nGROUP BY 1\nORDER BY ttft_avg_ms DESC",
           "refId": "A",
           "timeColumns": []
         }
@@ -290,7 +290,7 @@
       "targets": [
         {
           "queryType": "table",
-          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.turn_error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n    1\n  ) AS turn_err_pct\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_error', 'server.turn_duration_ms')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1\nHAVING SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END) > 0\nORDER BY turn_err_pct DESC",
+          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.turn_error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n    1\n  ) AS turn_err_pct\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_error', 'server.turn_duration_ms')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') IN (${runtime:sqlstring})\nGROUP BY 1\nHAVING SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END) > 0\nORDER BY turn_err_pct DESC",
           "refId": "A",
           "timeColumns": []
         }
@@ -322,7 +322,7 @@
       "targets": [
         {
           "queryType": "table",
-          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  ROUND(\n    SUM(CASE WHEN metric = 'server.turn_cost' THEN value ELSE 0 END)\n    / MAX(1.0, SUM(CASE WHEN metric = 'server.turn_output_tokens' THEN value ELSE 0 END) * 1000.0),\n    4\n  ) AS usd_per_1k_out\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_cost', 'server.turn_output_tokens')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1\nHAVING SUM(CASE WHEN metric = 'server.turn_output_tokens' THEN value ELSE 0 END) > 0\nORDER BY usd_per_1k_out DESC",
+          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  ROUND(\n    SUM(CASE WHEN metric = 'server.turn_cost' THEN value ELSE 0 END)\n    / MAX(1.0, SUM(CASE WHEN metric = 'server.turn_output_tokens' THEN value ELSE 0 END) * 1000.0),\n    4\n  ) AS usd_per_1k_out\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_cost', 'server.turn_output_tokens')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') IN (${runtime:sqlstring})\nGROUP BY 1\nHAVING SUM(CASE WHEN metric = 'server.turn_output_tokens' THEN value ELSE 0 END) > 0\nORDER BY usd_per_1k_out DESC",
           "refId": "A",
           "timeColumns": []
         }
@@ -359,7 +359,7 @@
       "targets": [
         {
           "queryType": "table",
-          "rawQueryText": "SELECT\n  ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  SUM(value) / 1000000.0 AS cost_usd\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_cost'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1, 2\nORDER BY 1",
+          "rawQueryText": "SELECT\n  ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  SUM(value) / 1000000.0 AS cost_usd\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_cost'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') IN (${runtime:sqlstring})\nGROUP BY 1, 2\nORDER BY 1",
           "timeColumns": ["time"]
         }
       ],
@@ -401,7 +401,7 @@
       "targets": [
         {
           "queryType": "table",
-          "rawQueryText": "SELECT\n  ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  SUM(value) AS turn_errors\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_error'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1, 2\nORDER BY 1",
+          "rawQueryText": "SELECT\n  ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  SUM(value) AS turn_errors\nFROM server_ops_metric_samples\nWHERE metric = 'server.turn_error'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') IN (${runtime:sqlstring})\nGROUP BY 1, 2\nORDER BY 1",
           "timeColumns": ["time"]
         }
       ],
@@ -413,6 +413,95 @@
         }
       ],
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "oppi-telemetry-sqlite"
+      },
+      "description": "TTFT, turn error %, tool error %, and observed cost by runtime. Missing runtime is untagged. Turn and tool error rates are mechanical, not accepted-task correctness. Cost is SUM(server.turn_cost) / 1e6.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_usd"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "turn_err_pct"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tool_err_pct"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "id": 17,
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "queryType": "table",
+          "rawQueryText": "SELECT\n  COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') AS runtime,\n  CAST(SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END) AS INTEGER) AS turns,\n  ROUND(AVG(CASE WHEN metric = 'server.turn_ttft_ms' THEN value END), 0) AS ttft_avg_ms,\n  ROUND(SUM(CASE WHEN metric = 'server.turn_cost' THEN value ELSE 0 END) / 1000000.0, 2) AS cost_usd,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.turn_error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n    1\n  ) AS turn_err_pct,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END)),\n    1\n  ) AS tool_err_pct\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_ttft_ms','server.turn_duration_ms','server.turn_error','server.turn_cost','server.tool_result')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') IN (${runtime:sqlstring})\nGROUP BY 1\nORDER BY CASE WHEN runtime = 'untagged' THEN 1 ELSE 0 END, cost_usd DESC, turns DESC",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "By runtime",
+      "type": "table"
     },
     {
       "datasource": { "type": "frser-sqlite-datasource", "uid": "oppi-telemetry-sqlite" },
@@ -467,13 +556,13 @@
           }
         ]
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 31 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 39 },
       "id": 7,
       "options": { "cellHeight": "sm", "showHeader": true },
       "targets": [
         {
           "queryType": "table",
-          "rawQueryText": "SELECT\n  COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') AS provider,\n  CAST(SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END) AS INTEGER) AS turns,\n  ROUND(SUM(CASE WHEN metric = 'server.turn_cost' THEN value ELSE 0 END) / 1000000.0, 2) AS cost_usd,\n  ROUND(AVG(CASE WHEN metric = 'server.turn_ttft_ms' THEN value END), 0) AS ttft_avg_ms,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.turn_error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n    1\n  ) AS turn_err_pct,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END)),\n    1\n  ) AS tool_err_pct\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_ttft_ms','server.turn_duration_ms','server.turn_error','server.turn_cost','server.tool_result')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1\nORDER BY CASE WHEN provider = 'untagged' THEN 1 ELSE 0 END, cost_usd DESC, turns DESC",
+          "rawQueryText": "SELECT\n  COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') AS provider,\n  CAST(SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END) AS INTEGER) AS turns,\n  ROUND(SUM(CASE WHEN metric = 'server.turn_cost' THEN value ELSE 0 END) / 1000000.0, 2) AS cost_usd,\n  ROUND(AVG(CASE WHEN metric = 'server.turn_ttft_ms' THEN value END), 0) AS ttft_avg_ms,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.turn_error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n    1\n  ) AS turn_err_pct,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END)),\n    1\n  ) AS tool_err_pct\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_ttft_ms','server.turn_duration_ms','server.turn_error','server.turn_cost','server.tool_result')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') IN (${runtime:sqlstring})\nGROUP BY 1\nORDER BY CASE WHEN provider = 'untagged' THEN 1 ELSE 0 END, cost_usd DESC, turns DESC",
           "refId": "A",
           "timeColumns": []
         }
@@ -508,13 +597,13 @@
           }
         ]
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 31 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 39 },
       "id": 8,
       "options": { "cellHeight": "sm", "showHeader": true },
       "targets": [
         {
           "queryType": "table",
-          "rawQueryText": "SELECT\n  COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.tool')), ''), 'unknown') AS tool,\n  CAST(SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END) AS INTEGER) AS calls,\n  CAST(SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END) AS INTEGER) AS errors,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END)),\n    1\n  ) AS err_pct,\n  ROUND(AVG(CASE WHEN metric = 'server.tool_duration_ms' THEN value END), 0) AS duration_avg_ms\nFROM server_ops_metric_samples\nWHERE metric IN ('server.tool_result', 'server.tool_duration_ms')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1\nHAVING calls > 0\nORDER BY errors DESC, calls DESC",
+          "rawQueryText": "SELECT\n  COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.tool')), ''), 'unknown') AS tool,\n  CAST(SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END) AS INTEGER) AS calls,\n  CAST(SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END) AS INTEGER) AS errors,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END)),\n    1\n  ) AS err_pct,\n  ROUND(AVG(CASE WHEN metric = 'server.tool_duration_ms' THEN value END), 0) AS duration_avg_ms\nFROM server_ops_metric_samples\nWHERE metric IN ('server.tool_result', 'server.tool_duration_ms')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') IN (${runtime:sqlstring})\nGROUP BY 1\nHAVING calls > 0\nORDER BY errors DESC, calls DESC",
           "refId": "A",
           "timeColumns": []
         }
@@ -589,13 +678,13 @@
           }
         ]
       },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 39 },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 47 },
       "id": 9,
       "options": { "cellHeight": "sm", "showHeader": true },
       "targets": [
         {
           "queryType": "table",
-          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  CAST(SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END) AS INTEGER) AS turns,\n  ROUND(AVG(CASE WHEN metric = 'server.turn_ttft_ms' THEN value END), 0) AS ttft_avg_ms,\n  ROUND(AVG(CASE WHEN metric = 'server.turn_duration_ms' THEN value END) / 1000.0, 1) AS turn_avg_s,\n  CAST(COALESCE(SUM(CASE WHEN metric = 'server.turn_tool_calls' THEN value ELSE 0 END), 0) AS INTEGER) AS tool_starts,\n  ROUND(\n    CAST(COALESCE(SUM(CASE WHEN metric = 'server.turn_tool_calls' THEN value ELSE 0 END), 0) AS REAL)\n    / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n    2\n  ) AS tools_per_turn,\n  ROUND(SUM(CASE WHEN metric = 'server.turn_cost' THEN value ELSE 0 END) / 1000000.0, 2) AS cost_usd,\n  ROUND(\n    (SUM(CASE WHEN metric = 'server.turn_cost' THEN value ELSE 0 END) / 1000000.0)\n    / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n    4\n  ) AS usd_per_turn,\n  ROUND(\n    SUM(CASE WHEN metric = 'server.turn_cost' THEN value ELSE 0 END)\n    / MAX(1.0, SUM(CASE WHEN metric = 'server.turn_output_tokens' THEN value ELSE 0 END) * 1000.0),\n    4\n  ) AS usd_per_1k_out,\n  CAST(COALESCE(SUM(CASE WHEN metric = 'server.turn_output_tokens' THEN value ELSE 0 END), 0) AS INTEGER) AS output_tokens,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.turn_error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n    1\n  ) AS turn_err_pct,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END)),\n    1\n  ) AS tool_err_pct\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_ttft_ms','server.turn_duration_ms','server.turn_error','server.turn_tool_calls','server.turn_output_tokens','server.turn_cost','server.tool_result')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1\nHAVING turns > 0 OR tool_starts > 0 OR cost_usd > 0\nORDER BY CASE WHEN route = 'untagged' THEN 1 ELSE 0 END, cost_usd DESC, turns DESC",
+          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  CAST(SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END) AS INTEGER) AS turns,\n  ROUND(AVG(CASE WHEN metric = 'server.turn_ttft_ms' THEN value END), 0) AS ttft_avg_ms,\n  ROUND(AVG(CASE WHEN metric = 'server.turn_duration_ms' THEN value END) / 1000.0, 1) AS turn_avg_s,\n  CAST(COALESCE(SUM(CASE WHEN metric = 'server.turn_tool_calls' THEN value ELSE 0 END), 0) AS INTEGER) AS tool_starts,\n  ROUND(\n    CAST(COALESCE(SUM(CASE WHEN metric = 'server.turn_tool_calls' THEN value ELSE 0 END), 0) AS REAL)\n    / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n    2\n  ) AS tools_per_turn,\n  ROUND(SUM(CASE WHEN metric = 'server.turn_cost' THEN value ELSE 0 END) / 1000000.0, 2) AS cost_usd,\n  ROUND(\n    (SUM(CASE WHEN metric = 'server.turn_cost' THEN value ELSE 0 END) / 1000000.0)\n    / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n    4\n  ) AS usd_per_turn,\n  ROUND(\n    SUM(CASE WHEN metric = 'server.turn_cost' THEN value ELSE 0 END)\n    / MAX(1.0, SUM(CASE WHEN metric = 'server.turn_output_tokens' THEN value ELSE 0 END) * 1000.0),\n    4\n  ) AS usd_per_1k_out,\n  CAST(COALESCE(SUM(CASE WHEN metric = 'server.turn_output_tokens' THEN value ELSE 0 END), 0) AS INTEGER) AS output_tokens,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.turn_error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.turn_duration_ms' THEN 1 ELSE 0 END)),\n    1\n  ) AS turn_err_pct,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END)),\n    1\n  ) AS tool_err_pct\nFROM server_ops_metric_samples\nWHERE metric IN ('server.turn_ttft_ms','server.turn_duration_ms','server.turn_error','server.turn_tool_calls','server.turn_output_tokens','server.turn_cost','server.tool_result')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') IN (${runtime:sqlstring})\nGROUP BY 1\nHAVING turns > 0 OR tool_starts > 0 OR cost_usd > 0\nORDER BY CASE WHEN route = 'untagged' THEN 1 ELSE 0 END, cost_usd DESC, turns DESC",
           "refId": "A",
           "timeColumns": []
         }
@@ -630,13 +719,13 @@
           }
         ]
       },
-      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 49 },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 57 },
       "id": 10,
       "options": { "cellHeight": "sm", "showHeader": true },
       "targets": [
         {
           "queryType": "table",
-          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.tool')), ''), 'unknown') AS tool,\n  CAST(SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END) AS INTEGER) AS calls,\n  ROUND(AVG(CASE WHEN metric = 'server.tool_duration_ms' THEN value END), 0) AS duration_avg_ms,\n  CAST(SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END) AS INTEGER) AS errors,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END)),\n    1\n  ) AS err_pct\nFROM server_ops_metric_samples\nWHERE metric IN ('server.tool_result', 'server.tool_duration_ms')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\nGROUP BY 1, 2\nHAVING calls > 0\nORDER BY CASE WHEN route = 'untagged' THEN 1 ELSE 0 END, calls DESC, tool",
+          "rawQueryText": "SELECT\n  CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END AS route,\n  COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.tool')), ''), 'unknown') AS tool,\n  CAST(SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END) AS INTEGER) AS calls,\n  ROUND(AVG(CASE WHEN metric = 'server.tool_duration_ms' THEN value END), 0) AS duration_avg_ms,\n  CAST(SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END) AS INTEGER) AS errors,\n  ROUND(\n    100.0 * SUM(CASE WHEN metric = 'server.tool_result' AND json_extract(tags_json, '$.status') = 'error' THEN value ELSE 0 END)\n    / MAX(1, SUM(CASE WHEN metric = 'server.tool_result' THEN value ELSE 0 END)),\n    1\n  ) AS err_pct\nFROM server_ops_metric_samples\nWHERE metric IN ('server.tool_result', 'server.tool_duration_ms')\n  AND ts_ms BETWEEN $__from AND $__to\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.provider')), ''), 'untagged') IN (${provider:sqlstring})\n  AND (CASE WHEN NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.provider'), '')), '') IS NULL OR NULLIF(TRIM(COALESCE(json_extract(tags_json, '$.model'), '')), '') IS NULL THEN 'untagged' ELSE json_extract(tags_json, '$.provider') || '/' || json_extract(tags_json, '$.model') END) IN (${route:sqlstring})\n  AND COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') IN (${runtime:sqlstring})\nGROUP BY 1, 2\nHAVING calls > 0\nORDER BY CASE WHEN route = 'untagged' THEN 1 ELSE 0 END, calls DESC, tool",
           "refId": "A",
           "timeColumns": []
         }
@@ -686,6 +775,35 @@
         "skipUrlSync": false,
         "sort": 1,
         "type": "query"
+      },
+      {
+        "allValue": null,
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "oppi-telemetry-sqlite"
+        },
+        "definition": "SELECT DISTINCT COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') AS __text FROM server_ops_metric_samples WHERE metric IN ('server.turn_duration_ms', 'server.turn_cost', 'server.tool_result') AND ts_ms BETWEEN $__from AND $__to ORDER BY 1",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Runtime",
+        "multi": true,
+        "name": "runtime",
+        "options": [],
+        "query": "SELECT DISTINCT COALESCE(NULLIF(TRIM(json_extract(tags_json, '$.runtime')), ''), 'untagged') AS __text FROM server_ops_metric_samples WHERE metric IN ('server.turn_duration_ms', 'server.turn_cost', 'server.tool_result') AND ts_ms BETWEEN $__from AND $__to ORDER BY 1",
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
       }
     ]
   },
@@ -697,6 +815,6 @@
   "timezone": "browser",
   "title": "Oppi Model Routing",
   "uid": "oppi-model-routing",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }

@@ -5,7 +5,9 @@
  * flags SLO reference threshold violations, and provides dictation-focused
  * and model-routing dashboard views. `--models` is read-only operational
  * telemetry: success is not accepted-task correctness. `--http` breaks
- * raw `server.http_request_ms` samples down by method and path pattern.
+ * raw `server.http_request_ms` and `server.http_response_bytes` samples down
+ * by method and path pattern. `--models` includes a runtime breakdown;
+ * missing runtime stays in an explicit untagged bucket.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -169,12 +171,25 @@ export interface ModelToolReviewRow {
   untagged: boolean;
 }
 
+export interface RuntimeReviewRow {
+  runtime: string | null;
+  untagged: boolean;
+  samples: number;
+  turns: number;
+  ttft: LatencySummary;
+  turnErrorRate: number;
+  toolErrorRate: number;
+  costUsd: number;
+}
+
 export interface ModelsReviewOutput {
   days: number;
   untaggedSamples: number;
+  untaggedRuntimeSamples: number;
   note: string;
   models: ModelReviewRow[];
   modelTools: ModelToolReviewRow[];
+  runtimes: RuntimeReviewRow[];
 }
 
 const MODELS_REVIEW_NOTE =
@@ -902,6 +917,44 @@ function modelRoutingKey(provider: string | null, model: string | null): string 
   return `${provider}\0${model}`;
 }
 
+function runtimeIdentity(tags: Record<string, string> | undefined): {
+  runtime: string | null;
+  untagged: boolean;
+  key: string;
+} {
+  const runtime = tags?.runtime?.trim() || null;
+  if (!runtime) return { runtime: null, untagged: true, key: "untagged" };
+  return { runtime, untagged: false, key: runtime };
+}
+
+interface RuntimeAccumulator {
+  runtime: string | null;
+  untagged: boolean;
+  samples: number;
+  ttft: number[];
+  turnDuration: number[];
+  turnErrors: number;
+  toolResults: number;
+  toolErrors: number;
+  costMicrodollars: number;
+}
+
+function emptyRuntimeAccumulator(
+  identity: ReturnType<typeof runtimeIdentity>,
+): RuntimeAccumulator {
+  return {
+    runtime: identity.runtime,
+    untagged: identity.untagged,
+    samples: 0,
+    ttft: [],
+    turnDuration: [],
+    turnErrors: 0,
+    toolResults: 0,
+    toolErrors: 0,
+    costMicrodollars: 0,
+  };
+}
+
 function routingIdentity(tags: Record<string, string> | undefined): {
   provider: string | null;
   model: string | null;
@@ -965,12 +1018,30 @@ function emptyModelAccumulator(identity: ReturnType<typeof routingIdentity>): Mo
 export function reviewModels(data: LoadResult, options: { days: number }): ModelsReviewOutput {
   const models = new Map<string, ModelAccumulator>();
   const modelTools = new Map<string, ModelToolAccumulator>();
+  const runtimes = new Map<string, RuntimeAccumulator>();
   let untaggedSamples = 0;
+  let untaggedRuntimeSamples = 0;
 
   for (const sample of data.samples) {
     if (!MODEL_REVIEW_METRICS.has(sample.metric)) continue;
     const identity = routingIdentity(sample.tags);
     if (identity.untagged) untaggedSamples += 1;
+    const runtime = runtimeIdentity(sample.tags);
+    if (runtime.untagged) untaggedRuntimeSamples += 1;
+    const runtimeRow = runtimes.get(runtime.key) ?? emptyRuntimeAccumulator(runtime);
+    runtimeRow.samples += 1;
+    if (sample.metric === "server.turn_ttft_ms") runtimeRow.ttft.push(sample.value);
+    if (sample.metric === "server.turn_duration_ms") runtimeRow.turnDuration.push(sample.value);
+    if (sample.metric === "server.turn_error") runtimeRow.turnErrors += Math.max(0, sample.value);
+    if (sample.metric === "server.tool_result") {
+      const results = Math.max(0, sample.value);
+      runtimeRow.toolResults += results;
+      if (sample.tags?.status === "error") runtimeRow.toolErrors += results;
+    }
+    if (sample.metric === "server.turn_cost") {
+      runtimeRow.costMicrodollars += Math.max(0, sample.value);
+    }
+    runtimes.set(runtime.key, runtimeRow);
     const modelRow = models.get(identity.key) ?? emptyModelAccumulator(identity);
     modelRow.samples += 1;
     if (sample.metric === "server.turn_ttft_ms") modelRow.ttft.push(sample.value);
@@ -1075,12 +1146,33 @@ export function reviewModels(data: LoadResult, options: { days: number }): Model
       return b.calls - a.calls || a.tool.localeCompare(b.tool);
     });
 
+  const runtimeRows = [...runtimes.values()]
+    .map((row) => {
+      const turns = row.turnDuration.length;
+      return {
+        runtime: row.runtime,
+        untagged: row.untagged,
+        samples: row.samples,
+        turns,
+        ttft: latencySummary(row.ttft),
+        turnErrorRate: ratio(row.turnErrors, turns),
+        toolErrorRate: ratio(row.toolErrors, row.toolResults),
+        costUsd: row.costMicrodollars / 1_000_000,
+      } satisfies RuntimeReviewRow;
+    })
+    .sort((a, b) => {
+      if (a.untagged !== b.untagged) return a.untagged ? 1 : -1;
+      return b.costUsd - a.costUsd || b.samples - a.samples;
+    });
+
   return {
     days: options.days,
     untaggedSamples,
+    untaggedRuntimeSamples,
     note: MODELS_REVIEW_NOTE,
     models: modelRows,
     modelTools: modelToolRows,
+    runtimes: runtimeRows,
   };
 }
 
@@ -1106,6 +1198,28 @@ export function formatModelsReview(
   lines.push(
     `  Historical untagged samples: ${result.untaggedSamples} (pre-tag or missing provider/model)`,
   );
+  lines.push(
+    `  Historical untagged runtime samples: ${result.untaggedRuntimeSamples} (pre-tag or missing runtime)`,
+  );
+  lines.push("");
+  lines.push(`${c.bold}${c.cyan}By runtime${c.reset}`);
+  lines.push(
+    `  ${"Runtime".padEnd(12)} ${"samples".padStart(7)} ${"turns".padStart(6)} ${"ttft p50/p95".padStart(16)} ${"cost".padStart(10)} ${"turn err".padStart(8)} ${"tool err".padStart(8)}`,
+  );
+  if (result.runtimes.length === 0) {
+    lines.push(`  ${c.dim}no routing samples${c.reset}`);
+  } else {
+    for (const row of result.runtimes) {
+      const label = row.runtime ?? "untagged";
+      const ttft =
+        row.ttft.count > 0
+          ? `${fmtValue(row.ttft.p50, "ms")}/${fmtValue(row.ttft.p95, "ms")}`
+          : "—";
+      lines.push(
+        `  ${label.slice(0, 12).padEnd(12)} ${String(row.samples).padStart(7)} ${String(row.turns).padStart(6)} ${ttft.padStart(16)} ${formatUsd(row.costUsd).padStart(10)} ${fmtPercent(row.turnErrorRate).padStart(8)} ${fmtPercent(row.toolErrorRate).padStart(8)}`,
+      );
+    }
+  }
   lines.push("");
   lines.push(`${c.bold}${c.cyan}By model${c.reset}`);
   lines.push(
@@ -1144,17 +1258,21 @@ export function formatModelsReview(
 }
 
 export const HTTP_REVIEW_NOTE =
-  "server.http_request_ms rows are raw samples, not sum- or max-aggregated buckets. Fast successful routine routes are omitted, so sample count is not request volume. error_rate is the share of samples with status_code >= 400.";
+  "server.http_request_ms and server.http_response_bytes rows are raw samples, not sum- or max-aggregated buckets. Fast successful routine routes are omitted, so sample count is not request volume. error_rate is the share of request samples with status_code >= 400. Byte p50/p90 use the same nearest-rank percentile as latency; max is the largest response sample.";
 
 export interface HttpRouteReviewRow {
   method: string;
   pathPattern: string;
   samples: number;
-  p50: number;
-  p90: number;
-  p99: number;
+  p50: number | null;
+  p90: number | null;
+  p99: number | null;
   errors: number;
   errorRate: number;
+  byteSamples: number;
+  bytesP50: number | null;
+  bytesP90: number | null;
+  bytesMax: number | null;
 }
 
 export interface HttpReviewOutput {
@@ -1171,43 +1289,62 @@ function httpStatusCode(tags: Record<string, string> | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function nullablePercentile(sorted: number[], p: number): number | null {
+  if (sorted.length === 0) return null;
+  return routingPercentile(sorted, p);
+}
+
 export function reviewHttp(data: LoadResult, options: { days: number }): HttpReviewOutput {
   const byRoute = new Map<
     string,
-    { method: string; pathPattern: string; values: number[]; errors: number }
+    { method: string; pathPattern: string; latency: number[]; errors: number; bytes: number[] }
   >();
 
   for (const sample of data.samples) {
-    if (sample.metric !== "server.http_request_ms") continue;
+    if (sample.metric !== "server.http_request_ms" && sample.metric !== "server.http_response_bytes") {
+      continue;
+    }
     const method = sample.tags?.method?.trim() || "?";
     const pathPattern = sample.tags?.path_pattern?.trim() || "?";
     const key = `${method}\0${pathPattern}`;
     let row = byRoute.get(key);
     if (!row) {
-      row = { method, pathPattern, values: [], errors: 0 };
+      row = { method, pathPattern, latency: [], errors: 0, bytes: [] };
       byRoute.set(key, row);
     }
-    row.values.push(sample.value);
+    if (sample.metric === "server.http_response_bytes") {
+      row.bytes.push(sample.value);
+      continue;
+    }
+    row.latency.push(sample.value);
     if (httpStatusCode(sample.tags) >= 400) row.errors += 1;
   }
 
   const routes = [...byRoute.values()]
     .map((row) => {
-      const sorted = [...row.values].sort((a, b) => a - b);
+      const latency = [...row.latency].sort((a, b) => a - b);
+      const bytes = [...row.bytes].sort((a, b) => a - b);
       return {
         method: row.method,
         pathPattern: row.pathPattern,
-        samples: sorted.length,
-        p50: routingPercentile(sorted, 50),
-        p90: routingPercentile(sorted, 90),
-        p99: routingPercentile(sorted, 99),
+        samples: latency.length,
+        p50: nullablePercentile(latency, 50),
+        p90: nullablePercentile(latency, 90),
+        p99: nullablePercentile(latency, 99),
         errors: row.errors,
-        errorRate: ratio(row.errors, sorted.length),
+        errorRate: ratio(row.errors, latency.length),
+        byteSamples: bytes.length,
+        bytesP50: nullablePercentile(bytes, 50),
+        bytesP90: nullablePercentile(bytes, 90),
+        bytesMax: bytes.length > 0 ? bytes[bytes.length - 1] : null,
       } satisfies HttpRouteReviewRow;
     })
     .sort(
       (a, b) =>
-        b.samples - a.samples || b.p99 - a.p99 || a.pathPattern.localeCompare(b.pathPattern),
+        b.samples - a.samples ||
+        b.byteSamples - a.byteSamples ||
+        (b.p99 ?? -1) - (a.p99 ?? -1) ||
+        a.pathPattern.localeCompare(b.pathPattern),
     );
 
   return {
@@ -1230,15 +1367,16 @@ export function formatHttpReview(
   lines.push(`  ${c.dim}${result.note}${c.reset}`);
   lines.push("");
   lines.push(
-    `  ${"Method".padEnd(6)} ${"Path".padEnd(68)} ${"n".padStart(7)} ${"p50".padStart(8)} ${"p90".padStart(8)} ${"p99".padStart(8)} ${"err%".padStart(7)}`,
+    `  ${"Method".padEnd(6)} ${"Path".padEnd(68)} ${"n".padStart(7)} ${"p50".padStart(8)} ${"p90".padStart(8)} ${"p99".padStart(8)} ${"err%".padStart(7)} ${"b_n".padStart(7)} ${"b_p50".padStart(8)} ${"b_p90".padStart(8)} ${"b_max".padStart(8)}`,
   );
   if (result.routes.length === 0) {
-    lines.push(`  ${c.dim}no server.http_request_ms samples${c.reset}`);
+    lines.push(`  ${c.dim}no server.http_request_ms or server.http_response_bytes samples${c.reset}`);
     return lines.join("\n");
   }
   for (const row of result.routes) {
+    const err = row.samples > 0 ? fmtPercent(row.errorRate) : "—";
     lines.push(
-      `  ${row.method.slice(0, 6).padEnd(6)} ${row.pathPattern.slice(0, 68).padEnd(68)} ${String(row.samples).padStart(7)} ${fmtValue(row.p50, "ms").padStart(8)} ${fmtValue(row.p90, "ms").padStart(8)} ${fmtValue(row.p99, "ms").padStart(8)} ${fmtPercent(row.errorRate).padStart(7)}`,
+      `  ${row.method.slice(0, 6).padEnd(6)} ${row.pathPattern.slice(0, 68).padEnd(68)} ${String(row.samples).padStart(7)} ${fmtOptional(row.p50, "ms").padStart(8)} ${fmtOptional(row.p90, "ms").padStart(8)} ${fmtOptional(row.p99, "ms").padStart(8)} ${err.padStart(7)} ${String(row.byteSamples).padStart(7)} ${fmtOptional(row.bytesP50, "bytes").padStart(8)} ${fmtOptional(row.bytesP90, "bytes").padStart(8)} ${fmtOptional(row.bytesMax, "bytes").padStart(8)}`,
     );
   }
   return lines.join("\n");
@@ -1774,6 +1912,10 @@ function writeSvgReport(svgPath: string, svg: string): string {
   return resolvedPath;
 }
 
+function fmtOptional(value: number | null, unit: string): string {
+  return value == null ? "—" : fmtValue(value, unit);
+}
+
 export function fmtValue(n: number, unit: string = "ms"): string {
   if (unit === "ms") {
     if (n >= 10_000) return `${(n / 1_000).toFixed(1)}s`;
@@ -1855,6 +1997,7 @@ const AGENT_WORKLOAD_METRICS = new Set([
 ]);
 
 function informationalGroup(metric: string): string {
+  // chat.thread_load_ms stays no_slo: no installed-app samples yet, so there is no TM99 to gate.
   if (
     metric === "server.turn_ttft_ms" ||
     metric === "chat.thread_load_ms" ||
@@ -2311,12 +2454,13 @@ Options:
   --wide                Full table with all columns
   --dictation           Dictation-focused dashboard (UX + backend + assets)
                         Defaults to --by engine,source,provider_id,model
-  --models              Read-only routing review by exact provider/model and tool.
-                        Historical untagged samples stay explicit. Operational
-                        success is not accepted-task correctness.
-  --http                Per-route server.http_request_ms table (p50/p90/p99,
-                        sample count, status_code>=400 rate). Raw samples;
-                        fast successful routine routes are omitted.
+  --models              Read-only routing review by exact provider/model, runtime, and tool.
+                        Missing provider/model or runtime stays in an explicit untagged
+                        bucket. Operational success is not accepted-task correctness.
+  --http                Per-route server.http_request_ms table (p50/p90/p99, sample count,
+                        status_code>=400 rate) plus server.http_response_bytes p50/p90/max.
+                        Same nearest-rank percentile. Raw samples; fast successful routine
+                        routes are omitted.
   --by <tags>           Breakdown tags (comma-separated). Example: engine,source,provider_id,model
   --json                Machine-readable JSON
   --compact             Minimal JSON for agents

@@ -62,6 +62,22 @@ describe("telemetry-review svg reporting", () => {
     expect(SLO_THRESHOLDS).not.toHaveProperty("chat.session_list_row_compute_ms");
     expect(SLO_THRESHOLDS).not.toHaveProperty("server.event_loop_lag_ms");
     expect(SLO_THRESHOLDS["server.event_loop_max_ms"]?.p95).toBe(100);
+    expect(SLO_THRESHOLDS).not.toHaveProperty("chat.thread_load_ms");
+  });
+
+  it("leaves chat.thread_load_ms ungated until installed-app samples exist", () => {
+    const result = review(
+      {
+        values: { "chat.thread_load_ms": { vals: [40, 80], unit: "ms" } },
+        byBuild: {},
+        buildSummary: {},
+        samples: [],
+        totalSamples: 2,
+        filesRead: 1,
+      },
+      { days: 1, dataDir: "/tmp/oppi-test-data", dictationOnly: false, byTags: [] },
+    );
+    expect(result.metrics["chat.thread_load_ms"]?.status).toBe("no_slo");
   });
 
   it("gates event-loop stalls on the sampler interval max and leaves p99 ungated", () => {
@@ -496,6 +512,126 @@ describe("telemetry-review --models", () => {
     expect(text).toContain("p95");
     expect(text).toContain("Total$/call");
   });
+
+  it("groups runtime and keeps missing runtime in an untagged bucket", () => {
+    const now = Date.now();
+    const result = reviewModels(
+      {
+        values: {},
+        byBuild: {},
+        buildSummary: {},
+        samples: [
+          {
+            ts: now,
+            metric: "server.turn_duration_ms",
+            value: 1_000,
+            unit: "ms",
+            tags: { provider: "openai", model: "gpt-5.5", runtime: "durable" },
+          },
+          {
+            ts: now,
+            metric: "server.turn_ttft_ms",
+            value: 100,
+            unit: "ms",
+            tags: { provider: "openai", model: "gpt-5.5", runtime: "durable" },
+          },
+          {
+            ts: now,
+            metric: "server.turn_ttft_ms",
+            value: 300,
+            unit: "ms",
+            tags: { provider: "openai", model: "gpt-5.5", runtime: "durable" },
+          },
+          {
+            ts: now,
+            metric: "server.turn_duration_ms",
+            value: 3_000,
+            unit: "ms",
+            tags: { provider: "openai", model: "gpt-5.5", runtime: "durable" },
+          },
+          {
+            ts: now,
+            metric: "server.turn_error",
+            value: 1,
+            unit: "count",
+            tags: { provider: "openai", model: "gpt-5.5", runtime: "durable" },
+          },
+          {
+            ts: now,
+            metric: "server.turn_cost",
+            value: 200_000,
+            unit: "count",
+            tags: { provider: "openai", model: "gpt-5.5", runtime: "durable" },
+          },
+          {
+            ts: now,
+            metric: "server.tool_result",
+            value: 1,
+            unit: "count",
+            tags: { provider: "openai", model: "gpt-5.5", runtime: "durable", status: "error" },
+          },
+          {
+            ts: now,
+            metric: "server.tool_result",
+            value: 1,
+            unit: "count",
+            tags: { provider: "openai", model: "gpt-5.5", runtime: "oppi", status: "ok" },
+          },
+          {
+            ts: now,
+            metric: "server.turn_duration_ms",
+            value: 500,
+            unit: "ms",
+            tags: { provider: "openai", model: "gpt-5.5", runtime: "oppi" },
+          },
+          {
+            ts: now,
+            metric: "server.turn_cost",
+            value: 100_000,
+            unit: "count",
+            tags: { provider: "openai", model: "gpt-5.5", runtime: "oppi" },
+          },
+          {
+            ts: now,
+            metric: "server.turn_duration_ms",
+            value: 9_000,
+            unit: "ms",
+          },
+        ],
+        totalSamples: 11,
+        filesRead: 1,
+      },
+      { days: 1 },
+    );
+
+    expect(result.untaggedRuntimeSamples).toBe(1);
+    expect(result.runtimes.map((row) => row.runtime)).toEqual(["durable", "oppi", null]);
+    expect(result.runtimes[0]).toMatchObject({
+      runtime: "durable",
+      untagged: false,
+      turns: 2,
+      ttft: { count: 2, p50: 100, p95: 300 },
+      turnErrorRate: 0.5,
+      toolErrorRate: 1,
+      costUsd: 0.2,
+    });
+    expect(result.runtimes[1]).toMatchObject({
+      runtime: "oppi",
+      turns: 1,
+      costUsd: 0.1,
+      toolErrorRate: 0,
+    });
+    expect(result.runtimes[2]).toMatchObject({
+      runtime: null,
+      untagged: true,
+      turns: 1,
+      samples: 1,
+    });
+    const text = formatModelsReview(result, { noColor: true });
+    expect(text).toContain("By runtime");
+    expect(text).toContain("durable");
+    expect(text).toContain("missing runtime");
+  });
 });
 
 describe("telemetry-review --http", () => {
@@ -542,9 +678,83 @@ describe("telemetry-review --http", () => {
         p99: 40,
         errors: 1,
         errorRate: 0.25,
+        byteSamples: 0,
+        bytesP50: null,
+        bytesP90: null,
+        bytesMax: null,
       },
     ]);
-    expect(formatHttpReview(result, { noColor: true })).toContain("GET");
-    expect(formatHttpReview(result, { noColor: true })).toContain("25.0%");
+    const text = formatHttpReview(result, { noColor: true });
+    expect(text).toContain("GET");
+    expect(text).toContain("25.0%");
+    expect(text).toContain("b_p50");
+    expect(text).toContain("—");
+  });
+
+  it("adds nearest-rank response bytes and keeps unregistered paths", () => {
+    const now = Date.now();
+    const result = reviewHttp(
+      {
+        values: {},
+        byBuild: {},
+        buildSummary: {},
+        samples: [
+          ...[10, 20, 30, 40].map((value) => ({
+            ts: now,
+            metric: "server.http_response_bytes",
+            value,
+            unit: "bytes",
+            tags: {
+              method: "GET",
+              path_pattern: "unregistered",
+              status_code: "404",
+            },
+          })),
+          {
+            ts: now,
+            metric: "server.http_request_ms",
+            value: 8,
+            unit: "ms",
+            tags: { method: "POST", path_pattern: "/sessions", status_code: "201" },
+          },
+        ],
+        totalSamples: 5,
+        filesRead: 1,
+      },
+      { days: 1 },
+    );
+
+    expect(result.routes).toEqual([
+      {
+        method: "POST",
+        pathPattern: "/sessions",
+        samples: 1,
+        p50: 8,
+        p90: 8,
+        p99: 8,
+        errors: 0,
+        errorRate: 0,
+        byteSamples: 0,
+        bytesP50: null,
+        bytesP90: null,
+        bytesMax: null,
+      },
+      {
+        method: "GET",
+        pathPattern: "unregistered",
+        samples: 0,
+        p50: null,
+        p90: null,
+        p99: null,
+        errors: 0,
+        errorRate: 0,
+        byteSamples: 4,
+        bytesP50: 20,
+        bytesP90: 40,
+        bytesMax: 40,
+      },
+    ]);
+    expect(formatHttpReview(result, { noColor: true })).toContain("20B");
+    expect(formatHttpReview(result, { noColor: true })).toContain("unregistered");
   });
 });
