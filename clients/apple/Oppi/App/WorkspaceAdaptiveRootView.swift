@@ -316,6 +316,8 @@ private struct WorkspaceUtilityDestinationView: View {
                 SSHTerminalHostListView()
             case .durableSessions:
                 SessionInboxView(scope: .durable)
+            case .controlConversation:
+                ControlConversationDestinationView()
             case .desktopStill:
                 DesktopCurrentStillViewerView()
             case .manageServers:

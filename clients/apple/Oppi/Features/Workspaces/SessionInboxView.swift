@@ -147,6 +147,18 @@ enum WorkspaceSidebarPrimaryUtilities {
         accessibilityHint: "Lists this server's durable sessions"
     )
 
+    /// The server's durable control conversation. First in the list: it is the
+    /// agent you talk to before opening a workspace.
+    static let controlConversation = WorkspaceSidebarPrimaryUtilityItem(
+        target: .controlConversation,
+        title: "Oppi Control",
+        systemImage: "bubble.left.and.text.bubble.right",
+        accessibilityLabel: "Open Oppi Control",
+        accessibilityIdentifier: "workspace.controlConversation.open",
+        minimumHitHeight: 44,
+        accessibilityHint: "Opens this server's control conversation"
+    )
+
     /// `durableSessionsAvailable` is `DurableSessionsPlayground.isAvailable` for the shown server.
     /// The SSH inputs have no defaults: reading saved preferences here made tests depend on
     /// whatever a simulator's app container last persisted.
@@ -164,7 +176,10 @@ enum WorkspaceSidebarPrimaryUtilities {
                 minimumHitHeight: 44, accessibilityHint: "Opens your saved SSH hosts"
             ))
         }
-        if durableSessionsAvailable { result.append(durableSessions) }
+        if durableSessionsAvailable {
+            result.insert(controlConversation, at: 0)
+            result.append(durableSessions)
+        }
         if idiom == .phone { result.append(desktopStill) }
         return result
     }
@@ -711,6 +726,8 @@ struct SessionInboxView: View {
                     SSHTerminalHostListView()
                 case .durableSessions:
                     Self(scope: .durable)
+                case .controlConversation:
+                    ControlConversationDestinationView()
                 case .desktopStill:
                     DesktopCurrentStillViewerView()
                 case .manageServers:

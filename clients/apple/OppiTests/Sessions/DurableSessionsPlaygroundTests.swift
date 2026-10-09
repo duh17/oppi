@@ -18,6 +18,7 @@ struct DurableSessionsPlaygroundTests {
                 for: idiom, sshTerminalEnabled: true, hasSSHProfile: true, durableSessionsAvailable: false
             )
             #expect(!hidden.contains { $0.target == .durableSessions })
+            #expect(!hidden.contains { $0.target == .controlConversation })
 
             let withTerminal = WorkspaceSidebarPrimaryUtilities.items(
                 for: idiom, sshTerminalEnabled: true, hasSSHProfile: true, durableSessionsAvailable: true
@@ -29,6 +30,8 @@ struct DurableSessionsPlaygroundTests {
             let withoutTerminal = WorkspaceSidebarPrimaryUtilities.items(
                 for: idiom, sshTerminalEnabled: false, hasSSHProfile: false, durableSessionsAvailable: true
             ).map(\.target)
+            #expect(withTerminal.first == .controlConversation)
+            #expect(withoutTerminal.first == .controlConversation)
             let mcp = withoutTerminal.firstIndex(of: .mcpServers)
             #expect(mcp != nil)
             if let mcp { #expect(withoutTerminal[mcp + 1] == .durableSessions) }

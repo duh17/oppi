@@ -1440,6 +1440,7 @@
 		B6B797B24B65186FFC354257 /* ToolRowTextRenderStrategy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4824D3A8A29E0738CD117E04 /* ToolRowTextRenderStrategy.swift */; };
 		B6BB2FA195073ECA73922ACA /* VoiceTestDoubles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C885AA7B26EA460937B5CDC /* VoiceTestDoubles.swift */; };
 		B6D3AEA81E28082C1979EF0F /* ToolPresentationBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 556ADBB348DD48BC3D032ABD /* ToolPresentationBuilder.swift */; };
+		B6ED7E267F4F65D3190DB299 /* ControlConversationDestinationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9117DD8F707A2123E0297F9D /* ControlConversationDestinationView.swift */; };
 		B6F741FC198F696FE77A8B64 /* OrgToMarkdownConverterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7348BE85347697B8FE748871 /* OrgToMarkdownConverterTests.swift */; };
 		B71167C607841FED0FFA99A6 /* ChatActionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D920FA4562860EBED710D56 /* ChatActionHandler.swift */; };
 		B750E8F29B5F004317FF0412 /* ThemePaletteBuiltinTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74D0AADBB2C6DE237A4C1CEE /* ThemePaletteBuiltinTests.swift */; };
@@ -3073,6 +3074,7 @@
 		90ACA06659FCB4108760A9FF /* MarkdownTableColumnLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTableColumnLayout.swift; sourceTree = "<group>"; };
 		90D9E984389470189D63C3A0 /* AuthenticatedRangeHTTPServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthenticatedRangeHTTPServer.swift; sourceTree = "<group>"; };
 		910457729A89345B3E40DA72 /* ComposerScreenshotPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerScreenshotPreview.swift; sourceTree = "<group>"; };
+		9117DD8F707A2123E0297F9D /* ControlConversationDestinationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlConversationDestinationView.swift; sourceTree = "<group>"; };
 		91B99EC6904A0849335BAC3D /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		91C9E67C0AA877212B554EAE /* ToolCallDocumentBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolCallDocumentBuilder.swift; sourceTree = "<group>"; };
 		91DA431D5AC4D448CF803E3E /* ToolRowMarkdownRenderStrategy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRowMarkdownRenderStrategy.swift; sourceTree = "<group>"; };
@@ -3907,6 +3909,7 @@
 		0166E8C7DAC07E6C07089EC7 /* ControlSessions */ = {
 			isa = PBXGroup;
 			children = (
+				9117DD8F707A2123E0297F9D /* ControlConversationDestinationView.swift */,
 				9287F5E9C65CF8ADA77EE4B5 /* GuidedControlSessionComposer.swift */,
 				7485DF27B2132EF926F0FCE4 /* ReviewableControlMarkdownView.swift */,
 			);
@@ -8602,6 +8605,7 @@
 				62D6E59C5E2CF951248E2978 /* ContextUsageSnapshot.swift in Sources */,
 				19AE950F3F028BCAD9361CD7 /* ContextUsageViews.swift in Sources */,
 				CA595482402C279C49144898 /* ContinuousClock+Elapsed.swift in Sources */,
+				B6ED7E267F4F65D3190DB299 /* ControlConversationDestinationView.swift in Sources */,
 				1506A5499771368A2D9C99FB /* CrossProcessFileLock.swift in Sources */,
 				FAD32E1B82DC813291F7C520 /* CustomTimelineRowContent.swift in Sources */,
 				868FD48AD996C0CAD6352124 /* DailyCostChartView.swift in Sources */,
