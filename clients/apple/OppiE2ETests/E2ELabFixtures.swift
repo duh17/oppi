@@ -453,6 +453,9 @@ extension E2ETestCase {
     }
 
     private func e2eLabDeviceToken() throws -> String {
+        if let token = E2ELabServerContext.runDirectoryFile("device-token.txt") {
+            return token
+        }
         let path = "/tmp/oppi-e2e-device-token.txt"
         if FileManager.default.fileExists(atPath: path) {
             let token = try String(contentsOfFile: path, encoding: .utf8)
@@ -500,7 +503,24 @@ enum E2ELabServerContext {
         return nil
     }
 
+    /// Per-run directory from `TEST_RUNNER_OPPI_E2E_RUN_DIR`. Concurrent E2E
+    /// servers must not share `/tmp/oppi-e2e-invite.txt`.
+    static func runDirectoryFile(_ name: String) -> String? {
+        guard let directory = ProcessInfo.processInfo.environment["OPPI_E2E_RUN_DIR"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !directory.isEmpty else {
+            return nil
+        }
+        let contents = try? String(contentsOfFile: "\(directory)/\(name)", encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let contents, !contents.isEmpty else { return nil }
+        return contents
+    }
+
     static func readInviteURLWithSource() throws -> (url: String, source: String) {
+        if let invite = runDirectoryFile("invite.txt") {
+            return (invite, "run-dir")
+        }
         let fileContents = try? String(contentsOfFile: inviteFilePath, encoding: .utf8)
         guard let resolved = resolveInviteURL(
             environment: ProcessInfo.processInfo.environment,
