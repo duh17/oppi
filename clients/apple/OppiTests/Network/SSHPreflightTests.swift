@@ -368,7 +368,17 @@ struct SSHPairMintTests {
         #expect(SSHPairMint.statusScript.contains("https://127.0.0.1:${port}/health"))
         #expect(SSHPairMint.statusScript.contains("curl -sk --max-time 5"))
         #expect(SSHPairMint.statusScript.contains("NODE_TLS_REJECT_UNAUTHORIZED=0"))
-        #expect(SSHPairMint.statusScript.contains("wget -qO- --no-check-certificate"))
+    }
+
+    @Test func wgetHealthFallbackCannotLeaveLoopbackOrPersistHSTS() throws {
+        let invocations = SSHPairMint.statusScript.split(separator: "\n")
+            .filter { $0.contains("body=$(wget ") }
+        #expect(invocations.count == 1)
+        let invocation = try #require(invocations.first)
+        // Redirects and proxies must not supply another host's health body;
+        // the read-only preflight must not update ~/.wget-hsts either.
+        #expect(invocation.trimmingCharacters(in: .whitespaces) ==
+            #"body=$(wget -qO- --max-redirect=0 --no-proxy --no-hsts --no-check-certificate --timeout=5 "https://127.0.0.1:${port}/health" || true)"#)
     }
 
     @Test func tailscaleNameDoesNotDialTheSystemNetwork() {

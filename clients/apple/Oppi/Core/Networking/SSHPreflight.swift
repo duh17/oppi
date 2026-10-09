@@ -414,7 +414,7 @@ enum SSHPairMint {
       body=$(OPPI_PORT="$port" NODE_TLS_REJECT_UNAUTHORIZED=0 node -e 'const h=require("https");const p=process.env.OPPI_PORT;const r=h.get({hostname:"127.0.0.1",port:p,path:"/health",timeout:5000},s=>{let b="";s.on("data",c=>b+=c);s.on("end",()=>process.stdout.write(b));});r.on("error",()=>{});r.on("timeout",()=>r.destroy());' 2>/dev/null || true)
     fi
     if [ -z "$body" ] && command -v wget >/dev/null 2>&1; then
-      body=$(wget -qO- --no-check-certificate --timeout=5 "https://127.0.0.1:${port}/health" || true)
+      body=$(wget -qO- --max-redirect=0 --no-proxy --no-hsts --no-check-certificate --timeout=5 "https://127.0.0.1:${port}/health" || true)
     fi
     case "$body" in
       *'"ok":true'*'"protocol":2'*|*'"ok": true'*'"protocol": 2'*) echo end=1 ;;
