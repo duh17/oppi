@@ -1,6 +1,7 @@
 import GhosttyVt
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// What a tap on the terminal grid does. Direct typing owns a tap while the
 /// keyboard is down, so it can come back after leaving the chat bar. While
@@ -40,7 +41,8 @@ struct SSHTerminalSurface: UIViewRepresentable {
     /// Direct typing: a tap opens the raw keyboard instead of the chat bar.
     let tapTypesInTerminal: Bool
     let keyActions: [SSHTerminalKeyAction]
-    let paste: () -> Void
+    /// Clipboard text to send; nil when there was none or iOS refused it.
+    let paste: (String?) -> Void
     let followChanged: (Bool) -> Void
     let rawKeyboardChanged: (Bool) -> Void
     let focusComposer: () -> Void
@@ -78,7 +80,7 @@ struct SSHTerminalSurface: UIViewRepresentable {
 /// at fixed positions and supplies UIKeyInput and physical-key events.
 final class SSHTerminalGridView: UIView, UIKeyInput {
     let channel: SSHTerminalChannel
-    let requestPaste: () -> Void
+    let requestPaste: (String?) -> Void
     let followChanged: (Bool) -> Void
     var needsPaint = true
     var keyboardRequest = 0
@@ -127,9 +129,10 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
     /// The foreground program's actions, inserted after Paste.
     private var keyActions: [SSHTerminalKeyAction] = []
     private var keyActionButtons: [UIButton] = []
+    private var pasteControl: UIPasteControl?
     private var foreground = UIColor(Color.themeFg)
 
-    init(channel: SSHTerminalChannel, paste: @escaping () -> Void, followChanged: @escaping (Bool) -> Void) {
+    init(channel: SSHTerminalChannel, paste: @escaping (String?) -> Void, followChanged: @escaping (Bool) -> Void) {
         self.channel = channel
         requestPaste = paste
         self.followChanged = followChanged
@@ -139,6 +142,10 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
         clearsContextBeforeDrawing = false
         contentMode = .topLeft
         clipsToBounds = true
+        // The bar's UIPasteControl delivers to paste(itemProviders:). A
+        // programmatic UIPasteboard read from a plain button shows iOS's
+        // Allow Paste alert and blocks the main thread until it is answered.
+        pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: [UTType.plainText.identifier])
         accessibilityIdentifier = "sshTerminal.grid"
         accessibilityLabel = "SSH terminal. Tap to type or to hide the keyboard. Drag to scroll."
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped(_:))))
@@ -216,6 +223,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
         backgroundColor = background
         bar?.backgroundColor = background
         bar?.tintColor = foreground
+        installPasteControl(background: background)
         channel.engine.setColors(foreground: foreground.terminalRGB, background: background.terminalRGB,
                                  dark: themeID.preferredColorScheme != .light)
         needsPaint = true
@@ -337,9 +345,22 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
     private func cell(at point: CGPoint) -> (column: Int, row: Int) {
         (Int(point.x / cellSize.width), Int(point.y / cellSize.height))
     }
+    /// The edit menu's Paste. iOS grants that read without the Allow Paste alert.
     override func paste(_ sender: Any?) {
         guard hardwarePresses.isEmpty else { return }
-        requestPaste()
+        requestPaste(UIPasteboard.general.string)
+    }
+
+    /// The accessory bar's UIPasteControl. Its tap is the consent, so there is
+    /// no alert, and the text loads off the main thread.
+    override func paste(itemProviders: [NSItemProvider]) {
+        guard let provider = itemProviders.first(where: { $0.canLoadObject(ofClass: String.self) }) else {
+            requestPaste(nil)
+            return
+        }
+        _ = provider.loadObject(ofClass: String.self) { [weak self] text, _ in
+            Task { @MainActor in self?.requestPaste(text) }
+        }
     }
     override func resignFirstResponder() -> Bool {
         hardwarePresses.removeAll()
@@ -359,7 +380,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
             // spend the one-shot modifiers.
             if (0xE0...0xE7).contains(key.keyCode.rawValue) { continue }
             if key.modifierFlags.contains(.command), key.charactersIgnoringModifiers.lowercased() == "v" {
-                requestPaste()
+                requestPaste(UIPasteboard.general.string)
                 continue
             }
             let physical = Self.physicalKey(key.keyCode) ?? Self.logicalKey(key.charactersIgnoringModifiers)
@@ -516,7 +537,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
             }
         }
         showModifiers()
-        _ = button("Paste", id: "paste") { [weak self] in self?.requestPaste() }
+        installPasteControl(background: nil)
         let chat = button("", id: "useChatBar") { [weak self] in
             guard let self else { return }
             self.useChatBar()
@@ -527,6 +548,29 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
         let hide = button("⌄", id: "hideKeyboard") { [weak self] in self?.resignFirstResponder() }
         hide.accessibilityLabel = "Hide keyboard"
         return scroll
+    }
+
+    /// UIPasteControl ignores tint and fixes its configuration at init, so a
+    /// theme change replaces it in place, after the keys and before the
+    /// program's actions.
+    private func installPasteControl(background: UIColor?) {
+        guard let barKeys else { return }
+        let style = UIPasteControl.Configuration()
+        style.displayMode = .labelOnly
+        style.cornerStyle = .capsule
+        style.baseForegroundColor = foreground
+        style.baseBackgroundColor = background
+        let paste = UIPasteControl(configuration: style)
+        paste.target = self
+        paste.accessibilityIdentifier = "sshTerminal.paste"
+        paste.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        if let old = pasteControl, let index = barKeys.arrangedSubviews.firstIndex(of: old) {
+            old.removeFromSuperview()
+            barKeys.insertArrangedSubview(paste, at: index)
+        } else {
+            barKeys.addArrangedSubview(paste)
+        }
+        pasteControl = paste
     }
 
     private static func barButton(_ label: String, id: String, action: @escaping () -> Void) -> UIButton {

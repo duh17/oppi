@@ -379,10 +379,10 @@ struct SSHTerminalView: View {
         }
     }
 
-    private func requestPaste() {
+    /// `text` is nil when the clipboard holds no text or iOS refused the read.
+    private func requestPaste(_ text: String?) {
         guard channel.connected else { channel.send(Data()); return }
-        // Nil when the clipboard holds no text or iOS refused the read.
-        guard let text = UIPasteboard.general.string else {
+        guard let text else {
             showPasteNotice("Nothing pasted \u{2014} the clipboard has no text, or paste access was not allowed.")
             return
         }
