@@ -1,5 +1,7 @@
 #!/bin/bash
-# Stamp the current git commit into the built Info.plist.
+# Write the git commit for Info.plist preprocessing.
+# ProcessInfoPlistFile runs after script phases and would overwrite a
+# post-build PlistBuddy edit, so the value has to be in the plist input.
 # Format: 12-char SHA, plus -dirty when the worktree is not clean.
 set -euo pipefail
 
@@ -14,33 +16,11 @@ if git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 value="${commit}${dirty}"
 
-plist="${CODESIGNING_FOLDER_PATH:-}/Info.plist"
-if [ ! -f "$plist" ]; then
-  plist="${TARGET_BUILD_DIR:-}/${INFOPLIST_PATH:-}"
-fi
-if [ ! -f "$plist" ]; then
-  echo "error: built Info.plist missing; cannot stamp OPPIGitCommit" >&2
+if [ -z "${DERIVED_FILE_DIR:-}" ]; then
+  echo "error: DERIVED_FILE_DIR is unset; cannot write OPPIGitCommit.h" >&2
   exit 1
 fi
-
-if ! /usr/libexec/PlistBuddy -c "Set :OPPIGitCommit $value" "$plist" 2>/dev/null; then
-  /usr/libexec/PlistBuddy -c "Add :OPPIGitCommit string $value" "$plist"
-fi
-echo "note: stamped OPPIGitCommit=$value into $plist"
-
-if [ "${CODE_SIGNING_ALLOWED:-YES}" = "NO" ]; then
-  exit 0
-fi
-if [ -z "${CODESIGNING_FOLDER_PATH:-}" ] || [ ! -d "$CODESIGNING_FOLDER_PATH" ]; then
-  exit 0
-fi
-identity="${EXPANDED_CODE_SIGN_IDENTITY:-}"
-if [ -z "$identity" ]; then
-  identity="${CODE_SIGN_IDENTITY:--}"
-fi
-if [ -z "$identity" ]; then
-  identity="-"
-fi
-if ! /usr/bin/codesign --force --sign "$identity" --preserve-metadata=identifier,entitlements "$CODESIGNING_FOLDER_PATH"; then
-  echo "warning: re-sign after OPPIGitCommit stamp failed" >&2
-fi
+header="$DERIVED_FILE_DIR/OPPIGitCommit.h"
+mkdir -p "$DERIVED_FILE_DIR"
+printf '#define OPPI_GIT_COMMIT_VALUE %s\n' "$value" > "$header"
+echo "note: stamped OPPIGitCommit=$value into $header"

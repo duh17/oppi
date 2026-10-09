@@ -128,6 +128,8 @@ targets:
         DEVELOPMENT_TEAM: AZAQMY4SPZ
         INFOPLIST_KEY_NSSupportsLiveActivities: true
         ENABLE_USER_SCRIPT_SANDBOXING: false
+        INFOPLIST_PREPROCESS: YES
+        INFOPLIST_PREFIX_HEADER: "$(DERIVED_FILE_DIR)/OPPIGitCommit.h"
       configs:
         Release:
           # Only the DEBUG screenshot preview (usdz-rendering) reads this model.
@@ -193,11 +195,19 @@ targets:
           - SymbolsNerdFontMono-Regular.ttf
         ITSAppUsesNonExemptEncryption: false
         OPPITelemetryMode: "$(OPPI_TELEMETRY_MODE)"
-        # Overwritten at build time by scripts/stamp-git-commit.sh (short SHA, -dirty).
-        OPPIGitCommit: unknown
+        # Expanded by scripts/stamp-git-commit.sh via INFOPLIST_PREFIX_HEADER.
+        OPPIGitCommit: OPPI_GIT_COMMIT_VALUE
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
     preBuildScripts:
+      - script: |
+          "$SRCROOT/scripts/stamp-git-commit.sh"
+        name: StampGitCommit
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(DERIVED_FILE_DIR)/OPPIGitCommit.h
+        shell: /bin/bash
+        showEnvVars: false
       - script: |
           "$SRCROOT/scripts/build-ghostty-vt.sh"
         name: GhosttyVt
@@ -301,13 +311,6 @@ targets:
             touch "$STAMP_FILE"
           fi
         name: ArchitectureBoundaries
-        basedOnDependencyAnalysis: false
-        shell: /bin/bash
-        showEnvVars: false
-    postBuildScripts:
-      - script: |
-          "$SRCROOT/scripts/stamp-git-commit.sh"
-        name: StampGitCommit
         basedOnDependencyAnalysis: false
         shell: /bin/bash
         showEnvVars: false

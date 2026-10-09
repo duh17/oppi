@@ -6884,6 +6884,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = AFB14B88FE78000FE3E0783B /* Build configuration list for PBXNativeTarget "Oppi" */;
 			buildPhases = (
+				2D259CC09BD6C1EB47DA4410 /* StampGitCommit */,
 				2F5899E78516BA4838D48B53 /* GhosttyVt */,
 				92BDC557BC120C46953B00F4 /* TailscaleKit */,
 				C22D8579D29E569FBD61692A /* SwiftLint */,
@@ -6893,7 +6894,6 @@
 				8DCC973FC9A2E9C9A497FEAD /* Frameworks */,
 				025ACBDD88B373E32131E97D /* Embed Foundation Extensions */,
 				5E34E5BB49CDED205967C9EF /* Embed Frameworks */,
-				2D259CC09BD6C1EB47DA4410 /* StampGitCommit */,
 			);
 			buildRules = (
 			);
@@ -7132,6 +7132,7 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(DERIVED_FILE_DIR)/OPPIGitCommit.h",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
@@ -9408,6 +9409,8 @@
 				);
 				INFOPLIST_FILE = Oppi/Resources/Info.plist;
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
+				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/OPPIGitCommit.h";
+				INFOPLIST_PREPROCESS = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -9485,6 +9488,8 @@
 				);
 				INFOPLIST_FILE = Oppi/Resources/Info.plist;
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
+				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/OPPIGitCommit.h";
+				INFOPLIST_PREPROCESS = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

@@ -224,7 +224,7 @@ Category `Navigation`, level `info`. These are user-driven events, a handful per
 
 ## Build identity
 
-Debug and Release iOS builds stamp `OPPIGitCommit` into the built Info.plist (`clients/apple/scripts/stamp-git-commit.sh`, wired from `project.yml`). The value is a 12-character git SHA, plus `-dirty` when the worktree is not clean. Missing or unexpanded values upload as `unknown`.
+Debug and Release iOS builds stamp `OPPIGitCommit` through Info.plist preprocessing (`clients/apple/scripts/stamp-git-commit.sh`, wired from `project.yml`). A later `ProcessInfoPlistFile` copies the source plist over any post-build edit, so the script writes a prefix header and the processed plist expands it. The value is a 12-character git SHA, plus `-dirty` when the worktree is not clean. Missing or unexpanded values upload as `unknown`.
 
 Client-log, chat-metric, and MetricKit upload records store that value next to `appVersion` and `buildNumber`. The server keeps a short SHA, `unknown`, or a SHA with `-dirty`, and drops any other string so a bad stamp cannot store a path. Older clients that omit the field still upload.
 

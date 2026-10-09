@@ -61,7 +61,7 @@
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>OPPIGitCommit</key>
-	<string>unknown</string>
+	<string>OPPI_GIT_COMMIT_VALUE</string>
 	<key>OPPITelemetryMode</key>
 	<string>$(OPPI_TELEMETRY_MODE)</string>
 	<key>UIAppFonts</key>
