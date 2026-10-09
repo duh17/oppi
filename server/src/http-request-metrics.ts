@@ -126,9 +126,6 @@ export function observeHttpResponseBody(
   return () => {
     if (unmeasurable || res.statusCode === 101) return undefined;
     if (headerIncludes(res.getHeader("upgrade"), "websocket")) return undefined;
-    if (headerIncludes(res.getHeader("content-type"), "text/event-stream") && !res.writableEnded) {
-      return undefined;
-    }
     if (!Number.isInteger(bytes) || bytes < 0) return undefined;
     return bytes;
   };

@@ -1,4 +1,5 @@
 import { AgentLaunchService, type AgentDefinition } from "./agent-launch-service.js";
+import { ScheduleDispatchError } from "./schedule-run-metrics.js";
 import type {
   AgentScheduleDispatchHooks,
   ExistingSessionDispatchInput,
@@ -54,7 +55,7 @@ async function launchNewSession(
   input: NewSessionDispatchInput,
 ): Promise<unknown> {
   const workspace = deps.storage.getWorkspace(input.action.workspaceId);
-  if (!workspace) throw new Error("Workspace not found");
+  if (!workspace) throw new ScheduleDispatchError("other", "Workspace not found");
 
   const launchService = new AgentLaunchService({
     storage: deps.storage,
@@ -83,7 +84,7 @@ async function launchNewSession(
     sessionName: input.action.name,
   });
   if (result.kind === "launch_in_progress") {
-    throw new Error("launch_in_progress");
+    throw new ScheduleDispatchError("launch_in_progress");
   }
   if (
     result.promptDispatch !== "delivered" &&
@@ -92,7 +93,8 @@ async function launchNewSession(
     // A pre-start configuration failure may discard an unannounced shell. Do
     // not publish an app-event row or return a dangling session ID.
     if (!result.discarded) deps.appEvents?.emitSessionCreated(result.session);
-    throw new Error(
+    throw new ScheduleDispatchError(
+      "other",
       result.session.launch?.promptError ?? result.failure?.code ?? "prompt_not_sent",
     );
   }

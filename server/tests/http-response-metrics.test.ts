@@ -96,7 +96,7 @@ describe("http response metrics", () => {
     expect(read()).toBe(4);
   });
 
-  it("does not count a WebSocket upgrade or an unfinished event stream", () => {
+  it("does not count a WebSocket upgrade", () => {
     const upgrade = fakeResponse({ upgrade: "websocket" });
     const upgradeBytes = observeHttpResponseBody(upgrade.req, upgrade.res);
     upgrade.res.end("not-http");
@@ -106,13 +106,6 @@ describe("http response metrics", () => {
     const switchingBytes = observeHttpResponseBody(switching.req, switching.res);
     switching.res.end();
     expect(switchingBytes()).toBeUndefined();
-
-    const sse = fakeResponse({ headers: { "content-type": "text/event-stream" } });
-    const sseBytes = observeHttpResponseBody(sse.req, sse.res);
-    sse.res.write("data: hi\n\n");
-    expect(sseBytes()).toBeUndefined();
-    sse.res.end();
-    expect(sseBytes()).toBe(Buffer.byteLength("data: hi\n\n"));
   });
 
   it("drops the sample when a chunk size cannot be measured", () => {

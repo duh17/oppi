@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { recordScheduleRun } from "../src/schedule-run-metrics.js";
+import { ScheduleDispatchError, recordScheduleRun } from "../src/schedule-run-metrics.js";
 import type { ServerMetricCollector } from "../src/server-metric-collector.js";
 
 function collector() {
@@ -35,6 +35,32 @@ describe("schedule run metrics", () => {
       },
     ]);
     expect(JSON.stringify(samples)).not.toContain("deepseek");
+    expect(JSON.stringify(samples)).not.toContain("/Users/chenda/secret");
+  });
+
+  it("maps a promptError that mentions release or not found to other", () => {
+    const { samples, metrics } = collector();
+    recordScheduleRun(metrics, {
+      startedAt: 1,
+      now: 2,
+      kind: "due",
+      status: "failed",
+      error: new ScheduleDispatchError(
+        "other",
+        "please release the workspace; model not found at /Users/chenda/secret",
+      ),
+    });
+    expect(samples[0]?.tags).toEqual({ status: "failed", kind: "due", reason: "other" });
+    recordScheduleRun(metrics, {
+      startedAt: 1,
+      now: 2,
+      kind: "due",
+      status: "failed",
+      error: new Error("please release the file; model not found"),
+    });
+    expect(samples[1]?.tags?.reason).toBe("other");
+    expect(JSON.stringify(samples)).not.toContain("release");
+    expect(JSON.stringify(samples)).not.toContain("not found");
     expect(JSON.stringify(samples)).not.toContain("/Users/chenda/secret");
   });
 

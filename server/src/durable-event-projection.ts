@@ -13,7 +13,12 @@ import {
   type SnapshotEvent,
   type TaskId,
 } from "@earendil-works/pi-durable";
-import { adaptDurableEvent, createAdapterState, snapshotEvents } from "./durable-event-adapter.js";
+import {
+  adaptDurableEvent,
+  createAdapterState,
+  newestAssistantOfActiveRun,
+  snapshotEvents,
+} from "./durable-event-adapter.js";
 
 import { readDurableInputCards } from "./durable-input-cards.js";
 
@@ -115,6 +120,7 @@ export class DurableEventProjection {
       this.runInputs?.length === run.inputs.length &&
       this.runInputs.every((input, index) => input === run.inputs[index]);
     const previous = this.adapter.partial;
+    const previousLastAssistant = this.adapter.lastAssistant;
     const message = snapshot.generation?.message;
     const samePartial =
       sameRun &&
@@ -132,6 +138,16 @@ export class DurableEventProjection {
       },
       this.adapter,
     );
+    if (sameRun) this.adapter.lastAssistant = previousLastAssistant;
+    if (!sameRun && snapshot.run) {
+      const assistant = newestAssistantOfActiveRun(snapshot);
+      if (assistant) this.adapter.lastAssistant = assistant;
+    } else if (sameRun) {
+      const undelivered = newestAssistantOfActiveRun(snapshot);
+      if (undelivered?.stopReason === "error" && previousLastAssistant?.stopReason !== "error") {
+        this.adapter.lastAssistant = undelivered;
+      }
+    }
     if (!recovering && samePartial && message) {
       this.adapter.partial = previous;
       events.push(
@@ -254,6 +270,8 @@ export class DurableEventProjection {
         const message = event.entry.model?.[0];
         if (hidden.has(message)) {
           this.adapter.partial = undefined;
+          // Hidden from the timeline, but run_end still needs the assistant for turn_error.
+          if (message?.role === "assistant") this.adapter.lastAssistant = message;
           out.push(...(ends.get(event) ?? []));
           continue;
         }

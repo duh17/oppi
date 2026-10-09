@@ -30,10 +30,32 @@ export function createAdapterState(): AdapterState {
   };
 }
 
+/**
+ * Newest assistant written after the latest user entry while a run is active.
+ * An assistant older than that user entry belongs to a finished turn.
+ */
+export function newestAssistantOfActiveRun(snapshot: SnapshotEvent): AssistantMessage | undefined {
+  if (!snapshot.run) return undefined;
+  let lastUserId = -1;
+  let newest: { id: number; message: AssistantMessage } | undefined;
+  for (const entry of snapshot.entries) {
+    const message = entry.model?.[0];
+    if (message?.role === "user" && entry.id > lastUserId) lastUserId = entry.id;
+    if (message?.role === "assistant" && (!newest || entry.id > newest.id)) {
+      newest = { id: entry.id, message };
+    }
+  }
+  if (!newest || newest.id < lastUserId) return undefined;
+  return newest.message;
+}
+
 /** Re-bind a live turn without inventing another user input. */
 export function snapshotEvents(snapshot: SnapshotEvent, state: AdapterState): AgentSessionEvent[] {
+  // A same-run rebind omits `run`. Keep the assistant already projected so a
+  // backlog snapshot between message_end and run_end does not drop turn_error.
+  const kept = snapshot.run ? undefined : state.lastAssistant;
   state.partial = undefined;
-  state.lastAssistant = undefined;
+  state.lastAssistant = kept;
   state.toolArgs.clear();
   state.toolOutputs.clear();
   state.toolDetails.clear();
@@ -64,6 +86,12 @@ export function snapshotEvents(snapshot: SnapshotEvent, state: AdapterState): Ag
         state,
       ),
     );
+  }
+  // A snapshot that replaces undelivered events still has the run. Remember its
+  // assistant for run_end; do not emit another message_end.
+  if (snapshot.run) {
+    const assistant = newestAssistantOfActiveRun(snapshot);
+    if (assistant) state.lastAssistant = assistant;
   }
   return events;
 }

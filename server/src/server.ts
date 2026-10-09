@@ -257,12 +257,8 @@ export function unauthorizedAuthLogLevel(opts: {
  * so HTTP request metrics aggregate by route pattern, not by resource.
  */
 function normalizePathPattern(path: string): string {
-  const registered = normalizeRegisteredPathPattern(path);
-  if (registered) return registered;
-
-  return path
-    .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "/:id")
-    .replace(/\/[0-9a-f]{16,}/gi, "/:id");
+  // Unregistered requests must not record the raw pathname. Status >= 400 still records.
+  return normalizeRegisteredPathPattern(path) ?? "unregistered";
 }
 
 function normalizeBindHost(host: string): string {

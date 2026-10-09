@@ -162,6 +162,10 @@ describe("SessionEventProcessor", () => {
     const cases = [
       { session: {}, runtime: "oppi" },
       { session: { serverDurable: { conversationId: 7 } }, runtime: "durable" },
+      {
+        session: { serverDurable: { conversationId: 7 }, piSessionFile: "/tmp/session.jsonl" },
+        runtime: "oppi",
+      },
       { session: { runtime: "pi-tui" as const }, runtime: "pi-tui" },
       {
         session: { runtime: "pi-tui" as const, serverDurable: { conversationId: 7 } },

@@ -2,7 +2,7 @@ import type { AgentDefinition } from "./agent-launch-service.js";
 import type { SessionBackendEvent } from "./pi-events.js";
 import { SdkBackend } from "./sdk-backend.js";
 import { isControlConversation } from "./control-session.js";
-import { isServerDurableSession } from "./session-runtime-capabilities.js";
+import { usesDurableEngine } from "./session-runtime-capabilities.js";
 import type { DurableHarness } from "./durable-harness.js";
 import type { AgentBackend } from "./agent-backend.js";
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
@@ -16,8 +16,10 @@ import type { Storage } from "./storage.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import type { WorkspaceRuntime, WorkspaceSessionIdentity } from "./workspace-runtime.js";
 
-export interface SessionStartActiveSession
-  extends Omit<RuntimeSessionStateScaffold<SessionMessageQueueStore>, "messageQueue"> {
+export interface SessionStartActiveSession extends Omit<
+  RuntimeSessionStateScaffold<SessionMessageQueueStore>,
+  "messageQueue"
+> {
   messageQueue?: SessionMessageQueueStore;
   sdkBackend: AgentBackend;
   workspaceId: string;
@@ -93,7 +95,7 @@ export class SessionStartCoordinator {
         if (session.serverDurable && sandboxRequired && workspace?.runtime !== "sandbox") {
           throw new Error("Server durable sandbox sessions require a sandbox workspace");
         }
-        const useDurable = isServerDurableSession(session) && !session.piSessionFile;
+        const useDurable = usesDurableEngine(session);
         if (useDurable && !this.deps.durableHarness) {
           throw new Error(
             "Server durable session cannot start: the durable harness is unavailable",

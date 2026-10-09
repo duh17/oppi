@@ -25,19 +25,28 @@ export function runtimeLogTag(session: Pick<Session, "runtime">): SessionRuntime
 }
 
 /**
+ * Live engine for session start and the turn/tool `runtime` tag.
+ * A durable row with a Pi session file still starts on SdkBackend.
+ */
+export function usesDurableEngine(
+  session: Pick<Session, "runtime" | "serverDurable" | "piSessionFile">,
+): boolean {
+  return isServerDurableSession(session) && !session.piSessionFile;
+}
+
+/**
  * Bounded backend for turn and tool ops metrics.
  * Reuses `SessionRuntimeKind` (`oppi`, `pi-tui`) and the durable engine name.
- * Durable sessions are also stored as runtime `oppi` plus `serverDurable`, so
- * `durable` wins over `oppi`. A terminal mirror stays `pi-tui` even if a
- * durable binding is present.
+ * `durable` is `usesDurableEngine`, not merely a `serverDurable` row.
+ * A terminal mirror stays `pi-tui`.
  */
 export type SessionMetricRuntime = "oppi" | "durable" | "pi-tui";
 
 export function sessionMetricRuntime(
-  session: Pick<Session, "runtime" | "serverDurable">,
+  session: Pick<Session, "runtime" | "serverDurable" | "piSessionFile">,
 ): SessionMetricRuntime {
   if (isPiTuiSession(session)) return "pi-tui";
-  if (isServerDurableSession(session)) return "durable";
+  if (usesDurableEngine(session)) return "durable";
   return "oppi";
 }
 
