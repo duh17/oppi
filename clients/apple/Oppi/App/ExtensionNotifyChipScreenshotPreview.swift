@@ -1,7 +1,7 @@
 #if DEBUG
 import SwiftUI
 
-/// Isolated composer chrome for the extension notify chip.
+/// Isolated composer chrome for the extension notify strip pill.
 struct ExtensionNotifyChipScreenshotPreview: View {
     enum Mode {
         case collapsedInfo
@@ -26,7 +26,7 @@ struct ExtensionNotifyChipScreenshotPreview: View {
                 Text(title)
                     .font(.headline)
                     .foregroundStyle(.themeFg)
-                Text("Extension notify sits above the composer as a muted chip, not a Notice sheet.")
+                Text("Extension notify sits on the above-composer strip as a glassy pill. Tap expands a drawer under the row.")
                     .font(.caption)
                     .foregroundStyle(.themeComment)
                 Spacer()
@@ -35,12 +35,26 @@ struct ExtensionNotifyChipScreenshotPreview: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
             VStack(spacing: 8) {
-                ExtensionNotifyChip(
-                    state: chipState,
-                    onToggleExpanded: {},
-                    onDismiss: {},
-                    onOpenURL: { _ in false }
+                ExtensionSurfacePanel(
+                    surface: ExtensionSurfaceState(),
+                    placement: .aboveEditor,
+                    showsTrailingStripContent: true,
+                    trailingStripContent: {
+                        ExtensionNotifyChip(
+                            state: chipState,
+                            onToggleExpanded: {}
+                        )
+                    }
                 )
+
+                if chipState.isExpanded {
+                    ExtensionNotifyDrawer(
+                        state: chipState,
+                        onCollapse: {},
+                        onDismiss: {},
+                        onOpenURL: { _ in false }
+                    )
+                }
 
                 ChatInputBar(
                     text: $text,

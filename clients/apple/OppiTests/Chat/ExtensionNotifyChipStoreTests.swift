@@ -325,6 +325,70 @@ struct ExtensionNotifyChipStoreTests {
     }
 }
 
+@Suite("Extension notify chip chrome")
+struct ExtensionNotifyChipChromeTests {
+    @Test("Collapsed notify uses the glassy strip pill surface")
+    func collapsedNotifyUsesGlassyStripPillSurface() throws {
+        let source = try notifyChipSource()
+        let pill = try notifyChipSourceSlice(
+            named: "struct ExtensionNotifyChip: View {",
+            until: "struct ExtensionNotifyDrawer: View {",
+            in: source
+        )
+        #expect(pill.contains(".extensionStripPillSurface("))
+        #expect(pill.contains("state.isExpanded ? \"chevron.down\" : \"chevron.right\""))
+        #expect(pill.contains("chat.extensionNotify.chip"))
+        #expect(!pill.contains("Spacer(minLength: 0)"))
+        #expect(!pill.contains(".background(.themeFg.opacity(0.08), in: Capsule())"))
+        #expect(!pill.contains(".padding(.vertical, 5)"))
+    }
+
+    @Test("Expanded notify uses the glass drawer panel")
+    func expandedNotifyUsesGlassDrawerPanel() throws {
+        let source = try notifyChipSource()
+        let drawer = try notifyChipSourceSlice(
+            named: "struct ExtensionNotifyDrawer: View {",
+            until: "private enum ExtensionNotifyChipChrome",
+            in: source
+        )
+        #expect(drawer.contains(".extensionGlassPanel(cornerRadius: 18)"))
+        #expect(drawer.contains("chat.extensionNotify.expanded"))
+        #expect(drawer.contains("chat.extensionNotify.dismiss"))
+        #expect(drawer.contains("chat.extensionNotify.list"))
+        #expect(!drawer.contains(".background(\n            .themeFg.opacity(0.06)"))
+        #expect(!drawer.contains("cornerRadius: 14"))
+    }
+}
+
+private func notifyChipSource() throws -> String {
+    let sourceURL = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appending(path: "Oppi/Features/Chat/Support/ExtensionNotifyChip.swift")
+    return try String(contentsOf: sourceURL, encoding: .utf8)
+}
+
+private func notifyChipSourceSlice(
+    named marker: String,
+    until endMarker: String,
+    in source: String
+) throws -> String {
+    guard let start = source.range(of: marker) else {
+        Issue.record("Missing source marker \(marker)")
+        throw NotifyChipSourceSliceError.missingMarker(marker)
+    }
+    guard let end = source.range(of: endMarker, range: start.upperBound..<source.endIndex) else {
+        Issue.record("Missing source end marker \(endMarker)")
+        throw NotifyChipSourceSliceError.missingMarker(endMarker)
+    }
+    return String(source[start.lowerBound..<end.lowerBound])
+}
+
+private enum NotifyChipSourceSliceError: Error {
+    case missingMarker(String)
+}
+
 @MainActor
 private func notifyNotification(
     method: String = "notify",

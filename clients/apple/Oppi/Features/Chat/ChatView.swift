@@ -706,6 +706,14 @@ struct ChatView: View {
         )
     }
 
+    private var notifyChipState: ExtensionNotifyChipStore.SessionState? {
+        connection.extensionNotifyChipStore.state(for: sessionId)
+    }
+
+    private var showsNotifyChip: Bool {
+        notifyChipState != nil
+    }
+
     private func toggleNowPlayingDrawer() {
         let next = ReviewCommentStripChrome.toggleNowPlaying(
             .init(
@@ -716,6 +724,7 @@ struct ChatView: View {
         reviewCommentDrawerExpanded = next.commentsExpanded
         nowPlayingDrawerExpanded = next.nowPlayingExpanded
         if nowPlayingDrawerExpanded {
+            collapseNotifyChip()
             dismissKeyboard()
         }
     }
@@ -733,6 +742,7 @@ struct ChatView: View {
             // Extension panels own their selection; ask both placements to
             // collapse without hiding their pills or resetting their content.
             extensionDrawerCollapseRequestID &+= 1
+            collapseNotifyChip()
             dismissKeyboard()
         }
     }
@@ -740,7 +750,30 @@ struct ChatView: View {
     private func handleExtensionDrawerExpansion(_ expanded: Bool) {
         if expanded {
             reviewCommentDrawerExpanded = false
+            collapseNotifyChip()
             dismissKeyboard()
+        }
+    }
+
+    private func toggleNotifyChip() {
+        guard let state = notifyChipState else { return }
+        let expanding = !state.isExpanded
+        withAnimation(.easeOut(duration: 0.10)) {
+            connection.extensionNotifyChipStore.setExpanded(expanding, sessionId: sessionId)
+            if expanding {
+                reviewCommentDrawerExpanded = false
+                nowPlayingDrawerExpanded = false
+            }
+        }
+        if expanding {
+            extensionDrawerCollapseRequestID &+= 1
+            dismissKeyboard()
+        }
+    }
+
+    private func collapseNotifyChip() {
+        withAnimation(.easeOut(duration: 0.10)) {
+            connection.extensionNotifyChipStore.setExpanded(false, sessionId: sessionId)
         }
     }
 
@@ -1302,7 +1335,8 @@ struct ChatView: View {
                         showsReviewCommentPill: showsReviewCommentPill,
                         showsNowPlayingPill: showsNowPlayingPill,
                         hasAboveEditorSurface: surface.hasVisibleContent(in: .aboveEditor),
-                        showsMessageQueue: showsMessageQueue
+                        showsMessageQueue: showsMessageQueue,
+                        showsNotifyChip: showsNotifyChip
                     ) {
                         ExtensionSurfacePanel(
                             surface: surface,
@@ -1313,6 +1347,7 @@ struct ChatView: View {
                             onExpandedEntryChange: handleExtensionDrawerExpansion,
                             collapseRequestID: extensionDrawerCollapseRequestID,
                             showsLeadingStripContent: showsReviewCommentPill || showsNowPlayingPill,
+                            showsTrailingStripContent: showsNotifyChip,
                             leadingStripContent: {
                                 HStack(spacing: 8) {
                                     if showsReviewCommentPill {
@@ -1333,6 +1368,14 @@ struct ChatView: View {
                                         )
                                     }
                                 }
+                            },
+                            trailingStripContent: {
+                                if let notifyState = notifyChipState {
+                                    ExtensionNotifyChip(
+                                        state: notifyState,
+                                        onToggleExpanded: toggleNotifyChip
+                                    )
+                                }
                             }
                         )
                         .padding(.horizontal, 16)
@@ -1347,6 +1390,18 @@ struct ChatView: View {
                                 audioPlayer: audioPlayer,
                                 accessibilityPrefix: "chat.nowPlaying",
                                 onOpen: { openTimelineReader(.nowPlaying(audioPlayer)) }
+                            )
+                            .padding(.horizontal, 16)
+                        }
+
+                        if let notifyState = notifyChipState, notifyState.isExpanded {
+                            ExtensionNotifyDrawer(
+                                state: notifyState,
+                                onCollapse: collapseNotifyChip,
+                                onDismiss: {
+                                    connection.extensionNotifyChipStore.dismiss(sessionId: sessionId)
+                                },
+                                onOpenURL: { openExtensionSurfaceURL($0) }
                             )
                             .padding(.horizontal, 16)
                         }
@@ -1404,23 +1459,6 @@ struct ChatView: View {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .stroke(Color.themeYellow.opacity(0.35), lineWidth: 1)
                     }
-                    .padding(.horizontal, 16)
-                }
-
-                if let notifyState = connection.extensionNotifyChipStore.state(for: sessionId) {
-                    ExtensionNotifyChip(
-                        state: notifyState,
-                        onToggleExpanded: {
-                            connection.extensionNotifyChipStore.setExpanded(
-                                !notifyState.isExpanded,
-                                sessionId: sessionId
-                            )
-                        },
-                        onDismiss: {
-                            connection.extensionNotifyChipStore.dismiss(sessionId: sessionId)
-                        },
-                        onOpenURL: { openExtensionSurfaceURL($0) }
-                    )
                     .padding(.horizontal, 16)
                 }
 

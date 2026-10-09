@@ -18,7 +18,7 @@ struct ExtensionSurfacePanelChromeTests {
         )
         let drawer = try extensionSurfacePanelSourceSlice(
             named: "private struct ExtensionSurfaceDrawer",
-            until: "struct ExtensionSurfacePanel<LeadingStripContent: View>",
+            until: "struct ExtensionSurfacePanel<",
             in: source
         )
 
@@ -44,6 +44,21 @@ struct ExtensionSurfacePanelChromeTests {
         #expect(source.contains("func extensionGlassPanel(cornerRadius: CGFloat = 18)"))
         #expect(!source.contains("extensionStripGlassPanel"))
         #expect(!source.contains("func extensionStripGlassPanel"))
+        #expect(collapsedStrip.contains("showsTrailingStripContent"))
+        #expect(collapsedStrip.contains("trailingStripContent"))
+    }
+
+    @Test("Strip stays visible when only trailing content is present")
+    func stripStaysVisibleWhenOnlyTrailingContentIsPresent() throws {
+        let source = try extensionSurfacePanelSource()
+        let showsStrip = try extensionSurfacePanelSourceSlice(
+            named: "private var showsStrip: Bool {",
+            until: "var body: some View {",
+            in: source
+        )
+        #expect(showsStrip.contains("showsLeadingStripContent"))
+        #expect(showsStrip.contains("showsTrailingStripContent"))
+        #expect(showsStrip.contains("!stripEntries.isEmpty"))
     }
 
     @Test("Message queue strip uses play-later symbol instead of outline list")

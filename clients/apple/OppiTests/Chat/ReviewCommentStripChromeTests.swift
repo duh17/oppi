@@ -24,6 +24,48 @@ struct ReviewCommentStripChromeTests {
         #expect(collapse.contains("collapseActiveEntry()"))
     }
 
+    @Test("Notify chip and other strip drawers are exclusive")
+    func notifyChipAndOtherStripDrawersAreExclusive() throws {
+        let chat = try reviewCommentsChatViewSource()
+        let toggleNotify = try reviewCommentsSourceSlice(
+            named: "private func toggleNotifyChip", until: "private func collapseNotifyChip", in: chat
+        )
+        #expect(toggleNotify.contains("extensionDrawerCollapseRequestID &+= 1"))
+        #expect(toggleNotify.contains("reviewCommentDrawerExpanded = false"))
+        #expect(toggleNotify.contains("nowPlayingDrawerExpanded = false"))
+
+        let handle = try reviewCommentsSourceSlice(
+            named: "private func handleExtensionDrawerExpansion", until: "private func toggleNotifyChip", in: chat
+        )
+        #expect(handle.contains("collapseNotifyChip()"))
+
+        let toggleReview = try reviewCommentsSourceSlice(
+            named: "private func toggleReviewCommentDrawer", until: "private func handleExtensionDrawerExpansion", in: chat
+        )
+        #expect(toggleReview.contains("collapseNotifyChip()"))
+
+        let toggleNowPlaying = try reviewCommentsSourceSlice(
+            named: "private func toggleNowPlayingDrawer", until: "private func toggleReviewCommentDrawer", in: chat
+        )
+        #expect(toggleNowPlaying.contains("collapseNotifyChip()"))
+    }
+
+    @Test("Notify chip is a trailing above-editor strip pill, not a separate footer chip")
+    func notifyChipIsTrailingAboveEditorStripPill() throws {
+        let chat = try reviewCommentsChatViewSource()
+        let footer = try reviewCommentsSourceSlice(
+            named: "private var footerArea: some View {", until: "ChatInputBar(", in: chat
+        )
+        #expect(footer.contains("showsTrailingStripContent: showsNotifyChip"))
+        #expect(footer.contains("ExtensionNotifyChip("))
+        #expect(footer.contains("ExtensionNotifyDrawer("))
+        #expect(footer.contains("showsNotifyChip: showsNotifyChip"))
+
+        let chipRange = try #require(footer.range(of: "ExtensionNotifyChip("))
+        let warningRange = try #require(footer.range(of: "reconnectFailureMessage"))
+        #expect(chipRange.lowerBound < warningRange.lowerBound)
+    }
+
     @Test("Review UI test uses the same count-aware stash title as the product")
     func reviewUITestUsesCountAwareStashTitle() throws {
         let uiTest = try reviewCommentsFeatureSource(path: "OppiUITests/FullScreenReviewCommentUITests.swift")
@@ -65,7 +107,8 @@ struct ReviewCommentStripChromeTests {
                 showsReviewCommentPill: true,
                 showsNowPlayingPill: false,
                 hasAboveEditorSurface: false,
-                showsMessageQueue: false
+                showsMessageQueue: false,
+                showsNotifyChip: false
             )
         )
         #expect(
@@ -73,7 +116,21 @@ struct ReviewCommentStripChromeTests {
                 showsReviewCommentPill: false,
                 showsNowPlayingPill: false,
                 hasAboveEditorSurface: false,
-                showsMessageQueue: false
+                showsMessageQueue: false,
+                showsNotifyChip: false
+            )
+        )
+    }
+
+    @Test("Above-editor strip is visible when only a notify chip exists")
+    func aboveEditorStripIsVisibleWhenOnlyNotifyChipExists() {
+        #expect(
+            ReviewCommentStripChrome.shouldShowAboveEditorStrip(
+                showsReviewCommentPill: false,
+                showsNowPlayingPill: false,
+                hasAboveEditorSurface: false,
+                showsMessageQueue: false,
+                showsNotifyChip: true
             )
         )
     }

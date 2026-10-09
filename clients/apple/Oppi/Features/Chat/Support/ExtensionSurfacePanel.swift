@@ -907,7 +907,7 @@ private struct ExtensionSurfaceDrawer: View {
     }
 }
 
-struct ExtensionSurfacePanel<LeadingStripContent: View>: View {
+struct ExtensionSurfacePanel<LeadingStripContent: View, TrailingStripContent: View>: View {
     let surface: ExtensionSurfaceState
     let placement: ExtensionSurfacePlacementGroup
     var messageQueue: MessageQueueSurfaceConfiguration? = nil
@@ -916,7 +916,9 @@ struct ExtensionSurfacePanel<LeadingStripContent: View>: View {
     var onExpandedEntryChange: ((Bool) -> Void)? = nil
     var collapseRequestID: Int = 0
     var showsLeadingStripContent = false
+    var showsTrailingStripContent = false
     var leadingStripContent: LeadingStripContent
+    var trailingStripContent: TrailingStripContent
 
     init(
         surface: ExtensionSurfaceState,
@@ -927,7 +929,9 @@ struct ExtensionSurfacePanel<LeadingStripContent: View>: View {
         onExpandedEntryChange: ((Bool) -> Void)? = nil,
         collapseRequestID: Int = 0,
         showsLeadingStripContent: Bool = false,
-        @ViewBuilder leadingStripContent: () -> LeadingStripContent = { EmptyView() }
+        showsTrailingStripContent: Bool = false,
+        @ViewBuilder leadingStripContent: () -> LeadingStripContent = { EmptyView() },
+        @ViewBuilder trailingStripContent: () -> TrailingStripContent = { EmptyView() }
     ) {
         self.surface = surface
         self.placement = placement
@@ -937,7 +941,9 @@ struct ExtensionSurfacePanel<LeadingStripContent: View>: View {
         self.onExpandedEntryChange = onExpandedEntryChange
         self.collapseRequestID = collapseRequestID
         self.showsLeadingStripContent = showsLeadingStripContent
+        self.showsTrailingStripContent = showsTrailingStripContent
         self.leadingStripContent = leadingStripContent()
+        self.trailingStripContent = trailingStripContent()
     }
 
     @State private var expandedEntryID: String?
@@ -998,7 +1004,7 @@ struct ExtensionSurfacePanel<LeadingStripContent: View>: View {
     }
 
     private var showsStrip: Bool {
-        showsLeadingStripContent || !stripEntries.isEmpty
+        showsLeadingStripContent || showsTrailingStripContent || !stripEntries.isEmpty
     }
 
     var body: some View {
@@ -1016,6 +1022,9 @@ struct ExtensionSurfacePanel<LeadingStripContent: View>: View {
                                 placement: placement,
                                 onTap: { toggle(entry) }
                             )
+                        }
+                        if showsTrailingStripContent {
+                            trailingStripContent
                         }
                     }
                 }
