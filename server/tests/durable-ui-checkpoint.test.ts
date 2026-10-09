@@ -84,9 +84,10 @@ async function deltasSinceBase(storage: Storage, conversationId: ConversationId)
 it("replays the same extension UI state after checkpointing and after reload", async () => {
   const when = DurableUI.definition.checkpointWhen;
   expect(when).toBeTypeOf("function");
-  const empty = UncheckpointedUI.definition.initial();
-  expect(when!(empty, [], { deltasSinceBase: THRESHOLD - 1 })).toBe(false);
-  expect(when!(empty, [], { deltasSinceBase: THRESHOLD })).toBe(true);
+  const running = UncheckpointedUI.definition.initial();
+  applyStep(running, 1);
+  expect(when!(running, [], { deltasSinceBase: THRESHOLD - 1 })).toBe(false);
+  expect(when!(running, [], { deltasSinceBase: THRESHOLD })).toBe(true);
 
   const opened = await openStore();
   const checkpointed = await opened.session.commit(
@@ -124,6 +125,60 @@ it("replays the same extension UI state after checkpointing and after reload", a
     expect(await session.snapshot(DurableUI, checkpointed.id, context)).toEqual(replayedState);
     expect(await deltasSinceBase(reloaded, checkpointed.id)).toBe(PAST);
     await attached!.stop();
+  } finally {
+    await session.close(context);
+  }
+}, 60_000);
+
+it("stores a base when the run's working message clears and on every idle write", async () => {
+  const opened = await openStore();
+  const [checkpointed, replayed] = [
+    await opened.session.commit(
+      (tx) => tx.createConversation({ ownership: { kind: "ownerless" } }),
+      context,
+    ),
+    await opened.session.commit(
+      (tx) => tx.createConversation({ ownership: { kind: "ownerless" } }),
+      context,
+    ),
+  ];
+  const both = (change: (ui: UIState) => void) =>
+    opened.session.commit(async (tx) => {
+      change(await tx.doc(DurableUI, checkpointed.id));
+      change(await tx.doc(UncheckpointedUI, replayed.id));
+    }, context);
+  const RUN = 40;
+  for (let i = 0; i < RUN; i++) await both((ui) => applyStep(ui, i));
+  expect(await deltasSinceBase(opened.storage, checkpointed.id)).toBe(RUN - 1);
+
+  // Run ends: the working message clears, as working-words publishes while idle.
+  await both((ui) => {
+    ui.notifications["working:message"] = {
+      id: "working-words:working:message",
+      method: "setWorkingMessage",
+    };
+  });
+  expect(await deltasSinceBase(opened.storage, checkpointed.id)).toBe(0);
+  // Idle writes (a job widget finishing between turns) stay bases.
+  await both((ui) => {
+    ui.notifications["widget:jobs"] = {
+      id: "widget:jobs",
+      method: "setWidget",
+      widgetKey: "jobs",
+      widgetLines: ["done"],
+    };
+  });
+  expect(await deltasSinceBase(opened.storage, checkpointed.id)).toBe(0);
+  // The next run starts a new chain.
+  await both((ui) => applyStep(ui, RUN));
+  expect(await deltasSinceBase(opened.storage, checkpointed.id)).toBe(1);
+
+  const expected = await opened.session.snapshot(UncheckpointedUI, replayed.id, context);
+  await opened.session.close(context);
+  const reloaded = await openNodeSqliteStorage(opened.file);
+  const session = createSession(reloaded);
+  try {
+    expect(await session.snapshot(DurableUI, checkpointed.id, context)).toEqual(expected);
   } finally {
     await session.close(context);
   }

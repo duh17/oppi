@@ -159,6 +159,7 @@ Entries labeled **Mac** describe work on `main`; the Mac app is not part of the 
 
 ### Fixed
 
+- **Server:** A durable session's extension UI state (status, widgets, the working message) no longer builds up stored history between turns. It's saved as a single copy whenever no run is showing, as pi-durable does for live run state, so idle conversations keep none of the once-a-second working-message updates.
 - **Server:** Durable background jobs no longer keep a second copy of each job's output in storage after it is delivered. The output is held only until delivery and then deleted, and the transcript keeps the delivered result. Before, the copy filled 82% of the background-job state stored on disk.
 - **Client:** Extension `notify()` is a muted chip above the chat composer instead of a blocking Notice sheet. The chip shows the extension name, tints the icon for error/warning, auto-dismisses after a few seconds, and expands to the message. App-originated notices (file-link errors, reloaded tools) still use the sheet.
 - **Server:** User-installed extensions (files and helpers under the Pi agent `extensions` directory, project `.pi/extensions`, and `pi install` git checkouts) now send their display name with `notify()`, so the chip can attribute the message.

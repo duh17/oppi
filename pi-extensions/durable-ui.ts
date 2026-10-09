@@ -148,10 +148,18 @@ function pickUIFields(
   return result;
 }
 
-// Warm replay is ~1.6 ms per 1,000 deltas (12,689 took ~20 ms warm / ~60 ms cold).
-// 500 keeps that tail near 1 ms. The next write of an over-threshold document
-// stores a base and drops the chain; history is latest, so no migration is required.
+// Follows pi.live (pi-durable harness/live.ts, spec §3.5): store a complete base
+// whenever no run is shown, so the stored chain spans at most one run and an idle
+// conversation keeps no history. A run shows a working message; idle clears it.
+// Unlike pi.live, a run's chain carries a once-per-second elapsed-time message,
+// so a long run also stores a base every 500 deltas (warm replay is ~1.6 ms per
+// 1,000). History is latest: the next write of an existing chain drops it.
 const EXTENSION_UI_CHECKPOINT_DELTAS = 500;
+const showsRun = (value: Readonly<UIState>): boolean =>
+  Object.values(value.notifications).some(
+    (notification) =>
+      notification.method === "setWorkingMessage" && !!notification.message,
+  );
 
 export const DurableUI = defineDoc<UIState>({
   kind: "oppi.extension-ui",
@@ -160,8 +168,8 @@ export const DurableUI = defineDoc<UIState>({
   history: "latest",
   fork: "initial",
   initial: () => ({ requests: {}, notifications: {} }),
-  checkpointWhen: (_value, _ops, info) =>
-    info.deltasSinceBase >= EXTENSION_UI_CHECKPOINT_DELTAS,
+  checkpointWhen: (value, _ops, info) =>
+    !showsRun(value) || info.deltasSinceBase >= EXTENSION_UI_CHECKPOINT_DELTAS,
 });
 
 /**

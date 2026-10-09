@@ -23,6 +23,8 @@ const response = await requestUI(
 
 The helper creates one `oppi.extension-ui` conversation document entry per stable request ID. Each entry has `taskId`, a Pi-shaped `request`, and an optional `response`. Supported blocking methods are `ask`, `select`, `confirm`, `input`, and `editor`. Request fields match the existing extension UI protocol, including question options, multi-select, custom answers, provenance, and absolute `timeoutAt`. A relative `timeout` becomes an absolute deadline on first publication. Replayed tools must reuse their request ID.
 
+Storage follows pi-durable's `pi.live` rule: a write stores a complete base whenever no notification shows a working message (`setWorkingMessage` with text), so an idle conversation keeps no history and the stored chain spans at most one run. A run's chain includes the once-per-second elapsed-time message, so a long run also stores a base every 500 deltas.
+
 Writers of `oppi.extension-ui` are trusted in-process host code, with the same trust as classic `ctx.ui`. Use `requestUI` for blocking requests, not direct `tx.doc` writes. The host owns `harness.sqlite`; hostile co-tenant extensions are out of scope. The event-field allowlist guards against accidental overrides, not hostile writers.
 
 `DurableUIProjection` watches this document with `watchDoc`; custom documents are not in `viewState`. It emits the same backend events as `SdkUiBridge`. The existing extension UI state owner sanitizes text and native widgets, bounds payloads, throttles notifications, and builds ServerMessages. No relay code tests extension, tool, status, or widget identities.
