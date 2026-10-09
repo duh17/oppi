@@ -632,7 +632,7 @@ private func completedWithin<T: Sendable>(
             try? await Task.sleep(for: timeout)
             return nil
         }
-        let winner = await group.next()
+        let winner = await group.next() ?? nil
         group.cancelAll()
         return winner
     }

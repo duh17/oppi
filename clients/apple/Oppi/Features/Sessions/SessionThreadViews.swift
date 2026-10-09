@@ -713,8 +713,10 @@ private struct SessionThreadDetailContentView: View {
             fetch.agentNames?.cancel()
             return
         }
+        // Dismissal is not a failed open: do not paint an error or record the load.
         if Task.isCancelled {
             fetch.agentNames?.cancel()
+            return
         }
         if let fetched = fetch.snapshot {
             snapshot = fetched

@@ -1855,7 +1855,12 @@ const AGENT_WORKLOAD_METRICS = new Set([
 ]);
 
 function informationalGroup(metric: string): string {
-  if (metric === "server.turn_ttft_ms") {
+  if (
+    metric === "server.turn_ttft_ms" ||
+    metric === "chat.thread_load_ms" ||
+    metric === "chat.session_switch_ms" ||
+    metric === "chat.workspace_load_ms"
+  ) {
     return "UX responsiveness drill-down (no SLO)";
   }
   if (metric.startsWith("chat.dictation_") || metric.startsWith("server.dictation_")) {
