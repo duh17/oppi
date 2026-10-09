@@ -1152,15 +1152,22 @@ export class SearchIndex {
       }
     }
 
+    // Sample identity before the parse. A same-size rewrite keeps dev, ino, and
+    // size, so a boundary taken after the read would store the torn transcript.
+    const boundaryBefore = await readBoundary(jsonlPath, fileStat.size);
+    if (this.closed) return;
     const full = await this.readFullTranscript(jsonlPath, fileStat.size);
     if (this.closed || !full) return;
-    const boundaryNow = await readBoundary(jsonlPath, fileStat.size);
-    if (this.closed) return;
     await this.commitFileSnapshot(
       sessionId,
-      { path: jsonlPath, stat: fileStat, boundaryAtOffset: boundaryNow, offset: fileStat.size },
+      {
+        path: jsonlPath,
+        stat: fileStat,
+        boundaryAtOffset: boundaryBefore,
+        offset: fileStat.size,
+      },
       full.transcript,
-      cursorForFile(fileStat, boundaryNow, full.leafId),
+      cursorForFile(fileStat, boundaryBefore, full.leafId),
     );
   }
 
@@ -1817,6 +1824,7 @@ export class SearchIndex {
   private needsYieldingFullRead(session: Session): boolean {
     const live = this.getSession(session.id);
     if (!live || live.ephemeral || this.isIndexedFromDurable(live)) return false;
+    // Not finished work. The batch skip resumes the job after its transaction.
     if (this.fileIndexJobs.has(live.id)) return false;
     const jsonlPath = live.piSessionFile;
     if (!jsonlPath) return false;
@@ -1851,13 +1859,70 @@ export class SearchIndex {
     return offsetIsLineBoundarySync(jsonlPath, stored.offset);
   }
 
-  /** Startup full read. Yields through the file instead of readFileSync. */
-  private async syncSessionYielding(session: Session): Promise<SearchIndexSyncResult> {
-    const result = emptySyncResult();
-    if (this.fileIndexJobs.has(session.id)) {
+  /** True when the stored cursor names this file's current dev, ino, size, and tail. */
+  private fileCursorMatchesFile(sessionId: string): boolean {
+    const live = this.getSession(sessionId);
+    if (!live || live.ephemeral || this.isIndexedFromDurable(live)) return false;
+    const jsonlPath = live.piSessionFile;
+    if (!jsonlPath) return false;
+    const meta = this.getMeta(sessionId);
+    const stored = meta && meta.jsonl_path === jsonlPath ? cursorFromMeta(meta) : null;
+    if (!stored) return false;
+    let fileStat: FileStat | null;
+    try {
+      fileStat = fileStatFrom(statSync(jsonlPath, { bigint: true }));
+    } catch {
+      return false;
+    }
+    if (!fileStat || stored.dev !== fileStat.dev || stored.ino !== fileStat.ino) return false;
+    if (stored.offset !== fileStat.size) return false;
+    return readBoundarySync(jsonlPath, fileStat.size) === stored.boundary;
+  }
+
+  /**
+   * Await the turn-end read outside any SQLite transaction, then full-read once
+   * if it did not land the current cursor. One follow-up: the yielding read
+   * does not chain another.
+   */
+  private async resumeSkippedFileIndex(session: Session): Promise<SearchIndexSyncResult> {
+    const job = this.fileIndexJobs.get(session.id);
+    if (job) await job.done;
+    if (this.closed) return emptySyncResult();
+    const live = this.getSession(session.id);
+    if (!live || live.ephemeral || this.isIndexedFromDurable(live)) {
+      const result = emptySyncResult();
       result.skipped = 1;
       return result;
     }
+    if (this.fileCursorMatchesFile(live.id)) {
+      const result = emptySyncResult();
+      result.skipped = 1;
+      return result;
+    }
+    return this.syncSessionYielding(live, true);
+  }
+
+  private async followSkippedFileIndex(
+    session: Session,
+    followedUp: boolean,
+  ): Promise<SearchIndexSyncResult | null> {
+    if (!this.fileIndexJobs.has(session.id)) return null;
+    if (followedUp) {
+      const result = emptySyncResult();
+      result.skipped = 1;
+      return result;
+    }
+    return this.resumeSkippedFileIndex(session);
+  }
+
+  /** Startup full read. Yields through the file instead of readFileSync. */
+  private async syncSessionYielding(
+    session: Session,
+    followedUp = false,
+  ): Promise<SearchIndexSyncResult> {
+    const parked = await this.followSkippedFileIndex(session, followedUp);
+    if (parked) return parked;
+    const result = emptySyncResult();
     const live = this.getSession(session.id);
     if (!live || live.ephemeral) return this.removeIndexedSession(session.id);
     if (this.isIndexedFromDurable(live)) {
@@ -1874,22 +1939,24 @@ export class SearchIndex {
     }
     if (!fileStat) return this.syncSession(live, new Set());
     const hadRow = this.getMeta(live.id) !== undefined;
-    if (this.fileIndexJobs.has(live.id)) {
-      result.skipped = 1;
-      return result;
-    }
+    const parkedAfterStat = await this.followSkippedFileIndex(live, followedUp);
+    if (parkedAfterStat) return parkedAfterStat;
+    const boundaryBefore = await readBoundary(jsonlPath, fileStat.size);
+    if (this.closed) return result;
     const full = await this.readFullTranscript(jsonlPath, fileStat.size);
     if (this.closed || !full) return result;
-    if (this.fileIndexJobs.has(live.id)) {
-      result.skipped = 1;
-      return result;
-    }
-    const boundary = await readBoundary(jsonlPath, fileStat.size);
+    const parkedAfterRead = await this.followSkippedFileIndex(live, followedUp);
+    if (parkedAfterRead) return parkedAfterRead;
     await this.commitFileSnapshot(
       live.id,
-      { path: jsonlPath, stat: fileStat, boundaryAtOffset: boundary, offset: fileStat.size },
+      {
+        path: jsonlPath,
+        stat: fileStat,
+        boundaryAtOffset: boundaryBefore,
+        offset: fileStat.size,
+      },
       full.transcript,
-      cursorForFile(fileStat, boundary, full.leafId),
+      cursorForFile(fileStat, boundaryBefore, full.leafId),
     );
     if (!this.getSession(live.id)) {
       if (hadRow) result.removed = 1;
@@ -1900,7 +1967,7 @@ export class SearchIndex {
     if (
       !storedCursor ||
       storedCursor.offset !== fileStat.size ||
-      storedCursor.boundary !== boundary
+      storedCursor.boundary !== boundaryBefore
     ) {
       result.skipped = 1;
       return result;
@@ -1913,11 +1980,20 @@ export class SearchIndex {
     return result;
   }
 
-  private syncSession(session: Session, ftsIds: ReadonlySet<string>): SearchIndexSyncResult {
+  private syncSession(
+    session: Session,
+    ftsIds: ReadonlySet<string>,
+    inFlightSkips?: Session[],
+  ): SearchIndexSyncResult {
     const result = emptySyncResult();
     // An in-flight turn-end read owns this session. Writing here can land an
-    // older snapshot over a newer cursor.
+    // older snapshot over a newer cursor. The background walk resumes these
+    // after the batch transaction; do not await the job inside it.
     if (this.fileIndexJobs.has(session.id)) {
+      if (inFlightSkips) {
+        inFlightSkips.push(session);
+        return result;
+      }
       result.skipped = 1;
       return result;
     }
@@ -2126,10 +2202,16 @@ export class SearchIndex {
     budgetMs: number,
     batchSize: number,
     ftsIds: ReadonlySet<string>,
-  ): { nextIndex: number; result: SearchIndexSyncResult; elapsedMs: number } {
+  ): {
+    nextIndex: number;
+    result: SearchIndexSyncResult;
+    elapsedMs: number;
+    inFlightSkips: Session[];
+  } {
     const batchStart = performance.now();
     let nextIndex = startIndex;
     const result = emptySyncResult();
+    const inFlightSkips: Session[] = [];
 
     // Skip-only sessions are read-only. Do not open a write transaction or pull
     // transcript blobs for the unchanged path that dominates restart warming.
@@ -2177,14 +2259,14 @@ export class SearchIndex {
           )
         ) {
           if (this.needsYieldingFullRead(sessions[nextIndex])) break;
-          mergeSyncResults(result, this.syncSession(sessions[nextIndex], ftsIds));
+          mergeSyncResults(result, this.syncSession(sessions[nextIndex], ftsIds, inFlightSkips));
           nextIndex++;
         }
       });
       txn();
     }
 
-    return { nextIndex, result, elapsedMs: performance.now() - batchStart };
+    return { nextIndex, result, elapsedMs: performance.now() - batchStart, inFlightSkips };
   }
 
   private deleteOrphanBatchWithinBudget(
@@ -2308,6 +2390,14 @@ export class SearchIndex {
       sessionsChecked += batchSessionsChecked;
       maxBatchMs = Math.max(maxBatchMs, batchResult.elapsedMs);
       mergeSyncResults(result, batchResult.result);
+      // The batch transaction only recorded the skip. Await the turn-end read
+      // here, then index once if its cursor still does not match the file.
+      for (const skipped of batchResult.inFlightSkips) {
+        if (this.closed) {
+          return this.completeBackgroundSync(startedAt, result, sessionsChecked, maxBatchMs, true);
+        }
+        mergeSyncResults(result, await this.resumeSkippedFileIndex(skipped));
+      }
 
       if (sessionIndex < fileSessions.length) {
         await yieldBetweenBatches();

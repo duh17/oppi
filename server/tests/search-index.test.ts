@@ -1801,4 +1801,96 @@ describe("SearchIndex turn-end indexing", () => {
       index.close();
     }
   });
+
+  it("indexes a session boot sync skipped while an in-flight read throws", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-boot-skip-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    writeFileSync(
+      jsonlPath,
+      transcriptLine("u1", null, "user", "boot skip base token") +
+        transcriptLine("a1", "u1", "assistant", "boot skip answer"),
+    );
+    const session = makeSession({ id: "sess-boot-skip", piSessionFile: jsonlPath });
+    const index = new SearchIndex(dataDir, () => session);
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      await index.indexSession(session.id);
+      appendFileSync(jsonlPath, transcriptLine("u2", "a1", "user", "boot skip followup token"));
+      index.fileIndexGate = async () => {
+        index.fileIndexGate = undefined;
+        throw new Error("injected read failure");
+      };
+      const indexing = index.indexSession(session.id);
+      const syncing = index.startBackgroundSync([session], { batchSize: 1 });
+      await indexing;
+      await syncing;
+      expect(index.search("boot skip followup token", "ws-1")).toHaveLength(1);
+      expect(index.search("boot skip base token", "ws-1")).toHaveLength(1);
+      expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
+    } finally {
+      index.fileIndexGate = undefined;
+      index.close();
+    }
+  });
+
+  it("does not commit a same-size rewrite that lands during a full read", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-same-size-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    const head: string[] = [];
+    let parent: string | null = null;
+    for (let i = 0; i < 1000; i++) {
+      const id = `h${i}`;
+      head.push(transcriptLine(id, parent, "user", `same size head ${i}`));
+      parent = id;
+    }
+    const headText = head.join("");
+    const oldTail = transcriptLine("tail", parent, "user", "oldtailtoken");
+    const newTail = transcriptLine("tail", parent, "user", "newtailtoken");
+    expect(oldTail.length).toBe(newTail.length);
+    const original = headText + oldTail;
+    const rewritten = headText + newTail;
+    expect(original.length).toBe(rewritten.length);
+    expect(original.length).toBeLessThan(256 * 1024);
+    writeFileSync(jsonlPath, original);
+    const session = makeSession({ id: "sess-same-size", piSessionFile: jsonlPath });
+    const index = new SearchIndex(dataDir, () => session);
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    const originalSetImmediate = globalThis.setImmediate;
+    let rewroteDuringRead = false;
+    globalThis.setImmediate = ((callback: (...args: unknown[]) => void, ...args: unknown[]) => {
+      const duringFullRead = new Error().stack?.includes("readFullTranscript") === true;
+      return originalSetImmediate(
+        (...callbackArgs: unknown[]) => {
+          if (duringFullRead && !rewroteDuringRead) {
+            rewroteDuringRead = true;
+            const before = statSync(jsonlPath);
+            writeFileSync(jsonlPath, rewritten);
+            const after = statSync(jsonlPath);
+            if (String(after.ino) !== String(before.ino) || after.size !== before.size) {
+              throw new Error(
+                `same-size rewrite changed identity ${before.ino}->${after.ino} ${before.size}->${after.size}`,
+              );
+            }
+          }
+          callback(...callbackArgs);
+        },
+        ...args,
+      );
+    }) as typeof setImmediate;
+
+    try {
+      await index.indexSession(session.id);
+      expect(rewroteDuringRead).toBe(true);
+      expect(index.search("newtailtoken", "ws-1")).toHaveLength(1);
+      expect(index.search("oldtailtoken", "ws-1")).toEqual([]);
+      expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
+    } finally {
+      globalThis.setImmediate = originalSetImmediate;
+      index.close();
+    }
+  });
 });
