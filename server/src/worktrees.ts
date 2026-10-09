@@ -702,13 +702,36 @@ export async function previewWorkspaceWorktree(
 // Paths and workspace-scoped ids claimed by an in-flight create or removal.
 // The key includes workspaceId: managed ids are derived from the branch name
 // and would otherwise collide across workspaces. Removal inserts it only after
-// main/unmanaged/active-session rejection. Create inserts it immediately before
-// git worktree add, with no await between the check and the claim.
+// main/unmanaged/active-session rejection. Create inserts the id immediately
+// before git worktree add, with no await between the check and the claim.
+// A separate per-request sentinel covers the awaits before that id is known.
+// Only the no-id claim check sees it, so it cannot look like an existing id.
 const pendingWorktreeRemovals = new Set<string>();
 const pendingWorktreeRemovalKeys = new Set<string>();
+const pendingWorkspaceCreateKeys = new Set<string>();
+let nextWorkspaceCreateKey = 0;
 
 function pendingRemovalKey(workspaceId: string, worktreeId: string): string {
   return `${workspaceId}\0${worktreeId}`;
+}
+
+/** Hold a workspace create until the handler releases this key. Not a worktree id. */
+export function claimInFlightWorkspaceCreate(workspaceId: string): string {
+  const key = `${workspaceId}\0in-flight-create\0${nextWorkspaceCreateKey++}`;
+  pendingWorkspaceCreateKeys.add(key);
+  return key;
+}
+
+export function releaseInFlightWorkspaceCreate(key: string): void {
+  pendingWorkspaceCreateKeys.delete(key);
+}
+
+function setHasWorkspacePrefix(keys: ReadonlySet<string>, workspaceId: string): boolean {
+  const prefix = `${workspaceId}\0`;
+  for (const key of keys) {
+    if (key.startsWith(prefix)) return true;
+  }
+  return false;
 }
 
 /** True when create or removal holds this workspace, or one of its worktree ids. */
@@ -717,13 +740,14 @@ export function workspaceHasPendingWorktreeClaim(
   worktreeId?: string,
 ): boolean {
   if (worktreeId !== undefined) {
+    // Create sentinels are not ids. Session rebind must not treat an in-flight
+    // create as removal of the requested worktree.
     return pendingWorktreeRemovalKeys.has(pendingRemovalKey(workspaceId, worktreeId));
   }
-  const prefix = `${workspaceId}\0`;
-  for (const key of pendingWorktreeRemovalKeys) {
-    if (key.startsWith(prefix)) return true;
-  }
-  return false;
+  return (
+    setHasWorkspacePrefix(pendingWorktreeRemovalKeys, workspaceId) ||
+    setHasWorkspacePrefix(pendingWorkspaceCreateKeys, workspaceId)
+  );
 }
 
 // Deleting a multi-GB tree takes minutes; killing git midway leaves a half-deleted

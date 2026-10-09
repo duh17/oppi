@@ -13,11 +13,13 @@ import { resolveInitialChatModel } from "../session-model-selection.js";
 import { isPiTuiTaskRecordSession } from "../pi-tui-session-classification.js";
 import { hostMountValidationError } from "../host.js";
 import {
+  claimInFlightWorkspaceCreate,
   createWorkspaceWorktree,
   hasManagedWorkspaceWorktreeDirectory,
   listWorkspaceWorktrees,
   openWorkspaceWorktree,
   previewWorkspaceWorktree,
+  releaseInFlightWorkspaceCreate,
   removeWorkspaceWorktree,
   resolveWorkspaceWorktree,
   workspaceHasPendingWorktreeClaim,
@@ -253,8 +255,9 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     if (workspace) {
       const dataDir = ctx.storage.getDataDir();
       const listed = await listWorkspaceWorktrees(workspace, { dataDir });
-      // Create can mkdir and claim during that await. The catalog hides an
-      // in-flight claim, so re-check the directory and the claim set after.
+      // Create holds a workspace sentinel before its first await, and the
+      // per-id key only once the id is known. A stale catalog misses both,
+      // so re-check the directory and the claim set after this await.
       const hasManagedWorktrees =
         hasManagedWorkspaceWorktreeDirectory(dataDir, wsId) ||
         listed.some((worktree) => worktree.managedByOppi === true) ||
@@ -347,20 +350,29 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const body = await helpers.parseBody<unknown>(req);
-    if (!rejectNonObjectBody(body, res)) return;
+    // parseBody and the git checks before the per-id claim are awaits. Hold a
+    // workspace sentinel across them so delete cannot pass its post-await
+    // re-check and leave the later checkout orphaned. Do not claim the real
+    // id here: requireAvailableCreateTarget would treat it as already existing.
+    const createKey = claimInFlightWorkspaceCreate(wsId);
     try {
-      const worktree = await createWorkspaceWorktree(
-        workspace,
-        body as CreateWorkspaceWorktreeRequest,
-        {
-          dataDir: ctx.storage.getDataDir(),
-          reservedWorktreeIds: new Set(workspaceWorktreeSessionCounts(wsId).keys()),
-        },
-      );
-      helpers.json(res, { workspaceId: wsId, worktree }, 201);
-    } catch (error) {
-      handleWorktreeLifecycleError(error, res);
+      const body = await helpers.parseBody<unknown>(req);
+      if (!rejectNonObjectBody(body, res)) return;
+      try {
+        const worktree = await createWorkspaceWorktree(
+          workspace,
+          body as CreateWorkspaceWorktreeRequest,
+          {
+            dataDir: ctx.storage.getDataDir(),
+            reservedWorktreeIds: new Set(workspaceWorktreeSessionCounts(wsId).keys()),
+          },
+        );
+        helpers.json(res, { workspaceId: wsId, worktree }, 201);
+      } catch (error) {
+        handleWorktreeLifecycleError(error, res);
+      }
+    } finally {
+      releaseInFlightWorkspaceCreate(createKey);
     }
   }
 
