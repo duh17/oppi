@@ -7,6 +7,7 @@ final class ChatTimelineControllerContext {
     var workspaceId: String?
     var agentId: String?
     var agentIcon: IconChoice?
+    var chromeStyle: ChatTimelineChromeStyle = .standard
     var routeScope: SessionRouteScope?
     var onFork: ((String) -> Void)?
     var onOpenCurrentFile: ((String) -> Void)?
@@ -41,12 +42,18 @@ final class ChatTimelineControllerContext {
         agentId != configuration.agentId || agentIcon != configuration.agentIcon
     }
 
+    /// Chrome changes row geometry, so cached heights are stale with it.
+    func didChangeChromeStyle(for configuration: ChatTimelineCollectionHost.Configuration) -> Bool {
+        chromeStyle != configuration.chromeStyle
+    }
+
     func apply(configuration: ChatTimelineCollectionHost.Configuration) {
         sessionId = configuration.sessionId
         serverId = configuration.serverId
         workspaceId = configuration.workspaceId
         agentId = configuration.agentId
         agentIcon = configuration.agentIcon
+        chromeStyle = configuration.chromeStyle
         routeScope = configuration.routeScope
         onFork = configuration.onFork
         onOpenCurrentFile = configuration.onOpenCurrentFile

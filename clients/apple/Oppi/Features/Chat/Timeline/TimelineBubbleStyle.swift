@@ -33,6 +33,50 @@ enum TimelineBubbleStyle {
     static let thumbnailBorderAlpha: CGFloat = 0.3
 }
 
+/// Row chrome for one chat timeline. Every row in a timeline uses the same
+/// style; ChatView picks it from the session (`ChatTimelineChromeStyle.for`).
+enum ChatTimelineChromeStyle: Equatable {
+    /// Coding transcript: full-width user card and unboxed assistant prose.
+    case standard
+    /// Messaging layout for durable sessions: trailing user bubble, assistant
+    /// card without the avatar, and work folded into a hugging
+    /// "Worked · N steps" pill.
+    case conversation
+
+    /// Durable sessions open in the conversation layout while this device
+    /// has the Durable Sessions experiment on. Classic sessions never do.
+    static func `for`(engine: SessionEngine?, durableExperimentEnabled: Bool) -> Self {
+        durableExperimentEnabled && engine == .durable ? .conversation : .standard
+    }
+}
+
+/// Geometry for `ChatTimelineChromeStyle.conversation`.
+enum ConversationBubbleChrome {
+    static let cornerRadius: CGFloat = 18
+    /// User bubbles and assistant cards never span the full row, so the
+    /// trailing/leading gutter says who is speaking without a caption.
+    static let maxWidthFraction: CGFloat = 0.82
+    /// Cap for wide (iPad, landscape) rows so a bubble stays readable.
+    static let maxWidth: CGFloat = 620
+    static let userHorizontalPadding: CGFloat = 14
+    static let userVerticalPadding: CGFloat = 9
+    static let assistantHorizontalPadding: CGFloat = 14
+    static let assistantVerticalPadding: CGFloat = 10
+    /// Space the assistant card leaves on its trailing edge.
+    static let assistantTrailingGutter: CGFloat = 28
+
+    static func maxBubbleWidth(rowWidth: CGFloat) -> CGFloat {
+        min(maxWidth, (rowWidth * maxWidthFraction).rounded(.down))
+    }
+
+    /// Assistant cards keep the theme's assistant fill when it has one;
+    /// built-ins leave it clear, so the card lifts onto `bgHighlight`.
+    static func assistantCardFill(from palette: ThemePalette) -> UIColor {
+        let themed = TimelineSpeakerChrome.assistantFill(from: palette)
+        return themed == .clear ? UIColor(palette.bgHighlight) : themed
+    }
+}
+
 /// Speaker chrome for user vs assistant timeline rows.
 ///
 /// User rows are the only elevated card: `userMessageBg` fill, plus a leading

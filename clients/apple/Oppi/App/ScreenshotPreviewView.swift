@@ -89,6 +89,10 @@ struct ScreenshotPreviewView: View {
             DurableSessionsScreenshotPreview(surface: .sidebar)
         case "durable-sessions-list":
             DurableSessionsScreenshotPreview(surface: .list)
+        case "durable-conversation":
+            DurableConversationScreenshotPreview(themeID: .dark)
+        case "durable-conversation-light":
+            DurableConversationScreenshotPreview(themeID: .light)
         case "scoped-locks":
             ScopedLocksScreenshotPreview()
         case "quick-session-overlay":

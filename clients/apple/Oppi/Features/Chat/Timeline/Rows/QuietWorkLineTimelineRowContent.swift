@@ -3,6 +3,7 @@ import UIKit
 struct QuietWorkLineTimelineRowConfiguration: UIContentConfiguration {
     let workLine: QuietTimelineWorkLine
     let style: AppPreferences.ChatDisplay.WorkStripStyle
+    let chromeStyle: ChatTimelineChromeStyle
     let onTap: () -> Void
     let isHighlighted: Bool
     let isSelected: Bool
@@ -10,12 +11,14 @@ struct QuietWorkLineTimelineRowConfiguration: UIContentConfiguration {
     init(
         workLine: QuietTimelineWorkLine,
         style: AppPreferences.ChatDisplay.WorkStripStyle? = nil,
+        chromeStyle: ChatTimelineChromeStyle = .standard,
         onTap: @escaping () -> Void = {},
         isHighlighted: Bool = false,
         isSelected: Bool = false
     ) {
         self.workLine = workLine
         self.style = style ?? workLine.displayStyle
+        self.chromeStyle = chromeStyle
         self.onTap = onTap
         self.isHighlighted = isHighlighted
         self.isSelected = isSelected
@@ -30,6 +33,7 @@ struct QuietWorkLineTimelineRowConfiguration: UIContentConfiguration {
         return Self(
             workLine: workLine,
             style: style,
+            chromeStyle: chromeStyle,
             onTap: onTap,
             isHighlighted: cellState.isHighlighted,
             isSelected: cellState.isSelected
@@ -40,13 +44,21 @@ struct QuietWorkLineTimelineRowConfiguration: UIContentConfiguration {
 /// Full-width compact-work strip. The whole row is the control; expanded vs
 /// collapsed is fill, not a chevron. The configured density shows either
 /// bucket icons with counts or a stable words summary.
+///
+/// Conversation chrome instead draws a leading pill that hugs
+/// "Worked 9s \u{00B7} 2 steps \u{203A}"; the chevron turns down while expanded.
 final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
     private static let liveBlinkAnimationKey = "oppi.quietWork.liveBlink"
+    /// Conversation pill sits inside the 44 pt touch row.
+    private static let conversationPillVerticalInset: CGFloat = 5
 
     private let chipView = UIView()
     private let button = UIButton(type: .system)
     private let summaryLabel = UILabel()
     private let durationLabel = UILabel()
+    private let chevronView = UIImageView()
+    private var standardConstraints: [NSLayoutConstraint] = []
+    private var conversationConstraints: [NSLayoutConstraint] = []
     private var currentConfiguration: QuietWorkLineTimelineRowConfiguration
     nonisolated(unsafe) private var durationTimer: Timer?
     private var durationStartedAt: Date?
@@ -121,42 +133,98 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
             self?.currentConfiguration.onTap()
         }, for: .primaryActionTriggered)
 
+        chevronView.translatesAutoresizingMaskIntoConstraints = false
+        chevronView.isUserInteractionEnabled = false
+        chevronView.contentMode = .center
+        chevronView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .caption1, scale: .small)
+            .applying(UIImage.SymbolConfiguration(weight: .semibold))
+        chevronView.setContentHuggingPriority(.required, for: .horizontal)
+        chevronView.setContentCompressionResistancePriority(.required, for: .horizontal)
+
         addSubview(chipView)
         addSubview(button)
         addSubview(summaryLabel)
         addSubview(durationLabel)
+        addSubview(chevronView)
+        // The button spans the chip horizontally and the full row vertically,
+        // so the inset conversation pill keeps a 44 pt target.
         NSLayoutConstraint.activate([
             chipView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            button.leadingAnchor.constraint(equalTo: chipView.leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: chipView.trailingAnchor),
+            button.topAnchor.constraint(equalTo: topAnchor),
+            button.bottomAnchor.constraint(equalTo: bottomAnchor),
+            button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            summaryLabel.centerYAnchor.constraint(equalTo: chipView.centerYAnchor),
+            durationLabel.centerYAnchor.constraint(equalTo: chipView.centerYAnchor),
+            chevronView.centerYAnchor.constraint(equalTo: chipView.centerYAnchor),
+        ])
+        standardConstraints = [
             chipView.trailingAnchor.constraint(equalTo: trailingAnchor),
             chipView.topAnchor.constraint(equalTo: topAnchor),
             chipView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            button.leadingAnchor.constraint(equalTo: chipView.leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: chipView.trailingAnchor),
-            button.topAnchor.constraint(equalTo: chipView.topAnchor),
-            button.bottomAnchor.constraint(equalTo: chipView.bottomAnchor),
-            button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             summaryLabel.leadingAnchor.constraint(equalTo: chipView.leadingAnchor, constant: 14),
-            summaryLabel.centerYAnchor.constraint(equalTo: chipView.centerYAnchor),
             durationLabel.leadingAnchor.constraint(greaterThanOrEqualTo: summaryLabel.trailingAnchor, constant: 8),
             durationLabel.trailingAnchor.constraint(equalTo: chipView.trailingAnchor, constant: -14),
-            durationLabel.centerYAnchor.constraint(equalTo: chipView.centerYAnchor),
-        ])
+        ]
+        conversationConstraints = [
+            chipView.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+            chipView.topAnchor.constraint(equalTo: topAnchor, constant: Self.conversationPillVerticalInset),
+            chipView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.conversationPillVerticalInset),
+            summaryLabel.leadingAnchor.constraint(equalTo: chipView.leadingAnchor, constant: 12),
+            durationLabel.leadingAnchor.constraint(equalTo: summaryLabel.trailingAnchor, constant: 5),
+            chevronView.leadingAnchor.constraint(equalTo: durationLabel.trailingAnchor, constant: 6),
+            chevronView.trailingAnchor.constraint(equalTo: chipView.trailingAnchor, constant: -12),
+        ]
+    }
+
+    private func applyChromeLayout(_ chromeStyle: ChatTimelineChromeStyle) {
+        let isConversation = chromeStyle == .conversation
+        NSLayoutConstraint.deactivate(isConversation ? standardConstraints : conversationConstraints)
+        NSLayoutConstraint.activate(isConversation ? conversationConstraints : standardConstraints)
+        chevronView.isHidden = !isConversation
+        // Standard strips truncate a long bucket summary; the pill's text is
+        // short and must stay whole.
+        summaryLabel.adjustsFontSizeToFitWidth = !isConversation
+        durationLabel.textAlignment = isConversation ? .left : .right
+        let baseSize = UIFont.preferredFont(forTextStyle: .subheadline).pointSize
+        let font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(
+            for: .monospacedDigitSystemFont(ofSize: baseSize, weight: isConversation ? .regular : .semibold)
+        )
+        if summaryLabel.font != font {
+            summaryLabel.font = font
+            lastSummaryIdentity = nil
+        }
     }
 
     private func apply(configuration: QuietWorkLineTimelineRowConfiguration) {
         currentConfiguration = configuration
+        applyChromeLayout(configuration.chromeStyle)
         let palette = ThemeRuntimeState.currentPalette()
         let colors = Self.stripColors(
             workLine: configuration.workLine,
             isHighlighted: configuration.isHighlighted,
+            chromeStyle: configuration.chromeStyle,
             palette: palette
         )
         chipView.backgroundColor = colors.fill
-        // Hairline accent border keeps the strip in the tool-row family
-        // (translucent accent fill) and clearly distinct from the opaque,
-        // borderless user-message bubble.
-        chipView.layer.borderWidth = 1 / max(1, traitCollection.displayScale)
-        chipView.layer.borderColor = colors.border.cgColor
+        switch configuration.chromeStyle {
+        case .standard:
+            // Hairline accent border keeps the strip in the tool-row family
+            // (translucent accent fill) and clearly distinct from the opaque,
+            // borderless user-message bubble.
+            chipView.layer.cornerRadius = 10
+            chipView.layer.borderWidth = 1 / max(1, traitCollection.displayScale)
+            chipView.layer.borderColor = colors.border.cgColor
+        case .conversation:
+            chipView.layer.cornerRadius = 0
+            chipView.layer.borderWidth = 0
+            chipView.layer.borderColor = nil
+            chevronView.image = UIImage(
+                systemName: configuration.workLine.isExpanded ? "chevron.down" : "chevron.right"
+            )
+            chevronView.tintColor = colors.foreground
+        }
         durationLabel.textColor = colors.foreground
         durationLabel.font = summaryLabel.font
         refreshDurationText()
@@ -178,9 +246,27 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
     private static func stripColors(
         workLine: QuietTimelineWorkLine,
         isHighlighted: Bool,
+        chromeStyle: ChatTimelineChromeStyle,
         palette: ThemePalette
     ) -> (fill: UIColor, foreground: UIColor, border: UIColor) {
         let accent = UIColor(palette.blue)
+        if chromeStyle == .conversation {
+            // Neutral pill beside the assistant card; only live work tints.
+            let neutral = UIColor(palette.bgHighlight)
+            let fill: UIColor
+            if isHighlighted {
+                fill = UIColor(palette.fgDim).withAlphaComponent(0.22)
+            } else if workLine.isLive {
+                fill = accent.withAlphaComponent(0.14)
+            } else {
+                fill = neutral
+            }
+            return (
+                fill: fill,
+                foreground: workLine.isLive ? accent : UIColor(palette.fgDim),
+                border: .clear
+            )
+        }
         let foreground = workLine.isLive ? accent : UIColor(palette.fgDim)
         let fillAlpha: CGFloat
         if isHighlighted {
@@ -199,16 +285,37 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         )
     }
 
-    static func accessibilitySummary(for workLine: QuietTimelineWorkLine, now: Date = Date()) -> String {
-        workLine.wordsSummary(now: now)
+    static func accessibilitySummary(
+        for workLine: QuietTimelineWorkLine,
+        chromeStyle: ChatTimelineChromeStyle = .standard,
+        now: Date = Date()
+    ) -> String {
+        switch chromeStyle {
+        case .standard: workLine.wordsSummary(now: now)
+        case .conversation: workLine.conversationSummary(now: now)
+        }
     }
 
     private func refreshDurationText(now: Date = Date()) {
         refreshSummaryIfNeeded()
         let workLine = currentConfiguration.workLine
-        durationLabel.text = workLine.durationString(now: now)
+        switch currentConfiguration.chromeStyle {
+        case .standard: durationLabel.text = workLine.durationString(now: now)
+        case .conversation: durationLabel.text = workLine.conversationDetail(now: now)
+        }
         durationLabel.isHidden = durationLabel.text == nil
-        button.accessibilityLabel = Self.accessibilitySummary(for: workLine, now: now)
+        button.accessibilityLabel = Self.accessibilitySummary(
+            for: workLine,
+            chromeStyle: currentConfiguration.chromeStyle,
+            now: now
+        )
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if currentConfiguration.chromeStyle == .conversation {
+            chipView.layer.cornerRadius = chipView.bounds.height / 2
+        }
     }
 
     /// Duration ticks must not rewrite the summary. Rebuilding attributed text
@@ -218,11 +325,13 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         let colors = Self.stripColors(
             workLine: workLine,
             isHighlighted: currentConfiguration.isHighlighted,
+            chromeStyle: currentConfiguration.chromeStyle,
             palette: ThemeRuntimeState.currentPalette()
         )
         let identity = SummaryIdentity(
             themeID: ThemeRuntimeState.currentThemeID(),
             style: currentConfiguration.style,
+            chromeStyle: currentConfiguration.chromeStyle,
             isLive: workLine.isLive,
             isHighlighted: currentConfiguration.isHighlighted,
             isThinkingOnly: workLine.isThinkingOnly,
@@ -231,6 +340,15 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
         )
         guard lastSummaryIdentity != identity else { return }
         lastSummaryIdentity = identity
+
+        if currentConfiguration.chromeStyle == .conversation {
+            summaryLabel.attributedText = Self.conversationTitle(
+                for: workLine,
+                foreground: colors.foreground,
+                font: summaryLabel.font
+            )
+            return
+        }
 
         if workLine.isThinkingOnly {
             summaryLabel.attributedText = nil
@@ -291,11 +409,43 @@ final class QuietWorkLineTimelineRowContentView: UIView, UIContentView {
     private struct SummaryIdentity: Equatable {
         let themeID: ThemeID
         let style: AppPreferences.ChatDisplay.WorkStripStyle
+        let chromeStyle: ChatTimelineChromeStyle
         let isLive: Bool
         let isHighlighted: Bool
         let isThinkingOnly: Bool
         let work: String
         let buckets: [QuietWorkBucket]
+    }
+
+    /// Terminal glyph plus the pill verb. The detail (`9s \u{00B7} 2 steps`)
+    /// lives in the duration label so the live tick never rebuilds this.
+    private static func conversationTitle(
+        for workLine: QuietTimelineWorkLine,
+        foreground: UIColor,
+        font: UIFont
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        let symbol = workLine.isThinkingOnly ? "brain" : "apple.terminal"
+        if let image = UIImage(
+            systemName: symbol,
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+        )?.withTintColor(foreground, renderingMode: .alwaysOriginal) {
+            let attachment = NSTextAttachment(image: image)
+            let height = image.size.height
+            attachment.bounds = CGRect(
+                x: 0,
+                y: (font.capHeight - height) / 2,
+                width: image.size.width,
+                height: height
+            )
+            result.append(NSAttributedString(attachment: attachment))
+            result.append(NSAttributedString(string: "  ", attributes: [.font: font]))
+        }
+        result.append(NSAttributedString(
+            string: workLine.conversationTitle,
+            attributes: [.font: font, .foregroundColor: foreground]
+        ))
+        return result
     }
 
     private static func iconSummary(

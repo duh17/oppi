@@ -46,6 +46,7 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     var interactionContext: TimelineInteractionContext? = nil
     var increasedContrast: Bool = false
     var differentiateWithoutColor: Bool = false
+    var chromeStyle: ChatTimelineChromeStyle = .standard
 
     func makeContentView() -> any UIView & UIContentView {
         UserTimelineRowContentView(configuration: self)
@@ -148,6 +149,19 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
     private let accentBar = UIView()
     private let youCaption = UILabel()
     private let bubbleStack = UIStackView()
+    private var bubbleStackInsetConstraints: (
+        top: NSLayoutConstraint,
+        leading: NSLayoutConstraint,
+        trailing: NSLayoutConstraint,
+        bottom: NSLayoutConstraint
+    )?
+    /// Conversation chrome only: the trailing bubble's width, resolved from
+    /// the row width at layout (`updateConversationBubbleWidth`).
+    private var conversationBubbleWidthConstraint: NSLayoutConstraint?
+    private var conversationImageStripWidthConstraint: NSLayoutConstraint?
+    /// Unwrapped width of a single-text-view body, or nil when the bubble
+    /// holds a table, badges, or path pills and takes the full bubble width.
+    private var conversationNaturalTextWidth: CGFloat?
     private let attachmentBadgeRow = UIStackView()
     private let pathPillRow = UIStackView()
     private let textRow = UIStackView()
@@ -324,11 +338,20 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         bubbleStack.addArrangedSubview(textRow)
         bubbleContainer.addSubview(bubbleStack)
         bubbleContainer.addSubview(accentBar)
+        let insets = (
+            top: bubbleStack.topAnchor.constraint(equalTo: bubbleContainer.topAnchor, constant: 8),
+            leading: bubbleStack.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor, constant: 10),
+            trailing: bubbleStack.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -10),
+            bottom: bubbleStack.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor, constant: -8)
+        )
+        bubbleStackInsetConstraints = insets
+        conversationBubbleWidthConstraint = bubbleContainer.widthAnchor.constraint(equalToConstant: 0)
+        conversationImageStripWidthConstraint = imageStrip.widthAnchor.constraint(equalTo: outerStack.widthAnchor)
         NSLayoutConstraint.activate([
-            bubbleStack.topAnchor.constraint(equalTo: bubbleContainer.topAnchor, constant: 8),
-            bubbleStack.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor, constant: 10),
-            bubbleStack.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -10),
-            bubbleStack.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor, constant: -8),
+            insets.top,
+            insets.leading,
+            insets.trailing,
+            insets.bottom,
             accentBar.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor),
             accentBar.topAnchor.constraint(equalTo: bubbleContainer.topAnchor),
             accentBar.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor),
@@ -392,7 +415,8 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         updatePathPills(content.nonImagePathPills, palette: palette)
         textRow.isHidden = !content.showsTextRow
         bubbleContainer.isHidden = !content.showsBubble(hasImages: !configuration.images.isEmpty)
-        iconLabel.isHidden = !content.showsTextRow
+        iconLabel.isHidden = !content.showsTextRow || configuration.chromeStyle == .conversation
+        applyChromeGeometry(content: content)
 
         updateReviewCommentSelectionPolicy()
 
@@ -460,6 +484,97 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
             bottom: 0,
             trailing: 0
         )
+    }
+
+    // MARK: - Conversation chrome
+
+    /// Standard rows are a full-width card with a `\u{276F}` prompt glyph.
+    /// Conversation rows are a trailing bubble that hugs short text and wraps
+    /// at `ConversationBubbleChrome.maxBubbleWidth`.
+    private func applyChromeGeometry(content: UserTimelineBubbleContent) {
+        let isConversation = currentConfiguration.chromeStyle == .conversation
+        outerStack.alignment = isConversation ? .trailing : .fill
+        bubbleContainer.layer.cornerRadius = isConversation
+            ? ConversationBubbleChrome.cornerRadius
+            : TimelineBubbleStyle.bubbleCornerRadius
+        bubbleContainer.layer.cornerCurve = isConversation ? .continuous : .circular
+        if let insets = bubbleStackInsetConstraints {
+            let horizontal = isConversation ? ConversationBubbleChrome.userHorizontalPadding : 10
+            let vertical = isConversation ? ConversationBubbleChrome.userVerticalPadding : 8
+            insets.top.constant = vertical
+            insets.bottom.constant = -vertical
+            insets.leading.constant = horizontal
+            insets.trailing.constant = -horizontal
+        }
+        conversationBubbleWidthConstraint?.isActive = isConversation
+        conversationImageStripWidthConstraint?.isActive = isConversation
+        conversationNaturalTextWidth = isConversation
+            ? Self.naturalTextWidth(
+                textView: messageTextView,
+                hasExtraBlocks: !extraMarkdownTextViews.isEmpty || !tableBlockViews.isEmpty,
+                content: content
+            )
+            : nil
+        if isConversation {
+            updateConversationBubbleWidth(rowWidth: bounds.width)
+        }
+    }
+
+    private static func naturalTextWidth(
+        textView: UITextView,
+        hasExtraBlocks: Bool,
+        content: UserTimelineBubbleContent
+    ) -> CGFloat? {
+        guard !hasExtraBlocks,
+              !content.showsBadgeRow,
+              content.nonImagePathPills.isEmpty,
+              let text = textView.attributedText,
+              text.length > 0 else {
+            return nil
+        }
+        let bounds = text.boundingRect(
+            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        )
+        // One point of slack so rounding never wraps the last word.
+        return bounds.width.rounded(.up) + 1
+    }
+
+    private func updateConversationBubbleWidth(rowWidth: CGFloat) {
+        guard currentConfiguration.chromeStyle == .conversation,
+              let constraint = conversationBubbleWidthConstraint,
+              rowWidth.isFinite, rowWidth > 0 else {
+            return
+        }
+        let maxWidth = ConversationBubbleChrome.maxBubbleWidth(rowWidth: rowWidth)
+        let width: CGFloat
+        if let natural = conversationNaturalTextWidth {
+            width = min(maxWidth, natural + ConversationBubbleChrome.userHorizontalPadding * 2)
+        } else {
+            width = maxWidth
+        }
+        if constraint.constant != width {
+            constraint.constant = width
+        }
+    }
+
+    override func systemLayoutSizeFitting(
+        _ targetSize: CGSize,
+        withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
+        verticalFittingPriority: UILayoutPriority
+    ) -> CGSize {
+        updateConversationBubbleWidth(rowWidth: targetSize.width)
+        return super.systemLayoutSizeFitting(
+            targetSize,
+            withHorizontalFittingPriority: horizontalFittingPriority,
+            verticalFittingPriority: verticalFittingPriority
+        )
+    }
+
+    override func layoutSubviews() {
+        updateConversationBubbleWidth(rowWidth: bounds.width)
+        super.layoutSubviews()
     }
 
     fileprivate static func displayText(for rawText: String) -> (text: String, wasTruncated: Bool) {

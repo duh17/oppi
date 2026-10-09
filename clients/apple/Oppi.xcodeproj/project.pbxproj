@@ -1138,6 +1138,7 @@
 		90090A5B50CE79E6A2F9CC23 /* PhotoLibraryMediaImporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DAAF3350CEF8BC7013CE205 /* PhotoLibraryMediaImporterTests.swift */; };
 		904AF588541BBCE6808FEF0D /* SessionListPerf.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA71A2BA6D57F78D04EA3FA9 /* SessionListPerf.swift */; };
 		909AB57FFE15FDB604884E3B /* ChatFileBrowserE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0C65DEF9132D02288A61A97 /* ChatFileBrowserE2ETests.swift */; };
+		9133D23F554237541C1768CA /* DurableConversationScreenshotPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6919CAE84A3674A9371D3F28 /* DurableConversationScreenshotPreview.swift */; };
 		9138F271298AB8547DE57E38 /* MermaidScreenshotPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39BF4B4DF1ABC9A60177AC3A /* MermaidScreenshotPreview.swift */; };
 		915120879DF62EA1EEC6A912 /* MacSessionSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A605621F16E59EF453BB1782 /* MacSessionSearchTests.swift */; };
 		91767C6A79C5720CDBDE7FB9 /* ChatTimelineCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97E5B2F1A89228B9CA97F2EB /* ChatTimelineCoordinatorTests.swift */; };
@@ -2802,6 +2803,7 @@
 		68CC6609C8A024F7926B757B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		68D97ED7255A013BCD0F274D /* ImageSaveAndPermissionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageSaveAndPermissionsTests.swift; sourceTree = "<group>"; };
 		691331E025055B2A0A43B01F /* McpServerModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpServerModelTests.swift; sourceTree = "<group>"; };
+		6919CAE84A3674A9371D3F28 /* DurableConversationScreenshotPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DurableConversationScreenshotPreview.swift; sourceTree = "<group>"; };
 		69278C2C473AFFA85909BF8A /* ToolContentDescriptorBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolContentDescriptorBuilder.swift; sourceTree = "<group>"; };
 		692A4747C46B99B0BF61915E /* TimelineStreamingScrollMatrixSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineStreamingScrollMatrixSupport.swift; sourceTree = "<group>"; };
 		6967D1470CC713AF430A8877 /* MacServerLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacServerLifecycleTests.swift; sourceTree = "<group>"; };
@@ -4327,6 +4329,7 @@
 				FA2B594D45F22888B1015D79 /* ChatSpeakerContrastPreview.swift */,
 				910457729A89345B3E40DA72 /* ComposerScreenshotPreview.swift */,
 				DE7970DF57EBD2D8CFAFBD8F /* ContextBarOverlapPreview.swift */,
+				6919CAE84A3674A9371D3F28 /* DurableConversationScreenshotPreview.swift */,
 				34FF326366C22022929FFD0A /* DurableSessionsScreenshotPreview.swift */,
 				2DC187650A964F90E6EDF396 /* ExtensionSurfacePreview.swift */,
 				4B14EED6D0DBEBB2878012FF /* FeatureEducationTipsPreview.swift */,
@@ -8635,6 +8638,7 @@
 				435F76642CA3C052C6B7EDA8 /* DoubleTapCopyGesture.swift in Sources */,
 				2EA8198F8C08985E689258A6 /* DoubleTapZoom.swift in Sources */,
 				9A5050B016D58A22D35D3B7E /* DragSelectState.swift in Sources */,
+				9133D23F554237541C1768CA /* DurableConversationScreenshotPreview.swift in Sources */,
 				87FEDBB0D348945D1940CCCE /* DurableSessionsPlayground.swift in Sources */,
 				D8C881613A2A37ACD3072192 /* DurableSessionsScreenshotPreview.swift in Sources */,
 				D7DF7D2F04D7A4E2168801B8 /* EmbeddedFileViewerView.swift in Sources */,

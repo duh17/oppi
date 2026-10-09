@@ -94,6 +94,7 @@ struct ChatTimelineView: View {
     let audioLifecycleCoordinator: AudioLifecycleCoordinator?
     var quietModeEnabled: Bool = false
     var workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons
+    var chromeStyle: ChatTimelineChromeStyle = .standard
     let onFork: (String) -> Void
     let onOpenCurrentFile: (String) -> Void
     var onOpenChatReader: (ChatReaderPayload) -> Void = { _ in }
@@ -156,6 +157,7 @@ struct ChatTimelineView: View {
                 ownsTimelineProjection: true,
                 quietModeEnabled: quietModeEnabled,
                 workStripStyle: workStripStyle,
+                chromeStyle: chromeStyle,
                 sessionManager: sessionManager,
                 outlineAvailability: outlineAvailability,
                 speakerIncreasedContrastOverride: speakerIncreasedContrastOverride,

@@ -147,6 +147,34 @@ struct QuietTimelineWorkLine: Equatable, Identifiable {
         return Self.liveDurationString(since: liveStartedAt, now: end)
     }
 
+    /// Folded tool calls; thinking is not a step.
+    var stepCount: Int { buckets.reduce(0) { $0 + $1.count } }
+
+    /// Conversation pill verb: "Working" while live, "Worked" once settled.
+    /// Thinking-only strips keep their Thinking\u{2026} / Thought wording.
+    var conversationTitle: String {
+        if isThinkingOnly { return isLive ? "Thinking" : "Thought" }
+        return isLive ? "Working" : "Worked"
+    }
+
+    /// Conversation pill detail after the verb: `9s \u{00B7} 2 steps`, or
+    /// `\u{00B7} 1 step` when no interval is known. Nil when there is nothing.
+    func conversationDetail(now: Date) -> String? {
+        let duration = durationString(now: now)
+        let steps = stepCount > 0 ? "\(stepCount) \(stepCount == 1 ? "step" : "steps")" : nil
+        switch (duration, steps) {
+        case let (duration?, steps?): return "\(duration) \u{00B7} \(steps)"
+        case let (duration?, nil): return duration
+        case let (nil, steps?): return "\u{00B7} \(steps)"
+        case (nil, nil): return nil
+        }
+    }
+
+    func conversationSummary(now: Date) -> String {
+        guard let detail = conversationDetail(now: now) else { return conversationTitle }
+        return "\(conversationTitle) \(detail)"
+    }
+
     func wordsSummary(now: Date) -> String {
         let work = workSummary
         guard let duration = durationString(now: now) else { return work }

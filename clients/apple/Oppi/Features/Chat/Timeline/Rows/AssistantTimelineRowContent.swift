@@ -29,6 +29,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     var preparationRevision: UInt64
     var imagePreparationContext: TimelineImagePreparationContext?
     var resourcePressure: StreamingRenderPolicy.ResourcePressure
+    var chromeStyle: ChatTimelineChromeStyle
 
     var renderedMarkdownSource: String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -49,7 +50,8 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         preparedBlocks: [MarkdownBlock]? = nil,
         preparationRevision: UInt64 = 0,
         imagePreparationContext: TimelineImagePreparationContext? = nil,
-        resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
+        resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal,
+        chromeStyle: ChatTimelineChromeStyle = .standard
     ) {
         self.text = text
         self.isStreaming = isStreaming
@@ -66,6 +68,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
         self.preparationRevision = preparationRevision
         self.imagePreparationContext = imagePreparationContext
         self.resourcePressure = resourcePressure
+        self.chromeStyle = chromeStyle
     }
 
     func makeContentView() -> any UIView & UIContentView {
@@ -109,6 +112,12 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
     private let bubbleContainer = UIView()
     private let iconBadge = SessionGridBadgeView()
     private let markdownView = AssistantMarkdownContentView()
+    private var bubbleTrailingConstraint: NSLayoutConstraint?
+    private var markdownLeadingConstraint: NSLayoutConstraint?
+    private var markdownTrailingConstraint: NSLayoutConstraint?
+    private var markdownTopConstraint: NSLayoutConstraint?
+    private var markdownBottomConstraint: NSLayoutConstraint?
+    private var appliedChromeStyle: ChatTimelineChromeStyle?
 
     private var currentConfiguration: AssistantTimelineRowConfiguration
     private var interactionHandlers: TimelineRowInteractionHandlers?
@@ -240,10 +249,33 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             provider: self
         )
 
+        let bubbleTrailing = bubbleContainer.trailingAnchor.constraint(equalTo: trailingAnchor)
+        let markdownLeading = markdownView.leadingAnchor.constraint(
+            equalTo: bubbleContainer.leadingAnchor,
+            constant: Self.bubbleLeadingPadding
+        )
+        let markdownTop = markdownView.topAnchor.constraint(
+            equalTo: bubbleContainer.topAnchor,
+            constant: Self.bubbleVerticalPadding
+        )
+        let markdownTrailing = markdownView.trailingAnchor.constraint(
+            equalTo: bubbleContainer.trailingAnchor,
+            constant: -Self.bubbleTrailingPadding
+        )
+        let markdownBottom = markdownView.bottomAnchor.constraint(
+            equalTo: bubbleContainer.bottomAnchor,
+            constant: -Self.bubbleVerticalPadding
+        )
+        bubbleTrailingConstraint = bubbleTrailing
+        markdownLeadingConstraint = markdownLeading
+        markdownTopConstraint = markdownTop
+        markdownTrailingConstraint = markdownTrailing
+        markdownBottomConstraint = markdownBottom
+
         NSLayoutConstraint.activate([
             bubbleContainer.topAnchor.constraint(equalTo: topAnchor),
             bubbleContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
-            bubbleContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
+            bubbleTrailing,
             bubbleContainer.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             // Avatar stays top-leading. Markdown is full-bleed inside the bubble
@@ -260,27 +292,44 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
                 constant: Self.avatarTopPadding
             ),
 
-            markdownView.leadingAnchor.constraint(
-                equalTo: bubbleContainer.leadingAnchor,
-                constant: Self.bubbleLeadingPadding
-            ),
-            markdownView.topAnchor.constraint(
-                equalTo: bubbleContainer.topAnchor,
-                constant: Self.bubbleVerticalPadding
-            ),
-            markdownView.trailingAnchor.constraint(
-                equalTo: bubbleContainer.trailingAnchor,
-                constant: -Self.bubbleTrailingPadding
-            ),
-            markdownView.bottomAnchor.constraint(
-                equalTo: bubbleContainer.bottomAnchor,
-                constant: -Self.bubbleVerticalPadding
-            ),
+            markdownLeading,
+            markdownTop,
+            markdownTrailing,
+            markdownBottom,
         ])
 
         bubbleContainer.bringSubviewToFront(iconBadge)
-        markdownView.leadingHangClearance = Self.avatarContentClearance
-        markdownView.leadingHangHeight = Self.avatarHangHeight
+    }
+
+    /// Standard rows hang the avatar beside the first lines of full-width
+    /// prose. Conversation rows drop the avatar (the title names the Agent)
+    /// and paint the reply as a card that stops short of the trailing edge.
+    private func applyChromeGeometry(_ style: ChatTimelineChromeStyle) {
+        guard appliedChromeStyle != style else { return }
+        appliedChromeStyle = style
+        switch style {
+        case .standard:
+            iconBadge.isHidden = false
+            bubbleContainer.layer.cornerRadius = TimelineBubbleStyle.bubbleCornerRadius
+            bubbleTrailingConstraint?.constant = 0
+            markdownLeadingConstraint?.constant = Self.bubbleLeadingPadding
+            markdownTrailingConstraint?.constant = -Self.bubbleTrailingPadding
+            markdownTopConstraint?.constant = Self.bubbleVerticalPadding
+            markdownBottomConstraint?.constant = -Self.bubbleVerticalPadding
+            markdownView.leadingHangClearance = Self.avatarContentClearance
+            markdownView.leadingHangHeight = Self.avatarHangHeight
+        case .conversation:
+            iconBadge.isHidden = true
+            bubbleContainer.layer.cornerRadius = ConversationBubbleChrome.cornerRadius
+            bubbleContainer.layer.cornerCurve = .continuous
+            bubbleTrailingConstraint?.constant = -ConversationBubbleChrome.assistantTrailingGutter
+            markdownLeadingConstraint?.constant = ConversationBubbleChrome.assistantHorizontalPadding
+            markdownTrailingConstraint?.constant = -ConversationBubbleChrome.assistantHorizontalPadding
+            markdownTopConstraint?.constant = ConversationBubbleChrome.assistantVerticalPadding
+            markdownBottomConstraint?.constant = -ConversationBubbleChrome.assistantVerticalPadding
+            markdownView.leadingHangClearance = 0
+            markdownView.leadingHangHeight = 0
+        }
     }
 
     private func apply(configuration: AssistantTimelineRowConfiguration) {
@@ -288,14 +337,20 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         accessibilityIdentifier = configuration.itemID.map { "chat.timeline.assistant.\($0)" }
 
         let palette = ThemeRuntimeState.currentPalette()
-        iconBadge.configure(
-            sessionId: configuration.sessionId,
-            agentId: configuration.agentId,
-            agentIcon: configuration.agentIcon,
-            iconAssetCache: configuration.iconAssetCache,
-            agentVisualScale: ChatAgentIconStyle.compactVisualScale
-        )
-        bubbleContainer.backgroundColor = TimelineSpeakerChrome.assistantFill(from: palette)
+        applyChromeGeometry(configuration.chromeStyle)
+        switch configuration.chromeStyle {
+        case .standard:
+            iconBadge.configure(
+                sessionId: configuration.sessionId,
+                agentId: configuration.agentId,
+                agentIcon: configuration.agentIcon,
+                iconAssetCache: configuration.iconAssetCache,
+                agentVisualScale: ChatAgentIconStyle.compactVisualScale
+            )
+            bubbleContainer.backgroundColor = TimelineSpeakerChrome.assistantFill(from: palette)
+        case .conversation:
+            bubbleContainer.backgroundColor = ConversationBubbleChrome.assistantCardFill(from: palette)
+        }
 
         // Unified markdown path for both streaming and done states.
         // During streaming, the incremental parser (tail-only CommonMark parse

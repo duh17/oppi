@@ -387,6 +387,7 @@ extension ChatTimelineCollectionHost.Controller {
 
             cell.contentConfiguration = QuietWorkLineTimelineRowConfiguration(
                 workLine: workLine,
+                chromeStyle: self.chromeStyle,
                 onTap: { [weak self, weak collectionView] in
                     guard let self, let collectionView else { return }
                     self.toggleQuietWorkLine(workLine, in: collectionView)

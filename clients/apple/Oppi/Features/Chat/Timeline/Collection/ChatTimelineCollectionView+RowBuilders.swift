@@ -61,7 +61,8 @@ extension ChatTimelineCollectionHost.Controller {
             iconAssetCache: iconAssetCache,
             interactionContext: interactionContext,
             resourceAccess: markdownResourceAccess(includesInlineMedia: true),
-            resourcePressure: resourcePressure
+            resourcePressure: resourcePressure,
+            chromeStyle: chromeStyle
         )
     }
 
@@ -119,7 +120,8 @@ extension ChatTimelineCollectionHost.Controller {
             itemID: itemID,
             interactionContext: interactionContext,
             increasedContrast: speakerIncreasedContrast,
-            differentiateWithoutColor: speakerDifferentiateWithoutColor
+            differentiateWithoutColor: speakerDifferentiateWithoutColor,
+            chromeStyle: chromeStyle
         )
     }
 

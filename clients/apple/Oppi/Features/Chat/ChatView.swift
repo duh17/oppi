@@ -445,6 +445,16 @@ struct ChatView: View {
             && AppPreferences.ChatDisplay.isCompactTurnsEnabled
     }
 
+    private var timelineChromeStyle: ChatTimelineChromeStyle {
+        .for(engine: session?.engine, durableExperimentEnabled: durableSessionsExperimentEnabled)
+    }
+
+    /// The conversation layout always folds work into "Worked \u{00B7} N steps"
+    /// pills; tapping a pill expands that turn.
+    private var foldsTimelineWork: Bool {
+        timelineChromeStyle == .conversation || compactTurnsEnabled
+    }
+
     private var workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle {
         _ = chatDisplayRefresh
         return AppPreferences.ChatDisplay.workStripStyle
@@ -537,8 +547,9 @@ struct ChatView: View {
             scrollController: scrollController,
             sessionManager: sessionManager,
             audioLifecycleCoordinator: audioLifecycleCoordinator,
-            quietModeEnabled: compactTurnsEnabled,
+            quietModeEnabled: foldsTimelineWork,
             workStripStyle: workStripStyle,
+            chromeStyle: timelineChromeStyle,
             onFork: forkFromMessage,
             onOpenCurrentFile: openCurrentToolFile,
             onOpenChatReader: openTimelineReader,
@@ -1782,8 +1793,14 @@ struct ChatView: View {
             cost: session?.cost,
             terminalMirrorIndicator: TerminalMirrorIndicatorPresentation(session: session),
             maxWidth: chatPrincipalTitleMaxWidth,
-            showsDurableLabel: durableSessionsExperimentEnabled && session?.engine == .durable
+            showsDurableLabel: durableSessionsExperimentEnabled && session?.engine == .durable,
+            subtitle: conversationTitleSubtitle
         )
+    }
+
+    private var conversationTitleSubtitle: String? {
+        guard timelineChromeStyle == .conversation, let model = session?.model else { return nil }
+        return "\(shortModelName(model)) \u{00B7} \(chatState.thinkingLevel.compactTitle)"
     }
 
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter {
@@ -3222,47 +3239,62 @@ struct ChatSessionTitleView: View {
     let maxWidth: CGFloat
     /// Durable Sessions experiment: marks a durable-engine session.
     var showsDurableLabel = false
+    /// Conversation layout: model and thinking under the title, e.g.
+    /// "gpt-5 \u{00B7} High".
+    var subtitle: String? = nil
     var iconIsDecorative = true
     var iconAccessibilityIdentifier: String?
 
     var body: some View {
         VStack(spacing: 1) {
-            HStack(spacing: 6) {
-                switch assistantIdentityPresentation {
-                case .agent:
-                    agentIconView()
-                case .globalAvatar:
-                    PiAvatarView(size: 20)
-                }
-
-                Text(sessionDisplayName)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.themeFg)
+            titleRow
+            if let subtitle {
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.themeComment)
                     .lineLimit(1)
-                    .truncationMode(.tail)
-
-                if let cost, cost > 0 {
-                    Text(SessionFormatting.costString(cost))
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.themeComment)
-                        .fixedSize()
-                }
-
-                if let terminalMirrorIndicator {
-                    TerminalMirrorIndicatorView(presentation: terminalMirrorIndicator)
-                }
-
-                if showsDurableLabel {
-                    Text("Durable")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.themeComment)
-                        .fixedSize()
-                        .accessibilityIdentifier("chat.title.durable")
-                }
+                    .truncationMode(.middle)
+                    .accessibilityIdentifier("chat.title.subtitle")
             }
         }
         .frame(maxWidth: maxWidth)
         .clipped()
+    }
+
+    private var titleRow: some View {
+        HStack(spacing: 6) {
+            switch assistantIdentityPresentation {
+            case .agent:
+                agentIconView()
+            case .globalAvatar:
+                PiAvatarView(size: 20)
+            }
+
+            Text(sessionDisplayName)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.themeFg)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            if let cost, cost > 0 {
+                Text(SessionFormatting.costString(cost))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.themeComment)
+                    .fixedSize()
+            }
+
+            if let terminalMirrorIndicator {
+                TerminalMirrorIndicatorView(presentation: terminalMirrorIndicator)
+            }
+
+            if showsDurableLabel {
+                Text("Durable")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.themeComment)
+                    .fixedSize()
+                    .accessibilityIdentifier("chat.title.durable")
+            }
+        }
     }
 
     @ViewBuilder

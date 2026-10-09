@@ -74,6 +74,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         let ownsTimelineProjection: Bool
         let quietModeEnabled: Bool
         let workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle
+        let chromeStyle: ChatTimelineChromeStyle
         let sessionManager: ChatSessionManager?
         var outlineAvailability: ChatTimelineOutlineAvailability?
         /// Nil: resolve Increase Contrast from UIAccessibility / traits.
@@ -127,6 +128,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             ownsTimelineProjection: Bool = false,
             quietModeEnabled: Bool = false,
             workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle = .icons,
+            chromeStyle: ChatTimelineChromeStyle = .standard,
             sessionManager: ChatSessionManager? = nil,
             outlineAvailability: ChatTimelineOutlineAvailability? = nil,
             speakerIncreasedContrastOverride: Bool? = nil,
@@ -178,6 +180,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             self.ownsTimelineProjection = ownsTimelineProjection
             self.quietModeEnabled = quietModeEnabled
             self.workStripStyle = workStripStyle
+            self.chromeStyle = chromeStyle
             self.sessionManager = sessionManager
             self.outlineAvailability = outlineAvailability
             self.speakerIncreasedContrastOverride = speakerIncreasedContrastOverride
@@ -339,6 +342,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         var agentId: String? { context.agentId }
         var agentIcon: IconChoice? { context.agentIcon }
+        var chromeStyle: ChatTimelineChromeStyle { context.chromeStyle }
 
         var routeScope: SessionRouteScope? {
             get { context.routeScope }
@@ -964,6 +968,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         func apply(configuration: Configuration, to collectionView: UICollectionView) {
             let sessionScopeChanged = context.didChangeSessionScope(for: configuration)
             let agentPresentationChanged = context.didChangeAgentPresentation(for: configuration)
+            let chromeStyleChanged = context.didChangeChromeStyle(for: configuration)
             hiddenCount = configuration.hiddenCount
             hasOlderServerPage = configuration.hasOlderServerPage
             workLineReplacementIDByPreviousID = Dictionary(uniqueKeysWithValues:
@@ -994,7 +999,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // Note: isTimelineBusy is updated AFTER the structurallyUnchanged
             // check so the comparison detects busy→idle transitions.
 
-            if sessionScopeChanged {
+            if sessionScopeChanged || chromeStyleChanged {
                 (collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout)?
                     .removeAllCachedHeights()
                 cancelAllToolOutputLoadTasks()
@@ -1037,7 +1042,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // closures such as attachment fetchers. Reconfigure visible rows
             // when that scope appears or changes, even if ChatItem values are
             // identical, so expanded media retries with the current workspace.
-            let globalAppearanceChanged = themeChanged || sessionScopeChanged
+            let globalAppearanceChanged = themeChanged || sessionScopeChanged || chromeStyleChanged
             let appearanceChanged = globalAppearanceChanged || agentPresentationChanged
 
             // Only update backgroundColor when theme changed or on first apply.
