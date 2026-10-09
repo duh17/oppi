@@ -519,26 +519,13 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   }
 
   /** Opened Harness for a bound durable conversation, or null. */
-  private async durableConversation(sessionId: string): Promise<{
-    owner: DurableHarness;
-    harness: Harness;
-    conversationId: ConversationId;
-  } | null> {
-    const conversationId = this.boundConversationId(sessionId);
-    const owner = this.durableHarness;
-    if (conversationId === undefined || !owner) return null;
-    const opened = await owner;
-    const { harness } = await opened.open();
-    return { owner: opened, harness, conversationId };
-  }
-
-  private async requireDurableConversation(
+  private async durableConversation(
     sessionId: string,
-    message: string,
-  ): Promise<{ owner: DurableHarness; harness: Harness; conversationId: ConversationId }> {
-    const bound = await this.durableConversation(sessionId);
-    if (!bound) throw new Error(message);
-    return bound;
+  ): Promise<{ harness: Harness; conversationId: ConversationId } | null> {
+    const conversationId = this.boundConversationId(sessionId);
+    if (conversationId === undefined || !this.durableHarness) return null;
+    const { harness } = await (await this.durableHarness).open();
+    return { harness, conversationId };
   }
 
   async getServerDurableInputCardOutput(
@@ -602,14 +589,14 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     request: ConversationStreamAttach,
     send: (frame: ConversationStreamServerMessage) => void,
   ): Promise<() => void> {
-    const { harness, conversationId } = await this.requireDurableConversation(
-      session.id,
-      "The conversation stream requires a durable session",
-    );
+    const conversationId = this.boundConversationId(session.id);
+    if (conversationId === undefined || !this.durableHarness)
+      throw new Error("The conversation stream requires a durable session");
     if (request.sessionId !== undefined && request.sessionId !== session.id)
       throw new Error(`The conversation stream cannot target session ${request.sessionId}`);
     if (request.conversationId !== undefined && request.conversationId !== conversationId)
       throw new Error(`Conversation ${request.conversationId} is not this session's conversation`);
+    const { harness } = await (await this.durableHarness).open();
     const { attachConversationStream } = await import("./durable-conversation-stream.js");
     const subscription = await attachConversationStream({
       harness,
@@ -663,13 +650,13 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     sessionId: string,
     entryId: string,
   ): Promise<ConversationId | undefined> {
-    const { owner, conversationId } = await this.requireDurableConversation(
-      sessionId,
-      "Server durable fork requires a bound conversation",
-    );
+    const conversationId = this.boundConversationId(sessionId);
+    if (conversationId === undefined || !this.durableHarness) {
+      throw new Error("Server durable fork requires a bound conversation");
+    }
     // Trace entry ids are the decimal Durable entry ids.
     if (!/^[1-9]\d*$/.test(entryId) || !Number.isSafeInteger(Number(entryId))) return undefined;
-    return owner.forkConversation(conversationId, Number(entryId) as EntryId);
+    return (await this.durableHarness).forkConversation(conversationId, Number(entryId) as EntryId);
   }
 
   /**
