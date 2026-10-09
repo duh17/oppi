@@ -148,10 +148,12 @@ enum WorkspaceSidebarPrimaryUtilities {
     )
 
     /// `durableSessionsAvailable` is `DurableSessionsPlayground.isAvailable` for the shown server.
+    /// The SSH inputs have no defaults: reading saved preferences here made tests depend on
+    /// whatever a simulator's app container last persisted.
     static func items(
         for idiom: UIUserInterfaceIdiom,
-        sshTerminalEnabled: Bool = AppPreferences.Experiments.sshTerminalEnabled,
-        hasSSHProfile: Bool = SSHTerminalProfileStore().hasConfiguredHost,
+        sshTerminalEnabled: Bool,
+        hasSSHProfile: Bool,
         durableSessionsAvailable: Bool = false
     ) -> [WorkspaceSidebarPrimaryUtilityItem] {
         var result = items
