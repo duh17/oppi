@@ -423,7 +423,8 @@ describe("SessionTraceService", () => {
     });
     const toolResult = result?.trace.find((event) => event.type === "toolResult");
     const details = toolResult?.details as
-      { media?: Array<{ id?: string; kind?: string; mimeType?: string }> } | undefined;
+      | { media?: Array<{ id?: string; kind?: string; mimeType?: string }> }
+      | undefined;
 
     expect(toolResult?.output).toBe("Read image file [image/png]");
     expect(toolResult?.output).not.toContain("data:image/");
@@ -577,11 +578,15 @@ describe("SessionTraceService", () => {
     expect(result.kind === "ok" ? result.diff.hunks.length : 0).toBeGreaterThan(0);
   });
 
-  it("does not read home files for a mountless sandbox overall diff", async () => {
+  it("does not read home files for an empty-folder sandbox overall diff", async () => {
     const dataDir = tempDir("oppi-session-sandbox-diff-data-");
     const home = tempDir("oppi-session-sandbox-diff-home-");
     const tracePath = join(dataDir, "trace.jsonl");
-    const workspace = makeWorkspace({ name: "Sandbox Diff", runtime: "sandbox" });
+    const workspace = makeWorkspace({
+      name: "Sandbox Diff",
+      runtime: "sandbox",
+      hostMount: "~/sandbox/sandbox-diff",
+    });
     const session = makeSession({ piSessionFile: tracePath, worktreeId: "main" });
     writeFileSync(join(home, "parent-only.txt"), "home bytes", "utf8");
     const mount = join(home, "sandbox", "sandbox-diff");

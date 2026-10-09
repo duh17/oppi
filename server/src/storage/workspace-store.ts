@@ -17,6 +17,7 @@ import { generateId } from "../id.js";
 import { DEFAULT_ICON_CHOICE, migrateIconChoice, validateIconChoice } from "../icon-choice.js";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
+import { defaultSandboxHostMount } from "../sandbox-workspace-folder.js";
 import type {
   CreateWorkspaceRequest,
   UpdateWorkspaceRequest,
@@ -148,41 +149,61 @@ export class WorkspaceStore {
       updatedAt: now,
     };
 
-    this.saveWorkspace(workspace);
-    return workspace;
+    return this.saveWorkspace(workspace);
   }
 
-  saveWorkspace(workspace: Workspace): void {
+  saveWorkspace(workspace: Workspace): Workspace {
     const sanitized = this.sanitizeWorkspace(workspace);
-    const path = this.getWorkspacePath(sanitized.id);
+    this.writeWorkspaceFile(sanitized);
+    return sanitized;
+  }
+
+  private writeWorkspaceFile(workspace: Workspace): void {
+    const path = this.getWorkspacePath(workspace.id);
     const dir = dirname(path);
 
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
 
-    writeFileSync(path, JSON.stringify(sanitized, null, 2), { mode: 0o600 });
+    writeFileSync(path, JSON.stringify(workspace, null, 2), { mode: 0o600 });
   }
 
   private sanitizeWorkspace(raw: Workspace | Record<string, unknown>): Workspace {
-    const workspace: Workspace = {
-      id: typeof raw.id === "string" ? raw.id : "unknown",
-      name: typeof raw.name === "string" ? raw.name : "",
+    const id = typeof raw.id === "string" ? raw.id : "unknown";
+    const name = typeof raw.name === "string" ? raw.name : "";
+    const runtime = raw.runtime === "host" || raw.runtime === "sandbox" ? raw.runtime : undefined;
+    let hostMount = normalizeHostMount(raw.hostMount);
+    if (!hostMount && runtime === "sandbox") {
+      hostMount = defaultSandboxHostMount({ id, name });
+    }
+
+    return {
+      id,
+      name,
       description: normalizeOptionalString(raw.description),
       icon: migrateIconChoice(raw.icon),
       systemPrompt: normalizeOptionalString(raw.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(raw.systemPromptMode),
-      hostMount: normalizeHostMount(raw.hostMount),
+      hostMount,
       tools: normalizeTools(raw.tools as string[] | undefined),
       gitStatusEnabled:
         typeof raw.gitStatusEnabled === "boolean" ? raw.gitStatusEnabled : undefined,
-      runtime: raw.runtime === "host" || raw.runtime === "sandbox" ? raw.runtime : undefined,
+      runtime,
       sandboxConfig: normalizeSandboxConfig(raw.sandboxConfig),
       createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
       updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
     };
+  }
 
-    return workspace;
+  private persistSandboxHostMountIfFilled(
+    raw: Record<string, unknown>,
+    sanitized: Workspace,
+  ): void {
+    if (sanitized.runtime !== "sandbox" || normalizeHostMount(raw.hostMount)) {
+      return;
+    }
+    this.writeWorkspaceFile(sanitized);
   }
 
   getWorkspace(workspaceId: string): Workspace | undefined {
@@ -193,7 +214,9 @@ export class WorkspaceStore {
 
     try {
       const workspace = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
-      return this.sanitizeWorkspace(workspace);
+      const sanitized = this.sanitizeWorkspace(workspace);
+      this.persistSandboxHostMountIfFilled(workspace, sanitized);
+      return sanitized;
     } catch {
       return undefined;
     }
@@ -215,7 +238,9 @@ export class WorkspaceStore {
       const path = join(dir, file);
       try {
         const workspace = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
-        workspaces.push(this.sanitizeWorkspace(workspace));
+        const sanitized = this.sanitizeWorkspace(workspace);
+        this.persistSandboxHostMountIfFilled(workspace, sanitized);
+        workspaces.push(sanitized);
       } catch (err: unknown) {
         log.error("workspace_store.workspace_file_parse.failed", {
           workspaceFilePath: path,
@@ -253,8 +278,7 @@ export class WorkspaceStore {
 
     workspace.updatedAt = Date.now();
 
-    this.saveWorkspace(workspace);
-    return workspace;
+    return this.saveWorkspace(workspace);
   }
 
   private validateWorkspaceIcon(value: unknown): Workspace["icon"] {

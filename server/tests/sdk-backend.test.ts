@@ -153,6 +153,7 @@ describe("resolveSdkSessionDisplayCwd", () => {
       id: "ws-sandbox",
       name: uniqueName,
       runtime: "sandbox",
+      hostMount: `~/sandbox/${slug}`,
     } as Workspace;
     const hostBackingDir = resolvePath(homedir(), "sandbox", slug);
 
@@ -160,6 +161,34 @@ describe("resolveSdkSessionDisplayCwd", () => {
       expect(resolveSandboxGuestCwd(workspace)).toBe(`/workspace/${slug}`);
       expect(resolveSdkSessionDisplayCwd(workspace)).toBe(`/workspace/${slug}`);
       expect(resolveSdkSessionCwd(workspace)).toBe(hostBackingDir);
+    } finally {
+      rmSync(hostBackingDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not derive a sandbox cwd from the current name when hostMount is missing", async () => {
+    const workspace = {
+      id: "ws-sandbox",
+      name: "Missing Mount",
+      runtime: "sandbox",
+    } as Workspace;
+
+    expect(() => resolveSdkSessionCwd(workspace)).toThrow("Sandbox workspace is missing hostMount");
+    expect(resolveSandboxGuestCwd(workspace)).toBe("/workspace/missing-mount");
+  });
+
+  it("keeps a persisted sandbox hostMount after the workspace is renamed", async () => {
+    const hostBackingDir = resolvePath(homedir(), "sandbox", "original-name");
+    const workspace = {
+      id: "ws-sandbox",
+      name: "Renamed Title",
+      runtime: "sandbox",
+      hostMount: "~/sandbox/original-name",
+    } as Workspace;
+
+    try {
+      expect(resolveSdkSessionCwd(workspace)).toBe(hostBackingDir);
+      expect(resolveSandboxGuestCwd(workspace)).toBe("/workspace/renamed-title");
     } finally {
       rmSync(hostBackingDir, { recursive: true, force: true });
     }

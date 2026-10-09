@@ -87,6 +87,7 @@ import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
+import { sandboxWorkspaceSlug } from "./sandbox-workspace-folder.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
 import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "./oppi-docs.js";
 import type { ReadonlyMount, ReadonlyMountSpec, VmSecretDefinition } from "./gondolin-manager.js";
@@ -324,16 +325,6 @@ export function resolveSessionSeedModel(
  * producing cwd values like "<server-cwd>/~/workspace/...". Normalize here
  * before passing cwd into SDK components.
  */
-function sandboxWorkspaceSlug(workspace: Workspace): string {
-  return (
-    (workspace.name || workspace.id)
-      .toLowerCase()
-      .replace(/[^a-z0-9-_]/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "") || workspace.id
-  );
-}
-
 export function resolveSandboxGuestCwd(workspace: Workspace): string {
   return posix.join("/workspace", sandboxWorkspaceSlug(workspace));
 }
@@ -400,17 +391,19 @@ export function resolveSdkSessionCwd(
   const rawHostMount = workspace?.hostMount?.trim();
   if (!rawHostMount) {
     if (workspace?.runtime === "sandbox") {
-      // Auto-create a dedicated sandbox directory. Permanent, per-workspace.
-      // The host path is never exposed to the sandboxed agent; it only backs
-      // the VM mount at resolveSandboxGuestCwd(workspace).
-      const sandboxDir = join(homedir(), "sandbox", sandboxWorkspaceSlug(workspace));
-      mkdirSync(sandboxDir, { recursive: true });
-      return sandboxDir;
+      throw new Error("Sandbox workspace is missing hostMount");
     }
     return homedir();
   }
 
-  return resolveHostPath(rawHostMount);
+  const resolved = resolveHostPath(rawHostMount);
+  if (workspace?.runtime === "sandbox") {
+    // The host path is never exposed to the sandboxed agent; it only backs
+    // the VM mount at resolveSandboxGuestCwd(workspace). Create it lazily so
+    // an empty-folder sandbox still has a real cwd on first session.
+    mkdirSync(resolved, { recursive: true });
+  }
+  return resolved;
 }
 
 /**

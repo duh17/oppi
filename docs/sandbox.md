@@ -41,7 +41,7 @@ New sandbox sessions behave as follows:
 
 - The visible cwd is `/workspace/<workspace-slug>`.
 - Users browse sandbox artifacts on the host mount; guest `/workspace/<slug>` paths are accepted and mapped.
-- If no host path is selected, Oppi creates a backing directory under `~/sandbox/<slug>` on the server host.
+- If no host path is selected, Oppi creates a backing directory under `~/sandbox/<slug>` on the server host and stores that path as the workspace folder. Renaming the workspace keeps the same folder.
 - `read`, `edit`, `write`, and `ls` use Gondolin's guest filesystem API and reject paths outside the configured workspace mount.
 - `bash` runs inside the VM with cwd mapped to the workspace mount. Shell commands can inspect the guest filesystem, but host paths remain unavailable unless explicitly mounted.
 - Model API calls run from the host process; the VM does not need provider API keys for normal agent operation.

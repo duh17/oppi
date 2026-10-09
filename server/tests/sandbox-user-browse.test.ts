@@ -227,12 +227,16 @@ describe("sandbox user browse of host-mount artifacts", () => {
       expect(body.paths).toEqual(expect.arrayContaining(["notes.txt", "reports/foo.png"]));
     });
 
-    it("serves mountless sandbox files when the session worktree id is main", async () => {
+    it("serves an empty-folder sandbox from its persisted ~/sandbox/<slug> folder when worktree id is main", async () => {
       const name = `wiki-main-${Date.now()}`;
-      const workspace = makeWorkspace("/tmp/unused-mountless-sandbox", {
+      const slug = name
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "");
+      const workspace = makeWorkspace(`~/sandbox/${slug}`, {
         id: "ws-mountless",
         name,
-        hostMount: undefined,
       });
       const home = tempDir("oppi-sandbox-browse-home-");
       const previousHome = process.env.HOME;

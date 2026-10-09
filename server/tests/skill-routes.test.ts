@@ -778,7 +778,7 @@ describe("skills module", () => {
     }
   });
 
-  it("uses workspace scope when toggling and reloading mountless sandbox skills", async () => {
+  it("uses workspace scope when toggling and reloading empty-folder sandbox skills", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-resource-route-sandbox-scope-"));
     const cwd = join(root, "sandbox", "sandbox-workspace");
     const agentDir = join(root, "agent");
@@ -806,6 +806,7 @@ describe("skills module", () => {
         id: "sandbox-workspace-id",
         name: "Sandbox Workspace",
         runtime: "sandbox" as const,
+        hostMount: "~/sandbox/sandbox-workspace",
         icon: { kind: "symbol" as const, name: "lock" },
         systemPromptMode: "append" as const,
         createdAt: 1,

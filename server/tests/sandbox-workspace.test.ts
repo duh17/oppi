@@ -5,7 +5,7 @@
  * sandbox tool wiring path using a mocked Gondolin VM.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Storage } from "../src/storage.js";
@@ -191,6 +191,117 @@ describe("Sandbox workspace CRUD", () => {
 
     expect(sandboxWs?.runtime).toBe("sandbox");
     expect(hostWs?.runtime).toBe("host");
+  });
+});
+
+function workspaceFilePath(id: string): string {
+  return join(dataDir, "workspaces", `${id}.json`);
+}
+
+describe("Sandbox empty-folder hostMount persistence", () => {
+  let storage: Storage;
+
+  beforeEach(() => {
+    storage = createTempStorage();
+  });
+
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("persists ~/sandbox/<slug> when creating a sandbox workspace with an empty folder", () => {
+    const ws = storage.createWorkspace({
+      name: "Empty Sandbox",
+      runtime: "sandbox",
+    } as CreateWorkspaceRequest);
+
+    expect(ws.hostMount).toBe("~/sandbox/empty-sandbox");
+    const raw = JSON.parse(readFileSync(workspaceFilePath(ws.id), "utf-8")) as {
+      hostMount?: string;
+    };
+    expect(raw.hostMount).toBe("~/sandbox/empty-sandbox");
+    expect(storage.getWorkspace(ws.id)?.hostMount).toBe("~/sandbox/empty-sandbox");
+  });
+
+  it("keeps a host workspace with an empty folder unset", () => {
+    const blank = storage.createWorkspace({
+      name: "Blank Host",
+      runtime: "host",
+      hostMount: "   ",
+    } as CreateWorkspaceRequest);
+    expect(blank.hostMount).toBeUndefined();
+
+    const omitted = storage.createWorkspace({
+      name: "Omitted Host",
+    } as CreateWorkspaceRequest);
+    expect(omitted.hostMount).toBeUndefined();
+    expect(omitted.runtime).toBeUndefined();
+  });
+
+  it("keeps the persisted folder when the sandbox workspace is renamed", () => {
+    const ws = storage.createWorkspace({
+      name: "Original Name",
+      runtime: "sandbox",
+    } as CreateWorkspaceRequest);
+    expect(ws.hostMount).toBe("~/sandbox/original-name");
+
+    const renamed = storage.updateWorkspace(ws.id, { name: "Renamed Title" });
+    expect(renamed?.name).toBe("Renamed Title");
+    expect(renamed?.hostMount).toBe("~/sandbox/original-name");
+    expect(storage.getWorkspace(ws.id)?.hostMount).toBe("~/sandbox/original-name");
+  });
+
+  it("re-persists ~/sandbox/<current-slug> when an update clears the sandbox folder", () => {
+    const ws = storage.createWorkspace({
+      name: "Custom Folder",
+      runtime: "sandbox",
+      hostMount: dataDir,
+    } as CreateWorkspaceRequest);
+    expect(ws.hostMount).toBe(dataDir);
+
+    const cleared = storage.updateWorkspace(ws.id, { hostMount: null });
+    expect(cleared?.hostMount).toBe("~/sandbox/custom-folder");
+  });
+
+  it("migrates a stored sandbox workspace missing hostMount once from its current name", () => {
+    const ws = storage.createWorkspace({
+      name: "Current Name",
+      runtime: "host",
+    } as CreateWorkspaceRequest);
+    const path = workspaceFilePath(ws.id);
+    const raw = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+    raw.runtime = "sandbox";
+    delete raw.hostMount;
+    writeFileSync(path, JSON.stringify(raw, null, 2));
+
+    const loaded = storage.getWorkspace(ws.id);
+    expect(loaded?.hostMount).toBe("~/sandbox/current-name");
+    expect(loaded?.updatedAt).toBe(ws.updatedAt);
+
+    const diskAfterFirst = readFileSync(path, "utf-8");
+    expect(JSON.parse(diskAfterFirst)).toMatchObject({ hostMount: "~/sandbox/current-name" });
+
+    const again = storage.getWorkspace(ws.id);
+    expect(again?.hostMount).toBe("~/sandbox/current-name");
+    expect(readFileSync(path, "utf-8")).toBe(diskAfterFirst);
+  });
+
+  it("listWorkspaces migrates missing sandbox hostMount from the current name", () => {
+    const ws = storage.createWorkspace({
+      name: "Listed Sandbox",
+      runtime: "host",
+    } as CreateWorkspaceRequest);
+    const path = workspaceFilePath(ws.id);
+    const raw = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+    raw.runtime = "sandbox";
+    delete raw.hostMount;
+    writeFileSync(path, JSON.stringify(raw, null, 2));
+
+    const listed = storage.listWorkspaces().find((candidate) => candidate.id === ws.id);
+    expect(listed?.hostMount).toBe("~/sandbox/listed-sandbox");
+    expect((JSON.parse(readFileSync(path, "utf-8")) as { hostMount?: string }).hostMount).toBe(
+      "~/sandbox/listed-sandbox",
+    );
   });
 });
 

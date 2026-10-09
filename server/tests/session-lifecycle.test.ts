@@ -5,10 +5,10 @@ import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
  * turn dedupe. Complements stop-lifecycle.test.ts (stop/abort flows).
  */
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { join, sep } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
@@ -27,7 +27,7 @@ import {
   type SessionLifecycleSessionState,
 } from "../src/session-lifecycle.js";
 import { TurnDedupeCache } from "../src/turn-cache.js";
-import type { Storage } from "../src/storage.js";
+import { Storage } from "../src/storage.js";
 import type { ServerConfig, ServerMessage, Session, Workspace } from "../src/types.js";
 import { WsMessageHandler } from "../src/ws-message-handler.js";
 import { makeSdkBackendStub } from "./sdk-backend.helpers.js";
@@ -1488,6 +1488,59 @@ describe("SessionManager prompt", () => {
       );
     } finally {
       await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes attachments for a sandbox workspace created with an empty folder", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "oppi-sandbox-attach-"));
+    const isolatedHome = await mkdtemp(join(tmpdir(), "oppi-sandbox-attach-home-"));
+    const previousHome = process.env.HOME;
+    const notes = Buffer.from("sandbox notes", "utf8");
+    try {
+      process.env.HOME = isolatedHome;
+      const storage = new Storage(dataDir);
+      const workspace = storage.createWorkspace({
+        name: "Empty Attach Sandbox",
+        runtime: "sandbox",
+      });
+      expect(workspace.hostMount).toBe("~/sandbox/empty-attach-sandbox");
+
+      const cwd = join(homedir(), "sandbox", "empty-attach-sandbox");
+      const { manager, sdkBackend } = makeManagerHarness(
+        {
+          id: "sandbox-attach",
+          workspaceId: workspace.id,
+          status: "ready",
+        },
+        { workspace, dataDir },
+      );
+
+      await mkdir(cwd, { recursive: true });
+      await writeFile(join(cwd, "notes.txt"), notes);
+      await manager.sendPrompt("sandbox-attach", "look at this", {
+        attachments: [
+          {
+            type: "attachment",
+            id: "att-notes",
+            source: "workspace",
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: notes.byteLength,
+            workspacePath: "notes.txt",
+          },
+        ],
+      });
+
+      expect(sdkBackend.prompt).toHaveBeenCalledTimes(1);
+      expect(sdkBackend.prompt).toHaveBeenCalledWith(
+        expect.stringContaining("notes.txt:"),
+        expect.any(Object),
+      );
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await rm(dataDir, { recursive: true, force: true });
+      await rm(isolatedHome, { recursive: true, force: true });
     }
   });
 
