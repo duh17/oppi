@@ -78,6 +78,8 @@ Assistant output can open markdown, code, diffs, and other documents in full-scr
 
 **Settings → Chat → Busy Animation** chooses the busy-row animation: **Orbiting**, **Searching**, and **Solving** Metal orbs, plus **Pi** and **GoL**. New installs default to Orbiting; saved Pi or GoL choices stay.
 
+**Settings → Chat → Compact Turns** (iPhone and other compact-width windows; off by default) folds each turn's tool calls and thinking into one row you tap to expand. **Layout** picks how compact chats look. **Transcript** keeps the full-width transcript with a work strip that shows **Icons** or **Words**. **Conversation** uses the messaging layout: your messages are trailing bubbles, replies are cards, the work row is a **Worked 9s · 2 steps** pill, and the title shows the model and thinking level. Durable sessions use the conversation layout whatever this setting says while the Durable Sessions experiment is on.
+
 ## Appearance
 
 **Settings → Appearance** picks a built-in theme (Dark, OLED, Light, Night) or an imported custom theme, either by hand or matching Light/Dark to iOS Display & Brightness.

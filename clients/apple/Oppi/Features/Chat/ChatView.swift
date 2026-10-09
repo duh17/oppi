@@ -446,7 +446,11 @@ struct ChatView: View {
     }
 
     private var timelineChromeStyle: ChatTimelineChromeStyle {
-        .for(engine: session?.engine, durableExperimentEnabled: durableSessionsExperimentEnabled)
+        .for(
+            engine: session?.engine,
+            durableExperimentEnabled: durableSessionsExperimentEnabled,
+            compactTurnsLayout: compactTurnsEnabled ? AppPreferences.ChatDisplay.layout : nil
+        )
     }
 
     /// The conversation layout always folds work into "Worked \u{00B7} N steps"

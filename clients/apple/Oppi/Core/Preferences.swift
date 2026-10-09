@@ -428,6 +428,24 @@ enum AppPreferences {
     /// Device-local Compact turns preference. It never changes session or
     /// Agent data sent over the wire.
     enum ChatDisplay {
+        /// How compact chats look (`ChatTimelineChromeStyle.for`). Transcript
+        /// keeps the full-width transcript with a work strip in
+        /// `WorkStripStyle`; Conversation uses the messaging layout with a
+        /// "Worked \u{00B7} N steps" pill, which ignores `WorkStripStyle`.
+        enum Layout: String, CaseIterable, Identifiable {
+            case transcript
+            case conversation
+
+            var id: String { rawValue }
+
+            var label: String {
+                switch self {
+                case .transcript: return "Transcript"
+                case .conversation: return "Conversation"
+                }
+            }
+        }
+
         enum WorkStripStyle: String, CaseIterable, Identifiable {
             case icons
             case words
@@ -444,6 +462,7 @@ enum AppPreferences {
 
         static let compactTurnsKey = "\(AppIdentifiers.subsystem).chatDisplay.compactTurns"
         static let workStripStyleKey = "\(AppIdentifiers.subsystem).chatDisplay.workStripStyle"
+        static let layoutKey = "\(AppIdentifiers.subsystem).chatDisplay.layout"
         static let didChangeNotification = Notification.Name("oppi.chatDisplay.compactTurnsDidChange")
 
         static var isCompactTurnsEnabled: Bool {
@@ -456,6 +475,16 @@ enum AppPreferences {
                 return .icons
             }
             return style
+        }
+
+        static var layout: Layout {
+            UserDefaults.standard.string(forKey: layoutKey).flatMap(Layout.init(rawValue:)) ?? .transcript
+        }
+
+        static func setLayout(_ layout: Layout) {
+            guard layout != self.layout else { return }
+            UserDefaults.standard.set(layout.rawValue, forKey: layoutKey)
+            NotificationCenter.default.post(name: didChangeNotification, object: nil)
         }
 
         static func setCompactTurnsEnabled(_ enabled: Bool) {

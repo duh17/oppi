@@ -49,7 +49,7 @@ struct ScreenshotPreviewView: View {
             // Real Settings/setup surfaces, not a mocked SSH connection. This
             // makes enrollment/refusal QA reachable without pairing a server.
             SettingsScreenshotPreview()
-        case "settings-appearance":
+        case "settings-appearance", "settings-chat-conversation":
             SettingsScreenshotPreview()
         case "chat-speaker-contrast-dark":
             ChatSpeakerContrastPreview(themeID: .dark)
@@ -93,6 +93,14 @@ struct ScreenshotPreviewView: View {
             DurableConversationScreenshotPreview(themeID: .dark)
         case "durable-conversation-light":
             DurableConversationScreenshotPreview(themeID: .light)
+        case "durable-conversation-running":
+            DurableConversationScreenshotPreview(themeID: .dark, scenario: .running)
+        case "durable-conversation-expanded":
+            DurableConversationScreenshotPreview(themeID: .dark, scenario: .expanded)
+        case "durable-conversation-pills":
+            DurableConversationPillStatesPreview(themeID: .dark)
+        case "durable-conversation-pills-light":
+            DurableConversationPillStatesPreview(themeID: .light)
         case "scoped-locks":
             ScopedLocksScreenshotPreview()
         case "quick-session-overlay":

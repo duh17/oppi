@@ -711,10 +711,9 @@ struct AssistantTimelineRowContentViewTests {
         let markdown = try #require(timelineFirstView(ofType: AssistantMarkdownContentView.self, in: view))
         let badge = try #require(timelineFirstView(ofType: SessionGridBadgeView.self, in: view))
 
-        #expect(abs(markdown.frame.minX - AssistantTimelineRowContentView.bubbleLeadingPadding) < 0.5)
-        #expect(
-            abs(view.bounds.width - markdown.frame.maxX - AssistantTimelineRowContentView.bubbleTrailingPadding) < 0.5
-        )
+        let padding = ChatTimelineChromeStyle.standard.assistantBubble.padding
+        #expect(abs(markdown.frame.minX - padding.leading) < 0.5)
+        #expect(abs(view.bounds.width - markdown.frame.maxX - padding.trailing) < 0.5)
         #expect(markdown.frame.minX < badge.frame.maxX)
 
         // First prose text view should reserve the avatar column via exclusion path.

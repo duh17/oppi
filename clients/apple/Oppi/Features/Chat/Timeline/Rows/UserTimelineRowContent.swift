@@ -145,16 +145,11 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
     }
 
     private let outerStack = UIStackView()
-    private let bubbleContainer = UIView()
+    private let bubbleContainer = TimelineChromeSurfaceView()
     private let accentBar = UIView()
     private let youCaption = UILabel()
     private let bubbleStack = UIStackView()
-    private var bubbleStackInsetConstraints: (
-        top: NSLayoutConstraint,
-        leading: NSLayoutConstraint,
-        trailing: NSLayoutConstraint,
-        bottom: NSLayoutConstraint
-    )?
+    private var bubbleStackEdges: TimelineEdgeConstraints?
     /// Conversation chrome only: the trailing bubble's width, resolved from
     /// the row width at layout (`updateConversationBubbleWidth`).
     private var conversationBubbleWidthConstraint: NSLayoutConstraint?
@@ -268,7 +263,6 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
 
         // Bubble container — elevated user card; the fill marks it.
         bubbleContainer.translatesAutoresizingMaskIntoConstraints = false
-        bubbleContainer.layer.cornerRadius = TimelineBubbleStyle.bubbleCornerRadius
         bubbleContainer.clipsToBounds = true
 
         // Leading strip, shown only when a custom theme sets userMessageAccent.
@@ -338,20 +332,12 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         bubbleStack.addArrangedSubview(textRow)
         bubbleContainer.addSubview(bubbleStack)
         bubbleContainer.addSubview(accentBar)
-        let insets = (
-            top: bubbleStack.topAnchor.constraint(equalTo: bubbleContainer.topAnchor, constant: 8),
-            leading: bubbleStack.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor, constant: 10),
-            trailing: bubbleStack.trailingAnchor.constraint(equalTo: bubbleContainer.trailingAnchor, constant: -10),
-            bottom: bubbleStack.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor, constant: -8)
-        )
-        bubbleStackInsetConstraints = insets
+        // Constants come from the chrome style in applyChromeGeometry.
+        let edges = TimelineEdgeConstraints(pinning: bubbleStack, to: bubbleContainer)
+        bubbleStackEdges = edges
         conversationBubbleWidthConstraint = bubbleContainer.widthAnchor.constraint(equalToConstant: 0)
         conversationImageStripWidthConstraint = imageStrip.widthAnchor.constraint(equalTo: outerStack.widthAnchor)
-        NSLayoutConstraint.activate([
-            insets.top,
-            insets.leading,
-            insets.trailing,
-            insets.bottom,
+        NSLayoutConstraint.activate(edges.all + [
             accentBar.leadingAnchor.constraint(equalTo: bubbleContainer.leadingAnchor),
             accentBar.topAnchor.constraint(equalTo: bubbleContainer.topAnchor),
             accentBar.bottomAnchor.constraint(equalTo: bubbleContainer.bottomAnchor),
@@ -490,22 +476,14 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
 
     /// Standard rows are a full-width card with a `\u{276F}` prompt glyph.
     /// Conversation rows are a trailing bubble that hugs short text and wraps
-    /// at `ConversationBubbleChrome.maxBubbleWidth`.
+    /// at `ChatTimelineChromeStyle.userBubbleMaxWidth`.
     private func applyChromeGeometry(content: UserTimelineBubbleContent) {
-        let isConversation = currentConfiguration.chromeStyle == .conversation
+        let style = currentConfiguration.chromeStyle
+        let isConversation = style == .conversation
+        let bubble = style.userBubble
         outerStack.alignment = isConversation ? .trailing : .fill
-        bubbleContainer.layer.cornerRadius = isConversation
-            ? ConversationBubbleChrome.cornerRadius
-            : TimelineBubbleStyle.bubbleCornerRadius
-        bubbleContainer.layer.cornerCurve = isConversation ? .continuous : .circular
-        if let insets = bubbleStackInsetConstraints {
-            let horizontal = isConversation ? ConversationBubbleChrome.userHorizontalPadding : 10
-            let vertical = isConversation ? ConversationBubbleChrome.userVerticalPadding : 8
-            insets.top.constant = vertical
-            insets.bottom.constant = -vertical
-            insets.leading.constant = horizontal
-            insets.trailing.constant = -horizontal
-        }
+        bubbleContainer.shape = bubble.shape
+        bubbleStackEdges?.inset(by: bubble.padding)
         conversationBubbleWidthConstraint?.isActive = isConversation
         conversationImageStripWidthConstraint?.isActive = isConversation
         conversationNaturalTextWidth = isConversation
@@ -542,15 +520,16 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
     }
 
     private func updateConversationBubbleWidth(rowWidth: CGFloat) {
-        guard currentConfiguration.chromeStyle == .conversation,
-              let constraint = conversationBubbleWidthConstraint,
-              rowWidth.isFinite, rowWidth > 0 else {
+        let style = currentConfiguration.chromeStyle
+        guard let constraint = conversationBubbleWidthConstraint,
+              rowWidth.isFinite, rowWidth > 0,
+              let maxWidth = style.userBubbleMaxWidth(rowWidth: rowWidth) else {
             return
         }
-        let maxWidth = ConversationBubbleChrome.maxBubbleWidth(rowWidth: rowWidth)
         let width: CGFloat
         if let natural = conversationNaturalTextWidth {
-            width = min(maxWidth, natural + ConversationBubbleChrome.userHorizontalPadding * 2)
+            let padding = style.userBubble.padding
+            width = min(maxWidth, natural + padding.leading + padding.trailing)
         } else {
             width = maxWidth
         }

@@ -1375,12 +1375,14 @@ extension ChatTimelineCollectionHost.Controller: UICollectionViewDataSourcePrefe
 
     private func timelineImageTarget() -> ChatTimelinePreparationRunway.ImageTarget {
         let collectionBounds = collectionView?.bounds ?? .zero
+        let card = chromeStyle.assistantBubble
         let pointWidth = max(
             1,
             collectionBounds.width
                 - 32
-                - AssistantTimelineRowContentView.bubbleLeadingPadding
-                - AssistantTimelineRowContentView.bubbleTrailingPadding
+                - card.padding.leading
+                - card.padding.trailing
+                - card.margins.trailing
         )
         let traitScale = collectionView?.traitCollection.displayScale ?? 0
         let windowHeight = collectionView?.window?.bounds.height ?? 0

@@ -10,6 +10,7 @@ struct QuietWorkLineRowContentTests {
     private func makeWorkLine(
         buckets: [QuietWorkBucket],
         style: AppPreferences.ChatDisplay.WorkStripStyle = .icons,
+        isExpanded: Bool = false,
         isLive: Bool = false
     ) -> QuietTimelineWorkLine {
         QuietTimelineWorkLine(
@@ -18,7 +19,7 @@ struct QuietWorkLineRowContentTests {
             sourceItemIDs: ["test"],
             buckets: buckets,
             displayStyle: style,
-            isExpanded: false,
+            isExpanded: isExpanded,
             isLive: isLive,
             liveStartedAt: isLive ? timestamp : nil
         )
@@ -284,6 +285,39 @@ struct QuietWorkLineRowContentTests {
         #expect(try #require(summaryLabel(in: view)).text == "run 1 tool")
         #expect(try #require(durationLabel(in: view)).text == "12s")
         #expect(try #require(durationLabel(in: view)).isHidden == false)
+    }
+
+    /// A visible cell is reconfigured in place (stream update, tap, press)
+    /// without a new layout pass. The pill must stay a capsule anyway.
+    @Test func conversationPillStaysACapsuleWhenReconfiguredInPlace() throws {
+        let buckets: [QuietWorkBucket] = [.init(kind: .tooling, count: 2)]
+        func pill(_ workLine: QuietTimelineWorkLine, isHighlighted: Bool = false) -> QuietWorkLineTimelineRowConfiguration {
+            QuietWorkLineTimelineRowConfiguration(
+                workLine: workLine,
+                chromeStyle: .conversation,
+                isHighlighted: isHighlighted
+            )
+        }
+        let view = QuietWorkLineTimelineRowContentView(
+            configuration: pill(makeWorkLine(buckets: buckets, isLive: true))
+        )
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 44)
+        view.layoutIfNeeded()
+        let chip = try #require(chipView(in: view))
+        let capsuleRadius = chip.bounds.height / 2
+        #expect(capsuleRadius > 0)
+
+        let reconfigurations = [
+            pill(makeWorkLine(buckets: buckets, isLive: true)),
+            pill(makeWorkLine(buckets: buckets)),
+            pill(makeWorkLine(buckets: buckets, isExpanded: true)),
+            pill(makeWorkLine(buckets: buckets, isExpanded: true), isHighlighted: true),
+            pill(makeWorkLine(buckets: buckets)),
+        ]
+        for configuration in reconfigurations {
+            view.configuration = configuration
+            #expect(chip.layer.cornerRadius == capsuleRadius)
+        }
     }
 
     @Test func collapsedStripFillDiffersFromUserMessageBubble() throws {

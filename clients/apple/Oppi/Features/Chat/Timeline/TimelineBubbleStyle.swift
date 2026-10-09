@@ -34,46 +34,218 @@ enum TimelineBubbleStyle {
 }
 
 /// Row chrome for one chat timeline. Every row in a timeline uses the same
-/// style; ChatView picks it from the session (`ChatTimelineChromeStyle.for`).
+/// style; ChatView picks it from the session and the Compact Turns layout
+/// (`ChatTimelineChromeStyle.for`).
+///
+/// This is the one owner of chrome that differs between the styles: rows
+/// read their surface (shape, padding, margins) and fill from here and draw
+/// the surface with `TimelineChromeSurfaceView`.
 enum ChatTimelineChromeStyle: Equatable {
     /// Coding transcript: full-width user card and unboxed assistant prose.
     case standard
-    /// Messaging layout for durable sessions: trailing user bubble, assistant
-    /// card without the avatar, and work folded into a hugging
-    /// "Worked · N steps" pill.
+    /// Messaging layout: trailing user bubble, assistant card without the
+    /// avatar, and work folded into a hugging "Worked · N steps" pill.
     case conversation
 
     /// Durable sessions open in the conversation layout while this device
-    /// has the Durable Sessions experiment on. Classic sessions never do.
-    static func `for`(engine: SessionEngine?, durableExperimentEnabled: Bool) -> Self {
-        durableExperimentEnabled && engine == .durable ? .conversation : .standard
+    /// has the Durable Sessions experiment on, whatever Compact Turns says.
+    /// Other sessions follow the Compact Turns layout; `compactTurnsLayout`
+    /// is nil when Compact Turns is off or does not apply to this window.
+    static func `for`(
+        engine: SessionEngine?,
+        durableExperimentEnabled: Bool,
+        compactTurnsLayout: AppPreferences.ChatDisplay.Layout?
+    ) -> Self {
+        if durableExperimentEnabled && engine == .durable { return .conversation }
+        return compactTurnsLayout == .conversation ? .conversation : .standard
+    }
+
+    /// User message: a full-width card, or a trailing bubble no wider than
+    /// `userBubbleMaxWidth`.
+    var userBubble: TimelineChromeSurface {
+        switch self {
+        case .standard:
+            TimelineChromeSurface(
+                shape: .roundedRect(radius: TimelineBubbleStyle.bubbleCornerRadius, curve: .circular),
+                padding: NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10)
+            )
+        case .conversation:
+            TimelineChromeSurface(
+                shape: .roundedRect(radius: Self.conversationCornerRadius, curve: .continuous),
+                padding: NSDirectionalEdgeInsets(top: 9, leading: 14, bottom: 9, trailing: 14)
+            )
+        }
+    }
+
+    /// Assistant reply. Standard prose is full width with room for the
+    /// hanging avatar; the conversation card stops short of the trailing
+    /// edge so the gutter says who is speaking without a caption.
+    var assistantBubble: TimelineChromeSurface {
+        switch self {
+        case .standard:
+            TimelineChromeSurface(
+                shape: .roundedRect(radius: TimelineBubbleStyle.bubbleCornerRadius, curve: .circular),
+                padding: NSDirectionalEdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 6)
+            )
+        case .conversation:
+            TimelineChromeSurface(
+                shape: .roundedRect(radius: Self.conversationCornerRadius, curve: .continuous),
+                padding: NSDirectionalEdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 14),
+                margins: NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 28)
+            )
+        }
+    }
+
+    /// Folded work row: a full-width strip, or a leading pill that hugs its
+    /// text and sits inside the 44 pt touch row.
+    var workLine: TimelineChromeSurface {
+        switch self {
+        case .standard:
+            TimelineChromeSurface(
+                shape: .roundedRect(radius: TimelineBubbleStyle.bubbleCornerRadius, curve: .continuous),
+                padding: NSDirectionalEdgeInsets(top: 0, leading: 14, bottom: 0, trailing: 14)
+            )
+        case .conversation:
+            TimelineChromeSurface(
+                shape: .capsule,
+                padding: NSDirectionalEdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12),
+                margins: NSDirectionalEdgeInsets(top: 5, leading: 0, bottom: 5, trailing: 0)
+            )
+        }
+    }
+
+    /// Widest a user bubble may be in a row this wide; nil spans the row.
+    /// The 620 pt cap keeps wide (iPad, landscape) bubbles readable.
+    func userBubbleMaxWidth(rowWidth: CGFloat) -> CGFloat? {
+        switch self {
+        case .standard: nil
+        case .conversation: min(620, (rowWidth * 0.82).rounded(.down))
+        }
+    }
+
+    /// Conversation cards keep the theme's assistant fill when it has one;
+    /// built-ins leave it clear, so the card lifts onto `bgHighlight`.
+    func assistantFill(from palette: ThemePalette) -> UIColor {
+        let themed = TimelineSpeakerChrome.assistantFill(from: palette)
+        switch self {
+        case .standard: return themed
+        case .conversation: return themed == .clear ? UIColor(palette.bgHighlight) : themed
+        }
+    }
+
+    /// Work row colors. Standard strips use translucent accent fills to stay
+    /// in the tool-row family (`userMessageBg` is opaque in shipped themes,
+    /// so matching it read as a second user bubble). The conversation pill
+    /// is neutral beside the assistant card; only live work tints it.
+    func workLineColors(
+        for workLine: QuietTimelineWorkLine,
+        isHighlighted: Bool,
+        palette: ThemePalette
+    ) -> (fill: UIColor, foreground: UIColor, border: UIColor) {
+        let accent = UIColor(palette.blue)
+        let foreground = workLine.isLive ? accent : UIColor(palette.fgDim)
+        switch self {
+        case .conversation:
+            let fill: UIColor
+            if isHighlighted {
+                fill = UIColor(palette.fgDim).withAlphaComponent(0.22)
+            } else if workLine.isLive {
+                fill = accent.withAlphaComponent(0.14)
+            } else {
+                fill = UIColor(palette.bgHighlight)
+            }
+            return (fill: fill, foreground: foreground, border: .clear)
+        case .standard:
+            let fillAlpha: CGFloat
+            if isHighlighted {
+                fillAlpha = 0.30
+            } else if workLine.isLive {
+                fillAlpha = 0.16
+            } else if workLine.isExpanded {
+                fillAlpha = 0.13
+            } else {
+                fillAlpha = 0.11
+            }
+            return (
+                fill: accent.withAlphaComponent(fillAlpha),
+                foreground: foreground,
+                border: accent.withAlphaComponent(workLine.isLive ? 0.45 : 0.25)
+            )
+        }
+    }
+
+    private static let conversationCornerRadius: CGFloat = 18
+}
+
+/// Corner shape of a timeline chrome surface.
+enum TimelineChromeShape: Equatable {
+    case roundedRect(radius: CGFloat, curve: CALayerCornerCurve)
+    /// Fully round ends; the radius follows the surface's height.
+    case capsule
+}
+
+/// Shape and spacing of one row surface: the user bubble, the assistant
+/// card, or the work strip/pill.
+struct TimelineChromeSurface: Equatable {
+    let shape: TimelineChromeShape
+    /// Content inset inside the surface.
+    let padding: NSDirectionalEdgeInsets
+    /// Space between the surface and the row's edges.
+    var margins: NSDirectionalEdgeInsets = .zero
+}
+
+/// Pins a view inside its container on four edges; `inset(by:)` applies a
+/// surface's padding or margins to them.
+@MainActor
+struct TimelineEdgeConstraints {
+    let top: NSLayoutConstraint
+    let leading: NSLayoutConstraint
+    let bottom: NSLayoutConstraint
+    let trailing: NSLayoutConstraint
+
+    init(pinning view: UIView, to container: UIView) {
+        top = view.topAnchor.constraint(equalTo: container.topAnchor)
+        leading = view.leadingAnchor.constraint(equalTo: container.leadingAnchor)
+        bottom = view.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        trailing = view.trailingAnchor.constraint(equalTo: container.trailingAnchor)
+    }
+
+    var all: [NSLayoutConstraint] { [top, leading, bottom, trailing] }
+
+    func inset(by insets: NSDirectionalEdgeInsets) {
+        top.constant = insets.top
+        leading.constant = insets.leading
+        bottom.constant = -insets.bottom
+        trailing.constant = -insets.trailing
     }
 }
 
-/// Geometry for `ChatTimelineChromeStyle.conversation`.
-enum ConversationBubbleChrome {
-    static let cornerRadius: CGFloat = 18
-    /// User bubbles and assistant cards never span the full row, so the
-    /// trailing/leading gutter says who is speaking without a caption.
-    static let maxWidthFraction: CGFloat = 0.82
-    /// Cap for wide (iPad, landscape) rows so a bubble stays readable.
-    static let maxWidth: CGFloat = 620
-    static let userHorizontalPadding: CGFloat = 14
-    static let userVerticalPadding: CGFloat = 9
-    static let assistantHorizontalPadding: CGFloat = 14
-    static let assistantVerticalPadding: CGFloat = 10
-    /// Space the assistant card leaves on its trailing edge.
-    static let assistantTrailingGutter: CGFloat = 28
-
-    static func maxBubbleWidth(rowWidth: CGFloat) -> CGFloat {
-        min(maxWidth, (rowWidth * maxWidthFraction).rounded(.down))
+/// Draws a `TimelineChromeShape`. The view resolves its own corner radius when
+/// the shape or its size changes, so rows never write `layer.cornerRadius`.
+/// A capsule depends on the surface's height; resolving it anywhere else left
+/// it square whenever a row was reconfigured without a new layout pass.
+final class TimelineChromeSurfaceView: UIView {
+    var shape: TimelineChromeShape = .roundedRect(radius: 0, curve: .circular) {
+        didSet {
+            guard shape != oldValue else { return }
+            applyShape()
+        }
     }
 
-    /// Assistant cards keep the theme's assistant fill when it has one;
-    /// built-ins leave it clear, so the card lifts onto `bgHighlight`.
-    static func assistantCardFill(from palette: ThemePalette) -> UIColor {
-        let themed = TimelineSpeakerChrome.assistantFill(from: palette)
-        return themed == .clear ? UIColor(palette.bgHighlight) : themed
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        applyShape()
+    }
+
+    private func applyShape() {
+        switch shape {
+        case let .roundedRect(radius, curve):
+            layer.cornerRadius = radius
+            layer.cornerCurve = curve
+        case .capsule:
+            layer.cornerRadius = min(bounds.width, bounds.height) / 2
+            layer.cornerCurve = .circular
+        }
     }
 }
 

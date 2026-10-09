@@ -5,6 +5,7 @@ struct SettingsChatPage: View {
     @State private var spinnerStyle = AppPreferences.Appearance.spinnerStyle
     @State private var compactTurnsEnabled = AppPreferences.ChatDisplay.isCompactTurnsEnabled
     @State private var workStripStyle = AppPreferences.ChatDisplay.workStripStyle
+    @State private var compactTurnsLayout = AppPreferences.ChatDisplay.layout
 
     var body: some View {
         List {
@@ -38,21 +39,36 @@ struct SettingsChatPage: View {
                         .accessibilityIdentifier("settings.compactTurns")
 
                     if compactTurnsEnabled {
-                        Picker("Work Strip", selection: $workStripStyle) {
-                            ForEach(AppPreferences.ChatDisplay.WorkStripStyle.allCases) { style in
-                                Text(style.label).tag(style)
+                        Picker("Layout", selection: $compactTurnsLayout) {
+                            ForEach(AppPreferences.ChatDisplay.Layout.allCases) { layout in
+                                Text(layout.label).tag(layout)
                             }
                         }
-                        .pickerStyle(.segmented)
-                        .onChange(of: workStripStyle) { _, newValue in
-                            AppPreferences.ChatDisplay.setWorkStripStyle(newValue)
+                        .onChange(of: compactTurnsLayout) { _, newValue in
+                            AppPreferences.ChatDisplay.setLayout(newValue)
                         }
-                        .accessibilityIdentifier("settings.workStripStyle")
+                        .accessibilityIdentifier("settings.compactTurnsLayout")
 
-                        WorkStripPreviewCard(style: workStripStyle)
+                        switch compactTurnsLayout {
+                        case .transcript:
+                            Picker("Work Strip", selection: $workStripStyle) {
+                                ForEach(AppPreferences.ChatDisplay.WorkStripStyle.allCases) { style in
+                                    Text(style.label).tag(style)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .onChange(of: workStripStyle) { _, newValue in
+                                AppPreferences.ChatDisplay.setWorkStripStyle(newValue)
+                            }
+                            .accessibilityIdentifier("settings.workStripStyle")
+
+                            WorkStripPreviewCard(style: workStripStyle)
+                        case .conversation:
+                            ConversationWorkPillPreviewCard()
+                        }
                     }
                 } footer: {
-                    Text("Collapse successful and failed tool work between messages. Thinking still folds, while messages, asks, system events, cache misses, and audio stay visible.")
+                    Text("Collapse successful and failed tool work between messages. Thinking still folds, while messages, asks, system events, cache misses, and audio stay visible. Conversation shows your messages as bubbles and replies as cards, with the work in a pill. Durable sessions always use Conversation.")
                 }
             }
 
@@ -68,7 +84,51 @@ struct SettingsChatPage: View {
         .onReceive(NotificationCenter.default.publisher(for: AppPreferences.ChatDisplay.didChangeNotification)) { _ in
             compactTurnsEnabled = AppPreferences.ChatDisplay.isCompactTurnsEnabled
             workStripStyle = AppPreferences.ChatDisplay.workStripStyle
+            compactTurnsLayout = AppPreferences.ChatDisplay.layout
         }
+    }
+}
+
+/// The real conversation work row, so the preview cannot drift from the
+/// timeline's pill geometry.
+struct ConversationWorkPillPreviewCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Preview", systemImage: "bubble.left.and.text.bubble.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.themeFgDim)
+            ConversationWorkPillRow()
+                .frame(height: 44)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Worked 9s, 2 steps")
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct ConversationWorkPillRow: UIViewRepresentable {
+    static let sampleWorkLine = QuietTimelineWorkLine(
+        id: "settings-conversation-pill-preview",
+        turnID: "settings-conversation-pill-preview",
+        sourceItemIDs: [],
+        buckets: [.init(kind: .read, count: 1), .init(kind: .tooling, count: 1)],
+        displayStyle: .icons,
+        isExpanded: false,
+        isLive: false,
+        liveStartedAt: Date(timeIntervalSince1970: 0),
+        intervalEndedAt: Date(timeIntervalSince1970: 9)
+    )
+
+    func makeUIView(context: Context) -> QuietWorkLineTimelineRowContentView {
+        QuietWorkLineTimelineRowContentView(configuration: Self.configuration)
+    }
+
+    func updateUIView(_ uiView: QuietWorkLineTimelineRowContentView, context: Context) {
+        uiView.configuration = Self.configuration
+    }
+
+    private static var configuration: QuietWorkLineTimelineRowConfiguration {
+        QuietWorkLineTimelineRowConfiguration(workLine: sampleWorkLine, chromeStyle: .conversation)
     }
 }
 

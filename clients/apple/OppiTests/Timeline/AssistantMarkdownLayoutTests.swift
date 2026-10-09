@@ -1012,8 +1012,8 @@ struct AssistantMarkdownLayoutTests {
         // this cannot silently rot if bubble padding changes.
         let rowWidth: CGFloat = 338
         let contentWidth = rowWidth
-            - AssistantTimelineRowContentView.bubbleLeadingPadding
-            - AssistantTimelineRowContentView.bubbleTrailingPadding
+            - ChatTimelineChromeStyle.standard.assistantBubble.padding.leading
+            - ChatTimelineChromeStyle.standard.assistantBubble.padding.trailing
 
         let row = AssistantTimelineRowContentView(configuration: .init(
             text: markdown,
