@@ -14,7 +14,6 @@ import {
 } from "../types.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { createLogger } from "../logger.js";
-import { decodeWorkspaceRoutePath } from "../file-serving-policy.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import { createSessionListRouteHandlers, sessionsWithLiveStatus } from "./session-list-handlers.js";
 import { createSessionTraceRouteHandlers } from "./session-trace-handlers.js";
@@ -961,27 +960,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         wsSessionChangesMatch[1],
         wsSessionChangesMatch[2],
         res,
-      );
-      return true;
-    }
-
-    // Legacy session-raw bytes for iOS builds that predate currentFiles; see
-    // /files/current?origin=session.
-    const wsSessionRawMatch = path.match(/^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/raw\/(.+)$/);
-    if (wsSessionRawMatch && (method === "GET" || method === "HEAD")) {
-      const requestedPath = decodeWorkspaceRoutePath(wsSessionRawMatch[3]);
-      if (requestedPath === null) {
-        helpers.error(res, 400, "Invalid file path encoding");
-        return true;
-      }
-
-      await sessionFileHandlers.handleGetSessionRaw(
-        wsSessionRawMatch[1],
-        wsSessionRawMatch[2],
-        requestedPath,
-        res,
-        req,
-        method,
       );
       return true;
     }

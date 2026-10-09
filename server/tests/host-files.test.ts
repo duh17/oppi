@@ -191,7 +191,7 @@ describe("expandExactHostPath", () => {
   });
 });
 
-describe("GET/HEAD /files/raw", () => {
+describe("GET/HEAD /files/current host and control-session origins", () => {
   const roots: string[] = [];
 
   afterEach(() => {
@@ -213,17 +213,25 @@ describe("GET/HEAD /files/raw", () => {
     const logs: HostFileLogLine[] = [];
     const logger = makeLogger(logs);
 
-    const getRes = await dispatchHost("GET", `/files/raw?path=${encodeURIComponent(filePath)}`, {
-      logger,
-    });
+    const getRes = await dispatchHost(
+      "GET",
+      `/files/current?origin=host&path=${encodeURIComponent(filePath)}`,
+      {
+        logger,
+      },
+    );
     expect(getRes.statusCode).toBe(200);
     expect(getRes.headers["Content-Type"]).toMatch(/text\/plain/);
     expect(getRes.headers["X-Oppi-Resolved-Path"]).toBe(realpathSync(filePath));
     expect(getRes.body.toString("utf8")).toBe("host log\n");
 
-    const headRes = await dispatchHost("HEAD", `/files/raw?path=${encodeURIComponent(filePath)}`, {
-      logger,
-    });
+    const headRes = await dispatchHost(
+      "HEAD",
+      `/files/current?origin=host&path=${encodeURIComponent(filePath)}`,
+      {
+        logger,
+      },
+    );
     expect(headRes.statusCode).toBe(200);
     expect(headRes.headers["Content-Length"]).toBe(String(Buffer.byteLength("host log\n")));
     expect(headRes.headers["X-Oppi-Resolved-Path"]).toBe(realpathSync(filePath));
@@ -231,16 +239,12 @@ describe("GET/HEAD /files/raw", () => {
 
     const resolvedFilePath = realpathSync(filePath);
     const infoLogs = logs.filter((line) => line.level === "info");
-    const debugLogs = logs.filter((line) => line.level === "debug");
     expect(infoLogs).toHaveLength(2);
-    expect(infoLogs.every((line) => line.event === "hostfile.read")).toBe(true);
+    expect(infoLogs.every((line) => line.event === "currentfile.read")).toBe(true);
     expect(infoLogs.map((line) => line.method)).toEqual(["GET", "HEAD"]);
-    expect(infoLogs.every((line) => line.realpath === undefined)).toBe(true);
-    expect(infoLogs.every((line) => line.size === Buffer.byteLength("host log\n"))).toBe(true);
     expect(infoLogs.every((line) => line.status === 200)).toBe(true);
-    expect(debugLogs.every((line) => line.realpath === resolvedFilePath)).toBe(true);
-    expect(JSON.stringify(infoLogs)).not.toContain(resolvedFilePath);
-    expect(JSON.stringify(logs)).not.toContain("workspace");
+    expect(JSON.stringify(logs)).not.toContain(resolvedFilePath);
+    expect(JSON.stringify(logs)).not.toContain(filePath);
   });
 
   it("resolves relative paths only from a declared control-session cwd", async () => {
@@ -249,8 +253,8 @@ describe("GET/HEAD /files/raw", () => {
     mkdirSync(controlCwd, { recursive: true });
     writeFileSync(join(controlCwd, "note.md"), "control current bytes\n", "utf8");
 
-    const query = `path=note.md&controlSessionId=control-1`;
-    const allowed = await dispatchHost("GET", `/files/raw?${query}`, {
+    const query = `origin=session&sessionId=control-1&path=note.md`;
+    const allowed = await dispatchHost("GET", `/files/current?${query}`, {
       dataDir,
       controlSessionIds: ["control-1"],
     });
@@ -260,12 +264,14 @@ describe("GET/HEAD /files/raw", () => {
 
     const unknown = await dispatchHost(
       "GET",
-      "/files/raw?path=note.md&controlSessionId=missing-control",
+      "/files/current?origin=session&sessionId=missing-control&path=note.md",
       { dataDir, controlSessionIds: ["control-1"] },
     );
     expect(unknown.statusCode).toBe(404);
 
-    const unscoped = await dispatchHost("GET", "/files/raw?path=note.md", { dataDir });
+    const unscoped = await dispatchHost("GET", "/files/current?origin=host&path=note.md", {
+      dataDir,
+    });
     expect(unscoped.statusCode).toBe(404);
   });
 
@@ -276,7 +282,7 @@ describe("GET/HEAD /files/raw", () => {
     writeFileSync(join(controlCwd, "note.md"), "must not serve\n");
     const response = await dispatchHost(
       "GET",
-      "/files/raw?path=note.md&controlSessionId=workspace-1",
+      "/files/current?origin=session&sessionId=workspace-1&path=note.md",
       {
         dataDir,
         workspaceSessionIds: ["workspace-1"],
@@ -301,7 +307,7 @@ describe("GET/HEAD /files/raw", () => {
       }
       const response = await dispatchHost(
         "GET",
-        "/files/raw?path=note.md&controlSessionId=control-1",
+        "/files/current?origin=session&sessionId=control-1&path=note.md",
         {
           dataDir,
           controlSessionIds: ["control-1"],
@@ -348,7 +354,7 @@ describe("GET/HEAD /files/raw", () => {
 
     try {
       const res = await fetch(
-        `http://127.0.0.1:${address.port}/files/raw?path=${encodeURIComponent(filePath)}`,
+        `http://127.0.0.1:${address.port}/files/current?origin=host&path=${encodeURIComponent(filePath)}`,
       );
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("unicode notes\n");
@@ -373,7 +379,7 @@ describe("GET/HEAD /files/raw", () => {
 
     const res = await dispatchHost(
       "GET",
-      `/files/raw?path=${encodeURIComponent("~/notes/readme.md")}`,
+      `/files/current?origin=host&path=${encodeURIComponent("~/notes/readme.md")}`,
       {
         logger: makeLogger(logs),
         homeDir: home,
@@ -387,12 +393,7 @@ describe("GET/HEAD /files/raw", () => {
     );
     const infoLogs = logs.filter((line) => line.level === "info");
     expect(infoLogs).toEqual([
-      expect.objectContaining({
-        event: "hostfile.read",
-        method: "GET",
-        realpath: undefined,
-        status: 200,
-      }),
+      expect.objectContaining({ event: "currentfile.read", method: "GET", status: 200 }),
     ]);
     expect(JSON.stringify(infoLogs)).not.toContain(realpathSync(join(home, "notes", "readme.md")));
   });
@@ -411,7 +412,10 @@ describe("GET/HEAD /files/raw", () => {
     try {
       const cases = [missing, directory, unreadable, fifo, "/dev/null"];
       for (const path of cases) {
-        const res = await dispatchHost("GET", `/files/raw?path=${encodeURIComponent(path)}`);
+        const res = await dispatchHost(
+          "GET",
+          `/files/current?origin=host&path=${encodeURIComponent(path)}`,
+        );
         expect(res.statusCode, path).toBe(404);
       }
     } finally {
@@ -435,7 +439,10 @@ describe("GET/HEAD /files/raw", () => {
     ];
 
     for (const path of cases) {
-      const res = await dispatchHost("GET", `/files/raw?path=${encodeURIComponent(path)}`);
+      const res = await dispatchHost(
+        "GET",
+        `/files/current?origin=host&path=${encodeURIComponent(path)}`,
+      );
       expect(res.statusCode, path).toBe(404);
       expect(res.body.toString("utf8")).not.toContain("should not be served");
     }
@@ -450,22 +457,26 @@ describe("GET/HEAD /files/raw", () => {
     const imagePath = join(root, "huge.png");
     writeFileSync(imagePath, Buffer.alloc(MAX_BROWSE_IMAGE_FILE_SIZE + 1, 0x89));
 
-    const rangeRes = await dispatchHost("GET", `/files/raw?path=${encodeURIComponent(textPath)}`, {
-      headers: { range: "bytes=2-5" },
-    });
+    const rangeRes = await dispatchHost(
+      "GET",
+      `/files/current?origin=host&path=${encodeURIComponent(textPath)}`,
+      {
+        headers: { range: "bytes=2-5" },
+      },
+    );
     expect(rangeRes.statusCode).toBe(206);
     expect(rangeRes.headers["Content-Range"]).toBe("bytes 2-5/10");
     expect(rangeRes.body.toString("utf8")).toBe("2345");
 
     const textTooLarge = await dispatchHost(
       "GET",
-      `/files/raw?path=${encodeURIComponent(hugePath)}`,
+      `/files/current?origin=host&path=${encodeURIComponent(hugePath)}`,
     );
     expect(textTooLarge.statusCode).toBe(413);
 
     const imageTooLarge = await dispatchHost(
       "GET",
-      `/files/raw?path=${encodeURIComponent(imagePath)}`,
+      `/files/current?origin=host&path=${encodeURIComponent(imagePath)}`,
     );
     expect(imageTooLarge.statusCode).toBe(413);
   });
@@ -477,15 +488,19 @@ describe("GET/HEAD /files/raw", () => {
     writeFileSync(allowed, Buffer.alloc(MAX_BROWSE_TEXT_FILE_SIZE + 1, 0x50));
     writeFileSync(tooLarge, Buffer.alloc(MAX_BROWSE_IMAGE_FILE_SIZE + 1, 0x50));
 
-    const allowedRes = await dispatchHost("GET", `/files/raw?path=${encodeURIComponent(allowed)}`);
+    const allowedRes = await dispatchHost(
+      "GET",
+      `/files/current?origin=host&path=${encodeURIComponent(allowed)}`,
+    );
     expect(allowedRes.statusCode).toBe(200);
-    expect(String(allowedRes.headers["Content-Type"] ?? allowedRes.headers["content-type"]))
-      .toBe("model/vnd.usdz+zip");
+    expect(String(allowedRes.headers["Content-Type"] ?? allowedRes.headers["content-type"])).toBe(
+      "model/vnd.usdz+zip",
+    );
     expect(allowedRes.body.length).toBe(MAX_BROWSE_TEXT_FILE_SIZE + 1);
 
     const tooLargeRes = await dispatchHost(
       "GET",
-      `/files/raw?path=${encodeURIComponent(tooLarge)}`,
+      `/files/current?origin=host&path=${encodeURIComponent(tooLarge)}`,
     );
     expect(tooLargeRes.statusCode).toBe(413);
   });
@@ -499,14 +514,17 @@ describe("GET/HEAD /files/raw", () => {
     const home = tempRoot("oppi-hostfile-tilde-");
     writeFileSync(join(home, "secret"), "from home\n", "utf8");
 
-    const aliasRes = await dispatchHost("HEAD", `/files/raw?path=${encodeURIComponent(alias)}`);
+    const aliasRes = await dispatchHost(
+      "HEAD",
+      `/files/current?origin=host&path=${encodeURIComponent(alias)}`,
+    );
     expect(aliasRes.statusCode).toBe(200);
     expect(aliasRes.headers["X-Oppi-Resolved-Path"]).toBe(realpathSync(target));
     expect(aliasRes.headers["X-Oppi-Resolved-Path"]).not.toBe(alias);
 
     const tildeRes = await dispatchHost(
       "HEAD",
-      `/files/raw?path=${encodeURIComponent("~/secret")}`,
+      `/files/current?origin=host&path=${encodeURIComponent("~/secret")}`,
       { homeDir: home },
     );
     expect(tildeRes.statusCode).toBe(200);
@@ -519,7 +537,10 @@ describe("GET/HEAD /files/raw", () => {
     const envPath = join(root, ".env");
     writeFileSync(envPath, "SECRET=yes\n", "utf8");
 
-    const res = await dispatchHost("GET", `/files/raw?path=${encodeURIComponent(envPath)}`);
+    const res = await dispatchHost(
+      "GET",
+      `/files/current?origin=host&path=${encodeURIComponent(envPath)}`,
+    );
     expect(res.statusCode).toBe(200);
     expect(res.body.toString("utf8")).toBe("SECRET=yes\n");
   });
@@ -538,14 +559,17 @@ describe("GET/HEAD /files/raw", () => {
     });
     expect(listed).toBe(false);
 
-    const dirRes = await dispatchHost("GET", `/files/raw?path=${encodeURIComponent(root)}`);
+    const dirRes = await dispatchHost(
+      "GET",
+      `/files/current?origin=host&path=${encodeURIComponent(root)}`,
+    );
     expect(dirRes.statusCode).toBe(404);
     expect(dirRes.body.toString("utf8")).not.toMatch(/notes/);
   });
 });
 
-describe("workspace confinement after /files/raw lands", () => {
-  it("keeps workspace contents and raw 404 for absolute paths and parent escapes", async () => {
+describe("workspace listing confinement", () => {
+  it("keeps workspace contents 404 for absolute paths and parent escapes", async () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), "oppi-ws-confine-"));
     const outside = mkdtempSync(join(tmpdir(), "oppi-ws-outside-"));
     try {
@@ -569,8 +593,6 @@ describe("workspace confinement after /files/raw lands", () => {
       );
 
       const cases = [
-        `/workspaces/ws-1/raw/${encodeURIComponent(join(outside, "secret.txt"))}`,
-        "/workspaces/ws-1/raw/../secret.txt",
         `/workspaces/ws-1/contents/${encodeURIComponent(outside)}`,
         "/workspaces/ws-1/contents/../",
       ];
@@ -597,7 +619,7 @@ describe("workspace confinement after /files/raw lands", () => {
 
       const hostRes = await dispatchHost(
         "GET",
-        `/files/raw?path=${encodeURIComponent(join(outside, "secret.txt"))}`,
+        `/files/current?origin=host&path=${encodeURIComponent(join(outside, "secret.txt"))}`,
       );
       expect(hostRes.statusCode).toBe(200);
       expect(hostRes.body.toString("utf8")).toBe("outside\n");
@@ -615,7 +637,10 @@ describe("host-file path helpers stay fail-closed", () => {
       mkdirSync(join(root, "real-dir"));
       const link = join(root, "alias");
       symlinkSync(join(root, "real-dir"), link);
-      const res = await dispatchHost("GET", `/files/raw?path=${encodeURIComponent(link)}`);
+      const res = await dispatchHost(
+        "GET",
+        `/files/current?origin=host&path=${encodeURIComponent(link)}`,
+      );
       expect(res.statusCode).toBe(404);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -733,9 +758,11 @@ describe("GET /host/contents", () => {
 });
 
 describe("auth contract", () => {
-  it("registers /files/raw as an owner-authenticated session route", async () => {
+  it("registers /files/current reads as owner-authenticated session routes", async () => {
     const { apiRouteSpecs } = await import("../src/routes/registry.js");
-    const routes = apiRouteSpecs.filter((route) => route.path === "/files/raw");
+    const routes = apiRouteSpecs.filter(
+      (route) => route.path === "/files/current" && route.method !== "PUT",
+    );
     expect(routes.map((route) => route.method).sort()).toEqual(["GET", "HEAD"]);
     expect(routes.every((route) => route.auth === "owner")).toBe(true);
     expect(routes.every((route) => route.nativeClientUses?.includes("session"))).toBe(true);

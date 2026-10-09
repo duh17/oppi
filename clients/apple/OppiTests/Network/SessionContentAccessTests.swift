@@ -43,7 +43,7 @@ struct SessionContentAccessTests {
         let request = try #require(RecordingContentProtocol.requests.first)
         #expect(RecordingContentProtocol.requests.count == 1)
         #expect(request.url?.host == "server-a.test")
-        #expect(request.url?.path == "/workspaces/w1/sessions/s-bound/raw/notes/a.txt")
+        expectCurrentFile(request, origin: "session", sessionId: "s-bound", file: "notes/a.txt")
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk_test")
         #expect(String(data: data, encoding: .utf8) == request.url?.absoluteString)
     }
@@ -76,7 +76,7 @@ struct SessionContentAccessTests {
         let request = try #require(RecordingContentProtocol.requests.first)
         #expect(RecordingContentProtocol.requests.count == 1)
         #expect(request.url?.host == "server-a.test")
-        #expect(request.url?.path == "/workspaces/w-row/sessions/s-row/raw/notes/a.txt")
+        expectCurrentFile(request, origin: "session", sessionId: "s-row", file: "notes/a.txt")
     }
 
     @Test("Connection supplies its current client and server-scoped workspace catalog")
@@ -100,7 +100,7 @@ struct SessionContentAccessTests {
         let request = try #require(RecordingContentProtocol.requests.first)
         #expect(RecordingContentProtocol.requests.count == 1)
         #expect(request.url?.host == "new-server.test")
-        expectPath(request, prefix: "/workspaces/w1/sessions/s-bound/raw/", file: "tmp/a.png")
+        expectCurrentFile(request, origin: "session", sessionId: "s-bound", file: "tmp/a.png")
     }
 
     @Test("Stored attachments keep session versus control-session origin")
@@ -235,11 +235,11 @@ struct SessionContentAccessTests {
 
         let requests = RecordingContentProtocol.requests
         #expect(requests.count == 3)
-        #expect(requests[0].url?.path == "/files/raw")
-        #expect(query(requests[0], "path") == "/tmp/a.png")
-        expectPath(requests[1], prefix: "/workspaces/w1/sessions/s1/raw/", file: "tmp/b.png")
-        expectPath(requests[2], prefix: "/workspaces/w1/raw/", file: "tmp/c.png")
-        #expect(query(requests[2], "worktreeId") == "wt_feature")
+        expectCurrentFile(requests[0], origin: "host", file: "/tmp/a.png")
+        expectCurrentFile(requests[1], origin: "session", sessionId: "s1", file: "tmp/b.png")
+        expectCurrentFile(
+            requests[2], origin: "workspace", workspaceId: "w1", worktreeId: "wt_feature", file: "tmp/c.png"
+        )
     }
 
     @Test("Sandbox host path without workspace or session is unavailable, not a host read")
@@ -276,7 +276,7 @@ struct SessionContentAccessTests {
             worktreeId: nil,
             workspaceRuntime: nil
         )
-        expectPath(source.url, prefix: "/workspaces/w1/sessions/s-source/raw/", file: "tmp/demo.mov")
+        expectCurrentFile(source.url, origin: "session", sessionId: "s-source", file: "tmp/demo.mov")
         #expect(source.contentTypeHint == MediaMimeType.videoMimeType(forPathExtension: "mov"))
         #expect(source.sourceFileExtension == "mov")
 
@@ -288,9 +288,9 @@ struct SessionContentAccessTests {
             worktreeId: "wt_bound",
             workspaceRuntime: nil
         )
-        expectPath(workspaceSource.url, prefix: "/workspaces/w1/raw/", file: "tmp/demo.mov")
-        #expect(URLComponents(url: workspaceSource.url, resolvingAgainstBaseURL: false)?
-            .queryItems?.first(where: { $0.name == "worktreeId" })?.value == "wt_bound")
+        expectCurrentFile(
+            workspaceSource.url, origin: "workspace", workspaceId: "w1", worktreeId: "wt_bound", file: "tmp/demo.mov"
+        )
     }
 
     @Test("Session-file media source resolves the workspace from the cached session")
@@ -308,7 +308,7 @@ struct SessionContentAccessTests {
         )
 
         #expect(source.url.host == "server-a.test")
-        #expect(source.url.path == "/workspaces/w1/sessions/s-bound/raw/clips/a.mp4")
+        expectCurrentFile(source.url, origin: "session", sessionId: "s-bound", file: "clips/a.mp4")
         #expect(source.contentTypeHint == "video/mp4")
     }
 
@@ -348,15 +348,14 @@ struct SessionContentAccessTests {
 
         let requests = RecordingContentProtocol.requests
         #expect(requests.count == 3)
-        expectPath(requests[0], prefix: "/workspaces/w1/raw/", file: "docs/a.png")
-        #expect(query(requests[0], "worktreeId") == "wt_feature")
+        expectCurrentFile(
+            requests[0], origin: "workspace", workspaceId: "w1", worktreeId: "wt_feature", file: "docs/a.png"
+        )
         // A workspace outside the source session has no checkout to list: main.
-        expectPath(requests[1], prefix: "/workspaces/elsewhere/raw/", file: "docs/b.png")
-        #expect(query(requests[1], "worktreeId") == nil)
+        expectCurrentFile(requests[1], origin: "workspace", workspaceId: "elsewhere", file: "docs/b.png")
         // Unknown runtime is an owner-host read.
-        #expect(requests[2].url?.path == "/files/raw")
-        #expect(query(requests[2], "path") == "/tmp/c.png")
-        expectPath(video.url, prefix: "/workspaces/w1/sessions/s-bound/raw/", file: "clips/d.mp4")
+        expectCurrentFile(requests[2], origin: "host", file: "/tmp/c.png")
+        expectCurrentFile(video.url, origin: "session", sessionId: "s-bound", file: "clips/d.mp4")
 
         // Tool Markdown hosts file reads only; the same source carries no inline media there.
         let toolAccess = connection.sessionContent.markdownResourceAccess(
@@ -406,8 +405,7 @@ struct SessionContentAccessTests {
         let request = try #require(RecordingContentProtocol.requests.first)
         #expect(RecordingContentProtocol.requests.count == 1)
         #expect(request.url?.host == "server-late.test")
-        #expect(request.url?.path == "/files/raw")
-        #expect(query(request, "path") == "/tmp/late.png")
+        expectCurrentFile(request, origin: "host", file: "/tmp/late.png")
     }
 
     @Test("Assistant row image loads through the row's bound checkout")
@@ -432,8 +430,9 @@ struct SessionContentAccessTests {
         #expect(requested)
         let request = try #require(RecordingContentProtocol.requests.first)
         #expect(request.url?.host == "server-a.test")
-        expectPath(request, prefix: "/workspaces/ws-test/raw/", file: "docs/chart.png")
-        #expect(query(request, "worktreeId") == "wt_feature")
+        expectCurrentFile(
+            request, origin: "workspace", workspaceId: "ws-test", worktreeId: "wt_feature", file: "docs/chart.png"
+        )
     }
 
     @Test(
@@ -475,8 +474,9 @@ struct SessionContentAccessTests {
         let request = try #require(RecordingContentProtocol.requests.first)
         #expect(request.url?.host == "server-a.test")
         // The image resolves against the document's directory, not the workspace root.
-        expectPath(request, prefix: "/workspaces/ws-test/raw/", file: "docs/diagram.png")
-        #expect(query(request, "worktreeId") == "wt_feature")
+        expectCurrentFile(
+            request, origin: "workspace", workspaceId: "ws-test", worktreeId: "wt_feature", file: "docs/diagram.png"
+        )
     }
 
     @Test("Tool Markdown full screen carries the row's bound access when workspace metadata is missing")
@@ -501,8 +501,7 @@ struct SessionContentAccessTests {
         _ = try await readHostFile("/tmp/diagram.png")
         let request = try #require(RecordingContentProtocol.requests.first)
         #expect(request.url?.host == "server-a.test")
-        #expect(request.url?.path == "/files/raw")
-        #expect(query(request, "path") == "/tmp/diagram.png")
+        expectCurrentFile(request, origin: "host", file: "/tmp/diagram.png")
     }
 
     @Test("Tool Markdown full-screen link in a control session opens a host file on the source server")
@@ -611,9 +610,14 @@ struct SessionContentAccessTests {
 
     /// Absolute guest/host paths may carry a doubled slash after the route
     /// prefix; the contract is the origin prefix plus the file path.
-    private func expectPath(
+    /// Asserts a `/files/current` read for exactly this origin. The read's `path`
+    /// ends with `file`; ids the origin does not use must be absent.
+    private func expectCurrentFile(
         _ request: URLRequest,
-        prefix: String,
+        origin: String,
+        workspaceId: String? = nil,
+        sessionId: String? = nil,
+        worktreeId: String? = nil,
         file: String,
         sourceLocation: SourceLocation = #_sourceLocation
     ) {
@@ -621,24 +625,29 @@ struct SessionContentAccessTests {
             Issue.record("request has no URL", sourceLocation: sourceLocation)
             return
         }
-        expectPath(url, prefix: prefix, file: file, sourceLocation: sourceLocation)
+        expectCurrentFile(
+            url, origin: origin, workspaceId: workspaceId, sessionId: sessionId,
+            worktreeId: worktreeId, file: file, sourceLocation: sourceLocation
+        )
     }
 
-    private func expectPath(
+    private func expectCurrentFile(
         _ url: URL,
-        prefix: String,
+        origin: String,
+        workspaceId: String? = nil,
+        sessionId: String? = nil,
+        worktreeId: String? = nil,
         file: String,
         sourceLocation: SourceLocation = #_sourceLocation
     ) {
-        #expect(url.path.hasPrefix(prefix), sourceLocation: sourceLocation)
-        #expect(url.path.hasSuffix(file), sourceLocation: sourceLocation)
-    }
-
-    private func query(_ request: URLRequest, _ name: String) -> String? {
-        guard let url = request.url,
-              let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
-        else { return nil }
-        return items.first(where: { $0.name == name })?.value
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        func value(_ name: String) -> String? { items.first(where: { $0.name == name })?.value }
+        #expect(url.path == "/files/current", sourceLocation: sourceLocation)
+        #expect(value("origin") == origin, sourceLocation: sourceLocation)
+        #expect(value("workspaceId") == workspaceId, sourceLocation: sourceLocation)
+        #expect(value("sessionId") == sessionId, sourceLocation: sourceLocation)
+        #expect(value("worktreeId") == worktreeId, sourceLocation: sourceLocation)
+        #expect(value("path")?.hasSuffix(file) == true, sourceLocation: sourceLocation)
     }
 
     private func makeVideoEmbed(_ markdown: String) throws -> MarkdownVideoEmbed {

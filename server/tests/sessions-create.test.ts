@@ -1526,12 +1526,6 @@ describe("workspace-scoped session route ownership", () => {
       url: "https://localhost/workspaces/ws-1/sessions/foreign-session/tool-output/tc-1?full=true",
     },
     {
-      name: "session raw file",
-      method: "GET",
-      path: "/workspaces/ws-1/sessions/foreign-session/raw/file.txt",
-      url: "https://localhost/workspaces/ws-1/sessions/foreign-session/raw/file.txt",
-    },
-    {
       name: "session diff",
       method: "GET",
       path: "/workspaces/ws-1/sessions/foreign-session/diff",

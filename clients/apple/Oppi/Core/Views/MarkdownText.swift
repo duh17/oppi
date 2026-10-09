@@ -171,7 +171,10 @@ final class MarkdownSegmentCache: @unchecked Sendable {
 // MARK: - Shared Workspace File URL Helpers
 
 enum WorkspaceFileURL {
-    /// Build `{base}/workspaces/{workspaceID}/raw/{path}`.
+    /// Build the client-local workspace-file identity URL
+    /// `{base}/workspaces/{workspaceID}/raw/{path}`. It is a cache and routing
+    /// key, never requested: the server has no such route, and bytes come from
+    /// `/files/current`.
     ///
     /// `worktreeId` uses the same query name as `APIClient` workspace fetches.
     /// Nil, blank, and `main` omit the query so main-checkout URLs keep their
@@ -194,7 +197,7 @@ enum WorkspaceFileURL {
         return components.url ?? url
     }
 
-    /// Parse `{base}/workspaces/{workspaceID}/raw/{path}`.
+    /// Parse the workspace-file identity URL `{base}/workspaces/{workspaceID}/raw/{path}`.
     /// Also accepts legacy `/files/` URLs from older transcript renders.
     static func parse(_ url: URL) -> (workspaceID: String, filePath: String, worktreeId: String?)? {
         let components = url.pathComponents

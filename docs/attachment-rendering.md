@@ -188,7 +188,7 @@ Current client behavior:
 
 ## Markdown image resolution
 
-Markdown `![]()` and `![[]]` embed Oppi-backed images through the same origin-first decision as video and audio. Public HTTPS images stay tap-to-load. Owner-host files use an authenticated full-byte GET (not range) on the host-origin current-file route: `/files/current?origin=host` when the server reports `currentFiles`, otherwise `/files/raw`. Sandbox sessions remap guest POSIX paths the same way inline AV does and never use a host-origin read for guest paths.
+Markdown `![]()` and `![[]]` embed Oppi-backed images through the same origin-first decision as video and audio. Public HTTPS images stay tap-to-load. Owner-host files use an authenticated full-byte GET (not range) on the host-origin current-file route, `/files/current?origin=host`. Sandbox sessions remap guest POSIX paths the same way inline AV does and never use a host-origin read for guest paths.
 
 | Markdown source                        | Current behavior                                                                                            |
 | -------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -218,7 +218,7 @@ A missing media file shows a not-found message (HTTP 404), rather than a generic
 
 The player always reserves 16:9 geometry because wiki-file syntax has no dimensions. Playback metadata never resizes an embed, including later remounts. Portrait and landscape clips letterbox inside that slot. Image and PDF export always use the deterministic fallback card; source export keeps the original Markdown.
 
-Workspace, host, and session video can overlay same-directory sidecar captions (`stem(.lang)?.(vtt|srt|ass|ssa)`). Auto-pick uses a bare stem, then the device locale, then the first match. A language control appears only when more than one sidecar matches. Session and sandbox files probe exact `stem.ext` names and never list the directory. Host files ask the server for bounded same-stem discovery beside the existing video (`/files/current/sidecars`), which returns only matching regular-file names, never a directory listing. A server without the `currentFiles` capability returns no host sidecars, and the video still plays. A missing, oversized, unreadable, or unparseable sidecar never blocks playback. Captions follow the player's clock in an overlay, inline and in native fullscreen; Oppi does not inject AVPlayer closed captions.
+Workspace, host, and session video can overlay same-directory sidecar captions (`stem(.lang)?.(vtt|srt|ass|ssa)`). Auto-pick uses a bare stem, then the device locale, then the first match. A language control appears only when more than one sidecar matches. Session and sandbox files probe exact `stem.ext` names and never list the directory. Host files ask the server for bounded same-stem discovery beside the existing video (`/files/current/sidecars`), which returns only matching regular-file names, never a directory listing. A missing, oversized, unreadable, or unparseable sidecar never blocks playback. Captions follow the player's clock in an overlay, inline and in native fullscreen; Oppi does not inject AVPlayer closed captions.
 
 ## Markdown inline audio
 
@@ -280,7 +280,7 @@ Use workspace/session file routes for current project files, PDFs, reports, and 
 - a file addressed relative to the session workspace or worktree
 - an explicit real path on a host workspace, including in-tree symlink targets and absolute/~ host paths
 
-Session-origin current-file reads require owner authentication and session ownership. On a host workspace they serve an explicit real path that exists, including in-tree symlink targets and absolute/~ host paths; pairing/auth is the gate. Sandbox session-origin reads stay confined and 403s outside or guest-escape paths. Current-file audio and video stream through authenticated `GET`/`HEAD` requests to `/files/current` when the server reports `currentFiles`, otherwise to the matching legacy origin route (workspace `raw`, session-raw, or `/files/raw`), with single-range byte responses.
+Session-origin current-file reads require owner authentication and session ownership. On a host workspace they serve an explicit real path that exists, including in-tree symlink targets and absolute/~ host paths; pairing/auth is the gate. Sandbox session-origin reads stay confined and 403s outside or guest-escape paths. Current-file audio and video stream through authenticated `GET`/`HEAD` requests to `/files/current`, with single-range byte responses.
 
 Use stored tool attachments for media associated with a message or tool result:
 
@@ -301,9 +301,9 @@ The server owns attachment materialization and serving.
 - Sniff image/audio/video headers where practical; do not trust only file extensions.
 - Copy bytes from helper-approved paths, generated temp files, or authenticated uploads.
 - Do not expose an HTTP API that attaches arbitrary server paths by name.
-- Keep workspace `contents` and legacy `raw` lexically inside the workspace, then follow in-tree symlink names even when the target is outside. Host-workspace workspace-origin and session-origin current-file reads may follow an explicit real path, including symlink targets; sandbox workspace-origin and session-origin reads 403 outside and guest-escape paths.
+- Keep workspace `contents` lexically inside the workspace, then follow in-tree symlink names even when the target is outside. Host-workspace workspace-origin and session-origin current-file reads may follow an explicit real path, including symlink targets; sandbox workspace-origin and session-origin reads 403 outside and guest-escape paths.
 - Serve stored media through authenticated `GET` and `HEAD` requests to `/sessions/{sessionId}/attachments/{attachmentId}`.
-- Serve current-file media through authenticated, range-capable `GET` and `HEAD` requests to `/files/current` when the server reports `currentFiles`; otherwise use the matching legacy origin route (workspace `raw`, session-raw, or `/files/raw`). Host-origin reads (`/files/current?origin=host` or `/files/raw`), host-workspace session-origin reads (`/files/current?origin=session` or session-raw), and host-workspace `/files/current?origin=workspace` reads may follow an unreported absolute, outside, or symlink-target file. Legacy workspace `raw` stays lexically inside the workspace.
+- Serve current-file media through authenticated, range-capable `GET` and `HEAD` requests to `/files/current`. Host-origin reads (`/files/current?origin=host`) and host-workspace `/files/current?origin=session|workspace` reads may follow an unreported absolute, outside, or symlink-target file.
 - Use workspace-scoped attachment routes only for upload creation and upload content.
 - Support byte ranges for audio and video.
 - Delete attachments when the owning session is deleted.
@@ -340,7 +340,7 @@ Clients render attachments from metadata and authenticated byte sources.
 - Route remote URLs through the existing tap-to-load remote image policy.
 - Keep attachment endpoints authenticated and session-scoped.
 - Build timeline attachment and session-file providers even when API-client or workspace metadata is still loading; resolve that context when the fetch starts so cached rows can recover.
-- Do not rely on workspace lexical containment for byte reads. It covers workspace listings and legacy workspace `raw` (in-tree symlinks may resolve outside), not authenticated host-origin reads (`/files/current?origin=host` or legacy `/files/raw`) or host-workspace workspace-origin and session-origin current-file reads (legacy session-raw included). Fuzzy `/paths` is not a secret-file ACL.
+- Do not rely on workspace lexical containment for byte reads. It covers workspace listings (in-tree symlinks may resolve outside), not authenticated host-origin reads (`/files/current?origin=host`) or host-workspace workspace-origin and session-origin current-file reads. Fuzzy `/paths` is not a secret-file ACL.
 - Avoid logging full file paths or attachment text when it can contain private data.
 - Treat stored attachments as durable session history until the session or attachment is deleted.
 

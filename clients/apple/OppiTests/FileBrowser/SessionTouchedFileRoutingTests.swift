@@ -213,7 +213,7 @@ struct SessionTouchedFileRoutingTests {
     }
 
     @MainActor
-    @Test func sessionOriginHostFileChildUsesHostRawNotSessionRaw() throws {
+    @Test func sessionOriginHostFileChildUsesHostFileNotSessionFile() throws {
         let cases: [(source: String, expectedPath: String)] = [
             ("[[/Users/owner/docs/child.md|Child]]", "/Users/owner/docs/child.md"),
             ("[[~/docs/child.md|Child]]", "~/docs/child.md"),
@@ -242,7 +242,7 @@ struct SessionTouchedFileRoutingTests {
                 workspaceRuntime: .host
             )
             guard case .resourceReference(let reference) = action else {
-                Issue.record("Host-file children must use /files/raw, got \(action)")
+                Issue.record("Host-file children must be host-file references, got \(action)")
                 return
             }
             #expect(reference.kind == .hostFile)
@@ -400,7 +400,7 @@ struct SessionTouchedFileRoutingTests {
     }
 
     @MainActor
-    @Test func completedReaderHostFileChildUsesHostRawNotSessionRaw() throws {
+    @Test func completedReaderHostFileChildUsesHostFileNotSessionFile() throws {
         let context = MarkdownResourceAccess(
             identity: .init(
                 serverID: "server-origin", workspaceID: "workspace-origin", sessionID: "session-origin",
@@ -425,7 +425,7 @@ struct SessionTouchedFileRoutingTests {
         let attributed = try #require(textView.attributedText)
         let link = try #require(attributed.attribute(.link, at: 0, effectiveRange: nil) as? URL)
         guard case .resourceReference(let child) = body.linkAction(for: link) else {
-            Issue.record("Host-file children must use /files/raw, got \(String(describing: body.linkAction(for: link)))")
+            Issue.record("Host-file children must be host-file references, got \(String(describing: body.linkAction(for: link)))")
             return
         }
         #expect(child.kind == .hostFile)
@@ -443,7 +443,7 @@ struct SessionTouchedFileRoutingTests {
     }
 
     @MainActor
-    @Test func serializedHostFileChildUsesHostRawAndMissingServerFailsClosed() throws {
+    @Test func serializedHostFileChildUsesHostFileAndMissingServerFailsClosed() throws {
         let hostPath = "/Users/owner/docs/child.md"
         let reference = ResourceReference(
             target: hostPath, sourceServerID: "server-origin",
@@ -458,7 +458,7 @@ struct SessionTouchedFileRoutingTests {
                 workspaceRuntime: .host
             )
             guard case .resourceReference(let child) = action else {
-                Issue.record("Host-file children must use /files/raw, got \(action)")
+                Issue.record("Host-file children must be host-file references, got \(action)")
                 return
             }
             #expect(child.kind == .hostFile)

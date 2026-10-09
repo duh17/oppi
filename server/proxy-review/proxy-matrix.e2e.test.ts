@@ -660,10 +660,12 @@ describe("reverse-proxy four-way matrix", () => {
         });
         expect(workspace.status).toBe(201);
         const workspaceId = (workspace.body as { workspace: { id: string } }).workspace.id;
-        const ranged = await httpsCall(edgePort, ca, `/workspaces/${workspaceId}/raw/clip.bin`, {
-          token: creds.accessToken,
-          headers: { Range: "bytes=0-3" },
-        });
+        const ranged = await httpsCall(
+          edgePort,
+          ca,
+          `/files/current?${new URLSearchParams({ origin: "workspace", workspaceId, path: "clip.bin" })}`,
+          { token: creds.accessToken, headers: { Range: "bytes=0-3" } },
+        );
         expect(ranged.status).toBe(206);
         expect(ranged.body.toString("utf8")).toBe("ABCD");
 

@@ -63,7 +63,6 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 import { createLogger } from "../src/logger.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createHostFileRoutes } from "../src/routes/host-files.js";
-import { createWorkspaceFileRoutes } from "../src/routes/workspace-files.js";
 import type { RouteContext } from "../src/routes/types.js";
 import type { Session, Workspace } from "../src/types.js";
 import { createWorkspaceWorktree } from "../src/worktrees.js";
@@ -728,7 +727,7 @@ describe("PUT /files/current?origin=workspace", () => {
     expect(readFileSync(join(fixture.outside, "secret.txt")).toString("utf8")).toBe("host-secret");
   });
 
-  it("rejects PUT for host and session origins and does not handle legacy raw PUT", async () => {
+  it("rejects PUT for host and session origins", async () => {
     const fixture = seed();
     const tag = etagFor(readFileSync(join(fixture.hostRoot, "README.md")));
     const original = readFileSync(join(fixture.hostRoot, "README.md"));
@@ -749,18 +748,6 @@ describe("PUT /files/current?origin=workspace", () => {
     );
     expect(sessionPut.statusCode).toBe(404);
     expect(readFileSync(join(fixture.hostRoot, "README.md")).equals(original)).toBe(true);
-
-    const rawDispatch = createWorkspaceFileRoutes(context(fixture), createRouteHelpers());
-    const rawRes = makeResponse();
-    const rawHandled = await rawDispatch({
-      method: "PUT",
-      path: "/workspaces/ws-host/raw/README.md",
-      url: new URL("https://localhost/workspaces/ws-host/raw/README.md"),
-      req: makeRawRequest(Buffer.from("nope")),
-      res: rawRes as unknown as ServerResponse,
-    });
-    expect(rawHandled).toBe(false);
-    expect(rawRes.statusCode).toBe(0);
   });
 
   it("serializes concurrent PUTs with the same tag to one 200 and one 412", async () => {

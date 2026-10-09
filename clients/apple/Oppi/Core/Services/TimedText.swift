@@ -249,8 +249,7 @@ enum TimedText {
         }
     }
 
-    /// The one sidecar access per media origin. Host discovery needs a server
-    /// with `currentFiles`; an older server yields no host sidecars.
+    /// The one sidecar access per media origin.
     static func access(
         for route: MarkdownVideoMediaSourceRoute,
         api: APIClient,

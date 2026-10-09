@@ -348,54 +348,6 @@ export function createHostFileRoutes(
     helpers.json(res, await listTimedTextSidecars(resolved.file));
   }
 
-  /** Legacy `/files/raw`: the host origin with optional control-session cwd; errors are 404. */
-  async function handleHostRawFile(
-    method: string,
-    url: URL,
-    req: IncomingMessage,
-    res: ServerResponse,
-  ): Promise<void> {
-    let status = 404;
-    let resolvedPath: string | null = null;
-    let size: number | null = null;
-
-    try {
-      const resolved = await resolveCurrentFilePath(
-        {
-          kind: "host",
-          homeDir,
-          cwd: () => controlSessionCwd(url.searchParams.get("controlSessionId")),
-        },
-        url.searchParams.get("path") ?? "",
-      );
-      if (resolved.kind !== "ok") {
-        helpers.error(res, 404, "File not found");
-        return;
-      }
-      resolvedPath = resolved.file.realPath;
-      const servable = await statServableFile(resolvedPath);
-      if (servable.kind === "too-large") {
-        status = 413;
-        helpers.error(res, 413, `File too large (max ${servable.maxSizeMegabytes}MB)`);
-        return;
-      }
-      if (servable.kind !== "ok") {
-        helpers.error(res, 404, "File not found");
-        return;
-      }
-      size = servable.file.size;
-      // Authenticated clients need the canonical path for tap-time disclosure
-      // and the viewer title. Audit logs already use it.
-      status = await sendFileBytes(req, res, method, servable.file, {
-        rangeLogTag: "host-raw",
-        extraHeaders: resolvedPathHeaders(resolved.file),
-      });
-    } finally {
-      log.info("hostfile.read", { method, size, status });
-      log.debug("hostfile.read.path", { method, realpath: resolvedPath, size, status });
-    }
-  }
-
   return async ({ method, path, url, req, res }) => {
     const normalizedMethod = method.toUpperCase();
     const readsBytes = normalizedMethod === "GET" || normalizedMethod === "HEAD";
@@ -413,12 +365,6 @@ export function createHostFileRoutes(
     if (path === "/files/current/sidecars") {
       if (normalizedMethod !== "GET") return false;
       await handleCurrentFileSidecars(url, res);
-      return true;
-    }
-
-    if (path === "/files/raw") {
-      if (!readsBytes) return false;
-      await handleHostRawFile(normalizedMethod, url, req, res);
       return true;
     }
 

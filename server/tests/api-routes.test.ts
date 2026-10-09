@@ -19,14 +19,12 @@ const ROUTES = {
   wsSessionAttachmentContent:
     /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/attachments\/([^/]+)\/content$/,
   wsSessionChanges: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/changes$/,
-  wsSessionRaw: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/raw\/(.+)$/,
   wsSessionDiff: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/diff$/,
   wsSessionEvents: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/events$/,
   wsSessionDetail: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)$/,
   wsSessionStream: /^\/workspaces\/([^/]+)\/sessions\/([^/]+)\/stream$/,
   wsContents: /^\/workspaces\/([^/]+)\/contents(?:\/(.*))?$/,
   hostContents: /^\/host\/contents(?:\/(.*))?$/,
-  wsRaw: /^\/workspaces\/([^/]+)\/raw\/(.+)$/,
   wsPaths: /^\/workspaces\/([^/]+)\/paths$/,
   wsGitStatus: /^\/workspaces\/([^/]+)\/git\/status$/,
   wsGitDiff: /^\/workspaces\/([^/]+)\/git\/diff$/,
@@ -114,12 +112,6 @@ describe("Workspace-scoped API routes", () => {
     expect(changes![1]).toBe("ws-1");
     expect(changes![2]).toBe("s1");
 
-    const raw = "/workspaces/ws-1/sessions/s1/raw/src/App.swift".match(ROUTES.wsSessionRaw);
-    expect(raw).toBeTruthy();
-    expect(raw![1]).toBe("ws-1");
-    expect(raw![2]).toBe("s1");
-    expect(raw![3]).toBe("src/App.swift");
-
     const diff = "/workspaces/ws-1/sessions/s1/diff".match(ROUTES.wsSessionDiff);
     expect(diff).toBeTruthy();
     expect(diff![1]).toBe("ws-1");
@@ -152,11 +144,6 @@ describe("Workspace-scoped API routes", () => {
     expect(contents).toBeTruthy();
     expect(contents![1]).toBe("ws-1");
     expect(contents![2]).toBe("src");
-
-    const raw = "/workspaces/ws-1/raw/src/App.swift".match(ROUTES.wsRaw);
-    expect(raw).toBeTruthy();
-    expect(raw![1]).toBe("ws-1");
-    expect(raw![2]).toBe("src/App.swift");
 
     const paths = "/workspaces/ws-1/paths".match(ROUTES.wsPaths);
     expect(paths).toBeTruthy();

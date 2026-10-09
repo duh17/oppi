@@ -124,6 +124,12 @@ struct APIClientTests {
         MockURLProtocol.handler = nil
     }
 
+    /// Query items of a `/files/current` URL by name.
+    private func currentFileQuery(_ url: URL?) -> [String: String] {
+        let items = url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?.queryItems ?? []
+        return Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
+    }
+
     private func mockResponse(status: Int = 200, json: String) -> (Data, HTTPURLResponse) {
         let data = json.data(using: .utf8)!
         let response = HTTPURLResponse(
@@ -1438,14 +1444,14 @@ struct APIClientTests {
         #expect(content == "ok")
     }
 
-    @Test func sessionRawFileSendsAbsoluteReportedPath() async throws {
+    @Test func sessionFileReadSendsAbsoluteReportedPath() async throws {
         let client = makeClient()
         defer { cleanup() }
         MockURLProtocol.handler = { request in
-            #expect(
-                URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.percentEncodedPath ==
-                    "/workspaces/w1/sessions/s1/raw/%2Ftmp%2Fmain.swift"
-            )
+            #expect(request.url?.path == "/files/current")
+            #expect(self.currentFileQuery(request.url) == [
+                "origin": "session", "sessionId": "s1", "path": "/tmp/main.swift",
+            ])
             let response = HTTPURLResponse(
                 url: request.url!,
                 statusCode: 200,
@@ -1463,14 +1469,11 @@ struct APIClientTests {
         #expect(String(data: data, encoding: .utf8) == "preview")
     }
 
-    @Test func sessionRawFilePreservesExactReportedPathWhitespace() async throws {
+    @Test func sessionFileReadPreservesExactReportedPathWhitespace() async throws {
         let client = makeClient()
         defer { cleanup() }
         MockURLProtocol.handler = { request in
-            #expect(
-                URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.percentEncodedPath ==
-                    "/workspaces/w1/sessions/s1/raw/%20%2Ftmp%2Fmovie.mp4%20"
-            )
+            #expect(self.currentFileQuery(request.url)["path"] == " /tmp/movie.mp4 ")
             let response = HTTPURLResponse(
                 url: request.url!,
                 statusCode: 200,
@@ -1493,7 +1496,6 @@ struct APIClientTests {
 
         let workspacePath = "folder one/plus+?hash#percent%&/日本語 image.png"
         let directoryPath = "folder one/日本語 #?/"
-        let expectedRawPath = "/workspaces/w1/raw/folder%20one%2Fplus%2B%3Fhash%23percent%25%26%2F%E6%97%A5%E6%9C%AC%E8%AA%9E%20image.png"
         let expectedDirectoryPath = "/workspaces/w1/contents/folder%20one/%E6%97%A5%E6%9C%AC%E8%AA%9E%20%23%3F/"
         var step = 0
 
@@ -1501,12 +1503,11 @@ struct APIClientTests {
             step += 1
             let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
             switch step {
-            case 1:
-                #expect(components?.percentEncodedPath == expectedRawPath)
-                #expect(components?.queryItems?.isEmpty ?? true)
-            case 2:
-                #expect(components?.percentEncodedPath == expectedRawPath)
-                #expect(components?.queryItems?.isEmpty ?? true)
+            case 1, 2:
+                #expect(components?.percentEncodedPath == "/files/current")
+                #expect(self.currentFileQuery(request.url) == [
+                    "origin": "workspace", "workspaceId": "w1", "path": workspacePath,
+                ])
             case 3:
                 #expect(components?.percentEncodedPath == expectedDirectoryPath)
                 #expect(components?.queryItems?.isEmpty ?? true)
@@ -1562,7 +1563,8 @@ struct APIClientTests {
             case 1:
                 #expect(components?.percentEncodedPath == "/workspaces/w1/contents/src/")
             case 2:
-                #expect(components?.percentEncodedPath == "/workspaces/w1/raw/src%2Fmain.swift")
+                #expect(components?.percentEncodedPath == "/files/current")
+                #expect(components?.queryItems?.first(where: { $0.name == "path" })?.value == "src/main.swift")
             case 3:
                 #expect(components?.percentEncodedPath == "/workspaces/w1/paths")
             default:
@@ -1590,12 +1592,10 @@ struct APIClientTests {
             sourceFileExtension: "mov"
         )
 
-        let components = URLComponents(url: source.url, resolvingAgainstBaseURL: false)
-        #expect(
-            components?.percentEncodedPath ==
-                "/workspaces/w1/raw/clips%2Fspace%20%2B%3F%23%25%26%2F%E6%97%A5%E6%9C%AC%E8%AA%9E%20sample.mov"
-        )
-        #expect(components?.queryItems?.isEmpty ?? true)
+        #expect(source.url.path == "/files/current")
+        #expect(currentFileQuery(source.url) == [
+            "origin": "workspace", "workspaceId": "w1", "path": "clips/space +?#%&/日本語 sample.mov",
+        ])
         #expect(source.url.absoluteString.contains("sk_test") == false)
         #expect(source.identity.contains("sk_test") == false)
         #expect(try await source.authorizationProvider() == "Bearer sk_test")
@@ -1611,41 +1611,18 @@ struct APIClientTests {
             sourceFileExtension: "mp4"
         )
 
-        let components = URLComponents(url: source.url, resolvingAgainstBaseURL: false)
-        #expect(components?.percentEncodedPath == "/files/raw")
-        #expect(components?.queryItems?.first(where: { $0.name == "path" })?.value == "/tmp/clip.mp4")
+        #expect(source.url.path == "/files/current")
+        #expect(currentFileQuery(source.url) == ["origin": "host", "path": "/tmp/clip.mp4"])
         #expect(source.url.absoluteString.contains("sk_test") == false)
         #expect(try await source.authorizationProvider() == "Bearer sk_test")
         #expect(source.contentTypeHint == "video/mp4")
     }
 
-    @Test func currentFileReadsSwitchOnlyAfterThisServerReportsTheCapability() async throws {
+    @Test func currentFileReadsUseOriginQueriesAndSidecarListing() async throws {
         let client = makeClient()
         defer { cleanup() }
-        let serverInfo = { (capabilities: String) in
-            """
-            {"name":"Test","version":"1.0","uptime":1,"os":"darwin","arch":"arm64","hostname":"test","nodeVersion":"22","piVersion":"1","configVersion":1,"capabilities":\(capabilities),"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":0,"modelCount":0}}
-            """
-        }
-        func query(_ source: AuthenticatedMediaSource) -> [String: String] {
-            let items = URLComponents(url: source.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
-            return Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
-        }
+        func query(_ source: AuthenticatedMediaSource) -> [String: String] { currentFileQuery(source.url) }
 
-        // An older server: no capability, so a sandbox session read stays on
-        // session-raw and never becomes an origin-blind host read.
-        MockURLProtocol.handler = { _ in self.mockResponse(json: serverInfo(#"{"controlSessions":{"version":1}}"#)) }
-        _ = try await client.serverInfo()
-        let legacy = try await client.makeSessionFileMediaSource(
-            workspaceId: "w1", sessionId: "s1", path: "/workspace/demo/clip.mp4"
-        )
-        #expect(legacy.url.path == "/workspaces/w1/sessions/s1/raw//workspace/demo/clip.mp4")
-        await #expect(throws: CocoaError.self) {
-            try await client.listCurrentFileSidecars(.host(controlSessionId: nil), mediaPath: "/tmp/clip.mp4")
-        }
-
-        MockURLProtocol.handler = { _ in self.mockResponse(json: serverInfo(#"{"currentFiles":{"version":1}}"#)) }
-        _ = try await client.serverInfo()
         let session = try await client.makeSessionFileMediaSource(
             workspaceId: "w1", sessionId: "s1", path: "/workspace/demo/clip.mp4"
         )
@@ -1675,7 +1652,7 @@ struct APIClientTests {
         #expect(names == ["clip.srt", "clip.en.srt"])
     }
 
-    @Test func sessionFileMediaSourceUsesSessionRawRouteForExternalPath() async throws {
+    @Test func sessionFileMediaSourceUsesSessionOriginForExternalPath() async throws {
         let client = makeClient()
         let source = try await client.makeSessionFileMediaSource(
             workspaceId: "w1",
@@ -1685,17 +1662,16 @@ struct APIClientTests {
             sourceFileExtension: "mp4"
         )
 
-        let components = URLComponents(url: source.url, resolvingAgainstBaseURL: false)
-        #expect(
-            components?.percentEncodedPath ==
-                "/workspaces/w1/sessions/s1/raw/%2Ftmp%2Fmovie%20clip.mp4"
-        )
+        #expect(source.url.path == "/files/current")
+        #expect(currentFileQuery(source.url) == [
+            "origin": "session", "sessionId": "s1", "path": "/tmp/movie clip.mp4",
+        ])
         #expect(try await source.authorizationProvider() == "Bearer sk_test")
         #expect(source.contentTypeHint == "video/mp4")
         #expect(source.sourceFileExtension == "mp4")
     }
 
-    @Test func hostRawFileUsesAuthenticatedQueryPath() async throws {
+    @Test func hostFileReadUsesAuthenticatedQueryPath() async throws {
         let client = makeClient()
         defer { cleanup() }
         var methods: [String] = []
@@ -1703,8 +1679,8 @@ struct APIClientTests {
         MockURLProtocol.handler = { request in
             methods.append(request.httpMethod ?? "")
             let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
-            #expect(components?.percentEncodedPath == "/files/raw")
-            #expect(components?.queryItems?.first(where: { $0.name == "path" })?.value == "/tmp/server.ts")
+            #expect(components?.percentEncodedPath == "/files/current")
+            #expect(self.currentFileQuery(request.url) == ["origin": "host", "path": "/tmp/server.ts"])
             #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer sk_test")
             let response = HTTPURLResponse(
                 url: request.url!,
@@ -1712,7 +1688,7 @@ struct APIClientTests {
                 httpVersion: nil,
                 headerFields: [
                     "Content-Type": "text/plain",
-                    HostRawFileHeaders.resolvedPathField: "/private/tmp/server.ts",
+                    HostFileResolvedPathHeaders.resolvedPathField: "/private/tmp/server.ts",
                 ]
             )!
             return (Data("host".utf8), response)
@@ -1745,7 +1721,10 @@ struct APIClientTests {
         let expectedHost = await client.baseURL.host
         #expect(reader.identity.routesFileReferencesThroughSession)
         MockURLProtocol.handler = { request in
-            #expect(request.url?.path == "/workspaces/workspace-origin/sessions/session-origin/raw//workspace/project/docs/image.png")
+            #expect(request.url?.path == "/files/current")
+            #expect(self.currentFileQuery(request.url) == [
+                "origin": "session", "sessionId": "session-origin", "path": "/workspace/project/docs/image.png",
+            ])
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
             return (Data("session image bytes".utf8), response)
         }
@@ -1763,7 +1742,10 @@ struct APIClientTests {
             let video = try await makeVideo(MarkdownVideoEmbed(reference: reference))
             let audio = try await makeAudio(MarkdownAudioEmbed(reference: reference))
             for source in [video, audio] {
-                #expect(source.url.path == "/workspaces/workspace-origin/sessions/session-origin/raw/\(path)")
+                #expect(source.url.path == "/files/current")
+                #expect(self.currentFileQuery(source.url) == [
+                    "origin": "session", "sessionId": "session-origin", "path": path,
+                ])
                 #expect(source.url.host == expectedHost)
             }
         }
@@ -1781,19 +1763,22 @@ struct APIClientTests {
             var session: String?
             var runtime: WorkspaceRuntime?
             var kind: ResourceReferenceKind = .workspaceFile
-            var route: String?
+            /// Expected `/files/current` query minus `path`; nil must fail closed.
+            var query: [String: String]?
         }
         let cases: [Case] = [
-            .init(source: .hostFile, workspace: "", session: "control-session", kind: .hostFile, route: "/files/raw"),
-            .init(route: "/workspaces/reference-workspace/raw/"),
-            .init(session: "origin-session", route: "/workspaces/reference-workspace/sessions/origin-session/raw/"),
+            .init(source: .hostFile, workspace: "", session: "control-session", kind: .hostFile,
+                  query: ["origin": "session", "sessionId": "control-session"]),
+            .init(query: ["origin": "workspace", "workspaceId": "reference-workspace", "worktreeId": "origin-worktree"]),
+            .init(session: "origin-session", query: ["origin": "session", "sessionId": "origin-session"]),
             .init(session: "origin-session", runtime: .sandbox, kind: .hostFile,
-                  route: "/workspaces/origin-workspace/sessions/origin-session/raw/"),
-            .init(runtime: .sandbox, kind: .hostFile, route: "/workspaces/origin-workspace/raw/"),
+                  query: ["origin": "session", "sessionId": "origin-session"]),
+            .init(runtime: .sandbox, kind: .hostFile,
+                  query: ["origin": "workspace", "workspaceId": "origin-workspace", "worktreeId": "origin-worktree"]),
             .init(source: .sessionFile(sessionId: "exact-session"), kind: .hostFile,
-                  route: "/workspaces/origin-workspace/sessions/exact-session/raw/"),
+                  query: ["origin": "session", "sessionId": "exact-session"]),
             .init(source: .sessionFile(sessionId: "exact-session"), session: "other-session",
-                  route: "/workspaces/origin-workspace/sessions/exact-session/raw/"),
+                  query: ["origin": "session", "sessionId": "exact-session"]),
             .init(workspace: "", runtime: .sandbox, kind: .hostFile),
             .init(workspace: ""),
         ]
@@ -1823,20 +1808,17 @@ struct APIClientTests {
                     } else {
                         try await makeAudio(MarkdownAudioEmbed(reference: reference))
                     }
-                    let route = try #require(item.route, "Missing origin must fail closed")
-                    let components = try #require(URLComponents(url: source.url, resolvingAgainstBaseURL: false))
-                    #expect(source.url.path == (route == "/files/raw" ? route : route + path))
+                    let expected = try #require(item.query, "Missing origin must fail closed")
+                    #expect(source.url.path == "/files/current")
                     #expect(source.url.host == "origin.example")
-                    #expect(components.queryItems?.first(where: { $0.name == "path" })?.value == (route == "/files/raw" ? path : nil))
-                    #expect(components.queryItems?.first(where: { $0.name == "controlSessionId" })?.value == (route == "/files/raw" ? "control-session" : nil))
-                    #expect(components.queryItems?.first(where: { $0.name == "worktreeId" })?.value == (route.contains("/sessions/") || route == "/files/raw" ? nil : "origin-worktree"))
+                    #expect(currentFileQuery(source.url) == expected.merging(["path": path]) { $1 })
                     #expect(source.contentTypeHint == mime)
                     #expect(source.sourceFileExtension == ext)
                     #expect(source.tlsCertFingerprint == "fixture-pin")
                     #expect(source.tlsServerName == "origin.example")
                     #expect(source.identity == [source.url.absoluteString, "fixture-pin", "origin.example", mime, ext].joined(separator: "|"))
                     #expect(try await source.authorizationProvider() == "Bearer fixture-token")
-                } catch let error as CocoaError where item.route == nil {
+                } catch let error as CocoaError where item.query == nil {
                     #expect(error.code == .fileNoSuchFile)
                 }
             }
@@ -1849,7 +1831,7 @@ struct APIClientTests {
         let canonicalPath = "/data/control-sessions/cwd/notes/current.md"
         MockURLProtocol.handler = { request in
             #expect(request.httpMethod == "GET")
-            #expect(request.url?.path == "/files/raw")
+            #expect(request.url?.path == "/files/current")
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil,
                 headerFields: ["X-Oppi-Resolved-Path": canonicalPath]
@@ -1876,15 +1858,15 @@ struct APIClientTests {
         #expect(reference.sourceSessionID == "control-1")
     }
 
-    @Test func controlHostRawFileCarriesDeclaredSessionForRelativePath() async throws {
+    @Test func controlHostFileReadCarriesDeclaredSessionForRelativePath() async throws {
         let client = makeClient()
         defer { cleanup() }
 
         MockURLProtocol.handler = { request in
-            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
-            #expect(components?.percentEncodedPath == "/files/raw")
-            #expect(components?.queryItems?.first(where: { $0.name == "path" })?.value == "notes/current.md")
-            #expect(components?.queryItems?.first(where: { $0.name == "controlSessionId" })?.value == "control-1")
+            #expect(request.url?.path == "/files/current")
+            #expect(self.currentFileQuery(request.url) == [
+                "origin": "session", "sessionId": "control-1", "path": "notes/current.md",
+            ])
             let response = HTTPURLResponse(
                 url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil
             )!
@@ -1899,12 +1881,11 @@ struct APIClientTests {
             path: "notes/current.md",
             controlSessionId: "control-1"
         )
-        let sourceComponents = URLComponents(url: source.url, resolvingAgainstBaseURL: false)
         #expect(String(data: data, encoding: .utf8) == "control bytes")
-        #expect(sourceComponents?.queryItems?.first(where: { $0.name == "controlSessionId" })?.value == "control-1")
+        #expect(currentFileQuery(source.url)["sessionId"] == "control-1")
     }
 
-    @Test func hostRawFileHEADUsesCanonicalResolvedPathHeader() async throws {
+    @Test func hostFileHEADUsesCanonicalResolvedPathHeader() async throws {
         let client = makeClient()
         defer { cleanup() }
 
@@ -1916,7 +1897,7 @@ struct APIClientTests {
                 url: request.url!,
                 statusCode: 200,
                 httpVersion: nil,
-                headerFields: [HostRawFileHeaders.resolvedPathField: "/Users/me/secret"]
+                headerFields: [HostFileResolvedPathHeaders.resolvedPathField: "/Users/me/secret"]
             )!
             return (Data(), response)
         }
@@ -1926,13 +1907,13 @@ struct APIClientTests {
         #expect(resolved != "~/secret")
     }
 
-    @Test func hostRawFileHeaderDecodesPercentEncodedNonLatinPath() {
+    @Test func hostFileResolvedPathHeaderDecodesPercentEncodedNonLatinPath() {
         #expect(
-            HostRawFileHeaders.decode("/private/tmp/%E4%B8%AD%E6%96%87.md")
+            HostFileResolvedPathHeaders.decode("/private/tmp/%E4%B8%AD%E6%96%87.md")
                 == "/private/tmp/中文.md"
         )
-        #expect(HostRawFileHeaders.decode("/private/tmp/server.ts") == "/private/tmp/server.ts")
-        #expect(HostRawFileHeaders.decode("relative.md") == nil)
+        #expect(HostFileResolvedPathHeaders.decode("/private/tmp/server.ts") == "/private/tmp/server.ts")
+        #expect(HostFileResolvedPathHeaders.decode("relative.md") == nil)
     }
 
     @Test func sessionAttachmentMediaSourceUsesEncodedPathSegmentsAndBearerAuth() async throws {
@@ -2499,11 +2480,14 @@ struct APIClientTests {
             let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
             let pathQuery = components?.queryItems?.first(where: { $0.name == "path" })?.value
             if step == 1 {
-                #expect(
-                    components?.percentEncodedPath ==
-                        "/workspaces/w1/sessions/s1/raw/Sources%2Fspace%20%2B%3F%23%25%26=%2F%E6%97%A5%E6%9C%AC%E8%AA%9E.swift"
-                )
-                #expect(components?.percentEncodedQuery == nil)
+                #expect(components?.percentEncodedPath == "/files/current")
+                #expect(self.currentFileQuery(request.url) == [
+                    "origin": "session", "sessionId": "s1", "path": specialPath,
+                ])
+                let encodedQuery = components?.percentEncodedQuery ?? ""
+                #expect(encodedQuery.contains("%2B"))
+                #expect(encodedQuery.contains("%26"))
+                #expect(encodedQuery.contains("+") == false)
             } else if step == 2 {
                 let encodedQuery = components?.percentEncodedQuery ?? ""
                 #expect(encodedQuery.contains("%2B"))

@@ -173,7 +173,7 @@ enum DesktopCurrentStillParser {
     }
 }
 
-enum HostRawFileHeaders {
+enum HostFileResolvedPathHeaders {
     static let resolvedPathField = "X-Oppi-Resolved-Path"
 
     static func resolvedPath(from response: URLResponse) -> String? {
@@ -313,12 +313,8 @@ actor APIClient: ClientLogUploading {
     private let trustDelegate: PinnedServerTrustDelegate
     private let availabilityObserver: APIClientAvailabilityObserver?
     nonisolated private let responseFailureObserverBox = APIClientResponseFailureObserverBox()
-    /// `/files/current` version reported by this client's own `/server/info`.
-    /// Zero keeps the legacy per-origin routes, so an older server never
-    /// receives a sandbox path on its origin-blind host route.
-    private var currentFilesVersion = 0
     /// `workspaceFileEditing` from this client's own `/server/info`. Nil keeps
-    /// every file read-only; there is no write fallback on a legacy byte route.
+    /// every file read-only.
     private var workspaceFileEditing: ServerInfo.WorkspaceFileEditingCapability?
 
     init(
@@ -521,7 +517,6 @@ actor APIClient: ClientLogUploading {
     }
 
     private func recordCapabilities(_ info: ServerInfo) -> ServerInfo {
-        currentFilesVersion = info.capabilities?.currentFiles?.version ?? 0
         workspaceFileEditing = info.capabilities?.workspaceFileEditing
         return info
     }
@@ -2086,7 +2081,7 @@ actor APIClient: ClientLogUploading {
 
     /// Fetch raw data for a workspace file or an external path reported by the session.
     func getSessionFileData(workspaceId: String, sessionId: String, path: String) async throws -> Data {
-        return try await get(url: makeCurrentFileURL(.session(workspaceId: workspaceId, sessionId: sessionId), path: path))
+        return try await get(url: makeCurrentFileURL(.session(sessionId: sessionId), path: path))
     }
 
     /// Fetch a workspace file by path (images, etc.) through the workspace-origin current-file read.
@@ -2151,11 +2146,9 @@ actor APIClient: ClientLogUploading {
 
     // MARK: - Workspace File Editing
 
-    /// Editing capability for this server. Requires `currentFiles` because reads
-    /// and writes both use `/files/current`. Nil means read-only.
+    /// Editing capability for this server. Nil means read-only.
     func workspaceFileEditingCapability() -> ServerInfo.WorkspaceFileEditingCapability? {
-        guard currentFilesVersion >= 1,
-              let workspaceFileEditing,
+        guard let workspaceFileEditing,
               workspaceFileEditing.version >= 1,
               workspaceFileEditing.maxBytes > 0 else { return nil }
         return workspaceFileEditing
@@ -2204,7 +2197,7 @@ actor APIClient: ClientLogUploading {
 
     /// Guarded write of an existing workspace text file. The only file-write URL
     /// this client builds: `PUT /files/current?origin=workspace`, one concrete
-    /// `If-Match`, raw bytes. Legacy raw routes stay read-only.
+    /// `If-Match`, raw bytes.
     func writeWorkspaceFile(
         workspaceId: String,
         path: String,
@@ -2273,7 +2266,7 @@ actor APIClient: ClientLogUploading {
         do {
             let (_, response) = try await request("HEAD", url: url)
             try checkStatus(response, data: Data())
-            return HostRawFileHeaders.resolvedPath(from: response) ?? path
+            return HostFileResolvedPathHeaders.resolvedPath(from: response) ?? path
         } catch let APIError.server(status, _) where status == 404 {
             return nil
         }
@@ -2297,7 +2290,7 @@ actor APIClient: ClientLogUploading {
             "GET", url: makeCurrentFileURL(.host(controlSessionId: controlSessionId), path: path)
         )
         try checkStatus(response, data: data)
-        return (data, HostRawFileHeaders.resolvedPath(from: response))
+        return (data, HostFileResolvedPathHeaders.resolvedPath(from: response))
     }
 
     func makeHostFileMediaSource(
@@ -2348,7 +2341,7 @@ actor APIClient: ClientLogUploading {
         sourceFileExtension: String? = nil
     ) throws -> AuthenticatedMediaSource {
         AuthenticatedMediaSource(
-            url: try makeCurrentFileURL(.session(workspaceId: workspaceId, sessionId: sessionId), path: path),
+            url: try makeCurrentFileURL(.session(sessionId: sessionId), path: path),
             authorizationProvider: mediaAuthorizationProvider(),
             tlsCertFingerprint: tlsCertFingerprint,
             tlsServerName: environment.tlsServerName,
@@ -2358,10 +2351,7 @@ actor APIClient: ClientLogUploading {
     }
 
     /// Same-stem timed-text sidecar names beside an existing media file.
-    /// Requires `currentFiles`; older servers have no bounded host discovery,
-    /// so callers treat the thrown error as "no sidecars".
     func listCurrentFileSidecars(_ origin: CurrentFileOrigin, mediaPath: String) async throws -> [String] {
-        guard currentFilesVersion >= 1 else { throw CocoaError(.featureUnsupported) }
         struct Response: Decodable { let names: [String] }
         let data = try await get(url: makeCurrentFileURL(origin, path: mediaPath, sidecars: true))
         return try JSONDecoder().decode(Response.self, from: data).names
@@ -2884,21 +2874,16 @@ actor APIClient: ClientLogUploading {
         /// declared control session's cwd when one is given.
         case host(controlSessionId: String?)
         case workspace(workspaceId: String, worktreeId: String?)
-        /// Workspace session cwd. `workspaceId` is only for the legacy route.
-        case session(workspaceId: String, sessionId: String)
+        /// Workspace session cwd; the server resolves the session by id.
+        case session(sessionId: String)
     }
 
-    /// One current-file URL. Servers that report `currentFiles` get
-    /// `/files/current?origin=…`; older servers keep the route that matches
-    /// the origin, never a less restrictive one.
+    /// One current-file URL: `/files/current?origin=…` (or its `/sidecars` listing).
     private func makeCurrentFileURL(
         _ origin: CurrentFileOrigin,
         path: String,
         sidecars: Bool = false
     ) throws -> URL {
-        guard currentFilesVersion >= 1 else {
-            return try makeLegacyFileURL(origin, path: path)
-        }
         var queryItems: [URLQueryItem]
         switch origin {
         case .host(let controlSessionId):
@@ -2915,7 +2900,7 @@ actor APIClient: ClientLogUploading {
                 URLQueryItem(name: "origin", value: "workspace"),
                 URLQueryItem(name: "workspaceId", value: workspaceId),
             ] + workspaceWorktreeQueryItems(worktreeId)
-        case .session(_, let sessionId):
+        case .session(let sessionId):
             queryItems = [
                 URLQueryItem(name: "origin", value: "session"),
                 URLQueryItem(name: "sessionId", value: sessionId),
@@ -2926,26 +2911,6 @@ actor APIClient: ClientLogUploading {
             pathSegments: sidecars ? ["files", "current", "sidecars"] : ["files", "current"],
             queryItems: queryItems
         )
-    }
-
-    private func makeLegacyFileURL(_ origin: CurrentFileOrigin, path: String) throws -> URL {
-        switch origin {
-        case .host(let controlSessionId):
-            var queryItems = [URLQueryItem(name: "path", value: path)]
-            if let controlSessionId, !controlSessionId.isEmpty {
-                queryItems.append(URLQueryItem(name: "controlSessionId", value: controlSessionId))
-            }
-            return try makeURL(pathSegments: ["files", "raw"], queryItems: queryItems)
-        case .workspace(let workspaceId, let worktreeId):
-            return try makeURL(
-                pathSegments: ["workspaces", workspaceId, "raw", path],
-                queryItems: workspaceWorktreeQueryItems(worktreeId)
-            )
-        case .session(let workspaceId, let sessionId):
-            return try makeURL(
-                pathSegments: ["workspaces", workspaceId, "sessions", sessionId, "raw", path]
-            )
-        }
     }
 
     private func makeSkillFileURL(name: String, path: String, cwd: String? = nil) throws -> URL {

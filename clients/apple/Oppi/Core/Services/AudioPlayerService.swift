@@ -1338,10 +1338,6 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
            let name = fileName(fromPath: pathValue) {
             return name
         }
-        let parts = url.pathComponents.filter { $0 != "/" }
-        if let rawIndex = parts.lastIndex(of: "raw"), rawIndex + 1 < parts.count {
-            return fileName(fromPath: parts.last ?? "")
-        }
         let last = url.lastPathComponent
         guard last.contains("."), last != ".", !last.hasPrefix(".") else { return nil }
         return fileName(fromPath: last)

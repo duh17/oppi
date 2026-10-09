@@ -43,9 +43,6 @@ const sessionOperationIds = [
   "getWorkspacePaths",
   "getWorkspaceContentsRoot",
   "getWorkspaceContents",
-  "getWorkspaceRaw",
-  "getHostRaw",
-  "headHostRaw",
   "getCurrentFile",
   "headCurrentFile",
   "putCurrentFile",
@@ -85,8 +82,6 @@ const sessionOperationIds = [
   "getSessionEvents",
   "listSessionChanges",
   "getSessionDiff",
-  "getSessionRaw",
-  "headSessionRaw",
   "getSessionToolOutput",
   "headSessionToolOutput",
   "openSessionStream",
@@ -197,19 +192,13 @@ describe("api route registry", () => {
     expect(
       normalizeRegisteredPathPattern("/workspaces/ws-1/contents/src/components/Button.tsx"),
     ).toBe("/workspaces/:workspaceId/contents/:path");
-    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/raw/src/components/Button.tsx")).toBe(
-      "/workspaces/:workspaceId/raw/:path",
-    );
-    expect(normalizeRegisteredPathPattern("/files/raw")).toBe("/files/raw");
+    expect(normalizeRegisteredPathPattern("/files/current")).toBe("/files/current");
     expect(normalizeRegisteredPathPattern("/host/contents")).toBe("/host/contents");
     expect(normalizeRegisteredPathPattern("/host/contents/")).toBe("/host/contents");
     expect(normalizeRegisteredPathPattern("/host/contents/Documents/notes")).toBe(
       "/host/contents/:path",
     );
 
-    expect(normalizeRegisteredPathPattern("/workspaces/ws-1/sessions/s1/raw/src/App.swift")).toBe(
-      "/workspaces/:workspaceId/sessions/:sessionId/raw/:path",
-    );
     expect(normalizeRegisteredPathPattern("/workspaces/ws-1/sessions/s1/changes")).toBe(
       "/workspaces/:workspaceId/sessions/:sessionId/changes",
     );
@@ -403,21 +392,14 @@ describe("api route registry", () => {
     expect(paths.has("/workspaces/{workspaceId}/system-prompt/base")).toBe(false);
   });
 
-  it("keeps legacy raw byte routes read-only; the only file write is workspace-origin /files/current", () => {
+  it("has no legacy raw byte routes; the only file write is workspace-origin /files/current", () => {
     const legacyRawPaths = [
-      "/workspaces/{workspaceId}/raw/{path+}",
+      "/workspaces/ws-1/raw/src/App.swift",
       "/files/raw",
-      "/workspaces/{workspaceId}/sessions/{sessionId}/raw/{path+}",
+      "/workspaces/ws-1/sessions/s1/raw/src/App.swift",
     ];
     for (const path of legacyRawPaths) {
-      const methods = apiRouteSpecs
-        .filter((route) => route.path === path)
-        .map((route) => route.method);
-      expect(methods.length, `${path} must stay registered for older clients`).toBeGreaterThan(0);
-      expect(
-        methods.filter((method) => method !== "GET" && method !== "HEAD"),
-        path,
-      ).toEqual([]);
+      expect(normalizeRegisteredPathPattern(path), path).toBeUndefined();
     }
 
     const fileWrites = apiRouteSpecs.filter(

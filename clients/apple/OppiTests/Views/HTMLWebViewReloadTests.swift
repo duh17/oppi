@@ -32,7 +32,7 @@ struct HTMLPreviewBrowserRoutingTests {
     }
 
     @Test(arguments: [
-        "https://example.com/automatic", "https://example.com/files/raw",
+        "https://example.com/automatic",
         "https://example.com/files/current", "https://example.com/files/current/sidecars",
         "mailto:preview@example.com",
     ])

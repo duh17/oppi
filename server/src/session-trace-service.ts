@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { access, readFile, realpath, stat } from "node:fs/promises";
 
-import { openVerifiedFile, resolveCurrentFilePath, statServableFile } from "./current-file.js";
+import { openVerifiedFile, resolveCurrentFilePath } from "./current-file.js";
 import { isPathWithinRoot } from "./git-utils.js";
 import {
   collectFileMutations,
@@ -96,15 +96,6 @@ export interface SessionChangesResult {
   changedFileCount: number;
   changedFilesOverflow: number;
 }
-
-export type SessionRawFileResult =
-  | { kind: "ok"; filePath: string; contentType: string; size: number }
-  | { kind: "path-required" }
-  | { kind: "file-not-found" }
-  | { kind: "workspace-root-not-found" }
-  | { kind: "path-outside-workspace" }
-  | { kind: "not-file" }
-  | { kind: "file-too-large"; maxSizeMegabytes: number };
 
 export interface SessionTraceServiceDeps {
   storage: Pick<Storage, "getDataDir" | "getSession" | "getWorkspace">;
@@ -444,53 +435,6 @@ export class SessionTraceService {
       changedFileCount: changeStats?.filesChanged ?? 0,
       changedFilesOverflow: changeStats?.changedFilesOverflow ?? 0,
     };
-  }
-
-  async getSessionRawFile(params: {
-    workspace: Workspace;
-    session: Session;
-    path: string;
-  }): Promise<SessionRawFileResult> {
-    if (!params.path) {
-      return { kind: "path-required" };
-    }
-
-    const workspaceRoot = await this.resolveSdkCwdOrNull(params.workspace, params.session);
-    if (!workspaceRoot) return { kind: "workspace-root-not-found" };
-
-    // Host workspaces: pairing/auth is the gate. Sandbox stays confined after realpath.
-    const resolved = await resolveCurrentFilePath(
-      {
-        kind: "workspace",
-        workspace: params.workspace,
-        root: workspaceRoot,
-        dataDir: this.deps.storage.getDataDir(),
-      },
-      params.path,
-    );
-    switch (resolved.kind) {
-      case "root-not-found":
-        return { kind: "workspace-root-not-found" };
-      case "outside-sandbox":
-        return { kind: "path-outside-workspace" };
-      case "not-found":
-        return { kind: "file-not-found" };
-      case "ok":
-        break;
-    }
-
-    const servable = await statServableFile(resolved.file.realPath);
-    switch (servable.kind) {
-      case "ok":
-        return { kind: "ok", ...servable.file };
-      case "not-file":
-        return { kind: "not-file" };
-      case "too-large":
-        return { kind: "file-too-large", maxSizeMegabytes: servable.maxSizeMegabytes };
-      case "missing":
-      case "unreadable":
-        return { kind: "file-not-found" };
-    }
   }
 
   private async readCurrentFileText(

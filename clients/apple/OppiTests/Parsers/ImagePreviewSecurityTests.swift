@@ -205,10 +205,7 @@ struct HTMLContentSecurityTests {
         #expect(!HTMLContentSecurity.allowsEmbeddedNavigation(to: testUnwrap(URL(string: "file:///tmp/report.html"))))
         #expect(!HTMLContentSecurity.allowsEmbeddedNavigation(to: testUnwrap(URL(string: "https://example.com"))))
         #expect(!HTMLContentSecurity.allowsEmbeddedNavigation(
-            to: testUnwrap(URL(string: "https://example.com/files/raw?path=/tmp/report.html"))
-        ))
-        #expect(HTMLContentSecurity.isCurrentFileReadURL(
-            testUnwrap(URL(string: "https://example.com/files/raw?path=/tmp/report.html"))
+            to: testUnwrap(URL(string: "https://example.com/files/current?origin=host&path=/tmp/report.html"))
         ))
         #expect(HTMLContentSecurity.isCurrentFileReadURL(
             testUnwrap(URL(string: "https://example.com/files/current?origin=host&path=/tmp/report.html"))

@@ -6,6 +6,7 @@ import { join, relative } from "node:path";
 
 import { parseByteRangeHeader } from "../src/http-range.js";
 import { createRouteHelpers } from "../src/routes/http.js";
+import { createHostFileRoutes } from "../src/routes/host-files.js";
 import { createWorkspaceFileRoutes } from "../src/routes/workspace-files.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { createWorkspaceWorktree } from "../src/worktrees.js";
@@ -649,7 +650,7 @@ describe("workspace file routes", () => {
 });
 
 describe("workspace file symlink security", () => {
-  test("includes owner-visible names and omits symlink aliases from the index but serves an in-workspace .env symlink", async () => {
+  test("includes owner-visible names and omits symlink aliases from the index but reads an in-workspace .env symlink", async () => {
     const root = mkdtempSync(join(tmpdir(), "oppi-ws-symlink-security-"));
     try {
       mkdirSync(join(root, "notes"), { recursive: true });
@@ -671,7 +672,7 @@ describe("workspace file symlink security", () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      const dispatch = createWorkspaceFileRoutes(
+      const dispatch = createHostFileRoutes(
         {
           storage: {
             getWorkspace: (workspaceId: string) => (workspaceId === "ws-1" ? workspace : undefined),
@@ -680,28 +681,24 @@ describe("workspace file symlink security", () => {
         } as unknown as RouteContext,
         createRouteHelpers(),
       );
+      const headCurrentFile = async (path: string) => {
+        const response = makeResponse();
+        const url = new URL(
+          `http://localhost/files/current?${new URLSearchParams({ origin: "workspace", workspaceId: "ws-1", path })}`,
+        );
+        const handled = await dispatch({
+          method: "HEAD",
+          path: url.pathname,
+          url,
+          req: { headers: {} } as never,
+          res: response as never,
+        });
+        expect(handled).toBe(true);
+        return response;
+      };
 
-      const sensitiveResponse = makeResponse();
-      const sensitiveHandled = await dispatch({
-        method: "HEAD",
-        path: "/workspaces/ws-1/raw/notes/report.md",
-        url: new URL("http://localhost/workspaces/ws-1/raw/notes/report.md"),
-        req: { headers: {} } as never,
-        res: sensitiveResponse as never,
-      });
-      expect(sensitiveHandled).toBe(true);
-      expect(sensitiveResponse.statusCode).toBe(200);
-
-      const safeResponse = makeResponse();
-      const safeHandled = await dispatch({
-        method: "HEAD",
-        path: "/workspaces/ws-1/raw/notes/safe.md",
-        url: new URL("http://localhost/workspaces/ws-1/raw/notes/safe.md"),
-        req: { headers: {} } as never,
-        res: safeResponse as never,
-      });
-      expect(safeHandled).toBe(true);
-      expect(safeResponse.statusCode).toBe(200);
+      expect((await headCurrentFile("notes/report.md")).statusCode).toBe(200);
+      expect((await headCurrentFile("notes/safe.md")).statusCode).toBe(200);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

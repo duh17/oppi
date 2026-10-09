@@ -18,7 +18,7 @@ import {
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -372,6 +372,67 @@ describe("GET/HEAD /files/current", () => {
       `/files/current?${query({ origin: "session", sessionId: "nope", path: "plan.md" })}`,
     );
     expect(unknown.statusCode).toBe(404);
+  });
+
+  it("reads a worktree session from its worktree and never falls back to the main checkout", async () => {
+    const fixture = seed();
+    execSync(
+      "git init -b main && git add -A && git -c user.email=t@t -c user.name=t commit -qm init",
+      {
+        cwd: fixture.hostRoot,
+        stdio: "ignore",
+        env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" },
+      },
+    );
+    const worktree = await createWorkspaceWorktree(
+      fixture.workspaces[0],
+      { branch: "feature/session-read" },
+      { dataDir: fixture.dataDir },
+    );
+    writeFileSync(join(fixture.hostRoot, "notes.txt"), "wrong main checkout bytes\n");
+    writeFileSync(join(worktree.path, "notes.txt"), "hello from worktree\n");
+    fixture.sessions.push(
+      session({ id: "worktree-session", workspaceId: "ws-host", worktreeId: worktree.id }),
+    );
+    const read = (method: string) =>
+      request(
+        fixture,
+        method,
+        `/files/current?${query({ origin: "session", sessionId: "worktree-session", path: "notes.txt" })}`,
+      );
+
+    const found = await read("GET");
+    expect(found.statusCode).toBe(200);
+    expect(found.text()).toBe("hello from worktree\n");
+
+    rmSync(join(worktree.path, "notes.txt"));
+    expect((await read("HEAD")).statusCode).toBe(404);
+
+    rmSync(worktree.path, { recursive: true, force: true });
+    expect((await read("HEAD")).statusCode).toBe(404);
+  });
+
+  it("serves in-tree symlinks and `..` paths that leave a host workspace", async () => {
+    const fixture = seed();
+    symlinkSync(join(fixture.outside, "secret.txt"), join(fixture.hostRoot, "outside-link.txt"));
+    fixture.sessions.push(session({ id: "host-reader", workspaceId: "ws-host" }));
+
+    for (const path of [
+      "outside-link.txt",
+      relative(fixture.hostRoot, join(fixture.outside, "secret.txt")),
+      join(fixture.outside, "secret.txt"),
+    ]) {
+      const res = await request(
+        fixture,
+        "GET",
+        `/files/current?${query({ origin: "session", sessionId: "host-reader", path })}`,
+      );
+      expect({ path, status: res.statusCode, body: res.text() }).toEqual({
+        path,
+        status: 200,
+        body: "host-secret",
+      });
+    }
   });
 
   it("serves single byte ranges and rejects unsatisfiable ranges", async () => {

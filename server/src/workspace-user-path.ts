@@ -15,7 +15,7 @@ export interface ResolveWorkspaceUserPathParams {
 }
 
 /**
- * Map a user-facing browse/raw path onto the workspace host mount.
+ * Map a user-facing browse or current-file path onto the workspace host mount.
  *
  * Humans always read sandbox artifacts from the host mount. Sandbox sessions
  * advertise guest cwd `/workspace/<slug>`, so that prefix is rewritten with

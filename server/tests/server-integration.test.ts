@@ -44,6 +44,16 @@ function get(path: string, auth = true): Promise<Response> {
   return fetch(`${baseUrl}${path}`, { headers });
 }
 
+/** `/files/current` URL for a workspace-origin read. */
+function workspaceFileUrl(workspaceId: string, path: string): string {
+  return `/files/current?${new URLSearchParams({ origin: "workspace", workspaceId, path })}`;
+}
+
+/** `/files/current` URL for a session-origin read. */
+function sessionFileUrl(sessionId: string, path: string): string {
+  return `/files/current?${new URLSearchParams({ origin: "session", sessionId, path })}`;
+}
+
 function post(path: string, body: unknown, auth = true): Promise<Response> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (auth) headers["Authorization"] = `Bearer ${token}`;
@@ -575,7 +585,7 @@ describe("workspace file serving", () => {
   });
 
   it("serves an image file with correct content-type", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/chart.png`);
+    const res = await get(workspaceFileUrl(wsId, "chart.png"));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/png");
     expect(res.headers.get("cache-control")).toBe("private, no-cache");
@@ -584,7 +594,7 @@ describe("workspace file serving", () => {
   });
 
   it("serves files in subdirectories", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/output/figure.jpg`);
+    const res = await get(workspaceFileUrl(wsId, "output/figure.jpg"));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/jpeg");
     const body = await res.arrayBuffer();
@@ -592,32 +602,27 @@ describe("workspace file serving", () => {
   });
 
   it("returns byte-identical content", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/output/figure.jpg`);
+    const res = await get(workspaceFileUrl(wsId, "output/figure.jpg"));
     const buf = Buffer.from(await res.arrayBuffer());
     expect(buf).toEqual(Buffer.alloc(16, 0xab));
   });
 
-  it("serves non-image file extensions through raw", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/secrets.env`);
+  it("serves non-image file extensions", async () => {
+    const res = await get(workspaceFileUrl(wsId, "secrets.env"));
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("SECRET=bad");
   });
 
   it("returns 404 for nonexistent files", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/missing.png`);
+    const res = await get(workspaceFileUrl(wsId, "missing.png"));
     expect(res.status).toBe(404);
   });
 
   it("returns 404 for nonexistent workspace", async () => {
-    const res = await get("/workspaces/BOGUS/raw/chart.png");
+    const res = await get(workspaceFileUrl("BOGUS", "chart.png"));
     expect(res.status).toBe(404);
     const body = await res.json();
     expect(body.error).toContain("not found");
-  });
-
-  it("blocks path traversal", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/../../../etc/passwd`);
-    expect(res.status).toBe(404);
   });
 
   it("serves an in-workspace symlink that points outside the root", async () => {
@@ -625,7 +630,7 @@ describe("workspace file serving", () => {
     writeFileSync(outsideFile, "escaped");
     symlinkSync(outsideFile, join(wsRoot, "escape.png"));
     try {
-      const res = await get(`/workspaces/${wsId}/raw/escape.png`);
+      const res = await get(workspaceFileUrl(wsId, "escape.png"));
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("escaped");
     } finally {
@@ -633,13 +638,29 @@ describe("workspace file serving", () => {
     }
   });
 
+  it("no longer serves the retired legacy byte routes", async () => {
+    for (const route of [
+      `/workspaces/${wsId}/raw/chart.png`,
+      "/files/raw?path=%2Ftmp%2Fchart.png",
+      `/workspaces/${wsId}/sessions/any-session/raw/chart.png`,
+    ]) {
+      for (const method of ["GET", "HEAD"]) {
+        const res = await fetch(`${baseUrl}${route}`, {
+          method,
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        expect({ route, method, status: res.status }).toEqual({ route, method, status: 404 });
+      }
+    }
+  });
+
   it("rejects requests without auth", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/chart.png`, false);
+    const res = await get(workspaceFileUrl(wsId, "chart.png"), false);
     expect(res.status).toBe(401);
   });
 
-  it("rejects query-param token auth for raw file reads", async () => {
-    const res = await fetch(`${baseUrl}/workspaces/${wsId}/raw/chart.png?token=${token}`);
+  it("rejects query-param token auth for current-file reads", async () => {
+    const res = await fetch(`${baseUrl}${workspaceFileUrl(wsId, "chart.png")}&token=${token}`);
     expect(res.status).toBe(401);
   });
 });
@@ -682,10 +703,10 @@ describe("workspace file browser", () => {
     rmSync(wsRoot, { recursive: true, force: true });
   });
 
-  // ── Raw files ──
+  // ── Current-file bytes ──
 
-  it("raw route serves text files with correct content-type", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/README.md`);
+  it("current-file route serves text files with correct content-type", async () => {
+    const res = await get(workspaceFileUrl(wsId, "README.md"));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
     expect(res.headers.get("cache-control")).toBe("private, no-cache");
@@ -693,63 +714,28 @@ describe("workspace file browser", () => {
     expect(body).toBe("# Hello world");
   });
 
-  it("raw route serves .ts files as text/plain", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/src/index.ts`);
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
-  });
-
-  it("raw route serves .json with application/json content-type", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/package.json`);
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toBe("application/json; charset=utf-8");
-  });
-
-  it("raw route serves images with image content-type", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/chart.png`);
+  it("current-file route serves images with image content-type", async () => {
+    const res = await get(workspaceFileUrl(wsId, "chart.png"));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/png");
   });
 
-  it("raw route serves .env files", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/.env`);
+  it("current-file route serves .env files", async () => {
+    const res = await get(workspaceFileUrl(wsId, ".env"));
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("SECRET=bad");
   });
 
-  it("raw route serves private keys", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/id_rsa`);
+  it("current-file route serves private keys", async () => {
+    const res = await get(workspaceFileUrl(wsId, "id_rsa"));
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("-----BEGIN RSA PRIVATE KEY-----");
   });
 
-  it("raw route serves .git directory contents", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/.git/HEAD`);
+  it("current-file route serves .git directory contents", async () => {
+    const res = await get(workspaceFileUrl(wsId, ".git/HEAD"));
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("ref: refs/heads/main");
-  });
-
-  it("raw route returns 404 for nonexistent files", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/missing.ts`);
-    expect(res.status).toBe(404);
-  });
-
-  it("raw route blocks path traversal", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/../../../etc/passwd`);
-    expect(res.status).toBe(404);
-  });
-
-  it("raw route serves workspace file bytes", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/README.md`);
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
-    await expect(res.text()).resolves.toBe("# Hello world");
-  });
-
-  it("raw route serves .env with 200", async () => {
-    const res = await get(`/workspaces/${wsId}/raw/.env`);
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe("SECRET=bad");
   });
 
   // ── Directory listing ──
@@ -833,7 +819,7 @@ describe("workspace file browser", () => {
   it("all new endpoints require auth", async () => {
     const endpoints = [
       `/workspaces/${wsId}/contents`,
-      `/workspaces/${wsId}/raw/README.md`,
+      workspaceFileUrl(wsId, "README.md"),
       `/workspaces/${wsId}/paths`,
     ];
     for (const endpoint of endpoints) {
@@ -847,19 +833,19 @@ describe("workspace file browser", () => {
 
 describe("sessions API", () => {
   it("streams authenticated session-reported files through the real router", async () => {
-    const workspaceRoot = mkdtempSync(join(tmpdir(), "oppi-session-raw-router-ws-"));
-    const externalRoot = mkdtempSync(join(tmpdir(), "oppi-session-raw-router-external-"));
+    const workspaceRoot = mkdtempSync(join(tmpdir(), "oppi-session-file-router-ws-"));
+    const externalRoot = mkdtempSync(join(tmpdir(), "oppi-session-file-router-external-"));
     const externalFile = join(externalRoot, "movie clip.mp4");
     writeFileSync(externalFile, "0123456789", "utf8");
 
     try {
       const wsRes = await post("/workspaces", {
-        name: "session-raw-router",
+        name: "session-file-router",
         hostMount: workspaceRoot,
       });
       expect(wsRes.status).toBe(201);
       const { workspace } = await wsRes.json();
-      const sessionId = `session-raw-router-${Date.now()}`;
+      const sessionId = `session-file-router-${Date.now()}`;
       storage.saveSession({
         id: sessionId,
         workspaceId: workspace.id,
@@ -879,7 +865,7 @@ describe("sessions API", () => {
         },
       });
 
-      const route = `/workspaces/${workspace.id}/sessions/${sessionId}/raw/${encodeURIComponent(externalFile)}`;
+      const route = sessionFileUrl(sessionId, externalFile);
       const unauthorized = await fetch(`${baseUrl}${route}`);
       expect(unauthorized.status).toBe(401);
 

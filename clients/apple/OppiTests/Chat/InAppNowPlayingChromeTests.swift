@@ -210,12 +210,12 @@ struct InAppNowPlayingChromeTests {
         )
         #expect(
             AudioPlayerService.nowPlayingDisplayTitle(
-                mediaURL: URL(string: "https://oppi.local/workspaces/ws/raw/music/bridge.m4a")
+                mediaURL: URL(string: "https://oppi.local/files/current?origin=workspace&workspaceId=ws&path=music%2Fbridge.m4a")
             ) == "bridge.m4a"
         )
         #expect(
             AudioPlayerService.nowPlayingDisplayTitle(
-                mediaURL: URL(string: "https://oppi.local/files/raw?path=%2FUsers%2Fchen%2Fvoice-memo.wav")
+                mediaURL: URL(string: "https://oppi.local/files/current?origin=host&path=%2FUsers%2Fchen%2Fvoice-memo.wav")
             ) == "voice-memo.wav"
         )
         #expect(
@@ -414,10 +414,10 @@ struct InAppNowPlayingChromeTests {
         #expect(filePlayer.nowPlayingPresentation?.title != session.displayTitle)
 
         let mediaURL = try #require(
-            URL(string: "https://oppi.local/workspaces/ws/raw/music/voice-memo.wav")
+            URL(string: "https://oppi.local/files/current?origin=workspace&workspaceId=ws&path=music%2Fvoice-memo.wav")
         )
         let queryURL = try #require(
-            URL(string: "https://oppi.local/files/raw?path=%2FUsers%2Fchen%2Fchorus.m4a")
+            URL(string: "https://oppi.local/files/current?origin=host&path=%2FUsers%2Fchen%2Fchorus.m4a")
         )
         let mediaPlayer = AudioPlayerService()
         mediaPlayer.setSessionContext(session)

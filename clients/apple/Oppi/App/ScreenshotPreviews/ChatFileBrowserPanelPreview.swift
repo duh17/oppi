@@ -213,8 +213,9 @@ private final class ScreenshotPreviewFileBrowserURLProtocol: URLProtocol {
             response = jsonResponse(Self.clientsDirectoryJSON)
         case "/workspaces/preview-workspace/contents/clients/apple", "/workspaces/preview-workspace/contents/clients/apple/":
             response = jsonResponse(Self.appleDirectoryJSON)
-        case let rawPath where rawPath.hasPrefix("/workspaces/preview-workspace/raw/"):
-            let filePath = String(rawPath.dropFirst("/workspaces/preview-workspace/raw/".count))
+        case "/files/current":
+            let filePath = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "path" })?.value ?? "file"
             let body = Data("// Preview content for \(filePath)\n".utf8)
             response = (200, "text/plain", body)
         default:

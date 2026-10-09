@@ -115,11 +115,11 @@ enum HTMLContentSecurity {
         return scheme == "http" || scheme == "https"
     }
 
-    /// Authenticated current-file routes (`/files/raw`, `/files/current`,
+    /// Authenticated current-file routes (`/files/current`,
     /// `/files/current/sidecars`) must never be URL-loaded by WKWebView.
     static func isCurrentFileReadURL(_ url: URL?) -> Bool {
         guard let url, isHTTPURL(url) else { return false }
-        return ["/files/raw", "/files/current", "/files/current/sidecars"].contains { route in
+        return ["/files/current", "/files/current/sidecars"].contains { route in
             url.path == route || url.path.hasSuffix(route)
         }
     }

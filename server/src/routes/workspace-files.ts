@@ -1,12 +1,9 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { ServerResponse } from "node:http";
 import type { Dirent } from "node:fs";
 import { opendir } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { resolveWorkspaceFileRoot, sendFileBytes, statServableFile } from "../current-file.js";
-import {
-  listDirectoryEntries,
-  resolveContainedPath as resolveWorkspaceFilePath,
-} from "../directory-listing.js";
+import { resolveWorkspaceFileRoot } from "../current-file.js";
+import { listDirectoryEntries } from "../directory-listing.js";
 import {
   decodeWorkspaceRoutePath,
   SEARCH_IGNORE_DIRS,
@@ -217,59 +214,6 @@ export function createWorkspaceFileRoutes(
     return root;
   }
 
-  async function handleBrowseFile(
-    wsId: string,
-    requestedPath: string,
-    url: URL,
-    req: IncomingMessage,
-    res: ServerResponse,
-    method: string,
-  ): Promise<void> {
-    const workspace = ctx.storage.getWorkspace(wsId);
-    if (!workspace) {
-      helpers.error(res, 404, "Workspace not found");
-      return;
-    }
-
-    const workspaceRoot = await resolveWorkspaceRootForFileRequest(workspace, url, res);
-    if (!workspaceRoot) return;
-    const mappedPath = resolveWorkspaceUserPath({
-      workspace,
-      requestedPath,
-      hostMount: workspaceRoot,
-      dataDir: ctx.storage.getDataDir(),
-    });
-    if (!mappedPath) {
-      helpers.error(res, 404, "File not found");
-      return;
-    }
-    // Host workspaces follow in-tree symlink names; sandbox mounts stay confined.
-    const realFile = await resolveWorkspaceFilePath(workspaceRoot, mappedPath, {
-      confineSymlinks: workspace.runtime === "sandbox",
-    });
-    if (!realFile) {
-      helpers.error(res, 404, "File not found");
-      return;
-    }
-
-    const servable = await statServableFile(realFile, requestedPath);
-    switch (servable.kind) {
-      case "ok":
-        await sendFileBytes(req, res, method, servable.file, { rangeLogTag: "workspace-raw" });
-        return;
-      case "not-file":
-        helpers.error(res, 404, "Not a file");
-        return;
-      case "too-large":
-        helpers.error(res, 413, `File too large (max ${servable.maxSizeMegabytes}MB)`);
-        return;
-      case "missing":
-      case "unreadable":
-        helpers.error(res, 404, "File not found");
-        return;
-    }
-  }
-
   async function handleListDirectory(
     wsId: string,
     requestedPath: string,
@@ -337,7 +281,7 @@ export function createWorkspaceFileRoutes(
     helpers.json(res, response);
   }
 
-  return async ({ method, path, url, req, res }) => {
+  return async ({ method, path, url, res }) => {
     const normalizedMethod = method.toUpperCase();
 
     // GET /workspaces/:id/paths — flat path list for client-side fuzzy search.
@@ -363,20 +307,6 @@ export function createWorkspaceFileRoutes(
       }
 
       await handleListDirectory(contentsMatch[1], requestedPath, url, res);
-      return true;
-    }
-
-    // GET/HEAD /workspaces/:id/raw/:path — legacy lexically confined bytes for
-    // iOS builds that predate currentFiles; see /files/current?origin=workspace.
-    const rawMatch = path.match(/^\/workspaces\/([^/]+)\/raw\/(.+)$/);
-    if (rawMatch && (normalizedMethod === "GET" || normalizedMethod === "HEAD")) {
-      const requestedPath = decodeWorkspaceRoutePath(rawMatch[2]);
-      if (requestedPath === null) {
-        helpers.error(res, 400, "Invalid file path encoding");
-        return true;
-      }
-
-      await handleBrowseFile(rawMatch[1], requestedPath, url, req, res, normalizedMethod);
       return true;
     }
 

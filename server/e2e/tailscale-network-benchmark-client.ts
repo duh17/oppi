@@ -406,7 +406,11 @@ async function main(): Promise<void> {
       const startedAt = performance.now();
       const result = await download(
         agent,
-        `/workspaces/${fixture.workspaceId}/raw/benchmark-${sizeMiB}m.mp4`,
+        `/files/current?${new URLSearchParams({
+          origin: "workspace",
+          workspaceId: fixture.workspaceId,
+          path: `benchmark-${sizeMiB}m.mp4`,
+        })}`,
       );
       const durationMs = performance.now() - startedAt;
       assert(result.status === 200, `download ${sizeBytes}/${sample} succeeds`);

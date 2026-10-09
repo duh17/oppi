@@ -81,7 +81,7 @@ function stripTrailingSlashes(path: string): string {
 /**
  * Percent-encode a canonical host path for `X-Oppi-Resolved-Path`.
  * Node `writeHead` rejects non-ASCII and CR/LF. Slashes stay literal so
- * ASCII paths are unchanged and HostRawFileHeaders can decode the same form.
+ * ASCII paths are unchanged and HostFileResolvedPathHeaders can decode the same form.
  */
 export function encodeHostResolvedPathHeader(path: string): string {
   return encodeURIComponent(path).replace(/%2F/gi, "/");

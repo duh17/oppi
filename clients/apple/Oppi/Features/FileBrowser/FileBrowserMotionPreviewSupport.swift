@@ -128,8 +128,9 @@ private final class FileBrowserMotionPreviewURLProtocol: URLProtocol {
         let response: (status: Int, contentType: String, body: Data)
         let path = url.path
 
-        if path.hasPrefix("/workspaces/\(FileBrowserMotionPreviewSupport.workspaceId)/raw/") {
-            let filePath = String(path.dropFirst("/workspaces/\(FileBrowserMotionPreviewSupport.workspaceId)/raw/".count))
+        if path == "/files/current" {
+            let filePath = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "path" })?.value ?? ""
             if let file = FileBrowserMotionPreviewSupport.files.first(where: { $0.path == filePath }) {
                 let body = FileBrowserMotionPreviewSupport.body(for: file.path, marker: file.marker)
                 response = (200, "text/plain; charset=utf-8", Data(body.utf8))

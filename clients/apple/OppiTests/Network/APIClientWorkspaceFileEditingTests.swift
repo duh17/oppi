@@ -107,10 +107,11 @@ struct APIClientWorkspaceFileEditingTests {
 
     @Test func missingCapabilityIsReadOnlyAndSendsNoRequest() async throws {
         defer { EditURLProtocol.reset() }
+        // A server that still advertises `currentFiles` decodes, but only
+        // `workspaceFileEditing` enables editing.
         for capabilities in [
             #"{"currentFiles":{"version":1}}"#,
-            // Editing without currentFiles would need a legacy route; stay read-only.
-            #"{"workspaceFileEditing":{"version":1,"maxBytes":1048576}}"#,
+            #"{"controlSessions":{"version":1}}"#,
         ] {
             let client = makeClient()
             try await loadCapabilities(client, capabilities)

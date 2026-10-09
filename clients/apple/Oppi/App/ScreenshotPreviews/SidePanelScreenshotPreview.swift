@@ -123,8 +123,9 @@ private final class SidePanelScreenshotURLProtocol: URLProtocol {
             response = json(["actions": []])
         } else if path.contains("/paths") {
             response = json(Self.fileIndexJSON())
-        } else if path.contains("/raw/") {
-            let filePath = path.split(separator: "/raw/").last.map(String.init) ?? "file"
+        } else if path == "/files/current" {
+            let filePath = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "path" })?.value ?? "file"
             response = (200, "text/plain", Data("// Preview \(filePath)\nlet ready = true\n".utf8))
         } else if path.contains("/contents") {
             response = json(Self.directoryJSON())

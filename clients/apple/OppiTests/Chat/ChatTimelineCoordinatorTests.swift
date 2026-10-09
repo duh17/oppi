@@ -178,10 +178,11 @@ struct ChatTimelineCoordinatorTests {
             scheme: .https
         )))
         let source = try await provider("/tmp/movie.mp4")
-        #expect(
-            URLComponents(url: source.url, resolvingAgainstBaseURL: false)?.percentEncodedPath ==
-                "/workspaces/workspace-video/sessions/session-video/raw/%2Ftmp%2Fmovie.mp4"
-        )
+        let items = URLComponents(url: source.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        #expect(source.url.path == "/files/current")
+        #expect(Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") }) == [
+            "origin": "session", "sessionId": "session-video", "path": "/tmp/movie.mp4",
+        ])
     }
 
     @MainActor
