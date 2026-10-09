@@ -1,4 +1,5 @@
 import { mkdtempSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -144,6 +145,19 @@ async function fixture(responses: FauxResponseStep[], realExec = false, serverOw
     counts: () => ({ executions, cancellations }),
   };
 }
+/** Stored document revisions of any kind, history included, that hold `text`. */
+function documentRevisionsContaining(dir: string, text: string): number {
+  const db = new DatabaseSync(join(dir, "jobs.sqlite"), { readOnly: true });
+  try {
+    return (
+      db
+        .prepare("SELECT count(*) AS n FROM document_revisions WHERE instr(content, ?) > 0")
+        .get(text) as { n: number }
+    ).n;
+  } finally {
+    db.close();
+  }
+}
 async function prompt(root: Conversation, content = "Start the job") {
   const submission = await root.submit({ type: "input", content }, context);
   expect((await submission.wait(context)).status).toBe("done");
@@ -266,8 +280,9 @@ describe("native Durable background jobs", () => {
     expect(f.counts()).toEqual({ executions: 1, cancellations: 0 });
     expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]).toMatchObject({
       delivered: true,
-      output: "",
     });
+    // Delivered output lives in the transcript only, not in any document's history.
+    expect(documentRevisionsContaining(f.dir, "FINAL-OUTPUT")).toBe(0);
     const cleared = await f.harness.snapshot(DurableUI, f.root.id, context);
     expect(cleared?.notifications["status:background-jobs"]).not.toHaveProperty("statusText");
     expect(cleared?.notifications["widget:background-jobs"]).not.toHaveProperty("nativeSurface");
@@ -564,7 +579,6 @@ describe("native Durable background jobs", () => {
     expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]).toMatchObject({
       status: "completed",
       delivered: true,
-      output: "",
     });
     let harness = f.harness;
     let root = f.root;
@@ -590,7 +604,6 @@ describe("native Durable background jobs", () => {
     }
     expect((await harness.snapshot(DurableJobs, root.id, context))!.jobs[0]).toMatchObject({
       delivered: true,
-      output: "",
       receiptId: "background-job:bash-1",
     });
     expect(f.counts().executions).toBe(1);
@@ -639,7 +652,6 @@ describe("native Durable background jobs", () => {
     await f.harness.waitForTask(first.taskId, context);
     expect((await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[0]).toMatchObject({
       delivered: true,
-      output: "",
     });
     await prompt(f.root, "Run background bash");
     const second = (await f.harness.snapshot(DurableJobs, f.root.id, context))!.jobs[1]!;

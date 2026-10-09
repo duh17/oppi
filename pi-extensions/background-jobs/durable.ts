@@ -53,8 +53,6 @@ type Job = {
   cancelTask?: TaskId;
   delivered: boolean;
   receiptId: string;
-  output: string;
-  truncated: boolean;
   exitCode: number | null;
 };
 export const DurableJobs = defineDoc<{ seq: number; jobs: Job[] }>({
@@ -65,6 +63,31 @@ export const DurableJobs = defineDoc<{ seq: number; jobs: Job[] }>({
   fork: "initial",
   initial: () => ({ seq: 0, jobs: [] }),
 });
+
+type Output = { output: string; truncated: boolean };
+/**
+ * Finished output, held from completion until delivery. Task-scoped to the
+ * runner: pi-durable retires it and deletes its stored revisions when the
+ * runner becomes terminal, so up to 64 KB per job never enters the job list's
+ * history. Written in the same commit as the terminal status.
+ */
+const JobOutput = defineDoc<Output>({
+  kind: "oppi.background-job-output",
+  version: 1,
+  scope: "task",
+  initial: () => ({ output: "", truncated: false }),
+});
+/** The run phase always writes it, and the runner stays live until delivery. */
+async function jobOutput(
+  api: DocumentReader,
+  taskId: TaskId,
+  context: Context,
+): Promise<Readonly<Output>> {
+  const value = await api.snapshot(JobOutput, taskId, context);
+  if (!value)
+    throw new Error(`Background job output for task ${taskId} is gone`);
+  return value;
+}
 
 function jobById(jobs: readonly Job[], jobId: string): Job {
   const job = jobs.find((item) => item.id === jobId);
@@ -166,7 +189,10 @@ async function waitForJob(
 const INTERRUPTED_PROCESS_WARNING =
   "The previous host or guest process may still be running. Do not start it again until it is confirmed dead.";
 
-function report(job: Job): {
+function report(
+  job: Job,
+  result: Output,
+): {
   content: string;
   output: {
     kind: "terminal";
@@ -192,7 +218,7 @@ function report(job: Job): {
     `command: ${job.command}`,
     `cwd: ${job.cwd}`,
     "",
-    ...(job.truncated
+    ...(result.truncated
       ? [
           "Output truncated to the last 64000 characters. Earlier output was dropped.",
         ]
@@ -200,7 +226,7 @@ function report(job: Job): {
     "output:",
     "",
   ].join("\n");
-  const output = job.output.trimEnd() || "(no output)";
+  const output = result.output.trimEnd() || "(no output)";
   return {
     content: `${prefix}${output}\n\nThis is the final result. Do not poll for this job.`,
     output: {
@@ -208,7 +234,7 @@ function report(job: Job): {
       offset: prefix.length,
       length: output.length,
       command: job.command,
-      truncated: job.truncated,
+      truncated: result.truncated,
     },
   };
 }
@@ -324,7 +350,11 @@ const JobRunner = defineTask<
           (await tx.doc(DurableJobs, runtime.conversationId)).jobs,
           job.id,
         );
-        Object.assign(current, { status, output, truncated, exitCode });
+        Object.assign(current, { status, exitCode });
+        Object.assign(await tx.doc(JobOutput, runtime.taskId), {
+          output,
+          truncated,
+        });
         if (
           current.decision === "waiting" &&
           (await tx.doc(LiveDoc, runtime.conversationId)).run === undefined
@@ -374,8 +404,8 @@ const JobRunner = defineTask<
           (await tx.doc(DurableJobs, runtime.conversationId)).jobs,
           job.id,
         );
+        // Terminal settlement retires this runner's JobOutput document.
         current.delivered = true;
-        current.output = "";
         await publish(tx, runtime.conversationId);
         return {
           status: "terminal",
@@ -394,7 +424,10 @@ const JobRunner = defineTask<
         // the bytes from here on. Stop may withdraw a queued report; replay must
         // not resurrect it under a new identity.
         const requestId = job.receiptId || `background-job:${job.id}`;
-        const result = report(job);
+        const result = report(
+          job,
+          await jobOutput(runtime, runtime.taskId, context),
+        );
         await runtime.commit(async (tx) => {
           const cards = await tx.doc(DurableInputCards, runtime.conversationId);
           cards.requests[requestId] ??= {
@@ -446,7 +479,6 @@ const JobRunner = defineTask<
       );
       job.status = "cancelled";
       job.delivered = true;
-      job.output = "";
       await publish(tx, runtime.conversationId);
       return { status: "terminal", outcome: { status: "aborted" } };
     }, context);
@@ -512,8 +544,6 @@ async function start(
       cancelRequested: false,
       delivered: false,
       receiptId: `background-job:${id}`,
-      output: "",
-      truncated: false,
       exitCode: null,
       ...(timeout === undefined ? {} : { timeout }),
     };
@@ -642,13 +672,16 @@ const bash = defineTool({
       return { ...current };
     }, context);
     if (selected.decision === "background") return notice(selected);
+    // The runner's report phase waits for this tool task before it settles, so
+    // its JobOutput is still current here.
+    const output = await jobOutput(api, selected.taskId, context);
     const formatted =
       selected.status === "interrupted"
         ? {
             text: `Command interrupted by a host restart; it was not rerun. ${INTERRUPTED_PROCESS_WARNING}`,
             isError: true,
           }
-        : formatForegroundResult(selected, {
+        : formatForegroundResult(output, {
             status: selected.status === "running" ? "failed" : selected.status,
             exitCode: selected.exitCode,
             timeoutSeconds: selected.timeout,
