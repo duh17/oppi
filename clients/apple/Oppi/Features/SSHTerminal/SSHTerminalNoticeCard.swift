@@ -1,17 +1,18 @@
 import SwiftUI
 
-/// Floating blocked notice over the top of the terminal grid.
+/// Floating notice over the top of the terminal grid: a blocked program or a
+/// one-shot notification.
 ///
-/// It is a material card, not a dialog and not a row of the grid: the kind
-/// label and host are Oppi's, and the program's message is a separate line.
-/// Floating keeps the grid's row count stable, so a blocked toggle does not
-/// resize the remote PTY. A tap or an upward swipe folds it into the toolbar
-/// glyph, which stays orange, so the prompt under it can be read.
-struct SSHTerminalBlockedBanner: View {
+/// It is a material card, not a dialog and not a row of the grid: the headline
+/// and host are Oppi's, and the program's text is a separate line, so a host
+/// cannot dress its message up as Oppi's. Floating keeps the grid's row count
+/// stable, so a notice does not resize the remote PTY. A tap or an upward
+/// swipe folds it into the toolbar glyph, so the prompt under it can be read.
+struct SSHTerminalNoticeCard: View {
     @Environment(\.theme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    let notice: SSHTerminalBlockedNotice
+    let notice: SSHTerminalNotice
     let hostLabel: String
     /// The padded card's layout frame, for the collapse anchor.
     let frameChanged: (CGRect) -> Void
@@ -22,10 +23,10 @@ struct SSHTerminalBlockedBanner: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                SSHTerminalStatusGlyph(status: notice.kind, style: .banner)
-                Text(notice.kind.label)
+                symbol
+                Text(headline)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(notice.kind.tint(theme))
+                    .foregroundStyle(tint)
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 Label(SSHTerminalProgramStatusPresentation.hostCaption(hostLabel), systemImage: "network")
@@ -33,8 +34,8 @@ struct SSHTerminalBlockedBanner: View {
                     .foregroundStyle(.themeComment)
                     .lineLimit(1)
             }
-            if !notice.remoteText.isEmpty {
-                Text(notice.remoteText)
+            if !remoteText.isEmpty {
+                Text(remoteText)
                     .font(.footnote)
                     .foregroundStyle(.themeFg)
                     .lineLimit(2)
@@ -53,7 +54,7 @@ struct SSHTerminalBlockedBanner: View {
         }
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(notice.kind.tint(theme), lineWidth: 0.5)
+                .strokeBorder(tint, lineWidth: 0.5)
         }
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .offset(y: drag)
@@ -64,10 +65,54 @@ struct SSHTerminalBlockedBanner: View {
         // inside it, so a drag never changes this frame or writes `cardFrame`.
         .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }, action: frameChanged)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(notice.kind.label), \(SSHTerminalProgramStatusPresentation.hostCaption(hostLabel))")
-        .accessibilityValue(notice.remoteText)
+        .accessibilityLabel("\(headline), \(SSHTerminalProgramStatusPresentation.hostCaption(hostLabel))")
+        .accessibilityValue(remoteText)
         .accessibilityAction(named: "Dismiss", dismiss)
-        .accessibilityIdentifier("sshTerminal.programStatusBanner")
+        .accessibilityIdentifier(accessibilityID)
+    }
+
+    // Each source's copy. A new `SSHTerminalNotice` case adds its arm here.
+
+    @ViewBuilder
+    private var symbol: some View {
+        switch notice {
+        case .blocked(let blocked):
+            SSHTerminalStatusGlyph(status: blocked.kind, style: .banner)
+        case .alert:
+            Image(systemName: "bell.badge")
+                .font(.body)
+                .foregroundStyle(tint)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// Oppi's words, never the program's.
+    private var headline: String {
+        switch notice {
+        case .blocked(let blocked): blocked.kind.label
+        case .alert: "Notification"
+        }
+    }
+
+    private var remoteText: String {
+        switch notice {
+        case .blocked(let blocked): blocked.remoteText
+        case .alert(let alert): [alert.title, alert.body].filter { !$0.isEmpty }.joined(separator: ": ")
+        }
+    }
+
+    private var tint: Color {
+        switch notice {
+        case .blocked(let blocked): blocked.kind.tint(theme)
+        case .alert: .themeBlue
+        }
+    }
+
+    private var accessibilityID: String {
+        switch notice {
+        case .blocked: "sshTerminal.programStatusBanner"
+        case .alert: "sshTerminal.notificationBanner"
+        }
     }
 
     /// Follows the finger up; downward pull resists. A short lift or an upward

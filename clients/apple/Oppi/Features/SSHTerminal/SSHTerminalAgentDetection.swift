@@ -97,10 +97,12 @@ final class SSHTerminalAgentDetector {
     }
 
     /// Chat for an agent, or for a Herdr client whose focused pane runs one.
-    /// The OSC 7501 root record decides first; the probe covers programs that
-    /// do not report. Nil until something decides.
+    /// The OSC 7501 root record decides first, unless it predates the shell's
+    /// latest prompt; the probe covers programs that do not report. The probe
+    /// cannot overrule a live report: Pi runs as `node`, which reads as a shell.
+    /// Nil until something decides.
     func mode(programStatus: SSHTerminalProgramStatusStore, herdr: HerdrSnapshot?) -> SSHTerminalInputMode? {
-        Self.mode(root: programStatus.root, app: programStatus.app(of: ""), foreground: foreground, herdr: herdr)
+        Self.mode(root: programStatus.liveRoot, app: programStatus.app(of: ""), foreground: foreground, herdr: herdr)
     }
 
     func mode(herdr: HerdrSnapshot?) -> SSHTerminalInputMode? { Self.mode(for: foreground, herdr: herdr) }

@@ -160,6 +160,8 @@ final class SSHTerminalChannel {
     let engine: SSHTerminalEngine
     /// OSC 7501 program status records reported in this terminal.
     var programStatus: SSHTerminalProgramStatusStore { engine.programStatus }
+    /// OSC 9 / OSC 777 notifications and BEL in this terminal.
+    var alerts: SSHTerminalAlertFeed { engine.alerts }
     var modifierLatch = SSHTerminalModifierLatch()
     private(set) var connected = false
     private(set) var connecting = true

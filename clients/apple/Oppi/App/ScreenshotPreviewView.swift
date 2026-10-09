@@ -65,6 +65,8 @@ struct ScreenshotPreviewView: View {
             SSHTerminalScreenshotPreview(status: .sequence)
         case "ssh-terminal-status-detail":
             SSHTerminalScreenshotPreview(status: .detail)
+        case "ssh-terminal-notification":
+            SSHTerminalScreenshotPreview(status: .notification)
         case "durable-sessions-settings":
             DurableSessionsScreenshotPreview(surface: .settings)
         case "durable-sessions-sidebar":

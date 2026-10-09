@@ -5,16 +5,12 @@ import GhosttyVt
 ///
 /// Ghostty keeps the C enums. This maps them into `SessionStatusKind` and rolls
 /// a terminal's record tree up with `SessionStatusRollup`. Terminal record ids
-/// are not session ids: seen state stays in a terminal-local `SessionSeenLedger`
-/// and is never written to `SessionStore`.
+/// are not session ids and never reach `SessionStore`.
 enum SSHTerminalProgramStatusPresentation {
-    /// While the terminal view is on screen, every record is seen. That is the
-    /// same rule as an open session chat, which reports distant future from
-    /// `SessionStore.seenAt`. The ledger is the record of it for a terminal
-    /// that is not on screen; this view is on screen whenever the pill can show.
-    static func seenAt(id: String, ledger: SessionSeenLedger, terminalVisible: Bool) -> Date {
-        terminalVisible ? .distantFuture : ledger.seenAt(for: id)
-    }
+    /// Every record is seen: a terminal lives only while its screen is shown
+    /// (leaving it closes the connection), the same rule as an open session
+    /// chat, which reports distant future from `SessionStore.seenAt`.
+    static let seenAt = Date.distantFuture
 
     static func programState(_ state: GhosttyProgramStatusState) -> ProgramStatusState? {
         switch state {
@@ -103,7 +99,7 @@ enum SSHTerminalProgramStatusPresentation {
         guard let chosen = pool.min(by: prefersBannerCopy) else { return nil }
         return SSHTerminalBlockedNotice(
             recordID: chosen.0.id,
-            episode: chosen.0.episode,
+            notice: chosen.0.notice,
             kind: kind,
             remoteText: remoteText(message: chosen.0.message, title: chosen.0.title)
         )
@@ -145,13 +141,14 @@ enum SSHTerminalProgramStatusPresentation {
 
 /// Blocked card copy. `kind` is Oppi's; `remoteText` is the program's.
 ///
-/// Equality is the dismissal key: record, blocked episode, kind, and text,
-/// never a redraw. A repeat of the same report keeps the episode and text, so
-/// a dismissed card stays down. A new message, a new kind, another record, or
-/// blocked again after another state is a different notice and shows.
+/// `recordID` and `notice` are the dismissal key (`SSHTerminalNotice.key`),
+/// never a redraw. A repeat of the same report keeps them, so a dismissed card
+/// stays down. Another record, blocked again after another state, a new kind,
+/// or a new message once the program's reports pause is a new notice and shows.
 struct SSHTerminalBlockedNotice: Hashable, Sendable {
     var recordID: String
-    var episode: UInt64
+    /// `SSHTerminalProgramStatusStore.Record.notice`.
+    var notice: UInt64
     var kind: SessionStatusKind
     var remoteText: String
 }

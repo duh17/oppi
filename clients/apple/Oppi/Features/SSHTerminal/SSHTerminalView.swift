@@ -33,15 +33,8 @@ struct SSHTerminalView: View {
     @State private var reconnectOnReturn = false
     /// Floats over the grid: a row in the stack would resize the remote terminal.
     @State private var copyNotice: String?
-    /// Seen times for this terminal's records. Not session ids, so this never
-    /// writes `SessionStore`.
-    @State private var programSeen = SessionSeenLedger()
-    /// The blocked card the user folded away. It stays down until a different
-    /// notice (see `SSHTerminalBlockedNotice` equality).
-    @State private var dismissedNotice: SSHTerminalBlockedNotice?
-    @State private var glyphFrame = SSHTerminalGlyphFrame()
-    /// Changes only when the card's layout does, never per animation frame.
-    @State private var cardFrame: CGRect = .zero
+    /// Which notice floats over the grid, and what the person folded away.
+    @State private var attention = SSHTerminalAttention()
 
     private var detectedMode: SSHTerminalInputMode? {
         detector.mode(programStatus: channel.programStatus, herdr: herdr.snapshot)
@@ -129,18 +122,18 @@ struct SSHTerminalView: View {
                             SSHTerminalTopBarHandle(show: { setTopBarHidden(false) })
                         }
                         if let notice = visibleNotice {
-                            SSHTerminalBlockedBanner(notice: notice, hostLabel: hostLabel, frameChanged: { cardFrame = $0 }) {
-                                dismissedNotice = notice
+                            SSHTerminalNoticeCard(notice: notice, hostLabel: hostLabel, frameChanged: { attention.cardFrame = $0 }) {
+                                attention.dismiss(notice.key)
                             }
                             // A new notice is a new card: a drag in flight belongs
                             // to the old one and can only dismiss that one.
-                            .id(notice)
-                            .transition(SSHTerminalBlockedBanner.transition(
-                                card: cardFrame, glyph: glyphFrame.rect, reduceMotion: reduceMotion
+                            .id(notice.key)
+                            .transition(SSHTerminalNoticeCard.transition(
+                                card: attention.cardFrame, glyph: attention.glyphFrame.rect, reduceMotion: reduceMotion
                             ))
                         }
                     }
-                    .animation(reduceMotion ? .easeOut(duration: 0.2) : .smooth, value: visibleNotice)
+                    .animation(reduceMotion ? .easeOut(duration: 0.2) : .smooth, value: visibleNotice?.key)
                 }
                 .overlay(alignment: .bottom) {
                     if let copyNotice {
@@ -186,7 +179,7 @@ struct SSHTerminalView: View {
                         summary: rollup.summaryText,
                         hostLabel: hostLabel,
                         rows: programStatusRows,
-                        frameBox: glyphFrame
+                        frameBox: attention.glyphFrame
                     )
                 }
             }
@@ -243,8 +236,7 @@ struct SSHTerminalView: View {
             if inputMode == .chat { composerFocusRequest += 1 }
         }
         .onChange(of: channel.connected) { _, connected in if !connected { topBarHidden = false } }
-        .onAppear { markProgramRecordsSeen() }
-        .onChange(of: programSeenToken) { _, _ in markProgramRecordsSeen() }
+        .modifier(SSHTerminalAttentionFeedback(notice: visibleNotice, bell: channel.alerts.bell) { attention.dismiss($0) })
         // One poller per connected generation; it ends with the connection.
         .task(id: channel.connected) {
             guard channel.connected else { return }
@@ -295,49 +287,30 @@ struct SSHTerminalView: View {
         } message: { Text(pasteFailure ?? "") }
     }
 
-    /// On screen for the life of this view, so done and error read as Idle
-    /// (or Stopped once the channel has closed). Matches an open session chat.
-    private var programSeenAt: Date {
-        SSHTerminalProgramStatusPresentation.seenAt(id: "", ledger: programSeen, terminalVisible: true)
-    }
-
+    /// Done and error read as Idle while on screen, Stopped once the channel has closed.
     private var programIsStopped: Bool { !channel.connected && !channel.connecting }
 
     private var programRollup: SessionStatusRollup? {
         SSHTerminalProgramStatusPresentation.rollup(
             store: channel.programStatus,
             isStopped: programIsStopped,
-            seenAt: programSeenAt
+            seenAt: SSHTerminalProgramStatusPresentation.seenAt
         )
     }
 
-    /// The blocked card, unless the user dismissed this same notice.
-    private var visibleNotice: SSHTerminalBlockedNotice? {
-        let notice = SSHTerminalProgramStatusPresentation.blockedNotice(
-            store: channel.programStatus,
-            isStopped: programIsStopped,
-            seenAt: programSeenAt
-        )
-        return notice == dismissedNotice ? nil : notice
-    }
-
-    private var programSeenToken: UInt64 {
-        channel.programStatus.records.values.map(\.revision).max() ?? 0
+    /// The highest-priority notice the person has not folded away.
+    private var visibleNotice: SSHTerminalNotice? {
+        attention.notice(from: SSHTerminalAttention.candidates(
+            programStatus: channel.programStatus, alerts: channel.alerts, isStopped: programIsStopped
+        ))
     }
 
     private var programStatusRows: [SSHTerminalStatusRow] {
         SSHTerminalProgramStatusPresentation.detailRows(
             store: channel.programStatus,
             isStopped: programIsStopped,
-            seenAt: programSeenAt
+            seenAt: SSHTerminalProgramStatusPresentation.seenAt
         )
-    }
-
-    private func markProgramRecordsSeen() {
-        let now = Date()
-        for record in channel.programStatus.records.values {
-            programSeen.markSeen(record.id, at: max(now, record.since))
-        }
     }
 
     private var statusText: String {

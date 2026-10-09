@@ -55,6 +55,8 @@ final class SSHTerminalEngine {
     /// OSC 7501 records for this terminal. Outlives `close()` so unseen
     /// `done`/`error` records can still be shown after the program exits.
     let programStatus = SSHTerminalProgramStatusStore()
+    /// OSC 9 / OSC 777 notifications and BEL from this terminal.
+    let alerts = SSHTerminalAlertFeed()
     private(set) var geometry: SSHTerminalGeometry
     private(set) var following = true
     /// Bumped by anything that can change the picture. The display link repaints
@@ -419,6 +421,22 @@ final class SSHTerminalEngine {
                     title: SSHTerminalEngine.copy(value.title), message: SSHTerminalEngine.copy(value.message)))
             }
         }
+        // Copy into the alert feed only; the screen decides what to show.
+        let notification: GhosttyTerminalDesktopNotificationFn = { _, context, request in
+            MainActor.assumeIsolated {
+                guard let context, let request else { return }
+                let value = request.pointee
+                Unmanaged<SSHTerminalEngine>.fromOpaque(context).takeUnretainedValue().alerts.notify(
+                    // swiftlint:disable:next prefer_self_in_static_references
+                    title: SSHTerminalEngine.copy(value.title), body: SSHTerminalEngine.copy(value.body))
+            }
+        }
+        let bell: GhosttyTerminalBellFn = { _, context in
+            MainActor.assumeIsolated {
+                guard let context else { return }
+                Unmanaged<SSHTerminalEngine>.fromOpaque(context).takeUnretainedValue().alerts.ring()
+            }
+        }
         let prompt: GhosttyTerminalSemanticPromptFn = { _, context, event in
             MainActor.assumeIsolated {
                 guard let context, let event, event.pointee.kind == GHOSTTY_SEMANTIC_PROMPT_PROMPT_START else { return }
@@ -468,6 +486,8 @@ final class SSHTerminalEngine {
             }
         }
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS, unsafeBitCast(status, to: UnsafeRawPointer.self))
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION, unsafeBitCast(notification, to: UnsafeRawPointer.self))
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_BELL, unsafeBitCast(bell, to: UnsafeRawPointer.self))
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SEMANTIC_PROMPT, unsafeBitCast(prompt, to: UnsafeRawPointer.self))
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_RESET, unsafeBitCast(reset, to: UnsafeRawPointer.self))
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY, unsafeBitCast(write, to: UnsafeRawPointer.self))

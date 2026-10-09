@@ -18,7 +18,7 @@ struct SSHTerminalProgramStatusPresentationTests {
     ) -> SSHTerminalProgramStatusStore.Record {
         .init(
             id: id, state: state, kind: kind, progress: -1, app: app,
-            title: title, message: message, revision: 1, since: since, episode: 1
+            title: title, message: message, revision: 1, since: since, notice: 1, reportedAt: .now
         )
     }
 
@@ -101,18 +101,6 @@ struct SSHTerminalProgramStatusPresentationTests {
         #expect(unseen == .error)
     }
 
-    @Test func anOnScreenTerminalTreatsDoneAsIdle() {
-        let ledger = SessionSeenLedger()
-        let visible = SSHTerminalProgramStatusPresentation.seenAt(id: "child", ledger: ledger, terminalVisible: true)
-        let hidden = SSHTerminalProgramStatusPresentation.seenAt(id: "child", ledger: ledger, terminalVisible: false)
-        #expect(SSHTerminalProgramStatusPresentation.status(
-            state: GHOSTTY_PROGRAM_STATUS_STATE_DONE, since: since, seenAt: visible
-        ) == .idle)
-        #expect(SSHTerminalProgramStatusPresentation.status(
-            state: GHOSTTY_PROGRAM_STATUS_STATE_DONE, since: since, seenAt: hidden
-        ) == .done)
-    }
-
     @Test func aTerminalTreeRollsUpWithoutCountingTheRootTwice() {
         let store = SSHTerminalProgramStatusStore()
         store.apply(report(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, app: "deploy"))
@@ -159,42 +147,47 @@ struct SSHTerminalProgramStatusPresentationTests {
         ) == nil)
     }
 
-    /// A dismissed card stays down while the same report repeats, and comes
-    /// back for a new message, a new kind, or a fresh blocked episode.
-    @Test func aDismissedNoticeReturnsOnlyForANewBlockedReport() {
+    /// A dismissed card stays down while the same report repeats or the
+    /// program rewrites its message in a burst, and comes back for a new
+    /// message after a pause, a new kind, or a fresh blocked episode.
+    @Test func aDismissedNoticeReturnsOnlyForANewBlockedReport() throws {
         let store = SSHTerminalProgramStatusStore()
+        var clock = ContinuousClock.now
+        func apply(_ report: SSHTerminalProgramStatusStore.Report, after delay: Duration = .milliseconds(100)) {
+            clock += delay
+            store.apply(report, at: clock)
+        }
         func notice() -> SSHTerminalBlockedNotice? {
             SSHTerminalProgramStatusPresentation.blockedNotice(store: store, isStopped: false, seenAt: nil)
         }
-        let permission = report(
-            GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED, kind: GHOSTTY_PROGRAM_STATUS_KIND_PERMISSION, message: "Allow rg?"
-        )
-        store.apply(permission)
-        let dismissed = notice()
-        #expect(dismissed != nil)
+        func key() -> SSHTerminalNotice.Key? { notice().map { SSHTerminalNotice.blocked($0).key } }
+        func asking(_ message: String, kind: GhosttyProgramStatusKind = GHOSTTY_PROGRAM_STATUS_KIND_PERMISSION)
+            -> SSHTerminalProgramStatusStore.Report {
+            report(GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED, kind: kind, message: message)
+        }
 
-        store.apply(permission)
-        #expect(notice() == dismissed, "a repeated report keeps the card down")
+        apply(asking("Allow rg?"))
+        let dismissed = try #require(key())
 
-        store.apply(report(
-            GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED, kind: GHOSTTY_PROGRAM_STATUS_KIND_PERMISSION, message: "Allow rm?"
-        ))
-        #expect(notice() != dismissed, "a new message shows")
+        apply(asking("Allow rg?"))
+        #expect(key() == dismissed, "a repeated report keeps the card down")
 
-        store.apply(permission)
-        let sameText = notice()
-        store.apply(report(
-            GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED, kind: GHOSTTY_PROGRAM_STATUS_KIND_QUESTION, message: "Allow rg?"
-        ))
-        #expect(notice() != sameText, "a new kind shows")
+        for step in 0..<20 { apply(asking("Allow rg? \(step)")) }
+        #expect(key() == dismissed, "a message rewritten in a burst is the same notice")
+        #expect(notice()?.remoteText == "Allow rg? 19", "its text stays live")
 
-        store.apply(permission)
-        let before = notice()
-        store.apply(report(GHOSTTY_PROGRAM_STATUS_STATE_WORKING))
+        apply(asking("Allow rm?"), after: SSHTerminalNotice.burstInterval)
+        #expect(key() != dismissed, "a new message after a pause shows")
+
+        let sameText = key()
+        apply(asking("Allow rm?", kind: GHOSTTY_PROGRAM_STATUS_KIND_QUESTION))
+        #expect(key() != sameText, "a new kind shows at once")
+
+        let before = key()
+        apply(report(GHOSTTY_PROGRAM_STATUS_STATE_WORKING))
         #expect(notice() == nil)
-        store.apply(permission)
-        #expect(notice()?.remoteText == before?.remoteText)
-        #expect(notice() != before, "blocked again after working is a new episode")
+        apply(asking("Allow rm?", kind: GHOSTTY_PROGRAM_STATUS_KIND_QUESTION))
+        #expect(key() != before, "blocked again after working is a new episode at once")
     }
 
     @Test func theSettleHoldEndsForAnyNewerStatus() {
@@ -289,6 +282,29 @@ struct SSHTerminalProgramStatusPresentationTests {
             override: .terminal, root: agent, app: "pi", foreground: .agent("pi"), herdr: focused
         ) == .terminal)
         #expect(SSHTerminalAgentDetector.rootSelectsChat(root: nil, app: "pi") == false)
+    }
+
+    /// Pi runs as `node`, so the probe reads a shell while Pi is in front: a
+    /// live report keeps the chat bar. Once the shell shows its next prompt,
+    /// the done report that outlives it no longer does.
+    @Test func aReportFromBeforeTheShellPromptNoLongerPicksTheChatBar() throws {
+        let engine = try SSHTerminalEngine { _ in }
+        let detector = SSHTerminalAgentDetector()
+        func mode() -> SSHTerminalInputMode? {
+            SSHTerminalAgentDetector.mode(
+                root: engine.programStatus.liveRoot, app: engine.programStatus.app(of: ""), foreground: .shell, herdr: nil
+            )
+        }
+        engine.receive(Data("\u{1b}]7501;state=done:app=pi\u{1b}\\".utf8))
+        #expect(mode() == .chat, "Pi between turns")
+
+        engine.receive(Data("\u{1b}]133;A\u{7}".utf8))
+        #expect(engine.programStatus.root?.state == GHOSTTY_PROGRAM_STATUS_STATE_DONE, "the outcome still shows")
+        #expect(mode() == .terminal, "the shell is back in front")
+        #expect(detector.mode(programStatus: engine.programStatus, herdr: nil) == nil)
+
+        engine.receive(Data("\u{1b}]7501;state=working:app=pi\u{1b}\\".utf8))
+        #expect(mode() == .chat, "Pi started again")
     }
 
     @Test func herdrStatusesUseTheSharedPresentation() {

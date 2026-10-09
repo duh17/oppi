@@ -1,9 +1,10 @@
 #if DEBUG
 import SwiftUI
 
-/// Which OSC 7501 reports this preview feeds through the real terminal engine.
+/// Which OSC 7501 reports (or, for `notification`, which OSC 777) this preview
+/// feeds through the real terminal engine.
 enum SSHTerminalScreenshotStatus: String {
-    case none, working, blocked, done, error, idle, tree, sequence, detail
+    case none, working, blocked, done, error, idle, tree, sequence, detail, notification
 }
 
 /// The real terminal surface over an in-memory connection: a Herdr-like
@@ -87,6 +88,7 @@ struct SSHTerminalScreenshotPreview: View {
     private func statusScreen(_ esc: String, step: SSHTerminalScreenshotStatus? = nil) -> String {
         let line: String = switch step ?? status {
         case .none, .sequence: ""
+        case .notification: "$ cargo test"
         case .working: "pi: installing updates"
         case .blocked: "Allow running rg?  Yes  No  Always"
         case .done: "Upgraded 12 packages"
@@ -116,6 +118,8 @@ struct SSHTerminalScreenshotPreview: View {
                 + osc("state=blocked:kind=permission:id=eu-west:title=\(b64("EU West")):msg=\(b64("Approve deploy to eu-west?"))")
         case .sequence:
             return Data()
+        case .notification:
+            return Data("\u{1b}]777;notify;cargo;All 214 tests passed\u{1b}\\".utf8)
         }
     }
 

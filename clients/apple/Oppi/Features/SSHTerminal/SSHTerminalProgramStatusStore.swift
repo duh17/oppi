@@ -87,15 +87,30 @@ final class SSHTerminalProgramStatusStore {
         /// When this state and kind began. A repeat of the same state keeps it,
         /// so a re-report is not a new unseen outcome.
         let since: Date
-        /// The store revision when this state and kind began; a repeat keeps it.
-        /// Unlike `since`, two episodes never share it.
-        let episode: UInt64
+        /// The store revision of what the person is shown: it advances when
+        /// this state and kind begin (an episode; two never share it), and for
+        /// new text once reports to this record pause for
+        /// `SSHTerminalNotice.burstInterval`. A program that rewrites its
+        /// message in a loop is one notice, so it cannot undo a dismissal or
+        /// repeat the haptic.
+        let notice: UInt64
+        /// When this record's latest report arrived.
+        let reportedAt: ContinuousClock.Instant
     }
 
     private(set) var records = [String: Record]()
     @ObservationIgnored private var revision: UInt64 = 0
 
     var root: Record? { records[""] }
+
+    /// The root record if it was reported after the shell's latest prompt
+    /// (OSC 133 A). A done or error root outlives that prompt to show its
+    /// outcome, but the program that sent it has returned to the shell, so it
+    /// no longer says what is in front.
+    var liveRoot: Record? { root.flatMap { $0.revision > promptRevision ? $0 : nil } }
+
+    /// The store revision at the shell's latest prompt.
+    private(set) var promptRevision: UInt64 = 0
 
     func record(id: String) -> Record? { records[id] }
 
@@ -125,7 +140,7 @@ final class SSHTerminalProgramStatusStore {
         }
     }
 
-    func apply(_ report: Report) {
+    func apply(_ report: Report, at now: ContinuousClock.Instant = .now) {
         let kind = report.kind
         switch report.state {
         case GHOSTTY_PROGRAM_STATUS_STATE_CLEAR:
@@ -139,14 +154,18 @@ final class SSHTerminalProgramStatusStore {
             }
             revision &+= 1
             let storedKind = report.state == GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED ? kind : GHOSTTY_PROGRAM_STATUS_KIND_NONE
+            let title = SSHTerminalDisplayText.sanitized(report.title, limit: SSHTerminalDisplayText.titleLimit)
+            let message = SSHTerminalDisplayText.sanitized(report.message, limit: SSHTerminalDisplayText.messageLimit)
             let since: Date
-            let episode: UInt64
+            let notice: UInt64
             if let previous = records[report.id], previous.state == report.state, previous.kind == storedKind {
                 since = previous.since
-                episode = previous.episode
+                let newText = previous.title != title || previous.message != message
+                let paused = previous.reportedAt.duration(to: now) >= SSHTerminalNotice.burstInterval
+                notice = newText && paused ? revision : previous.notice
             } else {
                 since = Date()
-                episode = revision
+                notice = revision
             }
             records[report.id] = Record(
                 id: report.id,
@@ -154,18 +173,22 @@ final class SSHTerminalProgramStatusStore {
                 kind: storedKind,
                 progress: (0...100).contains(report.progress) ? report.progress : -1,
                 app: report.app,
-                title: SSHTerminalDisplayText.sanitized(report.title, limit: SSHTerminalDisplayText.titleLimit),
-                message: SSHTerminalDisplayText.sanitized(report.message, limit: SSHTerminalDisplayText.messageLimit),
+                title: title,
+                message: message,
                 revision: revision,
                 since: since,
-                episode: episode)
+                notice: notice,
+                reportedAt: now)
         default:
             break // A state this build does not know is ignored, as the spec says.
         }
     }
 
     /// OSC 133 prompt start: the program that reported has returned to the shell.
-    func promptStarted() { dropRunning() }
+    func promptStarted() {
+        dropRunning()
+        promptRevision = revision
+    }
 
     /// The remote process or the connection ended.
     func processEnded() { dropRunning() }
