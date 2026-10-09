@@ -821,6 +821,113 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("Differentiate Without Color grows image-only rows by caption height only")
+    func differentiateWithoutColorHeightDeltaMatchesVisibleBubbleContent() throws {
+        let textOff = UserTimelineRowConfiguration(
+            text: "Hello",
+            images: [],
+            canFork: false,
+            onFork: nil,
+            differentiateWithoutColor: false
+        )
+        let textView = UserTimelineRowContentView(configuration: textOff)
+        let textHeightOff = fittedUserRowHeight(textView)
+        textView.configuration = UserTimelineRowConfiguration(
+            text: "Hello",
+            images: [],
+            canFork: false,
+            onFork: nil,
+            differentiateWithoutColor: true
+        )
+        let textDelta = fittedUserRowHeight(textView) - textHeightOff
+
+        let pngData = try #require(makeTestImage().pngData())
+        let image = ImageAttachment(data: pngData.base64EncodedString(), mimeType: "image/png")
+        let imageOff = UserTimelineRowConfiguration(
+            text: "",
+            images: [image],
+            canFork: false,
+            onFork: nil,
+            differentiateWithoutColor: false
+        )
+        let imageView = UserTimelineRowContentView(configuration: imageOff)
+        let imageHeightOff = fittedUserRowHeight(imageView)
+        imageView.configuration = UserTimelineRowConfiguration(
+            text: "",
+            images: [image],
+            canFork: false,
+            onFork: nil,
+            differentiateWithoutColor: true
+        )
+        let imageDelta = fittedUserRowHeight(imageView) - imageHeightOff
+
+        let captionOnly = TimelineSpeakerChrome.differentiateWithoutColorHeightDelta(
+            hasVisibleContentBelowCaption: false
+        )
+        let captionAndSpacing = TimelineSpeakerChrome.differentiateWithoutColorHeightDelta(
+            hasVisibleContentBelowCaption: true
+        )
+        #expect(abs(textDelta - captionAndSpacing) < 1)
+        #expect(abs(imageDelta - captionOnly) < 1)
+        #expect(!UserTimelineBubbleContent.resolve(text: "", images: [image]).hasVisibleContentBelowCaption)
+        #expect(UserTimelineBubbleContent.resolve(text: "Hello", images: []).hasVisibleContentBelowCaption)
+    }
+
+    @MainActor
+    @Test("Review Repo and Commit pills use userMessageText for icon and prefix")
+    func userCardPathPillsUseUserMessageTextForGlyphAndPrefix() throws {
+        let palette = ThemeRuntimeState.currentPalette()
+        let text = UserMessageAttachmentPresentation.makeDisplayText(
+            text: "Please inspect",
+            pendingAttachments: [],
+            pendingRepoPointers: [
+                PendingFileReference(path: "docs/notes.md", isDirectory: false, kind: .reviewFile),
+                PendingFileReference(path: "Sources/App.swift", isDirectory: false, kind: .workspaceFile),
+                PendingFileReference(
+                    path: "9b82f81",
+                    isDirectory: false,
+                    kind: .gitCommit,
+                    commitMessage: "Clarify the reply"
+                )
+            ]
+        )
+        let view = UserTimelineRowContentView(
+            configuration: UserTimelineRowConfiguration(
+                text: text,
+                images: [],
+                canFork: false,
+                onFork: nil
+            )
+        )
+        view.frame = CGRect(x: 0, y: 0, width: 390, height: 280)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+
+        let cases: [(id: String, prefix: String, kind: UserMessagePathPill.Kind)] = [
+            ("chat.user.path-pill.docs/notes.md", "Review", .reviewFile),
+            ("chat.user.path-pill.Sources/App.swift", "Repo", .repoFile),
+            ("chat.user.path-pill.9b82f81", "Commit", .gitCommit)
+        ]
+        for item in cases {
+            let expected = UIColor(
+                UserTimelinePathPillChrome.glyphAndTextColor(for: item.kind, palette: palette)
+            )
+            let pill = try #require(firstSubview(withAccessibilityIdentifier: item.id, in: view))
+            let prefix = try #require(
+                allSubviews(ofType: UILabel.self, in: pill).first { $0.text == item.prefix }
+            )
+            let icon = try #require(allSubviews(ofType: UIImageView.self, in: pill).first)
+            #expect(color(prefix.textColor, approximatelyEquals: expected))
+            #expect(color(icon.tintColor, approximatelyEquals: expected))
+            #expect(!color(prefix.textColor, approximatelyEquals: UIColor(palette.cyan)))
+            #expect(!color(prefix.textColor, approximatelyEquals: UIColor(palette.purple)))
+            #expect(!color(prefix.textColor, approximatelyEquals: UIColor(palette.orange)))
+            let backgroundAlpha = pill.backgroundColor?.cgColor.alpha ?? 0
+            #expect(backgroundAlpha < 0.02)
+        }
+    }
+
+    @MainActor
     @Test("user row renders GFM tables with NativeTableBlockView instead of ASCII pipes")
     func userRowRendersGFMTablesWithNativeTableView() throws {
         let markdown = """
@@ -1629,6 +1736,15 @@ private func makeImagePreviewTimelineItems(prefix: String, count: Int) -> [ChatI
             timestamp: Date(timeIntervalSince1970: TimeInterval(index))
         )
     }
+}
+
+@MainActor
+private func fittedUserRowHeight(_ view: UserTimelineRowContentView, width: CGFloat = 390) -> CGFloat {
+    view.systemLayoutSizeFitting(
+        CGSize(width: width, height: 0),
+        withHorizontalFittingPriority: .required,
+        verticalFittingPriority: .fittingSizeLevel
+    ).height
 }
 
 @MainActor

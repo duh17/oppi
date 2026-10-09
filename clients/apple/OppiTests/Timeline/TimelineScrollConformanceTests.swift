@@ -327,7 +327,9 @@ struct TimelineScrollConformanceTests {
         )
         settleTimelineLayout(harness.collectionView, passes: 3)
 
-        let delta = TimelineSpeakerChrome.differentiateWithoutColorHeightDelta()
+        let delta = TimelineSpeakerChrome.differentiateWithoutColorHeightDelta(
+            hasVisibleContentBelowCaption: true
+        )
         let userAfterOn = layout.cachedHeightForTesting(itemID: offscreenUserID)
         let assistantAfterOn = layout.cachedHeightForTesting(itemID: offscreenAssistantID)
         #expect(
@@ -362,6 +364,76 @@ struct TimelineScrollConformanceTests {
             abs((layout.cachedHeightForTesting(itemID: offscreenUserID) ?? 0) - userBefore) < 1,
             "turning DWC off should restore the offscreen user cached height"
         )
+        harness.assertAnchorStable(itemID: anchorID, edge: .top, before: anchorBefore)
+    }
+
+    @Test func differentiateWithoutColorToggleUsesCaptionOnlyDeltaForImageOnlyUserRows() throws {
+        let harness = TimelineScrollConformanceHarness(sessionId: "scroll-conformance-dwc-image-only")
+        harness.replaceTimelineItems(makeSpeakerContrastMixedHeightItems())
+        harness.startAttachedAtBottom(isBusy: false)
+        measureEveryTimelineRow(harness.collectionView)
+
+        let imageOnlyID = "user-image-0"
+        let textID = "user-text-1"
+        let anchorID = "assistant-8"
+        harness.userScrollsUpToRead(itemID: anchorID)
+
+        let layout = try #require(
+            harness.collectionView.collectionViewLayout as? ChatTimelineCachedHeightLayout
+        )
+        let imageBefore = layout.cachedHeightForTesting(itemID: imageOnlyID)
+        let textBefore = layout.cachedHeightForTesting(itemID: textID)
+        guard let imageBefore, let textBefore else {
+            Issue.record("Missing cached heights before DWC toggle")
+            return
+        }
+
+        harness.coordinator.applySpeakerAccessibilityForTesting(
+            increasedContrast: false,
+            differentiateWithoutColor: true
+        )
+        settleTimelineLayout(harness.collectionView, passes: 3)
+
+        let captionOnly = TimelineSpeakerChrome.differentiateWithoutColorHeightDelta(
+            hasVisibleContentBelowCaption: false
+        )
+        let captionAndSpacing = TimelineSpeakerChrome.differentiateWithoutColorHeightDelta(
+            hasVisibleContentBelowCaption: true
+        )
+        #expect(abs(captionAndSpacing - captionOnly - TimelineSpeakerChrome.userBubbleContentSpacing) < 0.01)
+        #expect(
+            abs((layout.cachedHeightForTesting(itemID: imageOnlyID) ?? 0) - (imageBefore + captionOnly)) < 1,
+            "image-only cache should grow by caption height only"
+        )
+        #expect(
+            abs((layout.cachedHeightForTesting(itemID: textID) ?? 0) - (textBefore + captionAndSpacing)) < 1,
+            "text row cache should grow by caption plus stack spacing"
+        )
+    }
+
+    @Test func differentiateWithoutColorToggleWhileTrackingKeepsAnchor() throws {
+        let harness = TimelineScrollConformanceHarness(sessionId: "scroll-conformance-dwc-tracking")
+        harness.replaceTimelineItems(makeSpeakerContrastHeightItems())
+        harness.startAttachedAtBottom(isBusy: false)
+        measureEveryTimelineRow(harness.collectionView)
+
+        let anchorID = "assistant-8"
+        harness.userScrollsUpToRead(itemID: anchorID)
+        let anchored = try #require(harness.collectionView as? AnchoredCollectionView)
+        let anchorBefore = harness.screenY(of: anchorID, edge: .top)
+
+        anchored.testIsTracking = true
+        anchored.testIsDragging = true
+        harness.coordinator.applySpeakerAccessibilityForTesting(
+            increasedContrast: false,
+            differentiateWithoutColor: true
+        )
+        settleTimelineLayout(harness.collectionView, passes: 3)
+        harness.assertAnchorStable(itemID: anchorID, edge: .top, before: anchorBefore)
+
+        anchored.testIsTracking = false
+        anchored.testIsDragging = false
+        settleTimelineLayout(harness.collectionView, passes: 3)
         harness.assertAnchorStable(itemID: anchorID, edge: .top, before: anchorBefore)
     }
 
@@ -411,6 +483,35 @@ private func makeSpeakerContrastHeightItems() -> [ChatItem] {
             images: [],
             timestamp: Date()
         ))
+        items.append(.assistantMessage(
+            id: "assistant-\(index)",
+            text: String(repeating: "Assistant reply \(index). ", count: 14),
+            timestamp: Date()
+        ))
+    }
+    return items
+}
+
+@MainActor
+private func makeSpeakerContrastMixedHeightItems() -> [ChatItem] {
+    let image = ImageAttachment(data: "AAAA", mimeType: "image/png")
+    var items: [ChatItem] = []
+    for index in 0..<16 {
+        if index.isMultiple(of: 2) {
+            items.append(.userMessage(
+                id: "user-image-\(index)",
+                text: "",
+                images: [image],
+                timestamp: Date()
+            ))
+        } else {
+            items.append(.userMessage(
+                id: "user-text-\(index)",
+                text: String(repeating: "User prompt \(index). ", count: 14),
+                images: [],
+                timestamp: Date()
+            ))
+        }
         items.append(.assistantMessage(
             id: "assistant-\(index)",
             text: String(repeating: "Assistant reply \(index). ", count: 14),

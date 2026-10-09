@@ -271,7 +271,7 @@ struct UserMessageAttachmentBadge: Equatable, Sendable {
 }
 
 struct UserMessagePathPill: Equatable, Sendable {
-    enum Kind: String, Sendable {
+    enum Kind: String, Sendable, CaseIterable {
         case uploadedFile
         case reviewFile
         case repoFile

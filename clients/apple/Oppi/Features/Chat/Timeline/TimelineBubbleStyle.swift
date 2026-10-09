@@ -46,8 +46,9 @@ enum TimelineSpeakerChrome {
     /// + 8 pt = 16 pt before a user row). Applied as the user cell's own top
     /// margin so cached-height layout and scroll anchoring stay unchanged.
     static let userTurnSpacingAbove: CGFloat = 8
-    /// Spacing inside the user bubble stack. The Differentiate Without Color
-    /// caption adds one label plus this spacing to row height.
+    /// Spacing inside the user bubble stack. UIStackView applies this only
+    /// between visible arranged subviews, so a Differentiate Without Color
+    /// caption adds it when text, badges, or path pills are also showing.
     static let userBubbleContentSpacing: CGFloat = 6
 
     @MainActor
@@ -61,9 +62,15 @@ enum TimelineSpeakerChrome {
         UIAccessibility.shouldDifferentiateWithoutColor
     }
 
-    /// Caption height + bubble-stack spacing from the caption's font metrics.
-    static func differentiateWithoutColorHeightDelta() -> CGFloat {
-        ceil(AppFont.systemSmall.lineHeight) + userBubbleContentSpacing
+    /// Caption height, plus bubble-stack spacing only when another arranged
+    /// subview will be visible (text, badge, or path pill). Image-only rows
+    /// grow by the caption alone.
+    static func differentiateWithoutColorHeightDelta(
+        hasVisibleContentBelowCaption: Bool
+    ) -> CGFloat {
+        let captionHeight = ceil(AppFont.systemSmall.lineHeight)
+        guard hasVisibleContentBelowCaption else { return captionHeight }
+        return captionHeight + userBubbleContentSpacing
     }
 
     static func userFill(

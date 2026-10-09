@@ -56,6 +56,74 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     }
 }
 
+/// Layout facts for the user bubble stack. Row apply and DWC height-cache
+/// math share this so caption spacing cannot drift from visibility.
+struct UserTimelineBubbleContent {
+    let displayText: String
+    let displayWasTruncated: Bool
+    let visibleBadges: [UserMessageAttachmentBadge]
+    let nonImagePathPills: [UserMessagePathPill]
+    let inlineImagePathPills: [UserMessagePathPill]
+    let allPathPills: [UserMessagePathPill]
+
+    var showsTextRow: Bool { !displayText.isEmpty }
+    var showsBadgeRow: Bool { !visibleBadges.isEmpty }
+    var showsPathPillRow: Bool { !nonImagePathPills.isEmpty }
+    var hasVisibleContentBelowCaption: Bool {
+        showsTextRow || showsBadgeRow || showsPathPillRow
+    }
+
+    func showsBubble(hasImages: Bool) -> Bool {
+        showsTextRow || hasImages || showsBadgeRow || !allPathPills.isEmpty
+    }
+
+    static func resolve(text: String, images: [ImageAttachment]) -> UserTimelineBubbleContent {
+        let parsed = UserMessageAttachmentPresentation.parse(rawText: text)
+        let display = UserTimelineRowContentView.displayText(for: parsed.visibleText)
+        let inlineImagePathPills = parsed.pathPills.filter { pill in
+            guard pill.supportsInlinePreview else { return false }
+            // Uploaded image attachments can arrive in two forms for the same
+            // user message: optimistic local image data plus the uploaded
+            // workspace path pill. When both are present, prefer the real image
+            // attachment and suppress the redundant inline file preview.
+            if !images.isEmpty, pill.kind == .uploadedFile {
+                return false
+            }
+            return true
+        }
+        let nonImagePathPills = parsed.pathPills.filter { !$0.supportsInlinePreview }
+        let visibleBadges = UserTimelineRowContentView.filteredAttachmentBadges(
+            parsed.badges,
+            images: images,
+            inlineImagePathPills: inlineImagePathPills,
+            pathPills: parsed.pathPills
+        )
+        return UserTimelineBubbleContent(
+            displayText: display.text,
+            displayWasTruncated: display.wasTruncated,
+            visibleBadges: visibleBadges,
+            nonImagePathPills: nonImagePathPills,
+            inlineImagePathPills: inlineImagePathPills,
+            allPathPills: parsed.pathPills
+        )
+    }
+}
+
+/// Icon and prefix color for path pills on the user card. Every kind uses
+/// `userMessageText` so 11 pt prefixes meet 4.5:1 and 12 pt icons meet 3:1
+/// on default and Increase Contrast fills. Kinds differ by symbol and label.
+enum UserTimelinePathPillChrome {
+    static func glyphAndTextColor(
+        for kind: UserMessagePathPill.Kind,
+        palette: ThemePalette
+    ) -> Color {
+        switch kind {
+        case .uploadedFile, .reviewFile, .repoFile, .gitCommit:
+            return palette.userMessageText
+        }
+    }
+}
+
 final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowInteractionProvider {
     /// UIControl so the outer timeline can cancel the touch and take a vertical
     /// drag. A tap recognizer on the first-row commit chip ate pull-to-top.
@@ -315,44 +383,35 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         messageTextView.font = AppFont.messageBody
         applySpeakerChrome(palette: palette)
 
-        let parsed = UserMessageAttachmentPresentation.parse(rawText: configuration.text)
-        let displayText = Self.displayText(for: parsed.visibleText)
-        applyMarkdownBody(displayText.text, palette: palette)
-        let inlineImagePathPills = parsed.pathPills.filter { pill in
-            guard pill.supportsInlinePreview else { return false }
-            // Uploaded image attachments can arrive in two forms for the same
-            // user message: optimistic local image data plus the uploaded
-            // workspace path pill. When both are present, prefer the real image
-            // attachment and suppress the redundant inline file preview.
-            if !configuration.images.isEmpty, pill.kind == .uploadedFile {
-                return false
-            }
-            return true
-        }
-        let nonImagePathPills = parsed.pathPills.filter { !$0.supportsInlinePreview }
-        let visibleBadges = filteredAttachmentBadges(
-            parsed.badges,
-            images: configuration.images,
-            inlineImagePathPills: inlineImagePathPills,
-            pathPills: parsed.pathPills
+        let content = UserTimelineBubbleContent.resolve(
+            text: configuration.text,
+            images: configuration.images
         )
-
-        updateAttachmentBadges(visibleBadges, palette: palette)
-        updatePathPills(nonImagePathPills, palette: palette)
-        textRow.isHidden = displayText.text.isEmpty
-        bubbleContainer.isHidden = displayText.text.isEmpty && configuration.images.isEmpty && visibleBadges.isEmpty && parsed.pathPills.isEmpty
-        iconLabel.isHidden = displayText.text.isEmpty
+        applyMarkdownBody(content.displayText, palette: palette)
+        updateAttachmentBadges(content.visibleBadges, palette: palette)
+        updatePathPills(content.nonImagePathPills, palette: palette)
+        textRow.isHidden = !content.showsTextRow
+        bubbleContainer.isHidden = !content.showsBubble(hasImages: !configuration.images.isEmpty)
+        iconLabel.isHidden = !content.showsTextRow
 
         updateReviewCommentSelectionPolicy()
 
         let currentThemeID = ThemeRuntimeState.currentThemeID()
         let imagesChanged = previousConfiguration.images != configuration.images
-        let inlineImagePillsChanged = UserMessageAttachmentPresentation.parse(rawText: previousConfiguration.text).pathPills.filter(\.supportsInlinePreview) != inlineImagePathPills
+        let previousContent = UserTimelineBubbleContent.resolve(
+            text: previousConfiguration.text,
+            images: previousConfiguration.images
+        )
+        let inlineImagePillsChanged = previousContent.inlineImagePathPills != content.inlineImagePathPills
         let fetchChanged = previousConfiguration.fetchWorkspaceFileData == nil && configuration.fetchWorkspaceFileData != nil
         let paletteChanged = previousThemeID != currentThemeID
         let shouldRefreshImages = !hasAppliedConfiguration || imagesChanged || inlineImagePillsChanged || fetchChanged || paletteChanged
         if shouldRefreshImages {
-            updateImageStrip(images: configuration.images, inlineImagePathPills: inlineImagePathPills, palette: palette)
+            updateImageStrip(
+                images: configuration.images,
+                inlineImagePathPills: content.inlineImagePathPills,
+                palette: palette
+            )
         }
 
         previousThemeID = currentThemeID
@@ -366,8 +425,8 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
                 metadata: [
                     "durationMs": String(durationMs),
                     "textChars": String(configuration.text.count),
-                    "displayChars": String(displayText.text.count),
-                    "displayTruncated": displayText.wasTruncated ? "true" : "false",
+                    "displayChars": String(content.displayText.count),
+                    "displayTruncated": content.displayWasTruncated ? "true" : "false",
                     "imageCount": String(configuration.images.count),
                     "imageBase64Chars": String(Self.totalBase64CharacterCount(for: configuration.images)),
                     "imagesChanged": imagesChanged ? "true" : "false",
@@ -402,7 +461,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         )
     }
 
-    private static func displayText(for rawText: String) -> (text: String, wasTruncated: Bool) {
+    fileprivate static func displayText(for rawText: String) -> (text: String, wasTruncated: Bool) {
         let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return ("", false)
@@ -577,7 +636,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         }
     }
 
-    private func filteredAttachmentBadges(
+    fileprivate static func filteredAttachmentBadges(
         _ badges: [UserMessageAttachmentBadge],
         images: [ImageAttachment],
         inlineImagePathPills: [UserMessagePathPill],
@@ -625,24 +684,19 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         guard !pathPills.isEmpty else { return }
 
         for pill in pathPills {
-            let tint: UIColor = switch pill.kind {
-            case .uploadedFile:
-                UIColor(palette.userMessageText)
-            case .reviewFile:
-                UIColor(palette.cyan)
-            case .repoFile:
-                UIColor(palette.purple)
-            case .gitCommit:
-                UIColor(palette.orange)
-            }
-
+            // No 10% hue wash: Dark Increase Contrast fill is already ~4.7:1
+            // with userMessageText; a 10% overlay drops below 4.5:1. Pills
+            // differ by symbol and prefix, not color.
+            let chrome = UIColor(
+                UserTimelinePathPillChrome.glyphAndTextColor(for: pill.kind, palette: palette)
+            )
             let pillView = makeCapsuleView(
                 prefix: pill.prefix,
                 text: pill.label,
                 symbolName: pill.symbolName,
-                tint: tint,
-                background: tint.withAlphaComponent(0.10),
-                textColor: UIColor(palette.userMessageText),
+                tint: chrome,
+                background: .clear,
+                textColor: chrome,
                 font: AppFont.monoSmall,
                 monospaced: true,
                 tappable: true

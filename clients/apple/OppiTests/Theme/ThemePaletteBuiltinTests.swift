@@ -209,6 +209,35 @@ struct ThemePaletteBuiltinTests {
             )
         }
     }
+
+    @Test func builtInUserCardPillGlyphsAndTextMeetContrastOnBothFills() {
+        for themeID in ThemeID.builtins {
+            let palette = themeID.palette
+            var fills: [(name: String, fill: Color)] = [("default", palette.userMessageBg)]
+            if let icFill = TimelineSpeakerChrome.increasedContrastFill(for: themeID) {
+                fills.append(("IC", Color(icFill)))
+            } else {
+                Issue.record("missing Increase Contrast fill for \(themeID.rawValue)")
+            }
+            for kind in UserMessagePathPill.Kind.allCases {
+                let chrome = UserTimelinePathPillChrome.glyphAndTextColor(
+                    for: kind,
+                    palette: palette
+                )
+                for fill in fills {
+                    let ratio = wcagContrast(chrome, fill.fill)
+                    #expect(
+                        ratio + 1e-6 >= 4.5,
+                        "\(themeID.rawValue) \(kind.rawValue) prefix/text on \(fill.name) \(ratio)"
+                    )
+                    #expect(
+                        ratio + 1e-6 >= 3.0,
+                        "\(themeID.rawValue) \(kind.rawValue) glyph on \(fill.name) \(ratio)"
+                    )
+                }
+            }
+        }
+    }
 }
 
 private func opaqueFill(_ color: Color) -> Color? {

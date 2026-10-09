@@ -82,7 +82,30 @@ struct ChatSpeakerContrastPreview: View {
             ),
             .agentEnd(sessionId: "speaker-contrast"),
         ])
-        _ = reducer.appendUserMessage("Can you make that clearer?")
+        _ = reducer.appendUserMessage(
+            UserMessageAttachmentPresentation.makeDisplayText(
+                text: "Can you make that clearer?",
+                pendingAttachments: [],
+                pendingRepoPointers: [
+                    PendingFileReference(
+                        path: "docs/notes.md",
+                        isDirectory: false,
+                        kind: .reviewFile
+                    ),
+                    PendingFileReference(
+                        path: "Sources/App.swift",
+                        isDirectory: false,
+                        kind: .workspaceFile
+                    ),
+                    PendingFileReference(
+                        path: "9b82f81",
+                        isDirectory: false,
+                        kind: .gitCommit,
+                        commitMessage: "Clarify the reply"
+                    )
+                ]
+            )
+        )
     }
 }
 #endif
