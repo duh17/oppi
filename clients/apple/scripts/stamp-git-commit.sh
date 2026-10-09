@@ -49,8 +49,9 @@ commit=""
 if ! commit="$(git_in_repo rev-parse --short=12 HEAD 2>&1)"; then
   fail_stamp "git rev-parse HEAD failed (${commit})"
 fi
-if ! [[ "$commit" =~ ^[0-9a-f]{12}$ ]]; then
-  fail_stamp "expected a 12-character commit, got '${commit}'"
+# --short=12 is a minimum; git lengthens an ambiguous abbreviation.
+if ! [[ "$commit" =~ ^[0-9a-f]{12,40}$ ]]; then
+  fail_stamp "expected a 12-40 character commit, got '${commit}'"
 fi
 
 status_output=""
