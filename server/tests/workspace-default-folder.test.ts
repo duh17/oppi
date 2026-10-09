@@ -22,7 +22,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { hostMountValidationError } from "../src/host.js";
+import { hostFolderClaimsHome } from "../src/host.js";
 import { ensureOwnerOnlyRealDirectory } from "../src/owner-directory.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import type { RouteContext } from "../src/routes/types.js";
@@ -43,6 +43,8 @@ let storage: Storage;
 
 const workspacesDir = () => join(dataDir, "workspaces");
 const recordPath = (id: string) => join(workspacesDir(), `${id}.json`);
+/** What the server process builds at startup: it alone migrates older records. */
+const serve = () => new Storage(dataDir, { migrateWorkspaceFolders: true });
 const readRecord = (id: string) =>
   JSON.parse(readFileSync(recordPath(id), "utf-8")) as Record<string, unknown>;
 
@@ -147,7 +149,7 @@ describe("host workspace created with an empty folder", () => {
   });
 });
 
-describe("loading records from before every workspace had a folder", () => {
+describe("startup migration of records from before every workspace had a folder", () => {
   function legacyHostWorkspace(name: string, createdAt?: number): string {
     const ws = storage.createWorkspace({ name });
     rmSync(ws.hostMount, { recursive: true, force: true });
@@ -164,7 +166,7 @@ describe("loading records from before every workspace had a folder", () => {
     const id = legacyHostWorkspace("Legacy Host");
     const before = readRecord(id);
 
-    const loaded = storage.getWorkspace(id);
+    const loaded = serve().getWorkspace(id);
 
     const folder = join(workspacesDir(), "legacy-host");
     expect(loaded).toMatchObject({ hostMount: folder, runtime: "host" });
@@ -172,19 +174,34 @@ describe("loading records from before every workspace had a folder", () => {
     expect(readRecord(id)).toEqual({ ...before, hostMount: folder, runtime: "host" });
 
     const written = readFileSync(recordPath(id), "utf-8");
-    expect(storage.getWorkspace(id)?.hostMount).toBe(folder);
-    expect(storage.listWorkspaces().find((ws) => ws.id === id)?.hostMount).toBe(folder);
+    const again = serve();
+    expect(again.getWorkspace(id)?.hostMount).toBe(folder);
+    expect(again.listWorkspaces().find((ws) => ws.id === id)?.hostMount).toBe(folder);
     expect(readFileSync(recordPath(id), "utf-8")).toBe(written);
   });
 
-  it("migrates at startup, oldest first, so same-named workspaces split the same way", () => {
+  it("is the only thing that migrates: get and list throw and write nothing", () => {
+    const id = legacyHostWorkspace("Reader Only");
+    const before = readFileSync(recordPath(id), "utf-8");
+    const reader = new WorkspaceStore(new ConfigStore(dataDir));
+
+    expect(() => reader.getWorkspace(id)).toThrow("start the Oppi server once to migrate it");
+    expect(() => reader.listWorkspaces()).toThrow("start the Oppi server once to migrate it");
+    expect(() => new Storage(dataDir)).toThrow("start the Oppi server once to migrate it");
+
+    expect(readFileSync(recordPath(id), "utf-8")).toBe(before);
+    expect(existsSync(join(workspacesDir(), "reader-only"))).toBe(false);
+    expect(readdirSync(workspacesDir()).filter((file) => file.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("goes oldest first, so same-named workspaces split the same way", () => {
     const newer = legacyHostWorkspace("Twin", 2_000);
     const older = legacyHostWorkspace("Twin", 1_000);
 
-    const reopened = new Storage(dataDir);
+    const served = serve();
 
-    expect(reopened.getWorkspace(older)?.hostMount).toBe(join(workspacesDir(), "twin"));
-    expect(reopened.getWorkspace(newer)?.hostMount).toBe(join(workspacesDir(), `twin-${newer}`));
+    expect(served.getWorkspace(older)?.hostMount).toBe(join(workspacesDir(), "twin"));
+    expect(served.getWorkspace(newer)?.hostMount).toBe(join(workspacesDir(), `twin-${newer}`));
     expect(readRecord(older).hostMount).toBe(join(workspacesDir(), "twin"));
   });
 
@@ -194,7 +211,7 @@ describe("loading records from before every workspace had a folder", () => {
       const ws = storage.createWorkspace({ name: "Has Folder", hostMount: chosen });
       writeLegacyRecord(ws.id, (raw) => delete raw.runtime);
 
-      expect(storage.getWorkspace(ws.id)).toMatchObject({ hostMount: chosen, runtime: "host" });
+      expect(serve().getWorkspace(ws.id)).toMatchObject({ hostMount: chosen, runtime: "host" });
       expect(readRecord(ws.id)).toMatchObject({ hostMount: chosen, runtime: "host" });
       expect(existsSync(join(workspacesDir(), "has-folder"))).toBe(false);
     } finally {
@@ -210,29 +227,70 @@ describe("loading records from before every workspace had a folder", () => {
   ])("keeps the original record when the write fails at %s", (faultPhase) => {
     const id = legacyHostWorkspace("Atomic Host");
     const original = readFileSync(recordPath(id), "utf-8");
-    const configStore = new ConfigStore(dataDir);
+    const faulty = new WorkspaceStore(new ConfigStore(dataDir), undefined, {
+      faultInjector(phase) {
+        if (phase === faultPhase) throw new Error(`injected ${phase}`);
+      },
+    });
 
-    expect(
-      () =>
-        new WorkspaceStore(configStore, undefined, {
-          faultInjector(phase) {
-            if (phase === faultPhase) throw new Error(`injected ${phase}`);
-          },
-        }),
-    ).toThrow(`injected ${faultPhase}`);
+    expect(() => faulty.migrateMissingHostMounts()).toThrow(`injected ${faultPhase}`);
     expect(readFileSync(recordPath(id), "utf-8")).toBe(original);
     // The folder made for the failed write is not left behind to look taken.
     expect(existsSync(join(workspacesDir(), "atomic-host"))).toBe(false);
     expect(readdirSync(workspacesDir()).filter((file) => file.endsWith(".tmp"))).toEqual([]);
 
-    const recovered = new WorkspaceStore(configStore);
-    expect(recovered.getWorkspace(id)?.hostMount).toBe(join(workspacesDir(), "atomic-host"));
+    expect(serve().getWorkspace(id)?.hostMount).toBe(join(workspacesDir(), "atomic-host"));
     expect(readRecord(id)).toMatchObject({
       hostMount: join(workspacesDir(), "atomic-host"),
       runtime: "host",
       futureField: { nested: true },
     });
   });
+
+  it("assigns no younger sibling after the oldest record fails, then splits correctly on retry", () => {
+    const older = legacyHostWorkspace("Twin", 1_000);
+    const younger = legacyHostWorkspace("Twin", 2_000);
+    const olderBytes = readFileSync(recordPath(older), "utf-8");
+    const youngerBytes = readFileSync(recordPath(younger), "utf-8");
+
+    const faulty = new WorkspaceStore(new ConfigStore(dataDir), undefined, {
+      faultInjector(phase) {
+        if (phase === "before_rename") throw new Error("disk full");
+      },
+    });
+    expect(() => faulty.migrateMissingHostMounts()).toThrow("disk full");
+    expect(readFileSync(recordPath(older), "utf-8")).toBe(olderBytes);
+    expect(readFileSync(recordPath(younger), "utf-8")).toBe(youngerBytes);
+    expect(existsSync(join(workspacesDir(), "twin"))).toBe(false);
+
+    const recovered = serve();
+    expect(recovered.getWorkspace(older)?.hostMount).toBe(join(workspacesDir(), "twin"));
+    expect(recovered.getWorkspace(younger)?.hostMount).toBe(
+      join(workspacesDir(), `twin-${younger}`),
+    );
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "names the host-folder migration when its original cannot be restored",
+    () => {
+      legacyHostWorkspace("Unrestorable", 1_000);
+      const faulty = new WorkspaceStore(new ConfigStore(dataDir), undefined, {
+        faultInjector(phase) {
+          if (phase === "after_rename") {
+            chmodSync(workspacesDir(), 0o500);
+            throw new Error("injected after_rename");
+          }
+        },
+      });
+      try {
+        expect(() => faulty.migrateMissingHostMounts()).toThrow(
+          "Workspace host-folder migration failed and its original could not be restored",
+        );
+      } finally {
+        chmodSync(workspacesDir(), 0o700);
+      }
+    },
+  );
 });
 
 describe("what an empty-created host workspace now takes part in", () => {
@@ -293,7 +351,15 @@ describe("what an empty-created host workspace now takes part in", () => {
   });
 });
 
-describe("a folder is only ever one Oppi made for this workspace", () => {
+describe("a folder is only ever one Oppi created for this workspace", () => {
+  /** A store whose default-folder creation is raced by `plant` (see `beforeFolderCreate`). */
+  function racedStore(plant: (path: string, attempt: number) => void): WorkspaceStore {
+    let attempt = 0;
+    return new WorkspaceStore(new ConfigStore(dataDir), undefined, {
+      beforeFolderCreate: (path) => plant(path, attempt++),
+    });
+  }
+
   it("never adopts a symlink planted at the slug path", () => {
     const elsewhere = mkdtempSync(join(tmpdir(), "oppi-elsewhere-"));
     try {
@@ -317,12 +383,63 @@ describe("a folder is only ever one Oppi made for this workspace", () => {
       symlinkSync(elsewhere, ws.hostMount);
       writeLegacyRecord(ws.id, (raw) => delete raw.hostMount);
 
-      const loaded = new Storage(dataDir).getWorkspace(ws.id);
+      const loaded = serve().getWorkspace(ws.id);
 
       expect(loaded?.hostMount).toBe(join(workspacesDir(), `legacy-planted-${ws.id}`));
       expect(readdirSync(elsewhere)).toEqual([]);
     } finally {
       rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("moves to the suffixed folder when the chosen one appears between the check and the mkdir", () => {
+    const store = racedStore((path, attempt) => {
+      if (attempt === 0) mkdirSync(path); // a real directory someone else just made
+    });
+
+    const ws = store.createWorkspace({ name: "Raced" });
+
+    expect(ws.hostMount).toBe(join(workspacesDir(), `raced-${ws.id}`));
+    expect(readdirSync(join(workspacesDir(), "raced"))).toEqual([]);
+    expect(statSync(ws.hostMount).isDirectory()).toBe(true);
+  });
+
+  it("does not follow a symlink that wins the race, and fails when both folders are raced", () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), "oppi-elsewhere-"));
+    try {
+      const store = racedStore((path) => symlinkSync(elsewhere, path));
+
+      expect(() => store.createWorkspace({ name: "Doubly Raced" })).toThrow(
+        "No free default folder",
+      );
+      expect(readdirSync(elsewhere)).toEqual([]);
+      expect(store.listWorkspaces()).toEqual([]);
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("applies the same exclusive mkdir to an update that clears the folder and to migration", () => {
+    const chosen = mkdtempSync(join(tmpdir(), "oppi-chosen-"));
+    try {
+      const ws = storage.createWorkspace({ name: "Cleared", hostMount: chosen });
+      const cleared = racedStore((path, attempt) => {
+        if (attempt === 0) mkdirSync(path);
+      }).updateWorkspace(ws.id, { hostMount: null });
+      expect(cleared?.hostMount).toBe(join(workspacesDir(), `cleared-${ws.id}`));
+
+      const legacy = storage.createWorkspace({ name: "Legacy Race" });
+      rmSync(legacy.hostMount, { recursive: true });
+      writeLegacyRecord(legacy.id, (raw) => delete raw.hostMount);
+      const migrating = racedStore((path, attempt) => {
+        if (attempt === 0) mkdirSync(path);
+      });
+      migrating.migrateMissingHostMounts();
+      expect(migrating.getWorkspace(legacy.id)?.hostMount).toBe(
+        join(workspacesDir(), `legacy-race-${legacy.id}`),
+      );
+    } finally {
+      rmSync(chosen, { recursive: true, force: true });
     }
   });
 
@@ -349,10 +466,10 @@ describe("a folder is only ever one Oppi made for this workspace", () => {
 
   it("fails instead of sharing a directory when the plain and the suffixed folder are taken", () => {
     const workspace = { id: "abc12345", name: "Busy" };
-    expect(() => defaultHostWorkspaceFolder("/data/workspaces", workspace, () => true)).toThrow(
+    expect(() => defaultHostWorkspaceFolder("/data/workspaces", workspace, () => false)).toThrow(
       "No free default folder",
     );
-    const plainTaken = (path: string) => path === "/data/workspaces/busy";
+    const plainTaken = (path: string) => path !== "/data/workspaces/busy";
     expect(defaultHostWorkspaceFolder("/data/workspaces", workspace, plainTaken)).toBe(
       "/data/workspaces/busy-abc12345",
     );
@@ -381,113 +498,6 @@ describe("a folder is only ever one Oppi made for this workspace", () => {
   });
 });
 
-describe("migration stops at the first failure and never shares a lock holder's work", () => {
-  function legacyHost(name: string, createdAt: number): string {
-    const ws = storage.createWorkspace({ name });
-    rmSync(ws.hostMount, { recursive: true, force: true });
-    writeLegacyRecord(ws.id, (raw) => {
-      delete raw.hostMount;
-      delete raw.runtime;
-      raw.createdAt = createdAt;
-    });
-    return ws.id;
-  }
-
-  it("assigns no younger sibling after the oldest record fails, then splits correctly on retry", () => {
-    const older = legacyHost("Twin", 1_000);
-    const younger = legacyHost("Twin", 2_000);
-    const olderBytes = readFileSync(recordPath(older), "utf-8");
-    const youngerBytes = readFileSync(recordPath(younger), "utf-8");
-    const configStore = new ConfigStore(dataDir);
-
-    expect(
-      () =>
-        new WorkspaceStore(configStore, undefined, {
-          faultInjector(phase) {
-            if (phase === "before_rename") throw new Error("disk full");
-          },
-        }),
-    ).toThrow("disk full");
-    expect(readFileSync(recordPath(older), "utf-8")).toBe(olderBytes);
-    expect(readFileSync(recordPath(younger), "utf-8")).toBe(youngerBytes);
-    expect(existsSync(join(workspacesDir(), "twin"))).toBe(false);
-    expect(existsSync(join(workspacesDir(), ".host-folder-migration.lock"))).toBe(false);
-
-    const recovered = new WorkspaceStore(configStore);
-    expect(recovered.getWorkspace(older)?.hostMount).toBe(join(workspacesDir(), "twin"));
-    expect(recovered.getWorkspace(younger)?.hostMount).toBe(
-      join(workspacesDir(), `twin-${younger}`),
-    );
-  });
-
-  it("lets a failed migration surface from list and from the stale record, not from other records", () => {
-    const healthy = storage.createWorkspace({ name: "Healthy" });
-    const configStore = new ConfigStore(dataDir);
-    let failWrites = false;
-    const store = new WorkspaceStore(configStore, undefined, {
-      faultInjector(phase) {
-        if (failWrites && phase === "after_temp_write") throw new Error("disk full");
-      },
-    });
-    const stale = legacyHost("Arrives Later", 3_000);
-    failWrites = true;
-
-    expect(() => store.listWorkspaces()).toThrow("disk full");
-    expect(() => store.getWorkspace(stale)).toThrow("disk full");
-    expect(store.getWorkspace(healthy.id)?.hostMount).toBe(healthy.hostMount);
-
-    failWrites = false;
-    expect(store.listWorkspaces().map((ws) => ws.id)).toContain(stale);
-  });
-
-  it("waits for another process's migration lock, then fails clearly", () => {
-    legacyHost("Locked", 1_000);
-    const lock = join(workspacesDir(), ".host-folder-migration.lock");
-    mkdirSync(lock);
-
-    expect(
-      () => new WorkspaceStore(new ConfigStore(dataDir), undefined, { lockTimeoutMs: 80 }),
-    ).toThrow("locked by another process");
-    expect(existsSync(lock)).toBe(true);
-  });
-
-  it("takes over a lock a crashed process left behind", () => {
-    const id = legacyHost("Crashed Holder", 1_000);
-    const lock = join(workspacesDir(), ".host-folder-migration.lock");
-    mkdirSync(lock);
-    const longAgo = new Date(Date.now() - 10 * 60_000);
-    utimesSync(lock, longAgo, longAgo);
-
-    const store = new WorkspaceStore(new ConfigStore(dataDir));
-
-    expect(store.getWorkspace(id)?.hostMount).toBe(join(workspacesDir(), "crashed-holder"));
-    expect(existsSync(lock)).toBe(false);
-  });
-
-  it.skipIf(process.getuid?.() === 0)(
-    "names the host-folder migration when its original cannot be restored",
-    () => {
-      legacyHost("Unrestorable", 1_000);
-      const configStore = new ConfigStore(dataDir);
-      try {
-        expect(
-          () =>
-            new WorkspaceStore(configStore, undefined, {
-              faultInjector(phase) {
-                if (phase === "after_rename") {
-                  chmodSync(workspacesDir(), 0o500);
-                  throw new Error("injected after_rename");
-                }
-              },
-            }),
-        ).toThrow("Workspace host-folder migration failed and its original could not be restored");
-      } finally {
-        chmodSync(workspacesDir(), 0o700);
-      }
-    },
-  );
-});
-
 describe("files that are not workspace records", () => {
   const strays: Array<[string, string]> = [
     ["note.json", '{"note":1}'],
@@ -500,77 +510,113 @@ describe("files that are not workspace records", () => {
     for (const [file, text] of strays) writeFileSync(join(workspacesDir(), file), text);
     const real = storage.createWorkspace({ name: "Real" });
 
-    const reopened = new Storage(dataDir);
+    const served = serve();
 
     for (const [file, text] of strays) {
       expect(readFileSync(join(workspacesDir(), file), "utf-8")).toBe(text);
     }
-    expect(reopened.listWorkspaces().map((ws) => ws.id)).toEqual([real.id]);
-    expect(reopened.getWorkspace("note")).toBeUndefined();
-    expect(reopened.getWorkspace("wrong-name")).toBeUndefined();
-    expect(reopened.getWorkspace("someone-else")).toBeUndefined();
+    expect(served.listWorkspaces().map((ws) => ws.id)).toEqual([real.id]);
+    expect(served.getWorkspace("note")).toBeUndefined();
+    expect(served.getWorkspace("wrong-name")).toBeUndefined();
+    expect(served.getWorkspace("someone-else")).toBeUndefined();
   });
 });
 
-describe("a host workspace cannot be rooted at the home folder", () => {
-  it("refuses ~, ~/, $HOME and a symlink to it for a host workspace only", () => {
-    const home = mkdtempSync(join(tmpdir(), "oppi-home-"));
-    const previousHome = process.env.HOME;
-    try {
-      process.env.HOME = home;
-      const viaLink = join(dataDir, "home-link");
-      symlinkSync(home, viaLink);
-      for (const value of ["~", "~/", home, `${home}/`, viaLink]) {
-        expect(hostMountValidationError(value, "host")).toContain("cannot be your home folder");
-        expect(hostMountValidationError(value, "sandbox")).toBeUndefined();
-      }
-      mkdirSync(join(home, "project"));
-      expect(hostMountValidationError("~/project", "host")).toBeUndefined();
-    } finally {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
-      rmSync(home, { recursive: true, force: true });
-    }
+describe("a host workspace cannot be rooted at the home folder or above it", () => {
+  let home: string;
+  let previousHome: string | undefined;
+
+  beforeEach(() => {
+    home = join(mkdtempSync(join(tmpdir(), "oppi-home-parent-")), "home");
+    mkdirSync(join(home, "project"), { recursive: true });
+    previousHome = process.env.HOME;
+    process.env.HOME = home;
   });
 
-  it("answers 400 on create and update, and leaves a stored home folder alone", async () => {
-    const home = mkdtempSync(join(tmpdir(), "oppi-home-"));
-    const previousHome = process.env.HOME;
-    try {
-      process.env.HOME = home;
-      const dispatch = createWorkspaceRoutes(
-        { storage } as unknown as RouteContext,
-        createRouteHelpers(),
-      );
-      const send = async (method: "POST" | "PUT", path: string, body: unknown) => {
-        const res = makeResponse();
-        await dispatch({
-          method,
-          path,
-          url: new URL(`http://localhost${path}`),
-          req: makeRequest(body) as never,
-          res: res as never,
-        });
-        return res;
-      };
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    rmSync(join(home, ".."), { recursive: true, force: true });
+  });
 
-      const created = await send("POST", "/workspaces", { name: "Home", hostMount: "~" });
-      expect(created.statusCode).toBe(400);
-      expect(created.body).toContain("cannot be your home folder");
-      expect(storage.listWorkspaces()).toEqual([]);
-
-      const ws = storage.createWorkspace({ name: "Updatable" });
-      const updated = await send("PUT", `/workspaces/${ws.id}`, { hostMount: home });
-      expect(updated.statusCode).toBe(400);
-      expect(storage.getWorkspace(ws.id)?.hostMount).toBe(ws.hostMount);
-
-      // A record an older Oppi stored with the home folder still loads as it was.
-      writeLegacyRecord(ws.id, (raw) => (raw.hostMount = "~"));
-      expect(new Storage(dataDir).getWorkspace(ws.id)?.hostMount).toBe("~");
-    } finally {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
-      rmSync(home, { recursive: true, force: true });
+  it("claims home for home, its ancestors and a symlink to either, but not for folders beside or under it", () => {
+    const link = join(dataDir, "home-link");
+    symlinkSync(home, link);
+    const above = join(home, "..");
+    for (const value of ["~", "~/", home, `${home}/`, link, above, "/"]) {
+      expect(hostFolderClaimsHome(value), value).toBe(true);
     }
+    expect(hostFolderClaimsHome("~/project")).toBe(false);
+    expect(hostFolderClaimsHome(join(above, "elsewhere"))).toBe(false);
+    expect(hostFolderClaimsHome(dataDir)).toBe(false);
+  });
+
+  it("refuses them at create for a host workspace, and allows them for a sandbox", () => {
+    for (const hostMount of ["~", home, join(home, ".."), "/"]) {
+      expect(() => storage.createWorkspace({ name: "Home", hostMount })).toThrow(
+        "cannot be your home folder or a folder above it",
+      );
+    }
+    expect(storage.listWorkspaces()).toEqual([]);
+    expect(
+      storage.createWorkspace({ name: "Sandbox Home", hostMount: "~", runtime: "sandbox" })
+        .hostMount,
+    ).toBe("~");
+    expect(storage.createWorkspace({ name: "Project", hostMount: "~/project" }).hostMount).toBe(
+      "~/project",
+    );
+  });
+
+  it("judges the folder that will be saved when an update makes the workspace a host workspace", () => {
+    const ws = storage.createWorkspace({ name: "Switch", hostMount: "~", runtime: "sandbox" });
+
+    expect(() => storage.updateWorkspace(ws.id, { runtime: "host" })).toThrow(
+      "cannot be your home folder or a folder above it",
+    );
+    expect(storage.getWorkspace(ws.id)).toMatchObject({ runtime: "sandbox", hostMount: "~" });
+
+    expect(() => storage.updateWorkspace(ws.id, { runtime: "host", hostMount: "~/" })).toThrow(
+      "cannot be your home folder or a folder above it",
+    );
+    expect(
+      storage.updateWorkspace(ws.id, { runtime: "host", hostMount: "~/project" }),
+    ).toMatchObject({ runtime: "host", hostMount: "~/project" });
+  });
+
+  it("does not re-judge a stored host record: an unrelated edit still works", () => {
+    const ws = storage.createWorkspace({ name: "Legacy Home", hostMount: "~/project" });
+    writeLegacyRecord(ws.id, (raw) => (raw.hostMount = "~"));
+
+    const renamed = serve().updateWorkspace(ws.id, { name: "Still Legacy" });
+
+    expect(renamed).toMatchObject({ name: "Still Legacy", hostMount: "~", runtime: "host" });
+  });
+
+  it("answers 400 through the routes on create and on a runtime switch", async () => {
+    const dispatch = createWorkspaceRoutes(
+      { storage } as unknown as RouteContext,
+      createRouteHelpers(),
+    );
+    const send = async (method: "POST" | "PUT", path: string, body: unknown) => {
+      const res = makeResponse();
+      await dispatch({
+        method,
+        path,
+        url: new URL(`http://localhost${path}`),
+        req: makeRequest(body) as never,
+        res: res as never,
+      });
+      return res;
+    };
+
+    const created = await send("POST", "/workspaces", { name: "Home", hostMount: "~" });
+    expect(created.statusCode).toBe(400);
+    expect(created.body).toContain("cannot be your home folder or a folder above it");
+    expect(storage.listWorkspaces()).toEqual([]);
+
+    const ws = storage.createWorkspace({ name: "Updatable", hostMount: "~", runtime: "sandbox" });
+    const switched = await send("PUT", `/workspaces/${ws.id}`, { runtime: "host" });
+    expect(switched.statusCode).toBe(400);
+    expect(storage.getWorkspace(ws.id)?.runtime).toBe("sandbox");
   });
 });

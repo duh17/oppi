@@ -182,7 +182,8 @@ describe("Storage.getWorkspace", () => {
     const loaded = storage.getWorkspace(ws.id);
     expect(loaded).toBeDefined();
     expect(loaded!.runtime).toBe("host");
-    expect(JSON.parse(readFileSync(path, "utf-8")).runtime).toBe("host");
+    // Reads never rewrite a record; only the startup migration does.
+    expect(JSON.parse(readFileSync(path, "utf-8")).runtime).toBe("container");
   });
 
   it("ignores stored defaultModel keys and removes them on the next save", () => {

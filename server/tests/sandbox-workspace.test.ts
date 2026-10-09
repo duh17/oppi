@@ -264,19 +264,19 @@ describe("Sandbox empty-folder hostMount persistence", () => {
     delete raw.hostMount;
     writeFileSync(path, JSON.stringify(raw, null, 2));
 
-    const loaded = storage.getWorkspace(ws.id);
+    const loaded = new Storage(dataDir, { migrateWorkspaceFolders: true }).getWorkspace(ws.id);
     expect(loaded?.hostMount).toBe("~/sandbox/current-name");
     expect(loaded?.updatedAt).toBe(ws.updatedAt);
 
     const diskAfterFirst = readFileSync(path, "utf-8");
     expect(JSON.parse(diskAfterFirst)).toMatchObject({ hostMount: "~/sandbox/current-name" });
 
-    const again = storage.getWorkspace(ws.id);
+    const again = new Storage(dataDir, { migrateWorkspaceFolders: true }).getWorkspace(ws.id);
     expect(again?.hostMount).toBe("~/sandbox/current-name");
     expect(readFileSync(path, "utf-8")).toBe(diskAfterFirst);
   });
 
-  it("listWorkspaces migrates missing sandbox hostMount from the current name", () => {
+  it("startup migration fills a missing sandbox hostMount from the current name", () => {
     const ws = storage.createWorkspace({
       name: "Listed Sandbox",
       runtime: "host",
@@ -287,14 +287,16 @@ describe("Sandbox empty-folder hostMount persistence", () => {
     delete raw.hostMount;
     writeFileSync(path, JSON.stringify(raw, null, 2));
 
-    const listed = storage.listWorkspaces().find((candidate) => candidate.id === ws.id);
+    const listed = new Storage(dataDir, { migrateWorkspaceFolders: true })
+      .listWorkspaces()
+      .find((candidate) => candidate.id === ws.id);
     expect(listed?.hostMount).toBe("~/sandbox/listed-sandbox");
     expect((JSON.parse(readFileSync(path, "utf-8")) as { hostMount?: string }).hostMount).toBe(
       "~/sandbox/listed-sandbox",
     );
   });
 
-  it("keeps unknown raw fields when filling sandbox hostMount on load", () => {
+  it("keeps unknown raw fields when filling sandbox hostMount at startup", () => {
     const ws = storage.createWorkspace({
       name: "Raw Fields",
       runtime: "host",
@@ -307,7 +309,7 @@ describe("Sandbox empty-folder hostMount persistence", () => {
     delete raw.hostMount;
     writeFileSync(path, JSON.stringify(raw, null, 2));
 
-    const loaded = storage.getWorkspace(ws.id);
+    const loaded = new Storage(dataDir, { migrateWorkspaceFolders: true }).getWorkspace(ws.id);
     expect(loaded?.hostMount).toBe("~/sandbox/raw-fields");
     expect(loaded?.systemPromptMode).toBe("append");
     expect(JSON.parse(readFileSync(path, "utf-8"))).toEqual({
@@ -333,20 +335,20 @@ describe("Sandbox empty-folder hostMount persistence", () => {
 
       const configStore = new ConfigStore(dataDir);
 
-      expect(
-        () =>
-          new WorkspaceStore(configStore, undefined, {
-            faultInjector(phase: WorkspaceMigrationFaultPhase) {
-              if (phase === faultPhase) throw new Error(`injected ${phase}`);
-            },
-          }),
-      ).toThrow(`injected ${faultPhase}`);
+      const faulty = new WorkspaceStore(configStore, undefined, {
+        faultInjector(phase: WorkspaceMigrationFaultPhase) {
+          if (phase === faultPhase) throw new Error(`injected ${phase}`);
+        },
+      });
+
+      expect(() => faulty.migrateMissingHostMounts()).toThrow(`injected ${faultPhase}`);
       expect(readFileSync(path, "utf-8")).toBe(original);
       expect(
         readdirSync(configStore.getWorkspacesDir()).filter((name) => name.endsWith(".tmp")),
       ).toEqual([]);
 
       const recovered = new WorkspaceStore(configStore);
+      recovered.migrateMissingHostMounts();
       expect(recovered.getWorkspace(ws.id)?.hostMount).toBe("~/sandbox/atomic-fill");
       expect(JSON.parse(readFileSync(path, "utf-8"))).toEqual({
         ...raw,

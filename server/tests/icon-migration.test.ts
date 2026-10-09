@@ -92,7 +92,7 @@ describe("coordinated icon migration", () => {
       }),
     );
 
-    const storage = new Storage(dataDir);
+    const storage = new Storage(dataDir, { migrateWorkspaceFolders: true });
     expect(storage.getWorkspace("symbol")?.icon).toEqual({ kind: "symbol", name: "terminal" });
     expect(storage.getWorkspace("bad")?.icon).toEqual({ kind: "default" });
     expect(JSON.parse(readFileSync(join(workspaces, "symbol.json"), "utf8")).icon).toEqual({

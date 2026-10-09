@@ -138,26 +138,28 @@ export function getHostPathStatus(rawPath: string): HostPathStatus {
   }
 }
 
-function isHomeDirectory(resolvedPath: string): boolean {
-  const home = homedir();
-  if (resolvedPath === resolve(home)) return true;
+function realpathOrResolved(path: string): string {
   try {
-    return realpathSync(resolvedPath) === realpathSync(home);
+    return realpathSync(path);
   } catch {
-    return false;
+    return resolve(path);
   }
 }
 
 /**
- * Validates a folder the owner entered. Pass the workspace's `runtime` to also refuse the home
- * folder itself for a host workspace: longest-prefix cwd matching would let it claim every
- * terminal and imported session under home. Leave `runtime` out to validate only that the
- * folder exists (a stored record is never re-judged by the home rule).
+ * True when a workspace rooted at `hostMount` would contain the home directory: the home folder
+ * itself or any folder above it (`/Users`, `/`). Longest-prefix cwd matching would then let it
+ * claim every terminal and imported session under home. Compares real paths, so a symlink to
+ * home counts.
  */
-export function hostMountValidationError(
-  hostMount: unknown,
-  runtime?: "host" | "sandbox",
-): string | undefined {
+export function hostFolderClaimsHome(hostMount: string): boolean {
+  const folder = realpathOrResolved(resolveHostPath(hostMount));
+  const home = realpathOrResolved(homedir());
+  return home === folder || home.startsWith(folder === "/" ? "/" : `${folder}/`);
+}
+
+/** Validates that a folder the owner entered exists and is a directory. */
+export function hostMountValidationError(hostMount: unknown): string | undefined {
   if (hostMount === undefined || hostMount === null) {
     return undefined;
   }
@@ -169,10 +171,6 @@ export function hostMountValidationError(
   const trimmed = hostMount.trim();
   if (!trimmed) {
     return undefined;
-  }
-
-  if (runtime === "host" && isHomeDirectory(resolveHostPath(trimmed))) {
-    return `Host working directory cannot be your home folder (${resolveHostPath(trimmed)}): it would claim every session under it. Choose a project folder, or clear Host Working Directory to let Oppi create one.`;
   }
 
   const status = getHostPathStatus(trimmed);

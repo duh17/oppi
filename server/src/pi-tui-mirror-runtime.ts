@@ -74,6 +74,7 @@ import {
   createRuntimeSessionStateScaffold,
   type RuntimeSessionStateScaffold,
 } from "./session-runtime-state.js";
+import { hostFolderClaimsHome } from "./host.js";
 import type { Storage } from "./storage.js";
 import { resolveWorkspaceWorktreeForPath } from "./worktrees.js";
 import type {
@@ -420,7 +421,9 @@ function nearestGitRoot(startDir: string): string | undefined {
 
 function mirrorWorkspaceRootForCwd(cwd: string): string {
   const resolvedCwd = requireExistingDirectory(cwd);
-  return nearestGitRoot(resolvedCwd) ?? resolvedCwd;
+  const root = nearestGitRoot(resolvedCwd) ?? resolvedCwd;
+  // A dotfiles repository at home must not make every folder under home one workspace.
+  return root !== resolvedCwd && hostFolderClaimsHome(root) ? resolvedCwd : root;
 }
 
 interface MirrorWorkspaceSuggestion {
@@ -1623,6 +1626,14 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const workspace = match?.workspace;
     if (!workspace) {
       const suggestion = mirrorWorkspaceSuggestionForCwd(cwd);
+      if (hostFolderClaimsHome(suggestion.hostMount)) {
+        // No workspace can be rooted at home or above it, so none is suggested or created.
+        throw new BridgeRegistrationError(
+          `Terminal cwd is your home folder or above it; open the terminal in a project folder to mirror it: ${cwd}`,
+          "workspace_missing",
+          { cwd },
+        );
+      }
       if (hello.createWorkspace === true) {
         return this.createMirrorWorkspaceForSuggestion(suggestion, cwd);
       }

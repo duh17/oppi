@@ -11,7 +11,6 @@ import {
   renameSync,
   rmSync,
   rmdirSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -20,7 +19,7 @@ import { generateId } from "../id.js";
 import { DEFAULT_ICON_CHOICE, migrateIconChoice, validateIconChoice } from "../icon-choice.js";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
-import { resolveHostPath } from "../host.js";
+import { hostFolderClaimsHome, resolveHostPath } from "../host.js";
 import { ensureOwnerOnlyRealDirectory } from "../owner-directory.js";
 import type {
   CreateWorkspaceRequest,
@@ -40,12 +39,9 @@ export type WorkspaceMigrationFaultPhase =
 export interface WorkspaceStoreOptions {
   /** Deterministic fault seam for startup migration recovery tests. */
   faultInjector?: (phase: WorkspaceMigrationFaultPhase) => void;
-  /** How long startup or a load waits for another process's host-folder migration. Default 10s. */
-  lockTimeoutMs?: number;
+  /** Test seam: runs after a default folder was found free and before it is created. */
+  beforeFolderCreate?: (path: string) => void;
 }
-
-const HOST_FOLDER_LOCK_NAME = ".host-folder-migration.lock";
-const HOST_FOLDER_LOCK_STALE_MS = 60_000;
 
 function normalizeNameList(values: string[] | undefined): string[] | undefined {
   if (!values) {
@@ -133,9 +129,6 @@ export class WorkspaceStore {
     private readonly options: WorkspaceStoreOptions = {},
   ) {
     this.migrateStoredIconChoices();
-    // A record that cannot be given a folder stops startup: the owner fixes the cause and
-    // restarts, rather than the server running with a workspace that has no folder.
-    this.migrateMissingHostMounts();
   }
 
   private getWorkspacePath(workspaceId: string): string {
@@ -146,6 +139,7 @@ export class WorkspaceStore {
     const id = generateId(8);
     const now = Date.now();
     const runtime = req.runtime === "sandbox" ? "sandbox" : "host";
+    assertHostFolderDoesNotClaimHome(normalizeHostMount(req.hostMount), runtime);
     const folder = this.chooseHostMount(req.hostMount, { id, name: req.name, runtime });
 
     const workspace: Workspace = {
@@ -194,7 +188,9 @@ export class WorkspaceStore {
     const id = typeof raw.id === "string" ? raw.id : "unknown";
     const hostMount = normalizeHostMount(raw.hostMount);
     if (!hostMount) {
-      throw new Error(`Workspace ${id} has no folder`);
+      throw new Error(
+        `Workspace ${id} has no folder yet: start the Oppi server once to migrate it`,
+      );
     }
 
     return {
@@ -221,11 +217,12 @@ export class WorkspaceStore {
    * for host, created here). Never `~` itself: longest-prefix cwd matching would let such a
    * workspace claim every session under home.
    *
-   * A host default is only ever a folder nobody stores and nothing occupies, except the folder
-   * `current` already stores for this workspace. So a deleted workspace's leftover folder is never
-   * handed to the next same-named workspace, a planted symlink is never adopted, and two records
-   * never share a directory. `undo` removes a folder this call created if the write that stores
-   * it fails.
+   * A host default is only ever a folder this call created: the mkdir is exclusive, and a path
+   * that exists (a leftover, a planted symlink or directory, a race) is taken, never adopted.
+   * The one exception is the folder `current` already stores for this workspace, which is reused
+   * after an `lstat` that refuses a symlink. So a deleted workspace's leftover folder is never
+   * handed to the next same-named workspace and two records never share a directory. `undo`
+   * removes a folder this call created if the write that stores it fails.
    */
   private chooseHostMount(
     requested: unknown,
@@ -244,27 +241,35 @@ export class WorkspaceStore {
     mkdirSync(workspacesDir, { recursive: true, mode: 0o700 });
     const owned = this.ownedHostFolders(workspace.id);
     const own = current ? resolveHostPath(current) : undefined;
-    const hostMount = defaultHostWorkspaceFolder(
-      workspacesDir,
-      workspace,
-      (path) => owned.has(path) || (path !== own && pathEntryExists(path)),
-    );
-    const reused = pathEntryExists(hostMount);
-    ensureOwnerOnlyRealDirectory(
-      hostMount,
-      `Workspace folder is not a real directory: ${hostMount}`,
-    );
+    let created = false;
+    const hostMount = defaultHostWorkspaceFolder(workspacesDir, workspace, (path) => {
+      if (owned.has(path)) return false;
+      if (path === own && pathEntryExists(path)) {
+        ensureOwnerOnlyRealDirectory(path, `Workspace folder is not a real directory: ${path}`);
+        return true;
+      }
+      if (path !== own && pathEntryExists(path)) return false;
+      this.options.beforeFolderCreate?.(path);
+      try {
+        mkdirSync(path, { mode: 0o700 });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+        throw error;
+      }
+      created = true;
+      return true;
+    });
     return {
       hostMount,
-      undo: reused
-        ? undefined
-        : () => {
+      undo: created
+        ? () => {
             try {
               rmdirSync(hostMount);
             } catch {
               // Not empty or already gone: nothing of ours to remove.
             }
-          },
+          }
+        : undefined,
     };
   }
 
@@ -325,39 +330,32 @@ export class WorkspaceStore {
   }
 
   /**
-   * The one routine that gives older records a folder (and `runtime`, "host" when missing).
-   * Oldest record first (createdAt, then id), so same-named workspaces always split the same way.
-   * It runs under a cross-process lock, re-reads each record as it writes, writes only a record
-   * that still has no folder, and stops at the first failure: no sibling is assigned after a
-   * failed one, so the plain slug can never go to a younger workspace by accident.
-   *
-   * Startup, `getWorkspace` (of a record that needs it) and `listWorkspaces` all call this.
-   * Failure surfaces as a thrown error from the caller; `listWorkspaces` therefore fails as a
-   * whole rather than return a catalog that silently lacks a workspace.
+   * Gives older records a folder (and `runtime`, "host" when missing). Only the server process
+   * calls this, once at startup before it serves, so nothing else is writing these records.
+   * Oldest record first (createdAt, then id), so same-named workspaces always split the same way;
+   * each record is re-read as it is written; the first failure stops the routine, so no sibling
+   * is assigned after a failed one and the plain slug can never go to a younger workspace.
+   * `getWorkspace` and `listWorkspaces` never migrate: a record still lacking a folder makes
+   * them throw, so an out-of-server reader cannot silently drop or rewrite it.
    */
-  private migrateMissingHostMounts(): void {
-    if (!this.readWorkspaceRecords().some(({ raw }) => needsHostMountFill(raw))) {
-      return;
-    }
-    this.withHostFolderLock(() => {
-      const pending = this.readWorkspaceRecords()
-        .filter(({ raw }) => needsHostMountFill(raw))
-        .sort(
-          (a, b) =>
-            Number(a.raw.createdAt ?? 0) - Number(b.raw.createdAt ?? 0) ||
-            String(a.raw.id).localeCompare(String(b.raw.id)),
+  migrateMissingHostMounts(): void {
+    const pending = this.readWorkspaceRecords()
+      .filter(({ raw }) => needsHostMountFill(raw))
+      .sort(
+        (a, b) =>
+          Number(a.raw.createdAt ?? 0) - Number(b.raw.createdAt ?? 0) ||
+          String(a.raw.id).localeCompare(String(b.raw.id)),
+      );
+    for (const { path } of pending) {
+      try {
+        this.fillMissingFields(path);
+      } catch (error) {
+        throw new Error(
+          `Workspace host-folder migration failed for ${path}: ${safeErrorMessage(error)}`,
+          { cause: error },
         );
-      for (const { path } of pending) {
-        try {
-          this.fillMissingFields(path);
-        } catch (error) {
-          throw new Error(
-            `Workspace host-folder migration failed for ${path}: ${safeErrorMessage(error)}`,
-            { cause: error },
-          );
-        }
       }
-    });
+    }
   }
 
   private fillMissingFields(path: string): void {
@@ -393,64 +391,12 @@ export class WorkspaceStore {
     }
   }
 
-  /** Exclusive across processes: a `mkdir` lock beside the records, stale after a minute. */
-  private withHostFolderLock<T>(fn: () => T): T {
-    const dir = this.configStore.getWorkspacesDir();
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const lockPath = join(dir, HOST_FOLDER_LOCK_NAME);
-    const deadline = Date.now() + (this.options.lockTimeoutMs ?? 10_000);
-    for (;;) {
-      try {
-        mkdirSync(lockPath, { mode: 0o700 });
-        break;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        let heldForMs: number;
-        try {
-          heldForMs = Date.now() - statSync(lockPath).mtimeMs;
-        } catch (statError) {
-          if ((statError as NodeJS.ErrnoException).code === "ENOENT") continue; // Just released.
-          throw statError;
-        }
-        if (heldForMs > HOST_FOLDER_LOCK_STALE_MS) {
-          rmSync(lockPath, { recursive: true, force: true });
-          continue;
-        }
-        if (Date.now() >= deadline) {
-          throw new Error(
-            `Workspace host-folder migration is locked by another process: ${lockPath}`,
-            { cause: error },
-          );
-        }
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
-      }
-    }
-    try {
-      return fn();
-    } finally {
-      try {
-        rmSync(lockPath, { recursive: true, force: true });
-      } catch (error) {
-        // Never mask the migration's own outcome; an unreleased lock goes stale on its own.
-        log.error("workspace_store.host_folder_lock_release.failed", {
-          lockPath,
-          error: safeErrorMessage(error),
-        });
-      }
-    }
-  }
-
   getWorkspace(workspaceId: string): Workspace | undefined {
-    let raw = this.readWorkspaceRecord(workspaceId);
-    if (raw && needsHostMountFill(raw)) {
-      this.migrateMissingHostMounts();
-      raw = this.readWorkspaceRecord(workspaceId);
-    }
+    const raw = this.readWorkspaceRecord(workspaceId);
     return raw ? this.sanitizeWorkspace(raw) : undefined;
   }
 
   listWorkspaces(): Workspace[] {
-    this.migrateMissingHostMounts();
     const records = this.readWorkspaceRecords((path, reason, error) => {
       log.error("workspace_store.workspace_file_parse.failed", {
         workspaceFilePath: path,
@@ -468,6 +414,7 @@ export class WorkspaceStore {
     if (!workspace) {
       return undefined;
     }
+    const previousRuntime = workspace.runtime;
 
     if (updates.name !== undefined) workspace.name = updates.name;
     if (updates.description !== undefined)
@@ -495,6 +442,14 @@ export class WorkspaceStore {
     workspace.updatedAt = Date.now();
 
     try {
+      // Judge the folder that will be saved, when this update sets it or makes the workspace a
+      // host workspace. An unrelated edit of a record an older Oppi stored at home is not blocked.
+      if (
+        updates.hostMount !== undefined ||
+        (workspace.runtime === "host" && previousRuntime !== "host")
+      ) {
+        assertHostFolderDoesNotClaimHome(workspace.hostMount, workspace.runtime);
+      }
       return this.saveWorkspace(workspace);
     } catch (error) {
       undo?.();
@@ -552,6 +507,21 @@ export class WorkspaceStore {
 
 function isRuntimeMode(value: unknown): value is Workspace["runtime"] {
   return value === "host" || value === "sandbox";
+}
+
+/**
+ * A host workspace rooted at home, or above it, would claim every terminal and imported session
+ * under home through longest-prefix cwd matching. Sandbox folders are never matched that way.
+ */
+function assertHostFolderDoesNotClaimHome(
+  hostMount: string | undefined,
+  runtime: Workspace["runtime"],
+): void {
+  if (runtime === "host" && hostMount && hostFolderClaimsHome(hostMount)) {
+    throw new Error(
+      `Host working directory cannot be your home folder or a folder above it (${resolveHostPath(hostMount)}): it would claim every session under home. Choose a project folder, or clear Host Working Directory to let Oppi create one.`,
+    );
+  }
 }
 
 function needsHostMountFill(raw: Record<string, unknown>): boolean {

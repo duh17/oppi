@@ -1254,7 +1254,7 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
   switch (command) {
     case "serve":
     case "start":
-      await cmdServe(new Storage(dataDir), flags.host);
+      await cmdServe(new Storage(dataDir, { migrateWorkspaceFolders: true }), flags.host);
       break;
 
     case "pair": {

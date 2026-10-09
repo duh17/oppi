@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
 
 import { PiTuiMirrorRuntime } from "../src/pi-tui-mirror-runtime.js";
@@ -416,6 +416,74 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     });
     expect(runtime.getActiveSession(sessionId)?.workspaceId).toBe(created?.id);
     expect(runtime.getActiveSession(sessionId)?.workspaceName).toBe(created?.name);
+  });
+
+  describe("a terminal in the home folder or above it", () => {
+    let previousHome: string | undefined;
+    let parent: string;
+    let home: string;
+
+    beforeEach(async () => {
+      parent = await mkdtemp(join(tmpdir(), "oppi-mirror-home-"));
+      home = join(parent, "home");
+      await mkdir(join(home, "scratch"), { recursive: true });
+      previousHome = process.env.HOME;
+      process.env.HOME = home;
+    });
+
+    afterEach(() => {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+    });
+
+    it.each([
+      ["the home folder", (h: string) => h],
+      ["a folder above home", (h: string) => join(h, "..")],
+    ])(
+      "creates no workspace for %s, even when asked to, and suggests none",
+      async (_name, pick) => {
+        const cwd = pick(home);
+        const { runtime, workspaces } = makeRuntime({ includeDefaultWorkspace: false });
+        const ws = new FakeBridgeWebSocket();
+        runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
+
+        ws.receive({
+          type: "hello",
+          protocolVersion: 2,
+          bridgeId: "bridge-home",
+          cwd,
+          createWorkspace: true,
+          capabilities: ["input_preflight:v1"],
+          state: { piSessionId: "pi-home", sessionFile: join(cwd, "session.jsonl") },
+        });
+
+        await waitForBridgeResult(ws);
+        const rejection = ws.sent.at(-1) as Record<string, unknown>;
+        expect(rejection).toMatchObject({
+          type: "error",
+          code: "workspace_missing",
+          cwd,
+          error: expect.stringContaining("home folder or above it"),
+        });
+        expect(rejection).not.toHaveProperty("suggestedHostMount");
+        expect(workspaces.size).toBe(0);
+      },
+    );
+
+    it("roots a workspace at the folder, not at home, when home is itself a git repository", async () => {
+      await writeFile(join(home, ".git"), "gitdir: .git-test\n");
+      const cwd = join(home, "scratch");
+      const { runtime, workspaces } = makeRuntime({ includeDefaultWorkspace: false });
+
+      await connectBridge(runtime, {
+        cwd,
+        workspaceId: null,
+        createWorkspace: true,
+        sessionFile: join(cwd, "session.jsonl"),
+      });
+
+      expect(Array.from(workspaces.values())[0]?.hostMount).toBe(cwd);
+    });
   });
 
   it("uses the nearest git root for requested mirror workspaces", async () => {

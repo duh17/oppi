@@ -104,7 +104,12 @@ export class Storage {
   private readonly scheduleStore: AgentScheduleStore;
   private readonly workspaceStore: WorkspaceStore;
 
-  constructor(dataDir?: string) {
+  /**
+   * `migrateWorkspaceFolders` is for the one process that serves this data directory: it gives
+   * older workspace records their folder before anything reads them. Other openers (scripts,
+   * tests) never migrate; a record that still lacks a folder makes their reads throw.
+   */
+  constructor(dataDir?: string, options: { migrateWorkspaceFolders?: boolean } = {}) {
     this.configStore = new ConfigStore(dataDir ?? DEFAULT_DATA_DIR);
     this.authStore = new AuthStore(this.configStore);
     this.deviceAuthStore = new DeviceAuthStore(this.configStore);
@@ -123,6 +128,9 @@ export class Storage {
     this.workspaceStore = new WorkspaceStore(this.configStore, (assetId) =>
       this.iconAssetStore.has(assetId),
     );
+    if (options.migrateWorkspaceFolders) {
+      this.workspaceStore.migrateMissingHostMounts();
+    }
     this.migrateLegacyWorkspaceSessions();
     // Reconcile only after Agent current/version history, workspaces, and
     // immutable session launch snapshots are all available.
