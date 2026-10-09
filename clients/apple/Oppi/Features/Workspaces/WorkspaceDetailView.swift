@@ -1057,18 +1057,30 @@ struct WorkspaceDetailView: View {
         }
     }
 
+    /// Once per process. Split destroys this view when a chat replaces the
+    /// detail root, so a view-local flag cannot remember the launch hint.
+    @MainActor
+    private enum E2EWorkspaceLaunchHintGate {
+        static var didCreateSession = false
+    }
+
     /// Create a new session in this workspace.
     ///
     /// Sandbox VM errors (QEMU unavailable, VM start failure) return as
     /// standard API errors (500/503) and are caught and displayed in the
     /// error alert — no special handling needed.
     private func autoCreateE2ESessionIfRequested() async {
-        guard !hasAutoCreatedE2ESession,
+        // Split replaces the detail root with the chat, so this view's @State
+        // is gone when Back returns here. A view-local flag would create and
+        // open another session, and the chat would look like it never left.
+        guard !E2EWorkspaceLaunchHintGate.didCreateSession,
+              !hasAutoCreatedE2ESession,
               (ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_SESSION_ID"] ?? "").isEmpty,
               ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_CREATE_SESSION"] == "1",
               workspace.name == ProcessInfo.processInfo.environment["OPPI_E2E_AUTO_OPEN_WORKSPACE"]
         else { return }
 
+        E2EWorkspaceLaunchHintGate.didCreateSession = true
         hasAutoCreatedE2ESession = true
         await createSession()
     }
