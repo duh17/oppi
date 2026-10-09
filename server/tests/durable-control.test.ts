@@ -499,8 +499,8 @@ describe("oppi.control tools", () => {
       [
         code(`
           const updated = await agents.update({ id: "${seed.id}", instructions: "new", expectedVersion: ${seed.version} });
-          // After --: a minted id can start with "-", which the CLI reads as a flag and
-          // refuses before any request, so no confirm card is asked.
+          // After --: a positional that starts with "-" is a flag. Older rows can still
+          // have one; generateId no longer mints them.
           const stale = await oppi([
             "agent", "update", "--name", "Stale", "--expected-version", "1", "--", "${seed.id}",
           ]);
