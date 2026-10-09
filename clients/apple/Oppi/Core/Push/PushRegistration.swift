@@ -31,6 +31,8 @@ final class PushRegistration {
     /// Request notification permission and register for remote notifications.
     /// Call AFTER successful server connection to maximize grant rate.
     func requestAndRegister() async {
+        // Screenshot previews must not raise the system permission alert.
+        if ScreenshotPreviewConfig.isEnabled { return }
         let center = UNUserNotificationCenter.current()
 
         // Check current authorization status first

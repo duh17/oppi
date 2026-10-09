@@ -5,6 +5,8 @@ struct SSHTerminalView: View {
     let channel: SSHTerminalChannel
     let reconnect: () -> Void
     let editHost: () -> Void
+    /// Saved profile label (`user@host`). Reports never supply this.
+    var hostLabel: String = ""
     @Environment(\.themeID) private var themeID
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -31,8 +33,19 @@ struct SSHTerminalView: View {
     @State private var reconnectOnReturn = false
     /// Floats over the grid: a row in the stack would resize the remote terminal.
     @State private var copyNotice: String?
+    /// Seen times for this terminal's records. Not session ids, so this never
+    /// writes `SessionStore`.
+    @State private var programSeen = SessionSeenLedger()
+    /// The blocked card the user folded away. It stays down until a different
+    /// notice (see `SSHTerminalBlockedNotice` equality).
+    @State private var dismissedNotice: SSHTerminalBlockedNotice?
+    @State private var glyphFrame = SSHTerminalGlyphFrame()
+    /// Changes only when the card's layout does, never per animation frame.
+    @State private var cardFrame: CGRect = .zero
 
-    private var detectedMode: SSHTerminalInputMode? { detector.mode(herdr: herdr.snapshot) }
+    private var detectedMode: SSHTerminalInputMode? {
+        detector.mode(programStatus: channel.programStatus, herdr: herdr.snapshot)
+    }
     /// A shell gets direct typing until a probe finds an agent.
     private var inputMode: SSHTerminalInputMode { modeOverride ?? detectedMode ?? .terminal }
     /// Whose key bindings the strips offer: the foreground program, or the
@@ -106,12 +119,28 @@ struct SSHTerminalView: View {
                                rawKeyboardChanged: { rawKeyboard = $0 },
                                focusComposer: { composerFocusRequest += 1 },
                                useChatBar: showChatBar)
+                .clipped()
                 .overlay(alignment: .top) {
-                    // Only while hidden: a visible bar already has Hide Bar in the menu,
-                    // and a control on the first row would cover the prompt for no reason.
-                    if topBarHidden, channel.connected {
-                        SSHTerminalTopBarHandle(show: { setTopBarHidden(false) })
+                    // The grid's row count is its height. An in-flow banner would
+                    // shrink that height and resize the remote PTY, so the notice
+                    // floats. The handle stays above it when the bar is hidden.
+                    VStack(spacing: 8) {
+                        if topBarHidden, channel.connected {
+                            SSHTerminalTopBarHandle(show: { setTopBarHidden(false) })
+                        }
+                        if let notice = visibleNotice {
+                            SSHTerminalBlockedBanner(notice: notice, hostLabel: hostLabel, frameChanged: { cardFrame = $0 }) {
+                                dismissedNotice = notice
+                            }
+                            // A new notice is a new card: a drag in flight belongs
+                            // to the old one and can only dismiss that one.
+                            .id(notice)
+                            .transition(SSHTerminalBlockedBanner.transition(
+                                card: cardFrame, glyph: glyphFrame.rect, reduceMotion: reduceMotion
+                            ))
+                        }
                     }
+                    .animation(reduceMotion ? .easeOut(duration: 0.2) : .smooth, value: visibleNotice)
                 }
                 .overlay(alignment: .bottom) {
                     if let copyNotice {
@@ -148,6 +177,19 @@ struct SSHTerminalView: View {
         .navigationTitle(channel.title.isEmpty ? "SSH Terminal" : channel.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            if let rollup = programRollup, let headline = rollup.headline {
+                ToolbarItem(placement: .topBarTrailing) {
+                    SSHTerminalStatusGlyph(
+                        status: headline,
+                        style: .toolbar,
+                        root: channel.programStatus.root.map { .init(state: $0.state, revision: $0.revision) },
+                        summary: rollup.summaryText,
+                        hostLabel: hostLabel,
+                        rows: programStatusRows,
+                        frameBox: glyphFrame
+                    )
+                }
+            }
             if herdr.available {
                 ToolbarItem(placement: .topBarTrailing) {
                     // A badge overlay does not survive the rail's glyph rendering, so
@@ -201,6 +243,8 @@ struct SSHTerminalView: View {
             if inputMode == .chat { composerFocusRequest += 1 }
         }
         .onChange(of: channel.connected) { _, connected in if !connected { topBarHidden = false } }
+        .onAppear { markProgramRecordsSeen() }
+        .onChange(of: programSeenToken) { _, _ in markProgramRecordsSeen() }
         // One poller per connected generation; it ends with the connection.
         .task(id: channel.connected) {
             guard channel.connected else { return }
@@ -249,6 +293,51 @@ struct SSHTerminalView: View {
         .alert("Paste Not Sent", isPresented: Binding(get: { pasteFailure != nil }, set: { if !$0 { pasteFailure = nil } })) {
             Button("OK", role: .cancel) { pasteFailure = nil }
         } message: { Text(pasteFailure ?? "") }
+    }
+
+    /// On screen for the life of this view, so done and error read as Idle
+    /// (or Stopped once the channel has closed). Matches an open session chat.
+    private var programSeenAt: Date {
+        SSHTerminalProgramStatusPresentation.seenAt(id: "", ledger: programSeen, terminalVisible: true)
+    }
+
+    private var programIsStopped: Bool { !channel.connected && !channel.connecting }
+
+    private var programRollup: SessionStatusRollup? {
+        SSHTerminalProgramStatusPresentation.rollup(
+            store: channel.programStatus,
+            isStopped: programIsStopped,
+            seenAt: programSeenAt
+        )
+    }
+
+    /// The blocked card, unless the user dismissed this same notice.
+    private var visibleNotice: SSHTerminalBlockedNotice? {
+        let notice = SSHTerminalProgramStatusPresentation.blockedNotice(
+            store: channel.programStatus,
+            isStopped: programIsStopped,
+            seenAt: programSeenAt
+        )
+        return notice == dismissedNotice ? nil : notice
+    }
+
+    private var programSeenToken: UInt64 {
+        channel.programStatus.records.values.map(\.revision).max() ?? 0
+    }
+
+    private var programStatusRows: [SSHTerminalStatusRow] {
+        SSHTerminalProgramStatusPresentation.detailRows(
+            store: channel.programStatus,
+            isStopped: programIsStopped,
+            seenAt: programSeenAt
+        )
+    }
+
+    private func markProgramRecordsSeen() {
+        let now = Date()
+        for record in channel.programStatus.records.values {
+            programSeen.markSeen(record.id, at: max(now, record.since))
+        }
     }
 
     private var statusText: String {

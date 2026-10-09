@@ -53,6 +53,18 @@ struct ScreenshotPreviewView: View {
             SettingsSweepScreenshotPreview()
         case "ssh-terminal":
             SSHTerminalScreenshotPreview()
+        case "ssh-terminal-status-working":
+            SSHTerminalScreenshotPreview(status: .working)
+        case "ssh-terminal-status-blocked":
+            SSHTerminalScreenshotPreview(status: .blocked)
+        case "ssh-terminal-status-done":
+            SSHTerminalScreenshotPreview(status: .done)
+        case "ssh-terminal-status-tree":
+            SSHTerminalScreenshotPreview(status: .tree)
+        case "ssh-terminal-status-sequence":
+            SSHTerminalScreenshotPreview(status: .sequence)
+        case "ssh-terminal-status-detail":
+            SSHTerminalScreenshotPreview(status: .detail)
         case "durable-sessions-settings":
             DurableSessionsScreenshotPreview(surface: .settings)
         case "durable-sessions-sidebar":

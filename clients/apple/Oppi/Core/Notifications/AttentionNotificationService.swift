@@ -208,6 +208,7 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
     }
 
     private func ensureAuthorizationForNotification() async -> Bool {
+        if ScreenshotPreviewConfig.isEnabled { return false }
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
 

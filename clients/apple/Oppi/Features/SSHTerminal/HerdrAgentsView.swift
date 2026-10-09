@@ -60,7 +60,12 @@ private struct AgentRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            status
+            if let status = agent.status.sessionStatus {
+                SSHTerminalStatusGlyph(status: status, style: .row)
+            } else {
+                Image(systemName: "questionmark")
+                    .foregroundStyle(.themeComment)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(agent.displayName).foregroundStyle(.themeFg).lineLimit(1)
                 if let subtitle = agent.subtitle {
@@ -73,26 +78,6 @@ private struct AgentRow: View {
         }
         .padding(.leading, 12)
         .accessibilityElement(children: .combine)
-        .accessibilityValue(label)
-    }
-
-    private var label: String {
-        switch agent.status {
-        case .working: "Working"
-        case .blocked: "Needs you"
-        case .done: "Done"
-        case .idle: "Idle"
-        case .unknown: "Unknown state"
-        }
-    }
-
-    @ViewBuilder private var status: some View {
-        switch agent.status {
-        case .working: ProgressView().controlSize(.small)
-        case .blocked: Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.themeOrange)
-        case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.themeGreen)
-        case .idle: Image(systemName: "circle").foregroundStyle(.themeComment)
-        case .unknown: Image(systemName: "questionmark.circle").foregroundStyle(.themeComment)
-        }
+        .accessibilityValue(agent.status.sessionStatus?.label ?? "Unknown")
     }
 }

@@ -9,20 +9,38 @@ enum SSHTerminalDisplayText {
     static let titleLimit = 120
     static let messageLimit = 256
 
+    /// Combining marks kept after one base character. Two covers stacked
+    /// accents (Vietnamese) and keycaps; a longer run is a tower of marks
+    /// that grows one line of text tall enough to cover the screen.
+    static let marksPerBase = 2
+
     /// Line and paragraph separators (U+2028/U+2029) become one space so the
     /// result is a single line and neighboring words stay apart.
     static func sanitized(_ raw: String, limit: Int) -> String {
         var kept = String.UnicodeScalarView()
+        // UnicodeScalarView.count walks the scalars, so checking it each
+        // iteration is O(input × limit). A running count stays O(input).
+        var count = 0
+        var marks = 0
         for scalar in raw.unicodeScalars {
-            if kept.count >= limit { break }
+            if count >= limit { break }
             switch scalar.properties.generalCategory {
             case .lineSeparator, .paragraphSeparator:
                 kept.append(" ")
+                count += 1
+                marks = 0
             case .format:
                 continue
+            case .nonspacingMark, .enclosingMark:
+                if marks >= marksPerBase { continue }
+                kept.append(scalar)
+                count += 1
+                marks += 1
             default:
                 if CharacterSet.controlCharacters.contains(scalar) || CharacterSet.illegalCharacters.contains(scalar) { continue }
                 kept.append(scalar)
+                count += 1
+                marks = 0
             }
         }
         return String(kept)
@@ -66,6 +84,12 @@ final class SSHTerminalProgramStatusStore {
         let message: String
         /// Increases with every update across the store. The eviction order.
         let revision: UInt64
+        /// When this state and kind began. A repeat of the same state keeps it,
+        /// so a re-report is not a new unseen outcome.
+        let since: Date
+        /// The store revision when this state and kind began; a repeat keeps it.
+        /// Unlike `since`, two episodes never share it.
+        let episode: UInt64
     }
 
     private(set) var records = [String: Record]()
@@ -114,15 +138,27 @@ final class SSHTerminalProgramStatusStore {
                 records[oldest.id] = nil
             }
             revision &+= 1
+            let storedKind = report.state == GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED ? kind : GHOSTTY_PROGRAM_STATUS_KIND_NONE
+            let since: Date
+            let episode: UInt64
+            if let previous = records[report.id], previous.state == report.state, previous.kind == storedKind {
+                since = previous.since
+                episode = previous.episode
+            } else {
+                since = Date()
+                episode = revision
+            }
             records[report.id] = Record(
                 id: report.id,
                 state: report.state,
-                kind: report.state == GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED ? kind : GHOSTTY_PROGRAM_STATUS_KIND_NONE,
+                kind: storedKind,
                 progress: (0...100).contains(report.progress) ? report.progress : -1,
                 app: report.app,
                 title: SSHTerminalDisplayText.sanitized(report.title, limit: SSHTerminalDisplayText.titleLimit),
                 message: SSHTerminalDisplayText.sanitized(report.message, limit: SSHTerminalDisplayText.messageLimit),
-                revision: revision)
+                revision: revision,
+                since: since,
+                episode: episode)
         default:
             break // A state this build does not know is ignored, as the spec says.
         }

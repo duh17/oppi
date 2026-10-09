@@ -1,4 +1,5 @@
 import Foundation
+import GhosttyVt
 import Observation
 
 /// Which input the terminal offers. An agent TUI gets Oppi's chat bar (edit,
@@ -96,8 +97,27 @@ final class SSHTerminalAgentDetector {
     }
 
     /// Chat for an agent, or for a Herdr client whose focused pane runs one.
-    /// Nil until the first probe answers.
+    /// The OSC 7501 root record decides first; the probe covers programs that
+    /// do not report. Nil until something decides.
+    func mode(programStatus: SSHTerminalProgramStatusStore, herdr: HerdrSnapshot?) -> SSHTerminalInputMode? {
+        Self.mode(root: programStatus.root, app: programStatus.app(of: ""), foreground: foreground, herdr: herdr)
+    }
+
     func mode(herdr: HerdrSnapshot?) -> SSHTerminalInputMode? { Self.mode(for: foreground, herdr: herdr) }
+
+    /// Manual override, then the OSC 7501 root, then the `ps` probe, then Herdr.
+    /// Nil means nothing has decided yet; the terminal view treats that as direct typing.
+    static func mode(
+        override: SSHTerminalInputMode? = nil,
+        root: SSHTerminalProgramStatusStore.Record? = nil,
+        app: String = "",
+        foreground: SSHTerminalForeground?,
+        herdr: HerdrSnapshot?
+    ) -> SSHTerminalInputMode? {
+        if let override { return override }
+        if rootSelectsChat(root: root, app: app) { return .chat }
+        return mode(for: foreground, herdr: herdr)
+    }
 
     static func mode(for foreground: SSHTerminalForeground?, herdr: HerdrSnapshot?) -> SSHTerminalInputMode? {
         switch foreground {
@@ -106,5 +126,43 @@ final class SSHTerminalAgentDetector {
         case .agent: .chat
         case .herdr: herdr?.focusedAgent == nil ? .terminal : .chat
         }
+    }
+
+    /// Chat when the root record's app is a coding agent and its state is a
+    /// real program state. A shell app, a cleared root, or any other app
+    /// (terraform, brew) falls back: a permission prompt there is answered
+    /// in the terminal, and the probe still sees agents that do not report.
+    static func rootSelectsChat(root: SSHTerminalProgramStatusStore.Record?, app: String) -> Bool {
+        guard let root else { return false }
+        switch root.state {
+        case GHOSTTY_PROGRAM_STATUS_STATE_IDLE, GHOSTTY_PROGRAM_STATUS_STATE_WORKING,
+             GHOSTTY_PROGRAM_STATUS_STATE_DONE, GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED,
+             GHOSTTY_PROGRAM_STATUS_STATE_ERROR:
+            break
+        default:
+            return false
+        }
+        let names = [app, root.app].map(normalizedApp).filter { !$0.isEmpty }
+        guard names.contains(where: isAgentApp) else { return false }
+        return !names.contains(where: isShellApp)
+    }
+
+    static func normalizedApp(_ app: String) -> String {
+        var name = app.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if name.hasPrefix("-") { name.removeFirst() }
+        return name
+    }
+
+    static func isAgentApp(_ app: String) -> Bool {
+        let name = normalizedApp(app)
+        guard !name.isEmpty else { return false }
+        if SSHTerminalForeground.agentNames.contains(name) { return true }
+        let head = name.split(whereSeparator: { $0 == "-" || $0 == "_" || $0 == "." }).first.map(String.init) ?? name
+        return head != name && SSHTerminalForeground.agentNames.contains(head)
+    }
+
+    static func isShellApp(_ app: String) -> Bool {
+        let shells: Set<String> = ["sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "shell", "tmux", "screen"]
+        return shells.contains(normalizedApp(app))
     }
 }

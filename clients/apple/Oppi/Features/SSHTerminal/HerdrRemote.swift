@@ -11,6 +11,19 @@ struct HerdrSnapshot: Decodable, Equatable, Sendable {
         init(from decoder: any Decoder) throws {
             self = Self(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
         }
+
+        /// Shared session-status reading. Herdr reports no blocked kind, so
+        /// `blocked` is a question. An unknown Herdr state stays nil rather
+        /// than claiming Done or a blocked kind.
+        var sessionStatus: SessionStatusKind? {
+            switch self {
+            case .working: .working
+            case .blocked: .question
+            case .done: .done
+            case .idle: .idle
+            case .unknown: nil
+            }
+        }
     }
 
     struct Workspace: Decodable, Equatable, Identifiable, Sendable {

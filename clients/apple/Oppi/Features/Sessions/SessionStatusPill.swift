@@ -23,6 +23,21 @@ extension SessionStatusKind {
         case .question, .working, .error, .done, .idle, .stopped: "questionmark.circle.fill"
         }
     }
+
+    /// Toolbar and terminal glyph. No border: the bar already contains it.
+    /// Session rows keep `badgeSymbol` and `SessionStatusPill`.
+    var terminalSymbol: String {
+        switch self {
+        case .working: "progress.indicator"
+        case .needsApproval: "hand.raised.fill"
+        case .question: "questionmark.bubble.fill"
+        case .signIn: "lock.fill"
+        case .error: "exclamationmark.triangle.fill"
+        case .done: "checkmark"
+        case .idle: "circle.fill"
+        case .stopped: "stop.fill"
+        }
+    }
 }
 
 /// Unread-style dot on a row's leading icon while the session needs attention,

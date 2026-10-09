@@ -300,7 +300,7 @@ private struct SSHTerminalConnectionModifier: ViewModifier {
             } message: { Text("Only do this after independently verifying why the host key changed.") }
             .navigationDestination(isPresented: $session.showsTerminal) {
                 if let channel = session.channel {
-                    SSHTerminalView(channel: channel, reconnect: { session.reconnect(experimentEnabled: experimentEnabled) }, editHost: editHost)
+                    SSHTerminalView(channel: channel, reconnect: { session.reconnect(experimentEnabled: experimentEnabled) }, editHost: editHost, hostLabel: profile.endpointLabel)
                         .id(ObjectIdentifier(channel))
                 }
             }
