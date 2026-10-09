@@ -54,8 +54,6 @@ export function createSessionFileHandlers(
       case "wrong-workspace":
         helpers.error(res, 400, "Session does not belong to this workspace");
         return null;
-      case "not-control":
-        return null;
     }
   }
 

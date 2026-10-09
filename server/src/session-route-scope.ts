@@ -48,12 +48,26 @@ export function matchFocusedSessionStreamPath(path: string): FocusedSessionStrea
   return null;
 }
 
+type SessionMissing = { kind: "session-missing" };
+
+// Per-family results list only the failures that family can produce, so each
+// HTTP boundary maps every kind to a response and has no silent arm.
 export function admitSessionRoute(
   store: SessionRouteStore,
   route: Extract<SessionRouteScope, { scope: "workspace" }>,
 ):
   | { kind: "ok"; session: Session; workspace: Workspace }
-  | Exclude<SessionRouteAdmission, { kind: "ok" }>;
+  | { kind: "workspace-missing" }
+  | SessionMissing
+  | { kind: "wrong-workspace" };
+export function admitSessionRoute(
+  store: SessionRouteStore,
+  route: Extract<SessionRouteScope, { scope: "control" }>,
+): { kind: "ok"; session: Session } | SessionMissing | { kind: "not-control" };
+export function admitSessionRoute(
+  store: SessionRouteStore,
+  route: Extract<SessionRouteScope, { scope: "generic" }>,
+): { kind: "ok"; session: Session } | SessionMissing;
 export function admitSessionRoute(
   store: SessionRouteStore,
   route: SessionRouteScope,

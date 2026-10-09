@@ -43,8 +43,6 @@ export function createUploadRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
       case "wrong-workspace":
         helpers.error(res, 404, "Session not found");
         return false;
-      case "not-control":
-        return false;
     }
   }
 
@@ -58,8 +56,6 @@ export function createUploadRoutes(ctx: RouteContext, helpers: RouteHelpers): Ro
         return false;
       case "not-control":
         helpers.error(res, 400, "Session is not a control session");
-        return false;
-      default:
         return false;
     }
   }

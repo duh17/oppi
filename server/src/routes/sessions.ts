@@ -145,8 +145,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       case "wrong-workspace":
         helpers.error(res, 400, "Session does not belong to this workspace");
         return null;
-      case "not-control":
-        return null;
     }
   }
 
@@ -160,8 +158,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         return null;
       case "not-control":
         helpers.error(res, 400, "Session is not a control session");
-        return null;
-      default:
         return null;
     }
   }
