@@ -24,19 +24,22 @@ const MAX_HOST_FOLDER_SLUG = 64;
 
 /**
  * Absolute hostMount Oppi stores for a host workspace with an empty folder:
- * `<workspacesDir>/<slug>`. The slug alphabet has no `.`, so it can never collide with the
- * `<id>.json` records in the same directory. When another workspace already owns that folder
- * (`ownedFolders` holds resolved paths), the workspace id is appended, so the same inputs always
- * give the same folder.
+ * `<workspacesDir>/<slug>`, else `<slug>-<id>` when that is taken. `isTaken` is the caller's
+ * definition of taken (another workspace stores it, or anything already exists there). The slug
+ * alphabet has no `.`, so a folder can never collide with the `<id>.json` records beside it.
+ * Throws when both are taken: two workspaces never share a folder.
  */
 export function defaultHostWorkspaceFolder(
   workspacesDir: string,
   workspace: WorkspaceNameId,
-  ownedFolders: ReadonlySet<string>,
+  isTaken: (resolvedPath: string) => boolean,
 ): string {
   // A name is user text of any length; keep the folder name well under the 255-byte limit.
   const slug =
     workspaceSlug(workspace).slice(0, MAX_HOST_FOLDER_SLUG).replace(/-+$/, "") || workspace.id;
   const plain = resolve(workspacesDir, slug);
-  return ownedFolders.has(plain) ? resolve(workspacesDir, `${slug}-${workspace.id}`) : plain;
+  if (!isTaken(plain)) return plain;
+  const suffixed = resolve(workspacesDir, `${slug}-${workspace.id}`);
+  if (!isTaken(suffixed)) return suffixed;
+  throw new Error(`No free default folder for workspace ${workspace.id}: ${suffixed} is taken`);
 }

@@ -188,7 +188,10 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const hostMountError = hostMountValidationError(body.hostMount);
+    const hostMountError = hostMountValidationError(
+      body.hostMount,
+      body.runtime === "sandbox" ? "sandbox" : "host",
+    );
     if (hostMountError) {
       helpers.error(res, 400, hostMountError);
       return;
@@ -232,7 +235,10 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const hostMountError = hostMountValidationError(body.hostMount);
+    const hostMountError = hostMountValidationError(
+      body.hostMount,
+      (body.runtime ?? workspace.runtime) === "sandbox" ? "sandbox" : "host",
+    );
     if (hostMountError) {
       helpers.error(res, 400, hostMountError);
       return;

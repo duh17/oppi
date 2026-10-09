@@ -3,12 +3,15 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
   readdirSync,
   renameSync,
   rmSync,
+  rmdirSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -18,6 +21,7 @@ import { DEFAULT_ICON_CHOICE, migrateIconChoice, validateIconChoice } from "../i
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
 import { resolveHostPath } from "../host.js";
+import { ensureOwnerOnlyRealDirectory } from "../owner-directory.js";
 import type {
   CreateWorkspaceRequest,
   UpdateWorkspaceRequest,
@@ -36,7 +40,12 @@ export type WorkspaceMigrationFaultPhase =
 export interface WorkspaceStoreOptions {
   /** Deterministic fault seam for startup migration recovery tests. */
   faultInjector?: (phase: WorkspaceMigrationFaultPhase) => void;
+  /** How long startup or a load waits for another process's host-folder migration. Default 10s. */
+  lockTimeoutMs?: number;
 }
+
+const HOST_FOLDER_LOCK_NAME = ".host-folder-migration.lock";
+const HOST_FOLDER_LOCK_STALE_MS = 60_000;
 
 function normalizeNameList(values: string[] | undefined): string[] | undefined {
   if (!values) {
@@ -124,6 +133,8 @@ export class WorkspaceStore {
     private readonly options: WorkspaceStoreOptions = {},
   ) {
     this.migrateStoredIconChoices();
+    // A record that cannot be given a folder stops startup: the owner fixes the cause and
+    // restarts, rather than the server running with a workspace that has no folder.
     this.migrateMissingHostMounts();
   }
 
@@ -135,6 +146,7 @@ export class WorkspaceStore {
     const id = generateId(8);
     const now = Date.now();
     const runtime = req.runtime === "sandbox" ? "sandbox" : "host";
+    const folder = this.chooseHostMount(req.hostMount, { id, name: req.name, runtime });
 
     const workspace: Workspace = {
       id,
@@ -143,7 +155,7 @@ export class WorkspaceStore {
       icon: this.validateWorkspaceIcon(req.icon),
       systemPrompt: normalizeOptionalString(req.systemPrompt),
       systemPromptMode: normalizeSystemPromptMode(req.systemPromptMode),
-      hostMount: this.storedHostMount(req.hostMount, { id, name: req.name, runtime }),
+      hostMount: folder.hostMount,
       tools: normalizeTools(req.tools),
       gitStatusEnabled: req.gitStatusEnabled,
       runtime,
@@ -152,7 +164,12 @@ export class WorkspaceStore {
       updatedAt: now,
     };
 
-    return this.saveWorkspace(workspace);
+    try {
+      return this.saveWorkspace(workspace);
+    } catch (error) {
+      folder.undo?.();
+      throw error;
+    }
   }
 
   saveWorkspace(workspace: Workspace): Workspace {
@@ -172,16 +189,17 @@ export class WorkspaceStore {
     writeFileSync(path, JSON.stringify(workspace, null, 2), { mode: 0o600 });
   }
 
+  /** Normalizes a stored record. Every stored record has its folder and runtime by now. */
   private sanitizeWorkspace(raw: Workspace | Record<string, unknown>): Workspace {
     const id = typeof raw.id === "string" ? raw.id : "unknown";
-    const name = typeof raw.name === "string" ? raw.name : "";
-    const runtime = raw.runtime === "sandbox" ? "sandbox" : "host";
-    const hostMount =
-      normalizeHostMount(raw.hostMount) ?? this.defaultHostMount({ id, name, runtime });
+    const hostMount = normalizeHostMount(raw.hostMount);
+    if (!hostMount) {
+      throw new Error(`Workspace ${id} has no folder`);
+    }
 
     return {
       id,
-      name,
+      name: typeof raw.name === "string" ? raw.name : "",
       description: normalizeOptionalString(raw.description),
       icon: migrateIconChoice(raw.icon),
       systemPrompt: normalizeOptionalString(raw.systemPrompt),
@@ -190,7 +208,7 @@ export class WorkspaceStore {
       tools: normalizeTools(raw.tools as string[] | undefined),
       gitStatusEnabled:
         typeof raw.gitStatusEnabled === "boolean" ? raw.gitStatusEnabled : undefined,
-      runtime,
+      runtime: raw.runtime === "sandbox" ? "sandbox" : "host",
       sandboxConfig: normalizeSandboxConfig(raw.sandboxConfig),
       createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
       updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
@@ -198,23 +216,59 @@ export class WorkspaceStore {
   }
 
   /**
-   * The folder Oppi picks for a workspace whose folder is empty: `~/sandbox/<slug>` for a
-   * sandbox, `<dataDir>/workspaces/<slug>` for host. Pure; callers that store a host default
-   * also create it (`storedHostMount`, `persistFilledDefaults`). Never `~` itself: longest-prefix
-   * cwd matching would let such a workspace claim every session under home.
+   * The folder to store for a create or update: the owner's choice, else Oppi's default
+   * (`~/sandbox/<slug>` for a sandbox, which appears at session start; `<dataDir>/workspaces/<slug>`
+   * for host, created here). Never `~` itself: longest-prefix cwd matching would let such a
+   * workspace claim every session under home.
+   *
+   * A host default is only ever a folder nobody stores and nothing occupies, except the folder
+   * `current` already stores for this workspace. So a deleted workspace's leftover folder is never
+   * handed to the next same-named workspace, a planted symlink is never adopted, and two records
+   * never share a directory. `undo` removes a folder this call created if the write that stores
+   * it fails.
    */
-  private defaultHostMount(workspace: Pick<Workspace, "id" | "name" | "runtime">): string {
-    if (workspace.runtime === "sandbox") {
-      return defaultSandboxHostMount(workspace);
+  private chooseHostMount(
+    requested: unknown,
+    workspace: Pick<Workspace, "id" | "name" | "runtime">,
+    current?: string,
+  ): { hostMount: string; undo?: () => void } {
+    const chosen = normalizeHostMount(requested);
+    if (chosen) {
+      return { hostMount: chosen };
     }
-    return defaultHostWorkspaceFolder(
-      this.configStore.getWorkspacesDir(),
+    if (workspace.runtime === "sandbox") {
+      return { hostMount: defaultSandboxHostMount(workspace) };
+    }
+
+    const workspacesDir = this.configStore.getWorkspacesDir();
+    mkdirSync(workspacesDir, { recursive: true, mode: 0o700 });
+    const owned = this.ownedHostFolders(workspace.id);
+    const own = current ? resolveHostPath(current) : undefined;
+    const hostMount = defaultHostWorkspaceFolder(
+      workspacesDir,
       workspace,
-      this.ownedHostFolders(workspace.id),
+      (path) => owned.has(path) || (path !== own && pathEntryExists(path)),
     );
+    const reused = pathEntryExists(hostMount);
+    ensureOwnerOnlyRealDirectory(
+      hostMount,
+      `Workspace folder is not a real directory: ${hostMount}`,
+    );
+    return {
+      hostMount,
+      undo: reused
+        ? undefined
+        : () => {
+            try {
+              rmdirSync(hostMount);
+            } catch {
+              // Not empty or already gone: nothing of ours to remove.
+            }
+          },
+    };
   }
 
-  /** Resolved folders other workspaces already store. Records without one own nothing yet. */
+  /** Resolved folders other workspaces already store. */
   private ownedHostFolders(exceptWorkspaceId: string): Set<string> {
     const owned = new Set<string>();
     for (const { raw } of this.readWorkspaceRecords()) {
@@ -226,21 +280,14 @@ export class WorkspaceStore {
     return owned;
   }
 
-  /** The stored folder for a create or update: the owner's choice, else the default, created now. */
-  private storedHostMount(
-    requested: unknown,
-    workspace: Pick<Workspace, "id" | "name" | "runtime">,
-  ): string {
-    const chosen = normalizeHostMount(requested);
-    if (chosen) {
-      return chosen;
-    }
-    const hostMount = this.defaultHostMount(workspace);
-    ensureDefaultHostFolder(hostMount, workspace.runtime);
-    return hostMount;
-  }
-
-  private readWorkspaceRecords(): Array<{ path: string; raw: Record<string, unknown> }> {
+  /**
+   * Readable workspace records. A record is a JSON object whose non-empty string `id` matches
+   * its `<id>.json` filename (the name `getWorkspacePath` gives it); anything else is never read
+   * as a workspace and never written. Unreadable or malformed files are passed to `onSkipped`.
+   */
+  private readWorkspaceRecords(
+    onSkipped?: (path: string, reason: string, error?: unknown) => void,
+  ): Array<{ path: string; raw: Record<string, unknown> }> {
     const dir = this.configStore.getWorkspacesDir();
     if (!existsSync(dir)) {
       return [];
@@ -251,118 +298,169 @@ export class WorkspaceStore {
         continue;
       }
       const path = join(dir, file);
+      let parsed: unknown;
       try {
-        const raw: unknown = JSON.parse(readFileSync(path, "utf-8"));
-        if (isWorkspaceRecord(raw)) {
-          records.push({ path, raw });
-        }
-      } catch {
-        // An unreadable record owns nothing; the list path logs it.
+        parsed = JSON.parse(readFileSync(path, "utf-8"));
+      } catch (error) {
+        onSkipped?.(path, "parse_failed", error);
+        continue;
       }
+      if (!isStoredWorkspaceRecord(parsed, file)) {
+        onSkipped?.(path, "invalid_workspace_shape");
+        continue;
+      }
+      records.push({ path, raw: parsed });
     }
     return records;
   }
 
-  /**
-   * One-time upgrade of older records: a missing `hostMount` gets the default folder and a
-   * missing `runtime` becomes "host", written atomically with every other raw field preserved.
-   * Oldest workspace first, so two same-named legacy workspaces always split the same way.
-   */
-  private migrateMissingHostMounts(): void {
-    const stale = this.readWorkspaceRecords()
-      .filter(({ raw }) => !normalizeHostMount(raw.hostMount) || !isRuntimeMode(raw.runtime))
-      .sort(
-        (a, b) =>
-          Number(a.raw.createdAt ?? 0) - Number(b.raw.createdAt ?? 0) ||
-          String(a.raw.id).localeCompare(String(b.raw.id)),
-      );
-    for (const { path, raw } of stale) {
-      try {
-        this.persistFilledDefaults(path, raw, this.sanitizeWorkspace(raw));
-      } catch (err: unknown) {
-        log.error("workspace_store.host_mount_migration.failed", {
-          workspaceFilePath: path,
-          error: safeErrorMessage(err),
-        });
-      }
-    }
-  }
-
-  /** Writes the defaults `sanitizeWorkspace` filled in back to a record that lacked them. */
-  private persistFilledDefaults(
-    path: string,
-    raw: Record<string, unknown>,
-    sanitized: Workspace,
-  ): void {
-    const filled: Record<string, unknown> = {};
-    if (!normalizeHostMount(raw.hostMount)) {
-      filled.hostMount = sanitized.hostMount;
-    }
-    if (!isRuntimeMode(raw.runtime)) {
-      filled.runtime = sanitized.runtime;
-    }
-    if (Object.keys(filled).length === 0) {
-      return;
-    }
-    if (filled.hostMount) {
-      ensureDefaultHostFolder(sanitized.hostMount, sanitized.runtime);
-    }
-    replaceWorkspaceMigrationFile(
-      path,
-      Buffer.from(JSON.stringify({ ...raw, ...filled }, null, 2)),
-      this.options.faultInjector,
-    );
-  }
-
-  getWorkspace(workspaceId: string): Workspace | undefined {
+  private readWorkspaceRecord(workspaceId: string): Record<string, unknown> | undefined {
     const path = this.getWorkspacePath(workspaceId);
-    if (!existsSync(path)) {
-      return undefined;
-    }
-
-    let raw: Record<string, unknown>;
-    let sanitized: Workspace;
     try {
-      raw = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
-      sanitized = this.sanitizeWorkspace(raw);
+      const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
+      return isStoredWorkspaceRecord(parsed, basename(path)) ? parsed : undefined;
     } catch {
       return undefined;
     }
-    this.persistFilledDefaults(path, raw, sanitized);
-    return sanitized;
+  }
+
+  /**
+   * The one routine that gives older records a folder (and `runtime`, "host" when missing).
+   * Oldest record first (createdAt, then id), so same-named workspaces always split the same way.
+   * It runs under a cross-process lock, re-reads each record as it writes, writes only a record
+   * that still has no folder, and stops at the first failure: no sibling is assigned after a
+   * failed one, so the plain slug can never go to a younger workspace by accident.
+   *
+   * Startup, `getWorkspace` (of a record that needs it) and `listWorkspaces` all call this.
+   * Failure surfaces as a thrown error from the caller; `listWorkspaces` therefore fails as a
+   * whole rather than return a catalog that silently lacks a workspace.
+   */
+  private migrateMissingHostMounts(): void {
+    if (!this.readWorkspaceRecords().some(({ raw }) => needsHostMountFill(raw))) {
+      return;
+    }
+    this.withHostFolderLock(() => {
+      const pending = this.readWorkspaceRecords()
+        .filter(({ raw }) => needsHostMountFill(raw))
+        .sort(
+          (a, b) =>
+            Number(a.raw.createdAt ?? 0) - Number(b.raw.createdAt ?? 0) ||
+            String(a.raw.id).localeCompare(String(b.raw.id)),
+        );
+      for (const { path } of pending) {
+        try {
+          this.fillMissingFields(path);
+        } catch (error) {
+          throw new Error(
+            `Workspace host-folder migration failed for ${path}: ${safeErrorMessage(error)}`,
+            { cause: error },
+          );
+        }
+      }
+    });
+  }
+
+  private fillMissingFields(path: string): void {
+    let undo: (() => void) | undefined;
+    try {
+      replaceWorkspaceMigrationFile(
+        path,
+        (original) => {
+          // Decided from the bytes about to be replaced, not from an earlier read.
+          const parsed: unknown = JSON.parse(original.toString("utf-8"));
+          if (!isStoredWorkspaceRecord(parsed, basename(path)) || !needsHostMountFill(parsed)) {
+            return undefined;
+          }
+          const runtime = isRuntimeMode(parsed.runtime) ? parsed.runtime : "host";
+          const filled: Record<string, unknown> = { runtime };
+          if (!normalizeHostMount(parsed.hostMount)) {
+            const folder = this.chooseHostMount(undefined, {
+              id: String(parsed.id),
+              name: typeof parsed.name === "string" ? parsed.name : "",
+              runtime,
+            });
+            undo = folder.undo;
+            filled.hostMount = folder.hostMount;
+          }
+          return Buffer.from(JSON.stringify({ ...parsed, ...filled }, null, 2));
+        },
+        this.options.faultInjector,
+        "host-folder",
+      );
+    } catch (error) {
+      undo?.();
+      throw error;
+    }
+  }
+
+  /** Exclusive across processes: a `mkdir` lock beside the records, stale after a minute. */
+  private withHostFolderLock<T>(fn: () => T): T {
+    const dir = this.configStore.getWorkspacesDir();
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const lockPath = join(dir, HOST_FOLDER_LOCK_NAME);
+    const deadline = Date.now() + (this.options.lockTimeoutMs ?? 10_000);
+    for (;;) {
+      try {
+        mkdirSync(lockPath, { mode: 0o700 });
+        break;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        let heldForMs: number;
+        try {
+          heldForMs = Date.now() - statSync(lockPath).mtimeMs;
+        } catch (statError) {
+          if ((statError as NodeJS.ErrnoException).code === "ENOENT") continue; // Just released.
+          throw statError;
+        }
+        if (heldForMs > HOST_FOLDER_LOCK_STALE_MS) {
+          rmSync(lockPath, { recursive: true, force: true });
+          continue;
+        }
+        if (Date.now() >= deadline) {
+          throw new Error(
+            `Workspace host-folder migration is locked by another process: ${lockPath}`,
+            { cause: error },
+          );
+        }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+      }
+    }
+    try {
+      return fn();
+    } finally {
+      try {
+        rmSync(lockPath, { recursive: true, force: true });
+      } catch (error) {
+        // Never mask the migration's own outcome; an unreleased lock goes stale on its own.
+        log.error("workspace_store.host_folder_lock_release.failed", {
+          lockPath,
+          error: safeErrorMessage(error),
+        });
+      }
+    }
+  }
+
+  getWorkspace(workspaceId: string): Workspace | undefined {
+    let raw = this.readWorkspaceRecord(workspaceId);
+    if (raw && needsHostMountFill(raw)) {
+      this.migrateMissingHostMounts();
+      raw = this.readWorkspaceRecord(workspaceId);
+    }
+    return raw ? this.sanitizeWorkspace(raw) : undefined;
   }
 
   listWorkspaces(): Workspace[] {
-    const dir = this.configStore.getWorkspacesDir();
-    if (!existsSync(dir)) {
-      return [];
-    }
-
-    const workspaces: Workspace[] = [];
-
-    for (const file of readdirSync(dir)) {
-      if (!file.endsWith(".json")) {
-        continue;
-      }
-
-      const path = join(dir, file);
-      let raw: Record<string, unknown>;
-      let sanitized: Workspace;
-      try {
-        raw = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
-        sanitized = this.sanitizeWorkspace(raw);
-      } catch (err: unknown) {
-        log.error("workspace_store.workspace_file_parse.failed", {
-          workspaceFilePath: path,
-          error: safeErrorMessage(err),
-        });
-        continue;
-      }
-      this.persistFilledDefaults(path, raw, sanitized);
-      workspaces.push(sanitized);
-    }
-
-    return workspaces.sort((a, b) => a.createdAt - b.createdAt);
+    this.migrateMissingHostMounts();
+    const records = this.readWorkspaceRecords((path, reason, error) => {
+      log.error("workspace_store.workspace_file_parse.failed", {
+        workspaceFilePath: path,
+        reason,
+        ...(error === undefined ? {} : { error: safeErrorMessage(error) }),
+      });
+    });
+    return records
+      .map(({ raw }) => this.sanitizeWorkspace(raw))
+      .sort((a, b) => a.createdAt - b.createdAt);
   }
 
   updateWorkspace(workspaceId: string, updates: UpdateWorkspaceRequest): Workspace | undefined {
@@ -384,15 +482,24 @@ export class WorkspaceStore {
       workspace.gitStatusEnabled = updates.gitStatusEnabled;
     if (updates.runtime !== undefined) workspace.runtime = updates.runtime;
     // Last, so clearing the folder picks the default for the runtime and name just applied.
-    if (updates.hostMount !== undefined)
-      workspace.hostMount = this.storedHostMount(updates.hostMount, workspace);
+    let undo: (() => void) | undefined;
+    if (updates.hostMount !== undefined) {
+      const folder = this.chooseHostMount(updates.hostMount, workspace, workspace.hostMount);
+      workspace.hostMount = folder.hostMount;
+      undo = folder.undo;
+    }
     if (updates.sandboxConfig !== undefined)
       workspace.sandboxConfig =
         updates.sandboxConfig === null ? undefined : normalizeSandboxConfig(updates.sandboxConfig);
 
     workspace.updatedAt = Date.now();
 
-    return this.saveWorkspace(workspace);
+    try {
+      return this.saveWorkspace(workspace);
+    } catch (error) {
+      undo?.();
+      throw error;
+    }
   }
 
   private validateWorkspaceIcon(value: unknown): Workspace["icon"] {
@@ -408,7 +515,7 @@ export class WorkspaceStore {
       const path = join(dir, file);
       try {
         const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
-        if (!isWorkspaceRecord(raw)) {
+        if (!isStoredWorkspaceRecord(raw, file)) {
           log.error("workspace_store.icon_migration.invalid_workspace_shape", {
             workspaceFilePath: path,
             topLevelType: workspaceTopLevelType(raw),
@@ -419,8 +526,9 @@ export class WorkspaceStore {
         if (JSON.stringify(raw.icon) === JSON.stringify(migratedIcon)) continue;
         replaceWorkspaceMigrationFile(
           path,
-          Buffer.from(JSON.stringify({ ...raw, icon: migratedIcon }, null, 2)),
+          () => Buffer.from(JSON.stringify({ ...raw, icon: migratedIcon }, null, 2)),
           this.options.faultInjector,
+          "icon",
         );
       } catch (err: unknown) {
         log.error("workspace_store.icon_migration.failed", {
@@ -446,10 +554,30 @@ function isRuntimeMode(value: unknown): value is Workspace["runtime"] {
   return value === "host" || value === "sandbox";
 }
 
-/** Host defaults live under Oppi's own data dir, so Oppi creates them. Sandbox folders appear at session start. */
-function ensureDefaultHostFolder(hostMount: string, runtime: Workspace["runtime"]): void {
-  if (runtime === "host") {
-    mkdirSync(resolveHostPath(hostMount), { recursive: true, mode: 0o755 });
+function needsHostMountFill(raw: Record<string, unknown>): boolean {
+  return !normalizeHostMount(raw.hostMount) || !isRuntimeMode(raw.runtime);
+}
+
+/** A stored record is a JSON object whose non-empty string id matches its `<id>.json` name. */
+function isStoredWorkspaceRecord(
+  value: unknown,
+  file: string,
+): value is Record<string, unknown> & { id: string } {
+  return (
+    isWorkspaceRecord(value) &&
+    typeof value.id === "string" &&
+    value.id.length > 0 &&
+    file === `${value.id}.json`
+  );
+}
+
+/** True for anything at the path, including a symlink (dangling or not). */
+function pathEntryExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -463,13 +591,21 @@ function workspaceTopLevelType(value: unknown): string {
   return typeof value;
 }
 
+/**
+ * Atomically replaces a record with the bytes `build` makes from what is on disk right now;
+ * `build` returning undefined leaves the record untouched. `label` names the migration in a
+ * failed-rollback error.
+ */
 function replaceWorkspaceMigrationFile(
   path: string,
-  bytes: Buffer,
-  faultInjector?: (phase: WorkspaceMigrationFaultPhase) => void,
+  build: (original: Buffer) => Buffer | undefined,
+  faultInjector: ((phase: WorkspaceMigrationFaultPhase) => void) | undefined,
+  label: string,
 ): void {
   const directory = dirname(path);
   const original = readFileSync(path);
+  const bytes = build(original);
+  if (!bytes) return;
   const temporaryPath = join(directory, `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
   let descriptor: number | undefined;
   let renamed = false;
@@ -495,7 +631,7 @@ function replaceWorkspaceMigrationFile(
       } catch (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],
-          "Workspace icon migration failed and its original could not be restored",
+          `Workspace ${label} migration failed and its original could not be restored`,
           { cause: rollbackError },
         );
       }

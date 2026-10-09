@@ -34,6 +34,8 @@ describe("storage flat layout", () => {
     const workspace: Workspace = {
       id: "ws-1",
       name: "Test Workspace",
+      hostMount: dir,
+      runtime: "host",
       systemPromptMode: "append",
       createdAt: Date.now() - 8_000,
       updatedAt: Date.now() - 8_000,

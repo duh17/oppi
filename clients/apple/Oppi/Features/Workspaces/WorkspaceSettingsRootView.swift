@@ -228,7 +228,7 @@ struct WorkspaceSettingsRootView: View {
 
     private var folderSummary: String {
         if let folder = model.savedFolder { return folder }
-        return model.isSandbox ? "Sandbox" : "Server home folder"
+        return model.isSandbox ? "Sandbox" : "No folder"
     }
 
     /// A host workspace manages its own `.pi/mcp.json`; a sandbox picks from the global servers.

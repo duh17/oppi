@@ -138,7 +138,26 @@ export function getHostPathStatus(rawPath: string): HostPathStatus {
   }
 }
 
-export function hostMountValidationError(hostMount: unknown): string | undefined {
+function isHomeDirectory(resolvedPath: string): boolean {
+  const home = homedir();
+  if (resolvedPath === resolve(home)) return true;
+  try {
+    return realpathSync(resolvedPath) === realpathSync(home);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Validates a folder the owner entered. Pass the workspace's `runtime` to also refuse the home
+ * folder itself for a host workspace: longest-prefix cwd matching would let it claim every
+ * terminal and imported session under home. Leave `runtime` out to validate only that the
+ * folder exists (a stored record is never re-judged by the home rule).
+ */
+export function hostMountValidationError(
+  hostMount: unknown,
+  runtime?: "host" | "sandbox",
+): string | undefined {
   if (hostMount === undefined || hostMount === null) {
     return undefined;
   }
@@ -150,6 +169,10 @@ export function hostMountValidationError(hostMount: unknown): string | undefined
   const trimmed = hostMount.trim();
   if (!trimmed) {
     return undefined;
+  }
+
+  if (runtime === "host" && isHomeDirectory(resolveHostPath(trimmed))) {
+    return `Host working directory cannot be your home folder (${resolveHostPath(trimmed)}): it would claim every session under it. Choose a project folder, or clear Host Working Directory to let Oppi create one.`;
   }
 
   const status = getHostPathStatus(trimmed);

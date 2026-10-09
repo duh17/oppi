@@ -213,7 +213,7 @@ private struct WorkspaceRowView: View {
                         .lineLimit(1)
                 }
 
-                Text(workspace.hostMount ?? "Server home folder")
+                Text(workspace.hostMount ?? "No folder")
                     .font(.caption2)
                     .foregroundStyle(.themeComment)
                     .lineLimit(1)

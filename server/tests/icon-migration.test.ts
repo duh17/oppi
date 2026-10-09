@@ -109,6 +109,8 @@ describe("coordinated icon migration", () => {
       const original = JSON.stringify({
         id: faultPhase,
         name: "Atomic migration",
+        hostMount: dataDir,
+        runtime: "host",
         icon: "terminal",
         systemPromptMode: "append",
         createdAt: 1,

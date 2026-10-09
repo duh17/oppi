@@ -332,13 +332,15 @@ describe("Sandbox empty-folder hostMount persistence", () => {
       writeFileSync(path, original, { mode: 0o600 });
 
       const configStore = new ConfigStore(dataDir);
-      const store = new WorkspaceStore(configStore, undefined, {
-        faultInjector(phase: WorkspaceMigrationFaultPhase) {
-          if (phase === faultPhase) throw new Error(`injected ${phase}`);
-        },
-      });
 
-      expect(() => store.getWorkspace(ws.id)).toThrow(`injected ${faultPhase}`);
+      expect(
+        () =>
+          new WorkspaceStore(configStore, undefined, {
+            faultInjector(phase: WorkspaceMigrationFaultPhase) {
+              if (phase === faultPhase) throw new Error(`injected ${phase}`);
+            },
+          }),
+      ).toThrow(`injected ${faultPhase}`);
       expect(readFileSync(path, "utf-8")).toBe(original);
       expect(
         readdirSync(configStore.getWorkspacesDir()).filter((name) => name.endsWith(".tmp")),

@@ -9,7 +9,7 @@ import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { isControlConversation, isDeclaredControlSession } from "./control-session.js";
 import { createLogger } from "./logger.js";
-import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, posix, relative, resolve as resolvePath } from "node:path";
 
@@ -87,6 +87,7 @@ import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError, resolveHostPath } from "./host.js";
+import { ensureOwnerOnlyRealDirectory } from "./owner-directory.js";
 import { workspaceSlug } from "./workspace-folder.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
 import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "./oppi-docs.js";
@@ -327,25 +328,6 @@ export function resolveSessionSeedModel(
  */
 export function resolveSandboxGuestCwd(workspace: Workspace): string {
   return posix.join("/workspace", workspaceSlug(workspace));
-}
-
-function ensureOwnerOnlyRealDirectory(path: string, errorMessage: string): void {
-  try {
-    mkdirSync(path, { mode: 0o700 });
-  } catch (error: unknown) {
-    if (
-      !(error instanceof Error) ||
-      !("code" in error) ||
-      (error as NodeJS.ErrnoException).code !== "EEXIST"
-    ) {
-      throw error;
-    }
-  }
-  const stat = lstatSync(path);
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
-    throw new Error(errorMessage);
-  }
-  chmodSync(path, 0o700);
 }
 
 export function resolveSdkSessionCwd(
