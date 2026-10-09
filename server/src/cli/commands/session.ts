@@ -21,6 +21,7 @@ import { inferWorkspaceIdFromCwdForCli, resolveWorkspaceIdForCli } from "../reso
 import { resolveThinkingFromFlags, resolveToolPolicyFromFlags } from "../launch-flags.js";
 import { resolveModelFlagForCli } from "../model-resolution.js";
 import { createLocalApiCommandContext, handleModelResolvingCliError } from "../command-support.js";
+import { isControlRouteSession } from "../../control-session.js";
 import {
   assertNotSelfTargetingSession,
   callerSessionIdFromEnvironment,
@@ -477,11 +478,8 @@ export async function cmdSession(
 
     if (mode === "resume") {
       const id = requireTarget(resolvedTargets, "session id is required");
-      const workspaceId = await resolveSessionWorkspaceId(id, call);
-      const result = await call<Record<string, unknown>>(
-        `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/resume`,
-        { method: "POST" },
-      );
+      const path = await resolveSessionScopedPath(id, call, "/resume");
+      const result = await call<Record<string, unknown>>(path, { method: "POST" });
       const session = result.session as Partial<Session> | undefined;
       const rebound = result.rebound === true;
       output(
@@ -530,9 +528,8 @@ export async function cmdSession(
       const id = requireTarget(resolvedTargets, "session id is required");
       const toolCallId = positional[1]?.trim();
       if (!toolCallId) throw new Error("tool call id is required");
-      const workspaceId = await resolveSessionWorkspaceId(id, call);
       const result = await call<Record<string, unknown>>(
-        `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/tool-output/${encodeURIComponent(toolCallId)}`,
+        await resolveSessionScopedPath(id, call, `/tool-output/${encodeURIComponent(toolCallId)}`),
       );
       output(result, () => {
         printDetails("Tool output", [
@@ -545,7 +542,6 @@ export async function cmdSession(
 
     if (mode === "trace-page" || mode === "trace-outline") {
       const id = requireTarget(resolvedTargets, "session id is required");
-      const workspaceId = await resolveSessionWorkspaceId(id, call);
       const params = new URLSearchParams();
       if (mode === "trace-page") {
         if (flags.cursor) params.set("cursor", flags.cursor);
@@ -554,7 +550,7 @@ export async function cmdSession(
         if (flags["preview-bytes"]) params.set("previewBytes", flags["preview-bytes"]);
       }
       const result = await call<Record<string, unknown>>(
-        `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}/${mode}${querySuffix(params)}`,
+        `${await resolveSessionScopedPath(id, call, `/${mode}`)}${querySuffix(params)}`,
       );
       output(withoutSessionMetadata(id, result), () => {
         if (mode === "trace-outline") {
@@ -827,6 +823,30 @@ async function resolveSessionWorkspaceId(id: string, call: SessionListApiCall): 
   const workspaceId = result.session?.workspaceId?.trim();
   if (!workspaceId) throw new Error("Session has no workspaceId");
   return workspaceId;
+}
+
+async function resolveSessionScopedPath(
+  id: string,
+  call: SessionListApiCall,
+  suffix: string,
+): Promise<string> {
+  const result = await call<{ session?: Partial<Session> }>(`/sessions/${encodeURIComponent(id)}`);
+  const session = result.session;
+  const workspaceId = session?.workspaceId?.trim();
+  if (workspaceId) {
+    return `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(id)}${suffix}`;
+  }
+  if (
+    session &&
+    isControlRouteSession({
+      workspaceId: session.workspaceId,
+      control: session.control,
+      serverDurable: session.serverDurable,
+    })
+  ) {
+    return `/control-sessions/${encodeURIComponent(id)}${suffix}`;
+  }
+  throw new Error("Session has no workspaceId");
 }
 
 function savedAgentReference(agent: string | undefined): string | undefined {

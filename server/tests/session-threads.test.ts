@@ -199,6 +199,42 @@ describe("session interaction recording", () => {
     expect(stop.at).toBeLessThan(store.getSession(target.id)!.lastActivity);
   });
 
+  it("records caller interactions on generic stop and command for declared Pi Control sessions", async () => {
+    const caller = seed("Orchestrator", 1_000, undefined, "ready");
+    const target = store.createSession("Control");
+    target.workspaceId = undefined;
+    target.status = "busy";
+    target.runtime = "oppi";
+    target.control = { domain: "agents", intent: "create" };
+    store.saveSession(target);
+    const { dispatch, sendSteer } = routes();
+
+    const commandRes = await send(
+      dispatch,
+      `/sessions/${target.id}/command`,
+      { type: "steer", message: "rebase first" },
+      caller.id,
+    );
+    expect(commandRes.statusCode).toBe(200);
+    expect(sendSteer).toHaveBeenCalledOnce();
+
+    const stopRes = await send(dispatch, `/sessions/${target.id}/stop`, {}, caller.id);
+    expect(stopRes.statusCode).toBe(200);
+
+    expect(store.listSessionInteractions([target.id])).toEqual([
+      expect.objectContaining({
+        fromSessionId: caller.id,
+        toSessionId: target.id,
+        kind: "steer",
+      }),
+      expect.objectContaining({
+        fromSessionId: caller.id,
+        toSessionId: target.id,
+        kind: "stop",
+      }),
+    ]);
+  });
+
   it("records caller interactions on control-session stop and resume", async () => {
     const caller = seed("Orchestrator", 1_000, undefined, "ready");
     const target = store.createSession("Control");

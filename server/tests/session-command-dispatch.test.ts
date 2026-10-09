@@ -666,6 +666,97 @@ describe("session command dispatch and output boundaries", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  it("resumes a workspace-less control-route session on the control route", async () => {
+    request.mockImplementation(async (_storage, path) => {
+      if (path.startsWith("/sessions?idPrefix=")) {
+        return {
+          sessions: [
+            {
+              id: "control-1",
+              control: { domain: "agents", intent: "create" },
+            },
+          ],
+        };
+      }
+      if (path === "/sessions/control-1") {
+        return {
+          session: {
+            id: "control-1",
+            control: { domain: "agents", intent: "create" },
+          },
+        };
+      }
+      if (path === "/control-sessions/control-1/resume") {
+        return { session: { id: "control-1", status: "ready" } };
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const { stdout } = await captureCliOutput(() =>
+      cmdSession(storage, "resume", ["control-1"], { json: "true" }),
+    );
+
+    expect(request).toHaveBeenCalledWith(storage, "/control-sessions/control-1/resume", {
+      method: "POST",
+    });
+    expect(JSON.parse(stdout)).toMatchObject({
+      ok: true,
+      data: { session_id: "control-1", status: "ready" },
+    });
+  });
+
+  it.each([
+    {
+      action: "tool-output" as const,
+      positional: ["control-1", "call/1"],
+      flags: { json: "true" },
+      path: "/control-sessions/control-1/tool-output/call%2F1",
+      response: { output: "ok" },
+    },
+    {
+      action: "trace-page" as const,
+      positional: ["control-1"],
+      flags: { json: "true" },
+      path: "/control-sessions/control-1/trace-page",
+      response: { entries: [] },
+    },
+    {
+      action: "trace-outline" as const,
+      positional: ["control-1"],
+      flags: { json: "true" },
+      path: "/control-sessions/control-1/trace-outline",
+      response: { outline: { entries: [] } },
+    },
+  ])(
+    "routes workspace-less control $action through the control-session family",
+    async ({ action, positional, flags, path, response }) => {
+      request.mockImplementation(async (_storage, requestPath) => {
+        if (requestPath.startsWith("/sessions?idPrefix=")) {
+          return {
+            sessions: [{ id: "control-1", serverDurable: { role: "control", conversationId: 4 } }],
+          };
+        }
+        if (requestPath === "/sessions/control-1") {
+          return {
+            session: {
+              id: "control-1",
+              serverDurable: { role: "control", conversationId: 4 },
+            },
+          };
+        }
+        if (requestPath === path) return response;
+        throw new Error(`unexpected path ${requestPath}`);
+      });
+
+      const { exitCode } = await captureCliOutput(() =>
+        cmdSession(storage, action, positional, flags),
+      );
+
+      expect(exitCode ?? 0).toBe(0);
+      expect(request).toHaveBeenCalledWith(storage, path, undefined);
+    },
+  );
+
   it("prints the live rebind sentence on resume and keeps it off Session JSON", async () => {
     request.mockImplementation(async (_storage, path) => {
       if (path.startsWith("/sessions?idPrefix="))

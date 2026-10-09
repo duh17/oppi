@@ -19,7 +19,7 @@ import { createSessionListRouteHandlers, sessionsWithLiveStatus } from "./sessio
 import { createSessionTraceRouteHandlers } from "./session-trace-handlers.js";
 import { WsMessageHandler } from "../ws-message-handler.js";
 import { normalizeSessionWorktreeId, resolveWorkspaceWorktree } from "../worktrees.js";
-import { isControlConversation, isDeclaredControlSession } from "../control-session.js";
+import { isControlConversation } from "../control-session.js";
 import { admitSessionRoute } from "../session-route-scope.js";
 import { parseClientCommand } from "../session-command-parse.js";
 import { reservedLaunchKeyError } from "../reserved-launch-keys.js";
@@ -454,16 +454,6 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     return null;
   }
 
-  function requireGenericMutableSession(sessionId: string, res: ServerResponse): Session | null {
-    const session = requireSession(sessionId, res);
-    if (!session) return null;
-    if (isDeclaredControlSession(session)) {
-      helpers.error(res, 400, "Use the control-session route for control-session mutations");
-      return null;
-    }
-    return session;
-  }
-
   async function dispatchSessionCommand(
     session: Session,
     req: IncomingMessage,
@@ -802,14 +792,14 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const sessionCommandMatch = path.match(/^\/sessions\/([^/]+)\/command$/);
     if (sessionCommandMatch && method === "POST") {
-      const session = requireGenericMutableSession(sessionCommandMatch[1], res);
+      const session = requireSession(sessionCommandMatch[1], res);
       if (session) await dispatchSessionCommand(session, req, res);
       return true;
     }
 
     const sessionStopMatch = path.match(/^\/sessions\/([^/]+)\/stop$/);
     if (sessionStopMatch && method === "POST") {
-      const session = requireGenericMutableSession(sessionStopMatch[1], res);
+      const session = requireSession(sessionStopMatch[1], res);
       if (session) await stopKnownSession(session, res, req);
       return true;
     }

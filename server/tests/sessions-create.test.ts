@@ -573,39 +573,41 @@ describe("control session route scope", () => {
     }
   });
 
-  it.each([
-    ["POST", "/sessions/control-1/command", { type: "reload" }],
-    ["POST", "/sessions/control-1/stop", {}],
-  ])(
-    "rejects generic mutation route %s %s for declared control sessions",
-    async (method, path, body) => {
-      const mock = createMockContext();
-      mock.storage.getSession.mockReturnValue(
-        makeSession({
-          id: "control-1",
-          workspaceId: undefined,
-          control: { domain: "agents", intent: "create" },
-        }),
-      );
-      const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
+  it("admits generic stop for a declared control session", async () => {
+    const mock = createMockContext();
+    const session = makeSession({
+      id: "control-1",
+      workspaceId: undefined,
+      control: { domain: "agents", intent: "create" },
+    });
+    mock.storage.getSession.mockReturnValue(session);
+    const dispatcher = createSessionRoutes(mock.ctx, mock.helpers);
+    const path = "/sessions/control-1/stop";
 
-      expect(
-        await dispatcher({
-          method,
-          path,
-          url: new URL(`https://localhost${path}`),
-          req: makeRequestBody(body),
-          res: {} as ServerResponse,
-        }),
-      ).toBe(true);
+    expect(
+      await dispatcher({
+        method: "POST",
+        path,
+        url: new URL(`https://localhost${path}`),
+        req: makeRequestBody({}),
+        res: {} as ServerResponse,
+      }),
+    ).toBe(true);
 
-      expect(mock.responses).toEqual([]);
-      expect(mock.errors).toEqual([
-        { status: 400, message: "Use the control-session route for control-session mutations" },
-      ]);
-      expect(mock.sessions.stopSession).not.toHaveBeenCalled();
-    },
-  );
+    expect(mock.errors).toEqual([]);
+    expect(mock.responses).toEqual([
+      {
+        status: 200,
+        data: {
+          ok: true,
+          session: expect.objectContaining({
+            id: "control-1",
+            status: "stopped",
+          }),
+        },
+      },
+    ]);
+  });
 
   it("admits the control conversation on a control-session route and rejects a workspace session", async () => {
     const cases = [
