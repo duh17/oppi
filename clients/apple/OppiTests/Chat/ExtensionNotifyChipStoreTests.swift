@@ -5,17 +5,6 @@ import Testing
 @MainActor
 @Suite("Extension notify chip")
 struct ExtensionNotifyChipStoreTests {
-    @Test func notifyDoesNotSetExtensionToast() {
-        let (conn, pipe) = makeTestConnection()
-        pipe.handle(notifyMessage(message: "Task complete", notifyType: "info"), sessionId: "s1")
-
-        #expect(conn.extensionToast == nil)
-        #expect(conn.extensionNotifyChipStore.state(for: "s1")?.newest.message == "Task complete")
-        #expect(conn.extensionNotifyChipStore.state(for: "s1")?.newest.extensionDisplayName == "Extension")
-        #expect(conn.extensionNotifyChipStore.state(for: "s1")?.newest.notifyType == "info")
-        conn.extensionNotifyChipStore.dismiss(sessionId: "s1")
-    }
-
     @Test func unknownMethodFeedsTheChipNotTheSheet() {
         let (conn, pipe) = makeTestConnection()
         pipe.handle(
@@ -33,6 +22,58 @@ struct ExtensionNotifyChipStoreTests {
         #expect(state?.newest.message == "Heads up")
         #expect(state?.newest.extensionDisplayName == "Review Helper")
         conn.extensionNotifyChipStore.dismiss(sessionId: "s1")
+    }
+
+    @Test(arguments: ["notify", "future_method"])
+    func boundSessionAppliesChipOnceFromSessionStreamAndAppEvent(method: String) {
+        let (conn, pipe) = makeTestConnection()
+        let stream = AsyncStream<SessionStreamEvent> { continuation in
+            conn.sessionEventContinuations["s1"] = continuation
+        }
+        withExtendedLifetime(stream) {
+            let notification = notifyNotification(
+                method: method,
+                message: "Task complete",
+                notifyType: "info",
+                displayName: "Web Search"
+            )
+            pipe.handle(.extensionUINotification(notification), sessionId: "s1")
+            conn.handleAppEvent(
+                .extensionUINotification(
+                    notification: notification,
+                    sessionId: "s1",
+                    workspaceId: nil,
+                    emittedAt: 0
+                )
+            )
+
+            #expect(conn.extensionToast == nil)
+            #expect(conn.extensionNotifyChipStore.state(for: "s1")?.count == 1)
+            #expect(conn.extensionNotifyChipStore.state(for: "s1")?.newest.message == "Task complete")
+            conn.extensionNotifyChipStore.dismiss(sessionId: "s1")
+            conn.sessionEventContinuations.removeValue(forKey: "s1")?.finish()
+        }
+    }
+
+    @Test func backgroundSessionAppEventInsertsOneChip() {
+        let (conn, _) = makeTestConnection(sessionId: "s1")
+        conn.handleAppEvent(
+            .extensionUINotification(
+                notification: notifyNotification(
+                    message: "Background ping",
+                    notifyType: "info",
+                    displayName: "Web Search"
+                ),
+                sessionId: "s2",
+                workspaceId: nil,
+                emittedAt: 0
+            )
+        )
+
+        #expect(conn.extensionNotifyChipStore.state(for: "s2")?.count == 1)
+        #expect(conn.extensionNotifyChipStore.state(for: "s2")?.newest.message == "Background ping")
+        #expect(conn.extensionNotifyChipStore.state(for: "s1") == nil)
+        conn.extensionNotifyChipStore.dismiss(sessionId: "s2")
     }
 
     @Test func sessionsDoNotLeakChipState() {
@@ -129,12 +170,87 @@ struct ExtensionNotifyChipStoreTests {
         store.dismiss(sessionId: "s1")
     }
 
+    @Test func hidingExpandedSessionRearmsAutoDismiss() async throws {
+        var sleepDurations: [Duration] = []
+        let store = ExtensionNotifyChipStore(
+            clock: ExtensionNotifyClock(
+                now: { ContinuousClock().now },
+                sleep: { duration in
+                    sleepDurations.append(duration)
+                    try await Task.sleep(for: .seconds(3_600))
+                }
+            )
+        )
+        store.apply(message: "hold", notifyType: "info", displayName: "Ext", sessionId: "s1")
+        try await waitUntil { sleepDurations.count == 1 }
+        store.setExpanded(true, sessionId: "s1")
+        #expect(store.state(for: "s1")?.isExpanded == true)
+
+        store.collapseForHiddenChat(sessionId: "s1")
+        try await waitUntil { sleepDurations.count == 2 }
+        #expect(store.state(for: "s1")?.isExpanded == false)
+        store.dismiss(sessionId: "s1")
+    }
+
+    @Test func clearingExtensionSurfaceDismissesChip() {
+        let (conn, pipe) = makeTestConnection()
+        pipe.handle(notifyMessage(message: "Task complete", notifyType: "info"), sessionId: "s1")
+        conn.extensionNotifyChipStore.setExpanded(true, sessionId: "s1")
+        #expect(conn.extensionNotifyChipStore.state(for: "s1")?.isExpanded == true)
+
+        conn.clearExtensionSurface(for: "s1")
+        #expect(conn.extensionNotifyChipStore.state(for: "s1") == nil)
+    }
+
     @Test func emptyMessageIsIgnored() {
         let store = ExtensionNotifyChipStore(clock: hangingClock())
         store.apply(message: "   ", notifyType: "info", displayName: "Ext", sessionId: "s1")
         store.apply(message: nil, notifyType: "info", displayName: "Ext", sessionId: "s1")
         #expect(store.state(for: "s1") == nil)
     }
+
+    @Test func expandedMessageKeepsAllHTTPLinksAndSuffix() {
+        let attributed = ExtensionNotifyChip.attributedMessage(
+            "See https://example.com/one and https://example.org/two please"
+        )
+        let links = attributed.runs.compactMap { $0.link }.map(\.absoluteString)
+        #expect(links == [
+            "https://example.com/one",
+            "https://example.org/two",
+        ])
+        #expect(String(attributed.characters).hasSuffix(" please"))
+        #expect(ExtensionNotifyChip.containsHTTPLinks(attributed))
+    }
+
+    @Test func expandedMessageDoesNotLinkFileOrSessionURLs() {
+        let attributed = ExtensionNotifyChip.attributedMessage(
+            "file:///tmp/secret oppi://session/abc https://example.com/ok"
+        )
+        let links = attributed.runs.compactMap { $0.link }.map(\.absoluteString)
+        #expect(links == ["https://example.com/ok"])
+    }
+}
+
+@MainActor
+private func notifyNotification(
+    method: String = "notify",
+    message: String?,
+    notifyType: String?,
+    displayName: String? = nil
+) -> ExtensionUINotification {
+    ExtensionUINotification(
+        method: method,
+        message: message,
+        notifyType: notifyType,
+        statusKey: nil,
+        statusText: nil,
+        title: nil,
+        text: nil,
+        widgetKey: nil,
+        widgetLines: nil,
+        widgetPlacement: nil,
+        extensionDisplayName: displayName
+    )
 }
 
 @MainActor
@@ -145,18 +261,11 @@ private func notifyMessage(
     displayName: String? = nil
 ) -> ServerMessage {
     .extensionUINotification(
-        ExtensionUINotification(
+        notifyNotification(
             method: method,
             message: message,
             notifyType: notifyType,
-            statusKey: nil,
-            statusText: nil,
-            title: nil,
-            text: nil,
-            widgetKey: nil,
-            widgetLines: nil,
-            widgetPlacement: nil,
-            extensionDisplayName: displayName
+            displayName: displayName
         )
     )
 }

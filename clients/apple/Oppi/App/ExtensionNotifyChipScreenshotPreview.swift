@@ -121,14 +121,32 @@ struct ExtensionNotifyChipScreenshotPreview: View {
                 entries: [
                     ExtensionNotifyChipStore.Entry(
                         id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAA3")!,
-                        message: "Retry succeeded",
+                        message: "See https://example.com/one and https://example.org/two for the retry notes after both links. The helper kept both URLs in one status line so the expanded card can open each separately.",
                         notifyType: "info",
                         extensionDisplayName: "Web Search"
                     ),
                     ExtensionNotifyChipStore.Entry(
                         id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAA4")!,
-                        message: "Provider returned 502",
+                        message: "Provider returned 502 while fetching the long status payload; the helper is still retrying the same query and will keep the previous ranking window until the next successful page.",
                         notifyType: "error",
+                        extensionDisplayName: "Web Search"
+                    ),
+                    ExtensionNotifyChipStore.Entry(
+                        id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAA5")!,
+                        message: "Indexed 128 documents and queued another pass because the ranking window is still open for this session. Extra rows exist so the expanded list has to scroll inside the capped card.",
+                        notifyType: "info",
+                        extensionDisplayName: "Web Search"
+                    ),
+                    ExtensionNotifyChipStore.Entry(
+                        id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAA6")!,
+                        message: "Rate limit approaching. Backing off for a few seconds before the next search_web call so the provider can recover, then the helper will resume the same query without opening a sheet.",
+                        notifyType: "warning",
+                        extensionDisplayName: "Web Search"
+                    ),
+                    ExtensionNotifyChipStore.Entry(
+                        id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAA7")!,
+                        message: "search_web: SearXNG is reachable, but the previous page took long enough that this fifth entry should sit below the fold in the expanded card and only appear after a scroll.",
+                        notifyType: "info",
                         extensionDisplayName: "Web Search"
                     ),
                 ],

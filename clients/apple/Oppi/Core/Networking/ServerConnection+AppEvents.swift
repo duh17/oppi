@@ -69,7 +69,8 @@ extension ServerConnection {
             applyExtensionUINotification(
                 notification,
                 sessionId: sessionId,
-                isActiveSession: isFocusedSession(sessionId)
+                isActiveSession: isFocusedSession(sessionId),
+                fromAppEvent: true
             )
 
         case .workspaceGitChanged(let workspaceId, let worktreeId, _, _, _):

@@ -33,8 +33,35 @@ describe("extensionScopeFromPath", () => {
     });
   });
 
+  it("attributes helper files under a user extension directory", () => {
+    expect(
+      extensionScopeFromPath("/Users/me/.pi/agent/extensions/review-helper/session.ts"),
+    ).toEqual({
+      extensionScopeId: "ext:review-helper",
+      extensionDisplayName: "Review Helper",
+    });
+  });
+
+  it("attributes nested helpers under a user extension directory", () => {
+    expect(
+      extensionScopeFromPath("/Users/me/.pi/agent/extensions/review-helper/src/run.ts"),
+    ).toEqual({
+      extensionScopeId: "ext:review-helper",
+      extensionDisplayName: "Review Helper",
+    });
+  });
+
   it("attributes project .pi/extensions entries", () => {
     expect(extensionScopeFromPath("/tmp/workspace/.pi/extensions/review-helper/index.js")).toEqual({
+      extensionScopeId: "ext:review-helper",
+      extensionDisplayName: "Review Helper",
+    });
+  });
+
+  it("attributes nested helpers under project .pi/extensions", () => {
+    expect(
+      extensionScopeFromPath("/tmp/workspace/.pi/extensions/review-helper/src/run.ts"),
+    ).toEqual({
       extensionScopeId: "ext:review-helper",
       extensionDisplayName: "Review Helper",
     });
@@ -80,5 +107,44 @@ describe("extensionScopeFromPath", () => {
 
   it("returns undefined for unrecognized paths", () => {
     expect(extensionScopeFromPath("/tmp/one-off-extension.ts")).toBeUndefined();
+  });
+
+  it("does not attribute unanchored server/extensions paths", () => {
+    expect(extensionScopeFromPath("/Users/me/oppi/server/extensions/voice.ts")).toBeUndefined();
+  });
+
+  it("does not attribute unanchored git paths", () => {
+    expect(extensionScopeFromPath("/tmp/src/git/github.com/acme/lib/index.ts")).toBeUndefined();
+  });
+
+  it("attributes helper files inside a git package by repo name", () => {
+    expect(
+      extensionScopeFromPath(
+        "/Users/me/.pi/agent/git/github.com/acme/web-search/src/run.ts",
+      ),
+    ).toEqual({
+      extensionScopeId: "git:web-search",
+      extensionDisplayName: "Web Search",
+    });
+  });
+
+  it("attributes files under PI_CODING_AGENT_DIR", () => {
+    const previous = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = "/data/pi-agent";
+    try {
+      expect(extensionScopeFromPath("/data/pi-agent/extensions/hello/session.ts")).toEqual({
+        extensionScopeId: "ext:hello",
+        extensionDisplayName: "Hello",
+      });
+      expect(
+        extensionScopeFromPath("/data/pi-agent/git/github.com/acme/web-search/src/run.ts"),
+      ).toEqual({
+        extensionScopeId: "git:web-search",
+        extensionDisplayName: "Web Search",
+      });
+    } finally {
+      if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previous;
+    }
   });
 });

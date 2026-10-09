@@ -170,18 +170,32 @@ extension ServerConnection {
 
     // MARK: - Extension Surface
 
+    /// Notify chips use one ingress per session.
+    ///
+    /// If `sessionEventContinuations[sessionId]` is non-nil, the session stream
+    /// is the sole chip owner (live frames, including the unknown-method
+    /// fallback). Otherwise the app-event stream owns the chip, including a
+    /// focused chat whose consumer has not attached yet (session-start notifies).
+    ///
+    /// Chip notifications are not parked. Parking would drain into the session
+    /// stream after attach and double-insert with the app-event apply from the
+    /// unbound window. `applyFocus` dropping parked frames therefore cannot
+    /// lose a chip. Other `extension_ui_notification` methods still park and
+    /// still use both ingresses (last-write-wins, unchanged).
     func applyExtensionUINotification(
         _ notification: ExtensionUINotification,
         sessionId: String,
-        isActiveSession: Bool
+        isActiveSession: Bool,
+        fromAppEvent: Bool = false
     ) {
         switch notification.method {
         case "notify":
-            extensionNotifyChipStore.apply(
+            applyNotifyChip(
                 message: notification.message,
                 notifyType: notification.notifyType,
                 displayName: notification.extensionDisplayName,
-                sessionId: sessionId
+                sessionId: sessionId,
+                fromAppEvent: fromAppEvent
             )
 
         case "set_editor_text":
@@ -201,13 +215,51 @@ extension ServerConnection {
             storeExtensionSurface(surface, for: sessionId)
 
         default:
-            extensionNotifyChipStore.apply(
+            applyNotifyChip(
                 message: notification.message ?? notification.notifyType,
                 notifyType: notification.notifyType,
                 displayName: notification.extensionDisplayName,
-                sessionId: sessionId
+                sessionId: sessionId,
+                fromAppEvent: fromAppEvent
             )
         }
+    }
+
+    static func isExtensionNotifyChipMethod(_ method: String) -> Bool {
+        switch method {
+        case "notify":
+            return true
+        case "set_editor_text",
+             "setStatus",
+             "setWidget",
+             "setTitle",
+             "setWorkingMessage",
+             "setWorkingVisible",
+             "setWorkingIndicator",
+             "setHiddenThinkingLabel",
+             "setToolsExpanded":
+            return false
+        default:
+            return true
+        }
+    }
+
+    private func applyNotifyChip(
+        message: String?,
+        notifyType: String?,
+        displayName: String?,
+        sessionId: String,
+        fromAppEvent: Bool
+    ) {
+        if fromAppEvent, sessionEventContinuations[sessionId] != nil {
+            return
+        }
+        extensionNotifyChipStore.apply(
+            message: message,
+            notifyType: notifyType,
+            displayName: displayName,
+            sessionId: sessionId
+        )
     }
 
     func storeExtensionSurface(_ surface: ExtensionSurfaceState, for sessionId: String) {
@@ -221,6 +273,7 @@ extension ServerConnection {
     func clearExtensionSurface(for sessionId: String) {
         extensionSurfaceBySession.removeValue(forKey: sessionId)
         clearExtensionDialog(for: sessionId)
+        extensionNotifyChipStore.dismiss(sessionId: sessionId)
     }
 
     // MARK: - Connected / State

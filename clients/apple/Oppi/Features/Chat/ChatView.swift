@@ -1002,6 +1002,8 @@ struct ChatView: View {
                 // specific state so the timeline and connection match.
                 guard sessionManager.sessionId != newId else { return }
 
+                connection.extensionNotifyChipStore.collapseForHiddenChat(sessionId: oldId)
+
                 // Tear down old session. cleanup() releases only the old
                 // runtime's own focus claim (live audio still defers it).
                 actionHandler.cleanup()
@@ -1078,6 +1080,7 @@ struct ChatView: View {
                     currentPresentation: appNavigation.workspaceNavigationPresentation
                 )
                 guard !appNavigation.isCoveringChat(sessionId: sessionId) else { return }
+                connection.extensionNotifyChipStore.collapseForHiddenChat(sessionId: sessionId)
                 actionHandler.cleanup()
                 // Releases this runtime's focus claim only; a newer chat for the
                 // same session keeps its stream (late or repeated cleanup is a no-op).

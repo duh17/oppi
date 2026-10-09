@@ -470,7 +470,7 @@ Native blocks stay viewport-independent; clients decide iPhone, iPad, Dynamic Ty
 | `ctx.ui.confirm(title, message)`   | Pi request fields              | compact confirmation card                  | terminal/TUI confirm               |
 | `ctx.ui.input()`                   | Pi request fields              | inline text prompt                         | terminal/TUI input                 |
 | `ctx.ui.editor()`                  | Pi request fields              | editor sheet                               | terminal/TUI editor                |
-| `ctx.ui.notify()`                  | notification fields            | muted chip above the iOS composer          | existing Notice sheet for app-originated toasts |
+| `ctx.ui.notify()`                  | notification fields            | muted chip above the iOS composer          | terminal/TUI notify                             |
 | `ctx.ui.onTerminalInput()`         | terminal-owned input stream    | no native mapping                          | no-op unsubscribe in SDK sessions  |
 | `ctx.ui.setTitle()`                | title notification             | extension surface heading                  | terminal window/tab title          |
 | `ctx.ui.setStatus()`               | status text fields             | generic status projection/chips            | text status                        |

@@ -2271,6 +2271,12 @@ final class ServerConnection {
     }
 
     private func parkFocusedSessionFrame(_ event: SessionStreamEvent) {
+        if case .extensionUINotification(let notification) = event.message,
+           Self.isExtensionNotifyChipMethod(notification.method) {
+            // App events own chips until a live continuation attaches. Parking
+            // these would drain into the session stream and double-insert.
+            return
+        }
         var buffer = parkedFocusedSessionFrames[event.sessionId] ?? []
         if buffer.count >= Self.parkedFocusedSessionFrameLimit {
             if let index = buffer.firstIndex(where: { !Self.isProtectedParkedSessionMessage($0.message) }) {
@@ -2475,6 +2481,9 @@ final class ServerConnection {
         let previousSessionId = focusedSessionId
         if previousSessionId != sessionId {
             if let previousSessionId {
+                // Notify chips are not parked, so dropping this buffer cannot
+                // lose or double a chip. App events own chips until a live
+                // continuation attaches; see applyExtensionUINotification.
                 parkedFocusedSessionFrames.removeValue(forKey: previousSessionId)
             }
             recordFocusArbitration(

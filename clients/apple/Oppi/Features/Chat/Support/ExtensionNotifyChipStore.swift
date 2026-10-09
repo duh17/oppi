@@ -90,6 +90,12 @@ final class ExtensionNotifyChipStore {
         }
     }
 
+    /// Chat for this session is no longer on screen. Collapse so auto-dismiss
+    /// can run; entries stay until the timer fires, dismiss, or session end.
+    func collapseForHiddenChat(sessionId: String) {
+        setExpanded(false, sessionId: sessionId)
+    }
+
     func dismiss(sessionId: String) {
         cancelTimer(sessionId: sessionId)
         states.removeValue(forKey: sessionId)

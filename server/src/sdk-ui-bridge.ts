@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 
 import type {
   ExtensionUIDialogOptions,
@@ -100,13 +102,59 @@ function titleCaseIdentifier(value: string): string {
     .join(" ");
 }
 
-export function extensionScopeFromPath(rawPath: string): ExtensionUISourceScope | undefined {
+function normalizeScopePath(rawPath: string): string {
   let decodedPath = rawPath.replace(/^file:\/\//, "").replaceAll("\\", "/");
   try {
     decodedPath = decodeURIComponent(decodedPath);
   } catch {
     // Keep the raw path when it is not URI-encoded.
   }
+  return decodedPath;
+}
+
+function configuredAgentDirPath(): string {
+  const raw = process.env.PI_CODING_AGENT_DIR?.trim();
+  const resolved = raw ? resolve(raw) : resolve(homedir(), ".pi", "agent");
+  return resolved.replaceAll("\\", "/").replace(/\/+$/, "");
+}
+
+function restUnderPrefix(path: string, prefix: string): string | undefined {
+  const normalized = prefix.replace(/\/+$/, "");
+  if (path === normalized) return "";
+  const withSlash = `${normalized}/`;
+  if (path.startsWith(withSlash)) return path.slice(withSlash.length);
+  return undefined;
+}
+
+function restAfterMarker(path: string, marker: string): string | undefined {
+  const index = path.indexOf(marker);
+  if (index < 0) return undefined;
+  return path.slice(index + marker.length);
+}
+
+function firstPathSegment(relative: string): string | undefined {
+  return relative.split("/").filter(Boolean)[0];
+}
+
+function extensionNameFromRelative(relative: string): string | undefined {
+  const parts = relative.split("/").filter(Boolean);
+  if (parts.length === 0) return undefined;
+  const first = parts[0];
+  if (parts.length === 1) {
+    const match = first.match(/^(.*)\.(ts|js)$/i);
+    return match?.[1];
+  }
+  return first;
+}
+
+function gitRepoFromRelative(relative: string): string | undefined {
+  const parts = relative.split("/").filter(Boolean);
+  // <host>/<owner>/<repo>/...
+  return parts.length >= 3 ? parts[2] : undefined;
+}
+
+export function extensionScopeFromPath(rawPath: string): ExtensionUISourceScope | undefined {
+  const decodedPath = normalizeScopePath(rawPath);
   const nodeModulesMarker = "/node_modules/";
   const nodeModulesIndex = decodedPath.lastIndexOf(nodeModulesMarker);
   if (nodeModulesIndex >= 0) {
@@ -124,8 +172,9 @@ export function extensionScopeFromPath(rawPath: string): ExtensionUISourceScope 
   const repoExtensionMarker = "/pi-extensions/";
   const repoExtensionIndex = decodedPath.indexOf(repoExtensionMarker);
   if (repoExtensionIndex >= 0) {
-    const rest = decodedPath.slice(repoExtensionIndex + repoExtensionMarker.length);
-    const directoryName = rest.split("/").filter(Boolean)[0];
+    const directoryName = firstPathSegment(
+      decodedPath.slice(repoExtensionIndex + repoExtensionMarker.length),
+    );
     if (directoryName) {
       return {
         extensionScopeId: `repo:${directoryName}`,
@@ -134,29 +183,40 @@ export function extensionScopeFromPath(rawPath: string): ExtensionUISourceScope 
     }
   }
 
-  // Pi git packages: <agentDir>/git/<host>/<owner>/<repo> or <cwd>/.pi/git/<host>/<owner>/<repo>.
-  const gitMatch = decodedPath.match(/(?:^|\/)git\/([^/]+\.[^/]+)\/([^/]+)\/([^/]+)(?:\/|$)/);
-  if (gitMatch?.[3]) {
+  // Pi git packages live under <agentDir>/git/<host>/<owner>/<repo> or
+  // <cwd>/.pi/git/<host>/<owner>/<repo>. Unanchored `/git/` paths do not match.
+  // Also recognize the default `/.pi/agent/git/` layout when PI_CODING_AGENT_DIR
+  // points somewhere else, so home-install stack frames still attribute.
+  const agentDir = configuredAgentDirPath();
+  const gitRelatives = [
+    restUnderPrefix(decodedPath, `${agentDir}/git`),
+    restAfterMarker(decodedPath, "/.pi/agent/git/"),
+    restAfterMarker(decodedPath, "/.pi/git/"),
+  ];
+  for (const relative of gitRelatives) {
+    if (relative === undefined) continue;
+    const repo = gitRepoFromRelative(relative);
+    if (!repo) continue;
     return {
-      extensionScopeId: `git:${gitMatch[3]}`,
-      extensionDisplayName: titleCaseIdentifier(gitMatch[3]),
+      extensionScopeId: `git:${repo}`,
+      extensionDisplayName: titleCaseIdentifier(repo),
     };
   }
 
-  // Auto-discovered: <agentDir>/extensions/<name>.ts|js or <name>/index.ts|js,
-  // and project .pi/extensions/<name>.
-  const directoryEntryMatch = decodedPath.match(/(?:^|\/)extensions\/([^/]+)\/index\.(?:ts|js)$/i);
-  if (directoryEntryMatch?.[1]) {
+  // Auto-discovered: any file under <agentDir>/extensions/<name>/ or
+  // .pi/extensions/<name>/, plus single-file <name>.ts|js entries.
+  const extensionRelatives = [
+    restUnderPrefix(decodedPath, `${agentDir}/extensions`),
+    restAfterMarker(decodedPath, "/.pi/agent/extensions/"),
+    restAfterMarker(decodedPath, "/.pi/extensions/"),
+  ];
+  for (const relative of extensionRelatives) {
+    if (relative === undefined) continue;
+    const name = extensionNameFromRelative(relative);
+    if (!name) continue;
     return {
-      extensionScopeId: `ext:${directoryEntryMatch[1]}`,
-      extensionDisplayName: titleCaseIdentifier(directoryEntryMatch[1]),
-    };
-  }
-  const fileEntryMatch = decodedPath.match(/(?:^|\/)extensions\/([^/]+)\.(?:ts|js)$/i);
-  if (fileEntryMatch?.[1]) {
-    return {
-      extensionScopeId: `ext:${fileEntryMatch[1]}`,
-      extensionDisplayName: titleCaseIdentifier(fileEntryMatch[1]),
+      extensionScopeId: `ext:${name}`,
+      extensionDisplayName: titleCaseIdentifier(name),
     };
   }
 

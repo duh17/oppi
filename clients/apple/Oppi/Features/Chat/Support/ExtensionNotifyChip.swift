@@ -84,10 +84,16 @@ struct ExtensionNotifyChip: View {
                 .accessibilityIdentifier("chat.extensionNotify.dismiss")
             }
 
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(Array(state.entries.enumerated()), id: \.element.id) { index, entry in
-                    expandedEntry(entry, showsName: showsPerEntryName && index > 0)
+            NativeSurfaceViewportScrollContainer(
+                maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight,
+                accessibilityIdentifier: "chat.extensionNotify.list"
+            ) {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(state.entries.enumerated()), id: \.element.id) { index, entry in
+                        expandedEntry(entry, showsName: showsPerEntryName && index > 0)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
         .padding(.horizontal, 12)
@@ -105,38 +111,31 @@ struct ExtensionNotifyChip: View {
         _ entry: ExtensionNotifyChipStore.Entry,
         showsName: Bool
     ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let attributed = Self.attributedMessage(entry.message)
+        let hasLinks = Self.containsHTTPLinks(attributed)
+        let entryBody = VStack(alignment: .leading, spacing: 4) {
             if showsName {
                 Text("From extension · \(entry.extensionDisplayName)")
                     .font(.caption2)
                     .foregroundStyle(.themeFgDim)
             }
-            ForEach(Self.parseLines(entry.message)) { line in
-                if let url = line.url {
-                    Button {
-                        _ = onOpenURL?(url)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(line.label)
-                                .font(.footnote)
-                                .foregroundStyle(.themeComment)
-                            Text(url.absoluteString)
-                                .font(.footnote)
-                                .foregroundStyle(.themeBlue)
-                                .lineLimit(2)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    Text(line.text)
-                        .font(.footnote)
-                        .foregroundStyle(.themeFg)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+            Text(attributed)
+                .font(.footnote)
+                .foregroundStyle(.themeFg)
+                .fixedSize(horizontal: false, vertical: true)
+                .environment(\.openURL, OpenURLAction { url in
+                    Self.openHTTPURL(url, onOpenURL: onOpenURL)
+                })
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("From extension · \(entry.extensionDisplayName). \(entry.message)")
+        if hasLinks {
+            entryBody.accessibilityElement(children: .contain)
+        } else {
+            entryBody
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    "From extension · \(entry.extensionDisplayName). \(entry.message)"
+                )
+        }
     }
 
     private var showsPerEntryName: Bool {
@@ -174,30 +173,41 @@ struct ExtensionNotifyChip: View {
         }
     }
 
-    fileprivate struct ParsedLine: Identifiable {
-        let id: Int
-        let text: String
-        let label: String
-        let url: URL?
+    static func attributedMessage(_ message: String) -> AttributedString {
+        var attributed = AttributedString(message)
+        guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else {
+            return attributed
+        }
+        let nsRange = NSRange(message.startIndex..., in: message)
+        detector.enumerateMatches(in: message, options: [], range: nsRange) { match, _, _ in
+            guard let match,
+                  let stringRange = Range(match.range, in: message),
+                  let url = URL(string: String(message[stringRange])),
+                  Self.isHTTPURL(url),
+                  let attributedRange = Range(stringRange, in: attributed)
+            else { return }
+            attributed[attributedRange].link = url
+        }
+        return attributed
     }
 
-    fileprivate static func parseLines(_ message: String) -> [ParsedLine] {
-        let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
-        return message.components(separatedBy: .newlines).enumerated().compactMap { index, raw in
-            let trimmed = raw.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { return nil }
-
-            let range = NSRange(location: 0, length: trimmed.utf16.count)
-            guard let match = detector?.firstMatch(in: trimmed, options: [], range: range),
-                  let urlRange = Range(match.range, in: trimmed),
-                  let url = URL(string: String(trimmed[urlRange])),
-                  url.scheme?.hasPrefix("http") == true else {
-                return ParsedLine(id: index, text: trimmed, label: trimmed, url: nil)
-            }
-
-            let prefix = String(trimmed[..<urlRange.lowerBound]).trimmingCharacters(in: .whitespaces)
-            let label = prefix.isEmpty ? "Link" : prefix
-            return ParsedLine(id: index, text: trimmed, label: label, url: url)
+    static func containsHTTPLinks(_ attributed: AttributedString) -> Bool {
+        attributed.runs.contains { run in
+            guard let url = run.link else { return false }
+            return isHTTPURL(url)
         }
+    }
+
+    private static func isHTTPURL(_ url: URL) -> Bool {
+        let scheme = url.scheme?.lowercased()
+        return scheme == "http" || scheme == "https"
+    }
+
+    private static func openHTTPURL(
+        _ url: URL,
+        onOpenURL: ((URL) -> Bool)?
+    ) -> OpenURLAction.Result {
+        guard isHTTPURL(url) else { return .discarded }
+        return onOpenURL?(url) == true ? .handled : .discarded
     }
 }
