@@ -38,7 +38,16 @@ import {
   type DurableControlHost,
 } from "../extensions/durable/control/durable.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
+import type { DurableExtensionRuntime } from "./durable-extension-api.js";
+import {
+  discoverDurableExtensionPackages,
+  loadDurableExtensions,
+  type DurableExtensionIssue,
+  type LoadedDurableExtension,
+} from "./durable-extension-loader.js";
 import type { DurableMcp } from "./durable-mcp.js";
+import { createLogger } from "./logger.js";
+import { safeErrorMessage } from "./log-utils.js";
 import type { DurableThreads } from "./durable-threads.js";
 
 /** Persist the execution boundary so a resumed conversation cannot change runtime. */
@@ -50,6 +59,36 @@ export const DurableRuntime = defineDoc<{ kind: "host" | "sandbox"; workspaceId?
   fork: "initial",
   initial: () => ({ kind: "host" }),
 });
+
+const log = createLogger({ base: { component: "durable_harness" } });
+
+export interface DurableExtensionSummary {
+  name: string;
+  entry: string;
+  runtimes: readonly DurableExtensionRuntime[];
+  tools: string[];
+}
+
+/** What one load of the Pi packages' durable entries did to the registry. */
+export interface DurableExtensionReport {
+  /** Installed from this load; a name that was already installed was replaced in place. */
+  loaded: DurableExtensionSummary[];
+  /** Failed to load this time; the previously loaded code stays installed. */
+  kept: DurableExtensionSummary[];
+  /** Installed before, and no longer provided by any enabled package: uninstalled. */
+  removed: string[];
+  skipped: DurableExtensionIssue[];
+  errors: DurableExtensionIssue[];
+}
+
+function summarize(loaded: LoadedDurableExtension): DurableExtensionSummary {
+  return {
+    name: loaded.extension.name,
+    entry: loaded.entry,
+    runtimes: loaded.runtimes,
+    tools: (loaded.extension.tools ?? []).map((tool) => tool.name),
+  };
+}
 
 /** Process-owned, lazy Harness. A disabled server never creates this owner. */
 export class DurableHarness {
@@ -73,6 +112,10 @@ export class DurableHarness {
   private readonly mcps = new Map<string, DurableMcp>();
   private threads?: DurableThreads;
   private control?: DurableControlHost;
+  /** Extensions from the durable entries of enabled Pi packages, in load order. */
+  private packageExtensions: readonly LoadedDurableExtension[] = [];
+  /** One load or reload at a time. */
+  private extensionLoad: Promise<unknown> = Promise.resolve();
   /** The session tools; they reach Oppi through the host bound with `bindThreads`. */
   readonly sessionsExtension = createDurableSessions(() => this.threads);
   /** The control conversation's tools; they reach Oppi through the host bound with `bindControl`. */
@@ -118,6 +161,94 @@ export class DurableHarness {
   get runPolicySettings(): SettingsManager {
     if (!this.runPolicy) throw new Error("Server durable Harness is not open");
     return this.runPolicy;
+  }
+
+  /**
+   * Extensions loaded from Pi packages that a session of this runtime selects next to the
+   * built-ins. The control conversation selects none of them.
+   */
+  packageExtensionsFor(runtime: DurableExtensionRuntime): Extension[] {
+    return this.packageExtensions
+      .filter((loaded) => loaded.runtimes.includes(runtime))
+      .map((loaded) => loaded.extension);
+  }
+
+  /**
+   * Re-read the durable entries of enabled Pi packages and install them in the open
+   * registry. Installing an extension under an installed name replaces it in place: running
+   * tool calls finish on their old code, and the next task phase, request, or call uses the
+   * new code. A package that fails to load keeps its previous code installed; a package that
+   * is gone is uninstalled, and conversations that selected it stop getting it.
+   */
+  async reloadExtensions(): Promise<DurableExtensionReport> {
+    await this.open();
+    const registry = this.registry;
+    if (!registry) throw new Error("Server durable Harness is not open");
+    return this.loadPackageExtensions(registry);
+  }
+
+  private loadPackageExtensions(registry: Registry): Promise<DurableExtensionReport> {
+    const run = this.extensionLoad.then(() => this.loadPackageExtensionsOnce(registry));
+    this.extensionLoad = run.catch(() => undefined);
+    return run;
+  }
+
+  private async loadPackageExtensionsOnce(registry: Registry): Promise<DurableExtensionReport> {
+    const previous = this.packageExtensions;
+    const builtIns = [...this.baseExtensions, ...this.controlExtensions];
+    let discovered: Awaited<ReturnType<typeof discoverDurableExtensionPackages>>;
+    try {
+      discovered = await discoverDurableExtensionPackages(getAgentDir());
+    } catch (error) {
+      // Discovery itself failed: change nothing, so a settings typo cannot unload everything.
+      const report: DurableExtensionReport = {
+        loaded: [],
+        kept: previous.map(summarize),
+        removed: [],
+        skipped: [],
+        errors: [
+          { entry: getAgentDir(), message: `Package discovery failed: ${safeErrorMessage(error)}` },
+        ],
+      };
+      this.logExtensionReport(report);
+      return report;
+    }
+    const result = await loadDurableExtensions(discovered.packages, {
+      names: new Set(builtIns.map((extension) => extension.name)),
+      tools: new Set(
+        builtIns.flatMap((extension) => extension.tools ?? []).map((tool) => tool.name),
+      ),
+    });
+    const loadedNames = new Set(result.loaded.map((loaded) => loaded.extension.name));
+    const failedEntries = new Set(result.errors.map((issue) => issue.entry));
+    const kept = previous.filter(
+      (old) => failedEntries.has(old.entry) && !loadedNames.has(old.extension.name),
+    );
+    const next = [...result.loaded, ...kept];
+    const nextNames = new Set(next.map((loaded) => loaded.extension.name));
+    for (const loaded of result.loaded) registry.install(loaded.extension);
+    const removed = previous.filter((old) => !nextNames.has(old.extension.name));
+    for (const old of removed) registry.uninstall(old.extension);
+    this.packageExtensions = next;
+    const report: DurableExtensionReport = {
+      loaded: result.loaded.map(summarize),
+      kept: kept.map(summarize),
+      removed: removed.map((old) => old.extension.name),
+      skipped: result.skipped,
+      errors: [...discovered.errors, ...result.errors],
+    };
+    this.logExtensionReport(report);
+    return report;
+  }
+
+  private logExtensionReport(report: DurableExtensionReport): void {
+    if (report.loaded.length || report.removed.length)
+      log.info("durable_extensions.loaded", {
+        loaded: report.loaded.map((loaded) => loaded.name),
+        removed: report.removed,
+      });
+    for (const issue of report.errors)
+      log.error("durable_extensions.load_failed", { entry: issue.entry, message: issue.message });
   }
 
   installExtension(extension: Extension): void {
@@ -295,6 +426,8 @@ export class DurableHarness {
     for (const extension of this.controlExtensions)
       if (!this.baseExtensions.includes(extension)) registry.install(extension);
     this.registry = registry;
+    // Before `Harness.open`, so pending tasks of a package extension find their definitions.
+    await this.loadPackageExtensions(registry);
     const directory = join(this.dataDir, "durable");
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     // Bun-based CLI commands must not load node:sqlite when the experiment is

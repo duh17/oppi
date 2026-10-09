@@ -88,6 +88,10 @@ const HELP_TOPICS: HelpTopic[] = [
         name: "control",
         summary: "open or message the durable control conversation (experimental.serverDurable)",
       },
+      {
+        name: "extensions",
+        summary: "reload durable extensions from Pi packages (experimental.serverDurable)",
+      },
       { name: "wait", summary: "poll session state until a condition is true" },
       { name: "token", summary: "rotate the owner bearer token" },
       { name: "update", summary: "check or update the npm-installed server and CLI" },
@@ -1981,6 +1985,36 @@ const HELP_TOPICS: HelpTopic[] = [
       "Follow the reply with 'oppi session wait <session_id>' and 'oppi session inspect <session_id> --view response'.",
     ],
     examples: [{ command: 'oppi control send "Pause the nightly schedule" --json' }],
+  },
+  {
+    path: ["extensions"],
+    title: "Durable extensions",
+    summary: "Reload durable extensions from Pi packages into the running server.",
+    usage: "oppi extensions reload [--json]",
+    description: [
+      "Durable sessions load the durable entry of each enabled user-scope Pi package: package.json 'oppi.durable', else durable.ts or durable.js in the package directory. The server loads them when its durable store opens and again on reload, without a restart.",
+    ],
+    subcommands: [
+      { name: "reload", summary: "re-read every durable entry and replace the installed code" },
+    ],
+    notes: [
+      "Requires experimental.serverDurable; the server refuses with HTTP 409 while it has no durable store.",
+    ],
+    examples: [{ command: "oppi extensions reload" }],
+  },
+  {
+    path: ["extensions", "reload"],
+    title: "Reload durable extensions",
+    summary: "Re-read durable entries and install them in the running server.",
+    usage: "oppi extensions reload [--json]",
+    flags: [{ name: "--json", summary: "write the standard JSON envelope" }],
+    notes: [
+      "A reloaded extension replaces the installed one with the same name: running tool calls finish on the old code, and the next request or call uses the new code.",
+      "A package that fails to load keeps its previous code installed and is listed under errors and kept. A package that is gone is uninstalled.",
+      "Sessions pick up a newly added extension the next time they attach (open, resume, or server restart).",
+      "JSON data: loaded, kept, removed, skipped, errors. loaded and kept items have name, entry, runtimes, tools; skipped and errors items have entry and message.",
+    ],
+    examples: [{ command: "oppi extensions reload --json" }],
   },
 ];
 

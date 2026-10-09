@@ -333,6 +333,15 @@ export const DurableWorkingWords = defineExtension({
   tasks: [Words],
 });
 
+/**
+ * The durable entry shape (`oppi/durable`). The server bundles this extension, so its
+ * package loader skips this entry when the package is also installed in `~/.pi/agent`.
+ */
+export default {
+  extension: DurableWorkingWords,
+  runtimes: ["host", "sandbox"],
+};
+
 /** Called at conversation attachment, before scheduling. Also repairs a stopped owner. */
 export async function ensureWorkingWords(
   tx: Tx,

@@ -344,6 +344,43 @@ Oppi loads Pi-resolved extensions without injecting an extra Ask tool. Install o
 
 `/reload` rebuilds an active Oppi-managed session through Pi's full `AgentSession.reload()` lifecycle. It reloads host Pi extensions, skills, prompts, themes, system-prompt files, and the current Mobile Output Guide setting before the next turn. Terminal-owned mirrored sessions keep terminal ownership and are not changed by this server setting.
 
+## Durable extensions
+
+Durable sessions (`experimental.serverDurable`) do not run a package's classic `index.ts`. A package can add a durable entry next to it: `durable.ts` (or `durable.js`) in the package directory, or the file named by `package.json` `"oppi": { "durable": "./src/durable.ts" }`. The entry exports a plain pi-durable extension:
+
+```ts
+// ~/.pi/agent/extensions/release-notes/durable.ts
+import { Type } from "typebox";
+import { defineExtension, defineTool } from "@earendil-works/pi-durable";
+import { defineDurableExtension } from "oppi/durable";
+
+export default defineDurableExtension({
+  extension: defineExtension({
+    name: "release-notes",
+    tools: [
+      defineTool({
+        name: "release_notes",
+        description: "Read the latest release notes.",
+        parameters: Type.Object({}),
+        replay: "safe", // a read; rerun after a crash
+        async execute(_args, api, context) {
+          const result = await api.env!.exec("cat CHANGELOG.md", {}, context);
+          return { content: [{ type: "text", text: result.ok ? result.value.stdout : result.error.message }] };
+        },
+      }),
+    ],
+  }),
+  runtimes: ["host"], // default; add "sandbox" only if every command and file access goes through api.env
+});
+```
+
+- **Where Oppi looks:** enabled user-scope Pi packages, resolved as Pi resolves classic extensions (`~/.pi/agent/extensions/<name>/`, packages from `settings.json` and `pi install`, the same enable and disable settings). Project `.pi/extensions` packages and single-file extensions have no durable entry.
+- **Shared modules:** `@earendil-works/pi-durable`, `@earendil-works/chord`, `@earendil-works/pi-ai`, `typebox`, and `oppi/durable` resolve to the server's own copies, so the extension's documents and tasks belong to the server's durable store.
+- **Which sessions get it:** every durable session whose runtime the extension lists (host by default), next to the built-in tools. The durable control conversation selects none of them. A name or tool name that a built-in already uses is refused; a package that provides one of Oppi's own durable extensions (such as `ask`) is skipped.
+- **Loading:** when the server opens its durable store, and on `oppi extensions reload`. A package that fails to load is reported in the server log and in the reload output; the others load.
+- **Reload without a restart:** `oppi extensions reload` re-reads every durable entry and the files it imports. An extension already installed is replaced in place: a tool call that is running finishes on its old code, and the next request or call uses the new code. A package that fails to load keeps its previous code. A package that is gone is uninstalled, and sessions stop being offered its tools. A session picks up a newly added extension the next time it attaches (open, resume, or server restart).
+- **Trust:** the code runs in the Oppi server process with your permissions, like a classic extension. It is not sandboxed, even for sandbox sessions.
+
 ## Pi resource toggle behavior
 
 Current Oppi workspaces do not store `extensions`. Extension enablement comes from Pi resource settings for the session cwd.

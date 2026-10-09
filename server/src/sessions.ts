@@ -80,7 +80,7 @@ type ActiveSession = SessionStartActiveSession;
 
 // ─── Session Manager ───
 
-import type { DurableHarness } from "./durable-harness.js";
+import type { DurableExtensionReport, DurableHarness } from "./durable-harness.js";
 import { hasServerDurableBinding } from "./session-runtime-capabilities.js";
 import type { ConversationId, EntryId, Harness } from "@earendil-works/pi-durable";
 
@@ -577,6 +577,15 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
    */
   conversationStreamAvailable(): boolean {
     return this.durableHarness !== undefined;
+  }
+
+  /**
+   * Re-read the durable entries of enabled Pi packages into the Harness registry. Resolves
+   * `undefined` when this server has no Harness (no durable sessions available or bound).
+   */
+  async reloadDurableExtensions(): Promise<DurableExtensionReport | undefined> {
+    if (!this.durableHarness) return undefined;
+    return (await this.durableHarness).reloadExtensions();
   }
 
   /**

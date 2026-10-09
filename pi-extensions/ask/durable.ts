@@ -118,3 +118,9 @@ export const DurableAsk = defineExtension({
     ),
   ],
 });
+
+/**
+ * The durable entry shape (`oppi/durable`). The server bundles this extension, so its
+ * package loader skips this entry when the package is also installed in `~/.pi/agent`.
+ */
+export default { extension: DurableAsk, runtimes: ["host", "sandbox"] };

@@ -1285,6 +1285,7 @@ export async function runCliMain(args: readonly string[] = process.argv.slice(2)
     case "worktree":
     case "session":
     case "control":
+    case "extensions":
     case "schedule":
     case "wait":
       await runCli(invocationArgs);

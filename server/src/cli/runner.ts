@@ -5,6 +5,7 @@ import { cmdAgent } from "./commands/agent.js";
 import { cmdConfig } from "./commands/config.js";
 import { cmdControl } from "./commands/control.js";
 import { cmdDictionary } from "./commands/dictionary.js";
+import { cmdExtensions } from "./commands/extensions.js";
 import { cmdSchedule } from "./commands/schedule.js";
 import { cmdSession } from "./commands/session.js";
 import { cmdWait } from "./commands/wait.js";
@@ -175,6 +176,9 @@ async function executeCliCommand(args: readonly string[], options: CliRunOptions
       return;
     case "schedule":
       await cmdSchedule(connection, positional[0], positional.slice(1), flags);
+      return;
+    case "extensions":
+      await cmdExtensions(connection, positional[0], positional.slice(1), flags, options.signal);
       return;
     case "wait":
       await cmdWait(

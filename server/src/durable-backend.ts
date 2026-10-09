@@ -360,6 +360,10 @@ export class DurableBackend implements AgentBackend {
     const sandbox = workspace?.runtime === "sandbox";
     const id = session.serverDurable?.conversationId;
     const control = isControlConversation(session);
+    // Extensions from Pi packages' durable entries allowed in this runtime; never on control.
+    const packageExtensions = control
+      ? []
+      : owner.packageExtensionsFor(sandbox ? "sandbox" : "host");
     let conversation: Conversation;
     if (id !== undefined) {
       const existing = await harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
@@ -391,6 +395,7 @@ export class DurableBackend implements AgentBackend {
                   DurableBackgroundJobs,
                   owner.sessionsExtension,
                   DurableProjectContext,
+                  ...packageExtensions,
                   ...(mcp ? [mcp.selection] : []),
                 ],
               },
@@ -403,7 +408,13 @@ export class DurableBackend implements AgentBackend {
       const additions = (
         control
           ? []
-          : [DurableAsk, DurableWorkingWords, DurableBackgroundJobs, owner.sessionsExtension]
+          : [
+              DurableAsk,
+              DurableWorkingWords,
+              DurableBackgroundJobs,
+              owner.sessionsExtension,
+              ...packageExtensions,
+            ]
       )
         .flatMap((extension) => extension.tools ?? [])
         .filter(
@@ -448,6 +459,7 @@ export class DurableBackend implements AgentBackend {
               ...(sandbox ? (DurableSandboxTools.tools ?? []) : []),
               ...(DurableBackgroundJobs.tools ?? []),
               ...(owner.sessionsExtension.tools ?? []),
+              ...packageExtensions.flatMap((extension) => extension.tools ?? []),
             ]
       ).filter(
         (tool) =>
@@ -482,6 +494,7 @@ export class DurableBackend implements AgentBackend {
                     DurableBackgroundJobs,
                     owner.sessionsExtension,
                     DurableProjectContext,
+                    ...packageExtensions,
                     ...(mcp ? [mcp.selection] : []),
                   ]
                 : [
@@ -491,6 +504,7 @@ export class DurableBackend implements AgentBackend {
                     DurableBackgroundJobs,
                     owner.sessionsExtension,
                     DurableProjectContext,
+                    ...packageExtensions,
                     ...(mcp ? [mcp.selection] : []),
                   ],
             model: { provider: model.provider, modelId: model.id },

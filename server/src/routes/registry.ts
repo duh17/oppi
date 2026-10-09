@@ -990,6 +990,13 @@ const rawApiRouteSpecs = [
     surface: "core",
     auth: "owner",
   },
+  {
+    method: "POST",
+    path: "/durable/extensions/reload",
+    operationId: "reloadDurableExtensions",
+    surface: "core",
+    auth: "owner",
+  },
 
   {
     method: "GET",
