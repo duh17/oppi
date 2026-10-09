@@ -585,19 +585,21 @@ export class SessionEventProcessor {
       timerKey,
       setTimeout(() => {
         this.gitStatusTimers.delete(timerKey);
-        this.emitGitStatusNow(key, wsId, worktreeId);
+        void this.emitGitStatusNow(key, wsId, worktreeId);
       }, SessionEventProcessor.GIT_STATUS_DEBOUNCE_MS),
     );
   }
 
-  private emitGitStatusNow(key: string, wsId: string, worktreeId: string): void {
+  private async emitGitStatusNow(key: string, wsId: string, worktreeId: string): Promise<void> {
     const workspace = this.deps.storage.getWorkspace(wsId);
     if (!workspace?.hostMount) return;
     if (workspace.gitStatusEnabled === false) return;
 
-    const worktreePath = resolveWorkspaceWorktree(workspace, worktreeId, {
-      dataDir: this.deps.storage.getDataDir(),
-    })?.path;
+    const worktreePath = (
+      await resolveWorkspaceWorktree(workspace, worktreeId, {
+        dataDir: this.deps.storage.getDataDir(),
+      })
+    )?.path;
     if (!worktreePath) return;
 
     void getGitStatus(worktreePath)

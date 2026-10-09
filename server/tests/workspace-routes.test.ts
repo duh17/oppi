@@ -396,7 +396,7 @@ describe("workspaces module", () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      const worktree = createWorkspaceWorktree(
+      const worktree = await createWorkspaceWorktree(
         workspace,
         { branch: "feature/delete-block" },
         { dataDir },
@@ -545,7 +545,7 @@ describe("workspaces module", () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      const worktree = createWorkspaceWorktree(
+      const worktree = await createWorkspaceWorktree(
         workspace,
         { branch: "feature/review" },
         { dataDir },
@@ -610,7 +610,7 @@ describe("workspaces module", () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      const worktree = createWorkspaceWorktree(
+      const worktree = await createWorkspaceWorktree(
         workspace,
         { branch: "feature/stopped-history" },
         { dataDir },
@@ -684,7 +684,7 @@ describe("workspaces module", () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      const worktree = createWorkspaceWorktree(
+      const worktree = await createWorkspaceWorktree(
         workspace,
         { branch: "feature/detached-history" },
         { dataDir },
@@ -754,7 +754,7 @@ describe("workspaces module", () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      const worktree = createWorkspaceWorktree(
+      const worktree = await createWorkspaceWorktree(
         workspace,
         { branch: "feature/remove-guard" },
         { dataDir },

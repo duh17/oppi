@@ -81,7 +81,7 @@ export interface SessionInputCoordinatorDeps {
     data: unknown,
   ) => void | Promise<void>;
   enqueueQueuedMessage?: EnqueueQueuedMessage;
-  resolveWorkspaceRoot?: (session: Session) => string | null;
+  resolveWorkspaceRoot?: (session: Session) => string | null | Promise<string | null>;
   onFirstMessage?: (session: Session) => void;
   assertModelTurnAdmissionAllowed?: (key: string) => void;
 }
@@ -118,7 +118,7 @@ export class SessionInputCoordinator {
       return { message, images: [] };
     }
 
-    const workspaceRoot = this.deps.resolveWorkspaceRoot?.(active.session);
+    const workspaceRoot = await this.deps.resolveWorkspaceRoot?.(active.session);
     if (!workspaceRoot) {
       throw new Error(attachmentWorkspaceErrorMessage(active.session));
     }

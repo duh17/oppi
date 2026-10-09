@@ -12,7 +12,7 @@ import {
 } from "./diff-core.js";
 import { type MobileRendererRegistry, resolveToolDisplay } from "./mobile-renderer.js";
 import type { SessionRuntimes } from "./runtime-router.js";
-import { resolveSdkSessionCwd } from "./sdk-backend.js";
+import { resolveSdkSessionCwdAsync } from "./sdk-backend.js";
 import { WorkspaceWorktreeError } from "./worktrees.js";
 import type { Storage } from "./storage.js";
 import {
@@ -455,7 +455,7 @@ export class SessionTraceService {
       return { kind: "path-required" };
     }
 
-    const workspaceRoot = this.resolveSdkCwdOrNull(params.workspace, params.session);
+    const workspaceRoot = await this.resolveSdkCwdOrNull(params.workspace, params.session);
     if (!workspaceRoot) return { kind: "workspace-root-not-found" };
 
     // Host workspaces: pairing/auth is the gate. Sandbox stays confined after realpath.
@@ -560,15 +560,18 @@ export class SessionTraceService {
       : undefined;
 
     if (workspace?.runtime === "sandbox" || workspace?.hostMount) {
-      const resolved = this.resolveSdkCwdOrNull(workspace, session);
+      const resolved = await this.resolveSdkCwdOrNull(workspace, session);
       return resolved && (await pathExists(resolved)) ? resolved : null;
     }
     return homedir();
   }
 
-  private resolveSdkCwdOrNull(workspace: Workspace, session: Session): string | null {
+  private async resolveSdkCwdOrNull(
+    workspace: Workspace,
+    session: Session,
+  ): Promise<string | null> {
     try {
-      return resolveSdkSessionCwd(workspace, session, {
+      return await resolveSdkSessionCwdAsync(workspace, session, {
         dataDir: this.deps.storage.getDataDir(),
       });
     } catch (error) {

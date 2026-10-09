@@ -607,7 +607,11 @@ describe("workspace file routes", () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
-      const worktree = createWorkspaceWorktree(workspace, { branch: "feature/files" }, { dataDir });
+      const worktree = await createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/files" },
+        { dataDir },
+      );
       rmSync(join(worktree.path, "main-only.txt"), { force: true });
       writeFileSync(join(worktree.path, "worktree-only.txt"), "worktree\n");
       writeFileSync(join(worktree.path, "shared.txt"), "worktree shared\n");

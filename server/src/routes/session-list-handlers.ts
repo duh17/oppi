@@ -245,11 +245,11 @@ export function createSessionListRouteHandlers(
     );
   }
 
-  function handleWorkspaceSessionBuckets(
+  async function handleWorkspaceSessionBuckets(
     workspaceId: string,
     req: IncomingMessage,
     res: ServerResponse,
-  ): void {
+  ): Promise<void> {
     const workspace = ctx.storage.getWorkspace(workspaceId);
     if (!workspace) {
       helpers.error(res, 404, "Workspace not found");
@@ -268,7 +268,7 @@ export function createSessionListRouteHandlers(
       return;
     }
 
-    const worktreeSelection = normalizeSessionWorktreeId(
+    const worktreeSelection = await normalizeSessionWorktreeId(
       workspace,
       url.searchParams.get("worktreeId") ?? undefined,
       { dataDir: ctx.storage.getDataDir() },
@@ -281,7 +281,7 @@ export function createSessionListRouteHandlers(
     helpers.compressedJson(
       req,
       res,
-      listService.listWorkspaceStoppedSessionBuckets({
+      await listService.listWorkspaceStoppedSessionBuckets({
         workspace,
         beforeMs,
         worktreeId: worktreeSelection.worktreeId,
@@ -319,7 +319,7 @@ export function createSessionListRouteHandlers(
       return;
     }
 
-    const worktreeSelection = normalizeSessionWorktreeId(
+    const worktreeSelection = await normalizeSessionWorktreeId(
       workspace,
       url.searchParams.get("worktreeId") ?? undefined,
       { dataDir: ctx.storage.getDataDir() },
@@ -332,7 +332,7 @@ export function createSessionListRouteHandlers(
     helpers.compressedJson(
       req,
       res,
-      listService.listWorkspaceSessionRows({
+      await listService.listWorkspaceSessionRows({
         workspace,
         statuses: parsedStatus.statuses,
         ...(parsedTimeRange.timeRange ? { timeRange: parsedTimeRange.timeRange } : {}),

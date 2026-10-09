@@ -169,14 +169,14 @@ export class SessionListService {
     return { sessions, serverNow };
   }
 
-  listWorkspaceSessionRows(params: {
+  async listWorkspaceSessionRows(params: {
     workspace: Workspace;
     statuses: ReadonlySet<SessionStatusFilter>;
     timeRange?: { sinceMs: number; untilMs: number };
     filterActiveByTimeRange?: boolean;
     worktreeId?: string;
     nowMs?: number;
-  }): WorkspaceSessionCollectionResult {
+  }): Promise<WorkspaceSessionCollectionResult> {
     const serverNow = params.nowMs ?? Date.now();
     const attention = collectPendingAttentionCounts(this.deps.sessionRuntimes);
     const response: WorkspaceSessionCollectionResult = {
@@ -199,7 +199,7 @@ export class SessionListService {
     }
 
     if (params.statuses.has("stopped") && params.timeRange) {
-      response.stopped = this.listWorkspaceStoppedSessionRows(
+      response.stopped = await this.listWorkspaceStoppedSessionRows(
         params.workspace,
         params.timeRange,
         attention,
@@ -211,14 +211,14 @@ export class SessionListService {
     return response;
   }
 
-  listWorkspaceStoppedSessionBuckets(params: {
+  async listWorkspaceStoppedSessionBuckets(params: {
     workspace: Workspace;
     beforeMs: number;
     worktreeId?: string;
     nowMs?: number;
-  }): WorkspaceStoppedSessionBucketsResult {
+  }): Promise<WorkspaceStoppedSessionBucketsResult> {
     const serverNow = params.nowMs ?? Date.now();
-    const importableSnapshot = this.listWorkspaceImportableSessions(
+    const importableSnapshot = await this.listWorkspaceImportableSessions(
       params.workspace,
       params.worktreeId,
     );
@@ -268,13 +268,13 @@ export class SessionListService {
     return this.buildManagedSessionListRows(sessions, attention).sort(compareActiveSessionListRows);
   }
 
-  private listWorkspaceStoppedSessionRows(
+  private async listWorkspaceStoppedSessionRows(
     workspace: Workspace,
     timeRange: { sinceMs: number; untilMs: number },
     attention: PendingAttentionCounts,
     serverNow: number,
     worktreeId?: string,
-  ): SessionListRow[] {
+  ): Promise<SessionListRow[]> {
     const managed = this.deps.storage
       .listStoppedWorkspaceTimeRangeSessionSnapshots(
         workspace.id,
@@ -291,7 +291,7 @@ export class SessionListService {
       );
     const managedRows = this.buildManagedSessionListRows(managed, attention);
 
-    const importableSnapshot = this.listWorkspaceImportableSessions(workspace, worktreeId);
+    const importableSnapshot = await this.listWorkspaceImportableSessions(workspace, worktreeId);
     this.refreshLocalSessionCatalogIfStale(importableSnapshot.lastScannedAt, serverNow);
     const importableSplit = splitImportableSessionsByRange(
       importableSnapshot.sessions,
@@ -317,18 +317,20 @@ export class SessionListService {
     });
   }
 
-  private listWorkspaceImportableSessions(
+  private async listWorkspaceImportableSessions(
     workspace: Workspace,
     worktreeId?: string,
-  ): LocalSessionCatalogSnapshot {
+  ): Promise<LocalSessionCatalogSnapshot> {
     const knownPiSessionIdentities = this.collectKnownPiSessionIdentities();
     const snapshot = listCatalogedLocalSessions(knownPiSessionIdentities, {
       dataDir: this.deps.storage.getDataDir(),
     });
     const hostMount = worktreeId
-      ? resolveWorkspaceWorktree(workspace, worktreeId, {
-          dataDir: this.deps.storage.getDataDir(),
-        })?.path
+      ? (
+          await resolveWorkspaceWorktree(workspace, worktreeId, {
+            dataDir: this.deps.storage.getDataDir(),
+          })
+        )?.path
       : workspace.hostMount;
     if (!hostMount) {
       return { ...snapshot, sessions: [] };

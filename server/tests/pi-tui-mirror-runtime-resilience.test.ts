@@ -210,7 +210,7 @@ function makeHarness(root: string) {
   return { storage, sessions, mirror, managed, runtimes, streamMux };
 }
 
-function connectBridge(
+async function connectBridge(
   runtime: PiTuiMirrorRuntime,
   options: {
     bridgeId: string;
@@ -220,7 +220,7 @@ function connectBridge(
     sessionName: string;
     workspaceId?: string | null;
   },
-): { ws: FakeBridgeWebSocket; sessionId: string } {
+): Promise<{ ws: FakeBridgeWebSocket; sessionId: string }> {
   const ws = new FakeBridgeWebSocket();
   runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
   ws.receive({
@@ -236,6 +236,15 @@ function connectBridge(
       sessionName: options.sessionName,
     },
   });
+
+  await vi.waitFor(
+    () => {
+      expect(
+        ws.sent.some((message) => message.type === "hello_ack" || message.type === "error"),
+      ).toBe(true);
+    },
+    { timeout: 2_000 },
+  );
 
   const ack = ws.sent.find((message) => message.type === "hello_ack");
   expect(ack).toBeTruthy();
@@ -273,7 +282,9 @@ function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
-function createManagedWorktreeFixture(root: string): { worktreeId: string; worktreePath: string } {
+async function createManagedWorktreeFixture(
+  root: string,
+): Promise<{ worktreeId: string; worktreePath: string }> {
   git(root, ["init", "--initial-branch=main"]);
   git(root, ["config", "user.email", "oppi-test@example.invalid"]);
   git(root, ["config", "user.name", "Oppi Test"]);
@@ -287,7 +298,7 @@ function createManagedWorktreeFixture(root: string): { worktreeId: string; workt
   git(root, ["worktree", "add", worktreePath, "feature/mirror-worktree"]);
 
   const workspace: Workspace = { id: "w1", name: "Workspace", hostMount: root };
-  const worktree = listWorkspaceWorktrees(workspace).find((candidate) => !candidate.isMain);
+  const worktree = (await listWorkspaceWorktrees(workspace)).find((candidate) => !candidate.isMain);
   if (!worktree) throw new Error("Expected managed worktree fixture");
   return { worktreeId: worktree.id, worktreePath };
 }
@@ -296,12 +307,12 @@ describe("PiTuiMirrorRuntime resilience", () => {
   it("tags mirrored sessions with the workspace worktree inferred from terminal cwd", async () => {
     const root = await mkdtemp(join(tmpdir(), "oppi-mirror-runtime-worktree-"));
     try {
-      const fixture = createManagedWorktreeFixture(root);
+      const fixture = await createManagedWorktreeFixture(root);
       const cwd = join(fixture.worktreePath, "nested");
       mkdirSync(cwd, { recursive: true });
       const { mirror, sessions } = makeHarness(root);
 
-      const connected = connectBridge(mirror, {
+      const connected = await connectBridge(mirror, {
         bridgeId: "bridge-worktree",
         cwd,
         piSessionId: "pi-worktree",
@@ -309,8 +320,10 @@ describe("PiTuiMirrorRuntime resilience", () => {
         sessionName: "Worktree terminal session",
       });
 
-      expect(sessions.get(connected.sessionId)?.worktreeId).toBe(fixture.worktreeId);
-      expect(mirror.getActiveSession(connected.sessionId)?.worktreeId).toBe(fixture.worktreeId);
+      await vi.waitFor(() => {
+        expect(sessions.get(connected.sessionId)?.worktreeId).toBe(fixture.worktreeId);
+        expect(mirror.getActiveSession(connected.sessionId)?.worktreeId).toBe(fixture.worktreeId);
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -328,14 +341,14 @@ describe("PiTuiMirrorRuntime resilience", () => {
 
       const dataDir = join(root, ".oppi-test-data");
       const workspace: Workspace = { id: "w1", name: "Workspace", hostMount: root };
-      const worktree = createWorkspaceWorktree(
+      const worktree = await createWorkspaceWorktree(
         workspace,
         { branch: "feature/infer-data-worktree" },
         { dataDir },
       );
       const { mirror, sessions } = makeHarness(root);
 
-      const connected = connectBridge(mirror, {
+      const connected = await connectBridge(mirror, {
         bridgeId: "bridge-infer-data-worktree",
         cwd: worktree.path,
         piSessionId: "pi-infer-data-worktree",
@@ -344,9 +357,11 @@ describe("PiTuiMirrorRuntime resilience", () => {
         workspaceId: null,
       });
 
-      expect(sessions.get(connected.sessionId)).toMatchObject({
-        workspaceId: "w1",
-        worktreeId: worktree.id,
+      await vi.waitFor(() => {
+        expect(sessions.get(connected.sessionId)).toMatchObject({
+          workspaceId: "w1",
+          worktreeId: worktree.id,
+        });
       });
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -365,7 +380,7 @@ describe("PiTuiMirrorRuntime resilience", () => {
 
       const dataDir = join(root, ".oppi-test-data");
       const workspace: Workspace = { id: "w1", name: "Workspace", hostMount: root };
-      const worktree = createWorkspaceWorktree(
+      const worktree = await createWorkspaceWorktree(
         workspace,
         { branch: "feature/mirror-attachment" },
         { dataDir },
@@ -373,7 +388,7 @@ describe("PiTuiMirrorRuntime resilience", () => {
       writeFileSync(join(worktree.path, "only-in-worktree.txt"), "worktree attachment\n");
       const { mirror, runtimes, sessions } = makeHarness(root);
 
-      const connected = connectBridge(mirror, {
+      const connected = await connectBridge(mirror, {
         bridgeId: "bridge-data-worktree",
         cwd: worktree.path,
         piSessionId: "pi-data-worktree",
@@ -381,7 +396,9 @@ describe("PiTuiMirrorRuntime resilience", () => {
         sessionName: "Data worktree terminal session",
       });
 
-      expect(sessions.get(connected.sessionId)?.worktreeId).toBe(worktree.id);
+      await vi.waitFor(() => {
+        expect(sessions.get(connected.sessionId)?.worktreeId).toBe(worktree.id);
+      });
       const pendingPrompt = runtimes.sendPrompt(connected.sessionId, "review attachment", {
         clientTurnId: "turn-attachment",
         requestId: "req-attachment",
@@ -418,7 +435,7 @@ describe("PiTuiMirrorRuntime resilience", () => {
     const root = await mkdtemp(join(tmpdir(), "oppi-mirror-runtime-resilience-"));
     try {
       const { mirror, managed, runtimes, streamMux, sessions } = makeHarness(root);
-      const first = connectBridge(mirror, {
+      const first = await connectBridge(mirror, {
         bridgeId: "bridge-reused",
         cwd: root,
         piSessionId: "pi-first",
@@ -454,7 +471,7 @@ describe("PiTuiMirrorRuntime resilience", () => {
       });
       focusedStream.close(1000);
 
-      const second = connectBridge(mirror, {
+      const second = await connectBridge(mirror, {
         bridgeId: "bridge-reused",
         cwd: root,
         piSessionId: "pi-second",
@@ -532,7 +549,7 @@ describe("PiTuiMirrorRuntime resilience", () => {
     const root = await mkdtemp(join(tmpdir(), "oppi-mirror-runtime-replace-"));
     try {
       const { mirror, sessions } = makeHarness(root);
-      const first = connectBridge(mirror, {
+      const first = await connectBridge(mirror, {
         bridgeId: "bridge-same-session",
         cwd: root,
         piSessionId: "pi-same",
@@ -556,6 +573,12 @@ describe("PiTuiMirrorRuntime resilience", () => {
         },
       });
 
+      await vi.waitFor(
+        () => {
+          expect(secondWs.sent.some((message) => message.type === "hello_ack")).toBe(true);
+        },
+        { timeout: 2_000 },
+      );
       const ack = secondWs.sent.find((message) => message.type === "hello_ack");
       expect(ack?.sessionId).toBe(first.sessionId);
       expect(mirror.isSessionConnected(first.sessionId)).toBe(true);
@@ -589,7 +612,7 @@ describe("PiTuiMirrorRuntime resilience", () => {
     const root = await mkdtemp(join(tmpdir(), "oppi-mirror-runtime-evict-"));
     try {
       const { mirror, sessions, runtimes } = makeHarness(root);
-      const connected = connectBridge(mirror, {
+      const connected = await connectBridge(mirror, {
         bridgeId: "bridge-evict",
         cwd: root,
         piSessionId: "pi-evict",

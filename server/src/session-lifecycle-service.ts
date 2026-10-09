@@ -29,7 +29,7 @@ import { safeErrorMessage } from "./log-utils.js";
 import { isRequiredModelUnavailableError } from "./model-resolution.js";
 import { createLogger } from "./logger.js";
 import type { SessionRuntimes } from "./runtime-router.js";
-import { forkPiSessionFrom, resolveSdkSessionCwd } from "./sdk-backend.js";
+import { forkPiSessionFrom, resolveSdkSessionCwdAsync } from "./sdk-backend.js";
 import { deleteSessionAttachments } from "./session-attachments.js";
 import {
   DEFAULT_SESSION_JSONL_META_READ_BYTES,
@@ -762,7 +762,7 @@ export class SessionLifecycleService {
       // Bound before start: the backend attaches to this conversation instead of creating one.
       forkSession.serverDurable = { conversationId: forkConversationId };
     } else {
-      const forkCwd = resolveSdkSessionCwd(params.workspace, forkSession, {
+      const forkCwd = await resolveSdkSessionCwdAsync(params.workspace, forkSession, {
         dataDir: this.deps.storage.getDataDir(),
       });
       let forkedFile: string;
@@ -989,14 +989,17 @@ export class SessionLifecycleService {
     this.deps.storage.saveSession(stored ?? session);
   }
 
-  private inspectWorktreeBinding(session: Session, workspace?: Workspace): WorktreeBindingState {
+  private async inspectWorktreeBinding(
+    session: Session,
+    workspace?: Workspace,
+  ): Promise<WorktreeBindingState> {
     const requested = session.worktreeId?.trim();
     if (!requested || requested === "main") return "main";
     if (!workspace) return "main-missing";
 
     let worktrees;
     try {
-      worktrees = listWorkspaceWorktrees(workspace, {
+      worktrees = await listWorkspaceWorktrees(workspace, {
         dataDir: this.deps.storage.getDataDir(),
         listingFailure: "throw",
       });
@@ -1029,7 +1032,7 @@ export class SessionLifecycleService {
     session: Session,
     workspace?: Workspace,
   ): Promise<{ session: Session; rebound: boolean }> {
-    const binding = this.inspectWorktreeBinding(session, workspace);
+    const binding = await this.inspectWorktreeBinding(session, workspace);
     if (binding === "main" || binding === "available") {
       const stripped = this.stripPersistedWorktreeRebindNotice(session);
       return { session: stripped ?? session, rebound: false };
@@ -1210,7 +1213,7 @@ export class SessionLifecycleService {
       }
     } else {
       try {
-        workRoot = resolveSdkSessionCwd(workspace, session, {
+        workRoot = await resolveSdkSessionCwdAsync(workspace, session, {
           dataDir: this.deps.storage.getDataDir(),
         });
       } catch (error) {

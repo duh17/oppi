@@ -393,12 +393,6 @@ export function resolveSdkSessionCwd(
     return controlCwd;
   }
 
-  if (workspace?.runtime !== "sandbox" && workspace && session?.worktreeId) {
-    const worktreePath = resolveWorkspaceSessionCwd(workspace, session.worktreeId, options);
-    if (worktreePath && existsSync(worktreePath)) return worktreePath;
-    throw new WorkspaceWorktreeError(409, "Session worktree is no longer available");
-  }
-
   const rawHostMount = workspace?.hostMount?.trim();
   if (!rawHostMount) {
     if (workspace?.runtime === "sandbox") {
@@ -413,6 +407,23 @@ export function resolveSdkSessionCwd(
   }
 
   return resolveHostPath(rawHostMount);
+}
+
+/**
+ * Session cwd, including a host worktree. Git inspection is asynchronous so a
+ * locked or slow repository cannot freeze the server event loop.
+ */
+export async function resolveSdkSessionCwdAsync(
+  workspace?: Workspace,
+  session?: Pick<Session, "workspaceId" | "worktreeId" | "control" | "serverDurable">,
+  options: { dataDir?: string } = {},
+): Promise<string> {
+  if (workspace?.runtime !== "sandbox" && workspace && session?.worktreeId) {
+    const worktreePath = await resolveWorkspaceSessionCwd(workspace, session.worktreeId, options);
+    if (worktreePath && existsSync(worktreePath)) return worktreePath;
+    throw new WorkspaceWorktreeError(409, "Session worktree is no longer available");
+  }
+  return resolveSdkSessionCwd(workspace, session, options);
 }
 
 export function resolveSdkSessionDisplayCwd(
@@ -1037,7 +1048,9 @@ export class SdkBackend implements AgentBackend {
   static async create(config: SdkBackendConfig): Promise<SdkBackend> {
     const createStartMs = Date.now();
     const { session, workspace, onEvent, onEnd: _onEnd } = config;
-    const initialHostCwd = resolveSdkSessionCwd(workspace, session, { dataDir: config.dataDir });
+    const initialHostCwd = await resolveSdkSessionCwdAsync(workspace, session, {
+      dataDir: config.dataDir,
+    });
     const displayCwd = resolveSdkSessionDisplayCwd(workspace, session, { dataDir: config.dataDir });
     const sandboxMode = workspace?.runtime === "sandbox";
     // Sandboxes persist a guest/display cwd in Pi session state and need a real

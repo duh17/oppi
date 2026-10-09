@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, realpathSync } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
@@ -31,6 +31,8 @@ type ListWorkspaceWorktreesOptions = {
   sessionCountsByWorktreeId?: ReadonlyMap<string, number>;
   /** When `throw`, git worktree list failure is 409 instead of a main-only fallback. */
   listingFailure?: "fallback-main" | "throw";
+  /** Removal resolves the tree it just marked pending. Other callers must not. */
+  includePendingRemovals?: boolean;
 };
 
 type GitResult = {
@@ -70,53 +72,51 @@ function safeRealpath(path: string): string {
   }
 }
 
-function runGit(cwd: string, args: string[]): string | null {
-  const result = runGitResult(cwd, args, 5000);
-  return result.status === 0 ? result.stdout : null;
+function runGit(cwd: string, args: string[]): Promise<string | null> {
+  return runGitResult(cwd, args, 5000).then((result) =>
+    result.status === 0 ? result.stdout : null,
+  );
 }
 
-function runGitResult(cwd: string, args: string[], timeout = 15_000): GitResult {
-  try {
-    return {
-      status: 0,
-      stdout: execFileSync("git", args, {
-        cwd,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout,
-      }),
-      stderr: "",
-    };
-  } catch (error: unknown) {
-    const childError = error as { status?: unknown; stdout?: unknown; stderr?: unknown };
-    return {
-      status: typeof childError.status === "number" ? childError.status : 1,
-      stdout: typeof childError.stdout === "string" ? childError.stdout : "",
-      stderr: typeof childError.stderr === "string" ? childError.stderr : "",
-    };
-  }
+/**
+ * Git waits on the index lock and on `worktree add`/`merge-tree` for as long as
+ * the child runs. A synchronous child would freeze every other request for that
+ * wait — measured as multi-second event-loop lag while CPU stays near idle.
+ */
+function runGitResult(cwd: string, args: string[], timeout = 15_000): Promise<GitResult> {
+  return runGitAsync(cwd, args, timeout);
 }
 
-function runGitOrThrow(cwd: string, args: string[], statusCode = 409): string {
-  try {
-    return execFileSync("git", args, {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 60_000,
-    });
-  } catch (error: unknown) {
-    const stderr =
-      typeof (error as { stderr?: unknown }).stderr === "string"
-        ? (error as { stderr: string }).stderr.trim()
-        : "";
-    const stdout =
-      typeof (error as { stdout?: unknown }).stdout === "string"
-        ? (error as { stdout: string }).stdout.trim()
-        : "";
-    const detail = stderr || stdout || `git ${args.join(" ")} failed`;
-    throw new WorkspaceWorktreeError(statusCode, detail);
-  }
+async function runGitOrThrow(cwd: string, args: string[], statusCode = 409): Promise<string> {
+  const result = await runGitAsync(cwd, args, 60_000);
+  if (result.status === 0) return result.stdout;
+  const detail = result.stderr.trim() || result.stdout.trim() || `git ${args.join(" ")} failed`;
+  throw new WorkspaceWorktreeError(statusCode, detail);
+}
+
+function runGitAsync(cwd: string, args: string[], timeout: number): Promise<GitResult> {
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      args,
+      { cwd, encoding: "utf8", timeout, maxBuffer: 16 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        const status = (error as { status?: unknown } | null)?.status;
+        const code = (error as { code?: unknown } | null)?.code;
+        resolve({
+          status: error
+            ? typeof status === "number"
+              ? status
+              : typeof code === "number"
+                ? code
+                : 1
+            : 0,
+          stdout,
+          stderr,
+        });
+      },
+    );
+  });
 }
 
 function branchName(raw: string | null): string | null {
@@ -258,13 +258,13 @@ function displayNameForWorktree(record: WorktreePorcelainRecord, isMain: boolean
   return basename(record.path) || "Detached checkout";
 }
 
-function fallbackMainWorktree(path: string, isGitRepo: boolean): WorkspaceWorktree {
+async function fallbackMainWorktree(path: string, isGitRepo: boolean): Promise<WorkspaceWorktree> {
   const resolvedPath = safeRealpath(path);
   const branch = isGitRepo
-    ? branchName(runGit(resolvedPath, ["branch", "--show-current"])?.trim() ?? null)
+    ? branchName((await runGit(resolvedPath, ["branch", "--show-current"]))?.trim() ?? null)
     : null;
   const headSha = isGitRepo
-    ? runGit(resolvedPath, ["rev-parse", "--short", "HEAD"])?.trim() || null
+    ? (await runGit(resolvedPath, ["rev-parse", "--short", "HEAD"]))?.trim() || null
     : null;
   return {
     id: MAIN_WORKTREE_ID,
@@ -278,7 +278,7 @@ function fallbackMainWorktree(path: string, isGitRepo: boolean): WorkspaceWorktr
   };
 }
 
-function requireWorkspaceGitRoot(workspace: Workspace): string {
+async function requireWorkspaceGitRoot(workspace: Workspace): Promise<string> {
   const hostMount = workspace.hostMount?.trim();
   if (!hostMount) {
     throw new WorkspaceWorktreeError(400, "Workspace has no host mount");
@@ -289,7 +289,7 @@ function requireWorkspaceGitRoot(workspace: Workspace): string {
     throw new WorkspaceWorktreeError(400, "Workspace host mount does not exist");
   }
 
-  const rootOut = runGit(safeRealpath(hostPath), ["rev-parse", "--show-toplevel"]);
+  const rootOut = await runGit(safeRealpath(hostPath), ["rev-parse", "--show-toplevel"]);
   if (!rootOut) {
     throw new WorkspaceWorktreeError(400, "Workspace host mount is not a git repository");
   }
@@ -297,10 +297,10 @@ function requireWorkspaceGitRoot(workspace: Workspace): string {
   return safeRealpath(rootOut.trim());
 }
 
-export function listWorkspaceWorktrees(
+export async function listWorkspaceWorktrees(
   workspace: Workspace,
   options: ListWorkspaceWorktreesOptions = {},
-): WorkspaceWorktree[] {
+): Promise<WorkspaceWorktree[]> {
   const hostMount = workspace.hostMount?.trim();
   if (!hostMount) return [];
 
@@ -308,18 +308,18 @@ export function listWorkspaceWorktrees(
   if (!existsSync(hostPath)) return [];
 
   const workspacePath = safeRealpath(hostPath);
-  const rootOut = runGit(workspacePath, ["rev-parse", "--show-toplevel"]);
+  const rootOut = await runGit(workspacePath, ["rev-parse", "--show-toplevel"]);
   if (!rootOut) {
-    return withSessionCounts([fallbackMainWorktree(workspacePath, false)], options);
+    return withSessionCounts([await fallbackMainWorktree(workspacePath, false)], options);
   }
 
   const workspaceRoot = safeRealpath(rootOut.trim());
-  const listed = runGitResult(workspaceRoot, ["worktree", "list", "--porcelain"]);
+  const listed = await runGitResult(workspaceRoot, ["worktree", "list", "--porcelain"]);
   if (listed.status !== 0) {
     if (options.listingFailure === "throw") {
       throw new WorkspaceWorktreeError(409, "Worktree inspection failed");
     }
-    return withSessionCounts([fallbackMainWorktree(workspaceRoot, true)], options);
+    return withSessionCounts([await fallbackMainWorktree(workspaceRoot, true)], options);
   }
   const raw = listed.stdout;
 
@@ -327,13 +327,18 @@ export function listWorkspaceWorktrees(
   const records = parseWorktreePorcelain(raw);
   const withIds: WorkspaceWorktree[] = records.flatMap((record) => {
     const path = safeRealpath(record.path);
-    // A worktree whose removal is underway is already gone to callers, so no
-    // session or file read can bind to a tree that is being deleted.
-    if (pendingWorktreeRemovals.has(path)) return [];
     const isMain = path === workspaceRoot;
     const dataDirWorktreeId = dataDirManagedWorktreeId(options.dataDir, workspace.id, path);
     const isProjectManaged = isPathWithin(projectManagedRoot, path);
     if (!isMain && !dataDirWorktreeId && !isProjectManaged) return [];
+    // A worktree whose removal is underway is already gone to callers, so no
+    // session or file read can bind to a tree that is being deleted.
+    const id = isMain ? MAIN_WORKTREE_ID : (dataDirWorktreeId ?? worktreeIdForPath(path));
+    if (
+      !options.includePendingRemovals &&
+      (pendingWorktreeRemovals.has(path) || pendingWorktreeRemovalIds.has(id))
+    )
+      return [];
 
     return [
       {
@@ -350,7 +355,7 @@ export function listWorkspaceWorktrees(
   });
 
   if (!withIds.some((worktree) => worktree.isMain)) {
-    withIds.unshift(fallbackMainWorktree(workspaceRoot, true));
+    withIds.unshift(await fallbackMainWorktree(workspaceRoot, true));
   }
 
   const sorted = withIds.sort((lhs, rhs) => {
@@ -375,12 +380,12 @@ function withSessionCounts(
   }));
 }
 
-function requireBranch(workspaceRoot: string, value: unknown): string {
+async function requireBranch(workspaceRoot: string, value: unknown): Promise<string> {
   if (typeof value !== "string" || !value.trim()) {
     throw new WorkspaceWorktreeError(400, "branch required");
   }
   const branch = value.trim();
-  const check = runGitResult(workspaceRoot, ["check-ref-format", "--branch", branch]);
+  const check = await runGitResult(workspaceRoot, ["check-ref-format", "--branch", branch]);
   if (check.status !== 0 || check.stdout.trim() !== branch) {
     throw new WorkspaceWorktreeError(400, "Invalid branch name");
   }
@@ -430,15 +435,15 @@ function managedCreatePath(
   return { id, path: join(root, id) };
 }
 
-function branchExists(workspaceRoot: string, branch: string): boolean {
-  return runGit(workspaceRoot, ["show-ref", "--verify", `refs/heads/${branch}`]) !== null;
+async function branchExists(workspaceRoot: string, branch: string): Promise<boolean> {
+  return (await runGit(workspaceRoot, ["show-ref", "--verify", `refs/heads/${branch}`])) !== null;
 }
 
-function requireAvailableCreateTarget(
+async function requireAvailableCreateTarget(
   workspace: Workspace,
   targetId: string,
   options: WorkspaceWorktreeLifecycleOptions,
-): void {
+): Promise<void> {
   if (targetId === MAIN_WORKTREE_ID) {
     throw new WorkspaceWorktreeError(400, "Worktree path uses a reserved worktree id");
   }
@@ -446,7 +451,7 @@ function requireAvailableCreateTarget(
     throw new WorkspaceWorktreeError(409, "Worktree id is still referenced by session history");
   }
   if (
-    listWorkspaceWorktrees(workspace, { dataDir: options.dataDir }).some(
+    (await listWorkspaceWorktrees(workspace, { dataDir: options.dataDir })).some(
       (worktree) => worktree.id === targetId,
     )
   ) {
@@ -472,33 +477,46 @@ function requireTargetRef(value: unknown): string {
   return value.trim();
 }
 
-function requireCommit(workspaceRoot: string, ref: string, label: string): string {
-  const resolved = runGit(workspaceRoot, ["rev-parse", "--verify", `${ref}^{commit}`])?.trim();
+async function requireCommit(workspaceRoot: string, ref: string, label: string): Promise<string> {
+  const resolved = (
+    await runGit(workspaceRoot, ["rev-parse", "--verify", `${ref}^{commit}`])
+  )?.trim();
   if (!resolved) {
     throw new WorkspaceWorktreeError(404, `${label} not found`);
   }
   return resolved;
 }
 
-function isAncestor(workspaceRoot: string, ancestor: string, descendant: string): boolean {
+async function isAncestor(
+  workspaceRoot: string,
+  ancestor: string,
+  descendant: string,
+): Promise<boolean> {
   return (
-    runGitResult(workspaceRoot, ["merge-base", "--is-ancestor", ancestor, descendant]).status === 0
+    (await runGitResult(workspaceRoot, ["merge-base", "--is-ancestor", ancestor, descendant]))
+      .status === 0
   );
 }
 
-function countCommits(workspaceRoot: string, range: string): number {
+async function countCommits(workspaceRoot: string, range: string): Promise<number> {
   const count = Number.parseInt(
-    runGit(workspaceRoot, ["rev-list", "--count", range])?.trim() ?? "0",
+    (await runGit(workspaceRoot, ["rev-list", "--count", range]))?.trim() ?? "0",
     10,
   );
   return Number.isFinite(count) ? count : 0;
 }
 
-function listPreviewCommits(
+async function listPreviewCommits(
   workspaceRoot: string,
   range: string,
-): Array<{ sha: string; subject: string }> {
-  const raw = runGit(workspaceRoot, ["log", "--oneline", "--no-decorate", "--max-count=50", range]);
+): Promise<Array<{ sha: string; subject: string }>> {
+  const raw = await runGit(workspaceRoot, [
+    "log",
+    "--oneline",
+    "--no-decorate",
+    "--max-count=50",
+    range,
+  ]);
   if (!raw) return [];
   return raw
     .split("\n")
@@ -528,12 +546,12 @@ function parseNameStatus(raw: string): WorkspaceWorktreePreviewFile[] {
     });
 }
 
-function previewChangedFiles(
+async function previewChangedFiles(
   workspaceRoot: string,
   targetSha: string,
   sourceSha: string,
-): WorkspaceWorktreePreviewFile[] {
-  const result = runGitResult(
+): Promise<WorkspaceWorktreePreviewFile[]> {
+  const result = await runGitResult(
     workspaceRoot,
     ["diff", "--name-status", `${targetSha}...${sourceSha}`, "--"],
     30_000,
@@ -547,12 +565,12 @@ function previewChangedFiles(
   );
 }
 
-function mergeTreeConflictCheck(
+async function mergeTreeConflictCheck(
   workspaceRoot: string,
   targetSha: string,
   sourceSha: string,
-): Pick<WorkspaceWorktreePreview, "conflictCheck" | "conflictCheckError"> {
-  const result = runGitResult(
+): Promise<Pick<WorkspaceWorktreePreview, "conflictCheck" | "conflictCheckError">> {
+  const result = await runGitResult(
     workspaceRoot,
     ["merge-tree", "--write-tree", targetSha, sourceSha],
     30_000,
@@ -564,23 +582,23 @@ function mergeTreeConflictCheck(
   return { conflictCheck: "unknown", conflictCheckError: "git merge-tree failed" };
 }
 
-export function createWorkspaceWorktree(
+export async function createWorkspaceWorktree(
   workspace: Workspace,
   request: CreateWorkspaceWorktreeRequest,
   options: WorkspaceWorktreeLifecycleOptions,
-): WorkspaceWorktree {
-  const workspaceRoot = requireWorkspaceGitRoot(workspace);
-  const branch = requireBranch(workspaceRoot, request.branch);
+): Promise<WorkspaceWorktree> {
+  const workspaceRoot = await requireWorkspaceGitRoot(workspace);
+  const branch = await requireBranch(workspaceRoot, request.branch);
   const base = normalizedBase(request.base);
   const target = managedCreatePath(workspace, options.dataDir, branch, request.path);
-  requireAvailableCreateTarget(workspace, target.id, options);
+  await requireAvailableCreateTarget(workspace, target.id, options);
 
-  const args = branchExists(workspaceRoot, branch)
+  const args = (await branchExists(workspaceRoot, branch))
     ? ["worktree", "add", target.path, branch]
     : ["worktree", "add", "-b", branch, target.path, base];
-  runGitOrThrow(workspaceRoot, args);
+  await runGitOrThrow(workspaceRoot, args);
 
-  const created = listWorkspaceWorktrees(workspace, { dataDir: options.dataDir }).find(
+  const created = (await listWorkspaceWorktrees(workspace, { dataDir: options.dataDir })).find(
     (worktree) => worktree.id === target.id,
   );
   if (!created) {
@@ -589,18 +607,18 @@ export function createWorkspaceWorktree(
   return created;
 }
 
-export function openWorkspaceWorktree(
+export async function openWorkspaceWorktree(
   workspace: Workspace,
   request: OpenWorkspaceWorktreeRequest,
   options: WorkspaceWorktreeLifecycleOptions,
-): WorkspaceWorktree {
+): Promise<WorkspaceWorktree> {
   const branch = typeof request.branch === "string" ? request.branch.trim() : "";
   const path = typeof request.path === "string" ? resolveHostPath(request.path) : "";
   if (!branch && !path) {
     throw new WorkspaceWorktreeError(400, "branch or path required");
   }
 
-  const worktrees = listWorkspaceWorktrees(workspace, { dataDir: options.dataDir });
+  const worktrees = await listWorkspaceWorktrees(workspace, { dataDir: options.dataDir });
   const worktree = path
     ? worktrees.find((candidate) => safeRealpath(candidate.path) === safeRealpath(path))
     : worktrees.find(
@@ -614,14 +632,16 @@ export function openWorkspaceWorktree(
   return worktree;
 }
 
-export function previewWorkspaceWorktree(
+export async function previewWorkspaceWorktree(
   workspace: Workspace,
   worktreeId: string,
   request: PreviewWorkspaceWorktreeRequest,
   options: WorkspaceWorktreeLifecycleOptions,
-): WorkspaceWorktreePreview {
-  const workspaceRoot = requireWorkspaceGitRoot(workspace);
-  const worktree = resolveWorkspaceWorktree(workspace, worktreeId, { dataDir: options.dataDir });
+): Promise<WorkspaceWorktreePreview> {
+  const workspaceRoot = await requireWorkspaceGitRoot(workspace);
+  const worktree = await resolveWorkspaceWorktree(workspace, worktreeId, {
+    dataDir: options.dataDir,
+  });
   if (!worktree) {
     throw new WorkspaceWorktreeError(404, "Worktree not found");
   }
@@ -631,12 +651,12 @@ export function previewWorkspaceWorktree(
 
   const mode = requireIntegrationMode(request.mode);
   const targetRef = requireTargetRef(request.into);
-  const sourceSha = requireCommit(worktree.path, "HEAD", "Source worktree HEAD");
-  const targetSha = requireCommit(workspaceRoot, targetRef, "Target branch");
+  const sourceSha = await requireCommit(worktree.path, "HEAD", "Source worktree HEAD");
+  const targetSha = await requireCommit(workspaceRoot, targetRef, "Target branch");
   const range = `${targetSha}..${sourceSha}`;
-  const alreadyMerged = isAncestor(workspaceRoot, sourceSha, targetSha);
-  const fastForwardPossible = isAncestor(workspaceRoot, targetSha, sourceSha);
-  const changedFiles = previewChangedFiles(workspaceRoot, targetSha, sourceSha);
+  const alreadyMerged = await isAncestor(workspaceRoot, sourceSha, targetSha);
+  const fastForwardPossible = await isAncestor(workspaceRoot, targetSha, sourceSha);
+  const changedFiles = await previewChangedFiles(workspaceRoot, targetSha, sourceSha);
 
   return {
     worktree,
@@ -651,15 +671,18 @@ export function previewWorkspaceWorktree(
     mode,
     alreadyMerged,
     fastForwardPossible,
-    commitCount: countCommits(workspaceRoot, range),
-    commits: listPreviewCommits(workspaceRoot, range),
+    commitCount: await countCommits(workspaceRoot, range),
+    commits: await listPreviewCommits(workspaceRoot, range),
     changedFiles,
-    ...mergeTreeConflictCheck(workspaceRoot, targetSha, sourceSha),
+    ...(await mergeTreeConflictCheck(workspaceRoot, targetSha, sourceSha)),
   };
 }
 
-// Paths of managed worktrees whose async removal has passed validation.
+// Paths and ids of managed worktrees whose removal has been accepted.
+// The id is marked before the first await so a concurrent catalog read cannot
+// bind a session to a tree that is about to be deleted.
 const pendingWorktreeRemovals = new Set<string>();
+const pendingWorktreeRemovalIds = new Set<string>();
 
 // Deleting a multi-GB tree takes minutes; killing git midway leaves a half-deleted
 // checkout. The bound only guards against a wedged git.
@@ -675,85 +698,82 @@ export async function removeWorkspaceWorktree(
   if (!worktreeId) {
     throw new WorkspaceWorktreeError(400, "worktree id required");
   }
-
-  const workspaceRoot = requireWorkspaceGitRoot(workspace);
-  const worktree = resolveWorkspaceWorktree(workspace, worktreeId, { dataDir: options.dataDir });
-  if (!worktree) {
+  if (pendingWorktreeRemovalIds.has(worktreeId)) {
     throw new WorkspaceWorktreeError(404, "Worktree not found");
   }
-  if (worktree.isMain) {
-    throw new WorkspaceWorktreeError(400, "Cannot remove the main checkout");
-  }
-  if (!worktree.managedByOppi) {
-    throw new WorkspaceWorktreeError(400, "Only Oppi-managed data-dir worktrees can be removed");
-  }
-  if ((options.activeSessionCount ?? 0) > 0) {
-    throw new WorkspaceWorktreeError(409, "Cannot remove a worktree with active sessions");
-  }
-  // Mark pending before the first await so a concurrent request cannot resolve it.
-  pendingWorktreeRemovals.add(worktree.path);
+  pendingWorktreeRemovalIds.add(worktreeId);
+  let removedPath: string | undefined;
   try {
-    if (options.force !== true) {
-      const status = await runGitAsync(worktree.path, ["status", "--porcelain=v1"], 60_000);
-      if (status.status !== 0 || status.stdout.trim().length > 0) {
-        throw new WorkspaceWorktreeError(409, "Worktree has uncommitted or untracked changes");
+    const workspaceRoot = await requireWorkspaceGitRoot(workspace);
+    const worktree = await resolveWorkspaceWorktree(workspace, worktreeId, {
+      dataDir: options.dataDir,
+      includePendingRemovals: true,
+    });
+    if (!worktree) {
+      throw new WorkspaceWorktreeError(404, "Worktree not found");
+    }
+    if (worktree.isMain) {
+      throw new WorkspaceWorktreeError(400, "Cannot remove the main checkout");
+    }
+    if (!worktree.managedByOppi) {
+      throw new WorkspaceWorktreeError(400, "Only Oppi-managed data-dir worktrees can be removed");
+    }
+    if ((options.activeSessionCount ?? 0) > 0) {
+      throw new WorkspaceWorktreeError(409, "Cannot remove a worktree with active sessions");
+    }
+    // Mark pending before the first await so a concurrent request cannot resolve it.
+    pendingWorktreeRemovals.add(worktree.path);
+    removedPath = worktree.path;
+    try {
+      if (options.force !== true) {
+        const status = await runGitAsync(worktree.path, ["status", "--porcelain=v1"], 60_000);
+        if (status.status !== 0 || status.stdout.trim().length > 0) {
+          throw new WorkspaceWorktreeError(409, "Worktree has uncommitted or untracked changes");
+        }
       }
-    }
 
-    const removed = await runGitAsync(
-      workspaceRoot,
-      ["worktree", "remove", ...(options.force ? ["--force"] : []), worktree.path],
-      WORKTREE_REMOVE_TIMEOUT_MS,
-    );
-    if (removed.status !== 0) {
-      throw new WorkspaceWorktreeError(
-        409,
-        removed.stderr.trim() || removed.stdout.trim() || "git worktree remove failed",
+      const removed = await runGitAsync(
+        workspaceRoot,
+        ["worktree", "remove", ...(options.force ? ["--force"] : []), worktree.path],
+        WORKTREE_REMOVE_TIMEOUT_MS,
       );
+      if (removed.status !== 0) {
+        throw new WorkspaceWorktreeError(
+          409,
+          removed.stderr.trim() || removed.stdout.trim() || "git worktree remove failed",
+        );
+      }
+      return worktree;
+    } finally {
+      pendingWorktreeRemovals.delete(worktree.path);
     }
-    return worktree;
   } finally {
-    pendingWorktreeRemovals.delete(worktree.path);
+    pendingWorktreeRemovalIds.delete(worktreeId);
+    if (removedPath) pendingWorktreeRemovals.delete(removedPath);
   }
 }
 
-function runGitAsync(cwd: string, args: string[], timeout: number): Promise<GitResult> {
-  return new Promise((resolve) => {
-    execFile(
-      "git",
-      args,
-      { cwd, encoding: "utf8", timeout, maxBuffer: 16 * 1024 * 1024 },
-      (error, stdout, stderr) => {
-        const code = (error as { code?: unknown } | null)?.code;
-        resolve({
-          status: error ? (typeof code === "number" ? code : 1) : 0,
-          stdout,
-          stderr,
-        });
-      },
-    );
-  });
-}
-
-export function resolveWorkspaceWorktree(
+export async function resolveWorkspaceWorktree(
   workspace: Workspace,
   worktreeId: string | undefined,
-  options: Pick<ListWorkspaceWorktreesOptions, "dataDir"> = {},
-): WorkspaceWorktree | undefined {
+  options: Pick<ListWorkspaceWorktreesOptions, "dataDir" | "includePendingRemovals"> = {},
+): Promise<WorkspaceWorktree | undefined> {
   const requestedId = worktreeId?.trim() || MAIN_WORKTREE_ID;
-  return listWorkspaceWorktrees(workspace, options).find((worktree) => worktree.id === requestedId);
+  return (await listWorkspaceWorktrees(workspace, options)).find(
+    (worktree) => worktree.id === requestedId,
+  );
 }
 
-export function resolveWorkspaceWorktreeForPath(
+export async function resolveWorkspaceWorktreeForPath(
   workspace: Workspace,
   path: string | undefined,
   options: Pick<ListWorkspaceWorktreesOptions, "dataDir"> = {},
-): WorkspaceWorktree | undefined {
+): Promise<WorkspaceWorktree | undefined> {
   const requestedPath = path?.trim();
   if (!requestedPath) return undefined;
 
   let best: WorkspaceWorktree | undefined;
-  for (const worktree of listWorkspaceWorktrees(workspace, options)) {
+  for (const worktree of await listWorkspaceWorktrees(workspace, options)) {
     if (!isPathWithin(worktree.path, requestedPath)) continue;
     if (!best || safeRealpath(worktree.path).length > safeRealpath(best.path).length) {
       best = worktree;
@@ -762,28 +782,28 @@ export function resolveWorkspaceWorktreeForPath(
   return best;
 }
 
-export function normalizeSessionWorktreeId(
+export async function normalizeSessionWorktreeId(
   workspace: Workspace,
   requestedWorktreeId: string | undefined,
   options: Pick<ListWorkspaceWorktreesOptions, "dataDir"> = {},
-): { worktreeId: string; error?: string } {
+): Promise<{ worktreeId: string; error?: string }> {
   const requestedId = requestedWorktreeId?.trim() || MAIN_WORKTREE_ID;
   if (requestedId === MAIN_WORKTREE_ID && !workspace.hostMount) {
     return { worktreeId: MAIN_WORKTREE_ID };
   }
 
-  const worktree = resolveWorkspaceWorktree(workspace, requestedId, options);
+  const worktree = await resolveWorkspaceWorktree(workspace, requestedId, options);
   if (!worktree) {
     return { worktreeId: requestedId, error: "Unknown worktree" };
   }
   return { worktreeId: worktree.id };
 }
 
-export function resolveWorkspaceSessionCwd(
+export async function resolveWorkspaceSessionCwd(
   workspace: Workspace,
   worktreeId: string | undefined,
   options: Pick<ListWorkspaceWorktreesOptions, "dataDir"> = {},
-): string | undefined {
-  const worktree = resolveWorkspaceWorktree(workspace, worktreeId, options);
+): Promise<string | undefined> {
+  const worktree = await resolveWorkspaceWorktree(workspace, worktreeId, options);
   return worktree?.path;
 }

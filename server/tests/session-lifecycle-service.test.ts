@@ -1299,7 +1299,7 @@ describe("SessionLifecycleService", () => {
       const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-missing-dir-data-"));
       try {
         const workspace = makeGitWorkspace(root);
-        const created = createWorkspaceWorktree(
+        const created = await createWorkspaceWorktree(
           workspace,
           { branch: "feature/vanished-dir" },
           { dataDir },
@@ -1333,7 +1333,7 @@ describe("SessionLifecycleService", () => {
       const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-resume-existing-data-"));
       try {
         const workspace = makeGitWorkspace(root);
-        const created = createWorkspaceWorktree(
+        const created = await createWorkspaceWorktree(
           workspace,
           { branch: "feature/still-here" },
           { dataDir },

@@ -145,7 +145,16 @@ function makeRuntime(
   };
 }
 
-function connectBridge(
+async function waitForBridgeResult(ws: FakeBridgeWebSocket): Promise<void> {
+  await vi.waitFor(
+    () => {
+      expect(ws.sent.length).toBeGreaterThan(0);
+    },
+    { timeout: 2_000 },
+  );
+}
+
+async function connectBridge(
   runtime: PiTuiMirrorRuntime,
   options: {
     bridgeId?: string;
@@ -159,10 +168,10 @@ function connectBridge(
     protocolVersion?: number;
     capabilities?: string[];
   } = {},
-): {
+): Promise<{
   ws: FakeBridgeWebSocket;
   sessionId: string;
-} {
+}> {
   const ws = new FakeBridgeWebSocket();
   runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
   ws.receive({
@@ -184,6 +193,14 @@ function connectBridge(
       sessionName: options.sessionName,
     },
   });
+  await vi.waitFor(
+    () => {
+      expect(
+        ws.sent.some((message) => message.type === "hello_ack" || message.type === "error"),
+      ).toBe(true);
+    },
+    { timeout: 2_000 },
+  );
   const ack = ws.sent.find((message) => message.type === "hello_ack");
   expect(ack).toBeTruthy();
   return { ws, sessionId: String(ack?.sessionId) };
@@ -252,11 +269,11 @@ async function waitForNextCommand(
 }
 
 describe("PiTuiMirrorRuntime queue bridge", () => {
-  it("matches home-relative workspace mounts against terminal cwd", () => {
+  it("matches home-relative workspace mounts against terminal cwd", async () => {
     const cwd = `${homedir()}/workspace/oppi/server`;
     const { runtime } = makeRuntime({ hostMount: "~/workspace/oppi" });
 
-    const { sessionId } = connectBridge(runtime, {
+    const { sessionId } = await connectBridge(runtime, {
       cwd,
       workspaceId: null,
       sessionFile: `${cwd}/session.jsonl`,
@@ -321,7 +338,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     },
   );
 
-  it("reports the received shape when protocolVersion is missing", () => {
+  it("reports the received shape when protocolVersion is missing", async () => {
     const { runtime } = makeRuntime();
     const ws = new FakeBridgeWebSocket();
     runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
@@ -365,6 +382,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       state: { piSessionId: "pi-1", sessionFile: join(cwd, "session.jsonl") },
     });
 
+    await waitForBridgeResult(ws);
     expect(ws.sent.at(-1)).toMatchObject({
       type: "error",
       code: "workspace_missing",
@@ -381,7 +399,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     const root = await mkdtemp(join(tmpdir(), "oppi-mirror-create-workspace-"));
     const { runtime, workspaces } = makeRuntime({ includeDefaultWorkspace: false });
 
-    const { sessionId } = connectBridge(runtime, {
+    const { sessionId } = await connectBridge(runtime, {
       cwd: root,
       workspaceId: null,
       createWorkspace: true,
@@ -407,7 +425,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     await writeFile(join(root, ".git"), "gitdir: .git-test\n");
     const { runtime, workspaces } = makeRuntime({ includeDefaultWorkspace: false });
 
-    const { sessionId } = connectBridge(runtime, {
+    const { sessionId } = await connectBridge(runtime, {
       cwd,
       workspaceId: null,
       createWorkspace: true,
@@ -420,7 +438,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(runtime.getActiveSession(sessionId)?.workspaceId).toBe(created?.id);
   });
 
-  it("rejects workspaceId bridge hellos when cwd is outside the workspace mount", () => {
+  it("rejects workspaceId bridge hellos when cwd is outside the workspace mount", async () => {
     const { runtime } = makeRuntime({ hostMount: "/tmp/oppi-mirror-test" });
     const ws = new FakeBridgeWebSocket();
     runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
@@ -435,6 +453,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       state: { piSessionId: "pi-1" },
     });
 
+    await waitForBridgeResult(ws);
     expect(ws.sent.at(-1)).toMatchObject({
       type: "error",
       error: expect.stringContaining("Terminal cwd is outside Oppi workspace hostMount"),
@@ -459,6 +478,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       state: { piSessionId: "pi-1" },
     });
 
+    await waitForBridgeResult(ws);
     expect(ws.sent.at(-1)).toMatchObject({
       type: "error",
       error: expect.stringContaining("Terminal cwd is not an existing directory"),
@@ -467,7 +487,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(ws.closeCode).toBe(1008);
   });
 
-  it("does not register no-trace Pi Agent task records as openable mirror sessions", () => {
+  it("does not register no-trace Pi Agent task records as openable mirror sessions", async () => {
     const { runtime, sessions, workspaces } = makeRuntime({ includeDefaultWorkspace: false });
     const ws = new FakeBridgeWebSocket();
     runtime.handleBridgeWebSocket(ws as unknown as WebSocket);
@@ -494,7 +514,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(workspaces.size).toBe(0);
   });
 
-  it("requires terminal confirmation before taking over a stopped Oppi session", () => {
+  it("requires terminal confirmation before taking over a stopped Oppi session", async () => {
     const { runtime, sessions } = makeRuntime({ hostMount: "/tmp/oppi-mirror-test" });
     sessions.set("oppi-1", {
       id: "oppi-1",
@@ -540,7 +560,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(sessions.get("oppi-1")?.runtime).toBe("oppi");
   });
 
-  it("promotes a stopped Oppi session after terminal confirmation", () => {
+  it("promotes a stopped Oppi session after terminal confirmation", async () => {
     const { runtime, sessions } = makeRuntime({ hostMount: "/tmp/oppi-mirror-test" });
     sessions.set("oppi-1", {
       id: "oppi-1",
@@ -557,7 +577,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       piSessionFile: "/tmp/oppi-mirror-test/session.jsonl",
     });
 
-    const { sessionId } = connectBridge(runtime, {
+    const { sessionId } = await connectBridge(runtime, {
       takeoverConfirmationSessionId: "oppi-1",
       piSessionId: "pi-1",
       sessionFile: "/tmp/oppi-mirror-test/session.jsonl",
@@ -568,9 +588,9 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(sessions.get("oppi-1")?.mirror?.status).toBe("connected");
   });
 
-  it("does not treat heartbeat-only mirror state as session activity", () => {
+  it("does not treat heartbeat-only mirror state as session activity", async () => {
     const { runtime, sessions } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const session = runtime.getActiveSession(sessionId);
     expect(session).toBeTruthy();
     session!.lastActivity = 1;
@@ -601,7 +621,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(received.some((message) => message.type === "state")).toBe(false);
   });
 
-  it("requires terminal confirmation before taking over an active Oppi session", () => {
+  it("requires terminal confirmation before taking over an active Oppi session", async () => {
     const { runtime, sessions } = makeRuntime({
       hostMount: "/tmp/oppi-mirror-test",
       isOppiSessionActive: (sessionId) => sessionId === "oppi-1",
@@ -714,9 +734,9 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(sessions.get("oppi-1")?.mirror?.status).toBe("connected");
   });
 
-  it("starts and clears mirrored current turn timestamps from terminal idle state", () => {
+  it("starts and clears mirrored current turn timestamps from terminal idle state", async () => {
     const { runtime, sessions } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const session = sessions.get(sessionId);
     if (!session) throw new Error("expected mirrored session");
     expect(session.status).toBe("ready");
@@ -733,9 +753,9 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(ready?.currentTurnStartedAt).toBeUndefined();
   });
 
-  it("marks the iOS mirror session stopped when the terminal session shuts down", () => {
+  it("marks the iOS mirror session stopped when the terminal session shuts down", async () => {
     const { runtime, sessions } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const session = sessions.get(sessionId);
     if (!session) throw new Error("expected mirrored session");
     session.status = "busy";
@@ -757,7 +777,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("sends stop to pi-tui and waits for the terminal to shut down", async () => {
     const { runtime, sessions } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const session = sessions.get(sessionId);
     if (!session) throw new Error("expected mirrored session");
     session.status = "busy";
@@ -779,7 +799,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("rejects stop promptly when pi-tui reports a stop command failure", async () => {
     const { runtime, sessions } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const session = sessions.get(sessionId);
     if (!session) throw new Error("expected mirrored session");
     session.status = "busy";
@@ -811,7 +831,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     );
     const { runtime } = makeRuntime({ hostMount: root });
 
-    const { sessionId } = connectBridge(runtime, {
+    const { sessionId } = await connectBridge(runtime, {
       cwd: root,
       sessionFile,
       sessionName: "Session LyOQX5NA",
@@ -822,9 +842,9 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(session?.firstMessage).toBe("review mirror mode titles");
   });
 
-  it("captures terminal-origin user messages as the first message", () => {
+  it("captures terminal-origin user messages as the first message", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
 
     ws.receive({
       type: "event",
@@ -839,9 +859,9 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(session?.messageCount).toBe(1);
   });
 
-  it("broadcasts terminal-origin user message_end events to live subscribers", () => {
+  it("broadcasts terminal-origin user message_end events to live subscribers", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -862,9 +882,9 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     );
   });
 
-  it("broadcasts terminal-origin assistant message_end events to finalize thinking blocks", () => {
+  it("broadcasts terminal-origin assistant message_end events to finalize thinking blocks", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -891,9 +911,9 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     );
   });
 
-  it("broadcasts terminal-origin compaction events", () => {
+  it("broadcasts terminal-origin compaction events", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -935,7 +955,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("hydrates get_queue from the terminal bridge", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
 
     const queuePromise = runtime.getMessageQueue(sessionId);
     const command = latestCommand(ws);
@@ -963,7 +983,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("rejects get_queue bridge failures instead of returning stale cached queue", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
 
     ws.receive({
       type: "queue_state",
@@ -990,7 +1010,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("rejects malformed get_queue command results", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
 
     const queuePromise = runtime.getMessageQueue(sessionId);
     const command = latestCommand(ws);
@@ -1007,7 +1027,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("bridges Remove and take while keeping withdrawn input out of queue state", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const remove = runtime.removeQueuedMessage(sessionId, "one");
     const removing = await waitForLatestCommand(ws);
     expect(removing.command).toEqual({ type: "remove_queued_message", itemId: "one" });
@@ -1037,7 +1057,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("preserves image attachment refs from a mirror take while discarding materialized base64", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const attachment = {
       type: "attachment",
       id: "photo",
@@ -1087,7 +1107,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("routes /reload prompts to the terminal reload command without starting a turn", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -1118,7 +1138,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     "does not acknowledge rejected mirrored %s input and allows the same clientTurnId retry",
     async (kind, status) => {
       const { runtime } = makeRuntime();
-      const { ws, sessionId } = connectBridge(runtime);
+      const { ws, sessionId } = await connectBridge(runtime);
       const session = runtime.getActiveSession(sessionId);
       if (!session) throw new Error("expected active mirror session");
       session.status = status;
@@ -1202,7 +1222,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     vi.useFakeTimers();
     try {
       const { runtime } = makeRuntime();
-      const { ws, sessionId } = connectBridge(runtime);
+      const { ws, sessionId } = await connectBridge(runtime);
       const received: ServerMessage[] = [];
       runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -1241,7 +1261,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("treats disconnect as unknown and permits retrying the same ID after reconnect", async () => {
     const { runtime } = makeRuntime();
-    const first = connectBridge(runtime, { bridgeId: "bridge-disconnect-retry" });
+    const first = await connectBridge(runtime, { bridgeId: "bridge-disconnect-retry" });
     const received: ServerMessage[] = [];
     runtime.subscribe(first.sessionId, (message) => received.push(message));
 
@@ -1257,7 +1277,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     await expect(pending).rejects.toThrow("pi-tui disconnected");
     expect(received.filter((message) => message.type === "turn_ack")).toHaveLength(0);
 
-    const second = connectBridge(runtime, {
+    const second = await connectBridge(runtime, {
       bridgeId: "bridge-disconnect-retry",
       piSessionId: "pi-1",
       sessionFile: "/tmp/oppi-mirror-test/session.jsonl",
@@ -1281,7 +1301,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("waits for the terminal user event before recording a mirrored prompt", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
 
     const promptPromise = runtime.sendPrompt(sessionId, "hello from phone", {
       clientTurnId: "turn-phone",
@@ -1319,13 +1339,13 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("does not route stale session commands after a bridge id is reused", async () => {
     const { runtime } = makeRuntime();
-    const first = connectBridge(runtime, {
+    const first = await connectBridge(runtime, {
       bridgeId: "bridge-reused",
       piSessionId: "pi-first",
       sessionFile: "/tmp/oppi-mirror-test/first.jsonl",
       sessionName: "First terminal session",
     });
-    const second = connectBridge(runtime, {
+    const second = await connectBridge(runtime, {
       bridgeId: "bridge-reused",
       piSessionId: "pi-second",
       sessionFile: "/tmp/oppi-mirror-test/second.jsonl",
@@ -1376,7 +1396,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("preserves returned queue state after remote abort", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -1420,7 +1440,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("broadcasts idle state returned by a mirrored abort command", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     ws.receive({ type: "state", state: { isIdle: false } });
 
     const received: ServerMessage[] = [];
@@ -1448,7 +1468,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("settles an in-flight command once when the mirror disconnects", async () => {
     const { runtime, sessions } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -1491,7 +1511,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("forwards session-only set_model without persist to pi-tui", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const commandPromise = runtime.forwardClientCommand(
       sessionId,
       {
@@ -1518,7 +1538,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("returns the terminal's set_model rejection to an HTTP caller", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const handler = new WsMessageHandler({
       sessions: runtime as unknown as WsSessionCommands,
       ensureSessionContextWindow: (value) => value,
@@ -1553,7 +1573,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("rejects persist on set_model without forwarding it to pi-tui", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -1582,7 +1602,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("rejects persist on set_thinking_level without forwarding it to pi-tui", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -1606,7 +1626,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("applies forwarded metadata command results and broadcasts canonical command_result", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -1644,7 +1664,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("resets live cache comparison when mirror navigation creates a branch summary", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -1711,9 +1731,9 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     expect(received.some((message) => message.type === "cache_miss")).toBe(false);
   });
 
-  it("resets live cache comparison after terminal-local summarized navigation", () => {
+  it("resets live cache comparison after terminal-local summarized navigation", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -1729,7 +1749,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("forwards supported terminal-control commands through the bridge", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -1760,7 +1780,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("forwards session tree reads through the bridge", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -1818,7 +1838,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 
   it("reports unsupported mirror commands through the runtime command_result contract", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -1837,9 +1857,9 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     });
   });
 
-  it("removes a queued message when the terminal starts that user message", () => {
+  it("removes a queued message when the terminal starts that user message", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -1875,7 +1895,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     const root = await mkdtemp(join(tmpdir(), "oppi-mirror-attachments-"));
     await writeFile(join(root, "note.txt"), "hello from attachment");
     const { runtime } = makeRuntime({ hostMount: root });
-    const { ws, sessionId } = connectBridge(runtime, {
+    const { ws, sessionId } = await connectBridge(runtime, {
       cwd: root,
       sessionFile: join(root, "session.jsonl"),
     });
@@ -1935,7 +1955,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
   it("materializes legacy voice audio details from mirrored tool events", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "oppi-mirror-audio-"));
     const { runtime } = makeRuntime({ dataDir });
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -1990,7 +2010,7 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
     const imageBytes = Buffer.from("fake image bytes");
     await writeFile(join(root, "shot.png"), imageBytes);
     const { runtime } = makeRuntime({ hostMount: root });
-    const { ws, sessionId } = connectBridge(runtime, {
+    const { ws, sessionId } = await connectBridge(runtime, {
       cwd: root,
       sessionFile: join(root, "session.jsonl"),
     });
@@ -2048,9 +2068,9 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
 });
 
 describe("PiTuiMirrorRuntime extension UI bridge", () => {
-  it("forwards mirrored callback widgets as extension UI notifications", () => {
+  it("forwards mirrored callback widgets as extension UI notifications", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -2086,9 +2106,9 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
     ]);
   });
 
-  it("forwards native surfaces from mirrored callback widgets", () => {
+  it("forwards native surfaces from mirrored callback widgets", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -2135,9 +2155,9 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
     ]);
   });
 
-  it("drops invalid mirrored widget native surfaces while preserving line fallback", () => {
+  it("drops invalid mirrored widget native surfaces while preserving line fallback", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -2180,9 +2200,9 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
     expect(runtime.getPendingUIRequestMessages(sessionId)[0]).not.toHaveProperty("nativeSurface");
   });
 
-  it("promotes mirrored OSC-8 widget fallback links into native terminal surfaces", () => {
+  it("promotes mirrored OSC-8 widget fallback links into native terminal surfaces", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -2222,9 +2242,9 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
     });
   });
 
-  it("forwards mirrored working-state requests as timeline notifications", () => {
+  it("forwards mirrored working-state requests as timeline notifications", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -2269,9 +2289,9 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
     ]);
   });
 
-  it("replays mirrored clear notifications after explicit clears", () => {
+  it("replays mirrored clear notifications after explicit clears", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
 
     ws.receive({
       type: "extension_ui_request",
@@ -2299,9 +2319,9 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
     ]);
   });
 
-  it("clears persistent mirrored surfaces when the bridge disconnects", () => {
+  it("clears persistent mirrored surfaces when the bridge disconnects", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -2343,9 +2363,9 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
     expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([]);
   });
 
-  it("ingests bridge UI requests and replays pending dialogs", () => {
+  it("ingests bridge UI requests and replays pending dialogs", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -2375,9 +2395,9 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
     expect(runtime.getPendingUIRequestMessages(sessionId)).toEqual([received.at(-1)]);
   });
 
-  it("routes phone UI responses back to the bridge with first-wins settlement", () => {
+  it("routes phone UI responses back to the bridge with first-wins settlement", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -2417,9 +2437,9 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
     ).toBe(false);
   });
 
-  it("settles terminal-won bridge UI requests idempotently", () => {
+  it("settles terminal-won bridge UI requests idempotently", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -2446,9 +2466,9 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
     ).toBe(false);
   });
 
-  it("settles pending bridge UI requests when the bridge disconnects", () => {
+  it("settles pending bridge UI requests when the bridge disconnects", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -2476,9 +2496,9 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
     ).toBe(false);
   });
 
-  it("keeps ask replay separate from generic extension dialogs", () => {
+  it("keeps ask replay separate from generic extension dialogs", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
 
     ws.receive({
       type: "extension_ui_request",
@@ -2508,7 +2528,7 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
 
   it("cancels pending ask UI before mirrored abort", async () => {
     const { runtime } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const received: ServerMessage[] = [];
     runtime.subscribe(sessionId, (message) => received.push(message));
 
@@ -2554,7 +2574,7 @@ describe("PiTuiMirrorRuntime extension UI bridge", () => {
 
   it("cancels pending ask UI before mirrored stop", async () => {
     const { runtime, sessions } = makeRuntime();
-    const { ws, sessionId } = connectBridge(runtime);
+    const { ws, sessionId } = await connectBridge(runtime);
     const session = sessions.get(sessionId);
     if (!session) throw new Error("expected mirrored session");
     session.status = "busy";

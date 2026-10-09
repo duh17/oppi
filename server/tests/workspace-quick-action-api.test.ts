@@ -107,8 +107,7 @@ function makeQuickActionContext(
       getSessionSnapshot: (sessionId: string) =>
         (
           overrides.sessions as
-            | { getActiveSession?: (id: string) => Session | undefined }
-            | undefined
+            { getActiveSession?: (id: string) => Session | undefined } | undefined
         )?.getActiveSession?.(sessionId) ??
         (
           overrides.storage as { getSession?: (id: string) => Session | undefined } | undefined
@@ -303,7 +302,7 @@ describe("GET /workspaces/:wid/quick-actions", () => {
       writeFileSync(join(repoDir, ".pi", "prompts", "main-only.md"), "Main: $ARGUMENTS\n", "utf8");
 
       const workspace = makeWorkspace(repoDir);
-      const worktree = createWorkspaceWorktree(
+      const worktree = await createWorkspaceWorktree(
         workspace,
         { branch: "feature/worktree-quick-actions" },
         { dataDir },
@@ -604,7 +603,7 @@ describe("workspace prompt-template quick actions", () => {
       );
 
       const workspace = makeWorkspace(repoDir);
-      const worktree = createWorkspaceWorktree(
+      const worktree = await createWorkspaceWorktree(
         workspace,
         { branch: "feature/explicit" },
         { dataDir },
@@ -691,7 +690,9 @@ describe("workspace prompt-template quick actions", () => {
       );
 
       const workspace = makeWorkspace(repoDir);
-      const worktree = listWorkspaceWorktrees(workspace).find((candidate) => !candidate.isMain);
+      const worktree = (await listWorkspaceWorktrees(workspace)).find(
+        (candidate) => !candidate.isMain,
+      );
       expect(worktree).toBeDefined();
 
       mkdirSync(join(repoDir, ".pi", "worktrees", "repo-feature", ".pi", "prompts"), {

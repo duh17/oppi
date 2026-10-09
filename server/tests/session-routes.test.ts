@@ -343,7 +343,7 @@ describe("sessions module", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-route-worktree-data-"));
     try {
       const workspace = makeGitWorkspace(root);
-      const worktree = createWorkspaceWorktree(
+      const worktree = await createWorkspaceWorktree(
         workspace,
         { branch: "feature/session-route-worktree" },
         { dataDir },

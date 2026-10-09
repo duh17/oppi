@@ -203,12 +203,12 @@ export function createWorkspaceFileRoutes(
   ctx: RouteContext,
   helpers: RouteHelpers,
 ): RouteDispatcher {
-  function resolveWorkspaceRootForFileRequest(
+  async function resolveWorkspaceRootForFileRequest(
     workspace: Workspace,
     url: URL,
     res: ServerResponse,
-  ): string | null {
-    const root = resolveWorkspaceFileRoot(
+  ): Promise<string | null> {
+    const root = await resolveWorkspaceFileRoot(
       workspace,
       url.searchParams.get("worktreeId") ?? undefined,
       ctx.storage.getDataDir(),
@@ -231,7 +231,7 @@ export function createWorkspaceFileRoutes(
       return;
     }
 
-    const workspaceRoot = resolveWorkspaceRootForFileRequest(workspace, url, res);
+    const workspaceRoot = await resolveWorkspaceRootForFileRequest(workspace, url, res);
     if (!workspaceRoot) return;
     const mappedPath = resolveWorkspaceUserPath({
       workspace,
@@ -282,7 +282,7 @@ export function createWorkspaceFileRoutes(
       return;
     }
 
-    const workspaceRoot = resolveWorkspaceRootForFileRequest(workspace, url, res);
+    const workspaceRoot = await resolveWorkspaceRootForFileRequest(workspace, url, res);
     if (!workspaceRoot) return;
     // Strip trailing slash for path resolution
     const dirPath = requestedPath.endsWith("/") ? requestedPath.slice(0, -1) : requestedPath;
@@ -320,7 +320,7 @@ export function createWorkspaceFileRoutes(
       return;
     }
 
-    const workspaceRoot = resolveWorkspaceRootForFileRequest(workspace, url, res);
+    const workspaceRoot = await resolveWorkspaceRootForFileRequest(workspace, url, res);
     if (!workspaceRoot) return;
     const mappedRoot = resolveWorkspaceUserPath({
       workspace,

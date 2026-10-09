@@ -37,7 +37,7 @@ import {
   type RuntimeCommandExecutionContext,
 } from "./runtime-command-coordinator.js";
 import type { SessionBackendEvent } from "./pi-events.js";
-import { resolveSdkSessionCwd } from "./sdk-backend.js";
+import { resolveSdkSessionCwdAsync } from "./sdk-backend.js";
 import {
   isPiTuiMirrorRemoteCommand,
   PI_TUI_MIRROR_BRIDGE_PROTOCOL_VERSION,
@@ -470,9 +470,10 @@ function syncSessionWorktreeFromCwd(
   workspace: Workspace,
   cwd: string | undefined,
   dataDir: string,
-): void {
-  const worktree = resolveWorkspaceWorktreeForPath(workspace, cwd, { dataDir });
-  if (worktree) session.worktreeId = worktree.id;
+): Promise<void> {
+  return resolveWorkspaceWorktreeForPath(workspace, cwd, { dataDir }).then((worktree) => {
+    if (worktree) session.worktreeId = worktree.id;
+  });
 }
 
 function sessionActivityProjectionFingerprint(session: Session): string {
@@ -873,12 +874,12 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     return { length: active.eventRing.length, capacity: active.eventRing.capacity };
   }
 
-  private resolveWorkspaceRoot(session: Session): string | null {
+  private async resolveWorkspaceRoot(session: Session): Promise<string | null> {
     if (!session.workspaceId) return null;
     const workspace = this.storage.getWorkspace(session.workspaceId);
     if (!workspace?.hostMount) return null;
     return normalizePath(
-      resolveSdkSessionCwd(workspace, session, { dataDir: this.storage.getDataDir() }),
+      await resolveSdkSessionCwdAsync(workspace, session, { dataDir: this.storage.getDataDir() }),
     );
   }
 
@@ -1162,23 +1163,30 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         { sessionName: state.sessionName },
       );
     }
+    const registration = { now, bridgeId, protocolVersion };
     const workspace = this.resolveWorkspace(hello);
+    if (workspace instanceof Promise) {
+      return workspace.then((resolved) =>
+        this.registerResolvedWorkspace(ws, hello, resolved, state, registration),
+      );
+    }
+    return this.registerResolvedWorkspace(ws, hello, workspace, state, registration);
+  }
+
+  private registerResolvedWorkspace(
+    ws: WebSocket,
+    hello: PiBridgeHelloMessage,
+    workspace: Workspace,
+    state: PiBridgeStateSnapshot,
+    registration: { now: number; bridgeId: string; protocolVersion: number },
+  ): BridgeConnection | Promise<BridgeConnection> {
     const session = this.resolveOrCreateSession(workspace, state, hello);
     if (session instanceof Promise) {
       return session.then((resolvedSession) =>
-        this.finishBridgeRegistration(ws, hello, resolvedSession, workspace, state, {
-          now,
-          bridgeId,
-          protocolVersion,
-        }),
+        this.finishBridgeRegistration(ws, hello, resolvedSession, workspace, state, registration),
       );
     }
-
-    return this.finishBridgeRegistration(ws, hello, session, workspace, state, {
-      now,
-      bridgeId,
-      protocolVersion,
-    });
+    return this.finishBridgeRegistration(ws, hello, session, workspace, state, registration);
   }
 
   private finishBridgeRegistration(
@@ -1563,7 +1571,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     }
   }
 
-  private resolveWorkspace(hello: PiBridgeHelloMessage): Workspace {
+  private resolveWorkspace(hello: PiBridgeHelloMessage): Workspace | Promise<Workspace> {
     const cwd = hello.cwd ?? hello.state?.cwd;
     if (hello.workspaceId) {
       const workspace = this.storage.getWorkspace(hello.workspaceId);
@@ -1574,13 +1582,15 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         if (!workspace.hostMount) {
           throw new Error(`Oppi workspace ${workspace.id} has no hostMount for pi-tui`);
         }
-        if (
-          !pathContains(workspace.hostMount, cwd) &&
-          !resolveWorkspaceWorktreeForPath(workspace, cwd, { dataDir: this.storage.getDataDir() })
-        ) {
-          throw new Error(`Terminal cwd is outside Oppi workspace hostMount: ${cwd}`);
-        }
-        return workspace;
+        if (pathContains(workspace.hostMount, cwd)) return workspace;
+        return resolveWorkspaceWorktreeForPath(workspace, cwd, {
+          dataDir: this.storage.getDataDir(),
+        }).then((worktree) => {
+          if (!worktree) {
+            throw new Error(`Terminal cwd is outside Oppi workspace hostMount: ${cwd}`);
+          }
+          return workspace;
+        });
       }
     }
 
@@ -1588,17 +1598,26 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       throw new Error("Bridge hello must include cwd or workspaceId");
     }
 
-    const candidates = this.storage
+    const contained = this.storage
       .listWorkspaces()
       .flatMap((workspace) => {
-        if (!workspace.hostMount) return [];
-        const worktree = resolveWorkspaceWorktreeForPath(workspace, cwd, {
-          dataDir: this.storage.getDataDir(),
-        });
-        if (!pathContains(workspace.hostMount, cwd) && !worktree) return [];
-        return [{ workspace, matchPath: worktree?.path ?? workspace.hostMount }];
-      })
-      .sort((a, b) => normalizePath(b.matchPath).length - normalizePath(a.matchPath).length);
+        if (!workspace.hostMount || !pathContains(workspace.hostMount, cwd)) return [];
+        return [{ workspace, matchPath: workspace.hostMount }];
+      });
+    if (contained.length > 0) {
+      return this.finishWorkspaceMatch(contained, cwd, hello);
+    }
+    return this.resolveWorkspaceFromWorktrees(cwd, hello);
+  }
+
+  private finishWorkspaceMatch(
+    candidates: Array<{ workspace: Workspace; matchPath: string }>,
+    cwd: string,
+    hello: PiBridgeHelloMessage,
+  ): Workspace {
+    candidates.sort(
+      (a, b) => normalizePath(b.matchPath).length - normalizePath(a.matchPath).length,
+    );
     const match = candidates[0];
     const workspace = match?.workspace;
     if (!workspace) {
@@ -1606,7 +1625,6 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
       if (hello.createWorkspace === true) {
         return this.createMirrorWorkspaceForSuggestion(suggestion, cwd);
       }
-
       throw new BridgeRegistrationError(
         `No Oppi workspace hostMount contains terminal cwd: ${cwd}`,
         "workspace_missing",
@@ -1617,7 +1635,6 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
         },
       );
     }
-
     const matchLength = normalizePath(match.matchPath).length;
     if (
       candidates.length > 1 &&
@@ -1625,8 +1642,23 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     ) {
       throw new Error(`Ambiguous Oppi workspace match for terminal cwd: ${cwd}`);
     }
-
     return workspace;
+  }
+
+  private async resolveWorkspaceFromWorktrees(
+    cwd: string,
+    hello: PiBridgeHelloMessage,
+  ): Promise<Workspace> {
+    const candidates = [];
+    for (const workspace of this.storage.listWorkspaces()) {
+      if (!workspace.hostMount || pathContains(workspace.hostMount, cwd)) continue;
+      const worktree = await resolveWorkspaceWorktreeForPath(workspace, cwd, {
+        dataDir: this.storage.getDataDir(),
+      });
+      if (!worktree) continue;
+      candidates.push({ workspace, matchPath: worktree.path });
+    }
+    return this.finishWorkspaceMatch(candidates, cwd, hello);
   }
 
   private createMirrorWorkspaceForSuggestion(
@@ -1746,7 +1778,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     piSessionFile: string | undefined,
     piSessionId: string | undefined,
     existing: Session | undefined,
-  ): Session {
+  ): Session | Promise<Session> {
     const model = normalizeModelId(state.model);
     const sessionName = meaningfulSessionName(state.sessionName);
     const session = existing ?? this.storage.createSession(sessionName, model, { id: piSessionId });
@@ -1759,7 +1791,26 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     else if (meaningfulSessionName(session.name, session.id) === undefined) delete session.name;
     if (model) session.model = model;
     if (state.thinkingLevel?.trim()) session.thinkingLevel = state.thinkingLevel.trim();
-    syncSessionWorktreeFromCwd(session, workspace, state.cwd, this.storage.getDataDir());
+    // Tag the worktree after hello returns. Git must not run on this stack:
+    // a synchronous child freezes every other request for the lock wait.
+    void syncSessionWorktreeFromCwd(session, workspace, state.cwd, this.storage.getDataDir()).then(
+      () => {
+        if (!session.worktreeId) return;
+        this.storage.saveSession(session);
+        const active = this.active.get(session.id);
+        if (active) active.session.worktreeId = session.worktreeId;
+      },
+    ).catch(() => {
+      // Worktree tagging is best-effort. A locked git must not fail hello.
+    });
+    return this.finishPromotedBridgeSession(session, state, piSessionFile);
+  }
+
+  private finishPromotedBridgeSession(
+    session: Session,
+    state: PiBridgeStateSnapshot,
+    piSessionFile: string | undefined,
+  ): Session {
     mergePiSessionFile(session, piSessionFile);
     if (!session.firstMessage) {
       session.firstMessage = firstUserMessageFromSessionFile(

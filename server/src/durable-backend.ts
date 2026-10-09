@@ -60,7 +60,7 @@ import {
   SdkBackend,
   resolveSandboxGuestCwd,
   resolveSessionSeedModel,
-  resolveSdkSessionCwd,
+  resolveSdkSessionCwdAsync,
   toCommandLocation,
   type QueuedModelTurnBatch,
 } from "./sdk-backend.js";
@@ -269,7 +269,9 @@ export class DurableBackend implements AgentBackend {
     });
     if (unsupported) throw new DurableNotSupportedError(unsupported);
     const sandbox = workspace?.runtime === "sandbox";
-    const hostCwd = resolveSdkSessionCwd(options.workspace, session, { dataDir: options.dataDir });
+    const hostCwd = await resolveSdkSessionCwdAsync(options.workspace, session, {
+      dataDir: options.dataDir,
+    });
     const cwd = sandbox ? resolveSandboxGuestCwd(workspace) : hostCwd;
     const owner = options.owner;
     const agentDir = getAgentDir();

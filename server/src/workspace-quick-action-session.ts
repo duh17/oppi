@@ -118,17 +118,17 @@ function uniqueNormalizedPaths(paths: string[]): string[] {
   );
 }
 
-function resolveQuickActionReviewWorkspace(
+async function resolveQuickActionReviewWorkspace(
   workspace: Workspace,
   selectedSession: Session | undefined,
   options: { dataDir?: string; worktreeId?: string } = {},
-): Workspace {
+): Promise<Workspace> {
   const worktreeId = options.worktreeId?.trim() || selectedSession?.worktreeId?.trim();
   if (!worktreeId) {
     return workspace;
   }
 
-  const worktree = resolveWorkspaceWorktree(workspace, worktreeId, options);
+  const worktree = await resolveWorkspaceWorktree(workspace, worktreeId, options);
   if (!worktree?.path) {
     throw new WorkspaceQuickActionSessionError(409, "Workspace worktree unavailable");
   }
@@ -140,10 +140,14 @@ export async function loadWorkspaceQuickActionOptions(
   workspace: Workspace,
   options: { selectedSession?: Session; dataDir?: string; worktreeId?: string } = {},
 ): Promise<WorkspaceQuickActionOption[]> {
-  const reviewWorkspace = resolveQuickActionReviewWorkspace(workspace, options.selectedSession, {
-    dataDir: options.dataDir,
-    worktreeId: options.worktreeId,
-  });
+  const reviewWorkspace = await resolveQuickActionReviewWorkspace(
+    workspace,
+    options.selectedSession,
+    {
+      dataDir: options.dataDir,
+      worktreeId: options.worktreeId,
+    },
+  );
   const templates = await loadWorkspacePromptTemplates(reviewWorkspace);
   return templates.map((template): WorkspaceQuickActionOption => ({
     id: `prompt:${template.name}`,
@@ -179,7 +183,7 @@ export async function prepareWorkspaceQuickActionSession(args: {
     throw new WorkspaceQuickActionSessionError(404, "Workspace quick actions unavailable");
   }
 
-  const reviewWorkspace = resolveQuickActionReviewWorkspace(workspace, selectedSession, {
+  const reviewWorkspace = await resolveQuickActionReviewWorkspace(workspace, selectedSession, {
     dataDir: args.dataDir,
     worktreeId: args.worktreeId,
   });

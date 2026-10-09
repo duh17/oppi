@@ -446,8 +446,7 @@ describe("SessionTraceService", () => {
     });
     const toolResult = result?.trace.find((event) => event.type === "toolResult");
     const details = toolResult?.details as
-      | { media?: Array<{ id?: string; kind?: string; mimeType?: string }> }
-      | undefined;
+      { media?: Array<{ id?: string; kind?: string; mimeType?: string }> } | undefined;
 
     expect(toolResult?.output).toBe("Read image file [image/png]");
     expect(toolResult?.output).not.toContain("data:image/");
@@ -791,7 +790,7 @@ describe("SessionTraceService", () => {
     ).resolves.toEqual({ kind: "mutations-not-found" });
   });
 
-  it("summarizes session changed files", () => {
+  it("summarizes session changed files", async () => {
     const dataDir = tempDir("oppi-session-changes-");
     const { service } = makeService({ dataDir });
 
@@ -848,7 +847,7 @@ describe("SessionTraceService", () => {
     const workspaceRoot = tempDir("oppi-session-raw-worktree-workspace-");
     initGitRepo(workspaceRoot);
     const workspace = makeWorkspace({ hostMount: workspaceRoot });
-    const worktree = createWorkspaceWorktree(
+    const worktree = await createWorkspaceWorktree(
       workspace,
       { branch: "feature/raw-worktree" },
       { dataDir },

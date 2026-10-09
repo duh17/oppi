@@ -283,7 +283,7 @@ describe("workspace file editor GET/HEAD ETag", () => {
         env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" },
       },
     );
-    const worktree = createWorkspaceWorktree(
+    const worktree = await createWorkspaceWorktree(
       fixture.workspaces[0],
       { branch: "feature/edit" },
       { dataDir: fixture.dataDir },
@@ -521,7 +521,7 @@ describe("PUT /files/current?origin=workspace", () => {
         env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" },
       },
     );
-    const worktree = createWorkspaceWorktree(
+    const worktree = await createWorkspaceWorktree(
       fixture.workspaces[0],
       { branch: "feature/put" },
       { dataDir: fixture.dataDir },
@@ -893,12 +893,9 @@ describe("PUT /files/current?origin=workspace", () => {
       injected = true;
     });
 
-    const res = await putCurrent(
-      fixture,
-      workspaceQuery(fixture, "README.md"),
-      payload,
-      { "if-match": etagFor(original) },
-    );
+    const res = await putCurrent(fixture, workspaceQuery(fixture, "README.md"), payload, {
+      "if-match": etagFor(original),
+    });
     expect(injected).toBe(true);
     expect(res.statusCode).toBe(500);
     expect(readFileSync(target).equals(original)).toBe(true);
@@ -924,12 +921,9 @@ describe("PUT /files/current?origin=workspace", () => {
       injected = true;
     });
 
-    const res = await putCurrent(
-      fixture,
-      workspaceQuery(fixture, "README.md"),
-      payload,
-      { "if-match": etagFor(original) },
-    );
+    const res = await putCurrent(fixture, workspaceQuery(fixture, "README.md"), payload, {
+      "if-match": etagFor(original),
+    });
     expect(injected).toBe(true);
     expect(res.statusCode).toBe(500);
     const disk = readFileSync(target);

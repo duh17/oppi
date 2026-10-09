@@ -128,7 +128,7 @@ describe("SessionListService", () => {
   });
 
   describe("listRecentWorkspaceSessionSummaries", () => {
-    it("aggregates recent workspace summaries with live sessions and attention counts", () => {
+    it("aggregates recent workspace summaries with live sessions and attention counts", async () => {
       const workspaceOne = makeWorkspace({ id: "ws-1" });
       const workspaceTwo = makeWorkspace({ id: "ws-2" });
       const nowMs = Date.parse("2026-05-13T12:00:00Z");
@@ -182,7 +182,7 @@ describe("SessionListService", () => {
       expect(result.sessions[1]).not.toHaveProperty("warnings");
     });
 
-    it("uses bounded workspace queries and exactly filters stored and live active rows", () => {
+    it("uses bounded workspace queries and exactly filters stored and live active rows", async () => {
       const sinceMs = 1_000;
       const untilMs = 2_000;
       const { service, deps } = makeService({
@@ -213,7 +213,7 @@ describe("SessionListService", () => {
       expect(result.sessions.map((session) => session.id)).toEqual(["stored-until", "live-inside"]);
     });
 
-    it("uses safe SQLite bounds for one-sided activity ranges", () => {
+    it("uses safe SQLite bounds for one-sided activity ranges", async () => {
       const { service, deps } = makeService();
 
       service.listRecentWorkspaceSessionSummaries({ recentDays: 0, sinceMs: 1_000 });
@@ -234,7 +234,7 @@ describe("SessionListService", () => {
   });
 
   describe("listWorkspaceSessionRows", () => {
-    it("builds active and stopped workspace rows with live and local sessions", () => {
+    it("builds active and stopped workspace rows with live and local sessions", async () => {
       const workspace = makeWorkspace({ hostMount: "~/workspace/oppi" });
       const sinceMs = Date.parse("2026-05-13T00:00:00Z");
       const untilMs = Date.parse("2026-05-14T00:00:00Z");
@@ -298,7 +298,7 @@ describe("SessionListService", () => {
         pendingCounts: { "live-busy": 1 },
       });
 
-      const result = service.listWorkspaceSessionRows({
+      const result = await service.listWorkspaceSessionRows({
         workspace,
         statuses: new Set(["active", "stopped"]),
         timeRange: { sinceMs, untilMs },
@@ -330,7 +330,7 @@ describe("SessionListService", () => {
       );
     });
 
-    it("does not expose importable local sessions for hostless workspaces", () => {
+    it("does not expose importable local sessions for hostless workspaces", async () => {
       const sinceMs = Date.parse("2026-05-13T00:00:00Z");
       const untilMs = Date.parse("2026-05-14T00:00:00Z");
       const nowMs = Date.parse("2026-05-13T12:00:00Z");
@@ -346,13 +346,13 @@ describe("SessionListService", () => {
       };
       const { service } = makeService();
 
-      const result = service.listWorkspaceSessionRows({
+      const result = await service.listWorkspaceSessionRows({
         workspace: makeWorkspace(),
         statuses: new Set(["stopped"]),
         timeRange: { sinceMs, untilMs },
         nowMs,
       });
-      const buckets = service.listWorkspaceStoppedSessionBuckets({
+      const buckets = await service.listWorkspaceStoppedSessionBuckets({
         workspace: makeWorkspace(),
         beforeMs: untilMs,
         nowMs,
@@ -364,7 +364,7 @@ describe("SessionListService", () => {
   });
 
   describe("listWorkspaceStoppedSessionBuckets", () => {
-    it("merges managed stopped buckets with older importable local sessions", () => {
+    it("merges managed stopped buckets with older importable local sessions", async () => {
       const workspace = makeWorkspace({ hostMount: "~/workspace/oppi" });
       const beforeMs = Date.parse("2026-05-13T00:00:00Z");
       const nowMs = Date.parse("2026-05-13T12:00:00Z");
@@ -399,7 +399,11 @@ describe("SessionListService", () => {
         },
       });
 
-      const result = service.listWorkspaceStoppedSessionBuckets({ workspace, beforeMs, nowMs });
+      const result = await service.listWorkspaceStoppedSessionBuckets({
+        workspace,
+        beforeMs,
+        nowMs,
+      });
 
       expect(deps.storage.listWorkspaceStoppedTimeBuckets).toHaveBeenCalledWith(
         "ws-1",
@@ -435,7 +439,7 @@ describe("SessionListService", () => {
       });
       const nowMs = Date.now();
 
-      service.listWorkspaceSessionRows({
+      await service.listWorkspaceSessionRows({
         workspace: makeWorkspace({ hostMount: "/tmp/project" }),
         statuses: new Set(["stopped"]),
         timeRange: { sinceMs: nowMs - 1_000, untilMs: nowMs },

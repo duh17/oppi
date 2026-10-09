@@ -23,6 +23,7 @@ import {
   resolveSandboxGuestCwd,
   resolveSessionSeedModel,
   resolveSdkSessionCwd,
+  resolveSdkSessionCwdAsync,
   resolveSdkSessionDisplayCwd,
   SdkBackend,
 } from "../src/sdk-backend.js";
@@ -44,11 +45,11 @@ afterEach(() => {
 });
 
 describe("resolveSdkSessionCwd", () => {
-  it("defaults to home dir when workspace is missing", () => {
+  it("defaults to home dir when workspace is missing", async () => {
     expect(resolveSdkSessionCwd(undefined)).toBe(homedir());
   });
 
-  it("uses an owner-only internal cwd for declared control sessions", () => {
+  it("uses an owner-only internal cwd for declared control sessions", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-cwd-"));
     const session = {
       control: { domain: "agents", intent: "create" },
@@ -65,7 +66,7 @@ describe("resolveSdkSessionCwd", () => {
     }
   });
 
-  it("rejects a symlinked control-session parent before creating the cwd", () => {
+  it("rejects a symlinked control-session parent before creating the cwd", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-cwd-link-"));
     const outside = mkdtempSync(join(tmpdir(), "oppi-control-cwd-outside-"));
     const session = {
@@ -84,36 +85,36 @@ describe("resolveSdkSessionCwd", () => {
     }
   });
 
-  it("expands tilde hostMount to an absolute path", () => {
+  it("expands tilde hostMount to an absolute path", async () => {
     const workspace = { hostMount: "~/workspace/oppi" } as Workspace;
     expect(resolveSdkSessionCwd(workspace)).toBe(resolvePath(homedir(), "workspace", "oppi"));
   });
 
-  it("expands bare tilde hostMount", () => {
+  it("expands bare tilde hostMount", async () => {
     const workspace = { hostMount: "~" } as Workspace;
     expect(resolveSdkSessionCwd(workspace)).toBe(homedir());
   });
 
-  it("keeps absolute hostMount unchanged", () => {
+  it("keeps absolute hostMount unchanged", async () => {
     const mount = resolvePath(homedir(), "workspace", "oppi");
     const workspace = { hostMount: mount } as Workspace;
     expect(resolveSdkSessionCwd(workspace)).toBe(mount);
   });
 
-  it("never falls back to main when a session worktree is unavailable", () => {
+  it("never falls back to main when a session worktree is unavailable", async () => {
     const mount = mkdtempSync(join(tmpdir(), "oppi-removed-worktree-cwd-"));
     const workspace = { id: "ws-1", hostMount: mount } as Workspace;
 
     try {
-      expect(() => resolveSdkSessionCwd(workspace, { worktreeId: "wt_removed" })).toThrow(
-        "Session worktree is no longer available",
-      );
+      await expect(
+        resolveSdkSessionCwdAsync(workspace, { worktreeId: "wt_removed" }),
+      ).rejects.toThrow("Session worktree is no longer available");
     } finally {
       rmSync(mount, { recursive: true, force: true });
     }
   });
 
-  it("never falls back to main when a git worktree directory is gone", () => {
+  it("never falls back to main when a git worktree directory is gone", async () => {
     const mount = mkdtempSync(join(tmpdir(), "oppi-missing-dir-cwd-"));
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-missing-dir-cwd-data-"));
     execFileSync("git", ["init", "--initial-branch=main"], { cwd: mount });
@@ -123,14 +124,18 @@ describe("resolveSdkSessionCwd", () => {
     execFileSync("git", ["add", "README.md"], { cwd: mount });
     execFileSync("git", ["commit", "-m", "initial"], { cwd: mount });
     const workspace = { id: "ws-1", hostMount: mount } as Workspace;
-    const created = createWorkspaceWorktree(workspace, { branch: "feature/gone" }, { dataDir });
+    const created = await createWorkspaceWorktree(
+      workspace,
+      { branch: "feature/gone" },
+      { dataDir },
+    );
     rmSync(created.path, { recursive: true, force: true });
 
     try {
-      expect(() =>
-        resolveSdkSessionCwd(workspace, { worktreeId: created.id }, { dataDir }),
-      ).toThrow("Session worktree is no longer available");
-      expect(resolveSdkSessionCwd(workspace, { worktreeId: "main" }, { dataDir })).toBe(
+      await expect(
+        resolveSdkSessionCwdAsync(workspace, { worktreeId: created.id }, { dataDir }),
+      ).rejects.toThrow("Session worktree is no longer available");
+      expect(await resolveSdkSessionCwdAsync(workspace, { worktreeId: "main" }, { dataDir })).toBe(
         realpathSync(mount),
       );
     } finally {
@@ -141,7 +146,7 @@ describe("resolveSdkSessionCwd", () => {
 });
 
 describe("resolveSdkSessionDisplayCwd", () => {
-  it("uses a sandbox guest path instead of the host backing path", () => {
+  it("uses a sandbox guest path instead of the host backing path", async () => {
     const uniqueName = `Oppi Sandbox Display ${Date.now()}`;
     const slug = uniqueName.toLowerCase().replace(/[^a-z0-9-_]/g, "-");
     const workspace = {
@@ -160,7 +165,7 @@ describe("resolveSdkSessionDisplayCwd", () => {
     }
   });
 
-  it("keeps host workspaces on their resolved host cwd", () => {
+  it("keeps host workspaces on their resolved host cwd", async () => {
     const mount = resolvePath(homedir(), "workspace", "oppi");
     const workspace = { hostMount: mount, runtime: "host" } as Workspace;
 
@@ -169,7 +174,7 @@ describe("resolveSdkSessionDisplayCwd", () => {
 });
 
 describe("hostMountValidationError", () => {
-  it("accepts an existing directory", () => {
+  it("accepts an existing directory", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-hostmount-ok-"));
     try {
       expect(hostMountValidationError(cwd)).toBeUndefined();
@@ -178,7 +183,7 @@ describe("hostMountValidationError", () => {
     }
   });
 
-  it("rejects a missing directory with recovery guidance", () => {
+  it("rejects a missing directory with recovery guidance", async () => {
     const missing = join(tmpdir(), `oppi-hostmount-missing-${Date.now()}`);
     rmSync(missing, { recursive: true, force: true });
 
@@ -189,7 +194,7 @@ describe("hostMountValidationError", () => {
     expect(message).toContain("clear Host Working Directory for a blank workspace");
   });
 
-  it("rejects a file path", () => {
+  it("rejects a file path", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-hostmount-file-"));
     const file = join(cwd, "not-a-directory");
     writeFileSync(file, "x");
@@ -1804,7 +1809,7 @@ describe("SdkBackend saved Agent definitions", () => {
 });
 
 describe("SdkBackend session state seeding", () => {
-  it("normalizes stored Oppi thinking levels before SDK session creation", () => {
+  it("normalizes stored Oppi thinking levels before SDK session creation", async () => {
     for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const) {
       expect(normalizeThinkingLevel(level)).toBe(level);
     }
@@ -1812,7 +1817,7 @@ describe("SdkBackend session state seeding", () => {
     expect(normalizeThinkingLevel("unsupported")).toBeUndefined();
   });
 
-  it("refuses fallback when a schedule requires its pinned model", () => {
+  it("refuses fallback when a schedule requires its pinned model", async () => {
     const session = makeSession({
       model: "ds4/deepseek-v4-flash",
       launch: {
@@ -1829,7 +1834,7 @@ describe("SdkBackend session state seeding", () => {
     );
   });
 
-  it("rejects a fuzzy model match for a required schedule pin", () => {
+  it("rejects a fuzzy model match for a required schedule pin", async () => {
     const session = makeSession({
       model: "ds4/deepseek-v4-flash",
       launch: { modelPolicy: "required", status: "launching", requestedAt: 1 },
@@ -1843,7 +1848,7 @@ describe("SdkBackend session state seeding", () => {
     ).toThrow('Required model "ds4/deepseek-v4-flash" is not available');
   });
 
-  it("accepts only the exact required schedule model", () => {
+  it("accepts only the exact required schedule model", async () => {
     const session = makeSession({
       model: "ds4/deepseek-v4-flash",
       launch: { modelPolicy: "required", status: "launching", requestedAt: 1 },
@@ -1857,7 +1862,7 @@ describe("SdkBackend session state seeding", () => {
     ).not.toThrow();
   });
 
-  it("retains Pi fallback for launches without a required model", () => {
+  it("retains Pi fallback for launches without a required model", async () => {
     const session = makeSession({ model: "ds4/deepseek-v4-flash" });
 
     expect(() => enforceLaunchModelPolicy(session, undefined)).not.toThrow();
@@ -1872,7 +1877,7 @@ describe("SdkBackend session state seeding", () => {
         getAll: () => all,
       }) as unknown as Parameters<typeof resolveSessionSeedModel>[0];
 
-    it("keeps an authenticated exact model after enabledModels drops it", () => {
+    it("keeps an authenticated exact model after enabledModels drops it", async () => {
       const model = resolveSessionSeedModel(registry([codex, openai]), "openai-codex/gpt-6.1-sol", [
         "openai/*",
       ]);
@@ -1880,7 +1885,7 @@ describe("SdkBackend session state seeding", () => {
       expect(model).toBe(codex);
     });
 
-    it("refuses the exact model once its provider auth is gone", () => {
+    it("refuses the exact model once its provider auth is gone", async () => {
       const model = resolveSessionSeedModel(registry([openai]), "openai-codex/gpt-6.1-sol", [
         "openai/*",
       ]);
@@ -1888,7 +1893,7 @@ describe("SdkBackend session state seeding", () => {
       expect(model).toBeUndefined();
     });
 
-    it("does not seed an unauthenticated local model that enabledModels dropped", () => {
+    it("does not seed an unauthenticated local model that enabledModels dropped", async () => {
       const local = {
         provider: "ds4",
         id: "deepseek-v4-flash",
@@ -1904,7 +1909,7 @@ describe("SdkBackend session state seeding", () => {
       expect(model).toBeUndefined();
     });
 
-    it("keeps fuzzy requests inside enabledModels", () => {
+    it("keeps fuzzy requests inside enabledModels", async () => {
       const model = resolveSessionSeedModel(registry([codex, openai]), "sol", ["openai/*"]);
 
       expect(model).toBe(openai);
@@ -2263,7 +2268,7 @@ describe("SdkBackend.setModel", () => {
 });
 
 describe("SdkBackend.createPiSessionManager", () => {
-  it("opens existing session files with the effective cwd override", () => {
+  it("opens existing session files with the effective cwd override", async () => {
     const cwd = "/workspace/clanker-farm";
     const session = {
       id: "sess-1",
@@ -2299,7 +2304,7 @@ describe("SdkBackend.createPiSessionManager", () => {
     }
   });
 
-  it("uses pi's in-memory session manager for incognito sessions", () => {
+  it("uses pi's in-memory session manager for incognito sessions", async () => {
     const cwd = resolvePath(homedir(), "workspace", "oppi");
     const session = {
       id: "sess-1",
@@ -2338,7 +2343,7 @@ describe("SdkBackend.createPiSessionManager", () => {
 });
 
 describe("Oppi queue delivery defaults", () => {
-  it("configures queue delivery defaults without calling persistent Pi setters", () => {
+  it("configures queue delivery defaults without calling persistent Pi setters", async () => {
     const piSession = {
       agent: {
         steeringMode: "one-at-a-time" as const,
@@ -2536,7 +2541,7 @@ describe("SdkBackend extension UI bridge", () => {
     return { backend, ui, requests };
   }
 
-  it("forwards Pi notification, title, status, and string widget APIs", () => {
+  it("forwards Pi notification, title, status, and string widget APIs", async () => {
     const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
 
     ui.notify("Command allowed", "info");
@@ -2574,7 +2579,7 @@ describe("SdkBackend extension UI bridge", () => {
     ]);
   });
 
-  it("provides a snapshot theme on the UI context", () => {
+  it("provides a snapshot theme on the UI context", async () => {
     const { ui } = makeCustomUIHarness(() => ({ cancelled: true }));
 
     expect(ui.theme.bold("Review session active")).toBe("Review session active");
@@ -2587,7 +2592,7 @@ describe("SdkBackend extension UI bridge", () => {
     });
   });
 
-  it("keeps Pi editor and terminal-only UI shims compatible with mobile sessions", () => {
+  it("keeps Pi editor and terminal-only UI shims compatible with mobile sessions", async () => {
     const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
     let terminalInputCalled = false;
 
@@ -2621,7 +2626,7 @@ describe("SdkBackend extension UI bridge", () => {
     expect(terminalInputCalled).toBe(false);
   });
 
-  it("forwards Pi working-row customizations into extension UI notifications", () => {
+  it("forwards Pi working-row customizations into extension UI notifications", async () => {
     const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
 
     ui.setWorkingMessage("Running checks");
@@ -2655,7 +2660,7 @@ describe("SdkBackend extension UI bridge", () => {
     expect(ui.getToolsExpanded()).toBe(true);
   });
 
-  it("renders component widgets into mobile-friendly line snapshots", () => {
+  it("renders component widgets into mobile-friendly line snapshots", async () => {
     const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
 
     ui.setWidget("review", (_tui, theme) => ({
@@ -2667,7 +2672,7 @@ describe("SdkBackend extension UI bridge", () => {
     expect(requests[0].widgetLines).toEqual(["Review session active"]);
   });
 
-  it("sanitizes terminal component widget snapshots before mobile projection", () => {
+  it("sanitizes terminal component widget snapshots before mobile projection", async () => {
     const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
 
     ui.setWidget("links", () => ({
@@ -2679,7 +2684,7 @@ describe("SdkBackend extension UI bridge", () => {
     expect(requests[0].widgetLines).toEqual(["Open child now"]);
   });
 
-  it("forwards native surfaces from component widgets", () => {
+  it("forwards native surfaces from component widgets", async () => {
     const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
     let renderContext: { target: string; capabilities: string[] } | undefined;
 
@@ -2727,7 +2732,7 @@ describe("SdkBackend extension UI bridge", () => {
     expect(requests[0].nativeSurface?.blocks[0]?.type).toBe("activityList");
   });
 
-  it("provides terminal dimensions to TUI component snapshots", () => {
+  it("provides terminal dimensions to TUI component snapshots", async () => {
     const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
 
     ui.setWidget("agents", (tui) => {
@@ -2774,7 +2779,7 @@ describe("SdkBackend extension UI bridge", () => {
     expect(requests[1].widgetLines).toEqual(["Goal tick 1"]);
   });
 
-  it("coalesces component widget render requests through the shared update throttle", () => {
+  it("coalesces component widget render requests through the shared update throttle", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000);
     const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
@@ -2802,7 +2807,7 @@ describe("SdkBackend extension UI bridge", () => {
     expect(requests[1].widgetLines).toEqual(["Goal tick 2"]);
   });
 
-  it("disposes component widgets when clearing them", () => {
+  it("disposes component widgets when clearing them", async () => {
     const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
     let disposed = false;
 
@@ -2820,7 +2825,7 @@ describe("SdkBackend extension UI bridge", () => {
     expect(requests[1].widgetLines).toBeUndefined();
   });
 
-  it("clears stale component widget projection when replacement factory throws", () => {
+  it("clears stale component widget projection when replacement factory throws", async () => {
     const { ui, requests } = makeCustomUIHarness(() => ({ cancelled: true }));
 
     ui.setWidget("goal", () => ({

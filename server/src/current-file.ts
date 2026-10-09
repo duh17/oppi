@@ -239,16 +239,16 @@ export function resolvedPathHeaders(file: ResolvedCurrentFile): Record<string, s
  * SDK mount, regardless of a client-supplied worktree id. Host workspaces
  * resolve requested worktrees; an unknown id must not fall through to home.
  */
-export function resolveWorkspaceFileRoot(
+export async function resolveWorkspaceFileRoot(
   workspace: Workspace,
   worktreeId: string | undefined,
   dataDir: string,
-): string | null {
+): Promise<string | null> {
   const requested = worktreeId?.trim();
   if (workspace.runtime === "sandbox" || !requested) {
     return resolveSdkSessionCwd(workspace);
   }
-  return resolveWorkspaceWorktree(workspace, requested, { dataDir })?.path ?? null;
+  return (await resolveWorkspaceWorktree(workspace, requested, { dataDir }))?.path ?? null;
 }
 
 export interface ResolvedCurrentFile {

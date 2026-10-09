@@ -31,7 +31,7 @@ import {
 import { SessionStopCoordinator, type SessionStopTimers } from "./session-stop.js";
 import { SessionTurnCoordinator } from "./session-turns.js";
 import type { Storage } from "./storage.js";
-import { resolveSdkSessionCwd } from "./sdk-backend.js";
+import { resolveSdkSessionCwdAsync } from "./sdk-backend.js";
 import { resolveUploadStoreConfig } from "./uploads/local-upload-store.js";
 import type { ServerConfig, ServerMessage, Session } from "./types.js";
 import type { WorkspaceRuntime } from "./workspace-runtime.js";
@@ -200,19 +200,19 @@ export function createSessionCoordinatorBundle(
     broadcast: (key, message) => broadcaster.broadcast(key, message),
   });
 
-  const resolveWorkspaceRoot = (session: Session): string | null => {
+  const resolveWorkspaceRoot = async (session: Session): Promise<string | null> => {
     if (!session.workspaceId) {
       // Workspace-less control routes still have a server-owned cwd. Other
       // workspace-less sessions cannot take attachments.
       return isControlRouteSession(session)
-        ? resolveSdkSessionCwd(undefined, session, { dataDir: deps.storage.getDataDir() })
+        ? resolveSdkSessionCwdAsync(undefined, session, { dataDir: deps.storage.getDataDir() })
         : null;
     }
     const workspace = deps.storage.getWorkspace(session.workspaceId);
     if (!workspace?.hostMount) {
       return null;
     }
-    return resolveSdkSessionCwd(workspace, session, { dataDir: deps.storage.getDataDir() });
+    return resolveSdkSessionCwdAsync(workspace, session, { dataDir: deps.storage.getDataDir() });
   };
 
   const uploadStoreConfig = resolveUploadStoreConfig(deps.config);

@@ -17,7 +17,7 @@ import {
 import { listDirectoryEntries } from "../directory-listing.js";
 import { decodeWorkspaceRoutePath } from "../file-serving-policy.js";
 import { createLogger, type Logger } from "../logger.js";
-import { resolveSdkSessionCwd } from "../sdk-backend.js";
+import { resolveSdkSessionCwd, resolveSdkSessionCwdAsync } from "../sdk-backend.js";
 import type { DirectoryListingResponse } from "../types.js";
 import {
   evaluateIfMatch,
@@ -79,7 +79,7 @@ export function createHostFileRoutes(
    * - `origin=session&sessionId`: the session's actual cwd (worktree, sandbox
    *   mount, or control-session cwd).
    */
-  function parseCurrentFileRequest(url: URL): CurrentFileRequest {
+  async function parseCurrentFileRequest(url: URL): Promise<CurrentFileRequest> {
     const params = url.searchParams;
     for (const key of new Set(params.keys())) {
       if (!CURRENT_FILE_QUERY_KEYS.has(key) || params.getAll(key).length !== 1) {
@@ -107,7 +107,7 @@ export function createHostFileRoutes(
         if (!workspaceId || sessionId !== null) return conflict;
         const workspace = ctx.storage.getWorkspace(workspaceId);
         if (!workspace) return { kind: "error", status: 404, message: "Workspace not found" };
-        const root = resolveWorkspaceFileRoot(workspace, worktreeId ?? undefined, dataDir);
+        const root = await resolveWorkspaceFileRoot(workspace, worktreeId ?? undefined, dataDir);
         if (!root) return { kind: "error", status: 404, message: "Worktree not found" };
         return {
           kind: "ok",
@@ -136,7 +136,7 @@ export function createHostFileRoutes(
         if (!workspace) return { kind: "error", status: 404, message: "Workspace not found" };
         let root: string;
         try {
-          root = resolveSdkSessionCwd(workspace, session, { dataDir });
+          root = await resolveSdkSessionCwdAsync(workspace, session, { dataDir });
         } catch {
           return { kind: "error", status: 404, message: "Session root not found" };
         }
@@ -164,7 +164,7 @@ export function createHostFileRoutes(
       }
     | { status: number }
   > {
-    const request = parseCurrentFileRequest(url);
+    const request = await parseCurrentFileRequest(url);
     if (request.kind === "error") {
       helpers.error(res, request.status, request.message);
       return { status: request.status };
@@ -263,7 +263,7 @@ export function createHostFileRoutes(
     let relativePath: string | undefined;
     let size: number | null = null;
     try {
-      const request = parseCurrentFileRequest(url);
+      const request = await parseCurrentFileRequest(url);
       if (request.kind === "error") {
         status = request.status;
         helpers.error(res, request.status, request.message);

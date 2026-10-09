@@ -253,9 +253,11 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       const dataDir = ctx.storage.getDataDir();
       const hasManagedWorktrees =
         hasManagedWorkspaceWorktreeDirectory(dataDir, wsId) ||
-        listWorkspaceWorktrees(workspace, {
-          dataDir,
-        }).some((worktree) => worktree.managedByOppi === true);
+        (
+          await listWorkspaceWorktrees(workspace, {
+            dataDir,
+          })
+        ).some((worktree) => worktree.managedByOppi === true);
       if (hasManagedWorktrees) {
         helpers.error(
           res,
@@ -307,7 +309,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     return false;
   }
 
-  function handleListWorkspaceWorktrees(wsId: string, res: ServerResponse): void {
+  async function handleListWorkspaceWorktrees(wsId: string, res: ServerResponse): Promise<void> {
     const workspace = ctx.storage.getWorkspace(wsId);
     if (!workspace) {
       helpers.error(res, 404, "Workspace not found");
@@ -316,7 +318,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     helpers.json(res, {
       workspaceId: wsId,
-      worktrees: listWorkspaceWorktrees(workspace, {
+      worktrees: await listWorkspaceWorktrees(workspace, {
         dataDir: ctx.storage.getDataDir(),
         sessionCountsByWorktreeId: workspaceWorktreeSessionCounts(wsId),
       }),
@@ -347,10 +349,14 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const body = await helpers.parseBody<unknown>(req);
     if (!rejectNonObjectBody(body, res)) return;
     try {
-      const worktree = createWorkspaceWorktree(workspace, body as CreateWorkspaceWorktreeRequest, {
-        dataDir: ctx.storage.getDataDir(),
-        reservedWorktreeIds: new Set(workspaceWorktreeSessionCounts(wsId).keys()),
-      });
+      const worktree = await createWorkspaceWorktree(
+        workspace,
+        body as CreateWorkspaceWorktreeRequest,
+        {
+          dataDir: ctx.storage.getDataDir(),
+          reservedWorktreeIds: new Set(workspaceWorktreeSessionCounts(wsId).keys()),
+        },
+      );
       helpers.json(res, { workspaceId: wsId, worktree }, 201);
     } catch (error) {
       handleWorktreeLifecycleError(error, res);
@@ -371,9 +377,13 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const body = await helpers.parseBody<unknown>(req);
     if (!rejectNonObjectBody(body, res)) return;
     try {
-      const worktree = openWorkspaceWorktree(workspace, body as OpenWorkspaceWorktreeRequest, {
-        dataDir: ctx.storage.getDataDir(),
-      });
+      const worktree = await openWorkspaceWorktree(
+        workspace,
+        body as OpenWorkspaceWorktreeRequest,
+        {
+          dataDir: ctx.storage.getDataDir(),
+        },
+      );
       helpers.json(res, { workspaceId: wsId, worktree });
     } catch (error) {
       handleWorktreeLifecycleError(error, res);
@@ -391,7 +401,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const worktree = resolveWorkspaceWorktree(workspace, worktreeId, {
+    const worktree = await resolveWorkspaceWorktree(workspace, worktreeId, {
       dataDir: ctx.storage.getDataDir(),
     });
     if (!worktree) {
@@ -428,7 +438,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const body = await helpers.parseBody<unknown>(req);
     if (!rejectNonObjectBody(body, res)) return;
     try {
-      const preview = previewWorkspaceWorktree(
+      const preview = await previewWorkspaceWorktree(
         workspace,
         worktreeId,
         body as PreviewWorkspaceWorktreeRequest,
@@ -536,12 +546,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     return { ok: true, selectedSession };
   }
 
-  function workspaceCheckoutFromQuery(
+  async function workspaceCheckoutFromQuery(
     workspace: Workspace,
     workspaceId: string,
     url: URL,
     res: ServerResponse,
-  ): { path?: string; selectedSession?: Session } | undefined {
+  ): Promise<{ path?: string; selectedSession?: Session } | undefined> {
     const selected = selectedSessionFromQuery(workspaceId, url, res);
     if (!selected.ok) return undefined;
 
@@ -553,7 +563,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return { path: workspace.hostMount, selectedSession: selected.selectedSession };
     }
 
-    const worktree = resolveWorkspaceWorktree(workspace, worktreeId, {
+    const worktree = await resolveWorkspaceWorktree(workspace, worktreeId, {
       dataDir: ctx.storage.getDataDir(),
     });
     if (!worktree) {
@@ -595,7 +605,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const checkout = workspaceCheckoutFromQuery(workspace, wsId, url, res);
+    const checkout = await workspaceCheckoutFromQuery(workspace, wsId, url, res);
     if (!checkout) return;
 
     if (!checkout.path) {
@@ -710,7 +720,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const checkout = workspaceCheckoutFromQuery(workspace, wsId, url, res);
+    const checkout = await workspaceCheckoutFromQuery(workspace, wsId, url, res);
     if (!checkout) return;
 
     if (!checkout.path) {
@@ -984,7 +994,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     const wsWorktreesMatch = path.match(/^\/workspaces\/([^/]+)\/worktrees$/);
     if (wsWorktreesMatch && method === "GET") {
-      handleListWorkspaceWorktrees(wsWorktreesMatch[1], res);
+      await handleListWorkspaceWorktrees(wsWorktreesMatch[1], res);
       return true;
     }
     if (wsWorktreesMatch && method === "POST") {

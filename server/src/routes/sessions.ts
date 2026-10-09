@@ -259,7 +259,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
       return;
     }
     const requestedModel = body.model;
-    const worktreeSelection = normalizeSessionWorktreeId(workspace, body.worktreeId, {
+    const worktreeSelection = await normalizeSessionWorktreeId(workspace, body.worktreeId, {
       dataDir: ctx.storage.getDataDir(),
     });
     if (worktreeSelection.error) {
@@ -270,9 +270,13 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     // ── Local session import: validate path confinement + CWD alignment ──
     if (body.piSessionFile) {
       try {
-        const selectedWorktree = resolveWorkspaceWorktree(workspace, worktreeSelection.worktreeId, {
-          dataDir: ctx.storage.getDataDir(),
-        });
+        const selectedWorktree = await resolveWorkspaceWorktree(
+          workspace,
+          worktreeSelection.worktreeId,
+          {
+            dataDir: ctx.storage.getDataDir(),
+          },
+        );
         const importWorkspace = selectedWorktree
           ? { ...workspace, hostMount: selectedWorktree.path }
           : workspace;
@@ -955,7 +959,7 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
 
     const wsSessionBucketsMatch = path.match(/^\/workspaces\/([^/]+)\/session-buckets$/);
     if (wsSessionBucketsMatch && method === "GET") {
-      handleWorkspaceSessionBuckets(wsSessionBucketsMatch[1], req, res);
+      await handleWorkspaceSessionBuckets(wsSessionBucketsMatch[1], req, res);
       return true;
     }
 

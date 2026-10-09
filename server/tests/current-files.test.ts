@@ -259,7 +259,7 @@ describe("GET/HEAD /files/current", () => {
         env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" },
       },
     );
-    const worktree = createWorkspaceWorktree(
+    const worktree = await createWorkspaceWorktree(
       fixture.workspaces[0],
       { branch: "feature/current" },
       { dataDir: fixture.dataDir },
