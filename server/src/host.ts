@@ -9,7 +9,8 @@
 import { mkdirSync, readdirSync, existsSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { dirname, join, basename, resolve } from "node:path";
 import { homedir } from "node:os";
-import { execSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 // ─── Types ───
 
@@ -318,15 +319,16 @@ function refineLanguage(dir: string, base: string): string {
 
 // ─── Git helpers ───
 
-function getGitRemote(dir: string): string | undefined {
+const execFileAsync = promisify(execFile);
+
+async function getGitRemote(dir: string): Promise<string | undefined> {
   try {
-    const raw = execSync("git remote get-url origin", {
+    const { stdout } = await execFileAsync("git", ["remote", "get-url", "origin"], {
       cwd: dir,
-      stdio: ["ignore", "pipe", "ignore"],
       timeout: 2000,
-    })
-      .toString()
-      .trim();
+      windowsHide: true,
+    });
+    const raw = stdout.toString().trim();
     // Normalize: git@github.com:user/repo.git → github.com/user/repo
     if (raw.startsWith("git@")) {
       return raw
@@ -354,7 +356,7 @@ function getGitRemote(dir: string): string | undefined {
  * manifest file, or AGENTS.md). Skips hidden directories and common
  * non-project entries (node_modules, .Trash, Library, etc.).
  */
-export function scanDirectories(root: string): HostDirectory[] {
+export async function scanDirectories(root: string): Promise<HostDirectory[]> {
   const resolved = root.replace(/^~/, homedir());
   if (!existsSync(resolved)) return [];
 
@@ -415,7 +417,7 @@ export function scanDirectories(root: string): HostDirectory[] {
       path: displayPath,
       name: basename(fullPath),
       isGitRepo,
-      gitRemote: isGitRepo ? getGitRemote(fullPath) : undefined,
+      gitRemote: isGitRepo ? await getGitRemote(fullPath) : undefined,
       hasAgentsMd,
       projectType,
       language,
@@ -430,14 +432,14 @@ export function scanDirectories(root: string): HostDirectory[] {
  *
  * Default roots: ~/workspace, ~/projects, ~/src, ~/code, ~/Developer
  */
-export function discoverProjects(roots?: string[]): HostDirectory[] {
+export async function discoverProjects(roots?: string[]): Promise<HostDirectory[]> {
   const defaultRoots = ["~/workspace", "~/projects", "~/src", "~/code", "~/Developer"];
   const scanRoots = roots ?? defaultRoots;
   const seen = new Set<string>();
   const results: HostDirectory[] = [];
 
   for (const root of scanRoots) {
-    for (const dir of scanDirectories(root)) {
+    for (const dir of await scanDirectories(root)) {
       if (!seen.has(dir.path)) {
         seen.add(dir.path);
         results.push(dir);

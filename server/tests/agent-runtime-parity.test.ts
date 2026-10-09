@@ -95,11 +95,11 @@ function makeManagedHarness(mobileRenderers: MobileRendererRegistry): {
   };
 }
 
-function makeMirrorHarness(mobileRenderers: MobileRendererRegistry): {
+async function makeMirrorHarness(mobileRenderers: MobileRendererRegistry): Promise<{
   received: ServerMessage[];
   session: () => Session;
   ingest: (event: AgentSessionEvent) => void;
-} {
+}> {
   const workspace: Workspace = {
     id: "w1",
     name: "Workspace",
@@ -137,6 +137,9 @@ function makeMirrorHarness(mobileRenderers: MobileRendererRegistry): {
       sessionFile: "/tmp/oppi-runtime-parity/session.jsonl",
       isIdle: false,
     },
+  });
+  await vi.waitFor(() => {
+    expect(ws.sent.some((message) => message.type === "hello_ack")).toBe(true);
   });
   const ack = ws.sent.find((message) => message.type === "hello_ack");
   const sessionId = String(ack?.sessionId);
@@ -180,15 +183,15 @@ function normalizeMessages(messages: ServerMessage[]): ServerMessage[] {
   });
 }
 
-function expectRuntimeParity(
+async function expectRuntimeParity(
   events: AgentSessionEvent[],
   mobileRenderers = new MobileRendererRegistry(),
-): {
+): Promise<{
   managed: ReturnType<typeof makeManagedHarness>;
-  mirror: ReturnType<typeof makeMirrorHarness>;
-} {
+  mirror: Awaited<ReturnType<typeof makeMirrorHarness>>;
+}> {
   const managed = makeManagedHarness(mobileRenderers);
-  const mirror = makeMirrorHarness(mobileRenderers);
+  const mirror = await makeMirrorHarness(mobileRenderers);
 
   for (const event of events) {
     managed.ingest(event);
@@ -200,7 +203,7 @@ function expectRuntimeParity(
 }
 
 describe("managed and mirror runtime event parity", () => {
-  it("projects interactive facts for any exact declared name without streaming answer output", () => {
+  it("projects interactive facts for any exact declared name without streaming answer output", async () => {
     const registry = new MobileRendererRegistry();
     registry.register("choose_next", {
       outputPresentation: { kind: "interactive" },
@@ -208,7 +211,7 @@ describe("managed and mirror runtime event parity", () => {
       renderResult: () => [],
     });
     for (const toolName of ["ask", "choose_next"]) {
-      const { managed } = expectRuntimeParity(
+      const { managed } = await expectRuntimeParity(
         [
           {
             type: "tool_execution_start",
@@ -245,7 +248,7 @@ describe("managed and mirror runtime event parity", () => {
     expect(registry.outputPresentation("functions.ask")).toBeUndefined();
   });
 
-  it("preserves nested parent identity on start, metadata update, output and end in both runtimes", () => {
+  it("preserves nested parent identity on start, metadata update, output and end in both runtimes", async () => {
     const events: AgentSessionEvent[] = [
       {
         type: "tool_execution_start",
@@ -284,7 +287,7 @@ describe("managed and mirror runtime event parity", () => {
         ] as AgentSessionEvent[]),
       );
     }
-    const { managed } = expectRuntimeParity(events);
+    const { managed } = await expectRuntimeParity(events);
     for (const id of ["child-0", "child-1"]) {
       const messages = managed.received.filter((m) => "toolCallId" in m && m.toolCallId === id);
       expect(messages.map((m) => m.type)).toEqual([
@@ -299,8 +302,8 @@ describe("managed and mirror runtime event parity", () => {
       ).toBe(true);
     }
   });
-  it("projects compaction lifecycle events identically", () => {
-    const { managed, mirror } = expectRuntimeParity([
+  it("projects compaction lifecycle events identically", async () => {
+    const { managed, mirror } = await expectRuntimeParity([
       { type: "compaction_start", reason: "threshold" },
       {
         type: "compaction_end",
@@ -320,8 +323,8 @@ describe("managed and mirror runtime event parity", () => {
     );
   });
 
-  it("projects retry lifecycle events identically", () => {
-    expectRuntimeParity([
+  it("projects retry lifecycle events identically", async () => {
+    await expectRuntimeParity([
       {
         type: "auto_retry_start",
         attempt: 1,
@@ -333,8 +336,8 @@ describe("managed and mirror runtime event parity", () => {
     ] as AgentSessionEvent[]);
   });
 
-  it("projects streamed thinking and assistant finalization identically", () => {
-    const { managed, mirror } = expectRuntimeParity([
+  it("projects streamed thinking and assistant finalization identically", async () => {
+    const { managed, mirror } = await expectRuntimeParity([
       {
         type: "message_update",
         message: {},
@@ -357,8 +360,8 @@ describe("managed and mirror runtime event parity", () => {
     expect(mirror.session().lastMessage).toBe(managed.session.lastMessage);
   });
 
-  it("projects tool lifecycle events identically", () => {
-    expectRuntimeParity([
+  it("projects tool lifecycle events identically", async () => {
+    await expectRuntimeParity([
       {
         type: "tool_execution_start",
         toolCallId: "tool-1",
@@ -385,9 +388,9 @@ describe("managed and mirror runtime event parity", () => {
     ] as AgentSessionEvent[]);
   });
 
-  it("publishes terminal facts and a bounded tail for large bash output in both runtimes", () => {
+  it("publishes terminal facts and a bounded tail for large bash output in both runtimes", async () => {
     const output = "terminal output line\n".repeat(600);
-    const { managed, mirror } = expectRuntimeParity([
+    const { managed, mirror } = await expectRuntimeParity([
       {
         type: "tool_execution_start",
         toolCallId: "terminal-1",
@@ -440,7 +443,7 @@ describe("managed and mirror runtime event parity", () => {
 
   it.each(["read", "write", "edit", "put_file"])(
     "projects %s file facts identically in managed and mirror sessions",
-    (name) => {
+    async (name) => {
       const registry = new MobileRendererRegistry();
       registry.register("put_file", {
         inputPresentation: registry.inputPresentation("write"),
@@ -455,7 +458,7 @@ describe("managed and mirror runtime event parity", () => {
         offset: 3,
         limit: 7,
       };
-      const { managed } = expectRuntimeParity(
+      const { managed } = await expectRuntimeParity(
         [
           { type: "tool_execution_start", toolCallId: "file-1", toolName: name, args },
           {
@@ -490,9 +493,9 @@ describe("managed and mirror runtime event parity", () => {
 
   it.each(["voice_reply_mode", "unrelated"])(
     "projects %s setting authority identically",
-    (toolName) => {
+    async (toolName) => {
       const registry = new MobileRendererRegistry();
-      const { managed } = expectRuntimeParity(
+      const { managed } = await expectRuntimeParity(
         [
           { type: "tool_execution_start", toolCallId: "setting", toolName, args: {} },
           {
@@ -520,8 +523,8 @@ describe("managed and mirror runtime event parity", () => {
     },
   );
 
-  it("projects assistant error finalization identically", () => {
-    expectRuntimeParity([
+  it("projects assistant error finalization identically", async () => {
+    await expectRuntimeParity([
       {
         type: "message_end",
         message: {

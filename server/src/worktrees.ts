@@ -336,7 +336,8 @@ export async function listWorkspaceWorktrees(
     const id = isMain ? MAIN_WORKTREE_ID : (dataDirWorktreeId ?? worktreeIdForPath(path));
     if (
       !options.includePendingRemovals &&
-      (pendingWorktreeRemovals.has(path) || pendingWorktreeRemovalIds.has(id))
+      (pendingWorktreeRemovals.has(path) ||
+        pendingWorktreeRemovalKeys.has(pendingRemovalKey(workspace.id, id)))
     )
       return [];
 
@@ -449,6 +450,9 @@ async function requireAvailableCreateTarget(
   }
   if (options.reservedWorktreeIds?.has(targetId)) {
     throw new WorkspaceWorktreeError(409, "Worktree id is still referenced by session history");
+  }
+  if (pendingWorktreeRemovalKeys.has(pendingRemovalKey(workspace.id, targetId))) {
+    throw new WorkspaceWorktreeError(409, "Worktree id already exists");
   }
   if (
     (await listWorkspaceWorktrees(workspace, { dataDir: options.dataDir })).some(
@@ -678,11 +682,17 @@ export async function previewWorkspaceWorktree(
   };
 }
 
-// Paths and ids of managed worktrees whose removal has been accepted.
-// The id is marked before the first await so a concurrent catalog read cannot
-// bind a session to a tree that is about to be deleted.
+// Paths and workspace-scoped ids whose removal has passed validation.
+// The key includes workspaceId: managed ids are derived from the branch name
+// and would otherwise collide across workspaces. It is inserted only after
+// main/unmanaged/active-session rejection, and held through the dirty check
+// and git worktree remove.
 const pendingWorktreeRemovals = new Set<string>();
-const pendingWorktreeRemovalIds = new Set<string>();
+const pendingWorktreeRemovalKeys = new Set<string>();
+
+function pendingRemovalKey(workspaceId: string, worktreeId: string): string {
+  return `${workspaceId}\0${worktreeId}`;
+}
 
 // Deleting a multi-GB tree takes minutes; killing git midway leaves a half-deleted
 // checkout. The bound only guards against a wedged git.
@@ -698,58 +708,56 @@ export async function removeWorkspaceWorktree(
   if (!worktreeId) {
     throw new WorkspaceWorktreeError(400, "worktree id required");
   }
-  if (pendingWorktreeRemovalIds.has(worktreeId)) {
+  const removalKey = pendingRemovalKey(workspace.id, worktreeId);
+  if (pendingWorktreeRemovalKeys.has(removalKey)) {
+    throw new WorkspaceWorktreeError(409, "Worktree removal is already in progress");
+  }
+
+  const workspaceRoot = await requireWorkspaceGitRoot(workspace);
+  const worktree = await resolveWorkspaceWorktree(workspace, worktreeId, {
+    dataDir: options.dataDir,
+  });
+  if (!worktree) {
     throw new WorkspaceWorktreeError(404, "Worktree not found");
   }
-  pendingWorktreeRemovalIds.add(worktreeId);
-  let removedPath: string | undefined;
+  if (worktree.isMain) {
+    throw new WorkspaceWorktreeError(400, "Cannot remove the main checkout");
+  }
+  if (!worktree.managedByOppi) {
+    throw new WorkspaceWorktreeError(400, "Only Oppi-managed data-dir worktrees can be removed");
+  }
+  if ((options.activeSessionCount ?? 0) > 0) {
+    throw new WorkspaceWorktreeError(409, "Cannot remove a worktree with active sessions");
+  }
+  // Check again after the awaits: another remove can have claimed this key.
+  if (pendingWorktreeRemovalKeys.has(removalKey)) {
+    throw new WorkspaceWorktreeError(409, "Worktree removal is already in progress");
+  }
+  pendingWorktreeRemovalKeys.add(removalKey);
+  pendingWorktreeRemovals.add(worktree.path);
   try {
-    const workspaceRoot = await requireWorkspaceGitRoot(workspace);
-    const worktree = await resolveWorkspaceWorktree(workspace, worktreeId, {
-      dataDir: options.dataDir,
-      includePendingRemovals: true,
-    });
-    if (!worktree) {
-      throw new WorkspaceWorktreeError(404, "Worktree not found");
-    }
-    if (worktree.isMain) {
-      throw new WorkspaceWorktreeError(400, "Cannot remove the main checkout");
-    }
-    if (!worktree.managedByOppi) {
-      throw new WorkspaceWorktreeError(400, "Only Oppi-managed data-dir worktrees can be removed");
-    }
-    if ((options.activeSessionCount ?? 0) > 0) {
-      throw new WorkspaceWorktreeError(409, "Cannot remove a worktree with active sessions");
-    }
-    // Mark pending before the first await so a concurrent request cannot resolve it.
-    pendingWorktreeRemovals.add(worktree.path);
-    removedPath = worktree.path;
-    try {
-      if (options.force !== true) {
-        const status = await runGitAsync(worktree.path, ["status", "--porcelain=v1"], 60_000);
-        if (status.status !== 0 || status.stdout.trim().length > 0) {
-          throw new WorkspaceWorktreeError(409, "Worktree has uncommitted or untracked changes");
-        }
+    if (options.force !== true) {
+      const status = await runGitAsync(worktree.path, ["status", "--porcelain=v1"], 60_000);
+      if (status.status !== 0 || status.stdout.trim().length > 0) {
+        throw new WorkspaceWorktreeError(409, "Worktree has uncommitted or untracked changes");
       }
+    }
 
-      const removed = await runGitAsync(
-        workspaceRoot,
-        ["worktree", "remove", ...(options.force ? ["--force"] : []), worktree.path],
-        WORKTREE_REMOVE_TIMEOUT_MS,
+    const removed = await runGitAsync(
+      workspaceRoot,
+      ["worktree", "remove", ...(options.force ? ["--force"] : []), worktree.path],
+      WORKTREE_REMOVE_TIMEOUT_MS,
+    );
+    if (removed.status !== 0) {
+      throw new WorkspaceWorktreeError(
+        409,
+        removed.stderr.trim() || removed.stdout.trim() || "git worktree remove failed",
       );
-      if (removed.status !== 0) {
-        throw new WorkspaceWorktreeError(
-          409,
-          removed.stderr.trim() || removed.stdout.trim() || "git worktree remove failed",
-        );
-      }
-      return worktree;
-    } finally {
-      pendingWorktreeRemovals.delete(worktree.path);
     }
+    return worktree;
   } finally {
-    pendingWorktreeRemovalIds.delete(worktreeId);
-    if (removedPath) pendingWorktreeRemovals.delete(removedPath);
+    pendingWorktreeRemovalKeys.delete(removalKey);
+    pendingWorktreeRemovals.delete(worktree.path);
   }
 }
 

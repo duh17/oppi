@@ -237,7 +237,7 @@ describe("Pi-native session identity cutover", () => {
       }
     });
 
-    it("mirrors a bridge so Session.id equals the catalog Pi ID", () => {
+    it("mirrors a bridge so Session.id equals the catalog Pi ID", async () => {
       const sessions = new Map<string, Session>();
       let mintedFallback = 0;
       const workspace = makeWorkspace({ id: "w1", hostMount: "/tmp/mirror-host" });
@@ -281,6 +281,9 @@ describe("Pi-native session identity cutover", () => {
         },
       });
 
+      await vi.waitFor(() => {
+        expect(ws.sent.some((message) => message.type === "hello_ack")).toBe(true);
+      });
       const ack = ws.sent.find((message) => message.type === "hello_ack");
       const created = [...sessions.values()][0];
       expect(ack?.sessionId).toBe("019e1ccc-2222-7222-8222-222222222222");

@@ -33,21 +33,21 @@ afterEach(() => {
 });
 
 describe("scanDirectories", () => {
-  it("finds projects in a root directory", () => {
+  it("finds projects in a root directory", async () => {
     const root = makeTempRoot();
     makeProject(root, "oppi", { "package.json": "{}", "tsconfig.json": "{}" });
 
-    const dirs = scanDirectories(root);
+    const dirs = await scanDirectories(root);
 
     expect(dirs.map((dir) => dir.name)).toEqual(["oppi"]);
   });
 
-  it("finds a git project with correct metadata", () => {
+  it("finds a git project with correct metadata", async () => {
     const root = makeTempRoot();
     makeProject(root, "oppi", { "AGENTS.md": "# Agent guide\n" });
     mkdirSync(join(root, "oppi", ".git"));
 
-    const dirs = scanDirectories(root);
+    const dirs = await scanDirectories(root);
     const oppi = dirs.find((d) => d.name === "oppi");
 
     expect(oppi).toBeDefined();
@@ -56,18 +56,18 @@ describe("scanDirectories", () => {
     expect(oppi!.path).toContain("oppi");
   });
 
-  it("returns empty for non-existent directory", () => {
-    const dirs = scanDirectories("~/nonexistent-dir-xyz");
+  it("returns empty for non-existent directory", async () => {
+    const dirs = await scanDirectories("~/nonexistent-dir-xyz");
     expect(dirs).toHaveLength(0);
   });
 
-  it("skips hidden directories and node_modules", () => {
+  it("skips hidden directories and node_modules", async () => {
     const root = makeTempRoot();
     makeProject(root, "visible", { "go.mod": "module example.com/visible\n" });
     makeProject(root, ".hidden", { "package.json": "{}" });
     makeProject(root, "node_modules", { "package.json": "{}" });
 
-    const dirs = scanDirectories(root);
+    const dirs = await scanDirectories(root);
     const names = dirs.map((d) => d.name);
 
     expect(names).toEqual(["visible"]);
@@ -75,13 +75,13 @@ describe("scanDirectories", () => {
 });
 
 describe("discoverProjects", () => {
-  it("finds projects across supplied roots", () => {
+  it("finds projects across supplied roots", async () => {
     const firstRoot = makeTempRoot();
     const secondRoot = makeTempRoot();
     makeProject(firstRoot, "alpha", { "pyproject.toml": "[project]\nname = 'alpha'\n" });
     makeProject(secondRoot, "beta", { "Package.swift": "// swift-tools-version: 6.0\n" });
 
-    const all = discoverProjects([firstRoot, secondRoot]);
+    const all = await discoverProjects([firstRoot, secondRoot]);
 
     expect(all.map((dir) => dir.name)).toEqual(["alpha", "beta"]);
   });

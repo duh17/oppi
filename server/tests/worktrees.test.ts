@@ -9,9 +9,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { resolveSdkSessionCwdAsync } from "../src/sdk-backend.js";
 import {
@@ -35,6 +35,20 @@ afterEach(() => {
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function installSlowWorktreeRemove(bin: string): void {
+  const realGit = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  writeFileSync(
+    join(bin, "git"),
+    `#!/bin/sh
+if [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
+  sleep 1
+fi
+exec ${JSON.stringify(realGit)} "$@"
+`,
+  );
+  chmodSync(join(bin, "git"), 0o755);
 }
 
 function makeGitWorkspace(): { root: string; linkedPath: string; workspace: Workspace } {
@@ -414,15 +428,82 @@ describe("workspace worktrees", async () => {
       { branch: "feature/pending" },
       { dataDir },
     );
+    const bin = mkdtempSync(join(tmpdir(), "oppi-worktrees-slow-remove-"));
+    roots.push(bin);
+    installSlowWorktreeRemove(bin);
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
+    try {
+      const removal = removeWorkspaceWorktree(workspace, { dataDir, worktreeId: created.id });
+      await vi.waitFor(async () => {
+        expect(await resolveWorkspaceWorktree(workspace, created.id, { dataDir })).toBeUndefined();
+      });
+      await expect(
+        removeWorkspaceWorktree(workspace, { dataDir, worktreeId: created.id }),
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        message: "Worktree removal is already in progress",
+      });
+      await expect(
+        createWorkspaceWorktree(workspace, { branch: "feature/pending" }, { dataDir }),
+      ).rejects.toMatchObject({ statusCode: 409, message: "Worktree id already exists" });
 
-    const removal = removeWorkspaceWorktree(workspace, { dataDir, worktreeId: created.id });
-    expect(await resolveWorkspaceWorktree(workspace, created.id, { dataDir })).toBeUndefined();
+      expect((await removal).id).toBe(created.id);
+      expect(existsSync(created.path)).toBe(false);
+    } finally {
+      process.env.PATH = previousPath;
+    }
+  });
+
+  it("does not hide another workspace when a removal id is missing or in progress", async () => {
+    const left = makeGitWorkspace();
+    const right = makeGitWorkspace();
+    right.workspace = { ...right.workspace, id: "ws-worktrees-b" };
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-worktrees-pending-scope-"));
+    roots.push(dataDir);
+    const rightTree = await createWorkspaceWorktree(
+      right.workspace,
+      { branch: "fix/shared" },
+      { dataDir },
+    );
     await expect(
-      removeWorkspaceWorktree(workspace, { dataDir, worktreeId: created.id }),
-    ).rejects.toThrow("Worktree not found");
+      removeWorkspaceWorktree(left.workspace, { dataDir, worktreeId: rightTree.id }),
+    ).rejects.toMatchObject({ statusCode: 404, message: "Worktree not found" });
+    expect(
+      await resolveWorkspaceWorktree(right.workspace, rightTree.id, { dataDir }),
+    ).toBeDefined();
 
-    expect((await removal).id).toBe(created.id);
-    expect(existsSync(created.path)).toBe(false);
+    const leftTree = await createWorkspaceWorktree(
+      left.workspace,
+      { branch: "fix/shared" },
+      { dataDir },
+    );
+    expect(leftTree.id).toBe(rightTree.id);
+    const bin = mkdtempSync(join(tmpdir(), "oppi-worktrees-slow-scope-"));
+    roots.push(bin);
+    installSlowWorktreeRemove(bin);
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
+    try {
+      const removal = removeWorkspaceWorktree(left.workspace, {
+        dataDir,
+        worktreeId: leftTree.id,
+      });
+      await vi.waitFor(async () => {
+        expect(
+          await resolveWorkspaceWorktree(left.workspace, leftTree.id, { dataDir }),
+        ).toBeUndefined();
+      });
+      expect(
+        await resolveWorkspaceWorktree(right.workspace, rightTree.id, { dataDir }),
+      ).toMatchObject({ id: rightTree.id });
+      await expect(
+        removeWorkspaceWorktree(right.workspace, { dataDir, worktreeId: rightTree.id }),
+      ).resolves.toMatchObject({ id: rightTree.id });
+      expect((await removal).id).toBe(leftTree.id);
+    } finally {
+      process.env.PATH = previousPath;
+    }
   });
 
   it("lets the event loop run while git lists worktrees", async () => {

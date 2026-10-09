@@ -465,17 +465,6 @@ function mergePiSessionFile(session: Session, file: string | undefined): void {
   session.piSessionFiles = [...files];
 }
 
-function syncSessionWorktreeFromCwd(
-  session: Session,
-  workspace: Workspace,
-  cwd: string | undefined,
-  dataDir: string,
-): Promise<void> {
-  return resolveWorkspaceWorktreeForPath(workspace, cwd, { dataDir }).then((worktree) => {
-    if (worktree) session.worktreeId = worktree.id;
-  });
-}
-
 function sessionActivityProjectionFingerprint(session: Session): string {
   const summary = buildSessionSummary(session);
   return sessionSummaryFingerprint({
@@ -524,6 +513,9 @@ export interface PiTuiMirrorRuntimeOptions {
 export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTransport {
   private readonly active = new Map<string, MirrorActiveSession>();
   private readonly bridges = new Map<string, BridgeConnection>();
+  /** Latest hello whose worktree lookup may still be applied. */
+  private readonly worktreeHelloGeneration = new Map<string, number>();
+  private readonly helloGenerationBySession = new WeakMap<Session, number>();
   private readonly bridgeBySession = new Map<string, string>();
   private readonly broadcaster: SessionBroadcaster;
   private readonly eventProcessor: SessionEventProcessor;
@@ -1198,6 +1190,36 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     registration: { now: number; bridgeId: string; protocolVersion: number },
   ): BridgeConnection {
     const { now, bridgeId, protocolVersion } = registration;
+    const helloGeneration = this.helloGenerationBySession.get(session);
+    const staleHello =
+      helloGeneration !== undefined &&
+      this.worktreeHelloGeneration.get(session.id) !== helloGeneration;
+    if (staleHello && this.bridgeBySession.has(session.id)) {
+      // A newer hello already owns this session. Ack without replacing its
+      // bridge or rewriting cwd/worktreeId from this lookup.
+      ws.send(
+        JSON.stringify({
+          type: "hello_ack",
+          protocolVersion: PI_TUI_MIRROR_BRIDGE_PROTOCOL_VERSION,
+          bridgeId,
+          sessionId: session.id,
+          workspaceId: workspace.id,
+          serverHostname: hostname(),
+        }),
+      );
+      return {
+        bridgeId,
+        sessionId: session.id,
+        ws,
+        cwd: hello.cwd,
+        capabilities: [...hello.capabilities],
+        protocolVersion,
+        connectedAt: now,
+        lastSeenAt: now,
+        pendingCommands: new Map(),
+        fireAndForgetCommandIds: new Set(),
+      };
+    }
 
     const existingSameBridge = this.bridges.get(bridgeId);
     if (existingSameBridge && existingSameBridge.sessionId !== session.id) {
@@ -1772,13 +1794,13 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     });
   }
 
-  private promoteBridgeSession(
+  private async promoteBridgeSession(
     workspace: Workspace,
     state: PiBridgeStateSnapshot,
     piSessionFile: string | undefined,
     piSessionId: string | undefined,
     existing: Session | undefined,
-  ): Session | Promise<Session> {
+  ): Promise<Session> {
     const model = normalizeModelId(state.model);
     const sessionName = meaningfulSessionName(state.sessionName);
     const session = existing ?? this.storage.createSession(sessionName, model, { id: piSessionId });
@@ -1791,18 +1813,18 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     else if (meaningfulSessionName(session.name, session.id) === undefined) delete session.name;
     if (model) session.model = model;
     if (state.thinkingLevel?.trim()) session.thinkingLevel = state.thinkingLevel.trim();
-    // Tag the worktree after hello returns. Git must not run on this stack:
-    // a synchronous child freezes every other request for the lock wait.
-    void syncSessionWorktreeFromCwd(session, workspace, state.cwd, this.storage.getDataDir()).then(
-      () => {
-        if (!session.worktreeId) return;
-        this.storage.saveSession(session);
-        const active = this.active.get(session.id);
-        if (active) active.session.worktreeId = session.worktreeId;
-      },
-    ).catch(() => {
-      // Worktree tagging is best-effort. A locked git must not fail hello.
+    const generation = (this.worktreeHelloGeneration.get(session.id) ?? 0) + 1;
+    this.worktreeHelloGeneration.set(session.id, generation);
+    this.helloGenerationBySession.set(session, generation);
+    // Await the lookup before save and hello_ack. execFile yields the loop;
+    // a newer hello bumps the generation and this lookup must not persist.
+    const worktree = await resolveWorkspaceWorktreeForPath(workspace, state.cwd, {
+      dataDir: this.storage.getDataDir(),
     });
+    if (this.worktreeHelloGeneration.get(session.id) !== generation) {
+      return session;
+    }
+    if (worktree) session.worktreeId = worktree.id;
     return this.finishPromotedBridgeSession(session, state, piSessionFile);
   }
 

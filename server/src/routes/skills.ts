@@ -791,9 +791,9 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     }
   }
 
-  function handleListDirectories(url: URL, res: ServerResponse): void {
+  async function handleListDirectories(url: URL, res: ServerResponse): Promise<void> {
     const root = url.searchParams.get("root");
-    const dirs = root ? scanDirectories(root) : discoverProjects();
+    const dirs = root ? await scanDirectories(root) : await discoverProjects();
     helpers.json(res, { directories: dirs });
   }
 
@@ -936,7 +936,7 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
 
     // Host discovery
     if (path === "/host/directories" && method === "GET") {
-      handleListDirectories(url, res);
+      await handleListDirectories(url, res);
       return true;
     }
 

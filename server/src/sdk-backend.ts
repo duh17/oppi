@@ -393,6 +393,10 @@ export function resolveSdkSessionCwd(
     return controlCwd;
   }
 
+  if (workspace?.runtime !== "sandbox" && session?.worktreeId) {
+    throw new Error("Host worktree cwd is resolved by resolveSdkSessionCwdAsync");
+  }
+
   const rawHostMount = workspace?.hostMount?.trim();
   if (!rawHostMount) {
     if (workspace?.runtime === "sandbox") {
@@ -439,6 +443,9 @@ export function resolveSdkSessionDisplayCwd(
   }
   if (workspace?.runtime === "sandbox") {
     return resolveSandboxGuestCwd(workspace);
+  }
+  if (session?.worktreeId) {
+    throw new Error("Host worktree display cwd requires resolveSdkSessionCwdAsync");
   }
   return resolveSdkSessionCwd(workspace, session, options);
 }
@@ -1051,8 +1058,8 @@ export class SdkBackend implements AgentBackend {
     const initialHostCwd = await resolveSdkSessionCwdAsync(workspace, session, {
       dataDir: config.dataDir,
     });
-    const displayCwd = resolveSdkSessionDisplayCwd(workspace, session, { dataDir: config.dataDir });
     const sandboxMode = workspace?.runtime === "sandbox";
+    const displayCwd = sandboxMode ? resolveSandboxGuestCwd(workspace) : initialHostCwd;
     // Sandboxes persist a guest/display cwd in Pi session state and need a real
     // host path only for Pi's existence check. Control sessions are not a guest
     // filesystem: "Pi Control" is display metadata only. Persisting that label

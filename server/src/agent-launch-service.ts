@@ -13,7 +13,7 @@ import { resolveInitialChatModel } from "./session-model-selection.js";
 import type { Storage } from "./storage.js";
 import type { ThinkingLevel } from "./thinking-levels.js";
 import type { ChatAttachmentRef, IconChoice, Session, SessionEngine, Workspace } from "./types.js";
-import { resolveSdkSessionCwd } from "./sdk-backend.js";
+import { resolveSdkSessionCwdAsync } from "./sdk-backend.js";
 
 export type { ThinkingLevel } from "./thinking-levels.js";
 
@@ -582,7 +582,7 @@ export class AgentLaunchService {
 
     let hostCwd: string;
     try {
-      hostCwd = resolveSdkSessionCwd(request.target.workspace, session, {
+      hostCwd = await resolveSdkSessionCwdAsync(request.target.workspace, session, {
         dataDir: this.deps.storage.getDataDir(),
       });
       if (!existsSync(hostCwd) || !statSync(hostCwd).isDirectory()) {

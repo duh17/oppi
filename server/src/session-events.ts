@@ -208,6 +208,8 @@ export interface SessionEventProcessorDeps {
 
 export class SessionEventProcessor {
   private gitStatusTimers: Map<string, NodeJS.Timeout> = new Map();
+  /** Drops a git-status lookup that lost the debounce race. */
+  private gitStatusGeneration = new Map<string, number>();
   private static readonly GIT_STATUS_DEBOUNCE_MS = 2000;
   private static readonly CONTEXT_USAGE_BROADCAST_MIN_INTERVAL_MS = 500;
   private static readonly CONTEXT_USAGE_BROADCAST_MIN_TOKEN_DELTA = 128;
@@ -581,16 +583,25 @@ export class SessionEventProcessor {
     const existing = this.gitStatusTimers.get(timerKey);
     if (existing) clearTimeout(existing);
 
+    const generation = (this.gitStatusGeneration.get(timerKey) ?? 0) + 1;
+    this.gitStatusGeneration.set(timerKey, generation);
     this.gitStatusTimers.set(
       timerKey,
       setTimeout(() => {
         this.gitStatusTimers.delete(timerKey);
-        void this.emitGitStatusNow(key, wsId, worktreeId);
+        void this.emitGitStatusNow(key, wsId, worktreeId, timerKey, generation);
       }, SessionEventProcessor.GIT_STATUS_DEBOUNCE_MS),
     );
   }
 
-  private async emitGitStatusNow(key: string, wsId: string, worktreeId: string): Promise<void> {
+  private async emitGitStatusNow(
+    key: string,
+    wsId: string,
+    worktreeId: string,
+    timerKey: string,
+    generation: number,
+  ): Promise<void> {
+    if (this.gitStatusGeneration.get(timerKey) !== generation) return;
     const workspace = this.deps.storage.getWorkspace(wsId);
     if (!workspace?.hostMount) return;
     if (workspace.gitStatusEnabled === false) return;
@@ -600,11 +611,11 @@ export class SessionEventProcessor {
         dataDir: this.deps.storage.getDataDir(),
       })
     )?.path;
-    if (!worktreePath) return;
+    if (!worktreePath || this.gitStatusGeneration.get(timerKey) !== generation) return;
 
     void getGitStatus(worktreePath)
       .then((status) => {
-        if (!status.isGitRepo) return;
+        if (!status.isGitRepo || this.gitStatusGeneration.get(timerKey) !== generation) return;
         this.deps.broadcast(key, {
           type: "git_status",
           workspaceId: wsId,

@@ -320,10 +320,8 @@ describe("PiTuiMirrorRuntime resilience", () => {
         sessionName: "Worktree terminal session",
       });
 
-      await vi.waitFor(() => {
-        expect(sessions.get(connected.sessionId)?.worktreeId).toBe(fixture.worktreeId);
-        expect(mirror.getActiveSession(connected.sessionId)?.worktreeId).toBe(fixture.worktreeId);
-      });
+      expect(sessions.get(connected.sessionId)?.worktreeId).toBe(fixture.worktreeId);
+      expect(mirror.getActiveSession(connected.sessionId)?.worktreeId).toBe(fixture.worktreeId);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -357,11 +355,9 @@ describe("PiTuiMirrorRuntime resilience", () => {
         workspaceId: null,
       });
 
-      await vi.waitFor(() => {
-        expect(sessions.get(connected.sessionId)).toMatchObject({
-          workspaceId: "w1",
-          worktreeId: worktree.id,
-        });
+      expect(sessions.get(connected.sessionId)).toMatchObject({
+        workspaceId: "w1",
+        worktreeId: worktree.id,
       });
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -396,9 +392,7 @@ describe("PiTuiMirrorRuntime resilience", () => {
         sessionName: "Data worktree terminal session",
       });
 
-      await vi.waitFor(() => {
-        expect(sessions.get(connected.sessionId)?.worktreeId).toBe(worktree.id);
-      });
+      expect(sessions.get(connected.sessionId)?.worktreeId).toBe(worktree.id);
       const pendingPrompt = runtimes.sendPrompt(connected.sessionId, "review attachment", {
         clientTurnId: "turn-attachment",
         requestId: "req-attachment",
