@@ -465,11 +465,14 @@ export const SLO_THRESHOLDS: Record<string, SloThreshold> = {
     group: "Server",
     short: "srv_sess",
   },
-  "server.event_loop_lag_ms": {
+  // Stall gate, not the typical interval. TM99 of eventLoop.max was 50ms on
+  // 2026-10-06 and 111ms on 2026-10-07, so 100ms passes the calm day and fails
+  // the stall days. server.event_loop_lag_ms stays the ungated p99 trend.
+  "server.event_loop_max_ms": {
     p95: 100,
-    label: "Event-loop lag p99",
+    label: "Event-loop stall max",
     group: "Server",
-    short: "evt_loop",
+    short: "evt_max",
   },
 };
 
@@ -650,7 +653,7 @@ function loadServerMetrics(
         memory?: { rss?: number; heapUsed?: number };
         sessions?: { total?: number };
         wsConnections?: number;
-        eventLoop?: { p99?: number };
+        eventLoop?: { p99?: number; max?: number };
       };
       try {
         rec = JSON.parse(line);
@@ -672,6 +675,7 @@ function loadServerMetrics(
       push("server.ws_connections", rec.wsConnections, "count");
       push("server.sessions_total", rec.sessions?.total, "count");
       push("server.event_loop_lag_ms", rec.eventLoop?.p99, "ms");
+      push("server.event_loop_max_ms", rec.eventLoop?.max, "ms");
     }
   }
 
@@ -1820,7 +1824,7 @@ function makeColors(enabled: boolean) {
 const GROUP_NOTES: Record<string, string> = {
   "UX Responsiveness": "User-visible wait time. Do not put full agent work duration in this group.",
   Server:
-    "Resource pressure. event_loop_lag_ms is the sampler-interval p99; Server Health plots that p99 and the interval max.",
+    "Resource pressure. event_loop_lag_ms is the ungated sampler p99 trend. event_loop_max_ms is the interval max; the release gate uses its TM99.",
   "Connection Reliability":
     "Command/session readiness and stream health. These are user-blocking when they fail or tail out.",
   "Attention and Media UX":

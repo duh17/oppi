@@ -278,7 +278,8 @@ Importer notes:
 - can also run manually with `npm run telemetry:import`
 - normalizes append-only daily JSONL files incrementally, and reimports a file when the importer parser version changes
 - flattens common server-op tags for split-stream panels
-- copies resource-sample `eventLoop` `p50`, `p95`, `p99`, and `max` into `server_metric_samples` (`event_loop_p50`, `event_loop_p95`, `event_loop_p99`, `event_loop_max`). Missing values stay NULL. Server Health plots p99 and max. `telemetry:review` gates `server.event_loop_lag_ms` on the sampler p99.
+- copies resource-sample `eventLoop` `p50`, `p95`, `p99`, and `max` into `server_metric_samples` (`event_loop_p50`, `event_loop_p95`, `event_loop_p99`, `event_loop_max`). Missing values stay NULL. Server Health plots p99 and max.
+- `telemetry:review` derives `server.event_loop_lag_ms` from the sampler p99 and `server.event_loop_max_ms` from the sampler max. The release gate uses only `server.event_loop_max_ms` (TM99 SLO 100ms). That threshold sits between the 2026-10-06 TM99 of 50ms and the 2026-10-07 TM99 of 111ms. The p99 series is a trend, not a second gate.
 
 See `server/README.md` for the full dashboard runbook.
 

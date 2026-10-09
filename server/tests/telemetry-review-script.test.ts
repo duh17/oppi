@@ -60,6 +60,56 @@ describe("telemetry-review svg reporting", () => {
     expect(SLO_THRESHOLDS).not.toHaveProperty("chat.connected_dispatch_ms");
     expect(SLO_THRESHOLDS).not.toHaveProperty("server.dictation_llm_correction_ms");
     expect(SLO_THRESHOLDS).not.toHaveProperty("chat.session_list_row_compute_ms");
+    expect(SLO_THRESHOLDS).not.toHaveProperty("server.event_loop_lag_ms");
+    expect(SLO_THRESHOLDS["server.event_loop_max_ms"]?.p95).toBe(100);
+  });
+
+  it("gates event-loop stalls on the sampler interval max and leaves p99 ungated", () => {
+    const telemetryDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-review-"));
+    try {
+      const now = Date.now();
+      writeFileSync(
+        join(telemetryDir, "server-metrics-2026-10-08.jsonl"),
+        JSON.stringify({
+          ts: now,
+          cpu: { total: 1 },
+          memory: { rss: 10, heapUsed: 4 },
+          sessions: { total: 1 },
+          wsConnections: 1,
+          eventLoop: { p99: 20, max: 40 },
+        }) + "\n",
+      );
+      const loaded = loadSamples(telemetryDir, 1);
+      expect(loaded.values["server.event_loop_lag_ms"]?.vals).toEqual([20]);
+      expect(loaded.values["server.event_loop_max_ms"]?.vals).toEqual([40]);
+    } finally {
+      rmSync(telemetryDir, { recursive: true, force: true });
+    }
+
+    const reviewOf = (maxValues: number[]) =>
+      review(
+        {
+          values: {
+            "server.event_loop_max_ms": { vals: maxValues, unit: "ms" },
+            "server.event_loop_lag_ms": { vals: [5_000], unit: "ms" },
+          },
+          byBuild: {},
+          buildSummary: {},
+          samples: [],
+          totalSamples: maxValues.length + 1,
+          filesRead: 1,
+        },
+        { days: 1, dataDir: "/tmp/oppi-test-data", dictationOnly: false, byTags: [] },
+      );
+
+    const calm = reviewOf(Array.from({ length: 100 }, () => 40));
+    expect(calm.metrics["server.event_loop_max_ms"]?.status).toBe("pass");
+    expect(calm.metrics["server.event_loop_lag_ms"]?.status).toBe("no_slo");
+    expect(calm.summary.violations).toBe(0);
+
+    const stall = reviewOf(Array.from({ length: 100 }, () => 120));
+    expect(stall.metrics["server.event_loop_max_ms"]?.status).toBe("over");
+    expect(stall.summary.violations).toBe(1);
   });
 
   it("counts server resource samples as telemetry data", () => {
