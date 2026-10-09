@@ -126,7 +126,7 @@ Main client owners:
 - `clients/apple/OppiCore/Stores/AskRequestStore.swift` stores question/confirmation/input requests that render as ask cards.
 - `pendingExtensionDialogQueues` stores sheet-backed generic extension dialogs per session.
 - `clients/apple/OppiCore/Runtime/ExtensionSurfaceState.swift` owns the protocol-derived snapshot, reducer, placement grouping, and framework-free presentation helpers used by both iOS and Mac.
-- iOS `extensionSurfaceBySession` and Mac `MacSessionTraceStore.extensionSurface` store that shared snapshot per session. iOS also retains working-message, hidden-thinking-label, and tools-expanded fields, plus toast and editor-text effects.
+- iOS `extensionSurfaceBySession` and Mac `MacSessionTraceStore.extensionSurface` store that shared snapshot per session. iOS also retains working-message, hidden-thinking-label, and tools-expanded fields, plus a per-session notify chip and editor-text effects. App-originated `extensionToast` remains a Notice sheet.
 - `ServerConnection+Ask.swift` sends responses over the focused stream or the HTTP session command route for non-focused sessions.
 - `ExtensionSurfacePanel.swift` and `MacExtensionSurfacePanel.swift` paint extension-provided content. On iOS the panel keeps its SwiftUI chrome (strip pills, drawer header, detail header) and paints every block body through UIKit: `ExtensionNativeBlockViews.swift` reuses the chat timeline's Markdown and highlighted-code views, draws terminal and widget lines as unwrapped monospaced text, and keeps block and activity-row views by id so a replacement snapshot preserves their view state. `OppiCore/Runtime/ExtensionNativeBlockPresentation.swift` holds the framework-free state wording, progress clamping, link, and widget-line rules.
 

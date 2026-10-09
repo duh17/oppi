@@ -158,6 +158,8 @@ Entries labeled **Mac** describe work on `main`; the Mac app is not part of the 
 
 ### Fixed
 
+- **Client:** Extension `notify()` is a muted chip above the chat composer instead of a blocking Notice sheet. The chip shows the extension name, tints the icon for error/warning, auto-dismisses after a few seconds, and expands to the message. App-originated notices (file-link errors, reloaded tools) still use the sheet.
+- **Server:** User-installed extensions (`~/.pi/agent/extensions`, project `.pi/extensions`, and `pi install` git checkouts) now send their display name with `notify()`, so the chip can attribute the message.
 - **Client:** On iPhone, the chat's Context, Outline, and Files sheets open again. The side-panel inspector added for wide side-rail screens kept them from presenting; it is now attached only in regular-width windows, where its column can show.
 - **Client:** Full-screen video captions and the caption language button stay inside the safe area, so on iPhone Duo they no longer sit under the side rail.
 - **Client:** A chat opened in the sidebar-and-detail layout (iPad landscape) shows its title, Back, Files, Outline, and Context again; the side-panel inspector had hidden the chat's whole navigation bar there.

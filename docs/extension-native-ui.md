@@ -261,7 +261,7 @@ Fire-and-forget notifications come from `notify()`. They are not native widget s
 
 Lifecycle:
 
-- Clients may show them as toast, banner, sheet, or notification depending on severity and focus.
+- iOS shows them as a muted, temporary chip above the chat composer. Tap the chip to read the full message. They are not a blocking sheet.
 - They do not require `extension_ui_response`.
 - They are not replayed as durable session UI after reconnect.
 
@@ -312,7 +312,7 @@ This contract follows Pi TUI lifecycle concepts, but serializes them because Opp
 | `ctx.ui.custom(..., { overlay })` creates a focused overlay | Terminal-owned unless a future bridge capability defines a native equivalent                           |
 | `setWidget(key, ...)` persists until replaced or cleared    | Persistent keyed surface persists until explicit clear/session cleanup                                 |
 | `setStatus(key, ...)` persists until cleared                | Persistent keyed status text persists until explicit clear/session cleanup                             |
-| `notify()` is fire-and-forget                               | Ephemeral native toast/banner/sheet, not durable state                                                 |
+| `notify()` is fire-and-forget                               | Ephemeral muted chip above the iOS composer, not durable state                                         |
 
 Authority is the main difference. In terminal Pi, the in-process TUI owns focus and disposal directly. In Oppi, the server owns request state and sends snapshots; Apple clients render the snapshots and return responses and events. Clients can dismiss optimistically after a response is accepted, but `extension_ui_settled` remains the authoritative cross-device cleanup signal.
 
@@ -470,7 +470,7 @@ Native blocks stay viewport-independent; clients decide iPhone, iPad, Dynamic Ty
 | `ctx.ui.confirm(title, message)`   | Pi request fields              | compact confirmation card                  | terminal/TUI confirm               |
 | `ctx.ui.input()`                   | Pi request fields              | inline text prompt                         | terminal/TUI input                 |
 | `ctx.ui.editor()`                  | Pi request fields              | editor sheet                               | terminal/TUI editor                |
-| `ctx.ui.notify()`                  | notification fields            | transient toast/sheet                      | existing toast sheet               |
+| `ctx.ui.notify()`                  | notification fields            | muted chip above the iOS composer          | existing Notice sheet for app-originated toasts |
 | `ctx.ui.onTerminalInput()`         | terminal-owned input stream    | no native mapping                          | no-op unsubscribe in SDK sessions  |
 | `ctx.ui.setTitle()`                | title notification             | extension surface heading                  | terminal window/tab title          |
 | `ctx.ui.setStatus()`               | status text fields             | generic status projection/chips            | text status                        |

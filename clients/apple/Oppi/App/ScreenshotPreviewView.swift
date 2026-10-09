@@ -142,6 +142,12 @@ struct ScreenshotPreviewView: View {
             ExtensionSurfacePreview()
         case "chat-input-attachment-containment":
             ChatInputAttachmentContainmentPreview()
+        case "extension-notify-chip-info":
+            ExtensionNotifyChipScreenshotPreview(mode: .collapsedInfo)
+        case "extension-notify-chip-error":
+            ExtensionNotifyChipScreenshotPreview(mode: .collapsedError)
+        case "extension-notify-chip-expanded":
+            ExtensionNotifyChipScreenshotPreview(mode: .expandedMultiple)
         case "review-comment-strip-collapsed":
             ReviewCommentStripScreenshotPreview(isExpanded: false)
         case "review-comment-strip-expanded":

@@ -177,9 +177,12 @@ extension ServerConnection {
     ) {
         switch notification.method {
         case "notify":
-            if isActiveSession {
-                extensionToast = notification.message
-            }
+            extensionNotifyChipStore.apply(
+                message: notification.message,
+                notifyType: notification.notifyType,
+                displayName: notification.extensionDisplayName,
+                sessionId: sessionId
+            )
 
         case "set_editor_text":
             guard isActiveSession, let text = notification.text else { return }
@@ -198,9 +201,12 @@ extension ServerConnection {
             storeExtensionSurface(surface, for: sessionId)
 
         default:
-            if isActiveSession {
-                extensionToast = notification.message ?? notification.notifyType
-            }
+            extensionNotifyChipStore.apply(
+                message: notification.message ?? notification.notifyType,
+                notifyType: notification.notifyType,
+                displayName: notification.extensionDisplayName,
+                sessionId: sessionId
+            )
         }
     }
 

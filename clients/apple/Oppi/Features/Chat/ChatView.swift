@@ -1404,6 +1404,23 @@ struct ChatView: View {
                     .padding(.horizontal, 16)
                 }
 
+                if let notifyState = connection.extensionNotifyChipStore.state(for: sessionId) {
+                    ExtensionNotifyChip(
+                        state: notifyState,
+                        onToggleExpanded: {
+                            connection.extensionNotifyChipStore.setExpanded(
+                                !notifyState.isExpanded,
+                                sessionId: sessionId
+                            )
+                        },
+                        onDismiss: {
+                            connection.extensionNotifyChipStore.dismiss(sessionId: sessionId)
+                        },
+                        onOpenURL: { openExtensionSurfaceURL($0) }
+                    )
+                    .padding(.horizontal, 16)
+                }
+
                 ChatInputBar(
                     text: composerTextBinding,
                     textBeforeRecording: $composerTextBeforeRecording,

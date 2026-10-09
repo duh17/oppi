@@ -411,6 +411,8 @@ final class ServerConnection {
         pendingExtensionDialogQueues.values.flatMap { $0 }
     }
     var extensionToast: String?
+    /// Per-session extension `notify` chip. App-originated `extensionToast` stays a sheet.
+    let extensionNotifyChipStore = ExtensionNotifyChipStore()
     var extensionSurfaceBySession: [String: ExtensionSurfaceState] = [:]
     /// Server, workspace, and session locks: hide ask text, forget deleted sessions.
     @ObservationIgnored var scopedLocks: ScopedLockService = .shared

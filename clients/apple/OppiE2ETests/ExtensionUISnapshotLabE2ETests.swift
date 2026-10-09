@@ -1458,10 +1458,14 @@ final class ExtensionUISnapshotLabE2ETests: E2ETestCase {
             "method": "notify",
             "message": text,
             "notifyType": "info",
+            "extensionDisplayName": "RPC Demo",
         ])
-        waitForText(text, timeout: 10)
+        let chip = app.buttons["chat.extensionNotify.chip"]
+        XCTAssertTrue(
+            waitForElementToExist(chip, timeout: 10),
+            "Extension notify chip did not appear"
+        )
         try saveLabScreenshot(name: name)
-        tap(app.buttons["Done"], named: "extension notification done button", timeout: 5)
     }
 
     private func capturePrefill(sessionId: String) throws {

@@ -43,7 +43,7 @@ interface PendingExtensionUIResponse {
   cancel: () => void;
 }
 
-interface ExtensionUISourceScope {
+export interface ExtensionUISourceScope {
   extensionScopeId?: string;
   extensionDisplayName?: string;
 }
@@ -100,8 +100,13 @@ function titleCaseIdentifier(value: string): string {
     .join(" ");
 }
 
-function extensionScopeFromPath(rawPath: string): ExtensionUISourceScope | undefined {
-  const decodedPath = decodeURIComponent(rawPath.replace(/^file:\/\//, ""));
+export function extensionScopeFromPath(rawPath: string): ExtensionUISourceScope | undefined {
+  let decodedPath = rawPath.replace(/^file:\/\//, "").replaceAll("\\", "/");
+  try {
+    decodedPath = decodeURIComponent(decodedPath);
+  } catch {
+    // Keep the raw path when it is not URI-encoded.
+  }
   const nodeModulesMarker = "/node_modules/";
   const nodeModulesIndex = decodedPath.lastIndexOf(nodeModulesMarker);
   if (nodeModulesIndex >= 0) {
@@ -127,6 +132,32 @@ function extensionScopeFromPath(rawPath: string): ExtensionUISourceScope | undef
         extensionDisplayName: titleCaseIdentifier(directoryName),
       };
     }
+  }
+
+  // Pi git packages: <agentDir>/git/<host>/<owner>/<repo> or <cwd>/.pi/git/<host>/<owner>/<repo>.
+  const gitMatch = decodedPath.match(/(?:^|\/)git\/([^/]+\.[^/]+)\/([^/]+)\/([^/]+)(?:\/|$)/);
+  if (gitMatch?.[3]) {
+    return {
+      extensionScopeId: `git:${gitMatch[3]}`,
+      extensionDisplayName: titleCaseIdentifier(gitMatch[3]),
+    };
+  }
+
+  // Auto-discovered: <agentDir>/extensions/<name>.ts|js or <name>/index.ts|js,
+  // and project .pi/extensions/<name>.
+  const directoryEntryMatch = decodedPath.match(/(?:^|\/)extensions\/([^/]+)\/index\.(?:ts|js)$/i);
+  if (directoryEntryMatch?.[1]) {
+    return {
+      extensionScopeId: `ext:${directoryEntryMatch[1]}`,
+      extensionDisplayName: titleCaseIdentifier(directoryEntryMatch[1]),
+    };
+  }
+  const fileEntryMatch = decodedPath.match(/(?:^|\/)extensions\/([^/]+)\.(?:ts|js)$/i);
+  if (fileEntryMatch?.[1]) {
+    return {
+      extensionScopeId: `ext:${fileEntryMatch[1]}`,
+      extensionDisplayName: titleCaseIdentifier(fileEntryMatch[1]),
+    };
   }
 
   return undefined;
