@@ -17,7 +17,10 @@ extension ServerConnection {
         var metadata = [
             "errorKind": MessageSender.telemetryErrorKind(from: error),
         ]
+        // Refresh breadcrumbs share WorkspaceStore's catalog vocabulary (url, http,
+        // invalid_response, other), not the coarse command-metric error_kind.
         if error is URLError {
+            metadata["errorKind"] = "url"
             metadata.merge(ClientLog.networkErrorMetadata(error)) { current, _ in current }
         }
         if let apiError = error as? APIError {
