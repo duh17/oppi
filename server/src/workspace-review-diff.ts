@@ -1,7 +1,7 @@
-import { execFile } from "node:child_process";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { execGit, type GitTrust } from "./git-safe.js";
 import { isPathWithinRoot, resolveHomePath } from "./git-utils.js";
 import {
   computeDiffLines,
@@ -47,27 +47,19 @@ function bufferLooksBinary(buffer: Buffer): boolean {
   return buffer.includes(0);
 }
 
-function gitBuffer(cwd: string, args: string[]): Promise<Buffer | null> {
-  return new Promise((resolvePromise) => {
-    execFile("git", args, { cwd, timeout: GIT_TIMEOUT_MS }, (err, stdout) => {
-      if (err) {
-        resolvePromise(null);
-        return;
-      }
-
-      if (Buffer.isBuffer(stdout)) {
-        resolvePromise(stdout);
-        return;
-      }
-
-      resolvePromise(Buffer.from(String(stdout), "utf8"));
-    });
-  });
+async function gitBuffer(trust: GitTrust, cwd: string, args: string[]): Promise<Buffer | null> {
+  const { error, stdout } = await execGit(trust, cwd, args, { timeout: GIT_TIMEOUT_MS });
+  if (error) return null;
+  return Buffer.isBuffer(stdout) ? stdout : Buffer.from(String(stdout), "utf8");
 }
 
-async function readHeadText(repoDir: string, reqPath: string): Promise<ReadTextResult> {
+async function readHeadText(
+  repoDir: string,
+  trust: GitTrust,
+  reqPath: string,
+): Promise<ReadTextResult> {
   const resolved = resolveHomePath(repoDir);
-  const stdout = await gitBuffer(resolved, ["show", `HEAD:${reqPath}`]);
+  const stdout = await gitBuffer(trust, resolved, ["show", `HEAD:${reqPath}`]);
 
   if (stdout === null) {
     return { text: "", exists: false };
@@ -441,9 +433,10 @@ export function buildDiffHunks(flatLines: FlatDiffLine[]): WorkspaceReviewDiffHu
 export async function buildWorkspaceReviewDiff(args: {
   workspaceId: string;
   workspaceRoot: string;
+  trust: GitTrust;
   path: string;
 }): Promise<WorkspaceReviewDiffResponse> {
-  const { workspaceId, workspaceRoot, path } = args;
+  const { workspaceId, workspaceRoot, trust, path } = args;
   const reqPath = path.trim();
 
   if (!reqPath) {
@@ -451,7 +444,7 @@ export async function buildWorkspaceReviewDiff(args: {
   }
 
   const [baseline, current] = await Promise.all([
-    readHeadText(workspaceRoot, reqPath),
+    readHeadText(workspaceRoot, trust, reqPath),
     readCurrentText(workspaceRoot, reqPath),
   ]);
 

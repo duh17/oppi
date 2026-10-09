@@ -2,6 +2,7 @@ import type { ToolOutputSnapshots } from "./tool-output-sidecar.js";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import type { ExtensionUIState } from "./extension-ui-state.js";
+import { gitTrustForWorkspace } from "./git-safe.js";
 import { getGitStatus } from "./git-status.js";
 import {
   programRunFor,
@@ -613,7 +614,7 @@ export class SessionEventProcessor {
     )?.path;
     if (!worktreePath || this.gitStatusGeneration.get(timerKey) !== generation) return;
 
-    void getGitStatus(worktreePath)
+    void getGitStatus(worktreePath, gitTrustForWorkspace(workspace))
       .then((status) => {
         if (!status.isGitRepo || this.gitStatusGeneration.get(timerKey) !== generation) return;
         this.deps.broadcast(key, {

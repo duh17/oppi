@@ -6,6 +6,7 @@ import {
   getCommitFileDiff,
   getCommitLog,
 } from "../git-commits.js";
+import { gitTrustForWorkspace } from "../git-safe.js";
 import { getGitStatus, getWorkspaceGitSummary } from "../git-status.js";
 import { collectKnownLocalSessionIdentities, discoverLocalSessions } from "../local-sessions.js";
 import { safeErrorMessage } from "../log-utils.js";
@@ -99,7 +100,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
           if (workspace.gitStatusEnabled === false || !workspace.hostMount) {
             return { isGitRepo: false, changedCount: 0, ahead: null, behind: null };
           }
-          return getWorkspaceGitSummary(workspace.hostMount);
+          return getWorkspaceGitSummary(workspace.hostMount, gitTrustForWorkspace(workspace));
         }),
       );
       gitSummaries.push(...batchSummaries);
@@ -424,7 +425,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
     const sessionCounts = workspaceWorktreeSessionCounts(wsId);
     const activeSessionCounts = workspaceWorktreeActiveSessionCounts(wsId);
-    const status = await getGitStatus(worktree.path);
+    const status = await getGitStatus(worktree.path, gitTrustForWorkspace(workspace));
     helpers.json(res, {
       workspaceId: wsId,
       worktree: {
@@ -599,7 +600,10 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const summary = await getWorkspaceGitSummary(workspace.hostMount);
+    const summary = await getWorkspaceGitSummary(
+      workspace.hostMount,
+      gitTrustForWorkspace(workspace),
+    );
     if (!summary) {
       helpers.error(res, 503, "Workspace Git summary unavailable");
       return;
@@ -626,7 +630,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    const status = await getGitStatus(checkout.path);
+    const status = await getGitStatus(checkout.path, gitTrustForWorkspace(workspace));
     helpers.json(res, status);
   }
 
@@ -652,7 +656,12 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       Math.max(1, parseInt(url.searchParams.get("limit") ?? "20", 10) || 20),
     );
 
-    const result = await getCommitLog(workspace.hostMount, offset, limit);
+    const result = await getCommitLog(
+      workspace.hostMount,
+      gitTrustForWorkspace(workspace),
+      offset,
+      limit,
+    );
     helpers.json(res, result);
   }
 
@@ -673,7 +682,11 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     }
 
     try {
-      const detail = await getCommitDetail(workspace.hostMount, sha);
+      const detail = await getCommitDetail(
+        workspace.hostMount,
+        gitTrustForWorkspace(workspace),
+        sha,
+      );
       helpers.json(res, detail);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to get commit detail";
@@ -702,7 +715,13 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const filePath = url.searchParams.get("path") ?? "";
 
     try {
-      const diff = await getCommitFileDiff(workspace.hostMount, sha, filePath, wsId);
+      const diff = await getCommitFileDiff(
+        workspace.hostMount,
+        gitTrustForWorkspace(workspace),
+        sha,
+        filePath,
+        wsId,
+      );
       helpers.compressedJson(req, res, diff);
     } catch (error) {
       if (error instanceof CommitDiffError) {
@@ -745,6 +764,7 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       const diff = await buildWorkspaceReviewDiff({
         workspaceId: wsId,
         workspaceRoot: checkout.path,
+        trust: gitTrustForWorkspace(workspace),
         path: url.searchParams.get("path") ?? "",
       });
       helpers.compressedJson(req, res, diff);

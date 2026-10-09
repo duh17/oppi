@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { CommitDiffError, getCommitDetail, getCommitFileDiff } from "../src/git-commits.js";
+import { HOST_GIT_TRUST } from "../src/git-safe.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" });
@@ -38,7 +39,7 @@ describe("getCommitDetail", () => {
     ]);
 
     const sha = git(dir, ["rev-parse", "--short", "HEAD"]).trim();
-    const detail = await getCommitDetail(dir, sha);
+    const detail = await getCommitDetail(dir, HOST_GIT_TRUST, sha);
 
     expect(detail.message).toBe(
       "docs: explain contributor workflow\n\nAsk contributors to open an issue before submitting a pull request.",
@@ -65,7 +66,7 @@ describe("getCommitFileDiff", () => {
     git(dir, ["commit", "-m", "tiny change"]);
 
     const sha = git(dir, ["rev-parse", "--short", "HEAD"]).trim();
-    const diff = await getCommitFileDiff(dir, sha, filePath, "test-workspace");
+    const diff = await getCommitFileDiff(dir, HOST_GIT_TRUST, sha, filePath, "test-workspace");
 
     expect(diff.addedLines).toBe(2);
     expect(diff.removedLines).toBe(2);
@@ -106,7 +107,7 @@ describe("getCommitFileDiff", () => {
     git(dir, ["commit", "-m", "add notes"]);
 
     const sha = git(dir, ["rev-parse", "--short", "HEAD"]).trim();
-    const diff = await getCommitFileDiff(dir, sha, filePath, "workspace-1");
+    const diff = await getCommitFileDiff(dir, HOST_GIT_TRUST, sha, filePath, "workspace-1");
 
     expect(diff.workspaceId).toBe("workspace-1");
     expect(diff.path).toBe(filePath);
@@ -119,9 +120,9 @@ describe("getCommitFileDiff", () => {
   it("rejects invalid commit SHAs before shelling out", async () => {
     const dir = await createRepo();
 
-    await expect(getCommitFileDiff(dir, "bad;sha", "file.txt", "workspace-1")).rejects.toThrow(
-      "Invalid commit SHA",
-    );
+    await expect(
+      getCommitFileDiff(dir, HOST_GIT_TRUST, "bad;sha", "file.txt", "workspace-1"),
+    ).rejects.toThrow("Invalid commit SHA");
   });
 
   it("rejects blank paths", async () => {
@@ -133,7 +134,9 @@ describe("getCommitFileDiff", () => {
 
     const sha = git(dir, ["rev-parse", "--short", "HEAD"]).trim();
 
-    await expect(getCommitFileDiff(dir, sha, "   ", "workspace-1")).rejects.toMatchObject({
+    await expect(
+      getCommitFileDiff(dir, HOST_GIT_TRUST, sha, "   ", "workspace-1"),
+    ).rejects.toMatchObject({
       name: "CommitDiffError",
       status: 400,
       message: "path parameter required",
@@ -149,7 +152,9 @@ describe("getCommitFileDiff", () => {
 
     const sha = git(dir, ["rev-parse", "--short", "HEAD"]).trim();
 
-    await expect(getCommitFileDiff(dir, sha, "missing.txt", "workspace-1")).rejects.toMatchObject({
+    await expect(
+      getCommitFileDiff(dir, HOST_GIT_TRUST, sha, "missing.txt", "workspace-1"),
+    ).rejects.toMatchObject({
       name: "CommitDiffError",
       status: 404,
       message: "File not found in commit",
@@ -166,7 +171,9 @@ describe("getCommitFileDiff", () => {
 
     const sha = git(dir, ["rev-parse", "--short", "HEAD"]).trim();
 
-    await expect(getCommitFileDiff(dir, sha, filePath, "workspace-1")).rejects.toMatchObject({
+    await expect(
+      getCommitFileDiff(dir, HOST_GIT_TRUST, sha, filePath, "workspace-1"),
+    ).rejects.toMatchObject({
       name: "CommitDiffError",
       status: 422,
       message: "Binary files are not supported in diff view.",

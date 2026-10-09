@@ -7,10 +7,10 @@
  * remembers to commit.
  */
 
-import { execFile } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+import { execGit, isGitRepository, type GitTrust } from "./git-safe.js";
 import { resolveHomePath } from "./git-utils.js";
 import type { GitCommitSummary, GitFileStatus, GitStatus, WorkspaceGitSummary } from "./types.js";
 
@@ -21,20 +21,14 @@ const SUMMARY_GIT_TIMEOUT_MS = 1500;
 /**
  * Run a git command and return stdout. Returns null on any error.
  */
-function git(
+async function git(
+  trust: GitTrust,
   cwd: string,
   args: string[],
   timeoutMs: number = GIT_TIMEOUT_MS,
 ): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile("git", args, { cwd, timeout: timeoutMs }, (err, stdout) => {
-      if (err) {
-        resolve(null);
-      } else {
-        resolve(stdout);
-      }
-    });
-  });
+  const { error, stdout } = await execGit(trust, cwd, args, { timeout: timeoutMs });
+  return error ? null : String(stdout);
 }
 
 // ─── Main ───
@@ -48,15 +42,21 @@ function git(
  */
 export async function getWorkspaceGitSummary(
   dir: string,
+  trust: GitTrust,
 ): Promise<WorkspaceGitSummary | undefined> {
   const resolved = resolveHomePath(dir);
-  if (!existsSync(join(resolved, ".git"))) {
+  if (!isGitRepository(trust, resolved)) {
     return { isGitRepo: false, changedCount: 0, ahead: null, behind: null };
   }
 
   const [statusOut, upstreamOut] = await Promise.all([
-    git(resolved, ["status", "--porcelain"], SUMMARY_GIT_TIMEOUT_MS),
-    git(resolved, ["rev-list", "--left-right", "--count", "@{u}...HEAD"], SUMMARY_GIT_TIMEOUT_MS),
+    git(trust, resolved, ["status", "--porcelain"], SUMMARY_GIT_TIMEOUT_MS),
+    git(
+      trust,
+      resolved,
+      ["rev-list", "--left-right", "--count", "@{u}...HEAD"],
+      SUMMARY_GIT_TIMEOUT_MS,
+    ),
   ]);
   // A missing upstream is valid and leaves ahead/behind unknown. A failed
   // status probe is not a clean tree: omit the summary so clients preserve
@@ -85,7 +85,7 @@ export async function getWorkspaceGitSummary(
  * Get git status for a directory. Returns a complete GitStatus object.
  * If the directory is not a git repo, returns { isGitRepo: false, ... }.
  */
-export async function getGitStatus(dir: string): Promise<GitStatus> {
+export async function getGitStatus(dir: string, trust: GitTrust): Promise<GitStatus> {
   const resolved = resolveHomePath(dir);
 
   const empty: GitStatus = {
@@ -107,7 +107,7 @@ export async function getGitStatus(dir: string): Promise<GitStatus> {
     recentCommits: [],
   };
 
-  if (!existsSync(join(resolved, ".git"))) {
+  if (!isGitRepository(trust, resolved)) {
     return empty;
   }
 
@@ -117,14 +117,14 @@ export async function getGitStatus(dir: string): Promise<GitStatus> {
   // Run all git commands in parallel
   const [branchOut, shaOut, statusOut, stashOut, logOut, upstreamOut, numstatOut, recentOut] =
     await Promise.all([
-      git(resolved, ["branch", "--show-current"]),
-      git(resolved, ["rev-parse", "--short", "HEAD"]),
-      git(resolved, ["status", "--porcelain"]),
-      git(resolved, ["stash", "list"]),
-      git(resolved, ["log", "-1", "--format=%s%n%aI"]),
-      git(resolved, ["rev-list", "--left-right", "--count", "@{u}...HEAD"]),
-      git(resolved, ["diff", "HEAD", "--numstat"]),
-      git(resolved, [
+      git(trust, resolved, ["branch", "--show-current"]),
+      git(trust, resolved, ["rev-parse", "--short", "HEAD"]),
+      git(trust, resolved, ["status", "--porcelain"]),
+      git(trust, resolved, ["stash", "list"]),
+      git(trust, resolved, ["log", "-1", "--format=%s%n%aI"]),
+      git(trust, resolved, ["rev-list", "--left-right", "--count", "@{u}...HEAD"]),
+      git(trust, resolved, ["diff", "HEAD", "--numstat"]),
+      git(trust, resolved, [
         "log",
         `--max-count=${RECENT_COMMITS_CAP}`,
         `--format=%h${COMMIT_RECORD_SEP}%s${COMMIT_RECORD_SEP}%aI`,
@@ -215,7 +215,7 @@ export async function getGitStatus(dir: string): Promise<GitStatus> {
     .map((f) => f.path);
 
   if (untrackedPaths.length > 0) {
-    const untrackedLineCounts = await countUntrackedFileLines(resolved, untrackedPaths);
+    const untrackedLineCounts = await countUntrackedFileLines(resolved, untrackedPaths, trust);
     for (const file of files) {
       const lines = file.status === "??" ? untrackedLineCounts.get(file.path) : undefined;
       if (lines !== undefined) {
@@ -298,13 +298,15 @@ const UNTRACKED_LINE_COUNT_MAX_BYTES = 256 * 1024;
 function countUntrackedFileLines(
   repoRoot: string,
   relativePaths: string[],
+  trust: GitTrust,
 ): Promise<Map<string, number>> {
   const result = new Map<string, number>();
 
   for (const relPath of relativePaths) {
     try {
       const fullPath = join(repoRoot, relPath);
-      const stat = statSync(fullPath);
+      // A sandbox can plant a symlink to any host file; only count regular files in place.
+      const stat = trust.kind === "sandbox" ? lstatSync(fullPath) : statSync(fullPath);
       if (!stat.isFile() || stat.size > UNTRACKED_LINE_COUNT_MAX_BYTES || stat.size === 0) {
         continue;
       }

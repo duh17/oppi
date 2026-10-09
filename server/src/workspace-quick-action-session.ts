@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { getCommitDetail } from "./git-commits.js";
+import { gitTrustForWorkspace } from "./git-safe.js";
 import { normalizePath } from "./git-utils.js";
 import { getGitStatus } from "./git-status.js";
 import { resolveSdkSessionCwd } from "./sdk-backend.js";
@@ -191,9 +192,11 @@ export async function prepareWorkspaceQuickActionSession(args: {
     throw new WorkspaceQuickActionSessionError(404, "Workspace quick actions unavailable");
   }
 
+  // reviewWorkspace.hostMount may be a worktree checkout; trust follows the workspace.
+  const gitTrust = gitTrustForWorkspace(workspace);
   let workspaceGitStatus: Awaited<ReturnType<typeof getGitStatus>> | undefined;
   if (!commitSha) {
-    workspaceGitStatus = await getGitStatus(reviewWorkspace.hostMount);
+    workspaceGitStatus = await getGitStatus(reviewWorkspace.hostMount, gitTrust);
     if (!workspaceGitStatus.isGitRepo) {
       throw new WorkspaceQuickActionSessionError(409, "Workspace is not a git repository");
     }
@@ -220,7 +223,7 @@ export async function prepareWorkspaceQuickActionSession(args: {
   if (commitSha) {
     let commitDetail: Awaited<ReturnType<typeof getCommitDetail>>;
     try {
-      commitDetail = await getCommitDetail(reviewWorkspace.hostMount, commitSha);
+      commitDetail = await getCommitDetail(reviewWorkspace.hostMount, gitTrust, commitSha);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Commit not found";
       const status = message === "Invalid commit SHA" ? 400 : 404;

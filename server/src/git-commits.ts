@@ -6,8 +6,7 @@
  * patterns as git-status.ts.
  */
 
-import { execFile } from "node:child_process";
-
+import { execGit, type GitTrust } from "./git-safe.js";
 import { resolveHomePath } from "./git-utils.js";
 import { computeDiffLines, computeLineDiffStatsFromLines } from "./diff-core.js";
 import { applyWordSpansToNumberedHunks, buildDiffHunks } from "./workspace-review-diff.js";
@@ -27,34 +26,23 @@ const FIELD_SEP = "---sep---";
 
 // ─── Helpers ───
 
-function git(cwd: string, args: string[]): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile("git", args, { cwd, timeout: GIT_TIMEOUT_MS }, (err, stdout) => {
-      if (err) {
-        resolve(null);
-      } else {
-        resolve(stdout);
-      }
-    });
-  });
+async function git(trust: GitTrust, cwd: string, args: string[]): Promise<string | null> {
+  const { error, stdout } = await execGit(trust, cwd, args, { timeout: GIT_TIMEOUT_MS });
+  return error ? null : String(stdout);
 }
 
-function gitBuffer(cwd: string, args: string[], maxBuffer?: number): Promise<Buffer | null> {
-  return new Promise((resolve) => {
-    execFile("git", args, { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer }, (err, stdout) => {
-      if (err) {
-        resolve(null);
-        return;
-      }
-
-      if (Buffer.isBuffer(stdout)) {
-        resolve(stdout);
-        return;
-      }
-
-      resolve(Buffer.from(String(stdout), "utf8"));
-    });
+async function gitBuffer(
+  trust: GitTrust,
+  cwd: string,
+  args: string[],
+  maxBuffer?: number,
+): Promise<Buffer | null> {
+  const { error, stdout } = await execGit(trust, cwd, args, {
+    timeout: GIT_TIMEOUT_MS,
+    maxBuffer,
   });
+  if (error) return null;
+  return Buffer.isBuffer(stdout) ? stdout : Buffer.from(String(stdout), "utf8");
 }
 
 function bufferLooksBinary(buffer: Buffer): boolean {
@@ -138,6 +126,7 @@ function validateSha(sha: string): void {
 
 export async function getCommitLog(
   dir: string,
+  trust: GitTrust,
   offset: number,
   limit: number,
 ): Promise<{
@@ -148,13 +137,13 @@ export async function getCommitLog(
   const resolved = resolveHomePath(dir);
 
   const [logOut, countOut] = await Promise.all([
-    git(resolved, [
+    git(trust, resolved, [
       "log",
       `--skip=${offset}`,
       `--max-count=${limit}`,
       `--format=%h${FIELD_SEP}%s${FIELD_SEP}%aI`,
     ]),
-    git(resolved, ["rev-list", "--count", "HEAD"]),
+    git(trust, resolved, ["rev-list", "--count", "HEAD"]),
   ]);
 
   const total = countOut ? parseInt(countOut.trim(), 10) || 0 : 0;
@@ -179,19 +168,23 @@ export async function getCommitLog(
 
 // ─── Commit detail ───
 
-export async function getCommitDetail(dir: string, sha: string): Promise<GitCommitDetail> {
+export async function getCommitDetail(
+  dir: string,
+  trust: GitTrust,
+  sha: string,
+): Promise<GitCommitDetail> {
   validateSha(sha);
   const resolved = resolveHomePath(dir);
 
   const [metaOut, numstatOut, nameStatusOut] = await Promise.all([
-    git(resolved, [
+    git(trust, resolved, [
       "log",
       "-1",
       `--format=%h${FIELD_SEP}%B${FIELD_SEP}%aI${FIELD_SEP}%an <%ae>`,
       sha,
     ]),
-    git(resolved, ["diff-tree", "--no-commit-id", "-r", "--numstat", sha]),
-    git(resolved, ["diff-tree", "--no-commit-id", "-r", "--name-status", sha]),
+    git(trust, resolved, ["diff-tree", "--no-commit-id", "-r", "--numstat", sha]),
+    git(trust, resolved, ["diff-tree", "--no-commit-id", "-r", "--name-status", sha]),
   ]);
 
   if (!metaOut) {
@@ -271,6 +264,7 @@ export async function getCommitDetail(dir: string, sha: string): Promise<GitComm
 
 export async function getCommitFileDiff(
   dir: string,
+  trust: GitTrust,
   sha: string,
   filePath: string,
   workspaceId: string,
@@ -289,8 +283,8 @@ export async function getCommitFileDiff(
 
   // Get the file content at the commit and its parent
   const [beforeBuf, afterBuf] = await Promise.all([
-    gitBuffer(resolved, ["show", `${sha}^:${trimmedPath}`]),
-    gitBuffer(resolved, ["show", `${sha}:${trimmedPath}`]),
+    gitBuffer(trust, resolved, ["show", `${sha}^:${trimmedPath}`]),
+    gitBuffer(trust, resolved, ["show", `${sha}:${trimmedPath}`]),
   ]);
 
   const beforeExists = beforeBuf !== null;
@@ -335,6 +329,7 @@ export async function getCommitFileDiff(
   // Git already narrowed to the changed hunks instead of rejecting based on full
   // file size.
   const patchBuf = await gitBuffer(
+    trust,
     resolved,
     [
       "--literal-pathspecs",

@@ -321,6 +321,10 @@ function refineLanguage(dir: string, base: string): string {
 
 const execFileAsync = promisify(execFile);
 
+// Path-scanner only (no workspace, so no sandbox trust to pass). `git remote get-url`
+// reads config and prints it; it never runs fsmonitor, filters, textconv, hooks, or a
+// pager, so a sandbox-written config cannot execute anything here. Any git that does
+// more than that belongs in git-safe.ts.
 async function getGitRemote(dir: string): Promise<string | undefined> {
   try {
     const { stdout } = await execFileAsync("git", ["remote", "get-url", "origin"], {

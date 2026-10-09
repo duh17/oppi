@@ -3,6 +3,7 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
+import { HOST_GIT_TRUST } from "../src/git-safe.js";
 import { getGitStatus, getWorkspaceGitSummary } from "../src/git-status.js";
 
 // ─── Helpers ───
@@ -53,7 +54,7 @@ afterAll(() => {
 
 describe("getWorkspaceGitSummary", () => {
   it("returns a compact non-repo result", async () => {
-    await expect(getWorkspaceGitSummary(nonGitDir)).resolves.toEqual({
+    await expect(getWorkspaceGitSummary(nonGitDir, HOST_GIT_TRUST)).resolves.toEqual({
       isGitRepo: false,
       changedCount: 0,
       ahead: null,
@@ -65,7 +66,7 @@ describe("getWorkspaceGitSummary", () => {
     const brokenRepo = mkdtempSync(join(tmpdir(), "git-status-summary-broken-"));
     mkdirSync(join(brokenRepo, ".git"));
     try {
-      await expect(getWorkspaceGitSummary(brokenRepo)).resolves.toBeUndefined();
+      await expect(getWorkspaceGitSummary(brokenRepo, HOST_GIT_TRUST)).resolves.toBeUndefined();
     } finally {
       rmSync(brokenRepo, { recursive: true, force: true });
     }
@@ -75,7 +76,7 @@ describe("getWorkspaceGitSummary", () => {
     writeFileSync(join(repoDir, "file1.txt"), "modified\n");
     writeFileSync(join(repoDir, "summary-untracked.txt"), "new\n");
     try {
-      await expect(getWorkspaceGitSummary(repoDir)).resolves.toEqual({
+      await expect(getWorkspaceGitSummary(repoDir, HOST_GIT_TRUST)).resolves.toEqual({
         isGitRepo: true,
         changedCount: 2,
         ahead: null,
@@ -90,31 +91,31 @@ describe("getWorkspaceGitSummary", () => {
 
 describe("getGitStatus", () => {
   it("returns isGitRepo false for non-git directory", async () => {
-    const status = await getGitStatus(nonGitDir);
+    const status = await getGitStatus(nonGitDir, HOST_GIT_TRUST);
     expect(status.isGitRepo).toBe(false);
     expect(status.branch).toBeNull();
     expect(status.dirtyCount).toBe(0);
   });
 
   it("returns isGitRepo false for nonexistent directory", async () => {
-    const status = await getGitStatus("/tmp/does-not-exist-xyz-abc");
+    const status = await getGitStatus("/tmp/does-not-exist-xyz-abc", HOST_GIT_TRUST);
     expect(status.isGitRepo).toBe(false);
   });
 
   it("detects branch name", async () => {
-    const status = await getGitStatus(repoDir);
+    const status = await getGitStatus(repoDir, HOST_GIT_TRUST);
     expect(status.isGitRepo).toBe(true);
     expect(status.branch).toBe("main");
   });
 
   it("detects HEAD sha", async () => {
-    const status = await getGitStatus(repoDir);
+    const status = await getGitStatus(repoDir, HOST_GIT_TRUST);
     expect(status.headSha).toBeTruthy();
     expect(status.headSha!.length).toBeGreaterThanOrEqual(7);
   });
 
   it("shows clean status when no changes", async () => {
-    const status = await getGitStatus(repoDir);
+    const status = await getGitStatus(repoDir, HOST_GIT_TRUST);
     expect(status.dirtyCount).toBe(0);
     expect(status.untrackedCount).toBe(0);
     expect(status.stagedCount).toBe(0);
@@ -127,7 +128,7 @@ describe("getGitStatus", () => {
   it("detects untracked files with line counts", async () => {
     writeFileSync(join(repoDir, "untracked.txt"), "new file\n");
     try {
-      const status = await getGitStatus(repoDir);
+      const status = await getGitStatus(repoDir, HOST_GIT_TRUST);
       expect(status.untrackedCount).toBe(1);
       const file = status.files.find((f) => f.path === "untracked.txt" && f.status === "??");
       expect(file).toBeDefined();
@@ -144,7 +145,7 @@ describe("getGitStatus", () => {
   it("detects modified files with per-file line stats", async () => {
     writeFileSync(join(repoDir, "file1.txt"), "modified\nline2\nline3\n");
     try {
-      const status = await getGitStatus(repoDir);
+      const status = await getGitStatus(repoDir, HOST_GIT_TRUST);
       expect(status.dirtyCount).toBe(1);
       const file = status.files.find((f) => f.path === "file1.txt");
       expect(file).toBeDefined();
@@ -163,7 +164,7 @@ describe("getGitStatus", () => {
     writeFileSync(join(repoDir, "staged.txt"), "staged\n");
     gitIn(repoDir, "add staged.txt");
     try {
-      const status = await getGitStatus(repoDir);
+      const status = await getGitStatus(repoDir, HOST_GIT_TRUST);
       expect(status.stagedCount).toBe(1);
       expect(status.files.some((f) => f.path === "staged.txt")).toBe(true);
     } finally {
@@ -177,7 +178,7 @@ describe("getGitStatus", () => {
     gitIn(repoDir, "add file1.txt");
     writeFileSync(join(repoDir, "file1.txt"), "staged and dirty\n");
     try {
-      const status = await getGitStatus(repoDir);
+      const status = await getGitStatus(repoDir, HOST_GIT_TRUST);
       expect(status.stagedCount).toBe(1);
       expect(status.dirtyCount).toBe(1);
       expect(status.totalFiles).toBe(1);
@@ -191,7 +192,7 @@ describe("getGitStatus", () => {
     writeFileSync(join(repoDir, "file1.txt"), "stash me\n");
     gitIn(repoDir, "stash push -m test-stash");
     try {
-      const status = await getGitStatus(repoDir);
+      const status = await getGitStatus(repoDir, HOST_GIT_TRUST);
       expect(status.stashCount).toBeGreaterThanOrEqual(1);
     } finally {
       gitIn(repoDir, "stash drop");
@@ -199,7 +200,7 @@ describe("getGitStatus", () => {
   });
 
   it("returns last commit message and date", async () => {
-    const status = await getGitStatus(repoDir);
+    const status = await getGitStatus(repoDir, HOST_GIT_TRUST);
     expect(status.lastCommitMessage).toBe("initial commit");
     expect(status.lastCommitDate).toBeTruthy();
     // ISO date format
@@ -207,7 +208,7 @@ describe("getGitStatus", () => {
   });
 
   it("returns null ahead/behind when no upstream", async () => {
-    const status = await getGitStatus(repoDir);
+    const status = await getGitStatus(repoDir, HOST_GIT_TRUST);
     // No remote configured → null
     expect(status.ahead).toBeNull();
     expect(status.behind).toBeNull();
@@ -217,7 +218,7 @@ describe("getGitStatus", () => {
     const sha = gitIn(repoDir, "rev-parse HEAD");
     gitIn(repoDir, `checkout ${sha}`);
     try {
-      const status = await getGitStatus(repoDir);
+      const status = await getGitStatus(repoDir, HOST_GIT_TRUST);
       expect(status.isGitRepo).toBe(true);
       expect(status.branch).toBeNull();
       expect(status.headSha).toBeTruthy();
@@ -232,7 +233,7 @@ describe("getGitStatus", () => {
       writeFileSync(join(repoDir, `bulk-${String(i).padStart(3, "0")}.txt`), `content-${i}\n`);
     }
     try {
-      const status = await getGitStatus(repoDir);
+      const status = await getGitStatus(repoDir, HOST_GIT_TRUST);
       expect(status.files.length).toBeLessThanOrEqual(500);
       expect(status.untrackedCount).toBe(510);
       expect(status.totalFiles).toBeGreaterThanOrEqual(510);
@@ -245,7 +246,7 @@ describe("getGitStatus", () => {
 
   it("resolves tilde paths", async () => {
     const homeRelativePath = `~/${tildeRepoDir.slice(homedir().length + 1)}`;
-    const status = await getGitStatus(homeRelativePath);
+    const status = await getGitStatus(homeRelativePath, HOST_GIT_TRUST);
     expect(status.isGitRepo).toBe(true);
     expect(status.branch).toBe("main");
   });
@@ -262,7 +263,7 @@ describe("getGitStatus", () => {
     writeFileSync(join(repoDir, "z-untracked.txt"), "new\n");
 
     try {
-      const status = await getGitStatus(repoDir);
+      const status = await getGitStatus(repoDir, HOST_GIT_TRUST);
       expect(status.stagedCount).toBe(1);
       expect(status.dirtyCount).toBe(1);
       expect(status.untrackedCount).toBe(1);
