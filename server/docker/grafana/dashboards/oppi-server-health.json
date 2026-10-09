@@ -9,6 +9,56 @@
   "links": [],
   "panels": [
     {
+      "title": "Event Loop Lag (p99 and max)",
+      "description": "Sampler-interval event-loop delay from server resource samples. p99 is the typical delay in the interval; max is the stall spike. These are raw sampler fields, not ops-metric aggregates.",
+      "type": "timeseries",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "ms",
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "pointSize": 3,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "unit": "ms",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawQueryText": "SELECT ts_ms / 1000 AS time, event_loop_p99 AS p99, event_loop_max AS max\nFROM server_metric_samples\nWHERE ts_ms >= ${__from} AND ts_ms <= ${__to}\n  AND event_loop_p99 IS NOT NULL\nORDER BY ts_ms",
+          "queryType": "table",
+          "timeColumns": ["time"]
+        }
+      ],
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
       "title": "CPU Usage (%)",
       "type": "timeseries",
       "datasource": {
@@ -19,7 +69,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 0
+        "y": 8
       },
       "fieldConfig": {
         "defaults": {
@@ -105,7 +155,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 0
+        "y": 8
       },
       "fieldConfig": {
         "defaults": {
@@ -207,7 +257,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 8
+        "y": 16
       },
       "fieldConfig": {
         "defaults": {
@@ -305,7 +355,8 @@
           "displayMode": "list",
           "placement": "bottom"
         }
-      }
+      },
+      "description": "Stacked busy, ready, and starting counts from the resource sample. Their sum is sessions_total."
     },
     {
       "title": "WebSocket Connections",
@@ -318,7 +369,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 8
+        "y": 16
       },
       "fieldConfig": {
         "defaults": {
@@ -383,7 +434,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 16
+        "y": 24
       },
       "fieldConfig": {
         "defaults": {
@@ -447,7 +498,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 16
+        "y": 24
       },
       "fieldConfig": {
         "defaults": {
@@ -530,7 +581,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 24
+        "y": 32
       },
       "fieldConfig": {
         "defaults": {},
@@ -634,7 +685,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 32
+        "y": 40
       },
       "fieldConfig": {
         "defaults": {
@@ -698,7 +749,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 32
+        "y": 40
       },
       "fieldConfig": {
         "defaults": {
@@ -751,8 +802,8 @@
       }
     },
     {
-      "title": "Cost per Turn (\u00b5$)",
-      "description": "Turn cost in microdollars. Track spending trends per interaction.",
+      "title": "Turn Cost (\u00b5$, summed)",
+      "description": "SUM(value) of sum-aggregated server.turn_cost per interval. Value is microdollars (usage.cost * 1_000_000), not a per-turn average.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -762,7 +813,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 40
+        "y": 48
       },
       "fieldConfig": {
         "defaults": {
@@ -826,7 +877,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 40
+        "y": 48
       },
       "fieldConfig": {
         "defaults": {
@@ -890,7 +941,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 48
+        "y": 56
       },
       "fieldConfig": {
         "defaults": {
@@ -944,7 +995,7 @@
     },
     {
       "title": "Turn Tokens",
-      "description": "Input and output token counts per agent turn. Use this with active work duration to distinguish large productive turns from stalls.",
+      "description": "SUM(value) of sum-aggregated input and output token counters per interval. Not one point per turn.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -954,7 +1005,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 56
+        "y": 64
       },
       "fieldConfig": {
         "defaults": {
@@ -1044,7 +1095,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 56
+        "y": 64
       },
       "fieldConfig": {
         "defaults": {
@@ -1134,7 +1185,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 72
+        "y": 80
       },
       "fieldConfig": {
         "defaults": {
@@ -1198,7 +1249,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 72
+        "y": 80
       },
       "fieldConfig": {
         "defaults": {
@@ -1263,7 +1314,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 80
+        "y": 88
       },
       "fieldConfig": {
         "defaults": {
@@ -1343,7 +1394,7 @@
     },
     {
       "title": "Broadcast Fanout",
-      "description": "Number of subscribers receiving each durable broadcast, bucketed by Grafana interval to keep the panel queryable at production volume.",
+      "description": "MAX(value) of max-aggregated server.broadcast_fanout. Value is already the peak subscriber count in the flush bucket; the panel keeps the peak in each Grafana interval.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1353,7 +1404,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 80
+        "y": 88
       },
       "fieldConfig": {
         "defaults": {
@@ -1408,7 +1459,7 @@
     },
     {
       "title": "HTTP Request Latency (ms)",
-      "description": "Server-side HTTP request processing time.",
+      "description": "Raw server.http_request_ms samples, not sum- or max-aggregated. Fast successful routine routes are omitted, so this is not request volume. Use HTTP by route for p50/p90/p99 and error rate.",
       "type": "timeseries",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -1418,7 +1469,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 88
+        "y": 96
       },
       "fieldConfig": {
         "defaults": {
@@ -1482,7 +1533,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 88
+        "y": 96
       },
       "fieldConfig": {
         "defaults": {
@@ -1536,6 +1587,43 @@
       }
     },
     {
+      "title": "HTTP by route",
+      "description": "Raw server.http_request_ms samples grouped by method and path_pattern. p50/p90/p99 use nearest-rank ceil(p * n). samples is row count, not SUM(value). error_pct is status_code >= 400. Fast successful routine routes are omitted, so this is not request volume.",
+      "type": "table",
+      "datasource": {
+        "uid": "oppi-telemetry-sqlite",
+        "type": "frser-sqlite-datasource"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 104
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "rawQueryText": "WITH ranked AS (\n  SELECT\n    COALESCE(json_extract(tags_json, '$.method'), '?') AS method,\n    COALESCE(json_extract(tags_json, '$.path_pattern'), '?') AS path_pattern,\n    value,\n    CAST(COALESCE(json_extract(tags_json, '$.status_code'), '0') AS INTEGER) AS status_code,\n    ROW_NUMBER() OVER (\n      PARTITION BY COALESCE(json_extract(tags_json, '$.method'), '?'), COALESCE(json_extract(tags_json, '$.path_pattern'), '?')\n      ORDER BY value\n    ) AS rn,\n    COUNT(*) OVER (\n      PARTITION BY COALESCE(json_extract(tags_json, '$.method'), '?'), COALESCE(json_extract(tags_json, '$.path_pattern'), '?')\n    ) AS n\n  FROM server_ops_metric_samples\n  WHERE metric = 'server.http_request_ms'\n    AND ts_ms >= ${__from} AND ts_ms <= ${__to}\n)\nSELECT\n  method,\n  path_pattern,\n  n AS samples,\n  ROUND(MAX(CASE WHEN rn = ((n * 50 + 99) / 100) THEN value END), 1) AS p50_ms,\n  ROUND(MAX(CASE WHEN rn = ((n * 90 + 99) / 100) THEN value END), 1) AS p90_ms,\n  ROUND(MAX(CASE WHEN rn = ((n * 99 + 99) / 100) THEN value END), 1) AS p99_ms,\n  SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS errors,\n  ROUND(100.0 * SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) / n, 1) AS error_pct\nFROM ranked\nGROUP BY method, path_pattern, n\nORDER BY samples DESC",
+          "queryType": "table",
+          "timeColumns": []
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
       "title": "Compaction Duration (ms)",
       "description": "Time spent compacting session event history.",
       "type": "timeseries",
@@ -1547,7 +1635,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 96
+        "y": 114
       },
       "fieldConfig": {
         "defaults": {
@@ -1611,7 +1699,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 96
+        "y": 114
       },
       "fieldConfig": {
         "defaults": {
@@ -1676,7 +1764,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 104
+        "y": 122
       },
       "fieldConfig": {
         "defaults": {
@@ -1726,7 +1814,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 104
+        "y": 122
       },
       "fieldConfig": {
         "defaults": {
@@ -1776,7 +1864,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 112
+        "y": 130
       },
       "fieldConfig": {
         "defaults": {
@@ -1813,7 +1901,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 112
+        "y": 130
       },
       "fieldConfig": {
         "defaults": {
@@ -1863,7 +1951,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 120
+        "y": 138
       },
       "fieldConfig": {
         "defaults": {
@@ -1900,7 +1988,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 120
+        "y": 138
       },
       "fieldConfig": {
         "defaults": {
@@ -1937,6 +2025,456 @@
           "placement": "bottom"
         }
       }
+    },
+    {
+      "type": "row",
+      "title": "Drill-down: session create and end",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 146
+      },
+      "panels": [
+        {
+          "title": "Session create (total / SDK / bind)",
+          "description": "Raw session-create latencies. create_ms is the full SdkBackend.create duration; sdk_ms and bind_ms are its parts.",
+          "type": "timeseries",
+          "datasource": {
+            "uid": "oppi-telemetry-sqlite",
+            "type": "frser-sqlite-datasource"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 147
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "ms",
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "pointSize": 3,
+                "showPoints": "auto",
+                "spanNulls": false
+              },
+              "unit": "ms",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "rawQueryText": "SELECT ts_ms / 1000 AS time,\n  CASE WHEN metric = 'server.session_create_ms' THEN value END AS create_ms,\n  CASE WHEN metric = 'server.session_create_sdk_ms' THEN value END AS sdk_ms,\n  CASE WHEN metric = 'server.session_create_bind_ms' THEN value END AS bind_ms\nFROM server_ops_metric_samples\nWHERE metric IN ('server.session_create_ms', 'server.session_create_sdk_ms', 'server.session_create_bind_ms')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
+              "queryType": "table",
+              "timeColumns": ["time"]
+            }
+          ],
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "title": "Session end by reason",
+          "description": "Raw server.session_end counters. SUM(value) is the end count; value is 1 per ended session.",
+          "type": "table",
+          "datasource": {
+            "uid": "oppi-telemetry-sqlite",
+            "type": "frser-sqlite-datasource"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 147
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.reason'), '?') AS reason,\n  SUM(value) AS ends\nFROM server_ops_metric_samples\nWHERE metric = 'server.session_end'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY reason\nORDER BY ends DESC",
+              "queryType": "table",
+              "timeColumns": []
+            }
+          ],
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm"
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Drill-down: push",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 147
+      },
+      "panels": [
+        {
+          "title": "Push send latency (ms)",
+          "description": "Raw server.push_send_ms samples, tagged by push_type in the stored JSON.",
+          "type": "timeseries",
+          "datasource": {
+            "uid": "oppi-telemetry-sqlite",
+            "type": "frser-sqlite-datasource"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 148
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "ms",
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "pointSize": 3,
+                "showPoints": "auto",
+                "spanNulls": false
+              },
+              "unit": "ms",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "rawQueryText": "SELECT ts_ms / 1000 AS time, value AS push_send_ms\nFROM server_ops_metric_samples\nWHERE metric = 'server.push_send_ms'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
+              "queryType": "table",
+              "timeColumns": ["time"]
+            }
+          ],
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "title": "Push results",
+          "description": "Raw server.push_result counters. SUM(value) is the result count by push_type and success.",
+          "type": "table",
+          "datasource": {
+            "uid": "oppi-telemetry-sqlite",
+            "type": "frser-sqlite-datasource"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 148
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.push_type'), '?') AS push_type,\n  COALESCE(json_extract(tags_json, '$.success'), '?') AS success,\n  SUM(value) AS results\nFROM server_ops_metric_samples\nWHERE metric = 'server.push_result'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY push_type, success\nORDER BY results DESC",
+              "queryType": "table",
+              "timeColumns": []
+            }
+          ],
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm"
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Drill-down: event ring",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 148
+      },
+      "panels": [
+        {
+          "title": "Event ring utilization peak",
+          "description": "MAX(value) of max-aggregated server.event_ring_utilization. Value is already the peak fill ratio in the flush bucket.",
+          "type": "timeseries",
+          "datasource": {
+            "uid": "oppi-telemetry-sqlite",
+            "type": "frser-sqlite-datasource"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 149
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "ratio",
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "pointSize": 3,
+                "showPoints": "auto",
+                "spanNulls": false
+              },
+              "unit": "percentunit",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "rawQueryText": "SELECT ((ts_ms / ${__interval_ms}) * ${__interval_ms}) / 1000 AS time,\n  MAX(value) AS peak_ratio\nFROM server_ops_metric_samples\nWHERE metric = 'server.event_ring_utilization'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY 1\nORDER BY 1",
+              "queryType": "table",
+              "timeColumns": ["time"]
+            }
+          ],
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "title": "Event ring peak by ring",
+          "description": "MAX(value) of max-aggregated server.event_ring_utilization by ring. buckets is flush-bucket rows, not raw ring samples.",
+          "type": "table",
+          "datasource": {
+            "uid": "oppi-telemetry-sqlite",
+            "type": "frser-sqlite-datasource"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 149
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.ring'), '?') AS ring,\n  COUNT(*) AS buckets,\n  ROUND(MAX(value), 3) AS peak_ratio\nFROM server_ops_metric_samples\nWHERE metric = 'server.event_ring_utilization'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY ring\nORDER BY peak_ratio DESC",
+              "queryType": "table",
+              "timeColumns": []
+            }
+          ],
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm"
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Drill-down: server dictation",
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 149
+      },
+      "panels": [
+        {
+          "title": "Server STT and finalize (ms)",
+          "description": "Raw server.dictation_stt_ms and server.dictation_finalize_ms. Front-page STT latency also appears on Release Preflight.",
+          "type": "timeseries",
+          "datasource": {
+            "uid": "oppi-telemetry-sqlite",
+            "type": "frser-sqlite-datasource"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 150
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "ms",
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "pointSize": 3,
+                "showPoints": "auto",
+                "spanNulls": false
+              },
+              "unit": "ms",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "rawQueryText": "SELECT ts_ms / 1000 AS time,\n  CASE WHEN metric = 'server.dictation_stt_ms' THEN value END AS stt_ms,\n  CASE WHEN metric = 'server.dictation_finalize_ms' THEN value END AS finalize_ms\nFROM server_ops_metric_samples\nWHERE metric IN ('server.dictation_stt_ms', 'server.dictation_finalize_ms')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
+              "queryType": "table",
+              "timeColumns": ["time"]
+            }
+          ],
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "title": "Server STT real-time factor",
+          "description": "Raw server.dictation_stt_audio_ratio. Below 1.0 is faster than real time.",
+          "type": "timeseries",
+          "datasource": {
+            "uid": "oppi-telemetry-sqlite",
+            "type": "frser-sqlite-datasource"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 150
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisLabel": "ratio",
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 10,
+                "pointSize": 3,
+                "showPoints": "auto",
+                "spanNulls": false
+              },
+              "unit": "percentunit",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "rawQueryText": "SELECT ts_ms / 1000 AS time, value AS stt_audio_ratio\nFROM server_ops_metric_samples\nWHERE metric = 'server.dictation_stt_audio_ratio'\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nORDER BY ts_ms",
+              "queryType": "table",
+              "timeColumns": ["time"]
+            }
+          ],
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "title": "Server dictation summary",
+          "description": "Raw dictation samples except retired retranscribe metrics. avg/min/max read value directly. server.dictation_error is a counter; its avg is not a latency.",
+          "type": "table",
+          "datasource": {
+            "uid": "oppi-telemetry-sqlite",
+            "type": "frser-sqlite-datasource"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 158
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "rawQueryText": "SELECT\n  metric,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 2) AS avg_value,\n  ROUND(MIN(value), 2) AS min_value,\n  ROUND(MAX(value), 2) AS max_value\nFROM server_ops_metric_samples\nWHERE metric IN ('server.dictation_session_ms', 'server.dictation_audio_duration_ms', 'server.dictation_first_audio_ms', 'server.dictation_first_result_ms', 'server.dictation_first_result_audio_ms', 'server.dictation_result_updates', 'server.dictation_stt_ms', 'server.dictation_stt_audio_ratio', 'server.dictation_finalize_ms', 'server.dictation_error')\n  AND ts_ms >= ${__from} AND ts_ms <= ${__to}\nGROUP BY metric\nORDER BY samples DESC",
+              "queryType": "table",
+              "timeColumns": []
+            }
+          ],
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm"
+          }
+        }
+      ]
     }
   ],
   "schemaVersion": 39,
@@ -1954,5 +2492,7 @@
   },
   "timezone": "browser",
   "title": "Oppi Server Health",
-  "uid": "oppi-server-health"
+  "uid": "oppi-server-health",
+  "version": 3,
+  "description": "Server resource health, connection and agent workload, plus collapsed drill-down for session lifecycle, push, event ring, and dictation. Sum-aggregated counters use SUM(value). Max-aggregated gauges use MAX(value). HTTP timings are raw samples."
 }

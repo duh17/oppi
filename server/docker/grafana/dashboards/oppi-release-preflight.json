@@ -532,6 +532,73 @@
         "type": "frser-sqlite-datasource",
         "uid": "oppi-telemetry-sqlite"
       },
+      "description": "Raw client network.handshake_ms and network.ws_ping_rtt_ms. These are connection health, not server ops aggregates.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "pointSize": 4,
+            "showPoints": "always"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "id": 90,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS handshake_ms\nFROM chat_metric_samples\nWHERE metric = 'network.handshake_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS handshake_ms\nFROM chat_metric_samples\nWHERE metric = 'network.handshake_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": ["time"],
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS ping_rtt_ms\nFROM chat_metric_samples\nWHERE metric = 'network.ws_ping_rtt_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS ping_rtt_ms\nFROM chat_metric_samples\nWHERE metric = 'network.ws_ping_rtt_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": ["time"],
+          "refId": "B"
+        }
+      ],
+      "title": "Client network (handshake + ping RTT)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "oppi-telemetry-sqlite"
+      },
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -590,7 +657,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 20
+        "y": 28
       },
       "id": 3,
       "options": {
@@ -655,7 +722,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 20
+        "y": 28
       },
       "id": 4,
       "options": {
@@ -709,7 +776,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 28
+        "y": 36
       },
       "id": 5,
       "options": {
@@ -802,7 +869,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 28
+        "y": 36
       },
       "id": 28,
       "options": {
@@ -876,7 +943,7 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 42
       },
       "id": 22,
       "options": {
@@ -923,7 +990,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 36
+        "y": 44
       },
       "id": 30,
       "options": {
@@ -994,7 +1061,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 36
+        "y": 44
       },
       "id": 31,
       "options": {
@@ -1041,7 +1108,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 44
+        "y": 52
       },
       "id": 8,
       "options": {
@@ -1095,7 +1162,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 44
+        "y": 52
       },
       "id": 9,
       "options": {
@@ -1149,7 +1216,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 44
+        "y": 52
       },
       "id": 10,
       "options": {
@@ -1212,7 +1279,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 52
+        "y": 60
       },
       "id": 11,
       "options": {
@@ -1259,7 +1326,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 60
+        "y": 68
       },
       "id": 74,
       "options": {
@@ -1313,7 +1380,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 60
+        "y": 68
       },
       "id": 75,
       "options": {
@@ -1367,7 +1434,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 60
+        "y": 68
       },
       "id": 76,
       "options": {
@@ -1421,7 +1488,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 68
+        "y": 76
       },
       "id": 77,
       "options": {
@@ -1475,7 +1542,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 68
+        "y": 76
       },
       "id": 78,
       "options": {
@@ -1529,7 +1596,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 68
+        "y": 76
       },
       "id": 79,
       "options": {
@@ -1583,7 +1650,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 76
+        "y": 84
       },
       "id": 80,
       "options": {
@@ -1637,7 +1704,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 76
+        "y": 84
       },
       "id": 81,
       "options": {
@@ -1673,10 +1740,22 @@
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS cancels\nFROM chat_metric_samples\nWHERE metric = 'chat.dictation_cancel'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "timeColumns": ["time"],
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS server_errors\nFROM server_ops_metric_samples\nWHERE metric = 'server.dictation_error'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS server_errors\nFROM server_ops_metric_samples\nWHERE metric = 'server.dictation_error'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": ["time"],
+          "refId": "C"
         }
       ],
       "title": "Errors + Cancels",
-      "type": "timeseries"
+      "type": "timeseries",
+      "description": "Client dictation errors and cancels, plus server.dictation_error. Counters are raw samples; read the point value, not the row count, when value can exceed 1."
     },
     {
       "datasource": {
@@ -1711,7 +1790,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 84
+        "y": 92
       },
       "id": 82,
       "options": {
@@ -1733,6 +1812,118 @@
       ],
       "title": "Dictation by STT Backend/Model",
       "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "oppi-telemetry-sqlite"
+      },
+      "description": "Front-page server.dictation_stt_audio_ratio. Raw STT latency divided by audio duration. Below 1.0 is faster than real time.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "percentunit",
+          "custom": {
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "pointSize": 4,
+            "showPoints": "always"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 100
+      },
+      "id": 101,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS stt_audio_ratio\nFROM server_ops_metric_samples\nWHERE metric = 'server.dictation_stt_audio_ratio'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS stt_audio_ratio\nFROM server_ops_metric_samples\nWHERE metric = 'server.dictation_stt_audio_ratio'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": ["time"],
+          "refId": "A"
+        }
+      ],
+      "title": "Server STT real-time factor",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "oppi-telemetry-sqlite"
+      },
+      "description": "Front-page server.dictation_stt_ms. Raw finalize STT latency, not a sum-aggregated counter.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "points",
+            "lineWidth": 0,
+            "pointSize": 4,
+            "showPoints": "always"
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 100
+      },
+      "id": 91,
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS stt_ms\nFROM server_ops_metric_samples\nWHERE metric = 'server.dictation_stt_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS stt_ms\nFROM server_ops_metric_samples\nWHERE metric = 'server.dictation_stt_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": ["time"],
+          "refId": "A"
+        }
+      ],
+      "title": "Server STT latency (ms)",
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -1835,7 +2026,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 92
+        "y": 108
       },
       "id": 29,
       "options": {
@@ -1931,7 +2122,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 100
+        "y": 116
       },
       "id": 16,
       "options": {
@@ -1987,7 +2178,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 108
+        "y": 124
       },
       "id": 17,
       "options": {
@@ -2035,7 +2226,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 117
+        "y": 133
       },
       "id": 18,
       "options": {
@@ -2098,7 +2289,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 117
+        "y": 133
       },
       "id": 19,
       "options": {
@@ -2145,7 +2336,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 125
+        "y": 141
       },
       "id": 20,
       "options": {
@@ -2208,7 +2399,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 125
+        "y": 141
       },
       "id": 21,
       "options": {
@@ -2272,7 +2463,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 133
+        "y": 149
       },
       "id": 32,
       "options": {
@@ -2358,6 +2549,25 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "workspace_load_ms"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
           }
         ]
       },
@@ -2365,7 +2575,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 133
+        "y": 149
       },
       "id": 33,
       "options": {
@@ -2401,10 +2611,22 @@
           "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.session_switch_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
           "timeColumns": ["time"],
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.workspace_load_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.workspace_load_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+          "timeColumns": ["time"],
+          "refId": "C"
         }
       ],
-      "title": "App Launch + Session Switch",
-      "type": "timeseries"
+      "title": "App Launch, Workspace Load, Session Switch",
+      "type": "timeseries",
+      "description": "Front-page session responsiveness. workspace_load_ms is time until the workspace screen is usable; session_switch_ms is row tap-to-content."
     },
     {
       "datasource": {
@@ -2430,7 +2652,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 141
+        "y": 157
       },
       "id": 34,
       "options": {
@@ -2484,7 +2706,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 141
+        "y": 157
       },
       "id": 35,
       "options": {
@@ -2576,7 +2798,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 157
+        "y": 173
       },
       "id": 37,
       "options": {
@@ -2654,7 +2876,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 165
+        "y": 181
       },
       "id": 38,
       "options": {
@@ -2709,7 +2931,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 165
+        "y": 181
       },
       "id": 39,
       "options": {
@@ -2764,7 +2986,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 173
+        "y": 189
       },
       "id": 40,
       "options": {
@@ -2893,7 +3115,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 173
+        "y": 189
       },
       "id": 41,
       "options": {
@@ -3031,7 +3253,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 181
+        "y": 197
       },
       "id": 42,
       "options": {
@@ -3173,7 +3395,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 181
+        "y": 197
       },
       "id": 43,
       "options": {
@@ -3318,7 +3540,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 189
+        "y": 205
       },
       "id": 44,
       "options": {
@@ -3456,7 +3678,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 189
+        "y": 205
       },
       "id": 45,
       "options": {
@@ -3518,7 +3740,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 197
+        "y": 213
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -3593,7 +3815,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 197
+        "y": 213
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -3673,7 +3895,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 205
+        "y": 221
       },
       "panels": []
     },
@@ -3686,7 +3908,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 206
+        "y": 222
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -3785,7 +4007,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 206
+        "y": 222
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -3841,7 +4063,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 214
+        "y": 230
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -3945,7 +4167,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 214
+        "y": 230
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4001,7 +4223,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 222
+        "y": 238
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4163,7 +4385,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 222
+        "y": 238
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4267,7 +4489,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 230
+        "y": 246
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4371,7 +4593,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 238
+        "y": 254
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4424,7 +4646,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 246
+        "y": 262
       },
       "collapsed": false,
       "panels": []
@@ -4437,7 +4659,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 247
+        "y": 263
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4492,7 +4714,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 247
+        "y": 263
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4547,7 +4769,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 255
+        "y": 271
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4602,7 +4824,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 255
+        "y": 271
       },
       "datasource": {
         "type": "frser-sqlite-datasource",
@@ -4651,7 +4873,7 @@
     },
     {
       "title": "Split Stream Server Lanes",
-      "description": "Release preflight: confirm split session/audio lanes have traffic and no untagged WebSocket lane is carrying the client flow.",
+      "description": "Handshake rows are raw latencies: total is AVG(value) in milliseconds and total_kind is avg_ms. Message and byte rows are sum-aggregated: total is SUM(value) and rows is flush buckets, not message count.",
       "type": "table",
       "datasource": {
         "uid": "oppi-telemetry-sqlite",
@@ -4661,7 +4883,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 263
+        "y": 279
       },
       "fieldConfig": {
         "defaults": {
@@ -4676,7 +4898,7 @@
       },
       "targets": [
         {
-          "rawQueryText": "SELECT\n  COALESCE(tag_path, 'untagged_ws') AS path,\n  metric,\n  COALESCE(tag_type, '-') AS message_type,\n  COUNT(*) AS samples,\n  ROUND(SUM(value), 1) AS total\nFROM server_ops_metric_samples\nWHERE metric IN ('server.ws_handshake_ms', 'server.ws_message_sent', 'server.ws_message_received', 'server.ws_binary_received_bytes')\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY path, metric, message_type\nORDER BY path, metric, samples DESC",
+          "rawQueryText": "SELECT\n  COALESCE(tag_path, 'untagged_ws') AS path,\n  metric,\n  COALESCE(tag_type, '-') AS message_type,\n  COUNT(*) AS rows,\n  CASE\n    WHEN metric = 'server.ws_handshake_ms' THEN ROUND(AVG(value), 1)\n    ELSE ROUND(SUM(value), 1)\n  END AS total,\n  CASE\n    WHEN metric = 'server.ws_handshake_ms' THEN 'avg_ms'\n    WHEN metric = 'server.ws_binary_received_bytes' THEN 'sum_bytes'\n    ELSE 'sum_count'\n  END AS total_kind\nFROM server_ops_metric_samples\nWHERE metric IN ('server.ws_handshake_ms', 'server.ws_message_sent', 'server.ws_message_received', 'server.ws_binary_received_bytes')\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY path, metric, message_type\nORDER BY path, metric, rows DESC",
           "queryType": "table",
           "timeColumns": []
         }
@@ -4698,7 +4920,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 263
+        "y": 279
       },
       "fieldConfig": {
         "defaults": {
@@ -4722,6 +4944,359 @@
         "showHeader": true,
         "cellHeight": "sm"
       }
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 287
+      },
+      "id": 92,
+      "panels": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "description": "Raw chat.command_send_ms, command_roundtrip_ms, and command_resolve_lag_ms. Percentiles are nearest-rank. Successful get_queue samples can be omitted, so this is not command volume. error_pct is outcome=error.",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 288
+          },
+          "id": 93,
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "frser-sqlite-datasource",
+                "uid": "oppi-telemetry-sqlite"
+              },
+              "queryType": "table",
+              "rawQueryText": "WITH ranked AS (\n  SELECT\n    metric,\n    COALESCE(json_extract(tags_json, '$.command'), '?') AS command,\n    value,\n    COALESCE(json_extract(tags_json, '$.outcome'), '') AS outcome,\n    ROW_NUMBER() OVER (\n      PARTITION BY metric, COALESCE(json_extract(tags_json, '$.command'), '?')\n      ORDER BY value\n    ) AS rn,\n    COUNT(*) OVER (\n      PARTITION BY metric, COALESCE(json_extract(tags_json, '$.command'), '?')\n    ) AS n\n  FROM chat_metric_samples\n  WHERE metric IN ('chat.command_send_ms', 'chat.command_roundtrip_ms', 'chat.command_resolve_lag_ms')\n    AND ts_ms BETWEEN $__from AND $__to\n)\nSELECT\n  command,\n  CASE metric\n    WHEN 'chat.command_send_ms' THEN 'send'\n    WHEN 'chat.command_roundtrip_ms' THEN 'roundtrip'\n    ELSE 'resolve_lag'\n  END AS phase,\n  n AS samples,\n  ROUND(MAX(CASE WHEN rn = ((n * 50 + 99) / 100) THEN value END), 1) AS p50_ms,\n  ROUND(MAX(CASE WHEN rn = ((n * 90 + 99) / 100) THEN value END), 1) AS p90_ms,\n  ROUND(MAX(CASE WHEN rn = ((n * 99 + 99) / 100) THEN value END), 1) AS p99_ms,\n  ROUND(100.0 * SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END) / n, 1) AS error_pct\nFROM ranked\nGROUP BY command, metric, n\nORDER BY samples DESC",
+              "queryText": "WITH ranked AS (\n  SELECT\n    metric,\n    COALESCE(json_extract(tags_json, '$.command'), '?') AS command,\n    value,\n    COALESCE(json_extract(tags_json, '$.outcome'), '') AS outcome,\n    ROW_NUMBER() OVER (\n      PARTITION BY metric, COALESCE(json_extract(tags_json, '$.command'), '?')\n      ORDER BY value\n    ) AS rn,\n    COUNT(*) OVER (\n      PARTITION BY metric, COALESCE(json_extract(tags_json, '$.command'), '?')\n    ) AS n\n  FROM chat_metric_samples\n  WHERE metric IN ('chat.command_send_ms', 'chat.command_roundtrip_ms', 'chat.command_resolve_lag_ms')\n    AND ts_ms BETWEEN $__from AND $__to\n)\nSELECT\n  command,\n  CASE metric\n    WHEN 'chat.command_send_ms' THEN 'send'\n    WHEN 'chat.command_roundtrip_ms' THEN 'roundtrip'\n    ELSE 'resolve_lag'\n  END AS phase,\n  n AS samples,\n  ROUND(MAX(CASE WHEN rn = ((n * 50 + 99) / 100) THEN value END), 1) AS p50_ms,\n  ROUND(MAX(CASE WHEN rn = ((n * 90 + 99) / 100) THEN value END), 1) AS p90_ms,\n  ROUND(MAX(CASE WHEN rn = ((n * 99 + 99) / 100) THEN value END), 1) AS p99_ms,\n  ROUND(100.0 * SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END) / n, 1) AS error_pct\nFROM ranked\nGROUP BY command, metric, n\nORDER BY samples DESC",
+              "timeColumns": [],
+              "refId": "A"
+            }
+          ],
+          "title": "Command latency by command",
+          "type": "table"
+        }
+      ],
+      "title": "Drill-down: client commands",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 288
+      },
+      "id": 94,
+      "panels": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "description": "Raw chat.quick_session_create_ms from sheet or other sources.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "ms",
+              "custom": {
+                "drawStyle": "points",
+                "lineWidth": 0,
+                "pointSize": 4,
+                "showPoints": "always"
+              },
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 289
+          },
+          "id": 95,
+          "options": {
+            "legend": {
+              "calcs": ["lastNotNull", "max"],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "frser-sqlite-datasource",
+                "uid": "oppi-telemetry-sqlite"
+              },
+              "queryType": "time series",
+              "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.quick_session_create_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+              "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value\nFROM chat_metric_samples\nWHERE metric = 'chat.quick_session_create_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+              "timeColumns": ["time"],
+              "refId": "A"
+            }
+          ],
+          "title": "Quick session create (ms)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "description": "Raw chat.quick_session_create_ms grouped by source, status, and selection. chat.quick_session_error is a separate counter and may be absent.",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 289
+          },
+          "id": 96,
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "frser-sqlite-datasource",
+                "uid": "oppi-telemetry-sqlite"
+              },
+              "queryType": "table",
+              "rawQueryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.source'), '?') AS source,\n  COALESCE(json_extract(tags_json, '$.status'), '?') AS status,\n  COALESCE(json_extract(tags_json, '$.selection'), '?') AS selection,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 1) AS avg_ms,\n  ROUND(MAX(value), 1) AS max_ms\nFROM chat_metric_samples\nWHERE metric = 'chat.quick_session_create_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY source, status, selection\nORDER BY samples DESC",
+              "queryText": "SELECT\n  COALESCE(json_extract(tags_json, '$.source'), '?') AS source,\n  COALESCE(json_extract(tags_json, '$.status'), '?') AS status,\n  COALESCE(json_extract(tags_json, '$.selection'), '?') AS selection,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 1) AS avg_ms,\n  ROUND(MAX(value), 1) AS max_ms\nFROM chat_metric_samples\nWHERE metric = 'chat.quick_session_create_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY source, status, selection\nORDER BY samples DESC",
+              "timeColumns": [],
+              "refId": "A"
+            }
+          ],
+          "title": "Quick session create by source",
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "description": "Raw chat.quick_session_error counters. Empty means no failures were uploaded in the selected window.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "short",
+              "custom": {
+                "drawStyle": "points",
+                "lineWidth": 0,
+                "pointSize": 4,
+                "showPoints": "always"
+              },
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 297
+          },
+          "id": 97,
+          "options": {
+            "legend": {
+              "calcs": ["lastNotNull", "max"],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "frser-sqlite-datasource",
+                "uid": "oppi-telemetry-sqlite"
+              },
+              "queryType": "time series",
+              "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS errors\nFROM chat_metric_samples\nWHERE metric = 'chat.quick_session_error'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+              "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS errors\nFROM chat_metric_samples\nWHERE metric = 'chat.quick_session_error'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+              "timeColumns": ["time"],
+              "refId": "A"
+            }
+          ],
+          "title": "Quick session errors",
+          "type": "timeseries"
+        }
+      ],
+      "title": "Drill-down: quick session",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 289
+      },
+      "id": 98,
+      "panels": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "description": "Raw chat.share_prepare_ms and chat.share_publish_ms. share_export_ms stays on Attention, media, and share UX.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "ms",
+              "custom": {
+                "drawStyle": "points",
+                "lineWidth": 0,
+                "pointSize": 4,
+                "showPoints": "always"
+              },
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 290
+          },
+          "id": 99,
+          "options": {
+            "legend": {
+              "calcs": ["lastNotNull", "max"],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "frser-sqlite-datasource",
+                "uid": "oppi-telemetry-sqlite"
+              },
+              "queryType": "time series",
+              "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS prepare_ms\nFROM chat_metric_samples\nWHERE metric = 'chat.share_prepare_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+              "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS prepare_ms\nFROM chat_metric_samples\nWHERE metric = 'chat.share_prepare_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+              "timeColumns": ["time"],
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "frser-sqlite-datasource",
+                "uid": "oppi-telemetry-sqlite"
+              },
+              "queryType": "time series",
+              "rawQueryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS publish_ms\nFROM chat_metric_samples\nWHERE metric = 'chat.share_publish_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+              "queryText": "SELECT CAST(ts_ms / 1000 AS INTEGER) AS time, value AS publish_ms\nFROM chat_metric_samples\nWHERE metric = 'chat.share_publish_ms'\n  AND ts_ms BETWEEN $__from AND $__to\nORDER BY ts_ms",
+              "timeColumns": ["time"],
+              "refId": "B"
+            }
+          ],
+          "title": "Share prepare and publish (ms)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "oppi-telemetry-sqlite"
+          },
+          "description": "Latency rows are raw samples: use avg_value and max_value. chat.share_error is a counter: use sum_value, not avg_value. Empty means no share publish samples in the window.",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 290
+          },
+          "id": 100,
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "frser-sqlite-datasource",
+                "uid": "oppi-telemetry-sqlite"
+              },
+              "queryType": "table",
+              "rawQueryText": "SELECT\n  metric,\n  COALESCE(json_extract(tags_json, '$.status'), json_extract(tags_json, '$.action'), '-') AS status_or_action,\n  COALESCE(json_extract(tags_json, '$.error_kind'), '-') AS error_kind,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 1) AS avg_value,\n  ROUND(MAX(value), 1) AS max_value,\n  ROUND(SUM(value), 1) AS sum_value\nFROM chat_metric_samples\nWHERE metric IN ('chat.share_prepare_ms', 'chat.share_publish_ms', 'chat.share_error')\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY metric, status_or_action, error_kind\nORDER BY metric, samples DESC",
+              "queryText": "SELECT\n  metric,\n  COALESCE(json_extract(tags_json, '$.status'), json_extract(tags_json, '$.action'), '-') AS status_or_action,\n  COALESCE(json_extract(tags_json, '$.error_kind'), '-') AS error_kind,\n  COUNT(*) AS samples,\n  ROUND(AVG(value), 1) AS avg_value,\n  ROUND(MAX(value), 1) AS max_value,\n  ROUND(SUM(value), 1) AS sum_value\nFROM chat_metric_samples\nWHERE metric IN ('chat.share_prepare_ms', 'chat.share_publish_ms', 'chat.share_error')\n  AND ts_ms BETWEEN $__from AND $__to\nGROUP BY metric, status_or_action, error_kind\nORDER BY metric, samples DESC",
+              "timeColumns": [],
+              "refId": "A"
+            }
+          ],
+          "title": "Share prepare, publish, and errors",
+          "type": "table"
+        }
+      ],
+      "title": "Drill-down: share publish",
+      "type": "row"
     }
   ],
   "refresh": "30s",
@@ -4739,6 +5314,7 @@
   "timezone": "browser",
   "title": "Oppi Release Preflight",
   "uid": "oppi-release-preflight",
-  "version": 10,
-  "weekStart": ""
+  "version": 11,
+  "weekStart": "",
+  "description": "Release and quality view. Front page covers UX latency, connection readiness, dictation, and client network. Collapsed rows hold command, quick-session, and share-publish drill-down. Sum-aggregated server counters use SUM(value); max-aggregated gauges use MAX(value); timings are raw samples."
 }

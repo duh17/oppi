@@ -8,10 +8,12 @@ import {
   SLO_THRESHOLDS,
   buildTelemetryTrendSvg,
   buildTrendBuckets,
+  formatHttpReview,
   formatModelsReview,
   loadSamples,
   parseArgs,
   review,
+  reviewHttp,
   reviewModels,
 } from "../scripts/telemetry-review.ts";
 
@@ -443,5 +445,56 @@ describe("telemetry-review --models", () => {
     expect(text).toContain("p50");
     expect(text).toContain("p95");
     expect(text).toContain("Total$/call");
+  });
+});
+
+describe("telemetry-review --http", () => {
+  it("parses the http flag without turning on models mode", () => {
+    expect(parseArgs(["--http", "--days", "1"]).http).toBe(true);
+    expect(parseArgs(["--http"]).models).toBe(false);
+    expect(parseArgs(["--wide"]).http).toBe(false);
+  });
+
+  it("reports raw-sample percentiles and status_code>=400 rate by route", () => {
+    const now = Date.now();
+    const samples = [10, 20, 30, 40].map((value, index) => ({
+      ts: now,
+      metric: "server.http_request_ms",
+      value,
+      unit: "ms",
+      tags: {
+        method: "GET",
+        path_pattern: "/sessions/:sessionId",
+        status_code: index === 3 ? "500" : "200",
+      },
+    }));
+    const result = reviewHttp(
+      {
+        values: {},
+        byBuild: {},
+        buildSummary: {},
+        samples,
+        totalSamples: samples.length,
+        filesRead: 1,
+      },
+      { days: 1 },
+    );
+
+    expect(result.samples).toBe(4);
+    expect(result.note).toMatch(/raw samples/i);
+    expect(result.routes).toEqual([
+      {
+        method: "GET",
+        pathPattern: "/sessions/:sessionId",
+        samples: 4,
+        p50: 20,
+        p90: 40,
+        p99: 40,
+        errors: 1,
+        errorRate: 0.25,
+      },
+    ]);
+    expect(formatHttpReview(result, { noColor: true })).toContain("GET");
+    expect(formatHttpReview(result, { noColor: true })).toContain("25.0%");
   });
 });

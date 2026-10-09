@@ -4,7 +4,8 @@
  * Oppi telemetry review — reads JSONL metric files, computes percentiles,
  * flags SLO reference threshold violations, and provides dictation-focused
  * and model-routing dashboard views. `--models` is read-only operational
- * telemetry: success is not accepted-task correctness.
+ * telemetry: success is not accepted-task correctness. `--http` breaks
+ * raw `server.http_request_ms` samples down by method and path pattern.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -239,9 +240,21 @@ export const SLO_THRESHOLDS: Record<string, SloThreshold> = {
   },
   "chat.session_load_ms": {
     p95: 600,
-    label: "Session switch",
+    label: "Session load",
     group: "UX Responsiveness",
     short: "sess_load",
+  },
+  "chat.workspace_load_ms": {
+    p95: 1_000,
+    label: "Workspace load",
+    group: "UX Responsiveness",
+    short: "ws_load",
+  },
+  "chat.session_switch_ms": {
+    p95: 600,
+    label: "Session switch",
+    group: "UX Responsiveness",
+    short: "sess_sw",
   },
   "chat.app_launch_ms": {
     p95: 1_000,
@@ -451,6 +464,12 @@ export const SLO_THRESHOLDS: Record<string, SloThreshold> = {
     label: "Active sessions",
     group: "Server",
     short: "srv_sess",
+  },
+  "server.event_loop_lag_ms": {
+    p95: 100,
+    label: "Event-loop lag p99",
+    group: "Server",
+    short: "evt_loop",
   },
 };
 
@@ -1120,6 +1139,107 @@ export function formatModelsReview(
   return lines.join("\n");
 }
 
+export const HTTP_REVIEW_NOTE =
+  "server.http_request_ms rows are raw samples, not sum- or max-aggregated buckets. Fast successful routine routes are omitted, so sample count is not request volume. error_rate is the share of samples with status_code >= 400.";
+
+export interface HttpRouteReviewRow {
+  method: string;
+  pathPattern: string;
+  samples: number;
+  p50: number;
+  p90: number;
+  p99: number;
+  errors: number;
+  errorRate: number;
+}
+
+export interface HttpReviewOutput {
+  days: number;
+  samples: number;
+  note: string;
+  routes: HttpRouteReviewRow[];
+}
+
+function httpStatusCode(tags: Record<string, string> | undefined): number {
+  const raw = tags?.status_code;
+  if (!raw) return 0;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function reviewHttp(data: LoadResult, options: { days: number }): HttpReviewOutput {
+  const byRoute = new Map<
+    string,
+    { method: string; pathPattern: string; values: number[]; errors: number }
+  >();
+
+  for (const sample of data.samples) {
+    if (sample.metric !== "server.http_request_ms") continue;
+    const method = sample.tags?.method?.trim() || "?";
+    const pathPattern = sample.tags?.path_pattern?.trim() || "?";
+    const key = `${method}\0${pathPattern}`;
+    let row = byRoute.get(key);
+    if (!row) {
+      row = { method, pathPattern, values: [], errors: 0 };
+      byRoute.set(key, row);
+    }
+    row.values.push(sample.value);
+    if (httpStatusCode(sample.tags) >= 400) row.errors += 1;
+  }
+
+  const routes = [...byRoute.values()]
+    .map((row) => {
+      const sorted = [...row.values].sort((a, b) => a - b);
+      return {
+        method: row.method,
+        pathPattern: row.pathPattern,
+        samples: sorted.length,
+        p50: routingPercentile(sorted, 50),
+        p90: routingPercentile(sorted, 90),
+        p99: routingPercentile(sorted, 99),
+        errors: row.errors,
+        errorRate: ratio(row.errors, sorted.length),
+      } satisfies HttpRouteReviewRow;
+    })
+    .sort(
+      (a, b) =>
+        b.samples - a.samples || b.p99 - a.p99 || a.pathPattern.localeCompare(b.pathPattern),
+    );
+
+  return {
+    days: options.days,
+    samples: routes.reduce((sum, row) => sum + row.samples, 0),
+    note: HTTP_REVIEW_NOTE,
+    routes,
+  };
+}
+
+export function formatHttpReview(
+  result: HttpReviewOutput,
+  options: { noColor?: boolean } = {},
+): string {
+  const c = makeColors(!options.noColor);
+  const lines: string[] = [];
+  lines.push(
+    `${c.bold}HTTP routes${c.reset} ${c.dim}${result.days}d  ${result.samples.toLocaleString()} raw samples  ${result.routes.length} routes${c.reset}`,
+  );
+  lines.push(`  ${c.dim}${result.note}${c.reset}`);
+  lines.push("");
+  lines.push(
+    `  ${"Method".padEnd(6)} ${"Path".padEnd(68)} ${"n".padStart(7)} ${"p50".padStart(8)} ${"p90".padStart(8)} ${"p99".padStart(8)} ${"err%".padStart(7)}`,
+  );
+  if (result.routes.length === 0) {
+    lines.push(`  ${c.dim}no server.http_request_ms samples${c.reset}`);
+    return lines.join("\n");
+  }
+  for (const row of result.routes) {
+    lines.push(
+      `  ${row.method.slice(0, 6).padEnd(6)} ${row.pathPattern.slice(0, 68).padEnd(68)} ${String(row.samples).padStart(7)} ${fmtValue(row.p50, "ms").padStart(8)} ${fmtValue(row.p90, "ms").padStart(8)} ${fmtValue(row.p99, "ms").padStart(8)} ${fmtPercent(row.errorRate).padStart(7)}`,
+    );
+  }
+  return lines.join("\n");
+}
+
 function statusValue(stats: MetricStats): number {
   return stats.tm99;
 }
@@ -1699,6 +1819,8 @@ function makeColors(enabled: boolean) {
 
 const GROUP_NOTES: Record<string, string> = {
   "UX Responsiveness": "User-visible wait time. Do not put full agent work duration in this group.",
+  Server:
+    "Resource pressure. event_loop_lag_ms is the sampler-interval p99; Server Health plots that p99 and the interval max.",
   "Connection Reliability":
     "Command/session readiness and stream health. These are user-blocking when they fail or tail out.",
   "Attention and Media UX":
@@ -1729,12 +1851,23 @@ const AGENT_WORKLOAD_METRICS = new Set([
 ]);
 
 function informationalGroup(metric: string): string {
-  if (
-    metric === "server.turn_ttft_ms" ||
-    metric === "chat.session_switch_ms" ||
-    metric === "chat.workspace_load_ms"
-  ) {
+  if (metric === "server.turn_ttft_ms") {
     return "UX responsiveness drill-down (no SLO)";
+  }
+  if (metric.startsWith("chat.dictation_") || metric.startsWith("server.dictation_")) {
+    return "Dictation drill-down (no SLO)";
+  }
+  if (
+    metric.startsWith("chat.share_") ||
+    metric.startsWith("chat.quick_session_") ||
+    metric.startsWith("chat.ask_") ||
+    metric.startsWith("chat.media_") ||
+    metric.startsWith("chat.voice_playback_")
+  ) {
+    return "Attention and media drill-down (no SLO)";
+  }
+  if (metric.startsWith("network.")) {
+    return "Connection and command drill-down (no SLO)";
   }
   if (AGENT_WORKLOAD_METRICS.has(metric)) return "Agent workload / progress (not UX latency)";
   if (
@@ -1762,13 +1895,6 @@ function informationalGroup(metric: string): string {
   }
   if (metric.startsWith("server.") || metric.startsWith("device.")) {
     return "Server and device diagnostics (no SLO)";
-  }
-  if (
-    metric.startsWith("chat.ask_") ||
-    metric.startsWith("chat.media_") ||
-    metric.startsWith("chat.voice_playback_")
-  ) {
-    return "Attention and media drill-down (no SLO)";
   }
   return "Other informational (no SLO)";
 }
@@ -2062,6 +2188,7 @@ interface ParsedArgs {
   help: boolean;
   dictation: boolean;
   models: boolean;
+  http: boolean;
   fields: Set<string> | null;
   byTags: string[];
   svgOut: string | undefined;
@@ -2079,6 +2206,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     help: false,
     dictation: false,
     models: false,
+    http: false,
     fields: null,
     byTags: [],
     svgOut: undefined,
@@ -2116,6 +2244,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
         break;
       case "--models":
         result.models = true;
+        break;
+      case "--http":
+        result.http = true;
         break;
       case "--by": {
         const raw = argv[++i] ?? "";
@@ -2163,6 +2294,7 @@ Phone-friendly by default. Use --wide for full tables.
   bun server/scripts/telemetry-review.ts --dictation --by engine,source,provider_id,model
   bun server/scripts/telemetry-review.ts --models
   bun server/scripts/telemetry-review.ts --models --json
+  bun server/scripts/telemetry-review.ts --http --days 1
 
 Options:
   --data-dir <path>     Oppi data dir (default: ~/.config/oppi)
@@ -2173,6 +2305,9 @@ Options:
   --models              Read-only routing review by exact provider/model and tool.
                         Historical untagged samples stay explicit. Operational
                         success is not accepted-task correctness.
+  --http                Per-route server.http_request_ms table (p50/p90/p99,
+                        sample count, status_code>=400 rate). Raw samples;
+                        fast successful routine routes are omitted.
   --by <tags>           Breakdown tags (comma-separated). Example: engine,source,provider_id,model
   --json                Machine-readable JSON
   --compact             Minimal JSON for agents
@@ -2218,6 +2353,16 @@ function main(): void {
       console.log(JSON.stringify(modelsResult, null, args.compact ? 0 : 2));
     } else {
       console.log(formatModelsReview(modelsResult, { noColor: args.noColor }));
+    }
+    return;
+  }
+
+  if (args.http) {
+    const httpResult = reviewHttp(data, { days: args.days });
+    if (args.json || args.compact) {
+      console.log(JSON.stringify(httpResult, null, args.compact ? 0 : 2));
+    } else {
+      console.log(formatHttpReview(httpResult, { noColor: args.noColor }));
     }
     return;
   }

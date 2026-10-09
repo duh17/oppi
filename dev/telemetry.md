@@ -25,6 +25,7 @@ From `server/`:
 
 ```bash
 npm run telemetry:review -- --days 1 --wide
+npm run telemetry:review -- --http --days 1
 npm run telemetry:review -- --models --days 7
 npm run telemetry:client-logs -- --days 1 --limit 30
 npm run telemetry:client-logs -- --hours 3 --limit 30
@@ -46,6 +47,8 @@ npm run telemetry:grafana:up
 # Open http://localhost:13001, default login admin/admin
 # Dashboards: Release Preflight, Server Health, Model Routing
 ```
+
+Release Preflight is the experience view: UX latency, connection readiness, client network, dictation, and collapsed command, quick-session, and share-publish drill-down. Server Health is resource and server-ops health: event-loop lag, per-route HTTP, and collapsed session, push, event-ring, and dictation drill-down. Model Routing compares provider and model workload.
 
 ## Privacy model
 
@@ -253,20 +256,29 @@ Use Pi session files for forensic replay. Use Oppi metrics to answer whether the
 
 ## Local dashboards and importer
 
-The optional Grafana stack imports JSONL files into SQLite and serves prebuilt dashboards: Release Preflight, Server Health, and Model Routing.
+The optional Grafana stack imports JSONL files into SQLite and serves three dashboards: Release Preflight, Server Health, and Model Routing.
 
 ```bash
 cd server
 npm run telemetry:grafana:up
 ```
 
+Query stored rows by how they were written:
+
+- Sum-aggregated counters (`server.ws_message_sent`, `server.ws_message_received`, `server.ws_binary_received_bytes`, `server.turn_input_tokens`, `server.turn_output_tokens`, `server.turn_cost`): `value` is the flush-bucket sum. Use `SUM(value)`. Row count is buckets, not events.
+- Max-aggregated gauges (`server.broadcast_fanout`, `server.event_ring_utilization`): `value` is the flush-bucket peak. Use `MAX(value)`.
+- Raw samples, including `server.http_request_ms`, session-create timings, dictation timings, and chat metrics: `value` is one measurement. Use percentiles or `AVG`/`MAX` of `value`, and `COUNT(*)` for sample count. Do not treat that count as request volume when the emitter omits fast successful routine routes.
+
+`telemetry:review -- --http` uses the same raw-sample rule for `server.http_request_ms`: p50/p90/p99, sample count, and `status_code >= 400` rate by method and `path_pattern`.
+
 Importer notes:
 
 - reads JSONL from `${OPPI_DATA_DIR:-~/.config/oppi}/diagnostics/telemetry/*.jsonl`
 - writes SQLite into a Docker-managed volume for Grafana; Grafana opens it read-write so SQLite WAL-mode read queries can create sidecar shared-memory files
 - can also run manually with `npm run telemetry:import`
-- normalizes append-only daily JSONL files incrementally
+- normalizes append-only daily JSONL files incrementally, and reimports a file when the importer parser version changes
 - flattens common server-op tags for split-stream panels
+- copies resource-sample `eventLoop` `p50`, `p95`, `p99`, and `max` into `server_metric_samples` (`event_loop_p50`, `event_loop_p95`, `event_loop_p99`, `event_loop_max`). Missing values stay NULL. Server Health plots p99 and max. `telemetry:review` gates `server.event_loop_lag_ms` on the sampler p99.
 
 See `server/README.md` for the full dashboard runbook.
 

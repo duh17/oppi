@@ -308,6 +308,8 @@ Importer behavior:
 - ingests append-only daily JSONL files incrementally instead of reimporting the whole hot file each cycle
 - normalizes source-file keys so Docker and host imports target the same rows
 - flattens common server-ops tags (`path`, `type`, `level`, `lane`, `ring`, `code`, `outcome`) for split-stream Grafana panels
+- copies resource-sample `eventLoop.p50`, `p95`, `p99`, and `max` into `event_loop_p50`, `event_loop_p95`, `event_loop_p99`, and `event_loop_max`; missing values stay NULL
+- reimports a JSONL file when the importer parser version changes, so new columns fill in on the next import
 - keeps at most `OPPI_TELEMETRY_BROKEN_DB_KEEP_COUNT` malformed-db backups; the default is `1`
 - uses a short-lived lock file so overlapping importer runs skip rather than clobber each other
 
@@ -320,6 +322,10 @@ The stack provisions this datasource and these dashboards automatically:
 
 - datasource: `Oppi Telemetry SQLite`
 - dashboards: `Oppi Release Preflight`, `Oppi Server Health`, and `Oppi Model Routing` (folder: `Oppi`)
+- Release Preflight: experience metrics, including workspace load, client network handshake and ping RTT, server STT latency, and collapsed command, quick-session, and share-publish drill-down
+- Server Health: event-loop p99 and max, per-route HTTP latency, and collapsed session-create, push, event-ring, and server-dictation drill-down
+- Model Routing: provider and model workload
+- Sum-aggregated counters use `SUM(value)`. Max-aggregated gauges (`broadcast_fanout`, `event_ring_utilization`) use `MAX(value)`. HTTP and other timings are raw samples; `telemetry:review -- --http` prints the per-route table
 
 ### 2) Stop telemetry stack
 

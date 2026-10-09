@@ -18,7 +18,7 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-const INGEST_PARSER_VERSION = 5;
+const INGEST_PARSER_VERSION = 6;
 const DEFAULT_BROKEN_BACKUP_KEEP_COUNT = 1;
 const DEFAULT_LOCK_STALE_MS = 10 * 60 * 1000;
 
@@ -124,7 +124,11 @@ function ensureSchema(db) {
       sessions_ready INTEGER NOT NULL,
       sessions_starting INTEGER NOT NULL,
       sessions_total INTEGER NOT NULL,
-      ws_connections INTEGER NOT NULL
+      ws_connections INTEGER NOT NULL,
+      event_loop_p50 REAL,
+      event_loop_p95 REAL,
+      event_loop_p99 REAL,
+      event_loop_max REAL
     );
     CREATE INDEX IF NOT EXISTS idx_server_metric_ts ON server_metric_samples(ts_ms);
 
@@ -181,6 +185,19 @@ function ensureSchema(db) {
     db.exec(
       "ALTER TABLE ingested_files ADD COLUMN processed_offset_bytes INTEGER NOT NULL DEFAULT 0",
     );
+  }
+
+  const serverMetricColumns = db.prepare("PRAGMA table_info(server_metric_samples)").all();
+  const serverMetricColumnNames = new Set(serverMetricColumns.map((column) => column.name));
+  for (const column of [
+    "event_loop_p50",
+    "event_loop_p95",
+    "event_loop_p99",
+    "event_loop_max",
+  ]) {
+    if (!serverMetricColumnNames.has(column)) {
+      db.exec(`ALTER TABLE server_metric_samples ADD COLUMN ${column} REAL`);
+    }
   }
 
   const serverOpsColumns = db.prepare("PRAGMA table_info(server_ops_metric_samples)").all();
@@ -435,8 +452,9 @@ function ingestServerFile(db, sourceFile, lines, options) {
     INSERT OR REPLACE INTO server_metric_samples (
       id, source_file, line_number, ts_ms, cpu_user, cpu_system, cpu_total,
       mem_heap_used, mem_heap_total, mem_rss, mem_external,
-      sessions_busy, sessions_ready, sessions_starting, sessions_total, ws_connections
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      sessions_busy, sessions_ready, sessions_starting, sessions_total, ws_connections,
+      event_loop_p50, event_loop_p95, event_loop_p99, event_loop_max
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let count = 0;
@@ -465,6 +483,10 @@ function ingestServerFile(db, sourceFile, lines, options) {
       Number(row.sessions?.starting ?? 0),
       Number(row.sessions?.total ?? 0),
       Number(row.wsConnections ?? 0),
+      safeNumber(Number(row.eventLoop?.p50)),
+      safeNumber(Number(row.eventLoop?.p95)),
+      safeNumber(Number(row.eventLoop?.p99)),
+      safeNumber(Number(row.eventLoop?.max)),
     );
     count += 1;
   }

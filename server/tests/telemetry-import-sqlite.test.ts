@@ -148,7 +148,7 @@ describe("telemetry SQLite importer", () => {
       const meta = db.prepare("SELECT parser_version FROM ingested_files").get() as {
         parser_version: number;
       };
-      expect(meta.parser_version).toBe(5);
+      expect(meta.parser_version).toBe(6);
     } finally {
       db.close();
     }
@@ -187,7 +187,7 @@ describe("telemetry SQLite importer", () => {
             parser_version: number;
           }
         ).parser_version,
-      ).toBe(5);
+      ).toBe(6);
     } finally {
       db.close();
     }
@@ -436,6 +436,64 @@ describe("telemetry SQLite importer", () => {
           tag_ring: null,
           tag_code: "1000",
           tag_outcome: null,
+        },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("imports event-loop lag from server resource samples and leaves missing samples null", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "oppi-telemetry-import-"));
+    const dbPath = join(tempDir, "telemetry.db");
+    writeFileSync(
+      join(tempDir, "server-metrics-2026-10-08.jsonl"),
+      JSON.stringify({
+        ts: 10,
+        cpu: { user: 1, system: 2, total: 3 },
+        memory: { heapUsed: 4, heapTotal: 5, rss: 6, external: 7 },
+        sessions: { busy: 0, ready: 1, starting: 0, total: 1 },
+        wsConnections: 2,
+        eventLoop: { p50: 1.5, p95: 9, p99: 21, max: 148 },
+      }) +
+        "\n" +
+        JSON.stringify({
+          ts: 11,
+          cpu: { total: 1 },
+          memory: { rss: 2, heapUsed: 3 },
+          sessions: { total: 1 },
+          wsConnections: 0,
+        }) +
+        "\n",
+    );
+
+    runImport(tempDir, dbPath);
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      const rows = db
+        .prepare(
+          `
+          SELECT ts_ms, event_loop_p50, event_loop_p95, event_loop_p99, event_loop_max
+          FROM server_metric_samples
+          ORDER BY ts_ms
+        `,
+        )
+        .all();
+      expect(rows).toEqual([
+        {
+          ts_ms: 10,
+          event_loop_p50: 1.5,
+          event_loop_p95: 9,
+          event_loop_p99: 21,
+          event_loop_max: 148,
+        },
+        {
+          ts_ms: 11,
+          event_loop_p50: null,
+          event_loop_p95: null,
+          event_loop_p99: null,
+          event_loop_max: null,
         },
       ]);
     } finally {
