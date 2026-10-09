@@ -2,25 +2,17 @@
  * Simulator lifecycle for the pool: idle reaping, the booted-simulator ceiling,
  * and session-owned claims. Every shutdown happens under the slot's flock
  * lease, so a run, a claim owner, and a reaper never race on one simulator.
+ *
+ * Reaping runs only inside a pool command (after run, claim, release; before a
+ * boot; `reap`), right after that command used its lock dir. There is no
+ * background watcher: a detached process can outlive the lock dir and PATH it
+ * was started with and then reap the wrong simulators against an empty ledger.
  */
-import { spawn, spawnSync } from "node:child_process";
-import {
-  closeSync,
-  constants,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readdirSync,
-  statSync,
-  truncateSync,
-} from "node:fs";
-import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import {
   beginPublishing,
-  flockFd,
   inspectSlot,
-  LOCK_EX,
-  LOCK_NB,
   readSlotState,
   recordOwnedPgid,
   releaseClaimed,
@@ -47,18 +39,9 @@ import {
   parseDevicesJson,
   poolDeviceName,
   preferredAcquireSlots,
-  simctlDeviceEnv,
   type SimulatorDevice,
 } from "./sim-pool-simctl";
 import { CommandSession } from "./sim-pool-supervise";
-
-/** How often a watcher rechecks booted claims, whose owners can stop at any time. */
-const CLAIM_POLL_MS = 5 * 60_000;
-/** When a pass failed to shut something down, the watcher tries again this soon. */
-const RETRY_MS = 2 * 60_000;
-/** Longest watcher sleep, so a watcher notices slots released after it planned. */
-const WATCH_MAX_SLEEP_MS = 10 * 60_000;
-const REAPER_LOG_MAX_BYTES = 1_000_000;
 
 const POOL_NAME = /^Oppi-Pool-(\d+)$/;
 
@@ -81,21 +64,19 @@ function formatAge(ms: number): string {
   return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h${minutes % 60}m`;
 }
 
-/**
- * `abandoned`: no lease holds the slot, but its last lease ended `uncertain` or
- * died `in-flight`. `tryAcquireSlot` takes it back once its processes are gone.
- */
-export type IdleSlot = { slot: number; udid: string; lastUsedMs: number; abandoned?: boolean };
+export type IdleSlot = { slot: number; udid: string; lastUsedMs: number };
 
 type RestingSlot =
-  | { kind: "idle"; lastUsedMs: number; abandoned: boolean }
+  | { kind: "idle"; lastUsedMs: number }
   | { kind: "claimed"; claim: SlotClaim; claimedAtMs: number }
   | { kind: "busy" };
 
 /**
  * What a slot is while no lease holds it: idle, claimed, or busy (held now,
  * legacy, unreadable). A claim on an `uncertain` or dead `in-flight` record
- * still counts as a claim, so the reaper and `release` can finish it.
+ * still counts as a claim, so the reaper and `release` can finish it; without
+ * a claim such a record is idle, and `tryAcquireSlot` takes it back once its
+ * processes are gone.
  */
 function restingSlot(lockDir: string, slot: number): RestingSlot {
   const info = inspectSlot(lockDir, slot);
@@ -106,32 +87,19 @@ function restingSlot(lockDir: string, slot: number): RestingSlot {
   if (state?.claim) {
     return { kind: "claimed", claim: state.claim, claimedAtMs: lastUsedMs(state) };
   }
-  return { kind: "idle", lastUsedMs: lastUsedMs(state), abandoned: state !== null && state.status !== "reusable" };
+  return { kind: "idle", lastUsedMs: lastUsedMs(state) };
 }
 
 /**
  * Idle booted pool simulators to shut down now. The `keepWarm` most recently
  * used stay booted no matter how long they idle; the rest go once idle for
- * `idleMs`. `nextDueMs` is when the next kept-for-now simulator expires.
+ * `idleMs`.
  */
-export function planIdleReap(
-  idle: IdleSlot[],
-  nowMs: number,
-  idleMs: number,
-  keepWarm: number,
-): { expired: IdleSlot[]; nextDueMs?: number } {
-  const byRecent = [...idle].sort((a, b) => b.lastUsedMs - a.lastUsedMs);
-  const expired: IdleSlot[] = [];
-  let nextDueMs: number | undefined;
-  for (const slot of byRecent.slice(keepWarm)) {
-    const due = slot.lastUsedMs + idleMs;
-    if (due <= nowMs) {
-      expired.push(slot);
-    } else {
-      nextDueMs = nextDueMs === undefined ? due : Math.min(nextDueMs, due);
-    }
-  }
-  return { expired, nextDueMs };
+export function planIdleReap(idle: IdleSlot[], nowMs: number, idleMs: number, keepWarm: number): IdleSlot[] {
+  return [...idle]
+    .sort((a, b) => b.lastUsedMs - a.lastUsedMs)
+    .slice(keepWarm)
+    .filter((slot) => slot.lastUsedMs + idleMs <= nowMs);
 }
 
 export type OwnerInfo = { status: string; lastActivityMs?: number } | "gone" | "unknown";
@@ -459,7 +427,7 @@ export async function commandShutdownIdle(config: PoolConfig): Promise<number> {
   return status;
 }
 
-type ClaimPass = { bootedKept: boolean; shutdowns: number; failed: boolean };
+type ClaimPass = { shutdowns: number; failed: boolean };
 
 /**
  * Frees claims of stopped owners and powers down claims of idle owners. The
@@ -473,7 +441,7 @@ async function reapClaims(
   slots?: number[],
 ): Promise<ClaimPass> {
   const claims = claimedSlots(config.lockDir).filter((entry) => !slots || slots.includes(entry.slot));
-  const pass: ClaimPass = { bootedKept: false, shutdowns: 0, failed: false };
+  const pass: ClaimPass = { shutdowns: 0, failed: false };
   if (claims.length === 0) {
     return pass;
   }
@@ -488,7 +456,6 @@ async function reapClaims(
     const booted = device ? isBooted(device) : false;
     const verdict = claimVerdict(owners.get(claim.owner) ?? "unknown", now, idleMs, claimedAtMs);
     if (verdict === "keep" || (verdict === "power-down" && !booted)) {
-      pass.bootedKept ||= booted;
       continue;
     }
     log(
@@ -503,18 +470,10 @@ async function reapClaims(
     });
     pass.failed ||= outcome === "failed";
     pass.shutdowns += outcome === "shutdown" ? 1 : 0;
-    pass.bootedKept ||= booted && outcome !== "shutdown";
   }
   return pass;
 }
 
-export type ReapResult = { nextDueMs?: number; failed: boolean };
-
-/**
- * One reaper pass: shut down idle pool simulators past the idle limit (except
- * the warm ones), then settle claims. `nextDueMs` says when another pass could
- * change something; undefined means nothing is left to watch.
- */
 /** Booted pool simulators that no lease or claim holds. */
 function idlePoolSlots(lockDir: string, devices: SimulatorDevice[]): IdleSlot[] {
   const idle: IdleSlot[] = [];
@@ -525,38 +484,34 @@ function idlePoolSlots(lockDir: string, devices: SimulatorDevice[]): IdleSlot[] 
     }
     const resting = restingSlot(lockDir, slot);
     if (resting.kind === "idle") {
-      idle.push({ slot, udid: device.udid, lastUsedMs: resting.lastUsedMs, abandoned: resting.abandoned });
+      idle.push({ slot, udid: device.udid, lastUsedMs: resting.lastUsedMs });
     }
   }
   return idle;
 }
 
-export async function reapOnce(config: PoolConfig, session: CommandSession): Promise<ReapResult> {
+/**
+ * One reaper pass: shut down idle pool simulators past the idle limit (except
+ * the warm ones), then settle claims. Anything it cannot shut down now (a
+ * failed shutdown, a lease whose processes still run) is picked up by the
+ * next pool command's pass. Returns whether any shutdown failed.
+ */
+export async function reapOnce(config: PoolConfig, session: CommandSession): Promise<boolean> {
   const now = Date.now();
   const devices = await listDevices(session);
-  const idle = idlePoolSlots(config.lockDir, devices);
-  const plan = planIdleReap(idle, now, config.idleMinutes * 60_000, config.keepWarm);
+  const expired = planIdleReap(idlePoolSlots(config.lockDir, devices), now, config.idleMinutes * 60_000, config.keepWarm);
   let failed = false;
-  let retry = false;
-  for (const slot of plan.expired) {
+  for (const slot of expired) {
     if (session.canceled) {
-      return { failed };
+      return failed;
     }
     log(`[sim-pool] reap: ${poolDeviceName(slot.slot)} idle for ${formatAge(now - slot.lastUsedMs)}`);
     const outcome = await shutdownPoolSlot(session, config, slot.slot, slot.udid, "reap", {
       idleSince: slot.lastUsedMs,
     });
     failed ||= outcome === "failed";
-    // An abandoned lease whose processes still run is skipped; try it again later.
-    retry ||= outcome === "skipped" && slot.abandoned === true;
   }
-  const claims = await reapClaims(session, config, devices);
-  failed ||= claims.failed;
-  const claimDue = claims.bootedKept ? now + CLAIM_POLL_MS : undefined;
-  // A failed or deferred shutdown leaves its simulator booted; keep a watcher on it.
-  const retryDue = failed || retry ? Date.now() + RETRY_MS : undefined;
-  const dues = [plan.nextDueMs, claimDue, retryDue].filter((due): due is number => due !== undefined);
-  return { failed, ...(dues.length > 0 ? { nextDueMs: Math.min(...dues) } : {}) };
+  return (await reapClaims(session, config, devices)).failed || failed;
 }
 
 /**
@@ -614,127 +569,40 @@ export async function ensureBootCapacity(config: PoolConfig, targetUdid: string)
   }
 }
 
-function takeReaperLock(lockDir: string): number | undefined {
-  mkdirSync(lockDir, { recursive: true });
-  const fd = openSync(join(lockDir, "reaper.lock"), constants.O_RDWR | constants.O_CREAT, 0o644);
-  // A watcher that just decided to exit still holds the lock for a moment.
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    if (flockFd(fd, LOCK_EX | LOCK_NB) === 0) {
-      return fd;
-    }
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
-  }
-  closeSync(fd);
-  return undefined;
-}
-
-function reaperRunning(lockDir: string): boolean {
-  const path = join(lockDir, "reaper.lock");
-  if (!existsSync(path)) {
-    return false;
-  }
-  const fd = openSync(path, constants.O_RDWR);
-  try {
-    return flockFd(fd, LOCK_EX | LOCK_NB) !== 0;
-  } finally {
-    closeSync(fd);
-  }
-}
-
-/** Starts a detached `reap --watch`; at most one runs per lock dir. */
-export function startReaperWatcher(config: PoolConfig): void {
-  if (config.idleMinutes === 0) {
-    return;
-  }
-  mkdirSync(config.lockDir, { recursive: true });
-  const logPath = join(config.lockDir, "reaper.log");
-  if (existsSync(logPath) && statSync(logPath).size > REAPER_LOG_MAX_BYTES) {
-    truncateSync(logPath, 0);
-  }
-  const fd = openSync(logPath, "a");
-  try {
-    const child = spawn(process.execPath, [config.poolScript, "reap", "--watch"], {
-      detached: true,
-      stdio: ["ignore", fd, fd],
-      env: simctlDeviceEnv(process.env),
-    });
-    child.unref();
-  } finally {
-    closeSync(fd);
-  }
-}
-
-/** Housekeeping after a run; it never changes the run's result. */
-export async function maintainAfterRun(config: PoolConfig): Promise<void> {
+/**
+ * Reap pass at the end of a pool command (run, claim, release). Housekeeping
+ * only: a failure is logged and never changes the command's result.
+ */
+export async function reapAfterCommand(config: PoolConfig): Promise<void> {
   if (config.idleMinutes === 0) {
     return;
   }
   const session = new CommandSession();
   session.installHandlers();
   try {
-    const result = await reapOnce(config, session);
-    if (result.nextDueMs !== undefined && !session.canceled) {
-      startReaperWatcher(config);
-    }
+    await reapOnce(config, session);
   } catch (error) {
-    log(`[sim-pool] reap after run failed: ${error instanceof Error ? error.message : String(error)}; leaving it to the watcher`);
-    startReaperWatcher(config);
+    log(`[sim-pool] reap failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
     await session.dispose();
   }
 }
 
 export async function commandReap(config: PoolConfig, args: string[]): Promise<number> {
-  const unknown = args.filter((arg) => arg !== "--watch");
-  if (unknown.length > 0) {
-    die(`reap: unexpected argument ${unknown[0]}`);
+  if (args.length > 0) {
+    die(`reap: unexpected argument ${args[0]}`);
   }
   if (config.idleMinutes === 0) {
     log("[sim-pool] reap: OPPI_SIM_POOL_IDLE_MINUTES=0, the reaper is off");
     return 0;
   }
-  if (!args.includes("--watch")) {
-    const session = new CommandSession();
-    session.installHandlers();
-    try {
-      const result = await reapOnce(config, session);
-      return session.canceled ? session.cancelExitCode() : result.failed ? 1 : 0;
-    } finally {
-      await session.dispose();
-    }
-  }
-  const lock = takeReaperLock(config.lockDir);
-  if (lock === undefined) {
-    log("[sim-pool] reap: another watcher is already running");
-    return 0;
-  }
+  const session = new CommandSession();
+  session.installHandlers();
   try {
-    while (true) {
-      log(`[sim-pool] reap ${new Date().toISOString()}`);
-      const session = new CommandSession();
-      session.installHandlers();
-      let result: ReapResult;
-      try {
-        result = await reapOnce(config, session);
-      } catch (error) {
-        log(`[sim-pool] reap failed: ${error instanceof Error ? error.message : String(error)}`);
-        result = { failed: true, nextDueMs: Date.now() + RETRY_MS };
-      } finally {
-        await session.dispose();
-      }
-      if (session.canceled) {
-        return session.cancelExitCode();
-      }
-      if (result.nextDueMs === undefined) {
-        log("[sim-pool] reap: nothing left to watch");
-        return 0;
-      }
-      const waitMs = Math.min(Math.max(result.nextDueMs - Date.now(), 5_000), WATCH_MAX_SLEEP_MS);
-      log(`[sim-pool] reap: next pass in ${Math.round(waitMs / 1000)}s`);
-      await new Promise((resolve) => setTimeout(resolve, waitMs));
-    }
+    const failed = await reapOnce(config, session);
+    return session.canceled ? session.cancelExitCode() : failed ? 1 : 0;
   } finally {
-    closeSync(lock);
+    await session.dispose();
   }
 }
 
@@ -878,11 +746,19 @@ export async function commandClaim(config: PoolConfig, args: string[]): Promise<
       }
     }
   }
-  startReaperWatcher(config);
+  await reapAfterCommand(config);
   return 0;
 }
 
 export async function commandRelease(config: PoolConfig, args: string[]): Promise<number> {
+  const status = await releaseClaims(config, args);
+  if (status !== 130 && status !== 143) {
+    await reapAfterCommand(config);
+  }
+  return status;
+}
+
+async function releaseClaims(config: PoolConfig, args: string[]): Promise<number> {
   const { owner, positional } = parseOwnerArgs("release", args);
   if (positional.length > 1) {
     die(`release: unexpected argument ${positional[1]}`);
@@ -893,16 +769,28 @@ export async function commandRelease(config: PoolConfig, args: string[]): Promis
   let status = 0;
   try {
     const devices = await listDevices(session);
-    const mine = claimedSlots(config.lockDir).filter((entry) => entry.claim.owner === owner);
-    const selected = target
-      ? mine.filter((entry) => poolDeviceFor(devices, entry.slot)?.udid === target)
-      : mine;
-    if (target && selected.length === 0) {
+    const isTarget = (slot: number) => !target || poolDeviceFor(devices, slot)?.udid === target;
+    const selected = claimedSlots(config.lockDir).filter(
+      (entry) => entry.claim.owner === owner && isTarget(entry.slot),
+    );
+    // Claims of this owner that a reaper or claim holds right now cannot be
+    // released yet; say so instead of reporting that nothing is claimed.
+    const held = [...slotStates(config.lockDir)]
+      .filter(([slot, state]) => state.claim?.owner === owner && isTarget(slot))
+      .map(([slot]) => slot)
+      .filter((slot) => restingSlot(config.lockDir, slot).kind === "busy");
+    for (const slot of held) {
+      log(`[sim-pool] release: ${poolDeviceName(slot)} is busy with another sim-pool command; try again`);
+      status = 1;
+    }
+    if (target && selected.length === 0 && held.length === 0) {
       die(`release: ${target} is not claimed by session ${owner}`);
     }
     if (selected.length === 0) {
-      log(`[sim-pool] release: session ${owner} has no claimed simulators`);
-      return 0;
+      if (held.length === 0) {
+        log(`[sim-pool] release: session ${owner} has no claimed simulators`);
+      }
+      return status;
     }
     for (const { slot } of selected) {
       if (session.canceled) {
@@ -941,7 +829,7 @@ export function commandStatus(config: PoolConfig): number {
   out(
     config.idleMinutes === 0
       ? "Idle reaper: off"
-      : `Idle reaper: after ${config.idleMinutes}m, keeping ${config.keepWarm} warm (watcher ${reaperRunning(config.lockDir) ? "running" : "not running"})`,
+      : `Idle reaper: after ${config.idleMinutes}m, keeping ${config.keepWarm} warm`,
   );
   out(`Booted limit: ${config.maxBooted === 0 ? "off" : config.maxBooted}`);
   out("");

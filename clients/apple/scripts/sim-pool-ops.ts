@@ -82,7 +82,6 @@ export type PoolConfig = {
   appleDir: string;
   buildBase: string;
   slimScript: string;
-  poolScript: string;
   homeDir: string;
   /** Selected device profile name, or "" for the default iPhone pool. */
   profileName: string;
@@ -443,7 +442,6 @@ export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: strin
     appleDir,
     buildBase,
     slimScript: join(scriptDir, "sim-slim.sh"),
-    poolScript: join(scriptDir, "sim-pool.ts"),
     homeDir: env.HOME ?? homedir(),
     profileName,
     claimSlotStart: profile?.claimSlotStart ?? 0,
@@ -2029,7 +2027,7 @@ export function usage(): never {
   sim-pool.sh run [--root <checkout>] [--device-profile NAME] -- <xcodebuild args...>
   sim-pool.sh claim --device-profile NAME [--owner SESSION]
   sim-pool.sh release [UDID] [--owner SESSION]
-  sim-pool.sh reap [--watch]
+  sim-pool.sh reap
   sim-pool.sh self-test
   sim-pool.sh status
   sim-pool.sh shutdown-idle
@@ -2051,9 +2049,10 @@ xcode-toolchain.txt (Xcode 27.1); an explicit DEVELOPER_DIR wins.
 run acquires a simulator pool slot, injects -destination and -derivedDataPath,
 runs xcodebuild, and releases the slot on exit. An already-booted pool
 simulator is reused unless OPPI_SIM_POOL_FORCE_CLEAN_BOOT=1. Pool simulators
-stay booted after a run unless OPPI_SIM_POOL_KEEP_BOOTED=0; after each run the
-reaper shuts down pool simulators idle for OPPI_SIM_POOL_IDLE_MINUTES (30)
-except the OPPI_SIM_POOL_KEEP_WARM (2) most recently used. Before booting, the
+stay booted after a run unless OPPI_SIM_POOL_KEEP_BOOTED=0; at the end of each
+run, claim, and release the reaper shuts down pool simulators idle for
+OPPI_SIM_POOL_IDLE_MINUTES (30) except the OPPI_SIM_POOL_KEEP_WARM (2) most
+recently used. Before booting, the
 pool shuts down least recently used idle pool simulators to keep at most
 OPPI_SIM_POOL_MAX_BOOTED (8) simulators booted, counting simulators it does not
 manage; when nothing is idle it boots anyway and says so. Unused simulator
@@ -2072,11 +2071,9 @@ simulator whose owner has been idle, and has not claimed, for
 OPPI_SIM_POOL_IDLE_MINUTES (the claim stays). Owners are checked with the oppi
 CLI, again right before each shutdown; when that fails, claims are left alone.
 
-reap applies that idle policy once. --watch keeps doing it until nothing is
-left to reap, retrying failed shutdowns after two minutes; run (also when
-canceled) and claim start a watcher in the background
-(\$OPPI_SIM_POOL_LOCK_DIR/reaper.log). OPPI_SIM_POOL_IDLE_MINUTES=0 turns the
-reaper off.
+reap applies that idle policy once. There is no background reaper: an idle
+simulator stays booted until the next pool command (a canceled run skips its
+pass). OPPI_SIM_POOL_IDLE_MINUTES=0 turns the reaper off.
 
 shutdown-idle acquires each slot with flock and records child process groups.
 Existing live, legacy, claimed, and flock-v1 in-flight slots are skipped. gated-v1

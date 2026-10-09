@@ -10,8 +10,7 @@ import {
   commandShutdownIdle,
   commandStatus,
   ensureBootCapacity,
-  maintainAfterRun,
-  startReaperWatcher,
+  reapAfterCommand,
 } from "./sim-pool-lifecycle";
 import { commandPruneCache, commandRun, extractPoolFlags, loadConfig, PoolError, usage } from "./sim-pool-ops";
 import { applyXcodeToolchain } from "./xcode-toolchain";
@@ -84,12 +83,9 @@ async function main(): Promise<void> {
         const code = await commandRun(config, peeled.rest.slice(1), {
           beforeBoot: (udid) => ensureBootCapacity(config, udid),
         });
-        // 130/143: canceled by SIGINT/SIGTERM. Skip the reap pass, but leave a
-        // watcher so a simulator this run booted does not stay up forever.
-        if (code === 130 || code === 143) {
-          startReaperWatcher(config);
-        } else {
-          await maintainAfterRun(config);
+        // 130/143: canceled by SIGINT/SIGTERM; the next pool command reaps.
+        if (code !== 130 && code !== 143) {
+          await reapAfterCommand(config);
         }
         process.exit(code);
         break;

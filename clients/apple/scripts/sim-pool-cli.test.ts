@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   chmodSync,
@@ -217,6 +217,21 @@ afterEach(() => {
   }
   for (const dir of temps.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// These tests are about run behaviour; reaping after each run is covered in
+// sim-pool-lifecycle.test.ts and here only adds simctl calls. Every CLI env
+// spreads process.env, so turning the reaper off covers them all.
+const savedIdleMinutes = process.env.OPPI_SIM_POOL_IDLE_MINUTES;
+beforeAll(() => {
+  process.env.OPPI_SIM_POOL_IDLE_MINUTES = "0";
+});
+afterAll(() => {
+  if (savedIdleMinutes === undefined) {
+    delete process.env.OPPI_SIM_POOL_IDLE_MINUTES;
+  } else {
+    process.env.OPPI_SIM_POOL_IDLE_MINUTES = savedIdleMinutes;
   }
 });
 

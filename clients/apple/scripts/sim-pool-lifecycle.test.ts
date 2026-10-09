@@ -145,7 +145,7 @@ echo "** BUILD SUCCEEDED **"
     OPPI_SIM_POOL_BOOT_TIMEOUT: "5",
     OPPI_SIM_RUNTIME: IOS_27_1,
     DEVELOPER_DIR: root,
-    // No background watcher in tests; the reap test turns the reaper on itself.
+    // Reaping stays off unless a test turns it on, so each test sees only its own command.
     OPPI_SIM_POOL_IDLE_MINUTES: "0",
   };
   delete env.OPPI_CALLER_SESSION_ID;
@@ -234,14 +234,14 @@ describe("idle reaping policy", () => {
       { slot: 2, udid: "C", lastUsedMs: now - 90 * MINUTE },
       { slot: 3, udid: "D", lastUsedMs: now - 20 * MINUTE },
     ];
-    const warmTwo = planIdleReap(idle, now, 30 * MINUTE, 2);
-    expect(warmTwo.expired.map((slot) => slot.udid).sort()).toEqual(["B", "C"]);
-    expect(warmTwo.nextDueMs).toBeUndefined();
-
-    // With one warm slot, D (20m idle) is not expired yet and sets the next pass.
-    const warmOne = planIdleReap(idle, now, 30 * MINUTE, 1);
-    expect(warmOne.expired.map((slot) => slot.udid).sort()).toEqual(["B", "C"]);
-    expect(warmOne.nextDueMs).toBe(now + 10 * MINUTE);
+    const udids = (slots: { udid: string }[]) => slots.map((slot) => slot.udid).sort();
+    // A and D are the two most recent (and under the limit anyway).
+    expect(udids(planIdleReap(idle, now, 30 * MINUTE, 2))).toEqual(["B", "C"]);
+    // D (20m) is not past the limit, warm or not.
+    expect(udids(planIdleReap(idle, now, 30 * MINUTE, 0))).toEqual(["B", "C"]);
+    // Keep-warm protects the most recent even when they are past the limit.
+    const stale = idle.filter((slot) => slot.udid === "B" || slot.udid === "C");
+    expect(udids(planIdleReap(stale, now, 30 * MINUTE, 1))).toEqual(["C"]);
   });
 
   test("claims follow their owner session", () => {
@@ -335,6 +335,10 @@ describe("sim-pool claim and release", () => {
     child.stdout.on("data", (chunk) => (stdout += chunk));
     child.stderr.on("data", (chunk) => (stderr += chunk));
     const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
+    // While the slot is held, release cannot free the claim and must not say there is none.
+    const blocked = sim.pool(["release", "--owner", "worker-a"]);
+    expect(blocked.status).not.toBe(0);
+    expect(blocked.stderr).toContain("busy");
     await new Promise((resolve) => setTimeout(resolve, 1500));
     releaseClaimed(held.owned, { owner: "worker-a", profile: "duo" });
     expect({ status: await exited, stderr }).toMatchObject({ status: 0 });
@@ -412,6 +416,35 @@ describe("sim-pool reap", () => {
   }, CLI_TIMEOUT);
 });
 
+function writeCheckout(root: string): void {
+  mkdirSync(join(root, "clients", "apple", "Oppi.xcodeproj"), { recursive: true });
+  writeFileSync(join(root, "clients", "apple", "Oppi.xcodeproj", "project.pbxproj"), "// fixture\n");
+}
+
+describe("sim-pool reap after a run", () => {
+  test("a finished run shuts down idle pool simulators and keeps its own warm", () => {
+    const sim = fakeSimulators([
+      { name: "Oppi-Pool-0", state: "Shutdown", type: IPHONE },
+      { name: "Oppi-Pool-5", state: "Booted", type: IPHONE },
+    ]);
+    seedSlot(sim.lockDir, 5, 60);
+    writeCheckout(sim.root);
+
+    const result = sim.pool(["run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"], {
+      OPPI_ROOT: sim.root,
+      OPPI_SIM_POOL_COUNT: "1",
+      OPPI_SIM_DEVICE_TYPE: IPHONE,
+      OPPI_SIM_POOL_IDLE_MINUTES: "30",
+      OPPI_SIM_POOL_KEEP_WARM: "1",
+    });
+    expectOk(result);
+    // Pool-0's own shutdown is the clean boot before the build; it must end booted.
+    expect(sim.shutdowns().filter((name) => name !== "Oppi-Pool-0")).toEqual(["Oppi-Pool-5"]);
+    expect(sim.state("Oppi-Pool-0")).toBe("Booted");
+    expect(slotStatus(sim.lockDir, 5)).toBe("reusable");
+  }, CLI_TIMEOUT);
+});
+
 describe("sim-pool booted ceiling", () => {
   test("a run shuts down least recently used idle pool simulators before booting, never unmanaged ones", () => {
     const sim = fakeSimulators([
@@ -422,8 +455,7 @@ describe("sim-pool booted ceiling", () => {
     ]);
     seedSlot(sim.lockDir, 3, 10);
     seedSlot(sim.lockDir, 4, 50);
-    mkdirSync(join(sim.root, "clients", "apple", "Oppi.xcodeproj"), { recursive: true });
-    writeFileSync(join(sim.root, "clients", "apple", "Oppi.xcodeproj", "project.pbxproj"), "// fixture\n");
+    writeCheckout(sim.root);
 
     const result = sim.pool(["run", "--", "xcodebuild", "-project", "Oppi.xcodeproj", "-scheme", "Oppi", "build"], {
       OPPI_ROOT: sim.root,
