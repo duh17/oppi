@@ -2,6 +2,10 @@
 # Xcode Cloud resolves linked xcframeworks before pre-build scripts run.
 # GhosttyVt and TailscaleKit are gitignored, so a clean clone fails unless
 # this script materializes them first. A vendor hit needs neither Zig nor Go.
+#
+# StampGitCommit reads this clone during the Xcode build. The checkout can
+# fail git with "dubious ownership"; stamp-git-commit.sh marks the repo root
+# safe for that read and still fails the build if git cannot resolve HEAD.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

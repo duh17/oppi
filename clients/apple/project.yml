@@ -130,6 +130,11 @@ targets:
         ENABLE_USER_SCRIPT_SANDBOXING: false
         INFOPLIST_PREPROCESS: YES
         INFOPLIST_PREFIX_HEADER: "$(DERIVED_FILE_DIR)/OPPIGitCommit.h"
+        # After the generated prefix header. A missing or undefined stamp
+        # fails ProcessInfoPlistFile instead of shipping a placeholder.
+        INFOPLIST_OTHER_PREPROCESSOR_FLAGS:
+          - "-include"
+          - "$(SRCROOT)/scripts/OPPIGitCommitGuard.h"
       configs:
         Release:
           # Only the DEBUG screenshot preview (usdz-rendering) reads this model.

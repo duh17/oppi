@@ -239,11 +239,10 @@ function sanitizeString(value: unknown, maxLength: number): string {
   return trimText(value, maxLength);
 }
 
-/** Short SHA, optional `-dirty`, or `unknown`. Anything else is dropped. */
+/** Short SHA, optional `-dirty`. Missing and anything else, including `unknown`, are dropped. */
 function sanitizeGitCommit(value: unknown): string | undefined {
   const raw = sanitizeString(value, 64).trim();
   if (!raw) return undefined;
-  if (raw === "unknown") return raw;
   if (/^[0-9a-f]{7,40}(?:-dirty)?$/i.test(raw)) return raw.toLowerCase();
   return undefined;
 }

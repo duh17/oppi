@@ -385,7 +385,7 @@ private struct MetricKitUploadMetadata: Sendable {
     let buildNumber: String
     let osVersion: String
     let deviceModel: String
-    let gitCommit: String
+    let gitCommit: String?
 }
 
 private actor MetricKitUploadQueue {

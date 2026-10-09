@@ -408,10 +408,22 @@ final class AppNavigation {
         }
     }
 
+    /// Stack depth is the workspace path. Split depth counts the detail
+    /// root plus each push, so a detail push is a route change even when the
+    /// screen token stays the same.
+    var navigationRouteDepth: Int {
+        switch workspaceNavigationPresentation {
+        case .stack:
+            workspacePath.count
+        case .split:
+            splitDetailPath.count + (splitDetailTarget == nil ? 0 : 1)
+        }
+    }
+
     var navigationRouteSnapshot: NavigationRouteSnapshot {
         NavigationRouteSnapshot(
             screen: diagnosticScreenLabel(),
-            stackDepth: workspacePath.count,
+            stackDepth: navigationRouteDepth,
             presentation: workspaceNavigationPresentation.telemetryLabel,
             sessionId: visibleDiagnosticSessionId(),
             workspaceId: visibleDiagnosticWorkspaceId()

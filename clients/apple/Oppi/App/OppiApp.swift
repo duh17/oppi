@@ -583,6 +583,9 @@ struct OppiApp: App {
             }
 
         return root
+            .onChange(of: navigation.splitDetailPath.count) { _, _ in
+                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "split_detail_path")
+            }
             .onReceive(NotificationCenter.default.publisher(for: .resourceReferenceTapped)) { notification in
                 guard let reference = notification.object as? ResourceReference else { return }
                 startResourceReferenceRequest(reference)

@@ -9409,6 +9409,10 @@
 				);
 				INFOPLIST_FILE = Oppi/Resources/Info.plist;
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
+				INFOPLIST_OTHER_PREPROCESSOR_FLAGS = (
+					"-include",
+					"$(SRCROOT)/scripts/OPPIGitCommitGuard.h",
+				);
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/OPPIGitCommit.h";
 				INFOPLIST_PREPROCESS = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -9488,6 +9492,10 @@
 				);
 				INFOPLIST_FILE = Oppi/Resources/Info.plist;
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
+				INFOPLIST_OTHER_PREPROCESSOR_FLAGS = (
+					"-include",
+					"$(SRCROOT)/scripts/OPPIGitCommitGuard.h",
+				);
 				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/OPPIGitCommit.h";
 				INFOPLIST_PREPROCESS = YES;
 				LD_RUNPATH_SEARCH_PATHS = (

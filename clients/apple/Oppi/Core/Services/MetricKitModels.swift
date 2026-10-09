@@ -19,7 +19,7 @@ struct MetricKitUploadRequest: Codable, Sendable {
     let buildNumber: String
     let osVersion: String
     let deviceModel: String
-    let gitCommit: String
+    let gitCommit: String?
     let clientKind: AppleClientKind?
     let appInstanceId: String?
     let bootId: String?
@@ -31,7 +31,7 @@ struct MetricKitUploadRequest: Codable, Sendable {
         buildNumber: String,
         osVersion: String,
         deviceModel: String,
-        gitCommit: String = "unknown",
+        gitCommit: String? = nil,
         clientKind: AppleClientKind? = nil,
         appInstanceId: String? = nil,
         bootId: String? = nil,
@@ -155,7 +155,7 @@ struct ChatMetricUploadRequest: Codable, Sendable {
     let buildNumber: String
     let osVersion: String
     let deviceModel: String
-    let gitCommit: String
+    let gitCommit: String?
     let samples: [ChatMetricSample]
 
     init(
@@ -164,7 +164,7 @@ struct ChatMetricUploadRequest: Codable, Sendable {
         buildNumber: String,
         osVersion: String,
         deviceModel: String,
-        gitCommit: String = "unknown",
+        gitCommit: String? = nil,
         samples: [ChatMetricSample]
     ) {
         self.generatedAt = generatedAt

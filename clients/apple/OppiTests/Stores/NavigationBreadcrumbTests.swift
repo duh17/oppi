@@ -157,11 +157,56 @@ struct NavigationBreadcrumbTests {
         #expect(remount["sessionId"] == "session-1")
     }
 
-    @Test func buildIdentityRejectsBlankAndUnexpandedSettings() {
-        #expect(AppBuildIdentity.gitCommit(infoValue: nil) == "unknown")
-        #expect(AppBuildIdentity.gitCommit(infoValue: "  ") == "unknown")
-        #expect(AppBuildIdentity.gitCommit(infoValue: "$(OPPI_GIT_COMMIT)") == "unknown")
+    @Test func buildIdentityOmitsBlankUnexpandedAndNonShaStamps() {
+        #expect(AppBuildIdentity.gitCommit(infoValue: nil) == nil)
+        #expect(AppBuildIdentity.gitCommit(infoValue: "  ") == nil)
+        #expect(AppBuildIdentity.gitCommit(infoValue: "$(OPPI_GIT_COMMIT)") == nil)
+        #expect(AppBuildIdentity.gitCommit(infoValue: "unknown") == nil)
+        #expect(AppBuildIdentity.gitCommit(infoValue: "OPPI_GIT_COMMIT_VALUE") == nil)
         #expect(AppBuildIdentity.gitCommit(infoValue: "fdf98184568b") == "fdf98184568b")
-        #expect(AppBuildIdentity.gitCommit(infoValue: "fdf98184568b-dirty") == "fdf98184568b-dirty")
+        #expect(AppBuildIdentity.gitCommit(infoValue: "FDF98184568B-dirty") == "fdf98184568b-dirty")
+    }
+
+    @Test func splitDetailPushChangesDepthAndEmitsWhenScreenTokenIsUnchanged() {
+        let navigation = AppNavigation()
+        navigation.launchPhase = .ready
+        navigation.showOnboarding = false
+        navigation.setWorkspaceNavigationPresentation(.split)
+        navigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+
+        let before = navigation.navigationRouteSnapshot
+        #expect(before.screen == "chat_reader")
+        #expect(before.presentation == "split")
+        #expect(before.stackDepth == 1)
+        #expect(navigation.visibleSplitDiagnosticContext.screen == "chat_reader")
+
+        navigation.openChatReader(ChatReaderNavTarget(id: UUID()))
+        let after = navigation.navigationRouteSnapshot
+
+        #expect(after.screen == before.screen)
+        #expect(navigation.visibleSplitDiagnosticContext == WorkspaceStackDiagnosticContext(
+            screen: "chat_reader",
+            sessionId: nil,
+            workspaceId: nil
+        ))
+        #expect(after.stackDepth == before.stackDepth + 1)
+        #expect(after.stackDepth == 2)
+
+        var logs: [NavigationRouteLog] = []
+        let coalescer = NavigationRouteTelemetryCoalescer(
+            schedule: { _ in },
+            emit: { logs.append($0) }
+        )
+        coalescer.note(before)
+        coalescer.flush()
+        coalescer.note(after)
+        coalescer.flush()
+
+        #expect(logs.count == 2)
+        #expect(logs[1].message == "Route changed")
+        #expect(logs[1].metadata["screen"] == "chat_reader")
+        #expect(logs[1].metadata["previousScreen"] == "chat_reader")
+        #expect(logs[1].metadata["stackDepth"] == "2")
+        #expect(logs[1].metadata["presentation"] == "split")
     }
 }

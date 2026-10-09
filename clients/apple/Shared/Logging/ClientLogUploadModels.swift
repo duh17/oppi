@@ -29,7 +29,7 @@ struct ClientLogUploadRequest: Codable, Sendable, Equatable {
     let buildNumber: String
     let osVersion: String
     let deviceModel: String
-    let gitCommit: String
+    let gitCommit: String?
     let clientKind: AppleClientKind
     let appInstanceId: String
     let bootId: String
@@ -42,7 +42,7 @@ struct ClientLogUploadRequest: Codable, Sendable, Equatable {
         buildNumber: String,
         osVersion: String,
         deviceModel: String,
-        gitCommit: String = "unknown",
+        gitCommit: String? = nil,
         clientKind: AppleClientKind,
         appInstanceId: String,
         bootId: String,
@@ -68,14 +68,14 @@ struct ClientLogUploadMetadata: Sendable, Equatable {
     let buildNumber: String
     let osVersion: String
     let deviceModel: String
-    let gitCommit: String
+    let gitCommit: String?
 
     init(
         appVersion: String,
         buildNumber: String,
         osVersion: String,
         deviceModel: String,
-        gitCommit: String = "unknown"
+        gitCommit: String? = nil
     ) {
         self.appVersion = appVersion
         self.buildNumber = buildNumber

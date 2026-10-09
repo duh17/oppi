@@ -274,6 +274,82 @@ describe("telemetry routes", () => {
     } finally {
       rmSync(unsafe.dataDir, { recursive: true, force: true });
     }
+
+    const unknown = makeHarness({
+      generatedAt,
+      gitCommit: "unknown",
+      clientKind: "ios",
+      appInstanceId: "app-1",
+      bootId: "boot-1",
+      entries: [
+        {
+          ts: generatedAt,
+          seq: 1,
+          level: "info",
+          category: "Navigation",
+          message: "Route changed",
+        },
+      ],
+    });
+    try {
+      const route = createTelemetryRoutes(unknown.ctx, unknown.helpers);
+      await route({
+        method: "POST",
+        path: "/telemetry/client-logs",
+        url: new URL("http://localhost/telemetry/client-logs"),
+        req: {} as IncomingMessage,
+        res: {} as ServerResponse,
+      });
+      const path = join(
+        unknown.dataDir,
+        "diagnostics",
+        "telemetry",
+        `client-logs-${new Date(generatedAt).toISOString().slice(0, 10)}.jsonl`,
+      );
+      const record = JSON.parse(readFileSync(path, "utf8").trim()) as { gitCommit?: string };
+      expect(record.gitCommit).toBeUndefined();
+    } finally {
+      rmSync(unknown.dataDir, { recursive: true, force: true });
+    }
+
+    const omitted = makeHarness({
+      generatedAt,
+      clientKind: "ios",
+      appInstanceId: "app-1",
+      bootId: "boot-1",
+      entries: [
+        {
+          ts: generatedAt,
+          seq: 1,
+          level: "info",
+          category: "Navigation",
+          message: "Route changed",
+        },
+      ],
+    });
+    try {
+      const route = createTelemetryRoutes(omitted.ctx, omitted.helpers);
+      const handled = await route({
+        method: "POST",
+        path: "/telemetry/client-logs",
+        url: new URL("http://localhost/telemetry/client-logs"),
+        req: {} as IncomingMessage,
+        res: {} as ServerResponse,
+      });
+      expect(handled).toBe(true);
+      expect(omitted.errors).toEqual([]);
+      const path = join(
+        omitted.dataDir,
+        "diagnostics",
+        "telemetry",
+        `client-logs-${new Date(generatedAt).toISOString().slice(0, 10)}.jsonl`,
+      );
+      const record = JSON.parse(readFileSync(path, "utf8").trim()) as { gitCommit?: string; entryCount?: number };
+      expect(record.gitCommit).toBeUndefined();
+      expect(record.entryCount).toBe(1);
+    } finally {
+      rmSync(omitted.dataDir, { recursive: true, force: true });
+    }
   });
 
   it("rejects client log uploads when telemetry is disabled", async () => {
