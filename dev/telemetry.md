@@ -130,6 +130,7 @@ The front page should focus on metrics that directly map to user experience. Kee
 | `chat.workspace_load_ms`    | Time until the workspace screen is usable.                       |
 | `chat.session_load_ms`      | Time from selecting a session to chat content visible.           |
 | `chat.session_switch_ms`    | Session row tap-to-content latency.                              |
+| `chat.thread_load_ms`       | Time from opening a thread until its snapshot is applied.        |
 | `chat.ttft_ms`              | User-perceived time to first assistant response token.           |
 | `chat.fresh_content_lag_ms` | Delay between new stream content and visible timeline freshness. |
 

@@ -512,6 +512,43 @@ struct SessionThreadDetailView: View {
     }
 }
 
+/// Overlaps best-effort Agent name lookup with the thread snapshot fetch.
+/// The snapshot is returned as soon as the thread request finishes; name lookup
+/// is a separate task so opening a thread is not gated on `listAgents`.
+enum SessionThreadLoad {
+    struct Failure: Sendable, Equatable {
+        var localizedDescription: String
+        var errorKind: String
+    }
+
+    struct Fetch: Sendable {
+        var snapshot: SessionThreadSnapshot?
+        var failure: Failure?
+        var agentNames: Task<[String: String]?, Never>?
+    }
+
+    static func fetch(
+        needsAgentNames: Bool,
+        listAgents: @escaping @Sendable () async -> [String: String]?,
+        getThread: @Sendable () async throws -> SessionThreadSnapshot
+    ) async -> Fetch {
+        let names = needsAgentNames ? Task { await listAgents() } : nil
+        do {
+            let snapshot = try await getThread()
+            return Fetch(snapshot: snapshot, failure: nil, agentNames: names)
+        } catch {
+            return Fetch(
+                snapshot: nil,
+                failure: Failure(
+                    localizedDescription: error.localizedDescription,
+                    errorKind: ChatSessionTelemetry.metricErrorKind(for: error)
+                ),
+                agentNames: names
+            )
+        }
+    }
+}
+
 private struct SessionThreadDetailContentView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
@@ -644,34 +681,102 @@ private struct SessionThreadDetailContentView: View {
     }
 
     private func load() async {
+        let startedAtMs = Date.nowMs()
+        let phase = snapshot == nil ? "initial" : "refresh"
         guard let api = connection?.apiClient else {
             loadError = "Server connection is unavailable."
+            recordThreadLoad(
+                startedAtMs: startedAtMs,
+                phase: phase,
+                status: "error",
+                errorKind: "not_connected",
+                workspaceId: workspaceId(in: snapshot)
+            )
             return
         }
         loadGeneration += 1
         let generation = loadGeneration
-        if agentNames.isEmpty {
-            // Names are labels only; icons come from each session's launch snapshot.
-            if let agents = try? await api.listAgents(includeArchived: true) {
-                agentNames = Dictionary(agents.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        let rootSessionId = target.rootSessionId
+        // Names are labels only; icons come from each session's launch snapshot.
+        // Do not wait for them before applying the thread snapshot.
+        let fetch = await SessionThreadLoad.fetch(
+            needsAgentNames: agentNames.isEmpty,
+            listAgents: { [api] in
+                guard let agents = try? await api.listAgents(includeArchived: true) else { return nil }
+                return Dictionary(agents.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+            },
+            getThread: { [api] in
+                try await api.getSessionThread(sessionId: rootSessionId)
             }
+        )
+        guard generation == loadGeneration else {
+            fetch.agentNames?.cancel()
+            return
         }
-        do {
-            let fetched = try await api.getSessionThread(sessionId: target.rootSessionId)
-            guard generation == loadGeneration else { return }
+        if Task.isCancelled {
+            fetch.agentNames?.cancel()
+        }
+        if let fetched = fetch.snapshot {
             snapshot = fetched
             markMembersSeen(fetched.sessions.map(\.id))
             loadedMemberKey = memberKey
             loadError = nil
             refreshError = nil
-        } catch {
-            guard generation == loadGeneration else { return }
+            recordThreadLoad(
+                startedAtMs: startedAtMs,
+                phase: phase,
+                status: "ok",
+                workspaceId: workspaceId(in: fetched)
+            )
+        } else if let failure = fetch.failure {
             if snapshot == nil {
-                loadError = error.localizedDescription
+                loadError = failure.localizedDescription
             } else {
-                refreshError = "Couldn't refresh: \(error.localizedDescription)"
+                refreshError = "Couldn't refresh: \(failure.localizedDescription)"
             }
+            recordThreadLoad(
+                startedAtMs: startedAtMs,
+                phase: phase,
+                status: "error",
+                errorKind: failure.errorKind,
+                workspaceId: workspaceId(in: snapshot)
+            )
         }
+        if !Task.isCancelled {
+            applyAgentNames(fetch.agentNames, generation: generation)
+        }
+    }
+
+    /// Name labels can land after the snapshot. A newer load wins.
+    private func applyAgentNames(_ namesTask: Task<[String: String]?, Never>?, generation: Int) {
+        guard let namesTask else { return }
+        Task { @MainActor in
+            let names = await namesTask.value
+            guard generation == loadGeneration, agentNames.isEmpty, let names else { return }
+            agentNames = names
+        }
+    }
+
+    private func workspaceId(in snapshot: SessionThreadSnapshot?) -> String? {
+        guard let snapshot else { return nil }
+        return snapshot.sessions.first { $0.id == snapshot.rootSessionId }?.workspaceId
+    }
+
+    private func recordThreadLoad(
+        startedAtMs: Int64,
+        phase: String,
+        status: String,
+        errorKind: String? = nil,
+        workspaceId: String?
+    ) {
+        ChatSessionTelemetry.recordThreadLoad(
+            durationMs: Date.nowMs() - startedAtMs,
+            sessionId: target.rootSessionId,
+            workspaceId: workspaceId,
+            phase: phase,
+            status: status,
+            errorKind: errorKind
+        )
     }
 
     /// Opening the thread marks every member seen. The view keeps the seen state from before,

@@ -122,6 +122,7 @@ enum ChatMetricName: String, Codable, Sendable {
     case sessionListBodyRate = "chat.session_list_body_rate"
     case sessionListRowComputeMs = "chat.session_list_row_compute_ms"
     case workspaceLoadMs = "chat.workspace_load_ms"
+    case threadLoadMs = "chat.thread_load_ms"
     case markdownStreamingMs = "chat.markdown_streaming_ms"
     case deviceCpuPct = "device.cpu_pct"
     case deviceMemoryMb = "device.memory_mb"

@@ -82,6 +82,26 @@ describe("shared telemetry constants", () => {
     expect(dashboard).not.toContain("chat.full_reload_ms");
   });
 
+  it("documents screen-load tags that match the client recorders", () => {
+    expect(CHAT_METRIC_REGISTRY["chat.thread_load_ms"]).toMatchObject({
+      unit: "ms",
+    });
+    expect(CHAT_METRIC_REGISTRY["chat.thread_load_ms"].description).toContain(
+      "phase=initial|refresh",
+    );
+    expect(CHAT_METRIC_REGISTRY["chat.thread_load_ms"].description).toContain("status=ok|error");
+    expect(CHAT_METRIC_REGISTRY["chat.thread_load_ms"].description).toContain("error_kind");
+    expect(CHAT_METRIC_REGISTRY["chat.session_load_ms"].description).toContain("path");
+    expect(CHAT_METRIC_REGISTRY["chat.session_load_ms"].description).toContain("items");
+    expect(CHAT_METRIC_REGISTRY["chat.session_switch_ms"].description).toContain("cached=0|1");
+    expect(CHAT_METRIC_REGISTRY["chat.workspace_load_ms"].description).toContain(
+      "path (open|return_from_chat)",
+    );
+    expect(CHAT_METRIC_REGISTRY["chat.workspace_load_ms"].description).not.toContain(
+      "workspace_id",
+    );
+  });
+
   it("keeps iOS metric enum in parity with server metric names", () => {
     const metricModelsPath = join(
       process.cwd(),

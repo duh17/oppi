@@ -514,3 +514,126 @@ struct SessionThreadsExperimentTests {
         }
     }
 }
+
+@Suite("Session thread load")
+struct SessionThreadLoadTests {
+    @Test func threadSnapshotIsNotGatedOnAgentNames() async {
+        let gate = NameGate()
+        let snapshot = SessionThreadSnapshot(
+            rootSessionId: "root", sessions: [], interactions: [], counterparts: []
+        )
+        let fetch = await completedWithin(.seconds(2)) {
+            await SessionThreadLoad.fetch(
+                needsAgentNames: true,
+                listAgents: { await gate.park() },
+                getThread: { snapshot }
+            )
+        }
+        await gate.open()
+
+        #expect(fetch?.snapshot?.rootSessionId == "root")
+        #expect(fetch?.failure == nil)
+        #expect(await fetch?.agentNames?.value?["a"] == "Ada")
+    }
+
+    @Test func threadFailureIsNotGatedOnAgentNames() async {
+        let gate = NameGate()
+        let fetch = await completedWithin(.seconds(2)) {
+            await SessionThreadLoad.fetch(
+                needsAgentNames: true,
+                listAgents: { await gate.park() },
+                getThread: { throw URLError(.timedOut) }
+            )
+        }
+        await gate.open()
+
+        #expect(fetch?.snapshot == nil)
+        #expect(fetch?.failure?.errorKind == "timeout")
+        #expect(await fetch?.agentNames?.value?["a"] == "Ada")
+    }
+
+    @Test func threadFailureKeepsTheThreadErrorWhenNamesAreMissing() async {
+        struct ThreadDown: LocalizedError, Sendable {
+            var errorDescription: String? { "thread down" }
+        }
+        let fetch = await SessionThreadLoad.fetch(
+            needsAgentNames: true,
+            listAgents: { nil },
+            getThread: { throw ThreadDown() }
+        )
+
+        #expect(fetch.failure?.localizedDescription == "thread down")
+        #expect(fetch.failure?.errorKind == "other")
+        #expect(fetch.agentNames != nil)
+        #expect(await fetch.agentNames?.value == nil)
+    }
+
+    @Test func knownAgentNamesSkipTheNameLookup() async {
+        let fetch = await SessionThreadLoad.fetch(
+            needsAgentNames: false,
+            listAgents: { Issue.record("listAgents should not run"); return nil },
+            getThread: {
+                SessionThreadSnapshot(rootSessionId: "root", sessions: [], interactions: [], counterparts: [])
+            }
+        )
+
+        #expect(fetch.snapshot?.rootSessionId == "root")
+        #expect(fetch.agentNames == nil)
+    }
+
+    @Test func threadLoadTagsStayBounded() {
+        #expect(ChatSessionTelemetry.threadLoadTags(phase: "refresh", status: "ok", errorKind: "network") == [
+            "phase": "refresh",
+            "status": "ok",
+        ])
+        #expect(ChatSessionTelemetry.threadLoadTags(phase: "initial", status: "error", errorKind: "timeout") == [
+            "phase": "initial",
+            "status": "error",
+            "error_kind": "timeout",
+        ])
+        #expect(ChatSessionTelemetry.threadLoadTags(phase: "session-id", status: "failed", errorKind: " ") == [
+            "phase": "initial",
+            "status": "error",
+            "error_kind": "other",
+        ])
+    }
+}
+
+/// Holds Agent-name lookup open until the test releases it.
+private actor NameGate {
+    private var isOpen = false
+    private var names: [String: String]?
+    private var waiters: [CheckedContinuation<[String: String]?, Never>] = []
+
+    func park() async -> [String: String]? {
+        if isOpen { return names }
+        return await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open(with names: [String: String]? = ["a": "Ada"]) {
+        isOpen = true
+        self.names = names
+        let pending = waiters
+        waiters = []
+        for waiter in pending { waiter.resume(returning: names) }
+    }
+}
+
+private func completedWithin<T: Sendable>(
+    _ timeout: Duration,
+    operation: @escaping @Sendable () async -> T
+) async -> T? {
+    await withTaskGroup(of: T?.self) { group in
+        group.addTask {
+            let value = await operation()
+            return Optional(value)
+        }
+        group.addTask {
+            try? await Task.sleep(for: timeout)
+            return nil
+        }
+        let winner = await group.next()
+        group.cancelAll()
+        return winner
+    }
+}

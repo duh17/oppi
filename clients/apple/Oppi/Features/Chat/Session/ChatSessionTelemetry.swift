@@ -151,6 +151,36 @@ enum ChatSessionTelemetry {
         )
     }
 
+    /// Thread detail load. Same recorder as other screen-load timings.
+    /// `phase` is `initial` or `refresh`; failures also carry `error_kind`.
+    static func recordThreadLoad(
+        durationMs: Int64,
+        sessionId: String,
+        workspaceId: String?,
+        phase: String,
+        status: String,
+        errorKind: String? = nil
+    ) {
+        recordTimingMetric(
+            .threadLoadMs,
+            durationMs: durationMs,
+            sessionId: sessionId,
+            workspaceId: workspaceId,
+            tags: threadLoadTags(phase: phase, status: status, errorKind: errorKind)
+        )
+    }
+
+    static func threadLoadTags(phase: String, status: String, errorKind: String?) -> [String: String] {
+        let phaseTag = phase == "refresh" ? "refresh" : "initial"
+        let statusTag = status == "ok" ? "ok" : "error"
+        var tags = ["phase": phaseTag, "status": statusTag]
+        if statusTag == "error" {
+            let kind = errorKind?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            tags["error_kind"] = kind.isEmpty ? "other" : kind
+        }
+        return tags
+    }
+
     // MARK: - Shared helpers
 
     static func recordTimingMetric(

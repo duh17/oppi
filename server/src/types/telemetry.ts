@@ -93,7 +93,8 @@ export const CHAT_METRIC_REGISTRY = {
   // Removed: chat.ws_decode_ms (high-volume noise, build 21)
   "chat.session_load_ms": {
     unit: "ms",
-    description: "End-to-end session load latency from tap to content visible.",
+    description:
+      "End-to-end session load latency from tap to content visible. Tags: path (cache_hit|cache_miss|full_reload|first_message_fallback), items (timeline item count).",
   },
   "chat.jank_pct": {
     unit: "ratio",
@@ -311,7 +312,8 @@ export const CHAT_METRIC_REGISTRY = {
   },
   "chat.session_switch_ms": {
     unit: "ms",
-    description: "Session switch latency: tap session row to chat content visible. Tags: cached.",
+    description:
+      "Session switch latency: tap session row to chat content visible. Tags: cached=0|1.",
   },
   "chat.share_export_ms": {
     unit: "ms",
@@ -395,7 +397,12 @@ export const CHAT_METRIC_REGISTRY = {
   "chat.workspace_load_ms": {
     unit: "ms",
     description:
-      "Workspace screen load latency from view entry until the list is usable. Tags: path, workspace_id.",
+      "Workspace screen load latency from view entry until the list is usable. Tags: path (open|return_from_chat).",
+  },
+  "chat.thread_load_ms": {
+    unit: "ms",
+    description:
+      "Time from thread view load start until the snapshot is applied or the load fails. Tags: phase=initial|refresh, status=ok|error, error_kind on failure.",
   },
 
   // ── Device resource samples (10s interval) ──
