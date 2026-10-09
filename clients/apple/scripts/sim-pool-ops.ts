@@ -1336,7 +1336,7 @@ async function runXcodebuildAttempt(input: {
       ) {
         lastProgress = now;
         lastProgressMs = nowMs;
-        cpuOnly = outputSilentMs > 0;
+        cpuOnly = outputSilentMs >= input.config.silenceTimeout * 1000;
       }
       if (next) {
         cpuSample = next;

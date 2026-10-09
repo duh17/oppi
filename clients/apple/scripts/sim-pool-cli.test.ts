@@ -1007,7 +1007,9 @@ sleep 30
     });
     expect(result.run.status).not.toBe(0);
     expect(result.summary.hang_detected).toBe(true);
-    // Five 1-second windows of CPU-only life, then the kill; the spinner would run 12 seconds.
+    // Up to five 1-second windows of CPU-only life, then the kill; the spinner would run 12
+    // seconds. Without the CPU signal the kill would come after one window instead.
+    expect(result.summary.elapsed_seconds).toBeGreaterThanOrEqual(4);
     expect(result.summary.elapsed_seconds).toBeLessThan(11);
   }, 20_000);
 
