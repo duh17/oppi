@@ -19,6 +19,8 @@ import {
   prepareSimulator,
   pruneBuildKind,
   silenceTimedOut,
+  treeCpu,
+  treeCpuRate,
   validateCommandGuardrails,
 } from "./sim-pool-ops";
 import { CommandSession } from "./sim-pool-supervise";
@@ -32,6 +34,17 @@ describe("sim-pool-ops helpers", () => {
     expect(silenceTimedOut(11_949, 10_950, 1)).toBe(false);
     expect(silenceTimedOut(11_950, 10_950, 1)).toBe(true);
     expect(silenceTimedOut(1_000_000, 0, 0)).toBe(false);
+  });
+
+  test("build CPU counts only xcodebuild's descendants, in every ps time format", () => {
+    // 10 = xcodebuild; 20 = SWBBuildService (own process group) with two compilers; 99 is unrelated.
+    const before = treeCpu(10, "10 1 0:01.00\n20 10 1:00.00\n21 20 0:30.00\n22 20 1-00:00:00\n99 1 5:00.00\n");
+    expect([...before.keys()].sort()).toEqual([10, 20, 21, 22]);
+    expect(before.get(22)).toBe(86_400);
+    // 21 exited (no negative), 23 is a new compiler, 99 burned CPU outside the tree.
+    const after = treeCpu(10, "10 1 0:01.10\n20 10 1:00.20\n22 20 1-00:00:01\n23 20 0:01.70\n99 1 9:00.00\n");
+    expect(treeCpuRate(before, after, 4)).toBeCloseTo((0.1 + 0.2 + 1 + 1.7) / 4);
+    expect(treeCpuRate(after, after, 4)).toBe(0);
   });
 
   test("compiler diagnostics are kept and rebuild logs are not", () => {

@@ -575,6 +575,57 @@ export function progressMtime(logFile: string, derivedData?: string): number {
   return latest;
 }
 
+/** `ps -o time` CPU time (`[dd-][hh:]mm:ss[.cc]`) in seconds. */
+export function parseCpuTime(text: string): number {
+  const [days, clock] = text.includes("-") ? text.split("-") : ["0", text];
+  const parts = clock.split(":").map(Number);
+  const seconds = parts.reduce((total, part) => total * 60 + part, 0);
+  return Number(days) * 86400 + seconds;
+}
+
+/**
+ * CPU seconds per process in the tree under rootPid, from `ps -axo pid=,ppid=,time=` text.
+ * The compilers live here: SWBBuildService and swift-frontend are xcodebuild's
+ * descendants, but in their own process groups.
+ */
+export function treeCpu(rootPid: number, psText: string): Map<number, number> {
+  const rows = psText.trim().split("\n").map((line) => line.trim().split(/\s+/));
+  const children = new Map<number, number[]>();
+  const cpu = new Map<number, number>();
+  for (const [pid, ppid, time] of rows) {
+    if (!time) continue;
+    cpu.set(Number(pid), parseCpuTime(time));
+    children.set(Number(ppid), [...(children.get(Number(ppid)) ?? []), Number(pid)]);
+  }
+  const tree = new Map<number, number>();
+  const queue = [rootPid];
+  while (queue.length > 0) {
+    const pid = queue.pop()!;
+    if (tree.has(pid) || !cpu.has(pid)) continue;
+    tree.set(pid, cpu.get(pid)!);
+    queue.push(...(children.get(pid) ?? []));
+  }
+  return tree;
+}
+
+/** Share of one core the tree used between samples; exited processes drop out instead of going negative. */
+export function treeCpuRate(previous: Map<number, number>, current: Map<number, number>, elapsedSeconds: number): number {
+  if (elapsedSeconds <= 0) return 0;
+  let used = 0;
+  for (const [pid, seconds] of current) {
+    used += Math.max(0, seconds - (previous.get(pid) ?? 0));
+  }
+  return used / elapsedSeconds;
+}
+
+/** A silent compile keeps at least this share of a core busy; a hung run sits near zero. */
+export const BUILD_CPU_PROGRESS_RATE = 0.25;
+
+function sampleTreeCpu(rootPid: number): Map<number, number> {
+  const ps = spawnSync("/bin/ps", ["-axo", "pid=,ppid=,time="], { encoding: "utf8" });
+  return ps.status === 0 ? treeCpu(rootPid, ps.stdout) : new Map();
+}
+
 function log(message: string): void {
   process.stderr.write(`${message}\n`);
 }
@@ -970,24 +1021,59 @@ type TestCompletion = {
 };
 
 /**
- * A Swift Testing summary is per test process, not per xcodebuild invocation.
- * Only trust this repository's single-bundle, non-repeating unit lane, after
- * XCTest also finished. In particular, XCTest's zero-test prelude alone is
- * not completion, nor is one worker's summary in a parallel/repeated run.
+ * Test summaries are per test process, not per xcodebuild invocation. Only
+ * trust a single-bundle, non-repeating, non-parallel run of this repository's
+ * project. Swift Testing (the unit lane) must finish after XCTest's zero-test
+ * prelude; an XCTest-only bundle (UI/E2E lanes) must print exactly one
+ * top-level suite result with at least one test, and nothing test-related after it.
  */
-function finishedUnitTests(argv: string[], logText: string): TestCompletion | undefined {
+function finishedTests(argv: string[], logText: string): TestCompletion | undefined {
   const project = extractFlagValue("-project", argv);
   if (
     (project != null && resolve(project) !== resolve("Oppi.xcodeproj")) ||
     !argv.some((arg) => arg === "test" || arg === "test-without-building") ||
-    extractFlagValue("-scheme", argv) !== "OppiUnitTests" ||
-    !onlyTestingTargetsAre("OppiTests", argv) ||
     argv.some((arg) => /^(?:-test-iterations|-retry-tests-on-failure|-run-tests-until-failure|-test-repetition-relaunch-enabled|-testPlan|-xctestrun|-testProductsPath|-workspace)(?:=|$)/.test(arg)) ||
     (argv.some((arg) => arg.startsWith("-parallel-testing-enabled=") || arg === "-parallel-testing-enabled") &&
       extractFlagValue("-parallel-testing-enabled", argv) !== "NO")
   ) {
     return undefined;
   }
+  if (extractFlagValue("-scheme", argv) === "OppiUnitTests" && onlyTestingTargetsAre("OppiTests", argv)) {
+    return finishedSwiftTesting(logText);
+  }
+  // Both schemes keep every test bundle parallelizable = NO; OppiMac does not.
+  const scheme = extractFlagValue("-scheme", argv);
+  const bundles = new Set(argv.filter((arg) => arg.startsWith("-only-testing:")).map((arg) => arg.slice(14).split("/")[0]));
+  if ((scheme !== "Oppi" && scheme !== "OppiUnitTests") || bundles.size !== 1 || /^◇ Test run started\./m.test(logText)) {
+    return undefined;
+  }
+  return finishedXCTest(logText);
+}
+
+/** XCTest's top-level result: the run is over, though xcodebuild may keep logging SDK records. */
+function finishedXCTest(logText: string): TestCompletion | undefined {
+  const ends = [...logText.matchAll(/^Test Suite '(?:All tests|Selected tests)' (passed|failed) at .+\r?\n[ \t]+(Executed ([1-9][0-9]*) tests?, with ([0-9]+) failures? \(([0-9]+) unexpected\) in .+ seconds)\r?$/gm)];
+  if (ends.length !== 1) {
+    return undefined;
+  }
+  const end = ends[0];
+  const after = logText.slice(end.index! + end[0].length);
+  const failures = Number(end[4]);
+  const outcome = end[1] as TestCompletion["outcome"];
+  if (
+    /^Test (?:Suite|Case) /m.test(after) ||
+    extractCompilerLinkerErrors(logText).length > 0 ||
+    (outcome === "passed") !== (failures === 0) ||
+    (outcome === "passed" && /^Testing failed:|^\*\* TEST FAILED \*\*/m.test(logText))
+  ) {
+    return undefined;
+  }
+  const suites = [...logText.matchAll(/^Test Suite '([^']+)' (?:passed|failed) at /gm)]
+    .filter((m) => m[1] !== "All tests" && m[1] !== "Selected tests" && !m[1].endsWith(".xctest")).length;
+  return { outcome, tests: Number(end[3]), suites, issues: failures, summary: end[2].trim() };
+}
+
+function finishedSwiftTesting(logText: string): TestCompletion | undefined {
   const starts = [...logText.matchAll(/^◇ Test run started\.\r?$/gm)];
   const ends = [...logText.matchAll(/^(✔|✘) Test run with ([1-9][0-9]*) tests? in ([1-9][0-9]*) suites? (passed|failed) after [0-9]+(?:\.[0-9]+)? seconds(?: with ([1-9][0-9]*) issues?)?\.\r?$/gm)];
   if (starts.length !== 1 || ends.length !== 1 || ends[0].index! < starts[0].index!) {
@@ -1094,7 +1180,7 @@ function printSummary(input: {
     lines.push(input.completion.summary);
     lines.push("Result bundle/coverage may be incomplete; the test result above comes from the finished test run.");
   } else if (input.hangDetected) {
-    lines.push(`Hang detection: triggered (no log or DerivedData growth for timeout)`);
+    lines.push(`Hang detection: triggered (no log, DerivedData, or build CPU progress for timeout)`);
   }
   lines.push("");
   let extractUncertain = false;
@@ -1184,6 +1270,12 @@ async function runXcodebuildAttempt(input: {
   let lastLogSize = -1;
   const exitPromise = spawned.owned.exit;
   const pollMs = Math.max(50, Math.floor(input.config.progressPollSeconds * 1000));
+  // Compiles can run minutes without log or DerivedData directory changes; the
+  // process tree's CPU is the progress signal for them. Sample a few times per
+  // silence window so one busy sample keeps the run alive.
+  const cpuSampleMs = Math.min(Math.max(pollMs, (input.config.silenceTimeout * 1000) / 3), 30_000);
+  let cpuSample = sampleTreeCpu(spawned.owned.pid);
+  let cpuSampleAt = Date.now();
   while (true) {
     if (input.session.canceled) {
       hung = false;
@@ -1201,7 +1293,7 @@ async function runXcodebuildAttempt(input: {
     const size = fileSize(input.logFile);
     if (size !== lastLogSize) {
       lastLogSize = size;
-      const next = finishedUnitTests(input.argv, readFileSync(input.logFile, "utf8"));
+      const next = finishedTests(input.argv, readFileSync(input.logFile, "utf8"));
       if (next?.summary !== completion?.summary) {
         completionSince = next ? nowMs : 0;
       }
@@ -1218,6 +1310,15 @@ async function runXcodebuildAttempt(input: {
       lastProgress = now;
       lastProgressMs = nowMs;
     }
+    if (nowMs - cpuSampleAt >= cpuSampleMs) {
+      const next = sampleTreeCpu(spawned.owned.pid);
+      if (treeCpuRate(cpuSample, next, (nowMs - cpuSampleAt) / 1000) >= BUILD_CPU_PROGRESS_RATE) {
+        lastProgress = now;
+        lastProgressMs = nowMs;
+      }
+      cpuSample = next;
+      cpuSampleAt = nowMs;
+    }
     if (
       input.config.heartbeatInterval > 0 &&
       now - lastHeartbeat >= input.config.heartbeatInterval
@@ -1229,7 +1330,7 @@ async function runXcodebuildAttempt(input: {
     }
     if (silenceTimedOut(nowMs, lastProgressMs, input.config.silenceTimeout)) {
       log(
-        `[sim-pool] hang detected: no log or DerivedData growth for ${input.config.silenceTimeout}s (pid ${spawned.owned.pid})`,
+        `[sim-pool] hang detected: no log, DerivedData, or build CPU progress for ${input.config.silenceTimeout}s (pid ${spawned.owned.pid})`,
       );
       hung = true;
       break;

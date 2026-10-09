@@ -129,7 +129,24 @@ const swiftTestPrelude = `Test Suite 'All tests' passed at 2026-10-01 13:10:19.7
 const swiftPassed = "✔ Test run with 9 tests in 1 suite passed after 11.224 seconds.\n";
 const swiftFailed = "✘ Test run with 9 tests in 1 suite failed after 11.224 seconds with 3 issues.\n";
 
+const xctestE2E = (failures: number) => `Test Suite 'Selected tests' started at 2026-10-08 20:08:53.283.
+Test Suite 'OppiE2ETests.xctest' started at 2026-10-08 20:08:53.284.
+Test Suite 'ChatE2ETests' started at 2026-10-08 20:08:53.284.
+Test Case '-[OppiE2ETests.ChatE2ETests testSend]' started.
+Test Case '-[OppiE2ETests.ChatE2ETests testSend]' ${failures ? "failed" : "passed"} (20.972 seconds).
+Test Suite 'ChatE2ETests' ${failures ? "failed" : "passed"} at 2026-10-08 20:09:14.260.
+\t Executed 1 test, with ${failures} failure${failures === 1 ? "" : "s"} (0 unexpected) in 20.972 (20.976) seconds
+Test Suite 'OppiE2ETests.xctest' ${failures ? "failed" : "passed"} at 2026-10-08 20:09:14.261.
+\t Executed 1 test, with ${failures} failure${failures === 1 ? "" : "s"} (0 unexpected) in 20.972 (20.977) seconds
+Test Suite 'Selected tests' ${failures ? "failed" : "passed"} at 2026-10-08 20:09:14.261.
+\t Executed 1 test, with ${failures} failure${failures === 1 ? "" : "s"} (0 unexpected) in 20.972 (20.978) seconds
+2026-10-08 20:09:14.303 xcodebuild[75205:17669572] [MT] IDESchemeActionSDKRecord: operatingSystemBuild = <DVTBuildVersion 24A94232>, error = invalidDigitCount(94232).
+`;
+const e2eArgs = ["-scheme", "Oppi", "test", "-only-testing:OppiE2ETests/ChatE2ETests/testSend"];
+
 function runCompletionFixture(text: string, options: {
+  /** Replaces the default unit-lane arguments. */
+  args?: string[];
   extraArgs?: string[];
   afterLog?: string;
   failQuery?: boolean;
@@ -157,7 +174,8 @@ if [ -f "${fake}/started" ]; then exit 2; fi
 exec /usr/bin/pgrep "$@"
 `, { mode: 0o755 });
   }
-  const run = spawnSync("bun", [cli, "run", "--", "xcodebuild", "-scheme", "OppiUnitTests", "test", "-only-testing:OppiTests", ...(options.extraArgs ?? [])], {
+  const args = options.args ?? ["-scheme", "OppiUnitTests", "test", "-only-testing:OppiTests"];
+  const run = spawnSync("bun", [cli, "run", "--", "xcodebuild", ...args, ...(options.extraArgs ?? [])], {
     cwd: root,
     encoding: "utf8",
     timeout: 15_000,
@@ -953,6 +971,31 @@ sleep 30
     }, 15_000);
   }
 
+  for (const [failures, code, outcome] of [[0, 0, "passed"], [1, 65, "failed"]] as const) {
+    test(`finished-then-lingering E2E run (${outcome}) keeps its XCTest result and never re-runs`, () => {
+      const result = runCompletionFixture(xctestE2E(failures), { args: e2eArgs });
+      expect(result.run.status).toBe(code);
+      expect(result.attempts).toHaveLength(1);
+      expect(result.calls).not.toMatch(/simctl (shutdown|erase)/);
+      expect(result.summary).toMatchObject({
+        exit_code: code, completion_hang_detected: true,
+        test_completion: { outcome, tests: 1, suites: 1, issues: failures },
+      });
+    }, 15_000);
+  }
+
+  test("silent build that keeps the CPU busy is progress, not a hang", () => {
+    // Like swift-frontend emitting a module: no log output for longer than the
+    // silence timeout, in a child process outside xcodebuild's process group.
+    const result = runCompletionFixture("", {
+      afterLog: "/usr/bin/perl -e 'my $end = time + 3; 1 while time < $end' & wait; exit 0",
+    });
+    expect(result.run.status).toBe(0);
+    expect(result.attempts).toHaveLength(1);
+    expect(result.summary.hang_detected).toBe(false);
+    expect(result.run.stderr).not.toContain("hang detected");
+  }, 15_000);
+
   test("completion deadline is not postponed by continuing app log output", () => {
     const result = runCompletionFixture(swiftTestPrelude + swiftPassed, {
       afterLog: "while :; do echo app-heartbeat; /bin/sleep 0.1; done",
@@ -977,10 +1020,14 @@ sleep 30
     { name: "parallel workers", text: swiftTestPrelude + swiftPassed, extraArgs: ["-parallel-testing-enabled", "YES"] },
     { name: "XCTest failures", text: swiftTestPrelude.replace("with 0 failures", "with 1 failures") + swiftPassed },
     { name: "infrastructure failure", text: swiftTestPrelude + swiftPassed + "Testing failed:\nrunner disconnected\n" },
+    { name: "XCTest run of two bundles", text: xctestE2E(0), args: [...e2eArgs, "-only-testing:OppiUITests"] },
+    { name: "XCTest activity after the top-level result", text: xctestE2E(0) + "Test Suite 'Selected tests' started at 2026-10-08 20:09:15.000.\n", args: e2eArgs },
+    { name: "XCTest run of a parallel scheme", text: xctestE2E(0), args: ["-scheme", "OppiMac", "test", "-only-testing:OppiMacTests"] },
+    { name: "XCTest passed with failures", text: xctestE2E(1).replaceAll("failed at", "passed at"), args: e2eArgs },
   ];
   for (const guard of completionGuards) {
     test(`${guard.name} cannot turn an incomplete hang into a pass`, () => {
-      const result = runCompletionFixture(guard.text, { extraArgs: guard.extraArgs });
+      const result = runCompletionFixture(guard.text, { args: guard.args, extraArgs: guard.extraArgs });
       expect(result.run.status).toBe(143);
       expect(result.attempts).toHaveLength(2);
       expect(result.summary.hang_detected).toBe(true);
