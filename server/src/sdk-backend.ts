@@ -371,8 +371,6 @@ export async function resolveSdkSessionCwdAsync(
     case "no-workspace":
     case "workspace-missing":
       return homedir();
-    case "root-missing":
-      throw new Error("unreachable: root-missing is only reported when create is false");
   }
 }
 

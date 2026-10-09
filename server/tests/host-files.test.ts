@@ -275,6 +275,34 @@ describe("GET/HEAD /files/current host and control-session origins", () => {
     expect(unscoped.statusCode).toBe(404);
   });
 
+  it.skipIf(process.getuid?.() === 0)(
+    "answers 500 without host paths when the control root cannot be inspected",
+    async () => {
+      const dataDir = tempRoot("oppi-control-hostfile-");
+      const parent = join(dataDir, "control-sessions");
+      mkdirSync(join(parent, "cwd"), { recursive: true });
+      chmodSync(parent, 0o000);
+      const logs: HostFileLogLine[] = [];
+      try {
+        const response = await dispatchHost(
+          "GET",
+          "/files/current?origin=session&sessionId=control-1&path=note.md",
+          { dataDir, controlSessionIds: ["control-1"], logger: makeLogger(logs) },
+        );
+        expect(response.statusCode).toBe(500);
+        expect(JSON.parse(response.body.toString("utf8"))).toEqual({
+          error: "Session root not found",
+        });
+        expect(response.body.toString("utf8")).not.toContain(dataDir);
+        expect(logs).toContainEqual(
+          expect.objectContaining({ level: "warn", event: "currentfile.session_root_failed" }),
+        );
+      } finally {
+        chmodSync(parent, 0o700);
+      }
+    },
+  );
+
   it("rejects relative paths from workspace sessions even with control metadata", async () => {
     const dataDir = tempRoot("oppi-control-hostfile-");
     const controlCwd = join(dataDir, "control-sessions", "cwd");

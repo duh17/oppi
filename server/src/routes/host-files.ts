@@ -113,7 +113,17 @@ export function createHostFileRoutes(
         if (!sessionId || workspaceId !== null || worktreeId !== null) return conflict;
         const session = ctx.storage.getSession(sessionId);
         if (!session) return { kind: "error", status: 404, message: "Session not found" };
-        const resolved = await sessionWorkRoot(session, ctx.storage, { create: false });
+        let resolved: SessionWorkRoot;
+        try {
+          resolved = await sessionWorkRoot(session, ctx.storage, { create: false });
+        } catch (error: unknown) {
+          // Filesystem error text names host paths; keep it in the server log.
+          log.warn("currentfile.session_root_failed", {
+            sessionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return { kind: "error", status: 500, message: "Session root not found" };
+        }
         if (resolved.kind !== "ok") {
           return { kind: "error", status: 404, message: SESSION_ROOT_ERRORS[resolved.kind] };
         }

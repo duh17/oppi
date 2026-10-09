@@ -54,6 +54,19 @@ export type SessionWorkRoot =
   /** `create: false` only: the directory does not exist. */
   | { kind: "root-missing" };
 
+/** `create: true` makes missing directories, so it never reports `root-missing`. */
+export type CreatedSessionWorkRoot = Exclude<SessionWorkRoot, { kind: "root-missing" }>;
+
+export function sessionWorkRoot(
+  session: WorkRootSession,
+  store: SessionWorkRootStore,
+  options: { create: true },
+): Promise<CreatedSessionWorkRoot>;
+export function sessionWorkRoot(
+  session: WorkRootSession,
+  store: SessionWorkRootStore,
+  options: { create: boolean },
+): Promise<SessionWorkRoot>;
 export function sessionWorkRoot(
   session: WorkRootSession,
   store: SessionWorkRootStore,
@@ -67,6 +80,18 @@ export function sessionWorkRoot(
  * Same rule for a caller that already holds the workspace (session start).
  * `dataDir` is required only for control-route sessions and worktrees.
  */
+export function resolveSessionWorkRoot(
+  session: WorkRootSession,
+  workspace: Workspace | undefined,
+  dataDir: string | undefined,
+  options: { create: true },
+): Promise<CreatedSessionWorkRoot>;
+export function resolveSessionWorkRoot(
+  session: WorkRootSession,
+  workspace: Workspace | undefined,
+  dataDir: string | undefined,
+  options: { create: boolean },
+): Promise<SessionWorkRoot>;
 export async function resolveSessionWorkRoot(
   session: WorkRootSession,
   workspace: Workspace | undefined,
@@ -130,7 +155,8 @@ export async function attachmentWorkRoot(
       throw result.error;
     case "invalid-root":
       throw new Error(result.message);
-    default:
+    case "no-workspace":
+    case "workspace-missing":
       return null;
   }
 }
@@ -179,7 +205,8 @@ async function pathExists(path: string): Promise<boolean> {
   try {
     await stat(path);
     return true;
-  } catch {
-    return false;
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return false;
+    throw error;
   }
 }
