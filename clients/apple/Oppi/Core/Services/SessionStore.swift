@@ -154,17 +154,14 @@ final class SessionStore {
     }
 
     func routeScope(for sessionId: String) -> SessionRouteScope? {
-        guard let session = session(id: sessionId) else { return nil }
-        if session.control != nil || session.isControlConversation { return .control }
-        guard let workspaceId = session.workspaceId, !workspaceId.isEmpty else { return nil }
-        return .workspace(workspaceId)
+        session(id: sessionId)?.routeScope
     }
 
     /// Declared Pi Control and the durable control conversation: global list only.
     private func isGlobalControlListSession(_ session: Session) -> Bool {
         let hasWorkspace = session.workspaceId?.isEmpty == false
         guard !hasWorkspace else { return false }
-        return session.control != nil || session.isControlConversation
+        return session.usesControlRoutes
     }
 
     // ── Cross-server queries ──

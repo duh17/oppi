@@ -188,9 +188,7 @@ enum SessionInboxHostChange {
 
 enum SessionInboxSessionRouting {
     static func routeScope(for session: Session) -> SessionRouteScope? {
-        if session.control != nil || session.isControlConversation { return .control }
-        guard let workspaceId = session.workspaceId, !workspaceId.isEmpty else { return nil }
-        return .workspace(workspaceId)
+        session.routeScope
     }
 
     static func allSessionsContext(for session: Session, workspaceName: String?) -> String? {

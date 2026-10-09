@@ -339,6 +339,17 @@ struct Session: Identifiable, Sendable, Equatable {
     /// Durable control conversation. Distinct from a declared Pi Control session (`control != nil`).
     var isControlConversation: Bool { serverDurableRole == "control" }
 
+    /// Declared Pi Control or the durable control conversation. Does not require
+    /// `workspaceId == nil`; the server's extra no-workspace check is not mirrored.
+    var usesControlRoutes: Bool { control != nil || isControlConversation }
+
+    /// Route family from session fields alone; nil without control or a workspace id.
+    var routeScope: SessionRouteScope? {
+        if usesControlRoutes { return .control }
+        guard let workspaceId, !workspaceId.isEmpty else { return nil }
+        return .workspace(workspaceId)
+    }
+
     /// Display title: name, first message preview, or session ID prefix.
     var displayTitle: String {
         if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
