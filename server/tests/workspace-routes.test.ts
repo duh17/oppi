@@ -24,10 +24,7 @@ import type {
   WorkspaceReviewDiffResponse,
   WorkspaceWorktree,
 } from "../src/types.js";
-import {
-  createWorkspaceWorktree,
-  hasManagedWorkspaceWorktreeDirectory,
-} from "../src/worktrees.js";
+import { createWorkspaceWorktree, hasManagedWorkspaceWorktreeDirectory } from "../src/worktrees.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
 function git(cwd: string, args: string[]): string {
@@ -675,11 +672,7 @@ describe("workspaces module", () => {
       };
       installHeldWorktreeAdd(bin, root, stateDir);
       process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
-      creating = createWorkspaceWorktree(
-        workspace,
-        { branch: "feature/claim-held" },
-        { dataDir },
-      );
+      creating = createWorkspaceWorktree(workspace, { branch: "feature/claim-held" }, { dataDir });
       await vi.waitFor(() => {
         expect(existsSync(join(stateDir, "add-started"))).toBe(true);
       });
@@ -1501,5 +1494,136 @@ describe("workspaces module", () => {
     });
 
     expect(handled).toBe(false);
+  });
+});
+
+describe("sandbox workspace worktree routes", () => {
+  function sandboxCtx(root: string, dataDir: string) {
+    const workspace: Workspace = {
+      id: "ws-1",
+      name: "Sandbox",
+      runtime: "sandbox",
+      hostMount: root,
+      systemPromptMode: "append",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const deleteWorkspace = vi.fn(() => true);
+    const ctx = {
+      storage: {
+        getWorkspace: vi.fn(() => workspace),
+        getDataDir: vi.fn(() => dataDir),
+        deleteWorkspace,
+        listAllWorkspaceSessionSnapshots: vi.fn(() => []),
+      },
+      sessionRuntimes: {
+        getActiveSessionIds: vi.fn(() => new Set<string>()),
+        getActiveSession: vi.fn(() => undefined),
+      },
+      stopWorkspaceVm: vi.fn(async () => undefined),
+    } as unknown as RouteContext;
+    return { ctx, deleteWorkspace };
+  }
+
+  function sandboxRepo(): string {
+    const root = mkdtempSync(join(tmpdir(), "oppi-sandbox-worktree-routes-"));
+    git(root, ["init", "--initial-branch=main"]);
+    git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+    git(root, ["config", "user.name", "Oppi Test"]);
+    writeFileSync(join(root, "README.md"), "sandbox\n");
+    git(root, ["add", "README.md"]);
+    git(root, ["commit", "-m", "initial"]);
+    git(root, ["branch", "feature"]);
+    return root;
+  }
+
+  it("answers 409 to every worktree route and leaves the repository untouched", async () => {
+    const root = sandboxRepo();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-worktree-routes-data-"));
+    try {
+      const { ctx } = sandboxCtx(root, dataDir);
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const calls: Array<[string, string, unknown]> = [
+        ["GET", "/workspaces/ws-1/worktrees", undefined],
+        ["POST", "/workspaces/ws-1/worktrees", { branch: "feature" }],
+        ["POST", "/workspaces/ws-1/worktrees/open", { branch: "feature" }],
+        ["POST", "/workspaces/ws-1/worktrees/wt_x/preview", { into: "main" }],
+        ["DELETE", "/workspaces/ws-1/worktrees/wt_x", undefined],
+      ];
+
+      for (const [method, path, body] of calls) {
+        const res = makeResponse();
+        await dispatch({
+          method,
+          path,
+          url: new URL(`http://localhost${path}`),
+          req: (body === undefined ? {} : makeRequest(body)) as never,
+          res: res as never,
+        });
+        expect(res.statusCode, `${method} ${path}`).toBe(409);
+        expect(JSON.parse(res.body)).toEqual({
+          error: "Worktrees are not available for sandbox workspaces",
+        });
+      }
+
+      expect(existsSync(join(root, ".git", "worktrees"))).toBe(false);
+      expect(git(root, ["branch", "--list"]).split("\n").length).toBe(2);
+      expect(existsSync(join(dataDir, "worktrees"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("still serves the main checkout's git status", async () => {
+    const root = sandboxRepo();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-worktree-routes-data-"));
+    try {
+      const { ctx } = sandboxCtx(root, dataDir);
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      await dispatch({
+        method: "GET",
+        path: "/workspaces/ws-1/worktrees/main/status",
+        url: new URL("http://localhost/workspaces/ws-1/worktrees/main/status"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toMatchObject({
+        worktree: { id: "main", isMain: true, branch: "main" },
+        status: { isGitRepo: true, branch: "main" },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("deletes a sandbox workspace even when a managed worktree directory is left over", async () => {
+    const root = sandboxRepo();
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-worktree-routes-data-"));
+    try {
+      mkdirSync(join(dataDir, "worktrees", "ws-1", "wt_left_over"), { recursive: true });
+      const { ctx, deleteWorkspace } = sandboxCtx(root, dataDir);
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      await dispatch({
+        method: "DELETE",
+        path: "/workspaces/ws-1",
+        url: new URL("http://localhost/workspaces/ws-1"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(deleteWorkspace).toHaveBeenCalledWith("ws-1");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 });

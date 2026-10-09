@@ -38,6 +38,7 @@ import { buildWorkspaceReviewDiff } from "../src/workspace-review-diff.js";
 import {
   createWorkspaceWorktree,
   listWorkspaceWorktrees,
+  openWorkspaceWorktree,
   previewWorkspaceWorktree,
   removeWorkspaceWorktree,
 } from "../src/worktrees.js";
@@ -218,66 +219,103 @@ describe("sandbox git: repository-controlled execution", () => {
     expect(markerLines(marker)).toEqual([]);
   });
 
-  it("does not execute hooks, filters, or fsmonitor when managing worktrees", async () => {
+  it("refuses worktree create, open, preview, and remove without running git", async () => {
     const { mount, marker } = armedRepo({ infoAttributes: false });
     const workspace = sandboxWorkspace(mount);
     const dataDir = tempDir("oppi-git-safe-data-");
-
-    const created = await createWorkspaceWorktree(workspace, { branch: "feature" }, { dataDir });
-    expect(created).toMatchObject({ branch: "feature", isGitRepo: true, managedByOppi: true });
-    expect(markerLines(marker)).toEqual([]);
-
-    // Commit on the worktree so preview has something to compare. The setup git
-    // runs under the armed config, so clear the marker afterwards.
-    writeFileSync(join(created.path, "c.txt"), "new\n");
-    git(created.path, ["add", "c.txt"]);
-    git(created.path, ["commit", "-m", "on feature"]);
-    rmSync(marker, { force: true });
-
-    const trust = gitTrustForWorkspace(workspace);
-    const worktreeStatus = await getGitStatus(created.path, trust);
-    expect(worktreeStatus).toMatchObject({ isGitRepo: true, branch: "feature", dirtyCount: 0 });
-    expect(worktreeStatus.recentCommits[0]?.message).toBe("on feature");
-
-    const preview = await previewWorkspaceWorktree(
-      workspace,
-      created.id,
-      { into: "main", mode: "merge" },
-      { dataDir },
-    );
-    expect(preview).toMatchObject({
-      commitCount: 1,
-      changedFiles: [{ status: "A", path: "c.txt" }],
-      conflictCheck: "clean",
-    });
-
-    const listed = await listWorkspaceWorktrees(workspace, { dataDir });
-    expect(listed.map((worktree) => worktree.branch).sort()).toEqual(["feature", "main"]);
-
-    await removeWorkspaceWorktree(workspace, { dataDir, worktreeId: created.id });
-    expect(existsSync(created.path)).toBe(false);
-
-    expect(markerLines(marker)).toEqual([]);
-  });
-
-  it("control: host-runtime worktree creation still runs the owner's hooks", async () => {
-    const { mount, marker } = armedRepo();
-    const dataDir = tempDir("oppi-git-safe-data-");
-
-    await createWorkspaceWorktree(hostWorkspace(mount), { branch: "feature" }, { dataDir });
-
-    expect(markerLines(marker)).toContain("hook post-checkout");
-  });
-
-  it("refuses worktree administration while info/attributes carries rules", async () => {
-    const { mount, marker } = armedRepo();
-    const workspace = sandboxWorkspace(mount);
-    const dataDir = tempDir("oppi-git-safe-data-");
+    const refused = {
+      statusCode: 409,
+      message: "Worktrees are not available for sandbox workspaces",
+    };
 
     await expect(
       createWorkspaceWorktree(workspace, { branch: "feature" }, { dataDir }),
-    ).rejects.toMatchObject({ statusCode: 409 });
+    ).rejects.toMatchObject(refused);
+    await expect(
+      openWorkspaceWorktree(workspace, { branch: "feature" }, { dataDir }),
+    ).rejects.toMatchObject(refused);
+    await expect(
+      previewWorkspaceWorktree(workspace, "wt_x", { into: "main" }, { dataDir }),
+    ).rejects.toMatchObject(refused);
+    await expect(
+      removeWorkspaceWorktree(workspace, { dataDir, worktreeId: "wt_x" }),
+    ).rejects.toMatchObject(refused);
+
+    expect(existsSync(join(mount, ".git", "worktrees"))).toBe(false);
+    expect(existsSync(join(dataDir, "worktrees"))).toBe(false);
     expect(markerLines(marker)).toEqual([]);
+  });
+
+  it("lists only the main checkout and never runs git worktree list", async () => {
+    const { mount, marker } = armedRepo();
+    const dataDir = tempDir("oppi-git-safe-data-");
+
+    const listed = await listWorkspaceWorktrees(sandboxWorkspace(mount), { dataDir });
+
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ id: "main", isMain: true, isGitRepo: true, branch: "main" });
+    expect(markerLines(marker)).toEqual([]);
+  });
+
+  it("control: host-runtime workspaces still create, preview, and remove worktrees", async () => {
+    const { mount, marker } = armedRepo();
+    const workspace = hostWorkspace(mount);
+    const dataDir = tempDir("oppi-git-safe-data-");
+
+    const created = await createWorkspaceWorktree(workspace, { branch: "feature" }, { dataDir });
+    expect(markerLines(marker)).toContain("hook post-checkout");
+    const preview = await previewWorkspaceWorktree(
+      workspace,
+      created.id,
+      { into: "main" },
+      { dataDir },
+    );
+    expect(preview.target.ref).toBe("main");
+    await removeWorkspaceWorktree(workspace, { dataDir, worktreeId: created.id });
+    expect(existsSync(created.path)).toBe(false);
+  });
+
+  it("only runs read-only subcommands, so nothing writes through the linked stores", async () => {
+    const { mount, commitSha } = armedRepo();
+    const trust = gitTrustForWorkspace(sandboxWorkspace(mount));
+    const objectsBefore = execFileSync("find", [join(mount, ".git", "objects"), "-type", "f"], {
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean)
+      .sort();
+    const refsBefore = git(mount, ["for-each-ref"]);
+
+    const writing: string[][] = [
+      ["merge-tree", "--write-tree", "HEAD", "HEAD"],
+      ["worktree", "list"],
+      ["worktree", "add", "../elsewhere", "feature"],
+      ["branch", "created-by-host"],
+      ["branch", "-D", "feature"],
+      ["stash", "push"],
+      ["update-ref", "refs/heads/x", commitSha],
+      ["commit-tree", "-m", "x", "HEAD^{tree}"],
+      ["hash-object", "-w", "a.txt"],
+      ["config", "core.fsmonitor", "true"],
+      ["diff", "--output=/tmp/oppi-git-safe-output", "HEAD"],
+    ];
+    for (const args of writing) {
+      const result = await execGit(trust, mount, args);
+      expect(result.error, args.join(" ")).toBeInstanceOf(SandboxGitRefusedError);
+    }
+
+    const current = await execGit(trust, mount, ["branch", "--show-current"]);
+    expect(current.error).toBeNull();
+    expect(String(current.stdout).trim()).toBe("main");
+    const objectsAfter = execFileSync("find", [join(mount, ".git", "objects"), "-type", "f"], {
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean)
+      .sort();
+    expect(objectsAfter).toEqual(objectsBefore);
+    expect(git(mount, ["for-each-ref"])).toBe(refsBefore);
+    expect(existsSync("/tmp/oppi-git-safe-output")).toBe(false);
   });
 
   it("ignores a core.worktree that points outside the mount", async () => {
@@ -289,6 +327,26 @@ describe("sandbox git: repository-controlled execution", () => {
     const status = await getGitStatus(mount, gitTrustForWorkspace(sandboxWorkspace(mount)));
 
     expect(status.files.map((file) => file.path).sort()).toEqual(["a.txt", "b.md"]);
+  });
+
+  it("does not honour a repository's core.symlinks = false", async () => {
+    const { mount } = armedRepo();
+    const outside = tempDir("oppi-git-safe-outside-");
+    writeFileSync(join(outside, "host.txt"), "host\n");
+    symlinkSync(join(outside, "host.txt"), join(mount, "link.txt"));
+    git(mount, ["add", "link.txt"]);
+    git(mount, ["commit", "-m", "track a symlink"]);
+    git(mount, ["config", "core.symlinks", "false"]);
+    const trust = gitTrustForWorkspace(sandboxWorkspace(mount));
+
+    const status = await getGitStatus(mount, trust);
+
+    // With symlinks = false git would read the link target's content and report a change.
+    expect(status.files.map((file) => file.path)).not.toContain("link.txt");
+    const shadowConfig = await execGit(trust, mount, ["rev-parse", "--git-dir"]);
+    expect(readFileSync(join(String(shadowConfig.stdout).trim(), "config"), "utf8")).toContain(
+      "symlinks = true",
+    );
   });
 
   it("does not let a submodule's own armed repository run during status", async () => {
@@ -395,16 +453,42 @@ describe("sandbox git: confinement to the mount", () => {
     expect(await getGitStatus(mount, trust)).toMatchObject({ isGitRepo: true, branch: "main" });
   });
 
-  it("refuses a worktree checkout whose gitfile belongs to another repository", async () => {
+  it("refuses an alternates file too large to confirm is confined", () => {
     const { mount } = armedRepo();
-    const other = armedRepo();
-    const checkout = tempDir("oppi-git-safe-checkout-");
-    git(other.mount, ["worktree", "add", join(checkout, "wt"), "feature"]);
+    const padding = `# ${"x".repeat(70 * 1024)}\n`;
+    writeFileSync(
+      join(mount, ".git", "objects", "info", "alternates"),
+      `${padding}${mount}/.git/objects\n`,
+    );
+
+    expect(isGitRepository(gitTrustForWorkspace(sandboxWorkspace(mount)), mount)).toBe(false);
+  });
+
+  it("refuses an alternates path that is a symlink", () => {
+    const { mount } = armedRepo();
+    const outside = tempDir("oppi-git-safe-outside-");
+    writeFileSync(join(outside, "alternates"), `${mount}/.git/objects\n`);
+    symlinkSync(join(outside, "alternates"), join(mount, ".git", "objects", "info", "alternates"));
+
+    expect(isGitRepository(gitTrustForWorkspace(sandboxWorkspace(mount)), mount)).toBe(false);
+  });
+
+  it("refuses a commondir redirect, however large", () => {
+    const { mount } = armedRepo();
     const trust = gitTrustForWorkspace(sandboxWorkspace(mount));
+    expect(isGitRepository(trust, mount)).toBe(true);
 
-    const result = await execGit(trust, join(checkout, "wt"), ["status", "--porcelain"]);
+    writeFileSync(join(mount, ".git", "commondir"), `${".".repeat(70 * 1024)}\n`);
 
-    expect(result.error).toBeInstanceOf(SandboxGitRefusedError);
+    expect(isGitRepository(trust, mount)).toBe(false);
+  });
+
+  it("refuses an oversized gitfile", () => {
+    const mount = tempDir("oppi-git-safe-mount-");
+    writeFileSync(join(mount, ".git"), `gitdir: .gitdata${" ".repeat(70 * 1024)}\n`);
+    mkdirSync(join(mount, ".gitdata"));
+
+    expect(isGitRepository(gitTrustForWorkspace(sandboxWorkspace(mount)), mount)).toBe(false);
   });
 
   it("refuses every command for a sandbox workspace without a mount", async () => {

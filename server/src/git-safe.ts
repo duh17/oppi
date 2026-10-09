@@ -15,20 +15,20 @@
  *
  * - `host`: `execFile("git", args, { cwd, ...options })`, unchanged. The owner's
  *   own repositories rely on their hooks and config.
- * - `sandbox`, `isolated` (default): git runs against a host-owned shadow git
- *   dir whose `config`, `info/`, and `HEAD` the host writes. Only data (objects,
- *   refs, index, reflogs, `info/exclude`) is linked from the mount. Repository
- *   config and attributes are never read, so there is nothing to race. Working
- *   tree `.gitattributes` is neutralised with `GIT_ATTR_SOURCE`.
- * - `sandbox`, `gitdir` (worktree administration only): git must see the real
- *   git dir because `git worktree add/remove/list` read and write its metadata.
- *   Config keys that run programs are overridden on the command line, attributes
- *   are neutralised, and the run is refused while `info/attributes` carries
- *   rules.
+ * - `sandbox`: git runs against a host-owned shadow git dir whose `config`,
+ *   `info/`, and `HEAD` the host writes. Only data (objects, refs, index,
+ *   reflogs, `info/exclude`) is linked from the mount. Repository config and
+ *   attributes are never read, so there is nothing to race. Working tree
+ *   `.gitattributes` is neutralised with `GIT_ATTR_SOURCE`. Only read-only
+ *   subcommands run: a writing command would write through the linked object
+ *   store and refs into whatever the VM redirected them to. Worktrees
+ *   (`git worktree`, `merge-tree`) therefore do not exist for sandbox workspaces.
  *
- * Both sandbox shapes first require the repository to be confined to the mount:
+ * Sandbox trust first requires the repository to be confined to the mount:
  * `.git` must be a real directory, or a gitfile whose resolved gitdir stays
- * inside the mount's real path. Anything else is treated as not a git repo.
+ * inside the mount's real path, with no `commondir` redirect and every object
+ * alternate inside the mount. Anything else, including a redirect file that
+ * cannot be read in full, is treated as not a git repo.
  */
 
 import { execFile } from "node:child_process";
@@ -78,14 +78,11 @@ export function gitTrustForWorkspace(
   return { kind: "sandbox", root: mount ? resolve(resolveHomePath(mount)) : null };
 }
 
-export type GitExecMode = "isolated" | "gitdir";
-
 export interface GitExecOptions {
   timeout?: number;
   maxBuffer?: number;
   encoding?: BufferEncoding;
-  /** Sandbox only. `gitdir` is for `git worktree` administration. Default `isolated`. */
-  mode?: GitExecMode;
+  windowsHide?: boolean;
 }
 
 export interface GitExecResult {
@@ -121,14 +118,17 @@ export async function execGit(
   args: readonly string[],
   options: GitExecOptions = {},
 ): Promise<GitExecResult> {
-  const { mode, ...execOptions } = options;
   if (trust.kind === "host") {
-    return runGit(["git"], args, { cwd, ...execOptions });
+    return runGit(["git"], args, { cwd, ...options });
+  }
+
+  if (!isSandboxReadOnlyCommand(args)) {
+    return refused(`\`git ${args.join(" ")}\` is not a read-only command`);
   }
 
   let plan: SandboxPlan | null;
   try {
-    plan = await planSandboxGit(trust, cwd, mode ?? "isolated");
+    plan = await planSandboxGit(trust, cwd);
   } catch (error) {
     if (error instanceof SandboxGitRefusedError) return { error, stdout: "", stderr: "" };
     return refused(error instanceof Error ? error.message : "unexpected failure");
@@ -136,7 +136,7 @@ export async function execGit(
   if (!plan) return refused("repository is not confined to the workspace mount");
 
   return runGit(["git", ...SANDBOX_GLOBAL_ARGS], args, {
-    ...execOptions,
+    ...options,
     cwd: plan.cwd,
     env: plan.env,
   });
@@ -160,10 +160,36 @@ function runGit(
 
 // ─── Sandbox command shape ───
 
+const SANDBOX_READ_SUBCOMMANDS = new Set([
+  "status",
+  "rev-parse",
+  "log",
+  "rev-list",
+  "diff",
+  "diff-tree",
+  "show",
+]);
+
 /**
- * Command-line config beats every file scope, so these hold even in `gitdir`
- * mode where the repository's own config is read. Isolated mode reads none of it;
- * the list stays as defence in depth for subprocesses (submodules).
+ * Sandbox git may only read. The shadow links `objects`, `refs`, and `index`
+ * into the mount, and the VM can replace any child of those with a symlink, so a
+ * command that writes a loose object, ref, or index would write where the VM
+ * points it. `status` stays read-only through `--no-optional-locks`.
+ */
+function isSandboxReadOnlyCommand(args: readonly string[]): boolean {
+  if (args.some((arg) => arg === "--output" || arg.startsWith("--output="))) return false;
+  const index = args.findIndex((arg) => !arg.startsWith("-"));
+  if (index < 0) return false;
+  const subcommand = args[index];
+  const rest = args.slice(index + 1);
+  if (subcommand === "branch") return rest.length === 1 && rest[0] === "--show-current";
+  if (subcommand === "stash") return rest.length === 1 && rest[0] === "list";
+  return subcommand !== undefined && SANDBOX_READ_SUBCOMMANDS.has(subcommand);
+}
+
+/**
+ * The shadow git dir carries none of the repository's config, so these are
+ * defence in depth for subprocesses git starts (submodules read their own).
  */
 const SANDBOX_CONFIG_OVERRIDES: readonly string[] = [
   "core.fsmonitor=false",
@@ -222,7 +248,6 @@ interface SandboxPlan {
 async function planSandboxGit(
   trust: Extract<GitTrust, { kind: "sandbox" }>,
   cwd: string,
-  mode: GitExecMode,
 ): Promise<SandboxPlan | null> {
   const repo = resolveSandboxRepo(trust, cwd);
   if (!repo) return null;
@@ -231,16 +256,6 @@ async function planSandboxGit(
   env.GIT_WORK_TREE = repo.workTree;
   // Rooted at the mount's parent, discovery cannot climb into host repositories.
   env.GIT_CEILING_DIRECTORIES = dirname(repo.workTree);
-
-  if (mode === "gitdir") {
-    if (hasAttributeRules(join(repo.commonDir, "info", "attributes"))) {
-      throw new SandboxGitRefusedError("info/attributes carries rules");
-    }
-    env.GIT_DIR = repo.gitDir;
-    env.GIT_ATTR_SOURCE = EMPTY_TREE_SHA1;
-    if (readObjectFormat(repo.commonDir) === "sha256") env.GIT_ATTR_SOURCE = EMPTY_TREE_SHA256;
-    return { cwd: repo.cwd, env };
-  }
 
   const shadow = await prepareShadowGitDir(repo);
   env.GIT_DIR = shadow.dir;
@@ -251,14 +266,12 @@ async function planSandboxGit(
 // ─── Confinement ───
 
 interface SandboxRepo {
-  /** Real path of the mount root (or the worktree checkout for a linked worktree). */
+  /** Real path of the mount root. */
   workTree: string;
   /** Real cwd inside `workTree`. */
   cwd: string;
-  /** Per-worktree git dir: holds HEAD and index. */
+  /** Real git dir, inside the mount. */
   gitDir: string;
-  /** Shared git dir: holds objects, refs, config. Equals `gitDir` outside linked worktrees. */
-  commonDir: string;
 }
 
 function lstatOrNull(path: string): ReturnType<typeof lstatSync> | null {
@@ -305,44 +318,39 @@ function confinedGitDir(dir: string, mountRoot: string): string | null {
   return real && isPathWithinRoot(real, mountRoot) ? real : null;
 }
 
-/** Common dir for `gitDir`: itself, or the target of its `commondir` file. */
-function confinedCommonDir(gitDir: string, mountRoot: string): string | null {
-  const raw = readSmallFile(join(gitDir, "commondir"));
-  if (raw === null) return gitDir;
-  const target = raw.trim();
-  if (!target) return null;
-  const real = realpathOrNull(isAbsolute(target) ? target : resolve(gitDir, target));
-  return real && isPathWithinRoot(real, mountRoot) ? real : null;
-}
+/**
+ * Every path git follows out of the git dir for data stays inside the mount, and
+ * no redirect file can send it elsewhere. A redirect that is present but cannot
+ * be read in full is a refusal: "unreadable" must never mean "absent".
+ */
+function gitDirConfined(gitDir: string, mountRoot: string): boolean {
+  // A linked-worktree git dir points at a shared common dir; sandbox mounts have none.
+  if (lstatOrNull(join(gitDir, "commondir"))) return false;
 
-/** Every path git follows out of the common dir for data stays inside the mount. */
-function commonDirDataConfined(commonDir: string, mountRoot: string): boolean {
   for (const name of ["objects", "refs", "packed-refs", "logs", "reftable", "shallow"]) {
-    const path = join(commonDir, name);
+    const path = join(gitDir, name);
     if (!lstatOrNull(path)) continue;
     const real = realpathOrNull(path);
     if (!real || !isPathWithinRoot(real, mountRoot)) return false;
   }
 
-  const alternates = readSmallFile(join(commonDir, "objects", "info", "alternates"));
-  if (alternates !== null) {
+  const alternatesPath = join(gitDir, "objects", "info", "alternates");
+  const alternatesStat = lstatOrNull(alternatesPath);
+  if (alternatesStat) {
+    if (!alternatesStat.isFile()) return false;
+    const alternates = readSmallFile(alternatesPath);
+    if (alternates === null) return false;
     for (const line of alternates.split("\n")) {
       const entry = line.trim();
       if (!entry || entry.startsWith("#")) continue;
-      const real = realpathOrNull(isAbsolute(entry) ? entry : resolve(commonDir, "objects", entry));
+      const real = realpathOrNull(isAbsolute(entry) ? entry : resolve(gitDir, "objects", entry));
       if (!real || !isPathWithinRoot(real, mountRoot)) return false;
     }
   }
   return true;
 }
 
-/**
- * Resolve the repository a sandbox git command may touch, or null.
- *
- * `cwd` is either inside the mount (the main checkout) or the root of a linked
- * worktree checkout (Oppi-managed worktrees live under the data dir, outside
- * the mount, with a gitfile pointing at `<mount git dir>/worktrees/<id>`).
- */
+/** Resolve the repository a sandbox git command may touch: the mount's own, or null. */
 function resolveSandboxRepo(
   trust: Extract<GitTrust, { kind: "sandbox" }>,
   cwd: string,
@@ -350,45 +358,11 @@ function resolveSandboxRepo(
   if (!trust.root) return null;
   const mountRoot = realpathOrNull(trust.root);
   const realCwd = realpathOrNull(resolveHomePath(cwd));
-  if (!mountRoot || !realCwd) return null;
+  if (!mountRoot || !realCwd || !isPathWithinRoot(realCwd, mountRoot)) return null;
 
-  const main = confinedGitDir(mountRoot, mountRoot);
-  const mainCommon = main && confinedCommonDir(main, mountRoot);
-  if (!main || !mainCommon || !commonDirDataConfined(mainCommon, mountRoot)) return null;
-
-  if (realCwd === mountRoot) {
-    return { workTree: mountRoot, cwd: realCwd, gitDir: main, commonDir: mainCommon };
-  }
-
-  // A linked worktree checkout has its own `.git` gitfile, even when it sits
-  // inside the mount (`.pi/worktrees/<id>`).
-  const checkoutStat = lstatOrNull(join(realCwd, ".git"));
-  if (checkoutStat) {
-    if (!checkoutStat.isFile()) return null;
-    const linked = confinedGitDir(realCwd, mountRoot);
-    if (!linked || !isPathWithinRoot(linked, join(mainCommon, "worktrees"))) return null;
-    if (confinedCommonDir(linked, mountRoot) !== mainCommon) return null;
-    return { workTree: realCwd, cwd: realCwd, gitDir: linked, commonDir: mainCommon };
-  }
-
-  if (!isPathWithinRoot(realCwd, mountRoot)) return null;
-  return { workTree: mountRoot, cwd: realCwd, gitDir: main, commonDir: mainCommon };
-}
-
-// ─── gitdir mode helpers ───
-
-function hasAttributeRules(path: string): boolean {
-  const content = readSmallFile(path);
-  if (content === null) return lstatOrNull(path) !== null;
-  return content.split("\n").some((line) => {
-    const trimmed = line.trim();
-    return trimmed.length > 0 && !trimmed.startsWith("#");
-  });
-}
-
-function readObjectFormat(commonDir: string): "sha1" | "sha256" {
-  const config = readSmallFile(join(commonDir, "config")) ?? "";
-  return /^\s*objectformat\s*=\s*sha256\s*$/im.test(config) ? "sha256" : "sha1";
+  const gitDir = confinedGitDir(mountRoot, mountRoot);
+  if (!gitDir || !gitDirConfined(gitDir, mountRoot)) return null;
+  return { workTree: mountRoot, cwd: realCwd, gitDir };
 }
 
 // ─── Isolated mode: shadow git dir ───
@@ -398,7 +372,6 @@ const SHADOW_CONFIG_KEYS = new Set([
   "core.filemode",
   "core.ignorecase",
   "core.precomposeunicode",
-  "core.symlinks",
   "core.autocrlf",
   "core.eol",
   "core.safecrlf",
@@ -454,6 +427,8 @@ function shadowConfigText(listing: string): string {
     "[core]",
     `\trepositoryformatversion = ${formatVersion}`,
     "\tbare = false",
+    // Never the repository's value: symlinks = false makes git read through links.
+    "\tsymlinks = true",
     ...core,
   ];
   if (objectFormat.length > 0) lines.push("[extensions]", ...objectFormat);
@@ -473,9 +448,9 @@ interface CachedConfig {
 }
 const shadowConfigCache = new Map<string, CachedConfig>();
 
-/** Shadow config text for `<commonDir>/config`, re-derived when the file changes. */
-function readShadowConfig(commonDir: string): Promise<string> {
-  const path = join(commonDir, "config");
+/** Shadow config text for `<gitDir>/config`, re-derived when the file changes. */
+function readShadowConfig(gitDir: string): Promise<string> {
+  const path = join(gitDir, "config");
   const stat = lstatOrNull(path);
   if (!stat || !stat.isFile()) return Promise.resolve(shadowConfigText(""));
 
@@ -561,23 +536,23 @@ async function prepareShadowGitDir(
     throw new SandboxGitRefusedError("HEAD is not a plain ref or object id");
   }
 
-  const key = createHash("sha256").update(`${repo.gitDir}\0${repo.commonDir}`).digest("hex");
+  const key = createHash("sha256").update(repo.gitDir).digest("hex");
   const dir = join(ensureShadowRoot(), key.slice(0, 32));
   mkdirSync(join(dir, "info"), { recursive: true, mode: 0o700 });
 
-  const config = await readShadowConfig(repo.commonDir);
+  const config = await readShadowConfig(repo.gitDir);
   atomicWrite(join(dir, "config"), config);
   atomicWrite(join(dir, "HEAD"), head.endsWith("\n") ? head : `${head}\n`);
 
   ensureSymlink(join(dir, "index"), join(repo.gitDir, "index"));
   for (const name of ["refs", "objects", "packed-refs", "logs", "reftable", "shallow"]) {
-    const target = join(repo.commonDir, name);
+    const target = join(repo.gitDir, name);
     if (lstatOrNull(target)) ensureSymlink(join(dir, name), target);
     else if (name === "refs" || name === "objects") ensureSymlink(join(dir, name), target);
     else removeIfPresent(join(dir, name));
   }
 
-  const exclude = join(repo.commonDir, "info", "exclude");
+  const exclude = join(repo.gitDir, "info", "exclude");
   if (lstatOrNull(exclude)) ensureSymlink(join(dir, "info", "exclude"), exclude);
   else removeIfPresent(join(dir, "info", "exclude"));
 

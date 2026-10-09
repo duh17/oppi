@@ -14,6 +14,7 @@ import { resolveInitialChatModel } from "../session-model-selection.js";
 import { isPiTuiTaskRecordSession } from "../pi-tui-session-classification.js";
 import { hostMountValidationError } from "../host.js";
 import {
+  assertWorkspaceSupportsWorktrees,
   claimInFlightWorkspaceCreate,
   createWorkspaceWorktree,
   hasManagedWorkspaceWorktreeDirectory,
@@ -253,7 +254,9 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
 
   async function handleDeleteWorkspace(wsId: string, res: ServerResponse): Promise<void> {
     const workspace = ctx.storage.getWorkspace(wsId);
-    if (workspace) {
+    // Sandbox workspaces have no worktree operations, so a leftover managed
+    // worktree could never be removed to unblock this delete.
+    if (workspace && workspace.runtime !== "sandbox") {
       const dataDir = ctx.storage.getDataDir();
       const listed = await listWorkspaceWorktrees(workspace, { dataDir });
       // Create holds a workspace sentinel before its first await, and the
@@ -321,13 +324,18 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
       return;
     }
 
-    helpers.json(res, {
-      workspaceId: wsId,
-      worktrees: await listWorkspaceWorktrees(workspace, {
-        dataDir: ctx.storage.getDataDir(),
-        sessionCountsByWorktreeId: workspaceWorktreeSessionCounts(wsId),
-      }),
-    });
+    try {
+      assertWorkspaceSupportsWorktrees(workspace);
+      helpers.json(res, {
+        workspaceId: wsId,
+        worktrees: await listWorkspaceWorktrees(workspace, {
+          dataDir: ctx.storage.getDataDir(),
+          sessionCountsByWorktreeId: workspaceWorktreeSessionCounts(wsId),
+        }),
+      });
+    } catch (error) {
+      handleWorktreeLifecycleError(error, res);
+    }
   }
 
   function handleWorktreeLifecycleError(error: unknown, res: ServerResponse): void {

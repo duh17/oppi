@@ -2,7 +2,13 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, realpathSync } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
 
-import { execGit, gitTrustForWorkspace, type GitExecMode, type GitTrust } from "./git-safe.js";
+import {
+  execGit,
+  gitTrustForWorkspace,
+  HOST_GIT_TRUST,
+  isGitRepository,
+  type GitTrust,
+} from "./git-safe.js";
 import { resolveHostPath } from "./host.js";
 import { DEFAULT_DATA_DIR } from "./storage/config-store.js";
 import type {
@@ -64,6 +70,20 @@ export class WorkspaceWorktreeError extends Error {
   }
 }
 
+/** Sandbox mounts are writable from the VM, so the host never runs `git worktree` there. */
+const SANDBOX_WORKTREES_UNAVAILABLE = "Worktrees are not available for sandbox workspaces";
+
+/**
+ * Refuse a worktree operation (create, open, preview, remove, list) for a sandbox
+ * workspace. `git worktree add/remove` write refs, logs, and `.git/worktrees` in
+ * the repository the VM controls, and `merge-tree` writes loose objects there.
+ */
+export function assertWorkspaceSupportsWorktrees(workspace: Pick<Workspace, "runtime">): void {
+  if (workspace.runtime === "sandbox") {
+    throw new WorkspaceWorktreeError(409, SANDBOX_WORKTREES_UNAVAILABLE);
+  }
+}
+
 function safeRealpath(path: string): string {
   try {
     return realpathSync(resolve(path));
@@ -72,8 +92,8 @@ function safeRealpath(path: string): string {
   }
 }
 
-function runGit(trust: GitTrust, cwd: string, args: string[]): Promise<string | null> {
-  return runGitResult(trust, cwd, args, 5000).then((result) =>
+function runGit(cwd: string, args: string[]): Promise<string | null> {
+  return runGitResult(cwd, args, 5000).then((result) =>
     result.status === 0 ? result.stdout : null,
   );
 }
@@ -83,41 +103,31 @@ function runGit(trust: GitTrust, cwd: string, args: string[]): Promise<string | 
  * the child runs. A synchronous child would freeze every other request for that
  * wait — measured as multi-second event-loop lag while CPU stays near idle.
  */
-function runGitResult(
-  trust: GitTrust,
-  cwd: string,
-  args: string[],
-  timeout = 15_000,
-  mode?: GitExecMode,
-): Promise<GitResult> {
-  return runGitAsync(trust, cwd, args, timeout, mode);
+function runGitResult(cwd: string, args: string[], timeout = 15_000): Promise<GitResult> {
+  return runGitAsync(cwd, args, timeout);
 }
 
-async function runGitOrThrow(
-  trust: GitTrust,
-  cwd: string,
-  args: string[],
-  mode?: GitExecMode,
-  statusCode = 409,
-): Promise<string> {
-  const result = await runGitAsync(trust, cwd, args, 60_000, mode);
+async function runGitOrThrow(cwd: string, args: string[], statusCode = 409): Promise<string> {
+  const result = await runGitAsync(cwd, args, 60_000);
   if (result.status === 0) return result.stdout;
   const detail = result.stderr.trim() || result.stdout.trim() || `git ${args.join(" ")} failed`;
   throw new WorkspaceWorktreeError(statusCode, detail);
 }
 
-async function runGitAsync(
+async function runGitAsync(cwd: string, args: string[], timeout: number): Promise<GitResult> {
+  return runGitWithTrust(HOST_GIT_TRUST, cwd, args, timeout);
+}
+
+async function runGitWithTrust(
   trust: GitTrust,
   cwd: string,
   args: string[],
   timeout: number,
-  mode?: GitExecMode,
 ): Promise<GitResult> {
   const { error, stdout, stderr } = await execGit(trust, cwd, args, {
     encoding: "utf8",
     timeout,
     maxBuffer: 16 * 1024 * 1024,
-    mode,
   });
   const status = (error as { status?: unknown } | null)?.status;
   const code = (error as { code?: unknown } | null)?.code;
@@ -268,17 +278,19 @@ function displayNameForWorktree(record: WorktreePorcelainRecord, isMain: boolean
 }
 
 async function fallbackMainWorktree(
-  trust: GitTrust,
   path: string,
   isGitRepo: boolean,
+  trust: GitTrust = HOST_GIT_TRUST,
 ): Promise<WorkspaceWorktree> {
   const resolvedPath = safeRealpath(path);
+  const read = async (args: string[]): Promise<string | null> => {
+    const result = await runGitWithTrust(trust, resolvedPath, args, 5000);
+    return result.status === 0 ? result.stdout : null;
+  };
   const branch = isGitRepo
-    ? branchName((await runGit(trust, resolvedPath, ["branch", "--show-current"]))?.trim() ?? null)
+    ? branchName((await read(["branch", "--show-current"]))?.trim() ?? null)
     : null;
-  const headSha = isGitRepo
-    ? (await runGit(trust, resolvedPath, ["rev-parse", "--short", "HEAD"]))?.trim() || null
-    : null;
+  const headSha = isGitRepo ? (await read(["rev-parse", "--short", "HEAD"]))?.trim() || null : null;
   return {
     id: MAIN_WORKTREE_ID,
     name: "Main checkout",
@@ -292,6 +304,7 @@ async function fallbackMainWorktree(
 }
 
 async function requireWorkspaceGitRoot(workspace: Workspace): Promise<string> {
+  assertWorkspaceSupportsWorktrees(workspace);
   const hostMount = workspace.hostMount?.trim();
   if (!hostMount) {
     throw new WorkspaceWorktreeError(400, "Workspace has no host mount");
@@ -302,10 +315,7 @@ async function requireWorkspaceGitRoot(workspace: Workspace): Promise<string> {
     throw new WorkspaceWorktreeError(400, "Workspace host mount does not exist");
   }
 
-  const rootOut = await runGit(gitTrustForWorkspace(workspace), safeRealpath(hostPath), [
-    "rev-parse",
-    "--show-toplevel",
-  ]);
+  const rootOut = await runGit(safeRealpath(hostPath), ["rev-parse", "--show-toplevel"]);
   if (!rootOut) {
     throw new WorkspaceWorktreeError(400, "Workspace host mount is not a git repository");
   }
@@ -323,26 +333,29 @@ export async function listWorkspaceWorktrees(
   const hostPath = resolveHostPath(hostMount);
   if (!existsSync(hostPath)) return [];
 
-  const trust = gitTrustForWorkspace(workspace);
   const workspacePath = safeRealpath(hostPath);
-  const rootOut = await runGit(trust, workspacePath, ["rev-parse", "--show-toplevel"]);
+  if (workspace.runtime === "sandbox") {
+    // The main checkout only: no `git worktree list` against a repository the VM controls.
+    const trust = gitTrustForWorkspace(workspace);
+    const isGitRepo = isGitRepository(trust, workspacePath);
+    return withSessionCounts(
+      [await fallbackMainWorktree(workspacePath, isGitRepo, trust)],
+      options,
+    );
+  }
+
+  const rootOut = await runGit(workspacePath, ["rev-parse", "--show-toplevel"]);
   if (!rootOut) {
-    return withSessionCounts([await fallbackMainWorktree(trust, workspacePath, false)], options);
+    return withSessionCounts([await fallbackMainWorktree(workspacePath, false)], options);
   }
 
   const workspaceRoot = safeRealpath(rootOut.trim());
-  const listed = await runGitResult(
-    trust,
-    workspaceRoot,
-    ["worktree", "list", "--porcelain"],
-    undefined,
-    "gitdir",
-  );
+  const listed = await runGitResult(workspaceRoot, ["worktree", "list", "--porcelain"]);
   if (listed.status !== 0) {
     if (options.listingFailure === "throw") {
       throw new WorkspaceWorktreeError(409, "Worktree inspection failed");
     }
-    return withSessionCounts([await fallbackMainWorktree(trust, workspaceRoot, true)], options);
+    return withSessionCounts([await fallbackMainWorktree(workspaceRoot, true)], options);
   }
   const raw = listed.stdout;
 
@@ -379,7 +392,7 @@ export async function listWorkspaceWorktrees(
   });
 
   if (!withIds.some((worktree) => worktree.isMain)) {
-    withIds.unshift(await fallbackMainWorktree(trust, workspaceRoot, true));
+    withIds.unshift(await fallbackMainWorktree(workspaceRoot, true));
   }
 
   const sorted = withIds.sort((lhs, rhs) => {
@@ -404,16 +417,12 @@ function withSessionCounts(
   }));
 }
 
-async function requireBranch(
-  trust: GitTrust,
-  workspaceRoot: string,
-  value: unknown,
-): Promise<string> {
+async function requireBranch(workspaceRoot: string, value: unknown): Promise<string> {
   if (typeof value !== "string" || !value.trim()) {
     throw new WorkspaceWorktreeError(400, "branch required");
   }
   const branch = value.trim();
-  const check = await runGitResult(trust, workspaceRoot, ["check-ref-format", "--branch", branch]);
+  const check = await runGitResult(workspaceRoot, ["check-ref-format", "--branch", branch]);
   if (check.status !== 0 || check.stdout.trim() !== branch) {
     throw new WorkspaceWorktreeError(400, "Invalid branch name");
   }
@@ -463,14 +472,8 @@ function managedCreatePath(
   return { id, path: join(root, id) };
 }
 
-async function branchExists(
-  trust: GitTrust,
-  workspaceRoot: string,
-  branch: string,
-): Promise<boolean> {
-  return (
-    (await runGit(trust, workspaceRoot, ["show-ref", "--verify", `refs/heads/${branch}`])) !== null
-  );
+async function branchExists(workspaceRoot: string, branch: string): Promise<boolean> {
+  return (await runGit(workspaceRoot, ["show-ref", "--verify", `refs/heads/${branch}`])) !== null;
 }
 
 async function requireAvailableCreateTarget(
@@ -514,14 +517,9 @@ function requireTargetRef(value: unknown): string {
   return value.trim();
 }
 
-async function requireCommit(
-  trust: GitTrust,
-  workspaceRoot: string,
-  ref: string,
-  label: string,
-): Promise<string> {
+async function requireCommit(workspaceRoot: string, ref: string, label: string): Promise<string> {
   const resolved = (
-    await runGit(trust, workspaceRoot, ["rev-parse", "--verify", `${ref}^{commit}`])
+    await runGit(workspaceRoot, ["rev-parse", "--verify", `${ref}^{commit}`])
   )?.trim();
   if (!resolved) {
     throw new WorkspaceWorktreeError(404, `${label} not found`);
@@ -530,41 +528,29 @@ async function requireCommit(
 }
 
 async function isAncestor(
-  trust: GitTrust,
   workspaceRoot: string,
   ancestor: string,
   descendant: string,
 ): Promise<boolean> {
   return (
-    (
-      await runGitResult(trust, workspaceRoot, [
-        "merge-base",
-        "--is-ancestor",
-        ancestor,
-        descendant,
-      ])
-    ).status === 0
+    (await runGitResult(workspaceRoot, ["merge-base", "--is-ancestor", ancestor, descendant]))
+      .status === 0
   );
 }
 
-async function countCommits(
-  trust: GitTrust,
-  workspaceRoot: string,
-  range: string,
-): Promise<number> {
+async function countCommits(workspaceRoot: string, range: string): Promise<number> {
   const count = Number.parseInt(
-    (await runGit(trust, workspaceRoot, ["rev-list", "--count", range]))?.trim() ?? "0",
+    (await runGit(workspaceRoot, ["rev-list", "--count", range]))?.trim() ?? "0",
     10,
   );
   return Number.isFinite(count) ? count : 0;
 }
 
 async function listPreviewCommits(
-  trust: GitTrust,
   workspaceRoot: string,
   range: string,
 ): Promise<Array<{ sha: string; subject: string }>> {
-  const raw = await runGit(trust, workspaceRoot, [
+  const raw = await runGit(workspaceRoot, [
     "log",
     "--oneline",
     "--no-decorate",
@@ -601,13 +587,11 @@ function parseNameStatus(raw: string): WorkspaceWorktreePreviewFile[] {
 }
 
 async function previewChangedFiles(
-  trust: GitTrust,
   workspaceRoot: string,
   targetSha: string,
   sourceSha: string,
 ): Promise<WorkspaceWorktreePreviewFile[]> {
   const result = await runGitResult(
-    trust,
     workspaceRoot,
     ["diff", "--name-status", `${targetSha}...${sourceSha}`, "--"],
     30_000,
@@ -622,13 +606,11 @@ async function previewChangedFiles(
 }
 
 async function mergeTreeConflictCheck(
-  trust: GitTrust,
   workspaceRoot: string,
   targetSha: string,
   sourceSha: string,
 ): Promise<Pick<WorkspaceWorktreePreview, "conflictCheck" | "conflictCheckError">> {
   const result = await runGitResult(
-    trust,
     workspaceRoot,
     ["merge-tree", "--write-tree", targetSha, sourceSha],
     30_000,
@@ -645,14 +627,13 @@ export async function createWorkspaceWorktree(
   request: CreateWorkspaceWorktreeRequest,
   options: WorkspaceWorktreeLifecycleOptions,
 ): Promise<WorkspaceWorktree> {
-  const trust = gitTrustForWorkspace(workspace);
   const workspaceRoot = await requireWorkspaceGitRoot(workspace);
-  const branch = await requireBranch(trust, workspaceRoot, request.branch);
+  const branch = await requireBranch(workspaceRoot, request.branch);
   const base = normalizedBase(request.base);
   const target = managedCreatePath(workspace, options.dataDir, branch, request.path);
   await requireAvailableCreateTarget(workspace, target.id, options);
 
-  const branchAlreadyExists = await branchExists(trust, workspaceRoot, branch);
+  const branchAlreadyExists = await branchExists(workspaceRoot, branch);
   const removalKey = pendingRemovalKey(workspace.id, target.id);
   // The catalog await can hide a worktree whose removal claimed this key.
   // Check and claim synchronously so git worktree add cannot run on that path.
@@ -665,7 +646,7 @@ export async function createWorkspaceWorktree(
     const args = branchAlreadyExists
       ? ["worktree", "add", target.path, branch]
       : ["worktree", "add", "-b", branch, target.path, base];
-    await runGitOrThrow(trust, workspaceRoot, args, "gitdir");
+    await runGitOrThrow(workspaceRoot, args);
 
     const created = (
       await listWorkspaceWorktrees(workspace, {
@@ -688,6 +669,7 @@ export async function openWorkspaceWorktree(
   request: OpenWorkspaceWorktreeRequest,
   options: WorkspaceWorktreeLifecycleOptions,
 ): Promise<WorkspaceWorktree> {
+  assertWorkspaceSupportsWorktrees(workspace);
   const branch = typeof request.branch === "string" ? request.branch.trim() : "";
   const path = typeof request.path === "string" ? resolveHostPath(request.path) : "";
   if (!branch && !path) {
@@ -714,7 +696,6 @@ export async function previewWorkspaceWorktree(
   request: PreviewWorkspaceWorktreeRequest,
   options: WorkspaceWorktreeLifecycleOptions,
 ): Promise<WorkspaceWorktreePreview> {
-  const trust = gitTrustForWorkspace(workspace);
   const workspaceRoot = await requireWorkspaceGitRoot(workspace);
   const worktree = await resolveWorkspaceWorktree(workspace, worktreeId, {
     dataDir: options.dataDir,
@@ -728,12 +709,12 @@ export async function previewWorkspaceWorktree(
 
   const mode = requireIntegrationMode(request.mode);
   const targetRef = requireTargetRef(request.into);
-  const sourceSha = await requireCommit(trust, worktree.path, "HEAD", "Source worktree HEAD");
-  const targetSha = await requireCommit(trust, workspaceRoot, targetRef, "Target branch");
+  const sourceSha = await requireCommit(worktree.path, "HEAD", "Source worktree HEAD");
+  const targetSha = await requireCommit(workspaceRoot, targetRef, "Target branch");
   const range = `${targetSha}..${sourceSha}`;
-  const alreadyMerged = await isAncestor(trust, workspaceRoot, sourceSha, targetSha);
-  const fastForwardPossible = await isAncestor(trust, workspaceRoot, targetSha, sourceSha);
-  const changedFiles = await previewChangedFiles(trust, workspaceRoot, targetSha, sourceSha);
+  const alreadyMerged = await isAncestor(workspaceRoot, sourceSha, targetSha);
+  const fastForwardPossible = await isAncestor(workspaceRoot, targetSha, sourceSha);
+  const changedFiles = await previewChangedFiles(workspaceRoot, targetSha, sourceSha);
 
   return {
     worktree,
@@ -748,10 +729,10 @@ export async function previewWorkspaceWorktree(
     mode,
     alreadyMerged,
     fastForwardPossible,
-    commitCount: await countCommits(trust, workspaceRoot, range),
-    commits: await listPreviewCommits(trust, workspaceRoot, range),
+    commitCount: await countCommits(workspaceRoot, range),
+    commits: await listPreviewCommits(workspaceRoot, range),
     changedFiles,
-    ...(await mergeTreeConflictCheck(trust, workspaceRoot, targetSha, sourceSha)),
+    ...(await mergeTreeConflictCheck(workspaceRoot, targetSha, sourceSha)),
   };
 }
 
@@ -816,6 +797,7 @@ export async function removeWorkspaceWorktree(
   workspace: Workspace,
   options: RemoveWorkspaceWorktreeOptions,
 ): Promise<WorkspaceWorktree> {
+  assertWorkspaceSupportsWorktrees(workspace);
   const worktreeId = options.worktreeId.trim();
   if (!worktreeId) {
     throw new WorkspaceWorktreeError(400, "worktree id required");
@@ -825,7 +807,6 @@ export async function removeWorkspaceWorktree(
     throw new WorkspaceWorktreeError(409, "Worktree removal is already in progress");
   }
 
-  const trust = gitTrustForWorkspace(workspace);
   const workspaceRoot = await requireWorkspaceGitRoot(workspace);
   const worktree = await resolveWorkspaceWorktree(workspace, worktreeId, {
     dataDir: options.dataDir,
@@ -850,18 +831,16 @@ export async function removeWorkspaceWorktree(
   pendingWorktreeRemovals.add(worktree.path);
   try {
     if (options.force !== true) {
-      const status = await runGitAsync(trust, worktree.path, ["status", "--porcelain=v1"], 60_000);
+      const status = await runGitAsync(worktree.path, ["status", "--porcelain=v1"], 60_000);
       if (status.status !== 0 || status.stdout.trim().length > 0) {
         throw new WorkspaceWorktreeError(409, "Worktree has uncommitted or untracked changes");
       }
     }
 
     const removed = await runGitAsync(
-      trust,
       workspaceRoot,
       ["worktree", "remove", ...(options.force ? ["--force"] : []), worktree.path],
       WORKTREE_REMOVE_TIMEOUT_MS,
-      "gitdir",
     );
     if (removed.status !== 0) {
       throw new WorkspaceWorktreeError(

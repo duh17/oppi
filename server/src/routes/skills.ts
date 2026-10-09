@@ -20,6 +20,7 @@ import {
   discoverProjects,
   getHostPathStatus,
   HostPathCreateError,
+  resolveHostPath,
   scanDirectories,
 } from "../host.js";
 import { listConfiguredHostExtensionResources } from "../extension-loader.js";
@@ -791,9 +792,35 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     }
   }
 
+  /** True for a directory that is the mount of a sandbox workspace. */
+  function sandboxMountMatcher(): (dir: string) => boolean {
+    const mounts = new Set<string>();
+    for (const workspace of ctx.storage.listWorkspaces()) {
+      if (workspace.runtime !== "sandbox" || !workspace.hostMount) continue;
+      const mount = resolveHostPath(workspace.hostMount);
+      mounts.add(mount);
+      try {
+        mounts.add(realpathSync(mount));
+      } catch {
+        // Mount missing: the resolved path alone still matches.
+      }
+    }
+    return (dir) => {
+      if (mounts.has(dir)) return true;
+      try {
+        return mounts.has(realpathSync(dir));
+      } catch {
+        return false;
+      }
+    };
+  }
+
   async function handleListDirectories(url: URL, res: ServerResponse): Promise<void> {
     const root = url.searchParams.get("root");
-    const dirs = root ? await scanDirectories(root) : await discoverProjects();
+    const isSandboxMount = sandboxMountMatcher();
+    const dirs = root
+      ? await scanDirectories(root, isSandboxMount)
+      : await discoverProjects(isSandboxMount);
     helpers.json(res, { directories: dirs });
   }
 

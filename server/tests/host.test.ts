@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,7 +38,7 @@ describe("scanDirectories", () => {
     const root = makeTempRoot();
     makeProject(root, "oppi", { "package.json": "{}", "tsconfig.json": "{}" });
 
-    const dirs = await scanDirectories(root);
+    const dirs = await scanDirectories(root, () => false);
 
     expect(dirs.map((dir) => dir.name)).toEqual(["oppi"]);
   });
@@ -47,7 +48,7 @@ describe("scanDirectories", () => {
     makeProject(root, "oppi", { "AGENTS.md": "# Agent guide\n" });
     mkdirSync(join(root, "oppi", ".git"));
 
-    const dirs = await scanDirectories(root);
+    const dirs = await scanDirectories(root, () => false);
     const oppi = dirs.find((d) => d.name === "oppi");
 
     expect(oppi).toBeDefined();
@@ -57,7 +58,7 @@ describe("scanDirectories", () => {
   });
 
   it("returns empty for non-existent directory", async () => {
-    const dirs = await scanDirectories("~/nonexistent-dir-xyz");
+    const dirs = await scanDirectories("~/nonexistent-dir-xyz", () => false);
     expect(dirs).toHaveLength(0);
   });
 
@@ -67,7 +68,7 @@ describe("scanDirectories", () => {
     makeProject(root, ".hidden", { "package.json": "{}" });
     makeProject(root, "node_modules", { "package.json": "{}" });
 
-    const dirs = await scanDirectories(root);
+    const dirs = await scanDirectories(root, () => false);
     const names = dirs.map((d) => d.name);
 
     expect(names).toEqual(["visible"]);
@@ -81,8 +82,39 @@ describe("discoverProjects", () => {
     makeProject(firstRoot, "alpha", { "pyproject.toml": "[project]\nname = 'alpha'\n" });
     makeProject(secondRoot, "beta", { "Package.swift": "// swift-tools-version: 6.0\n" });
 
-    const all = await discoverProjects([firstRoot, secondRoot]);
+    const all = await discoverProjects(() => false, [firstRoot, secondRoot]);
 
     expect(all.map((dir) => dir.name)).toEqual(["alpha", "beta"]);
+  });
+});
+
+describe("scanDirectories git remotes", () => {
+  function gitRepoWithOrigin(root: string, name: string): string {
+    const dir = makeProject(root, name, { "AGENTS.md": "# Agent guide\n" });
+    execFileSync("git", ["init", "--initial-branch=main"], { cwd: dir, stdio: "ignore" });
+    execFileSync("git", ["remote", "add", "origin", "git@example.invalid:team/app.git"], {
+      cwd: dir,
+      stdio: "ignore",
+    });
+    return dir;
+  }
+
+  it("reports a normalised origin for a host project", async () => {
+    const root = makeTempRoot();
+    gitRepoWithOrigin(root, "app");
+
+    const [dir] = await scanDirectories(root, () => false);
+
+    expect(dir?.gitRemote).toBe("example.invalid/team/app");
+  });
+
+  it("never asks a sandbox workspace mount for its remote", async () => {
+    const root = makeTempRoot();
+    const mount = gitRepoWithOrigin(root, "app");
+
+    const [dir] = await scanDirectories(root, (candidate) => candidate === mount);
+
+    expect(dir).toMatchObject({ name: "app", isGitRepo: true });
+    expect(dir?.gitRemote).toBeUndefined();
   });
 });

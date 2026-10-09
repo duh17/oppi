@@ -9,8 +9,8 @@
 import { mkdirSync, readdirSync, existsSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { dirname, join, basename, resolve } from "node:path";
 import { homedir } from "node:os";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+
+import { execGit, HOST_GIT_TRUST } from "./git-safe.js";
 
 // ─── Types ───
 
@@ -319,19 +319,13 @@ function refineLanguage(dir: string, base: string): string {
 
 // ─── Git helpers ───
 
-const execFileAsync = promisify(execFile);
-
-// Path-scanner only (no workspace, so no sandbox trust to pass). `git remote get-url`
-// reads config and prints it; it never runs fsmonitor, filters, textconv, hooks, or a
-// pager, so a sandbox-written config cannot execute anything here. Any git that does
-// more than that belongs in git-safe.ts.
 async function getGitRemote(dir: string): Promise<string | undefined> {
   try {
-    const { stdout } = await execFileAsync("git", ["remote", "get-url", "origin"], {
-      cwd: dir,
+    const { error, stdout } = await execGit(HOST_GIT_TRUST, dir, ["remote", "get-url", "origin"], {
       timeout: 2000,
       windowsHide: true,
     });
+    if (error) return undefined;
     const raw = stdout.toString().trim();
     // Normalize: git@github.com:user/repo.git → github.com/user/repo
     if (raw.startsWith("git@")) {
@@ -360,7 +354,10 @@ async function getGitRemote(dir: string): Promise<string | undefined> {
  * manifest file, or AGENTS.md). Skips hidden directories and common
  * non-project entries (node_modules, .Trash, Library, etc.).
  */
-export async function scanDirectories(root: string): Promise<HostDirectory[]> {
+export async function scanDirectories(
+  root: string,
+  isSandboxMount: (dir: string) => boolean,
+): Promise<HostDirectory[]> {
   const resolved = root.replace(/^~/, homedir());
   if (!existsSync(resolved)) return [];
 
@@ -421,7 +418,8 @@ export async function scanDirectories(root: string): Promise<HostDirectory[]> {
       path: displayPath,
       name: basename(fullPath),
       isGitRepo,
-      gitRemote: isGitRepo ? await getGitRemote(fullPath) : undefined,
+      // A sandbox mount's .git is controlled by the VM; the scan never asks it for a remote.
+      gitRemote: isGitRepo && !isSandboxMount(fullPath) ? await getGitRemote(fullPath) : undefined,
       hasAgentsMd,
       projectType,
       language,
@@ -436,14 +434,17 @@ export async function scanDirectories(root: string): Promise<HostDirectory[]> {
  *
  * Default roots: ~/workspace, ~/projects, ~/src, ~/code, ~/Developer
  */
-export async function discoverProjects(roots?: string[]): Promise<HostDirectory[]> {
+export async function discoverProjects(
+  isSandboxMount: (dir: string) => boolean,
+  roots?: string[],
+): Promise<HostDirectory[]> {
   const defaultRoots = ["~/workspace", "~/projects", "~/src", "~/code", "~/Developer"];
   const scanRoots = roots ?? defaultRoots;
   const seen = new Set<string>();
   const results: HostDirectory[] = [];
 
   for (const root of scanRoots) {
-    for (const dir of await scanDirectories(root)) {
+    for (const dir of await scanDirectories(root, isSandboxMount)) {
       if (!seen.has(dir.path)) {
         seen.add(dir.path);
         results.push(dir);
