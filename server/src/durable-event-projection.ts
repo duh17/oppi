@@ -120,7 +120,6 @@ export class DurableEventProjection {
       this.runInputs?.length === run.inputs.length &&
       this.runInputs.every((input, index) => input === run.inputs[index]);
     const previous = this.adapter.partial;
-    const previousLastAssistant = this.adapter.lastAssistant;
     const message = snapshot.generation?.message;
     const samePartial =
       sameRun &&
@@ -138,16 +137,6 @@ export class DurableEventProjection {
       },
       this.adapter,
     );
-    if (sameRun) this.adapter.lastAssistant = previousLastAssistant;
-    if (!sameRun && snapshot.run) {
-      const assistant = newestAssistantOfActiveRun(snapshot);
-      if (assistant) this.adapter.lastAssistant = assistant;
-    } else if (sameRun) {
-      const undelivered = newestAssistantOfActiveRun(snapshot);
-      if (undelivered?.stopReason === "error" && previousLastAssistant?.stopReason !== "error") {
-        this.adapter.lastAssistant = undelivered;
-      }
-    }
     if (!recovering && samePartial && message) {
       this.adapter.partial = previous;
       events.push(
@@ -270,8 +259,8 @@ export class DurableEventProjection {
         const message = event.entry.model?.[0];
         if (hidden.has(message)) {
           this.adapter.partial = undefined;
-          // Hidden from the timeline, but run_end still needs the assistant for turn_error.
-          if (message?.role === "assistant") this.adapter.lastAssistant = message;
+          // Hidden from the timeline. The entry stays in this.entries, so run_end
+          // can still see an overflow error that was not shown as a message.
           out.push(...(ends.get(event) ?? []));
           continue;
         }
@@ -306,7 +295,16 @@ export class DurableEventProjection {
       }
       if (event.type === "run_start") this.runInputs = event.inputs;
       if (event.type === "run_end") this.runInputs = undefined;
-      out.push(...adaptDurableEvent(event, this.adapter), ...(ends.get(event) ?? []));
+      // run_end carries no assistant. Read the ending run from entries already
+      // updated by this batch's message_end/entry_appended events and snapshots.
+      out.push(
+        ...adaptDurableEvent(
+          event,
+          this.adapter,
+          event.type === "run_end" ? newestAssistantOfActiveRun(this.entries) : undefined,
+        ),
+        ...(ends.get(event) ?? []),
+      );
     }
     return out;
   }

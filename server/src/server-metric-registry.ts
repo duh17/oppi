@@ -144,7 +144,7 @@ export const SERVER_METRIC_REGISTRY = {
   "server.http_response_bytes": {
     unit: "bytes",
     description:
-      "HTTP response body bytes actually written. Same tags and gating decision as server.http_request_ms. Omitted for WebSocket upgrades, HTTP 101, unfinished event streams, and unmeasurable chunks.",
+      "HTTP response body bytes actually written. Same tags and gating decision as server.http_request_ms. Omitted for WebSocket upgrades, HTTP 101, and unmeasurable chunks.",
   },
   "server.mcp_connect_ms": {
     unit: "ms",

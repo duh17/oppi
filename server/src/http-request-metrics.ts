@@ -91,9 +91,8 @@ function isWebSocketUpgrade(req: IncomingMessage): boolean {
 
 /**
  * Count body bytes passed to write/end. Returns undefined when the count would
- * be garbage: WebSocket upgrade, HTTP 101, an unfinished event stream, or a
- * chunk whose size cannot be measured. Does not use socket.bytesWritten or
- * Content-Length.
+ * be garbage: WebSocket upgrade, HTTP 101, or a chunk whose size cannot be
+ * measured. Does not use socket.bytesWritten or Content-Length.
  */
 export function observeHttpResponseBody(
   req: IncomingMessage,
@@ -126,7 +125,6 @@ export function observeHttpResponseBody(
   return () => {
     if (unmeasurable || res.statusCode === 101) return undefined;
     if (headerIncludes(res.getHeader("upgrade"), "websocket")) return undefined;
-    if (!Number.isInteger(bytes) || bytes < 0) return undefined;
     return bytes;
   };
 }

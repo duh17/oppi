@@ -1,7 +1,13 @@
 // Maps committed Durable events into the existing Pi session projection pipeline.
 // Durable backoff and compaction receipts need batch-level correlation before Pi projection.
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import type { AgentEvent, MessageChange, SnapshotEvent } from "@earendil-works/pi-durable";
+import {
+  UserEntry,
+  type AgentEvent,
+  type EntryRecord,
+  type MessageChange,
+  type SnapshotEvent,
+} from "@earendil-works/pi-durable";
 import type { AssistantMessage, AssistantMessageEvent, Usage } from "@earendil-works/pi-ai";
 
 const ZERO_USAGE: Usage = {
@@ -15,8 +21,6 @@ const ZERO_USAGE: Usage = {
 
 export interface AdapterState {
   partial?: AssistantMessage;
-  /** Last projected assistant message in the current run, for agent_end error metrics. */
-  lastAssistant?: AssistantMessage;
   toolOutputs: Map<string, string>;
   toolArgs: Map<string, Record<string, unknown>>;
   toolDetails: Map<string, unknown>;
@@ -31,16 +35,18 @@ export function createAdapterState(): AdapterState {
 }
 
 /**
- * Newest assistant written after the latest user entry while a run is active.
+ * Newest assistant written after the latest `pi.user` entry.
+ * Compaction summaries and reset handoffs are user-role but not a new turn.
  * An assistant older than that user entry belongs to a finished turn.
  */
-export function newestAssistantOfActiveRun(snapshot: SnapshotEvent): AssistantMessage | undefined {
-  if (!snapshot.run) return undefined;
+export function newestAssistantOfActiveRun(
+  entries: readonly EntryRecord[],
+): AssistantMessage | undefined {
   let lastUserId = -1;
   let newest: { id: number; message: AssistantMessage } | undefined;
-  for (const entry of snapshot.entries) {
+  for (const entry of entries) {
     const message = entry.model?.[0];
-    if (message?.role === "user" && entry.id > lastUserId) lastUserId = entry.id;
+    if (UserEntry.is(entry) && entry.id > lastUserId) lastUserId = entry.id;
     if (message?.role === "assistant" && (!newest || entry.id > newest.id)) {
       newest = { id: entry.id, message };
     }
@@ -51,11 +57,7 @@ export function newestAssistantOfActiveRun(snapshot: SnapshotEvent): AssistantMe
 
 /** Re-bind a live turn without inventing another user input. */
 export function snapshotEvents(snapshot: SnapshotEvent, state: AdapterState): AgentSessionEvent[] {
-  // A same-run rebind omits `run`. Keep the assistant already projected so a
-  // backlog snapshot between message_end and run_end does not drop turn_error.
-  const kept = snapshot.run ? undefined : state.lastAssistant;
   state.partial = undefined;
-  state.lastAssistant = kept;
   state.toolArgs.clear();
   state.toolOutputs.clear();
   state.toolDetails.clear();
@@ -87,27 +89,24 @@ export function snapshotEvents(snapshot: SnapshotEvent, state: AdapterState): Ag
       ),
     );
   }
-  // A snapshot that replaces undelivered events still has the run. Remember its
-  // assistant for run_end; do not emit another message_end.
-  if (snapshot.run) {
-    const assistant = newestAssistantOfActiveRun(snapshot);
-    if (assistant) state.lastAssistant = assistant;
-  }
   return events;
 }
 
-export function adaptDurableEvent(event: AgentEvent, state: AdapterState): AgentSessionEvent[] {
+export function adaptDurableEvent(
+  event: AgentEvent,
+  state: AdapterState,
+  /** Ending run's newest assistant, read from committed entries at run_end. */
+  runAssistant?: AssistantMessage,
+): AgentSessionEvent[] {
   switch (event.type) {
     case "snapshot":
       return snapshotEvents(event, state);
     case "run_start":
-      state.lastAssistant = undefined;
       return [asPi({ type: "agent_start" })];
     case "run_end": {
-      // Durable run_end has no Pi message list. Carry the projected assistant
-      // error so SessionEventProcessor records turn_error on the same path as SDK.
-      const errored = state.lastAssistant?.stopReason === "error" ? [state.lastAssistant] : [];
-      state.lastAssistant = undefined;
+      // Durable run_end has no Pi message list. The caller supplies the ending
+      // run's assistant so SessionEventProcessor records turn_error on the SDK path.
+      const errored = runAssistant?.stopReason === "error" ? [runAssistant] : [];
       return [
         asPi({ type: "agent_end", messages: errored, willRetry: false }),
         asPi({ type: "agent_settled" }),
@@ -148,10 +147,7 @@ export function adaptDurableEvent(event: AgentEvent, state: AdapterState): Agent
     case "message_end": {
       const message = event.entry.model?.[0];
       if (!message) return [];
-      if (message.role === "assistant") {
-        state.partial = undefined;
-        state.lastAssistant = message;
-      }
+      if (message.role === "assistant") state.partial = undefined;
       return [asPi({ type: "message_end", message, entryId: String(event.entry.id) })];
     }
     case "tool_execution_start":
