@@ -32,7 +32,7 @@ import { createControlConversationRoutes } from "../src/routes/control-conversat
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createSessionRoutes } from "../src/routes/sessions.js";
 import type { RouteContext } from "../src/routes/types.js";
-import { resolveSdkSessionCwd } from "../src/sdk-backend.js";
+import { resolveSdkSessionCwdAsync } from "../src/sdk-backend.js";
 import { SessionRuntimes } from "../src/runtime-router.js";
 import { BoundSessionStreamMux, type StreamContext } from "../src/stream.js";
 import { WsMessageHandler } from "../src/ws-message-handler.js";
@@ -140,14 +140,14 @@ describe("control conversation marker gates", () => {
     expect(clears).toEqual(["control"]);
   });
 
-  it("runs in $OPPI_DATA_DIR/control-conversation/cwd, owner-only", () => {
-    const cwd = resolveSdkSessionCwd(undefined, controlRow(), { dataDir: dir });
+  it("runs in $OPPI_DATA_DIR/control-conversation/cwd, owner-only", async () => {
+    const cwd = await resolveSdkSessionCwdAsync(undefined, controlRow(), { dataDir: dir });
     expect(cwd).toBe(join(dir, "control-conversation", "cwd"));
     expect(lstatSync(cwd).mode & 0o777).toBe(0o700);
     expect(lstatSync(join(dir, "control-conversation")).mode & 0o777).toBe(0o700);
     // Classic control sessions keep their own directory.
     expect(
-      resolveSdkSessionCwd(
+      await resolveSdkSessionCwdAsync(
         undefined,
         makeSession({ control: { domain: "agents", intent: "create" } }),
         { dataDir: dir },
@@ -155,12 +155,12 @@ describe("control conversation marker gates", () => {
     ).toBe(join(dir, "control-sessions", "cwd"));
   });
 
-  it("refuses a symlinked cwd root", () => {
+  it("refuses a symlinked cwd root", async () => {
     const elsewhere = mkdtempSync(join(tmpdir(), "oppi-control-conversation-elsewhere-"));
     symlinkSync(elsewhere, join(dir, "control-conversation"));
-    expect(() => resolveSdkSessionCwd(undefined, controlRow(), { dataDir: dir })).toThrow(
-      "Control conversation cwd parent must be a real directory",
-    );
+    await expect(
+      resolveSdkSessionCwdAsync(undefined, controlRow(), { dataDir: dir }),
+    ).rejects.toThrow("Control conversation cwd parent must be a real directory");
   });
 
   it("keeps the launch key out of client create routes", async () => {

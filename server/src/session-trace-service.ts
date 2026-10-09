@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { access, readFile, realpath, stat } from "node:fs/promises";
 
@@ -12,8 +11,7 @@ import {
 } from "./diff-core.js";
 import { type MobileRendererRegistry, resolveToolDisplay } from "./mobile-renderer.js";
 import type { SessionRuntimes } from "./runtime-router.js";
-import { resolveSdkSessionCwdAsync } from "./sdk-backend.js";
-import { WorkspaceWorktreeError } from "./worktrees.js";
+import { sessionWorkRoot } from "./session-work-root.js";
 import type { Storage } from "./storage.js";
 import {
   collectSessionTraceJsonlPaths,
@@ -37,7 +35,7 @@ import {
   type TraceOutlineMetrics,
   type TraceOutlineSnapshot,
 } from "./trace-outline.js";
-import type { Session, Workspace, WorkspaceReviewDiffResponse } from "./types.js";
+import type { Session, WorkspaceReviewDiffResponse } from "./types.js";
 import { buildDiffHunks } from "./workspace-review-diff.js";
 import { sanitizeToolResultDetails } from "./visual-schema.js";
 
@@ -441,16 +439,14 @@ export class SessionTraceService {
     session: Session,
     reqPath: string,
   ): Promise<CurrentFileTextResult> {
-    const workRoot = await this.resolveWorkRoot(session);
-    if (!workRoot) return { kind: "workspace-root-not-found" };
+    const sessionRoot = await sessionWorkRoot(session, this.deps.storage, { create: false });
+    if (sessionRoot.kind !== "ok") return { kind: "workspace-root-not-found" };
 
-    const workspace = session.workspaceId
-      ? this.deps.storage.getWorkspace(session.workspaceId)
-      : undefined;
+    const { root: workRoot, workspace } = sessionRoot;
     let resolved: string;
     if (workspace?.runtime === "sandbox") {
       const file = await resolveCurrentFilePath(
-        { kind: "workspace", workspace, root: workRoot, dataDir: this.deps.storage.getDataDir() },
+        { kind: "workspace", workspace, root: workRoot },
         reqPath,
       );
       if (file.kind === "root-not-found") return { kind: "workspace-root-not-found" };
@@ -495,32 +491,6 @@ export class SessionTraceService {
       return { kind: "current-file-unreadable" };
     } finally {
       await opened.handle.close().catch(() => {});
-    }
-  }
-
-  private async resolveWorkRoot(session: Session): Promise<string | null> {
-    const workspace = session.workspaceId
-      ? this.deps.storage.getWorkspace(session.workspaceId)
-      : undefined;
-
-    if (workspace) {
-      const resolved = await this.resolveSdkCwdOrNull(workspace, session);
-      return resolved && (await pathExists(resolved)) ? resolved : null;
-    }
-    return homedir();
-  }
-
-  private async resolveSdkCwdOrNull(
-    workspace: Workspace,
-    session: Session,
-  ): Promise<string | null> {
-    try {
-      return await resolveSdkSessionCwdAsync(workspace, session, {
-        dataDir: this.deps.storage.getDataDir(),
-      });
-    } catch (error) {
-      if (error instanceof WorkspaceWorktreeError) return null;
-      throw error;
     }
   }
 

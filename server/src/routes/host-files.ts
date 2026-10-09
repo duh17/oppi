@@ -2,8 +2,6 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import { isAbsolute } from "node:path";
 
-import { isControlRouteSession } from "../control-session.js";
-import { admitSessionRoute } from "../session-route-scope.js";
 import {
   listTimedTextSidecars,
   resolveCurrentFilePath,
@@ -18,7 +16,7 @@ import {
 import { listDirectoryEntries } from "../directory-listing.js";
 import { decodeWorkspaceRoutePath } from "../file-serving-policy.js";
 import { createLogger, type Logger } from "../logger.js";
-import { resolveSdkSessionCwd, resolveSdkSessionCwdAsync } from "../sdk-backend.js";
+import { sessionWorkRoot, type SessionWorkRoot } from "../session-work-root.js";
 import type { DirectoryListingResponse } from "../types.js";
 import {
   evaluateIfMatch,
@@ -45,6 +43,14 @@ const CURRENT_FILE_QUERY_KEYS = new Set([
   "sessionId",
 ]);
 
+const SESSION_ROOT_ERRORS: Record<Exclude<SessionWorkRoot["kind"], "ok">, string> = {
+  "no-workspace": "Workspace not found",
+  "workspace-missing": "Workspace not found",
+  "root-missing": "Workspace root not found",
+  "worktree-unavailable": "Session root not found",
+  "invalid-root": "Session root not found",
+};
+
 type CurrentFileRequest =
   | { kind: "ok"; origin: CurrentFileOrigin; path: string; originKind: string }
   | { kind: "error"; status: number; message: string };
@@ -56,22 +62,6 @@ export function createHostFileRoutes(
 ): RouteDispatcher {
   const log = options.logger ?? defaultLog;
   const homeDir = options.homeDir;
-
-  /** Control sessions share one server-owned cwd; invalid roots fail closed. */
-  function controlSessionCwd(sessionId: string | null): string | null {
-    if (!sessionId) return null;
-    const admitted = admitSessionRoute(ctx.storage, { scope: "control", sessionId });
-    if (admitted.kind !== "ok") return null;
-    try {
-      return resolveSdkSessionCwd(undefined, admitted.session, {
-        dataDir: ctx.storage.getDataDir(),
-      });
-    } catch {
-      // The runtime rejects symlinked/non-directory control roots. File reads
-      // must reject the same invalid origin, not follow it to alternate bytes.
-      return null;
-    }
-  }
 
   /**
    * Parse the unified current-file origin. Origin selects path resolution; it
@@ -114,7 +104,7 @@ export function createHostFileRoutes(
         if (!root) return { kind: "error", status: 404, message: "Worktree not found" };
         return {
           kind: "ok",
-          origin: { kind: "workspace", workspace, root, dataDir },
+          origin: { kind: "workspace", workspace, root },
           path,
           originKind,
         };
@@ -123,29 +113,19 @@ export function createHostFileRoutes(
         if (!sessionId || workspaceId !== null || worktreeId !== null) return conflict;
         const session = ctx.storage.getSession(sessionId);
         if (!session) return { kind: "error", status: 404, message: "Session not found" };
-        if (isControlRouteSession(session)) {
-          const cwd = controlSessionCwd(sessionId);
-          if (!cwd) return { kind: "error", status: 404, message: "Session root not found" };
-          return {
-            kind: "ok",
-            origin: { kind: "host", cwd: () => cwd, homeDir },
-            path,
-            originKind,
-          };
+        const resolved = await sessionWorkRoot(session, ctx.storage, { create: false });
+        if (resolved.kind !== "ok") {
+          return { kind: "error", status: 404, message: SESSION_ROOT_ERRORS[resolved.kind] };
         }
-        const workspace = session.workspaceId
-          ? ctx.storage.getWorkspace(session.workspaceId)
-          : undefined;
-        if (!workspace) return { kind: "error", status: 404, message: "Workspace not found" };
-        let root: string;
-        try {
-          root = await resolveSdkSessionCwdAsync(workspace, session, { dataDir });
-        } catch {
-          return { kind: "error", status: 404, message: "Session root not found" };
-        }
+        // Workspace sessions read through their workspace (sandbox mounts stay
+        // confined); control sessions have no workspace and read their
+        // server-owned cwd as a host origin. Invalid control roots fail closed
+        // above instead of being followed to alternate bytes.
         return {
           kind: "ok",
-          origin: { kind: "workspace", workspace, root, dataDir },
+          origin: resolved.workspace
+            ? { kind: "workspace", workspace: resolved.workspace, root: resolved.root }
+            : { kind: "host", cwd: () => resolved.root, homeDir },
           path,
           originKind,
         };
@@ -222,7 +202,6 @@ export function createHostFileRoutes(
               workspace: resolved.origin.workspace,
               root: resolved.origin.root,
               requestedPath: resolved.path,
-              dataDir: resolved.origin.dataDir,
             });
             if (inspection.kind === "eligible") {
               status = sendExactFileBytes(
@@ -315,7 +294,6 @@ export function createHostFileRoutes(
         workspace: request.origin.workspace,
         root: request.origin.root,
         requestedPath: request.path,
-        dataDir: request.origin.dataDir,
         ifMatch: req.headers["if-match"],
         body: body.bytes,
       });

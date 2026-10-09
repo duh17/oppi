@@ -264,7 +264,7 @@ export type CurrentFileOrigin =
   /** Absolute, `~`, and local `file://` paths; relative paths need `cwd`. */
   | { kind: "host"; cwd?: () => string | null; homeDir?: string }
   /** Workspace or workspace-session root: worktree, host mount, or sandbox mount. */
-  | { kind: "workspace"; workspace: Workspace; root: string; dataDir: string };
+  | { kind: "workspace"; workspace: Workspace; root: string };
 
 export type CurrentFilePathResult =
   | { kind: "ok"; file: ResolvedCurrentFile }
@@ -298,7 +298,6 @@ export async function resolveCurrentFilePath(
       workspace: origin.workspace,
       requestedPath,
       hostMount: origin.root,
-      dataDir: origin.dataDir,
     }) ?? (sandboxed ? null : resolveHostWorkspacePath(requestedPath, realRoot));
   if (!lexicalPath) return sandboxed ? { kind: "outside-sandbox" } : { kind: "not-found" };
 

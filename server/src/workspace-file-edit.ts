@@ -206,7 +206,6 @@ export async function inspectWorkspaceFileForEdit(input: {
   workspace: Workspace;
   root: string;
   requestedPath: string;
-  dataDir: string;
 }): Promise<WorkspaceFileEditInspection> {
   if (editorPathForm(input.workspace, input.requestedPath) !== "ok") {
     return { kind: "ineligible" };
@@ -216,7 +215,6 @@ export async function inspectWorkspaceFileForEdit(input: {
     workspace: input.workspace,
     requestedPath: input.requestedPath,
     hostMount: input.root,
-    dataDir: input.dataDir,
   });
   if (!lexicalPath) {
     return input.workspace.runtime === "sandbox" ? { kind: "forbidden" } : { kind: "not-found" };
@@ -386,7 +384,6 @@ async function writeWorkspaceFileAtomic(input: {
   workspace: Workspace;
   root: string;
   requestedPath: string;
-  dataDir: string;
   realPath: string;
   realRoot: string;
   expectedEtag: string;
@@ -466,7 +463,6 @@ async function writeWorkspaceFileAtomic(input: {
       workspace: input.workspace,
       root: input.root,
       requestedPath: input.requestedPath,
-      dataDir: input.dataDir,
     });
     const recheckError = inspectionError(recheck);
     if (recheckError) return recheckError;
@@ -516,7 +512,6 @@ export async function putWorkspaceFile(input: {
   workspace: Workspace;
   root: string;
   requestedPath: string;
-  dataDir: string;
   ifMatch: string | string[] | undefined;
   body: Buffer;
 }): Promise<PutWorkspaceFileResult> {
@@ -560,7 +555,6 @@ export async function putWorkspaceFile(input: {
       workspace: input.workspace,
       root: input.root,
       requestedPath: input.requestedPath,
-      dataDir: input.dataDir,
       realPath: inspection.realPath,
       realRoot: inspection.realRoot,
       expectedEtag: precondition.etag,

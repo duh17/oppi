@@ -234,7 +234,6 @@ export function createWorkspaceFileRoutes(
       workspace,
       requestedPath: dirPath || ".",
       hostMount: workspaceRoot,
-      dataDir: ctx.storage.getDataDir(),
     });
     if (!mappedPath) {
       helpers.error(res, 404, "Directory not found");
@@ -270,7 +269,6 @@ export function createWorkspaceFileRoutes(
       workspace,
       requestedPath: ".",
       hostMount: workspaceRoot,
-      dataDir: ctx.storage.getDataDir(),
     });
     if (!mappedRoot) {
       helpers.error(res, 404, "Workspace not found");

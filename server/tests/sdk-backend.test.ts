@@ -56,11 +56,11 @@ describe("resolveSdkSessionCwd", () => {
     } as Pick<Session, "worktreeId" | "control">;
 
     try {
-      const cwd = resolveSdkSessionCwd(undefined, session, { dataDir });
+      const cwd = await resolveSdkSessionCwdAsync(undefined, session, { dataDir });
       expect(cwd).toBe(join(dataDir, "control-sessions", "cwd"));
       expect(lstatSync(cwd).isDirectory()).toBe(true);
       expect(lstatSync(cwd).mode & 0o777).toBe(0o700);
-      expect(resolveSdkSessionDisplayCwd(undefined, session, { dataDir })).toBe("Pi Control");
+      expect(resolveSdkSessionDisplayCwd(undefined, session)).toBe("Pi Control");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
@@ -75,7 +75,7 @@ describe("resolveSdkSessionCwd", () => {
     symlinkSync(outside, join(dataDir, "control-sessions"));
 
     try {
-      expect(() => resolveSdkSessionCwd(undefined, session, { dataDir })).toThrow(
+      await expect(resolveSdkSessionCwdAsync(undefined, session, { dataDir })).rejects.toThrow(
         "Control session cwd parent must be a real directory",
       );
       expect(() => lstatSync(join(outside, "cwd"))).toThrow();
@@ -324,7 +324,7 @@ describe("SdkBackend control sessions", () => {
       expect(first.session.getToolDefinition("oppi")).toBeUndefined();
       expect(session.piSessionFile).toBeDefined();
       expect(session.piSessionFile).not.toContain("Pi Control");
-      expect(resolveSdkSessionDisplayCwd(undefined, session, { dataDir })).toBe("Pi Control");
+      expect(resolveSdkSessionDisplayCwd(undefined, session)).toBe("Pi Control");
 
       await first.dispose();
       reopened = await SdkBackend.create({

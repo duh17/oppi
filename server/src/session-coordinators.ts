@@ -1,5 +1,4 @@
 import { trustedSessionAttachmentSourceRoots } from "./chat-attachments.js";
-import { isControlRouteSession } from "./control-session.js";
 import { applyHostEnv } from "./host-env.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import type { SessionBackendEvent } from "./pi-events.js";
@@ -31,7 +30,7 @@ import {
 import { SessionStopCoordinator, type SessionStopTimers } from "./session-stop.js";
 import { SessionTurnCoordinator } from "./session-turns.js";
 import type { Storage } from "./storage.js";
-import { resolveSdkSessionCwdAsync } from "./sdk-backend.js";
+import { attachmentWorkRoot } from "./session-work-root.js";
 import { resolveUploadStoreConfig } from "./uploads/local-upload-store.js";
 import type { ServerConfig, ServerMessage, Session } from "./types.js";
 import type { WorkspaceRuntime } from "./workspace-runtime.js";
@@ -200,20 +199,8 @@ export function createSessionCoordinatorBundle(
     broadcast: (key, message) => broadcaster.broadcast(key, message),
   });
 
-  const resolveWorkspaceRoot = async (session: Session): Promise<string | null> => {
-    if (!session.workspaceId) {
-      // Workspace-less control routes still have a server-owned cwd. Other
-      // workspace-less sessions cannot take attachments.
-      return isControlRouteSession(session)
-        ? resolveSdkSessionCwdAsync(undefined, session, { dataDir: deps.storage.getDataDir() })
-        : null;
-    }
-    const workspace = deps.storage.getWorkspace(session.workspaceId);
-    if (!workspace) {
-      return null;
-    }
-    return resolveSdkSessionCwdAsync(workspace, session, { dataDir: deps.storage.getDataDir() });
-  };
+  const resolveWorkspaceRoot = (session: Session): Promise<string | null> =>
+    attachmentWorkRoot(session, deps.storage);
 
   const uploadStoreConfig = resolveUploadStoreConfig(deps.config);
   const maxTurnAttachmentBytes = deps.config.uploadStore?.maxTurnBytes ?? 100 * 1024 * 1024;

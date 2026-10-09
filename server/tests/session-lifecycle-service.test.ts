@@ -2096,6 +2096,52 @@ describe("SessionLifecycleService", () => {
       }
     });
 
+    it("does not create the control conversation cwd when deleting its session", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-conversation-delete-"));
+      const session = makeSession({
+        id: "conversation-delete-1",
+        workspaceId: undefined,
+        serverDurable: { role: "control" },
+      });
+      const { service } = makeService({ dataDir });
+
+      try {
+        const result = await service.deleteSession(session);
+        expect(result.deleted.workspaceAttachmentCopies).toBe(false);
+        expect(existsSync(join(dataDir, "control-conversation"))).toBe(false);
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
+    it("deletes attachment copies from an existing control conversation cwd", async () => {
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-conversation-delete-"));
+      const attachments = join(
+        dataDir,
+        "control-conversation",
+        "cwd",
+        ".pi",
+        "attachments",
+        "conversation-delete-1",
+      );
+      mkdirSync(attachments, { recursive: true });
+      writeFileSync(join(attachments, "note.txt"), "bytes");
+      const session = makeSession({
+        id: "conversation-delete-1",
+        workspaceId: undefined,
+        serverDurable: { role: "control" },
+      });
+      const { service } = makeService({ dataDir });
+
+      try {
+        const result = await service.deleteSession(session);
+        expect(result.deleted.workspaceAttachmentCopies).toBe(true);
+        expect(existsSync(attachments)).toBe(false);
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
     it("stops active runtimes and deletes session metadata/search rows", async () => {
       const session = makeSession({ id: "delete-1", workspaceId: "ws-1" });
       const { service, stopSessionIfActive, deleteSession, deleteSearchIndexSession } =

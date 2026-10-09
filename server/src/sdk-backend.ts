@@ -9,7 +9,7 @@ import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { isControlConversation, isDeclaredControlSession } from "./control-session.js";
 import { createLogger } from "./logger.js";
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, posix, relative, resolve as resolvePath } from "node:path";
 
@@ -86,15 +86,14 @@ import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
-import { hostMountValidationError, resolveHostPath } from "./host.js";
-import { ensureOwnerOnlyRealDirectory } from "./owner-directory.js";
+import { hostMountValidationError } from "./host.js";
+import { resolveSessionWorkRoot, workspaceMountRoot } from "./session-work-root.js";
 import { workspaceSlug } from "./workspace-folder.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
 import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "./oppi-docs.js";
 import type { ReadonlyMount, ReadonlyMountSpec, VmSecretDefinition } from "./gondolin-manager.js";
 import type { GondolinVm } from "./gondolin-ops.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
-import { resolveWorkspaceSessionCwd, WorkspaceWorktreeError } from "./worktrees.js";
 import { callerSessionIdentityShellPrefix } from "./session-caller-identity.js";
 import {
   SessionRuntimeTransaction,
@@ -330,80 +329,56 @@ export function resolveSandboxGuestCwd(workspace: Workspace): string {
   return posix.join("/workspace", workspaceSlug(workspace));
 }
 
+/**
+ * Host directory of a workspace's mount (no session). Session directories,
+ * including control sessions and worktrees, come from `resolveSessionWorkRoot`.
+ * A sandbox's backing folder is created lazily so an empty-folder sandbox
+ * still has a real cwd on first use.
+ */
 export function resolveSdkSessionCwd(
   workspace?: Workspace,
-  session?: Pick<Session, "workspaceId" | "worktreeId" | "control" | "serverDurable">,
-  options: { dataDir?: string } = {},
+  session?: Pick<Session, "worktreeId">,
 ): string {
-  if (session && isControlConversation(session)) {
-    if (!options.dataDir) {
-      throw new Error("The control conversation requires an Oppi data directory");
-    }
-    const conversationDir = join(options.dataDir, "control-conversation");
-    ensureOwnerOnlyRealDirectory(
-      conversationDir,
-      "Control conversation cwd parent must be a real directory",
-    );
-    const conversationCwd = join(conversationDir, "cwd");
-    ensureOwnerOnlyRealDirectory(
-      conversationCwd,
-      "Control conversation cwd must be a real directory",
-    );
-    return conversationCwd;
-  }
-
-  if (session && isDeclaredControlSession(session)) {
-    if (!options.dataDir) {
-      throw new Error("Control sessions require an Oppi data directory");
-    }
-    const controlSessionsDir = join(options.dataDir, "control-sessions");
-    ensureOwnerOnlyRealDirectory(
-      controlSessionsDir,
-      "Control session cwd parent must be a real directory",
-    );
-    const controlCwd = join(controlSessionsDir, "cwd");
-    ensureOwnerOnlyRealDirectory(controlCwd, "Control session cwd must be a real directory");
-    return controlCwd;
-  }
-
   if (workspace?.runtime !== "sandbox" && session?.worktreeId) {
     throw new Error("Host worktree cwd is resolved by resolveSdkSessionCwdAsync");
   }
 
-  // A session with no workspace has no folder of its own.
+  // A workspace-less caller has no folder of its own.
   if (!workspace) return homedir();
 
-  const resolved = resolveHostPath(workspace.hostMount);
-  if (workspace.runtime === "sandbox") {
-    // The host path is never exposed to the sandboxed agent; it only backs
-    // the VM mount at resolveSandboxGuestCwd(workspace). Create it lazily so
-    // an empty-folder sandbox still has a real cwd on first session.
-    mkdirSync(resolved, { recursive: true });
-  }
-  return resolved;
+  return workspaceMountRoot(workspace, { create: true });
 }
 
 /**
- * Session cwd, including a host worktree. Git inspection is asynchronous so a
- * locked or slow repository cannot freeze the server event loop.
+ * Session start cwd: `resolveSessionWorkRoot` with creation, thrown on
+ * unavailability. A start with no workspace row keeps the home fallback.
  */
 export async function resolveSdkSessionCwdAsync(
   workspace?: Workspace,
   session?: Pick<Session, "workspaceId" | "worktreeId" | "control" | "serverDurable">,
   options: { dataDir?: string } = {},
 ): Promise<string> {
-  if (workspace?.runtime !== "sandbox" && workspace && session?.worktreeId) {
-    const worktreePath = await resolveWorkspaceSessionCwd(workspace, session.worktreeId, options);
-    if (worktreePath && existsSync(worktreePath)) return worktreePath;
-    throw new WorkspaceWorktreeError(409, "Session worktree is no longer available");
+  const result = await resolveSessionWorkRoot(session ?? {}, workspace, options.dataDir, {
+    create: true,
+  });
+  switch (result.kind) {
+    case "ok":
+      return result.root;
+    case "worktree-unavailable":
+      throw result.error;
+    case "invalid-root":
+      throw new Error(result.message);
+    case "no-workspace":
+    case "workspace-missing":
+      return homedir();
+    case "root-missing":
+      throw new Error("unreachable: root-missing is only reported when create is false");
   }
-  return resolveSdkSessionCwd(workspace, session, options);
 }
 
 export function resolveSdkSessionDisplayCwd(
   workspace?: Workspace,
   session?: Pick<Session, "workspaceId" | "worktreeId" | "control" | "serverDurable">,
-  options: { dataDir?: string } = {},
 ): string {
   if (session && isDeclaredControlSession(session)) {
     return "Pi Control";
@@ -417,7 +392,7 @@ export function resolveSdkSessionDisplayCwd(
   if (session?.worktreeId) {
     throw new Error("Host worktree display cwd requires resolveSdkSessionCwdAsync");
   }
-  return resolveSdkSessionCwd(workspace, session, options);
+  return resolveSdkSessionCwd(workspace);
 }
 
 type AgentContextFile = { path: string; content: string };

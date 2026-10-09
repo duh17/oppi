@@ -37,7 +37,7 @@ import {
   type RuntimeCommandExecutionContext,
 } from "./runtime-command-coordinator.js";
 import type { SessionBackendEvent } from "./pi-events.js";
-import { resolveSdkSessionCwdAsync } from "./sdk-backend.js";
+import { attachmentWorkRoot } from "./session-work-root.js";
 import {
   isPiTuiMirrorRemoteCommand,
   PI_TUI_MIRROR_BRIDGE_PROTOCOL_VERSION,
@@ -869,12 +869,8 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   }
 
   private async resolveWorkspaceRoot(session: Session): Promise<string | null> {
-    if (!session.workspaceId) return null;
-    const workspace = this.storage.getWorkspace(session.workspaceId);
-    if (!workspace) return null;
-    return normalizePath(
-      await resolveSdkSessionCwdAsync(workspace, session, { dataDir: this.storage.getDataDir() }),
-    );
+    const root = await attachmentWorkRoot(session, this.storage);
+    return root === null ? null : normalizePath(root);
   }
 
   async sendPrompt(

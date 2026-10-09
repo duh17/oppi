@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
-import { access, lstat, readFile, realpath, rm, unlink } from "node:fs/promises";
+import { access, readFile, realpath, rm, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import {
@@ -31,6 +31,7 @@ import { createLogger } from "./logger.js";
 import type { SessionRuntimes } from "./runtime-router.js";
 import { forkPiSessionFrom, resolveSdkSessionCwdAsync } from "./sdk-backend.js";
 import { deleteSessionAttachments } from "./session-attachments.js";
+import { sessionWorkRoot } from "./session-work-root.js";
 import {
   DEFAULT_SESSION_JSONL_META_READ_BYTES,
   readSessionJsonlMeta,
@@ -1210,29 +1211,11 @@ export class SessionLifecycleService {
   }
 
   private async deleteWorkspaceSessionAttachmentCopies(session: Session): Promise<boolean> {
-    const workspace = session.workspaceId
-      ? this.deps.storage.getWorkspace(session.workspaceId)
-      : undefined;
-
-    let workRoot: string;
-    if (isDeclaredControlSession(session)) {
-      workRoot = resolve(this.deps.storage.getDataDir(), "control-sessions", "cwd");
-      if (!(await pathExists(workRoot))) return false;
-      const stat = await lstat(workRoot);
-      if (stat.isSymbolicLink() || !stat.isDirectory()) {
-        throw new Error("Control session cwd must be a real directory");
-      }
-    } else {
-      try {
-        workRoot = await resolveSdkSessionCwdAsync(workspace, session, {
-          dataDir: this.deps.storage.getDataDir(),
-        });
-      } catch (error) {
-        if (error instanceof WorkspaceWorktreeError) return false;
-        throw error;
-      }
-      if (!(await pathExists(workRoot))) return false;
-    }
+    // Cleanup must never create the directory it is cleaning.
+    const resolved = await sessionWorkRoot(session, this.deps.storage, { create: false });
+    if (resolved.kind === "invalid-root") throw new Error(resolved.message);
+    if (resolved.kind !== "ok") return false;
+    const workRoot = resolved.root;
 
     const workRootReal = await realpath(workRoot);
     const attachmentsRoot = resolve(workRootReal, ".pi", "attachments");

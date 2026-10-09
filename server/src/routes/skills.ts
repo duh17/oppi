@@ -667,7 +667,7 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       throw new WorkspaceResourceScopeError("Workspace not found", 404);
     }
 
-    const cwd = resolveSdkSessionCwd(workspace, undefined, { dataDir: ctx.storage.getDataDir() });
+    const cwd = resolveSdkSessionCwd(workspace);
     return {
       cwd,
       workspaceScoped: true,

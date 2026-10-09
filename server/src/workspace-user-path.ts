@@ -8,8 +8,7 @@ import type { Session, Workspace } from "./types.js";
 export interface ResolveWorkspaceUserPathParams {
   workspace: Workspace;
   requestedPath: string;
-  session?: Pick<Session, "workspaceId" | "worktreeId" | "control">;
-  dataDir?: string;
+  session?: Pick<Session, "worktreeId">;
   /** Override the host mount, e.g. a worktree path from a browse query. */
   hostMount?: string;
 }
@@ -32,9 +31,7 @@ export function resolveWorkspaceUserPath(params: ResolveWorkspaceUserPathParams)
 
   let hostMount: string;
   try {
-    hostMount =
-      params.hostMount ??
-      resolveSdkSessionCwd(params.workspace, params.session, { dataDir: params.dataDir });
+    hostMount = params.hostMount ?? resolveSdkSessionCwd(params.workspace, params.session);
   } catch {
     return null;
   }
