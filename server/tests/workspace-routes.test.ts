@@ -1,7 +1,16 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -9,12 +18,71 @@ import { getPiSessionsRoot } from "../src/local-sessions.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { createWorkspaceRoutes } from "../src/routes/workspaces.js";
-import type { Session, Workspace, WorkspaceReviewDiffResponse } from "../src/types.js";
-import { createWorkspaceWorktree } from "../src/worktrees.js";
+import type {
+  Session,
+  Workspace,
+  WorkspaceReviewDiffResponse,
+  WorkspaceWorktree,
+} from "../src/types.js";
+import {
+  createWorkspaceWorktree,
+  hasManagedWorkspaceWorktreeDirectory,
+} from "../src/worktrees.js";
 import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function installStaleWorktreeList(bin: string, cwd: string, stateDir: string): void {
+  const realGit = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const state = JSON.stringify(stateDir);
+  writeFileSync(
+    join(bin, "git"),
+    `#!/bin/sh
+expected=${JSON.stringify(cwd)}
+expected_p=$(cd "$expected" && pwd -P)
+pwd_p=$(pwd -P)
+if [ "$pwd_p" = "$expected_p" ] && [ "$1" = "worktree" ] && [ "$2" = "list" ]; then
+  nfile=${state}/list-count
+  n=$(cat "$nfile" 2>/dev/null || echo 0)
+  n=$((n + 1))
+  printf '%s\n' "$n" > "$nfile"
+  if [ "$n" = "1" ]; then
+    touch ${state}/list-started
+    while [ ! -f ${state}/release-list ]; do
+      sleep 0.02
+    done
+    cat ${state}/porcelain-snapshot > ${state}/list-stdout
+    cat ${state}/porcelain-snapshot
+    exit 0
+  fi
+fi
+exec ${JSON.stringify(realGit)} "$@"
+`,
+  );
+  chmodSync(join(bin, "git"), 0o755);
+}
+
+function installHeldWorktreeAdd(bin: string, cwd: string, stateDir: string): void {
+  const realGit = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const state = JSON.stringify(stateDir);
+  writeFileSync(
+    join(bin, "git"),
+    `#!/bin/sh
+expected=${JSON.stringify(cwd)}
+expected_p=$(cd "$expected" && pwd -P)
+pwd_p=$(pwd -P)
+if [ "$pwd_p" = "$expected_p" ] && [ "$1" = "worktree" ] && [ "$2" = "add" ]; then
+  touch ${state}/add-started
+  while [ ! -f ${state}/release-add ]; do
+    sleep 0.02
+  done
+fi
+exec ${JSON.stringify(realGit)} "$@"
+`,
+  );
+  chmodSync(join(bin, "git"), 0o755);
 }
 
 function makeRouteSession(id: string, overrides: Partial<Session> = {}): Session {
@@ -480,6 +548,163 @@ describe("workspaces module", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
       rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses workspace deletion when create finishes during the catalog await", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-create-landed-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-create-landed-data-"));
+    const stateDir = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-create-landed-state-"));
+    const bin = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-create-landed-bin-"));
+    const previousPath = process.env.PATH;
+    try {
+      git(root, ["init", "--initial-branch=main"]);
+      git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+      git(root, ["config", "user.name", "Oppi Test"]);
+      writeFileSync(join(root, "README.md"), "main checkout\n");
+      git(root, ["add", "README.md"]);
+      git(root, ["commit", "-m", "initial"]);
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Default",
+        hostMount: root,
+        systemPromptMode: "append",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      writeFileSync(
+        join(stateDir, "porcelain-snapshot"),
+        execFileSync("git", ["worktree", "list", "--porcelain"], {
+          cwd: root,
+          encoding: "utf8",
+        }),
+      );
+      installStaleWorktreeList(bin, root, stateDir);
+      process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
+      const deleteWorkspace = vi.fn(() => true);
+      const stopWorkspaceVm = vi.fn(async () => undefined);
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => workspace),
+          getDataDir: vi.fn(() => dataDir),
+          deleteWorkspace,
+        },
+        stopWorkspaceVm,
+      } as unknown as RouteContext;
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+      const deleting = dispatch({
+        method: "DELETE",
+        path: "/workspaces/ws-1",
+        url: new URL("http://localhost/workspaces/ws-1"),
+        req: {} as never,
+        res: res as never,
+      });
+      await vi.waitFor(() => {
+        expect(existsSync(join(stateDir, "list-started"))).toBe(true);
+      });
+      const created = await createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/during-delete" },
+        { dataDir },
+      );
+      writeFileSync(join(stateDir, "release-list"), "1");
+      expect(await deleting).toBe(true);
+
+      const catalogInput = readFileSync(join(stateDir, "list-stdout"), "utf8");
+      expect(catalogInput).not.toContain(created.path);
+      expect(existsSync(created.path)).toBe(true);
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body)).toEqual({
+        error: "Workspace has Oppi-managed worktrees; remove them before deleting the workspace",
+      });
+      expect(deleteWorkspace).not.toHaveBeenCalled();
+      expect(stopWorkspaceVm).not.toHaveBeenCalled();
+    } finally {
+      writeFileSync(join(stateDir, "release-list"), "1");
+      process.env.PATH = previousPath;
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+      rmSync(stateDir, { recursive: true, force: true });
+      rmSync(bin, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses workspace deletion while a create claim is held and the checkout does not exist yet", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-create-claim-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-create-claim-data-"));
+    const stateDir = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-create-claim-state-"));
+    const bin = mkdtempSync(join(tmpdir(), "oppi-workspace-delete-create-claim-bin-"));
+    const previousPath = process.env.PATH;
+    let creating: Promise<WorkspaceWorktree> | undefined;
+    try {
+      git(root, ["init", "--initial-branch=main"]);
+      git(root, ["config", "user.email", "oppi-test@example.invalid"]);
+      git(root, ["config", "user.name", "Oppi Test"]);
+      writeFileSync(join(root, "README.md"), "main checkout\n");
+      git(root, ["add", "README.md"]);
+      git(root, ["commit", "-m", "initial"]);
+      const workspace: Workspace = {
+        id: "ws-1",
+        name: "Default",
+        hostMount: root,
+        systemPromptMode: "append",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      installHeldWorktreeAdd(bin, root, stateDir);
+      process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
+      creating = createWorkspaceWorktree(
+        workspace,
+        { branch: "feature/claim-held" },
+        { dataDir },
+      );
+      await vi.waitFor(() => {
+        expect(existsSync(join(stateDir, "add-started"))).toBe(true);
+      });
+      expect(hasManagedWorkspaceWorktreeDirectory(dataDir, workspace.id)).toBe(false);
+      const deleteWorkspace = vi.fn(() => true);
+      const stopWorkspaceVm = vi.fn(async () => undefined);
+      const ctx = {
+        storage: {
+          getWorkspace: vi.fn(() => workspace),
+          getDataDir: vi.fn(() => dataDir),
+          deleteWorkspace,
+        },
+        stopWorkspaceVm,
+      } as unknown as RouteContext;
+      const dispatch = createWorkspaceRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      const handled = await dispatch({
+        method: "DELETE",
+        path: "/workspaces/ws-1",
+        url: new URL("http://localhost/workspaces/ws-1"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      expect(handled).toBe(true);
+      expect(hasManagedWorkspaceWorktreeDirectory(dataDir, workspace.id)).toBe(false);
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body)).toEqual({
+        error: "Workspace has Oppi-managed worktrees; remove them before deleting the workspace",
+      });
+      expect(deleteWorkspace).not.toHaveBeenCalled();
+      expect(stopWorkspaceVm).not.toHaveBeenCalled();
+      writeFileSync(join(stateDir, "release-add"), "1");
+      if (!creating) throw new Error("create did not start");
+      const created = await creating;
+      expect(existsSync(created.path)).toBe(true);
+      expect(deleteWorkspace).not.toHaveBeenCalled();
+    } finally {
+      writeFileSync(join(stateDir, "release-add"), "1");
+      await creating?.catch(() => undefined);
+      process.env.PATH = previousPath;
+      rmSync(root, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+      rmSync(stateDir, { recursive: true, force: true });
+      rmSync(bin, { recursive: true, force: true });
     }
   });
 

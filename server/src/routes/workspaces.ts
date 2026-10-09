@@ -20,6 +20,7 @@ import {
   previewWorkspaceWorktree,
   removeWorkspaceWorktree,
   resolveWorkspaceWorktree,
+  workspaceHasPendingWorktreeClaim,
   WorkspaceWorktreeError,
 } from "../worktrees.js";
 import type {
@@ -251,13 +252,13 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     const workspace = ctx.storage.getWorkspace(wsId);
     if (workspace) {
       const dataDir = ctx.storage.getDataDir();
+      const listed = await listWorkspaceWorktrees(workspace, { dataDir });
+      // Create can mkdir and claim during that await. The catalog hides an
+      // in-flight claim, so re-check the directory and the claim set after.
       const hasManagedWorktrees =
         hasManagedWorkspaceWorktreeDirectory(dataDir, wsId) ||
-        (
-          await listWorkspaceWorktrees(workspace, {
-            dataDir,
-          })
-        ).some((worktree) => worktree.managedByOppi === true);
+        listed.some((worktree) => worktree.managedByOppi === true) ||
+        workspaceHasPendingWorktreeClaim(wsId);
       if (hasManagedWorktrees) {
         helpers.error(
           res,

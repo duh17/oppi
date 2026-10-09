@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -27,7 +27,11 @@ import {
 import { getPiSessionsRoot } from "../src/local-sessions.js";
 import { buildSessionSummary } from "../src/session-summary.js";
 import type { Session, Workspace } from "../src/types.js";
-import { createWorkspaceWorktree, WorkspaceWorktreeError } from "../src/worktrees.js";
+import {
+  createWorkspaceWorktree,
+  removeWorkspaceWorktree,
+  WorkspaceWorktreeError,
+} from "../src/worktrees.js";
 import * as worktrees from "../src/worktrees.js";
 
 const WORKTREE_REBIND_NOTICE = "Resuming on Main checkout. The worktree is gone.";
@@ -43,6 +47,31 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function installHeldWorktreeRemove(bin: string, cwd: string, stateDir: string): void {
+  const realGit = execFileSync("/bin/sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const state = JSON.stringify(stateDir);
+  writeFileSync(
+    join(bin, "git"),
+    `#!/bin/sh
+expected=${JSON.stringify(cwd)}
+expected_p=$(cd "$expected" && pwd -P)
+pwd_p=$(pwd -P)
+if [ "$pwd_p" = "$expected_p" ] && [ "$1" = "worktree" ] && [ "$2" = "remove" ]; then
+  touch ${state}/remove-started
+  while [ ! -f ${state}/release-remove ]; do
+    sleep 0.02
+  done
+  if [ -f ${state}/fail-remove ]; then
+    echo "remove failed" >&2
+    exit 1
+  fi
+fi
+exec ${JSON.stringify(realGit)} "$@"
+`,
+  );
+  chmodSync(join(bin, "git"), 0o755);
 }
 
 function makeGitWorkspace(root: string): Workspace {
@@ -1509,6 +1538,66 @@ describe("SessionLifecycleService", () => {
       } finally {
         rmSync(root, { recursive: true, force: true });
         rmSync(dataDir, { recursive: true, force: true });
+      }
+    });
+
+    it("fails open with 409 while removal is pending instead of rebinding to main", async () => {
+      const root = mkdtempSync(join(tmpdir(), "oppi-lifecycle-open-pending-remove-"));
+      const dataDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-open-pending-remove-data-"));
+      const stateDir = mkdtempSync(join(tmpdir(), "oppi-lifecycle-open-pending-remove-state-"));
+      const bin = mkdtempSync(join(tmpdir(), "oppi-lifecycle-open-pending-remove-bin-"));
+      const previousPath = process.env.PATH;
+      let removal: Promise<unknown> = Promise.resolve();
+      try {
+        const workspace = makeGitWorkspace(root);
+        const created = await createWorkspaceWorktree(
+          workspace,
+          { branch: "feature/open-pending" },
+          { dataDir },
+        );
+        const session = makeSession({
+          runtime: "oppi",
+          status: "stopped",
+          worktreeId: created.id,
+        });
+        const { service, saveSession, startSession, getPersistedSession } = makeService({
+          dataDir,
+          storedSession: session,
+        });
+        installHeldWorktreeRemove(bin, root, stateDir);
+        process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
+        removal = removeWorkspaceWorktree(workspace, {
+          dataDir,
+          worktreeId: created.id,
+          force: true,
+        });
+        await vi.waitFor(() => {
+          expect(existsSync(join(stateDir, "remove-started"))).toBe(true);
+        });
+
+        await expect(service.openFocusedSession({ session, workspace })).rejects.toMatchObject({
+          name: "SessionLifecycleError",
+          statusCode: 409,
+          message: "Worktree removal is in progress",
+        } satisfies Partial<SessionLifecycleError>);
+        expect(saveSession).not.toHaveBeenCalled();
+        expect(startSession).not.toHaveBeenCalled();
+        expect(getPersistedSession("sess-1")?.worktreeId).toBe(created.id);
+        expect(session.worktreeId).toBe(created.id);
+
+        writeFileSync(join(stateDir, "fail-remove"), "1");
+        writeFileSync(join(stateDir, "release-remove"), "1");
+        await expect(removal).rejects.toMatchObject({ statusCode: 409 });
+        expect(existsSync(created.path)).toBe(true);
+        expect(getPersistedSession("sess-1")?.worktreeId).toBe(created.id);
+      } finally {
+        writeFileSync(join(stateDir, "release-remove"), "1");
+        await removal.catch(() => undefined);
+        process.env.PATH = previousPath;
+        rmSync(root, { recursive: true, force: true });
+        rmSync(dataDir, { recursive: true, force: true });
+        rmSync(stateDir, { recursive: true, force: true });
+        rmSync(bin, { recursive: true, force: true });
       }
     });
 

@@ -44,7 +44,11 @@ import type {
   SessionEngine,
   Workspace,
 } from "./types.js";
-import { listWorkspaceWorktrees, WorkspaceWorktreeError } from "./worktrees.js";
+import {
+  listWorkspaceWorktrees,
+  workspaceHasPendingWorktreeClaim,
+  WorkspaceWorktreeError,
+} from "./worktrees.js";
 
 const CONTROL_LAUNCH_LEASE_OWNER = "control-session-create";
 const CONTROL_LAUNCH_LEASE_TTL_MS = 2 * 60_000;
@@ -77,7 +81,7 @@ function withoutWorktreeRebindNotice(warnings: string[] | undefined): string[] |
 }
 
 type WorktreeBindingState =
-  "main" | "available" | "unavailable" | "main-missing" | "inspection-failed";
+  "main" | "available" | "unavailable" | "main-missing" | "inspection-failed" | "pending-removal";
 
 const REBIND_BLOCKING_STATUSES = new Set<Session["status"]>(["busy", "starting", "stopping"]);
 
@@ -996,6 +1000,10 @@ export class SessionLifecycleService {
     const requested = session.worktreeId?.trim();
     if (!requested || requested === "main") return "main";
     if (!workspace) return "main-missing";
+    // A pending removal is hidden from the catalog. That is not "gone": if the
+    // remove fails, rebinding now would strand the session on the main checkout.
+    const removalPending = (): boolean => workspaceHasPendingWorktreeClaim(workspace.id, requested);
+    if (removalPending()) return "pending-removal";
 
     let worktrees;
     try {
@@ -1004,9 +1012,13 @@ export class SessionLifecycleService {
         listingFailure: "throw",
       });
     } catch (error) {
-      if (error instanceof WorkspaceWorktreeError) return "inspection-failed";
+      if (error instanceof WorkspaceWorktreeError) {
+        if (removalPending()) return "pending-removal";
+        return "inspection-failed";
+      }
       throw error;
     }
+    if (removalPending()) return "pending-removal";
     const main = worktrees.find((worktree) => worktree.isMain);
     if (!main || !main.isGitRepo || !existsSync(main.path)) return "main-missing";
 
@@ -1036,6 +1048,9 @@ export class SessionLifecycleService {
     if (binding === "main" || binding === "available") {
       const stripped = this.stripPersistedWorktreeRebindNotice(session);
       return { session: stripped ?? session, rebound: false };
+    }
+    if (binding === "pending-removal") {
+      throw new SessionLifecycleError("Worktree removal is in progress", 409);
     }
     if (binding === "inspection-failed") {
       throw new SessionLifecycleError("Worktree inspection failed", 409);

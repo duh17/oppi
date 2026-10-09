@@ -711,6 +711,21 @@ function pendingRemovalKey(workspaceId: string, worktreeId: string): string {
   return `${workspaceId}\0${worktreeId}`;
 }
 
+/** True when create or removal holds this workspace, or one of its worktree ids. */
+export function workspaceHasPendingWorktreeClaim(
+  workspaceId: string,
+  worktreeId?: string,
+): boolean {
+  if (worktreeId !== undefined) {
+    return pendingWorktreeRemovalKeys.has(pendingRemovalKey(workspaceId, worktreeId));
+  }
+  const prefix = `${workspaceId}\0`;
+  for (const key of pendingWorktreeRemovalKeys) {
+    if (key.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
 // Deleting a multi-GB tree takes minutes; killing git midway leaves a half-deleted
 // checkout. The bound only guards against a wedged git.
 const WORKTREE_REMOVE_TIMEOUT_MS = 30 * 60_000;
