@@ -504,9 +504,10 @@ function buildEntryPath(entries: SessionEntry[], leafId?: string | null): Sessio
   const path: SessionEntry[] = [];
   let current: SessionEntry | undefined = leaf;
   while (current) {
-    path.unshift(current);
+    path.push(current);
     current = current.parentId ? byId.get(current.parentId) : undefined;
   }
+  path.reverse();
 
   return path;
 }
@@ -1148,75 +1149,106 @@ export interface SearchTranscriptContent {
  * sources as mobile TraceEvents, without constructing thinking, tool results,
  * custom cards, or the mobile normalization tree.
  */
+interface SearchTranscriptAccum {
+  userParts: string[];
+  assistantParts: string[];
+  toolNameSet: Set<string>;
+  userLen: number;
+  assistantLen: number;
+}
+
+function emptySearchTranscriptAccum(): SearchTranscriptAccum {
+  return { userParts: [], assistantParts: [], toolNameSet: new Set(), userLen: 0, assistantLen: 0 };
+}
+
+function consumeSearchTranscriptEntry(accum: SearchTranscriptAccum, entry: SessionEntry): void {
+  if (entry.type !== "message") return;
+  const msg = entry.message;
+  if (!msg) return;
+
+  if (msg.role === "user") {
+    const text = stripInlineMediaDataUris(
+      extractText(msg.content, { includeMediaDataURIs: false }),
+    );
+    if (text && accum.userLen < SEARCH_USER_MESSAGE_CAP) {
+      const normalized = replaceUnpairedSurrogates(text);
+      accum.userParts.push(normalized);
+      accum.userLen += normalized.length;
+    }
+    return;
+  }
+
+  if (msg.role !== "assistant") return;
+
+  const content = msg.content;
+  if (Array.isArray(content)) {
+    for (const projected of projectAssistantContentRuns(msg)) {
+      if (projected.kind === "text") {
+        if (projected.text && accum.assistantLen < SEARCH_ASSISTANT_MESSAGE_CAP) {
+          const normalized = replaceUnpairedSurrogates(stripInlineMediaDataUris(projected.text));
+          if (normalized) {
+            accum.assistantParts.push(normalized);
+            accum.assistantLen += normalized.length;
+          }
+        }
+        continue;
+      }
+      const block = projected.block;
+      if (block.type === "toolCall") {
+        const tool = (block.name as string) || "unknown";
+        if (tool) accum.toolNameSet.add(normalizeTraceValueForMobile(tool) as string);
+      }
+    }
+    return;
+  }
+
+  if (typeof content === "string" && content && accum.assistantLen < SEARCH_ASSISTANT_MESSAGE_CAP) {
+    const normalized = replaceUnpairedSurrogates(stripInlineMediaDataUris(content));
+    if (normalized) {
+      accum.assistantParts.push(normalized);
+      accum.assistantLen += normalized.length;
+    }
+  }
+}
+
+function finishSearchTranscript(accum: SearchTranscriptAccum): SearchTranscriptContent {
+  return {
+    userMessages: accum.userParts.join("\n").slice(0, SEARCH_USER_MESSAGE_CAP),
+    assistantMessages: accum.assistantParts.join("\n").slice(0, SEARCH_ASSISTANT_MESSAGE_CAP),
+    toolNames: [...accum.toolNameSet].join(" "),
+  };
+}
+
 export function extractSearchTranscriptFromEntries(
   entries: SessionEntry[],
 ): SearchTranscriptContent {
-  const userCap = SEARCH_USER_MESSAGE_CAP;
-  const assistantCap = SEARCH_ASSISTANT_MESSAGE_CAP;
   const { visibleEntries } = selectVisibleSessionContext(entries);
-  const userParts: string[] = [];
-  const assistantParts: string[] = [];
-  const toolNameSet = new Set<string>();
-  let userLen = 0;
-  let assistantLen = 0;
+  const accum = emptySearchTranscriptAccum();
+  for (const entry of visibleEntries) consumeSearchTranscriptEntry(accum, entry);
+  return finishSearchTranscript(accum);
+}
 
-  for (const entry of visibleEntries) {
-    if (entry.type !== "message") continue;
-    const msg = entry.message;
-    if (!msg) continue;
-
-    if (msg.role === "user") {
-      const text = stripInlineMediaDataUris(
-        extractText(msg.content, { includeMediaDataURIs: false }),
-      );
-      if (text && userLen < userCap) {
-        const normalized = replaceUnpairedSurrogates(text);
-        userParts.push(normalized);
-        userLen += normalized.length;
-      }
-      continue;
+/**
+ * Same extraction as extractSearchTranscriptFromEntries, yielding every
+ * `yieldEvery` visible entries so a large file cannot stall one event-loop turn.
+ * Returns null when `shouldStop` fires between slices.
+ */
+export async function extractSearchTranscriptFromEntriesYielding(
+  entries: SessionEntry[],
+  yieldEvery: number,
+  shouldStop: () => boolean = () => false,
+): Promise<SearchTranscriptContent | null> {
+  const { visibleEntries } = selectVisibleSessionContext(entries);
+  const accum = emptySearchTranscriptAccum();
+  for (let i = 0; i < visibleEntries.length; i++) {
+    if (i > 0 && i % yieldEvery === 0) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (shouldStop()) return null;
     }
-
-    if (msg.role !== "assistant") continue;
-
-    const content = msg.content;
-    if (Array.isArray(content)) {
-      for (const projected of projectAssistantContentRuns(msg)) {
-        if (projected.kind === "text") {
-          if (projected.text && assistantLen < assistantCap) {
-            const normalized = replaceUnpairedSurrogates(stripInlineMediaDataUris(projected.text));
-            if (normalized) {
-              assistantParts.push(normalized);
-              assistantLen += normalized.length;
-            }
-          }
-          continue;
-        }
-        const block = projected.block;
-        if (block.type === "toolCall") {
-          const tool = (block.name as string) || "unknown";
-          if (tool) {
-            toolNameSet.add(normalizeTraceValueForMobile(tool) as string);
-          }
-        }
-      }
-      continue;
-    }
-
-    if (typeof content === "string" && content && assistantLen < assistantCap) {
-      const normalized = replaceUnpairedSurrogates(stripInlineMediaDataUris(content));
-      if (normalized) {
-        assistantParts.push(normalized);
-        assistantLen += normalized.length;
-      }
-    }
+    const entry = visibleEntries[i];
+    if (entry) consumeSearchTranscriptEntry(accum, entry);
   }
-
-  return {
-    userMessages: userParts.join("\n").slice(0, userCap),
-    assistantMessages: assistantParts.join("\n").slice(0, assistantCap),
-    toolNames: [...toolNameSet].join(" "),
-  };
+  return finishSearchTranscript(accum);
 }
 
 /**

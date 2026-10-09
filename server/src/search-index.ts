@@ -24,6 +24,7 @@ import { isServerDurableSession } from "./session-runtime-capabilities.js";
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "./sqlite-compat.js";
 import {
   extractSearchTranscriptFromEntries,
+  extractSearchTranscriptFromEntriesYielding,
   parseSessionEntries,
   readSearchTranscriptFile,
   SEARCH_ASSISTANT_MESSAGE_CAP,
@@ -94,6 +95,8 @@ export interface SearchIndexBackgroundSyncResult extends SearchIndexSyncResult {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_BACKGROUND_SYNC_BUDGET_MS = 8;
+/** Visible entries walked between event-loop yields on a full reindex. */
+const FULL_REINDEX_YIELD_EVERY = 1_000;
 /** FTS5 merge pages per step. 200 pages took up to 44 ms on an 11k-session index; 32 stays near the budget. */
 const FTS_MERGE_PAGES_PER_STEP = 32;
 const DEFAULT_BACKGROUND_SYNC_BATCH_SIZE = Number.MAX_SAFE_INTEGER;
@@ -348,6 +351,18 @@ function cursorForFile(stat: FileStat, boundary: string, leafId: string | null):
   };
 }
 
+/**
+ * A snapshot must not overwrite a cursor that already indexed a later prefix of
+ * the same file. Truncation and a same-size rewrite make the stored cursor
+ * stale: the snapshot is the file, and refusing it would retry forever.
+ */
+function storedCursorIsNewer(stored: FileCursor, snapshot: FileCursor, fileSize: number): boolean {
+  if (stored.dev !== snapshot.dev || stored.ino !== snapshot.ino) return false;
+  if (snapshot.offset === fileSize && fileSize <= stored.offset) return false;
+  if (stored.offset > snapshot.offset) return true;
+  return stored.offset === snapshot.offset && stored.boundary !== snapshot.boundary;
+}
+
 function appendCapped(existing: string, addition: string, cap: number): string {
   if (!addition) return existing.length > cap ? existing.slice(0, cap) : existing;
   if (!existing || existing.length >= cap) {
@@ -552,6 +567,11 @@ export class SearchIndex {
   /** Set when the server has a durable Harness. Durable sessions are then indexed from it. */
   durableSource?: DurableSearchSource;
   /**
+   * Test seam. Awaited after a file snapshot is read and before it is committed,
+   * so a test can delete the session or sync while that read is in flight.
+   */
+  fileIndexGate?: () => Promise<void>;
+  /**
    * Sessions that bound a durable conversation after a file walk snapshotted
    * them as file-backed. The walk must not write their (nonexistent) JSONL over
    * a durable row, so it hands them to the durable pass instead.
@@ -621,8 +641,7 @@ export class SearchIndex {
 
   private schemaVersion(): string | undefined {
     const row = this.db.prepare("SELECT value FROM fts_schema WHERE key = 'version'").get() as
-      | { value: string }
-      | undefined;
+      { value: string } | undefined;
     return row?.value;
   }
 
@@ -994,26 +1013,43 @@ export class SearchIndex {
   }
 
   private async pumpFileIndex(sessionId: string, job: { rerun: boolean }): Promise<void> {
-    try {
-      do {
-        job.rerun = false;
+    // A thrown read must not drop a coalesced follow-up. Keep the shared promise
+    // pending until that pass finishes, or the session is gone.
+    do {
+      job.rerun = false;
+      try {
         await this.runFileIndex(sessionId);
-      } while (job.rerun && !this.closed);
-    } catch (err: unknown) {
-      log.error("search_index.file_index.failed", {
-        sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+      } catch (err: unknown) {
+        log.error("search_index.file_index.failed", {
+          sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      if (this.closed || !this.getSession(sessionId)) return;
+    } while (job.rerun);
+  }
+
+  private async pauseFileIndex(): Promise<void> {
+    if (this.fileIndexGate) await this.fileIndexGate();
+  }
+
+  private markFileRerun(sessionId: string): void {
+    const job = this.fileIndexJobs.get(sessionId);
+    if (job) job.rerun = true;
+  }
+
+  /** Reload immediately before a write. A delete during the read must not be written back. */
+  private liveFileSession(sessionId: string): Session | undefined {
+    const live = this.getSession(sessionId);
+    if (live && !live.ephemeral) return live;
+    if (!this.closed) this.deleteSession(sessionId);
+    return undefined;
   }
 
   private async runFileIndex(sessionId: string): Promise<void> {
     if (this.closed) return;
-    const session = this.getSession(sessionId);
-    if (!session || session.ephemeral) {
-      if (!this.closed) this.deleteSession(sessionId);
-      return;
-    }
+    const session = this.liveFileSession(sessionId);
+    if (!session) return;
     if (this.isIndexedFromDurable(session)) {
       await this.syncDurableSession(sessionId);
       return;
@@ -1021,7 +1057,7 @@ export class SearchIndex {
 
     const jsonlPath = session.piSessionFile;
     if (!jsonlPath) {
-      this.writeFileTranscript(session, emptyTranscript(), null);
+      await this.commitFileSnapshot(sessionId, null, emptyTranscript(), null);
       return;
     }
 
@@ -1033,7 +1069,7 @@ export class SearchIndex {
     }
     if (this.closed) return;
     if (!fileStat) {
-      this.writeFileTranscript(session, emptyTranscript(), null);
+      await this.commitFileSnapshot(sessionId, null, emptyTranscript(), null);
       return;
     }
 
@@ -1059,16 +1095,37 @@ export class SearchIndex {
         } else if (fileStat.size === cursor.offset) {
           const title = extractSessionTitle(session);
           const workspaceId = session.workspaceId ?? "";
-          if (
-            meta.title !== title ||
-            meta.workspace_id !== workspaceId ||
-            meta.jsonl_mtime_ms !== Math.floor(fileStat.mtimeMs)
-          ) {
-            this.writeFileTranscript(session, indexed, {
-              path: jsonlPath,
-              stat: fileStat,
+          const unchanged =
+            meta.title === title &&
+            meta.workspace_id === workspaceId &&
+            meta.jsonl_mtime_ms === Math.floor(fileStat.mtimeMs);
+          // Still confirm the snapshot when nothing else changed, so a delete
+          // during the stat cannot be ignored.
+          if (!unchanged) {
+            await this.commitFileSnapshot(
+              sessionId,
+              {
+                path: jsonlPath,
+                stat: fileStat,
+                boundaryAtOffset: boundary,
+                offset: cursor.offset,
+              },
+              indexed,
               cursor,
-            });
+            );
+          } else {
+            await this.commitFileSnapshot(
+              sessionId,
+              {
+                path: jsonlPath,
+                stat: fileStat,
+                boundaryAtOffset: boundary,
+                offset: cursor.offset,
+              },
+              indexed,
+              cursor,
+              { skipUnchangedWrite: true },
+            );
           }
           return;
         } else {
@@ -1078,11 +1135,17 @@ export class SearchIndex {
           if (merged) {
             const boundaryNow = await readBoundary(jsonlPath, fileStat.size);
             if (this.closed) return;
-            this.writeFileTranscript(session, merged.content, {
-              path: jsonlPath,
-              stat: fileStat,
-              cursor: cursorForFile(fileStat, boundaryNow, merged.leafId),
-            });
+            await this.commitFileSnapshot(
+              sessionId,
+              {
+                path: jsonlPath,
+                stat: fileStat,
+                boundaryAtOffset: boundary,
+                offset: cursor.offset,
+              },
+              merged.content,
+              cursorForFile(fileStat, boundaryNow, merged.leafId),
+            );
             return;
           }
         }
@@ -1091,23 +1154,14 @@ export class SearchIndex {
 
     const full = await this.readFullTranscript(jsonlPath, fileStat.size);
     if (this.closed || !full) return;
-    const after = fileStatFrom(await stat(jsonlPath, { bigint: true }));
+    const boundaryNow = await readBoundary(jsonlPath, fileStat.size);
     if (this.closed) return;
-    // Replaced or truncated while we read. The follow-up, if any, reads again.
-    if (
-      !after ||
-      after.dev !== fileStat.dev ||
-      after.ino !== fileStat.ino ||
-      after.size < fileStat.size
-    ) {
-      return;
-    }
-    // Cursor covers the bytes we parsed, not bytes appended during the read.
-    this.writeFileTranscript(session, full.transcript, {
-      path: jsonlPath,
-      stat: fileStat,
-      cursor: cursorForFile(fileStat, await readBoundary(jsonlPath, fileStat.size), full.leafId),
-    });
+    await this.commitFileSnapshot(
+      sessionId,
+      { path: jsonlPath, stat: fileStat, boundaryAtOffset: boundaryNow, offset: fileStat.size },
+      full.transcript,
+      cursorForFile(fileStat, boundaryNow, full.leafId),
+    );
   }
 
   /**
@@ -1170,12 +1224,8 @@ export class SearchIndex {
       }
     }
 
-    const content = extractIndexedContent(session, jsonlPath);
-    this.writeFileTranscript(session, content, {
-      path: jsonlPath,
-      stat: fileStat,
-      cursor: cursorForFile(fileStat, readBoundarySync(jsonlPath, fileStat.size), content.leafId),
-    });
+    // Cursor miss at shutdown: leave the row. A whole-file read here would
+    // block process exit. The next boot reindexes.
   }
 
   private async readFullTranscript(
@@ -1186,11 +1236,7 @@ export class SearchIndex {
     // reindex cannot stall the event loop for the whole file.
     if (size < 256 * 1024) {
       const bytes = await readByteRange(jsonlPath, 0, size);
-      const entries = parseSessionEntries(bytes.toString("utf8"));
-      return {
-        transcript: extractSearchTranscriptFromEntries(entries),
-        leafId: sessionTranscriptLeafId(entries),
-      };
+      return this.finishFullTranscript(parseSessionEntries(bytes.toString("utf8")));
     }
 
     const handle = await open(jsonlPath, "r");
@@ -1213,7 +1259,10 @@ export class SearchIndex {
           entries.push(...parseSessionEntries(leftover.slice(0, newline)));
           leftover = leftover.slice(newline + 1);
         }
-        await new Promise<void>((resolve) => setImmediate(resolve));
+        if (entries.length > 0 && entries.length % FULL_REINDEX_YIELD_EVERY === 0) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          if (this.closed) return null;
+        }
       }
       leftover += decoder.decode();
       if (leftover.trim()) entries.push(...parseSessionEntries(leftover));
@@ -1221,10 +1270,19 @@ export class SearchIndex {
       await handle.close();
     }
     if (this.closed) return null;
-    return {
-      transcript: extractSearchTranscriptFromEntries(entries),
-      leafId: sessionTranscriptLeafId(entries),
-    };
+    return this.finishFullTranscript(entries);
+  }
+
+  private async finishFullTranscript(
+    entries: SessionEntry[],
+  ): Promise<{ transcript: SearchTranscriptContent; leafId: string | null } | null> {
+    const transcript = await extractSearchTranscriptFromEntriesYielding(
+      entries,
+      FULL_REINDEX_YIELD_EVERY,
+      () => this.closed,
+    );
+    if (!transcript) return null;
+    return { transcript, leafId: sessionTranscriptLeafId(entries) };
   }
 
   private getMeta(sessionId: string): FtsMetaRow | undefined {
@@ -1281,8 +1339,7 @@ export class SearchIndex {
 
   private indexedTranscript(sessionId: string): SearchTranscriptContent | null {
     const row = this.stmtGetIndexedRow.get(sessionId) as
-      | { user_messages: string; assistant_messages: string; tool_names: string }
-      | undefined;
+      { user_messages: string; assistant_messages: string; tool_names: string } | undefined;
     if (!row) return null;
     return {
       userMessages: row.user_messages,
@@ -1291,15 +1348,92 @@ export class SearchIndex {
     };
   }
 
+  /**
+   * Re-stat and re-read the boundary at the snapshot offset. A rewrite during
+   * the read must not be committed.
+   */
+  private async fileSnapshotHolds(
+    path: string,
+    snapshot: FileStat,
+    offset: number,
+    boundary: string,
+  ): Promise<boolean> {
+    let after: FileStat | null;
+    try {
+      after = fileStatFrom(await stat(path, { bigint: true }));
+    } catch {
+      return false;
+    }
+    if (
+      !after ||
+      after.dev !== snapshot.dev ||
+      after.ino !== snapshot.ino ||
+      after.size !== snapshot.size
+    ) {
+      return false;
+    }
+    return (await readBoundary(path, offset)) === boundary;
+  }
+
+  /**
+   * Pause for tests, refuse a snapshot the file no longer matches, then reload
+   * the session with no further await before the write.
+   */
+  private async commitFileSnapshot(
+    sessionId: string,
+    snapshot: {
+      path: string;
+      stat: FileStat;
+      boundaryAtOffset: string;
+      offset: number;
+    } | null,
+    content: SearchTranscriptContent,
+    cursor: FileCursor | null,
+    options: { skipUnchangedWrite?: boolean } = {},
+  ): Promise<void> {
+    await this.pauseFileIndex();
+    if (this.closed) return;
+    if (snapshot) {
+      const holds = await this.fileSnapshotHolds(
+        snapshot.path,
+        snapshot.stat,
+        snapshot.offset,
+        snapshot.boundaryAtOffset,
+      );
+      if (!holds) {
+        this.markFileRerun(sessionId);
+        return;
+      }
+    }
+    const live = this.liveFileSession(sessionId);
+    if (!live || options.skipUnchangedWrite) return;
+    this.writeFileTranscript(
+      live,
+      content,
+      snapshot && cursor ? { path: snapshot.path, stat: snapshot.stat, cursor } : null,
+    );
+  }
+
   private writeFileTranscript(
     session: Session,
     content: SearchTranscriptContent,
     file: { path: string; stat: FileStat; cursor: FileCursor } | null,
-  ): void {
-    if (this.closed) return;
+  ): boolean {
+    if (this.closed) return false;
+    let wrote = false;
     const title = extractSessionTitle(session);
     const workspaceId = session.workspaceId ?? "";
     this.db.transaction(() => {
+      if (file) {
+        const stored = this.getMeta(session.id);
+        const storedCursor =
+          stored && stored.jsonl_path === file.path ? cursorFromMeta(stored) : null;
+        if (storedCursor && storedCursorIsNewer(storedCursor, file.cursor, file.stat.size)) {
+          this.markFileRerun(session.id);
+          return;
+        }
+      }
+      wrote = true;
       this.upsertRow(
         session.id,
         workspaceId,
@@ -1319,6 +1453,7 @@ export class SearchIndex {
         file?.cursor ?? null,
       );
     })();
+    return wrote;
   }
 
   private upsertMeta(
@@ -1441,8 +1576,7 @@ export class SearchIndex {
       | undefined;
     if (meta?.durable_marker === marker) {
       const indexedRow = this.stmtGetIndexedRow.get(sessionId) as
-        | { user_messages: string; assistant_messages: string; tool_names: string }
-        | undefined;
+        { user_messages: string; assistant_messages: string; tool_names: string } | undefined;
       if (indexedRow) {
         if (meta.workspace_id === workspaceId && meta.title === title) {
           result.skipped = 1;
@@ -1679,8 +1813,114 @@ export class SearchIndex {
     return result;
   }
 
+  /** True when startup must read the whole file. The background pass uses the yielding reader. */
+  private needsYieldingFullRead(session: Session): boolean {
+    const live = this.getSession(session.id);
+    if (!live || live.ephemeral || this.isIndexedFromDurable(live)) return false;
+    if (this.fileIndexJobs.has(live.id)) return false;
+    const jsonlPath = live.piSessionFile;
+    if (!jsonlPath) return false;
+    const fingerprint = this.readTranscriptFingerprint(live);
+    if (!fingerprint.fileStat) return false;
+    const meta = this.getMeta(live.id);
+    if (
+      meta &&
+      meta.jsonl_mtime_ms === fingerprint.jsonlMtimeMs &&
+      meta.jsonl_size === fingerprint.jsonlSize &&
+      meta.jsonl_path === fingerprint.expectedJsonlPath
+    ) {
+      return false;
+    }
+    return !this.incrementalCursorHolds(live.id, jsonlPath);
+  }
+
+  private incrementalCursorHolds(sessionId: string, jsonlPath: string): boolean {
+    const meta = this.getMeta(sessionId);
+    const stored = meta ? cursorFromMeta(meta) : null;
+    if (!stored || !this.indexedTranscript(sessionId) || meta?.jsonl_path !== jsonlPath)
+      return false;
+    let fileStat: FileStat | null;
+    try {
+      fileStat = fileStatFrom(statSync(jsonlPath, { bigint: true }));
+    } catch {
+      return false;
+    }
+    if (!fileStat || fileStat.size <= stored.offset) return false;
+    if (fileStat.dev !== stored.dev || fileStat.ino !== stored.ino) return false;
+    if (readBoundarySync(jsonlPath, stored.offset) !== stored.boundary) return false;
+    return offsetIsLineBoundarySync(jsonlPath, stored.offset);
+  }
+
+  /** Startup full read. Yields through the file instead of readFileSync. */
+  private async syncSessionYielding(session: Session): Promise<SearchIndexSyncResult> {
+    const result = emptySyncResult();
+    if (this.fileIndexJobs.has(session.id)) {
+      result.skipped = 1;
+      return result;
+    }
+    const live = this.getSession(session.id);
+    if (!live || live.ephemeral) return this.removeIndexedSession(session.id);
+    if (this.isIndexedFromDurable(live)) {
+      this.lateDurableSessionIds.add(live.id);
+      return result;
+    }
+    const jsonlPath = live.piSessionFile;
+    if (!jsonlPath) return this.syncSession(live, new Set());
+    let fileStat: FileStat | null;
+    try {
+      fileStat = fileStatFrom(await stat(jsonlPath, { bigint: true }));
+    } catch {
+      fileStat = null;
+    }
+    if (!fileStat) return this.syncSession(live, new Set());
+    const hadRow = this.getMeta(live.id) !== undefined;
+    if (this.fileIndexJobs.has(live.id)) {
+      result.skipped = 1;
+      return result;
+    }
+    const full = await this.readFullTranscript(jsonlPath, fileStat.size);
+    if (this.closed || !full) return result;
+    if (this.fileIndexJobs.has(live.id)) {
+      result.skipped = 1;
+      return result;
+    }
+    const boundary = await readBoundary(jsonlPath, fileStat.size);
+    await this.commitFileSnapshot(
+      live.id,
+      { path: jsonlPath, stat: fileStat, boundaryAtOffset: boundary, offset: fileStat.size },
+      full.transcript,
+      cursorForFile(fileStat, boundary, full.leafId),
+    );
+    if (!this.getSession(live.id)) {
+      if (hadRow) result.removed = 1;
+      return result;
+    }
+    const stored = this.getMeta(live.id);
+    const storedCursor = stored ? cursorFromMeta(stored) : null;
+    if (
+      !storedCursor ||
+      storedCursor.offset !== fileStat.size ||
+      storedCursor.boundary !== boundary
+    ) {
+      result.skipped = 1;
+      return result;
+    }
+    result.transcriptsRead = 1;
+    result.transcriptsReindexed = 1;
+    result.transcriptBytesRead = fileStat.size;
+    if (hadRow) result.reindexed = 1;
+    else result.added = 1;
+    return result;
+  }
+
   private syncSession(session: Session, ftsIds: ReadonlySet<string>): SearchIndexSyncResult {
     const result = emptySyncResult();
+    // An in-flight turn-end read owns this session. Writing here can land an
+    // older snapshot over a newer cursor.
+    if (this.fileIndexJobs.has(session.id)) {
+      result.skipped = 1;
+      return result;
+    }
     // Resolve the startup snapshot ID against live storage immediately before
     // reading indexed fields. Lifecycle can replace or delete this session while
     // cooperative warming is between event-loop turns.
@@ -1787,6 +2027,8 @@ export class SearchIndex {
       return result;
     }
 
+    // Blocking sync() is the test oracle for small files. Production startup
+    // peels this case off and uses syncSessionYielding so it does not readFileSync.
     const content = extractIndexedContent(liveSession, fileStat ? jsonlPath : undefined);
     if (content.transcriptRead) {
       result.transcriptsRead = 1;
@@ -1901,6 +2143,12 @@ export class SearchIndex {
         sessions.length,
       )
     ) {
+      if (
+        this.fileIndexJobs.has(sessions[nextIndex].id) ||
+        this.needsYieldingFullRead(sessions[nextIndex])
+      ) {
+        break;
+      }
       const skipped = this.trySkipUnchangedSession(sessions[nextIndex], ftsIds);
       if (!skipped) break;
       mergeSyncResults(result, skipped);
@@ -1928,6 +2176,7 @@ export class SearchIndex {
             sessions.length,
           )
         ) {
+          if (this.needsYieldingFullRead(sessions[nextIndex])) break;
           mergeSyncResults(result, this.syncSession(sessions[nextIndex], ftsIds));
           nextIndex++;
         }
@@ -2035,6 +2284,15 @@ export class SearchIndex {
     while (sessionIndex < fileSessions.length) {
       if (this.closed) {
         return this.completeBackgroundSync(startedAt, result, sessionsChecked, maxBatchMs, true);
+      }
+
+      const next = fileSessions[sessionIndex];
+      if (next && this.needsYieldingFullRead(next)) {
+        mergeSyncResults(result, await this.syncSessionYielding(next));
+        sessionsChecked++;
+        sessionIndex++;
+        if (sessionIndex < fileSessions.length) await yieldBetweenBatches();
+        continue;
       }
 
       const batchStartIndex = sessionIndex;

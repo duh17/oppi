@@ -1687,4 +1687,118 @@ describe("SearchIndex turn-end indexing", () => {
       index.close();
     }
   });
+
+  it("does not write a deleted session back after an in-flight read", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-delete-race-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    writeFileSync(
+      jsonlPath,
+      transcriptLine("u1", null, "user", "delete race token") +
+        transcriptLine("a1", "u1", "assistant", "delete race answer"),
+    );
+    const session = makeSession({ id: "sess-delete-race", piSessionFile: jsonlPath });
+    const sessions = new Map([[session.id, session]]);
+    const index = new SearchIndex(dataDir, (id) => sessions.get(id));
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      await index.indexSession(session.id);
+      expect(index.search("delete race token", "ws-1")).toHaveLength(1);
+      appendFileSync(jsonlPath, transcriptLine("u2", "a1", "user", "delete race later token"));
+      index.fileIndexGate = async () => {
+        index.fileIndexGate = undefined;
+        sessions.delete(session.id);
+        unlinkSync(jsonlPath);
+        index.deleteSession(session.id);
+      };
+      await index.indexSession(session.id);
+      expect(index.search("delete race token", "ws-1")).toEqual([]);
+      expect(index.search("delete race later token", "ws-1")).toEqual([]);
+    } finally {
+      index.close();
+    }
+  });
+
+  it("does not regress the cursor when sync overlaps an in-flight index", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-sync-race-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    writeFileSync(
+      jsonlPath,
+      transcriptLine("u1", null, "user", "overlap hidden token") +
+        transcriptLine("a1", "u1", "assistant", "overlap kept answer") +
+        transcriptLine("u2", "a1", "user", "overlap kept token"),
+    );
+    const session = makeSession({ id: "sess-overlap", piSessionFile: jsonlPath });
+    const index = new SearchIndex(dataDir, () => session);
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      await index.indexSession(session.id);
+      index.fileIndexGate = async () => {
+        index.fileIndexGate = undefined;
+        appendFileSync(
+          jsonlPath,
+          JSON.stringify({
+            type: "compaction",
+            id: "c1",
+            parentId: "u2",
+            timestamp: "2026-01-01T00:00:05.000Z",
+            summary: "overlap summary token",
+            firstKeptEntryId: "u2",
+            tokensBefore: 10,
+          }) +
+            "\n" +
+            transcriptLine("u3", "c1", "user", "overlap post token"),
+        );
+        index.sync([session]);
+      };
+      await index.indexSession(session.id);
+      expect(index.search("overlap hidden token", "ws-1")).toEqual([]);
+      expect(index.search("overlap post token", "ws-1")).toHaveLength(1);
+      expect(index.search("overlap summary token", "ws-1")).toEqual([]);
+      expect(indexedTranscriptFields(dataDir, session.id)).toEqual(fullIndexFields(session));
+      const db = openDatabase(join(dataDir, "session-search.db"));
+      try {
+        const meta = db
+          .prepare("SELECT jsonl_offset FROM fts_meta WHERE session_id = ?")
+          .get(session.id) as { jsonl_offset: number };
+        expect(meta.jsonl_offset).toBe(statSync(jsonlPath).size);
+      } finally {
+        db.close();
+      }
+    } finally {
+      index.close();
+    }
+  });
+
+  it("indexes a coalesced follow-up after a read throws", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-throw-race-"));
+    cleanupPaths.add(dataDir);
+    const jsonlPath = join(dataDir, "session.jsonl");
+    writeFileSync(
+      jsonlPath,
+      transcriptLine("u1", null, "user", "throw race base token") +
+        transcriptLine("a1", "u1", "assistant", "throw race answer"),
+    );
+    const session = makeSession({ id: "sess-throw", piSessionFile: jsonlPath });
+    const index = new SearchIndex(dataDir, () => session);
+    cleanupPaths.add(join(dataDir, "session-search.db"));
+
+    try {
+      await index.indexSession(session.id);
+      index.fileIndexGate = async () => {
+        index.fileIndexGate = undefined;
+        appendFileSync(jsonlPath, transcriptLine("u2", "a1", "user", "throw race followup token"));
+        void index.indexSession(session.id);
+        throw new Error("injected read failure");
+      };
+      await index.indexSession(session.id);
+      expect(index.search("throw race followup token", "ws-1")).toHaveLength(1);
+      expect(index.search("throw race base token", "ws-1")).toHaveLength(1);
+    } finally {
+      index.close();
+    }
+  });
 });
