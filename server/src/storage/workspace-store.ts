@@ -139,7 +139,7 @@ export class WorkspaceStore {
     const id = generateId(8);
     const now = Date.now();
     const runtime = req.runtime === "sandbox" ? "sandbox" : "host";
-    assertHostFolderDoesNotClaimHome(normalizeHostMount(req.hostMount), runtime);
+    assertHostFolderDoesNotClaimHome(normalizeHostMount(req.hostMount));
     const folder = this.chooseHostMount(req.hostMount, { id, name: req.name, runtime });
 
     const workspace: Workspace = {
@@ -442,13 +442,10 @@ export class WorkspaceStore {
     workspace.updatedAt = Date.now();
 
     try {
-      // Judge the folder that will be saved, when this update sets it or makes the workspace a
-      // host workspace. An unrelated edit of a record an older Oppi stored at home is not blocked.
-      if (
-        updates.hostMount !== undefined ||
-        (workspace.runtime === "host" && previousRuntime !== "host")
-      ) {
-        assertHostFolderDoesNotClaimHome(workspace.hostMount, workspace.runtime);
+      // Judge the folder that will be saved, when this update sets it or switches runtime. An
+      // unrelated edit of a record an older Oppi stored at home is not blocked.
+      if (updates.hostMount !== undefined || workspace.runtime !== previousRuntime) {
+        assertHostFolderDoesNotClaimHome(workspace.hostMount);
       }
       return this.saveWorkspace(workspace);
     } catch (error) {
@@ -510,14 +507,12 @@ function isRuntimeMode(value: unknown): value is Workspace["runtime"] {
 }
 
 /**
- * A host workspace rooted at home, or above it, would claim every terminal and imported session
- * under home through longest-prefix cwd matching. Sandbox folders are never matched that way.
+ * A workspace rooted at home, or above it, would claim every terminal and imported session under
+ * home through longest-prefix cwd matching. That matching ignores runtime, so sandbox workspaces
+ * follow the same rule.
  */
-function assertHostFolderDoesNotClaimHome(
-  hostMount: string | undefined,
-  runtime: Workspace["runtime"],
-): void {
-  if (runtime === "host" && hostMount && hostFolderClaimsHome(hostMount)) {
+function assertHostFolderDoesNotClaimHome(hostMount: string | undefined): void {
+  if (hostMount && hostFolderClaimsHome(hostMount)) {
     throw new Error(
       `Host working directory cannot be your home folder or a folder above it (${resolveHostPath(hostMount)}): it would claim every session under home. Choose a project folder, or clear Host Working Directory to let Oppi create one.`,
     );

@@ -16,7 +16,6 @@ import {
   rmSync,
   statSync,
   symlinkSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -557,18 +556,22 @@ describe("a host workspace cannot be rooted at the home folder or above it", () 
         "cannot be your home folder or a folder above it",
       );
     }
+    // Cwd matching ignores runtime, so a sandbox at home would claim the same sessions.
+    expect(() =>
+      storage.createWorkspace({ name: "Sandbox Home", hostMount: "~", runtime: "sandbox" }),
+    ).toThrow("cannot be your home folder or a folder above it");
     expect(storage.listWorkspaces()).toEqual([]);
-    expect(
-      storage.createWorkspace({ name: "Sandbox Home", hostMount: "~", runtime: "sandbox" })
-        .hostMount,
-    ).toBe("~");
+    expect(storage.createWorkspace({ name: "Sandbox", runtime: "sandbox" }).hostMount).toMatch(
+      /sandbox/,
+    );
     expect(storage.createWorkspace({ name: "Project", hostMount: "~/project" }).hostMount).toBe(
       "~/project",
     );
   });
 
-  it("judges the folder that will be saved when an update makes the workspace a host workspace", () => {
-    const ws = storage.createWorkspace({ name: "Switch", hostMount: "~", runtime: "sandbox" });
+  it("judges the stored folder when an update switches runtime", () => {
+    const ws = storage.createWorkspace({ name: "Switch", hostMount: "~/s", runtime: "sandbox" });
+    writeLegacyRecord(ws.id, (raw) => (raw.hostMount = "~"));
 
     expect(() => storage.updateWorkspace(ws.id, { runtime: "host" })).toThrow(
       "cannot be your home folder or a folder above it",
@@ -614,7 +617,8 @@ describe("a host workspace cannot be rooted at the home folder or above it", () 
     expect(created.body).toContain("cannot be your home folder or a folder above it");
     expect(storage.listWorkspaces()).toEqual([]);
 
-    const ws = storage.createWorkspace({ name: "Updatable", hostMount: "~", runtime: "sandbox" });
+    const ws = storage.createWorkspace({ name: "Updatable", hostMount: "~/u", runtime: "sandbox" });
+    writeLegacyRecord(ws.id, (raw) => (raw.hostMount = "~"));
     const switched = await send("PUT", `/workspaces/${ws.id}`, { runtime: "host" });
     expect(switched.statusCode).toBe(400);
     expect(storage.getWorkspace(ws.id)?.runtime).toBe("sandbox");
