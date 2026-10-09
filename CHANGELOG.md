@@ -154,6 +154,7 @@ Entries labeled **Mac** describe work on `main`; the Mac app is not part of the 
 
 ### Fixed
 
+- **Client:** On iPhone, the chat's Context, Outline, and Files sheets open again. The side-panel inspector added for wide side-rail screens kept them from presenting; it is now attached only in regular-width windows, where its column can show.
 - **Client:** Full-screen video captions and the caption language button stay inside the safe area, so on iPhone Duo they no longer sit under the side rail.
 - **Client:** A chat opened in the sidebar-and-detail layout (iPad landscape) shows its title, Back, Files, Outline, and Context again; the side-panel inspector had hidden the chat's whole navigation bar there.
 - **Client:** Folding or rotating between the stack and split layouts keeps the chat at the message you were reading instead of jumping to the latest one; a chat that was at the latest message stays there.

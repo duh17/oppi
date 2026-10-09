@@ -1246,7 +1246,10 @@ struct ChatView: View {
             // Inside the title and toolbar: attached outside them, the
             // inspector drops the chat's whole navigation bar (title and
             // every item) when the chat is the split shell's detail.
-            .inspector(isPresented: sidePanelPresented(railEdge: railEdge)) { chatSidePanel }
+            .modifier(ChatSidePanelInspector(
+                isAvailable: horizontalSizeClass == .regular,
+                isPresented: sidePanelPresented(railEdge: railEdge)
+            ) { chatSidePanel })
             // On the side rail the system draws the title as its own strip
             // above the timeline. The rail session menu carries the name.
             .navigationTitle(railEdge == nil ? sessionDisplayName : "")
@@ -3198,6 +3201,25 @@ struct ChatSessionTitleView: View {
                 .accessibilityIdentifier(iconAccessibilityIdentifier)
         } else {
             icon
+        }
+    }
+}
+
+/// The side-panel inspector, attached only at regular width, where its column
+/// can show (`usesTrailingSidePanel`). At compact width an attached inspector,
+/// even unpresented, kept the chat's own sheets (Context, Outline, Files) from
+/// presenting on iPhone. A size-class change swaps this branch, which rebuilds
+/// the timeline view under it; the chat's state above it survives.
+private struct ChatSidePanelInspector<Panel: View>: ViewModifier {
+    let isAvailable: Bool
+    let isPresented: Binding<Bool>
+    @ViewBuilder let panel: () -> Panel
+
+    func body(content: Content) -> some View {
+        if isAvailable {
+            content.inspector(isPresented: isPresented, content: panel)
+        } else {
+            content
         }
     }
 }
