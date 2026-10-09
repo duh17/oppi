@@ -2080,7 +2080,7 @@ actor APIClient: ClientLogUploading {
     }
 
     /// Fetch raw data for a workspace file or an external path reported by the session.
-    func getSessionFileData(workspaceId: String, sessionId: String, path: String) async throws -> Data {
+    func getSessionFileData(sessionId: String, path: String) async throws -> Data {
         return try await get(url: makeCurrentFileURL(.session(sessionId: sessionId), path: path))
     }
 
@@ -2334,7 +2334,6 @@ actor APIClient: ClientLogUploading {
     /// Build a bearer-authenticated, range-capable media source for a file
     /// addressable through the owning session's session-origin current-file read.
     func makeSessionFileMediaSource(
-        workspaceId: String,
         sessionId: String,
         path: String,
         contentTypeHint: String? = nil,
@@ -2415,8 +2414,8 @@ actor APIClient: ClientLogUploading {
     ///
     /// Relative paths resolve against the session workspace or worktree. The server also accepts
     /// exact external paths present in that session's changed-file metadata or tool arguments.
-    func browseSessionTouchedFile(workspaceId: String, sessionId: String, path: String) async throws -> Data {
-        try await getSessionFileData(workspaceId: workspaceId, sessionId: sessionId, path: path)
+    func browseSessionTouchedFile(sessionId: String, path: String) async throws -> Data {
+        try await getSessionFileData(sessionId: sessionId, path: path)
     }
 
     // MARK: - Device Token

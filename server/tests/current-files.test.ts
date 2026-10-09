@@ -389,27 +389,30 @@ describe("GET/HEAD /files/current", () => {
       { branch: "feature/session-read" },
       { dataDir: fixture.dataDir },
     );
-    writeFileSync(join(fixture.hostRoot, "notes.txt"), "wrong main checkout bytes\n");
-    writeFileSync(join(worktree.path, "notes.txt"), "hello from worktree\n");
+    mkdirSync(join(fixture.hostRoot, "notes"), { recursive: true });
+    mkdirSync(join(worktree.path, "notes"), { recursive: true });
+    writeFileSync(join(fixture.hostRoot, "notes", "hello.txt"), "wrong main checkout bytes\n");
+    writeFileSync(join(worktree.path, "notes", "hello.txt"), "hello from worktree\n");
     fixture.sessions.push(
       session({ id: "worktree-session", workspaceId: "ws-host", worktreeId: worktree.id }),
     );
-    const read = (method: string) =>
+    const read = () =>
       request(
         fixture,
-        method,
-        `/files/current?${query({ origin: "session", sessionId: "worktree-session", path: "notes.txt" })}`,
+        "GET",
+        `/files/current?${query({ origin: "session", sessionId: "worktree-session", path: "notes/hello.txt" })}`,
       );
 
-    const found = await read("GET");
+    const found = await read();
     expect(found.statusCode).toBe(200);
     expect(found.text()).toBe("hello from worktree\n");
 
-    rmSync(join(worktree.path, "notes.txt"));
-    expect((await read("HEAD")).statusCode).toBe(404);
-
+    // The main checkout still has the same path, so any fallback would serve it.
     rmSync(worktree.path, { recursive: true, force: true });
-    expect((await read("HEAD")).statusCode).toBe(404);
+    const gone = await read();
+    expect(gone.statusCode).toBe(404);
+    expect(JSON.parse(gone.text())).toEqual({ error: "Session root not found" });
+    expect(gone.text()).not.toContain("wrong main checkout bytes");
   });
 
   it("serves in-tree symlinks and `..` paths that leave a host workspace", async () => {

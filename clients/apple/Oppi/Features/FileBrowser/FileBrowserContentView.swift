@@ -1037,7 +1037,6 @@ struct FileBrowserContentView: View {
                         )
                     case .sessionFile(let sourceSessionId):
                         return try await api.getSessionFileData(
-                            workspaceId: wsID.isEmpty ? workspaceId : wsID,
                             sessionId: sourceSessionId,
                             path: filePath
                         )
@@ -1051,7 +1050,6 @@ struct FileBrowserContentView: View {
                 },
                 fetchSessionFile: { workspaceID, sourceSessionID, path in
                     try await api.getSessionFileData(
-                        workspaceId: workspaceID,
                         sessionId: sourceSessionID,
                         path: path
                     )
@@ -1077,7 +1075,6 @@ struct FileBrowserContentView: View {
                         )
                     case .session(let workspaceID, let sessionID, let sessionPath):
                         return try await api.getSessionFileData(
-                            workspaceId: workspaceID,
                             sessionId: sessionID,
                             path: sessionPath
                         )
@@ -1156,7 +1153,6 @@ struct FileBrowserContentView: View {
                 )
             case .session(let workspaceID, let sessionID, let sessionPath):
                 data = try await api.getSessionFileData(
-                    workspaceId: workspaceID,
                     sessionId: sessionID,
                     path: sessionPath
                 )
@@ -1216,7 +1212,6 @@ struct FileBrowserContentView: View {
             )
         case .session(let workspaceID, let sessionID, let path):
             return try await api.makeSessionFileMediaSource(
-                workspaceId: workspaceID,
                 sessionId: sessionID,
                 path: path,
                 contentTypeHint: contentType,
@@ -1308,7 +1303,6 @@ struct FileBrowserContentView: View {
             )
         case .sessionFile(let sessionId):
             return try await api.getSessionFileData(
-                workspaceId: workspaceId,
                 sessionId: sessionId,
                 path: path
             )
@@ -1337,7 +1331,6 @@ struct FileBrowserContentView: View {
             )
         case .sessionFile(let sessionId):
             return try await api.makeSessionFileMediaSource(
-                workspaceId: workspaceId,
                 sessionId: sessionId,
                 path: path,
                 contentTypeHint: contentTypeHint,

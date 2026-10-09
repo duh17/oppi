@@ -272,7 +272,6 @@ enum TimedText {
                 sourceKind: .session,
                 fetchFile: { path in
                     try await api.getSessionFileData(
-                        workspaceId: workspaceID,
                         sessionId: sessionID,
                         path: path
                     )

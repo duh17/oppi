@@ -112,7 +112,6 @@ final class SessionContentAccess {
         guard let apiClient = currentAPIClient(), let workspaceId else { return nil }
         return { path in
             try await apiClient.getSessionFileData(
-                workspaceId: workspaceId,
                 sessionId: sessionId,
                 path: path
             )
@@ -129,7 +128,6 @@ final class SessionContentAccess {
             sessionId: sessionId
         )
         return try await context.apiClient.getSessionFileData(
-            workspaceId: context.workspaceId,
             sessionId: sessionId,
             path: path
         )
@@ -147,7 +145,6 @@ final class SessionContentAccess {
             sessionId: sessionId
         )
         return try await context.apiClient.makeSessionFileMediaSource(
-            workspaceId: context.workspaceId,
             sessionId: sessionId,
             path: path,
             contentTypeHint: contentTypeHint,
@@ -513,7 +510,6 @@ final class SessionContentAccess {
             )
         case .session(let workspaceID, let sessionID, let path):
             return try await apiClient.makeSessionFileMediaSource(
-                workspaceId: workspaceID,
                 sessionId: sessionID,
                 path: path,
                 contentTypeHint: contentType,
@@ -539,7 +535,6 @@ final class SessionContentAccess {
             return try await apiClient.browseHostFile(path: path)
         case .session(let workspaceID, let sessionID, let path):
             return try await apiClient.getSessionFileData(
-                workspaceId: workspaceID,
                 sessionId: sessionID,
                 path: path
             )

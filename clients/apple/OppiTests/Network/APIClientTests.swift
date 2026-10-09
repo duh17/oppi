@@ -1462,7 +1462,6 @@ struct APIClientTests {
         }
 
         let data = try await client.getSessionFileData(
-            workspaceId: "w1",
             sessionId: "s1",
             path: "/tmp/main.swift"
         )
@@ -1484,7 +1483,6 @@ struct APIClientTests {
         }
 
         _ = try await client.getSessionFileData(
-            workspaceId: "w1",
             sessionId: "s1",
             path: " /tmp/movie.mp4 "
         )
@@ -1624,7 +1622,7 @@ struct APIClientTests {
         func query(_ source: AuthenticatedMediaSource) -> [String: String] { currentFileQuery(source.url) }
 
         let session = try await client.makeSessionFileMediaSource(
-            workspaceId: "w1", sessionId: "s1", path: "/workspace/demo/clip.mp4"
+            sessionId: "s1", path: "/workspace/demo/clip.mp4"
         )
         #expect(session.url.path == "/files/current")
         #expect(query(session) == ["origin": "session", "sessionId": "s1", "path": "/workspace/demo/clip.mp4"])
@@ -1655,7 +1653,6 @@ struct APIClientTests {
     @Test func sessionFileMediaSourceUsesSessionOriginForExternalPath() async throws {
         let client = makeClient()
         let source = try await client.makeSessionFileMediaSource(
-            workspaceId: "w1",
             sessionId: "s1",
             path: "/tmp/movie clip.mp4",
             contentTypeHint: "video/mp4",
@@ -2502,7 +2499,7 @@ struct APIClientTests {
             return self.mockResponse(json: step == 1 ? "{}" : "{\"content\":\"ok\"}")
         }
 
-        _ = try await client.browseSessionTouchedFile(workspaceId: "w1", sessionId: "s1", path: specialPath)
+        _ = try await client.browseSessionTouchedFile(sessionId: "s1", path: specialPath)
         let content = try await client.getSkillFile(name: "fetch", path: specialSkillPath)
         #expect(content == "ok")
         #expect(step == 2)

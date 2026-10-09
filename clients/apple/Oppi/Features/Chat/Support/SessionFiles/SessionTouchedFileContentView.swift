@@ -252,7 +252,7 @@ struct SessionTouchedFileContentView: View {
         loadedServerBaseURL = api.baseURL
         let workspaceHostMount = currentWorkspaceHostMount
         let workspaceRuntime = currentWorkspaceRuntime
-        fetchSessionFileData = { [api, workspaceId, sessionId, workspaceRuntime, workspaceHostMount] path in
+        fetchSessionFileData = { [api, sessionId, workspaceRuntime, workspaceHostMount] path in
             switch SessionTouchedFileLoadRoute.resolve(
                 path: path,
                 workspaceRuntime: workspaceRuntime,
@@ -262,13 +262,12 @@ struct SessionTouchedFileContentView: View {
                 return try await api.browseHostFile(path: hostPath)
             case let .sessionRaw(rawPath):
                 return try await api.getSessionFileData(
-                    workspaceId: workspaceId,
                     sessionId: sessionId,
                     path: rawPath
                 )
             }
         }
-        makeMarkdownVideoSource = { [api, workspaceId, sessionId, workspaceRuntime, workspaceHostMount] embed in
+        makeMarkdownVideoSource = { [api, sessionId, workspaceRuntime, workspaceHostMount] embed in
             let route = SessionTouchedFileLoadRoute.resolve(
                 path: embed.filePath,
                 workspaceRuntime: workspaceRuntime,
@@ -284,7 +283,6 @@ struct SessionTouchedFileContentView: View {
                 )
             case .sessionRaw(let rawPath):
                 return try await api.makeSessionFileMediaSource(
-                    workspaceId: workspaceId,
                     sessionId: sessionId,
                     path: rawPath,
                     contentTypeHint: MediaMimeType.videoMimeType(forPathExtension: pathExtension),
@@ -292,7 +290,7 @@ struct SessionTouchedFileContentView: View {
                 )
             }
         }
-        makeMarkdownAudioSource = { [api, workspaceId, sessionId, workspaceRuntime, workspaceHostMount] embed in
+        makeMarkdownAudioSource = { [api, sessionId, workspaceRuntime, workspaceHostMount] embed in
             let route = SessionTouchedFileLoadRoute.resolve(
                 path: embed.filePath,
                 workspaceRuntime: workspaceRuntime,
@@ -308,7 +306,6 @@ struct SessionTouchedFileContentView: View {
                 )
             case .sessionRaw(let rawPath):
                 return try await api.makeSessionFileMediaSource(
-                    workspaceId: workspaceId,
                     sessionId: sessionId,
                     path: rawPath,
                     contentTypeHint: MediaMimeType.audioMimeType(forPathExtension: pathExtension),
@@ -328,7 +325,6 @@ struct SessionTouchedFileContentView: View {
                 data = try await api.browseHostFile(path: hostPath)
             case .sessionRaw(let rawPath):
                 data = try await api.browseSessionTouchedFile(
-                    workspaceId: workspaceId,
                     sessionId: sessionId,
                     path: rawPath
                 )
@@ -375,7 +371,6 @@ struct SessionTouchedFileContentView: View {
                     return try await api.browseHostFile(path: hostPath)
                 case let .sessionRaw(rawPath):
                     return try await api.browseSessionTouchedFile(
-                        workspaceId: workspaceId,
                         sessionId: sessionId,
                         path: rawPath
                     )
