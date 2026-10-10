@@ -50,7 +50,7 @@ final class FullScreenReviewCommentUITests: XCTestCase {
             "Native selection action bar did not expose the dictate-comment mic"
         )
         XCTAssertEqual(dictateAction.label, "Dictate Comment")
-        XCTAssertLessThan(commentAction.frame.minX, dictateAction.frame.minX)
+        XCTAssertLessThan(dictateAction.frame.minX, commentAction.frame.minX)
         XCTAssertTrue(commentAction.exists)
         XCTAssertTrue(copyAction.exists)
         saveScreenshot(name: "fullscreen-review-comment-action-bar")

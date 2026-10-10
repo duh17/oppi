@@ -1571,7 +1571,7 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func dictateActionFollowsCommentOnlyWhenVoiceInputIsAvailable() throws {
+    @Test func dictateActionLeadsCommentOnlyWhenVoiceInputIsAvailable() throws {
         var dispatched: [ReviewCommentSelectionRequest] = []
         func editMenu(voiceInputManager: VoiceInputManager?) throws -> UIMenu {
             let markdownView = AssistantMarkdownContentView()
@@ -1597,11 +1597,11 @@ struct AssistantTimelineRowContentViewTests {
 
         let menu = try editMenu(voiceInputManager: VoiceInputManager())
         let actions = menu.children.compactMap { $0 as? UIAction }
-        #expect(actions.map(\.title) == ["Comment", "", "Copy"])
-        let dictate = actions[1]
+        #expect(actions.map(\.title) == ["", "Comment", "Copy"])
+        let dictate = actions[0]
         #expect(dictate.image?.accessibilityLabel == "Dictate Comment")
 
-        actions[0].performWithSender(nil, target: nil)
+        actions[1].performWithSender(nil, target: nil)
         dictate.performWithSender(nil, target: nil)
         #expect(dispatched.map(\.startsDictation) == [false, true])
         #expect(dispatched.map(\.selectedText) == ["Alpha", "Alpha"])

@@ -404,8 +404,9 @@ enum ReviewCommentSelectionMenuBuilder {
         return UIMenu(children: actions + suggestedActions)
     }
 
-    /// Comment, plus an icon-only mic that opens the same composer already
-    /// dictating. Every selection edit menu (native text and web) uses this pair.
+    /// An icon-only mic that opens the comment composer already dictating, then
+    /// Comment. The mic leads the menu; every selection edit menu (native text
+    /// and web) uses this pair in this order.
     @MainActor
     static func commentActions(
         router: ReviewCommentSelectionRouter,
@@ -424,7 +425,7 @@ enum ReviewCommentSelectionMenuBuilder {
         micImage?.accessibilityLabel = "Dictate Comment"
         let dictate = UIAction(title: "", image: micImage) { _ in open(true) }
         dictate.accessibilityIdentifier = "review-comment.dictate"
-        return [comment, dictate]
+        return [dictate, comment]
     }
 
     @MainActor
