@@ -172,27 +172,6 @@ final class ChatComposerDraftController {
         discardImportedFiles(pendingAttachments)
     }
 
-    func detachForSessionChange() {
-        mediaImportGate.invalidate()
-        if isEphemeral {
-            discardImportedFiles(pendingAttachments)
-        }
-        store = nil
-        key = nil
-        isEphemeral = true
-        initialSeed = nil
-        messagePayload = .empty
-        pendingAttachments = []
-        lastAskVisibleText = ""
-        discardedAskSubmissionText = nil
-        isSubmissionInFlight = false
-        activeSubmissionID = nil
-        dispatchedVisibleClearEcho = nil
-        dispatchedVisibleClearEchoUntil = nil
-        mode = .message
-        applyVisiblePayload(.empty)
-    }
-
     func setMode(
         _ newMode: Mode,
         resetTransientInput: Bool = false

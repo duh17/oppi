@@ -68,6 +68,11 @@ struct ChatView: View {
         case compact
     }
 
+    /// Fixed for this view's lifetime. Every caller keys the view with
+    /// `.id(sessionId)`: a NavigationStack that replaces one session target
+    /// with another at the same position would otherwise reuse this view and
+    /// its @State runtime, and the new session would never connect (blank
+    /// timeline after a notification tap from another chat).
     let sessionId: String
     private let serverIdHint: String?
     private let workspaceIdHint: String?
@@ -1042,67 +1047,6 @@ struct ChatView: View {
                 // Capture while the source timeline still owns its live geometry;
                 // NavigationStack teardown can report tail geometry before onDisappear.
                 scrollController.suspendForNavigation()
-            }
-            .onChange(of: sessionId) { oldId, newId in
-                // Self-healing: when SwiftUI reuses this view at the same
-                // structural position with a different session ID (e.g.
-                // deep-link navigation, quick session switch), @State is
-                // preserved. Detect the mismatch and reset all session-
-                // specific state so the timeline and connection match.
-                guard sessionManager.sessionId != newId else { return }
-
-                connection.extensionNotifyChipStore.collapseForHiddenChat(sessionId: oldId)
-
-                // Tear down old session. cleanup() releases only the old
-                // runtime's own focus claim (live audio still defers it).
-                actionHandler.cleanup()
-                sessionManager.cleanup()
-                scrollController.cancel()
-                ChatScrollShellSwapHandoff.shared.chatDidDisappear(
-                    sessionId: oldId,
-                    controller: scrollController,
-                    mountedPresentation: mountedPresentation,
-                    currentPresentation: mountedPresentation
-                )
-                visibleAudioStripItemIDs = []
-                chatReaderPayloadStore?.removeAll()
-                nowPlayingDrawerExpanded = false
-                reviewCommentDrawerExpanded = false
-                reviewCommentStashPresentation = nil
-
-                // Stand up new session. Detach the draft key before any new
-                // workspace metadata resolves so edits cannot hit the old session.
-                composerDraftController.detachForSessionChange()
-                sessionManager = ChatSessionManager(
-                    sessionId: newId,
-                    workspaceIdHint: workspaceIdHint,
-                    routeScope: focusedRouteScope
-                )
-                sessionRuntimeLease.manager = sessionManager
-                // The chat on screen now shows newId: claim it like an appear.
-                sessionManager.claimFocusOnAppear(connection: connection, sessionStore: sessionStore)
-                // Session switches can happen while the scene is already
-                // inactive/background (deep link, iPad multitasking). The new
-                // coalescer starts unpaused — re-apply the hard boundary.
-                if Self.shouldPauseTimelinePresentation(for: scenePhase) {
-                    sessionManager.coalescer.pause()
-                }
-                scrollController = ChatScrollController()
-                ChatScrollShellSwapHandoff.shared.chatDidAppear(
-                    sessionId: newId,
-                    controller: scrollController,
-                    presentation: mountedPresentation
-                )
-                reviewComments = ChatReviewCommentsController()
-                activeReviewCommentRequest = nil
-                focusedReviewCommentId = nil
-                pendingAttachments = []
-                contextBarExpanded = false
-                showOutline = false
-                isFilePanelVisible = false
-                selectedFilePanelTab = ChatFileBrowserPanelTabStore.shared.tab(for: newId)
-                showContextInspector = false
-                attachComposerDraftIfPossible()
             }
             .onChange(of: selectedFilePanelTab) { _, newTab in
                 ChatFileBrowserPanelTabStore.shared.setTab(newTab, for: sessionId)

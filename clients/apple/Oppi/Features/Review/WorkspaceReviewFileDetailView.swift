@@ -260,6 +260,7 @@ struct WorkspaceReviewFileDetailView: View {
                 initialInputText: dest.inputText,
                 initialPendingFiles: dest.pendingFileReferences
             )
+            .id(dest.id)
         }
         .overlay {
             if let launchActionInFlightTitle {

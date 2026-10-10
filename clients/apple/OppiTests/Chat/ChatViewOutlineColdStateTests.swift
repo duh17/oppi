@@ -75,8 +75,6 @@ struct ChatViewOutlineColdStateTests {
         }
         #expect(showedA)
         let reducerA = try #require(fixture.reducer)
-        let controllerA = try #require(fixture.timelineController)
-        let rebindPublication = controllerA.outlinePublicationCompletionGenerationForTesting
 
         fixture.rebind(sessionId: sessionB)
         let rebound = await waitForTimelineCondition(timeoutMs: 2_000) {
@@ -92,13 +90,6 @@ struct ChatViewOutlineColdStateTests {
             }
         }
         #expect(rebound, "Clock must bind the new session reducer")
-        let rebindPublished = await waitForTimelineCondition(timeoutMs: 2_000) {
-            await MainActor.run {
-                (fixture.timelineController?.outlinePublicationCompletionGenerationForTesting
-                    ?? rebindPublication) > rebindPublication
-            }
-        }
-        #expect(rebindPublished, "Empty B availability publication must complete")
         let hiddenEmptyB = await waitForTimelineCondition(timeoutMs: 2_000) {
             await MainActor.run {
                 fixture.host.view.layoutIfNeeded()
@@ -219,7 +210,10 @@ private struct MountedChatViewRoot: View {
 
     var body: some View {
         NavigationStack {
+            // Same contract as every production caller: a new session is a
+            // new ChatView identity, never an in-place sessionId swap.
             ChatView(sessionId: sessionId)
+                .id(sessionId)
                 .environment(connection)
                 .environment(connection.chatState)
                 .environment(connection.sessionStore)

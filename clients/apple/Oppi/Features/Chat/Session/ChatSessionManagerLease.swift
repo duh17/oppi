@@ -7,7 +7,7 @@ import Foundation
 /// Releasing this lease still cancels the connect loop and releases still-owned focus.
 @MainActor
 final class ChatSessionManagerLease {
-    var manager: ChatSessionManager
+    let manager: ChatSessionManager
 
     init(manager: ChatSessionManager) {
         self.manager = manager

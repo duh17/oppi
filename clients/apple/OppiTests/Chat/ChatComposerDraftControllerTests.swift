@@ -40,6 +40,18 @@ struct ChatComposerDraftControllerTests {
         #expect(ChatView.localSlashCommand(for: "please /compact") == nil)
     }
 
+    @Test func controlRouteResolvesCommentScopeBeforeSessionMetadataLoads() {
+        #expect(
+            ChatView.reviewCommentLocalScopeId(routeScope: .control)
+                == SessionRouteScope.control.composerDraftScopeID
+        )
+        #expect(
+            ChatView.reviewCommentLocalScopeId(routeScope: .workspace("workspace-1"))
+                == "workspace-1"
+        )
+        #expect(ChatView.reviewCommentLocalScopeId(routeScope: nil) == nil)
+    }
+
     @Test func endingReviewModeReturnsToPendingAskBeforeMessageMode() {
         let ask = AskRequest(
             id: "ask-1",
@@ -108,25 +120,6 @@ struct ChatComposerDraftControllerTests {
         controller.attach(store: store, key: secondKey, isEphemeral: false)
         #expect(controller.text.isEmpty)
         #expect(controller.repoPointers.isEmpty)
-    }
-
-    @Test func unresolvedSessionSwitchCannotWriteThroughPreviousKey() async throws {
-        let fixture = try Fixture()
-        defer { fixture.remove() }
-        let store = fixture.makeStore()
-        await store.load()
-        let firstKey = try fixture.key(sessionID: "session-a")
-        let secondKey = try fixture.key(sessionID: "session-b")
-        let controller = ChatComposerDraftController(initialText: "session A draft")
-        controller.attach(store: store, key: firstKey, isEphemeral: false)
-
-        controller.detachForSessionChange()
-        controller.text = "typed before session B metadata"
-
-        #expect(store.record(for: firstKey)?.payload.text == "session A draft")
-        controller.attach(store: store, key: secondKey, isEphemeral: false)
-        #expect(controller.text == "typed before session B metadata")
-        #expect(store.record(for: secondKey)?.payload.text == "typed before session B metadata")
     }
 
     @Test func askAndReviewInputCannotOverwriteMessageDraft() async throws {
@@ -522,27 +515,6 @@ struct ChatComposerDraftControllerTests {
         #expect(store.record(for: key) == nil)
     }
 
-    @Test func acknowledgedSubmissionTombstonesDetachedSessionDraft() async throws {
-        let fixture = try Fixture()
-        defer { fixture.remove() }
-        let store = fixture.makeStore()
-        await store.load()
-        let key = try fixture.key()
-        let controller = ChatComposerDraftController(initialText: "sent before navigation")
-        controller.attach(store: store, key: key, isEphemeral: false)
-
-        let submission = try #require(controller.beginSubmission(draftClearance: .afterSuccess))
-        controller.detachForSessionChange()
-        let didClearVisibleDraft = controller.completeSubmission(submission)
-
-        #expect(!didClearVisibleDraft)
-        #expect(store.record(for: key) == nil)
-
-        let returningController = ChatComposerDraftController()
-        returningController.attach(store: store, key: key, isEphemeral: false)
-        #expect(returningController.text.isEmpty)
-    }
-
     @Test func acknowledgedSubmissionDoesNotClearNewerTyping() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
@@ -709,34 +681,6 @@ struct ChatComposerDraftControllerTests {
         reloaded.attach(store: store, key: key, isEphemeral: false)
         let restoredURL = try #require(reloaded.pendingAttachments.first?.localFileURL)
         #expect(restoredURL.standardizedFileURL == draftURL.standardizedFileURL)
-        #expect(try Data(contentsOf: restoredURL) == videoBytes)
-    }
-
-    @Test func sessionSwitchKeepsTheCanonicalDraftVideo() async throws {
-        let fixture = try Fixture()
-        defer { fixture.remove() }
-        let store = fixture.makeStore()
-        await store.load()
-        let key = try fixture.key()
-        let (video, videoBytes, draftURL) = try fixture.makeImportedVideo(store: store, named: "clip.mp4", byte: 0x46)
-        let controller = ChatComposerDraftController()
-        controller.attach(store: store, key: key, isEphemeral: false)
-        #expect(controller.setPendingAttachments([video]))
-        controller.text = "See clip"
-
-        controller.detachForSessionChange()
-        await store.flush()
-
-        #expect(store.record(for: key)?.payload.text == "See clip")
-        #expect(store.attachmentFileURL(for: key, attachmentID: video.id)?.standardizedFileURL == draftURL.standardizedFileURL)
-        #expect(try Data(contentsOf: draftURL) == videoBytes)
-
-        let reloaded = ChatComposerDraftController()
-        reloaded.attach(store: store, key: key, isEphemeral: false)
-        #expect(reloaded.text == "See clip")
-        let restoredURL = try #require(reloaded.pendingAttachments.first?.localFileURL)
-        #expect(restoredURL.standardizedFileURL == draftURL.standardizedFileURL)
-        #expect(reloaded.pendingAttachments.first?.localFileData == nil)
         #expect(try Data(contentsOf: restoredURL) == videoBytes)
     }
 

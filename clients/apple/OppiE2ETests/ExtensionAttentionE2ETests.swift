@@ -138,4 +138,68 @@ final class ExtensionAttentionE2ETests: E2ETestCase {
         try settleE2EUIRequest(sessionId: backgroundSession, requestId: requestId)
     }
 
+    /// A notification tap into the running app while another chat is on
+    /// screen replaces `[chat B]` with `[chat A]` at the same stack depth.
+    /// SwiftUI must not reuse B's ChatView for A: the reused runtime never
+    /// connected and A showed only its ask card over a blank timeline.
+    /// `openSessionDeepLink` relaunches the app, so this uses a warm system open.
+    @MainActor
+    func testWarmOpenFromAnotherChatShowsTimeline() throws {
+        createAndEnterSession()
+        waitForRequiredSplitStreamCapabilities()
+        waitForWebSocketConnected()
+        let backgroundSession = waitForFocusedSessionId(timeout: 20)
+
+        try sendE2EHarnessMessage(sessionId: backgroundSession, ["type": "agent_start"])
+        try sendE2EHarnessMessage(sessionId: backgroundSession, [
+            "type": "text_delta",
+            "delta": "NOTIFY_TAP_TIMELINE_OK",
+        ])
+        try sendE2EHarnessMessage(sessionId: backgroundSession, [
+            "type": "message_end",
+            "role": "assistant",
+            "content": "NOTIFY_TAP_TIMELINE_OK",
+            "persist": true,
+        ])
+        try sendE2EHarnessMessage(sessionId: backgroundSession, ["type": "agent_end"])
+        XCTAssertTrue(
+            waitForTimelineTextContaining("NOTIFY_TAP_TIMELINE_OK", timeout: 20),
+            "Seeded timeline row did not appear before leaving the session"
+        )
+
+        navigateBackToWorkspace()
+        createSession()
+        let focusedSession = waitForFocusedSessionId(excluding: backgroundSession, timeout: 20)
+        XCTAssertEqual(waitForFocusedSessionId(focusedSession, timeout: 5), focusedSession)
+
+        // Put the other chat alone on the stack (depth 1, like opening it from
+        // All Sessions), then open the target: [B] -> [A] at the same depth.
+        warmOpenSession(focusedSession)
+        XCTAssertEqual(waitForFocusedSessionId(focusedSession, timeout: 20), focusedSession)
+        waitForWebSocketConnected()
+        warmOpenSession(backgroundSession)
+        XCTAssertEqual(waitForFocusedSessionId(backgroundSession, timeout: 20), backgroundSession)
+        XCTAssertTrue(
+            waitForTimelineTextContaining("NOTIFY_TAP_TIMELINE_OK", timeout: 20),
+            "Warm open from another chat must show the target timeline, not a blank thread"
+        )
+    }
+
+    /// Open `oppi://session/<id>` through the system into the running app,
+    /// the same in-process route a notification tap takes.
+    @MainActor
+    private func warmOpenSession(_ sessionId: String) {
+        guard let url = URL(string: "oppi://session/\(sessionId)") else {
+            XCTFail("Invalid session deep link for \(sessionId)")
+            return
+        }
+        XCUIDevice.shared.system.open(url)
+        // The system may confirm a custom-scheme open from SpringBoard.
+        let openButton = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Open"]
+        if openButton.waitForExistence(timeout: 3) {
+            openButton.tap()
+        }
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+    }
+
 }

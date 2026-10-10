@@ -669,11 +669,13 @@ struct WorkspaceDetailView: View {
         }
         .navigationDestination(for: String.self) { sessionId in
             ChatView(sessionId: sessionId, workspaceIdHint: workspace.id)
+                .id(sessionId)
         }
         .navigationDestination(
             item: $navigateToSessionId
         ) { sessionId in
             ChatView(sessionId: sessionId, workspaceIdHint: workspace.id)
+                .id(sessionId)
         }
         .toolbar {
             workspaceDetailToolbar(railEdge: railEdge)

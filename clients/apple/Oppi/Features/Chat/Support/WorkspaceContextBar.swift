@@ -447,6 +447,7 @@ struct WorkspaceContextBar: View {
                 initialInputText: dest.inputText,
                 initialPendingFiles: dest.pendingFileReferences
             )
+            .id(dest.id)
         }
     }
 

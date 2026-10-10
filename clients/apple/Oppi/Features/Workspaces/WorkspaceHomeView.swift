@@ -329,6 +329,7 @@ struct WorkspaceSessionScopedDestinationView: View {
                     routeScope: target.routeScope,
                     ownsWorkspacePathBackNavigation: true
                 )
+                .id(target.sessionId)
                 .withServerScopedEnvironment(connection)
             } else {
                 ProgressView("Connecting…")
