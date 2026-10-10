@@ -18,7 +18,7 @@ const credentialPayload = {
   pairingToken: secrets.pairing,
   authDevices: [{ deviceId: "dev-output-fixture", token: secrets.authDevice }],
   authAccessTokens: [{ deviceId: "dev-output-fixture", token: secrets.accessToken }],
-  pushDeviceTokens: [secrets.push],
+  pushRegistrations: [{ deviceId: "dev-output-fixture", sendToken: secrets.push }],
   liveActivityToken: secrets.liveActivity,
   runtimeEnv: { OPENAI_API_KEY: secrets.runtime, TTS_BASE_URL: "http://127.0.0.1:7937" },
 };
@@ -36,6 +36,7 @@ describe("credential output redaction", () => {
     expectNoFixtureCredentials(redacted);
     expect(text).toContain("[REDACTED 1 device]");
     expect(text).toContain("[REDACTED 1 token]");
+    expect(text).toContain("[REDACTED 1 push registration]");
     expect(text).toContain('"TTS_BASE_URL":"http://127.0.0.1:7937"');
   });
 
@@ -52,7 +53,7 @@ describe("credential output redaction", () => {
       [
         "{",
         `  "deviceId": "dev-output-fixture",`,
-        `  "pushDeviceTokens": ["${secrets.push}"],`,
+        `  "pushRegistrations": ["${secrets.push}"],`,
         `  "liveActivityToken": "${secrets.liveActivity}",`,
         `  "OPENAI_API_KEY": "${secrets.runtime}"`,
         "}",

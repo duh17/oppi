@@ -240,6 +240,7 @@ final class AppLockService {
         let wasEnabled = machine.isEnabled
         AppLockSettings.setTimeout(timeout, in: defaults)
         update { $0.setTimeout(timeout) }
+        PushRegistration.publishRedactionSnapshot(appLockEnabled: timeout.isEnabled)
         if !wasEnabled, machine.isEnabled {
             didTurnOn()
         }

@@ -7,8 +7,16 @@
  * Does NOT spawn pi or containers — just the HTTP/WS layer.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { generateKeyPairSync } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Server } from "../src/server.js";
@@ -19,6 +27,8 @@ import {
   listCatalogedLocalSessions,
 } from "../src/local-sessions.js";
 import { Storage } from "../src/storage.js";
+import { pushRegistrationMessage } from "../src/push/registration.js";
+import { ensureIdentityMaterial, identityConfigForDataDir } from "../src/security.js";
 import { structuralHeifFixture } from "./harness/heic-fixture.js";
 import { WebSocket } from "ws";
 
@@ -31,14 +41,16 @@ let deviceId: string;
 let originalTlsRejectUnauthorized: string | undefined;
 
 const authDeviceToken = "dt_test_auth_device_token";
-const pushOnlyToken = "apns_test_push_only_token";
+const pushOnlyToken = "osp1.r_fixture.p_fixture.push_only_send_token";
 const pushOnlyRecord = {
   deviceId: "dev_push_fixture",
-  tokenType: "apns" as const,
-  token: pushOnlyToken,
-  environment: "sandbox" as const,
+  keyId: "fixture-key-id",
+  publicKey: "fixture-public-key",
+  sendToken: pushOnlyToken,
   registeredAt: 1,
+  nextSeq: 1,
 };
+const deviceKeys = generateKeyPairSync("ec", { namedCurve: "P-256" });
 
 function devicePublicKey(): { kty: string; crv: string; x: string; y: string } {
   const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -120,11 +132,12 @@ beforeAll(async () => {
     port: 0,
     host: "127.0.0.1",
     tls: { mode: "self-signed" },
-    pushDeviceTokens: [pushOnlyRecord],
+    pushRegistrations: [pushOnlyRecord],
   });
   storage.ensurePaired();
+  const deviceJwk = deviceKeys.publicKey.export({ format: "jwk" }) as { x: string; y: string };
   const enrolled = storage.enrollViaPairing(storage.issuePairingToken(), {
-    publicKey: devicePublicKey(),
+    publicKey: { kty: "EC", crv: "P-256", x: deviceJwk.x, y: deviceJwk.y },
     name: "integration",
   });
   if (!enrolled) throw new Error("enrollment failed");
@@ -237,7 +250,7 @@ describe("auth", () => {
       port: 0,
       host: "127.0.0.1",
       tls: { mode: "disabled" },
-      pushDeviceTokens: [pushOnlyRecord],
+      pushRegistrations: [pushOnlyRecord],
     });
     rotationStorage.ensurePaired();
     const rotationServer = new Server(rotationStorage);
@@ -1290,33 +1303,112 @@ describe("removed user skills API", () => {
   });
 });
 
-// ── Device token ──
+// ── Push registration ──
 
-describe("device token API", () => {
-  it("POST /me/device-token stores the token for the calling device and its APNs environment", async () => {
-    const res = await post("/me/device-token", {
-      deviceToken: "ABCDEF0123456789ABCDEF0123456789",
-      apnsEnvironment: "production",
+describe("push registration API", () => {
+  const relay = "https://push.example.test";
+  const pushVectors = JSON.parse(
+    readFileSync(
+      new URL("../../protocol/push/vectors/cryptokit-hpke.json", import.meta.url),
+      "utf8",
+    ),
+  ) as { recipient: { publicKey: string; keyId: string } };
+
+  function signedRegistration(
+    overrides: { relay?: string; signer?: KeyObject; sendToken?: string } = {},
+  ): Record<string, unknown> {
+    const identity = ensureIdentityMaterial(identityConfigForDataDir(dataDir));
+    const issuedAt = Date.now();
+    const sendToken = overrides.sendToken ?? "osp1.r_test.p_test.secret";
+    const message = pushRegistrationMessage({
+      deviceId,
+      serverFingerprint: identity.fingerprint,
+      keyId: pushVectors.recipient.keyId,
+      publicKey: Buffer.from(pushVectors.recipient.publicKey, "base64url"),
+      sendToken,
+      relay: overrides.relay ?? relay,
+      issuedAt,
     });
+    const signature = sign("sha256", message, {
+      key: overrides.signer ?? deviceKeys.privateKey,
+      dsaEncoding: "ieee-p1363",
+    });
+    return {
+      keyId: pushVectors.recipient.keyId,
+      publicKey: pushVectors.recipient.publicKey,
+      sendToken,
+      relay: overrides.relay ?? relay,
+      issuedAt,
+      signature: signature.toString("base64url"),
+    };
+  }
+
+  function setPushMode(mode: "off" | "relay"): void {
+    storage.updateConfig({ push: mode === "relay" ? { mode, relays: [relay] } : { mode } });
+  }
+
+  afterAll(() => {
+    setPushMode("off");
+    storage.removePushRegistration(deviceId);
+  });
+
+  it("advertises the relay and accepts registrations only in relay mode", async () => {
+    setPushMode("off");
+    const offInfo = (await (await get("/server/info")).json()) as {
+      capabilities: { pushNotifications?: unknown };
+    };
+    expect(offInfo.capabilities.pushNotifications).toBeUndefined();
+    const refused = await put("/me/push-registration", signedRegistration());
+    expect(refused.status).toBe(409);
+
+    setPushMode("relay");
+    const info = (await (await get("/server/info")).json()) as {
+      capabilities: { pushNotifications?: unknown };
+    };
+    expect(info.capabilities.pushNotifications).toEqual({ version: 1, relay });
+  });
+
+  it("stores the key signed by the calling device and returns the pinned server key", async () => {
+    setPushMode("relay");
+    const res = await put("/me/push-registration", signedRegistration());
     expect(res.status).toBe(200);
-    expect(storage.getPushDeviceTokens("apns")).toContainEqual(
-      expect.objectContaining({
-        deviceId,
-        token: "abcdef0123456789abcdef0123456789",
-        environment: "production",
-      }),
+    const body = (await res.json()) as { serverPublicKey: string; keyId: string };
+    const identity = ensureIdentityMaterial(identityConfigForDataDir(dataDir));
+    const fingerprint = `sha256:${createHash("sha256").update(Buffer.from(body.serverPublicKey, "base64url")).digest("base64url")}`;
+    expect(fingerprint).toBe(identity.fingerprint);
+    expect(storage.getPushRegistrations()).toContainEqual(
+      expect.objectContaining({ deviceId, keyId: pushVectors.recipient.keyId, nextSeq: 1 }),
     );
   });
 
-  it("POST /me/device-token rejects a missing token or APNs environment", async () => {
-    expect((await post("/me/device-token", {})).status).toBe(400);
+  it("rejects a registration the device key did not sign, or minted at another relay", async () => {
+    setPushMode("relay");
+    storage.removePushRegistration(deviceId);
+    const otherKey = generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey;
     expect(
-      (await post("/me/device-token", { deviceToken: "abcdef0123456789abcdef0123456789" })).status,
-    ).toBe(400);
+      (await put("/me/push-registration", signedRegistration({ signer: otherKey }))).status,
+    ).toBe(401);
+    expect(
+      (
+        await put(
+          "/me/push-registration",
+          signedRegistration({ relay: "https://other.example.test" }),
+        )
+      ).status,
+    ).toBe(409);
+    expect(storage.getPushRegistrations().some((entry) => entry.deviceId === deviceId)).toBe(false);
   });
 
-  it("DELETE /me/device-token is not part of the HTTP API", async () => {
-    const res = await del("/me/device-token");
+  it("DELETE /me/push-registration forgets the calling device's registration", async () => {
+    setPushMode("relay");
+    expect((await put("/me/push-registration", signedRegistration())).status).toBe(200);
+    const res = await del("/me/push-registration");
+    expect(res.status).toBe(200);
+    expect(storage.getPushRegistrations().some((entry) => entry.deviceId === deviceId)).toBe(false);
+  });
+
+  it("POST /me/device-token is not part of the HTTP API", async () => {
+    const res = await post("/me/device-token", { deviceToken: "abcdef0123456789" });
     expect(res.status).toBe(404);
   });
 });

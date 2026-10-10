@@ -159,7 +159,7 @@ describe("GET /desktop/view/session HTTPS auth shell", () => {
       ...makeSession(),
       deviceId: input.deviceId,
     }));
-    server = new Server(storage, undefined, {
+    server = new Server(storage, {
       desktopCompanionViewSessionClient: { fetchViewSession },
     });
     await server.start();

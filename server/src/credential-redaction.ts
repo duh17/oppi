@@ -4,7 +4,7 @@ const STABLE_DEVICE_IDENTIFIER_KEYS = new Set(["deviceid"]);
 
 const TOKEN_COLLECTIONS = new Map([
   ["authdevicetokens", "token"],
-  ["pushdevicetokens", "token"],
+  ["pushregistrations", "push registration"],
   ["authaccesstokens", "token"],
   ["authdevices", "device"],
 ]);

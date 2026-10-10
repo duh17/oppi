@@ -22,7 +22,8 @@ import {
   parsePublicUrl,
   parseTrustedPeers,
 } from "../proxy-config.js";
-import type { DevicePublicKey, PushDeviceToken, ServerConfig } from "../types.js";
+import { parseRelayOrigins } from "../push/relay-origin.js";
+import type { DevicePublicKey, PushConfig, PushRegistration, ServerConfig } from "../types.js";
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
 const CONFIG_VERSION = 2;
@@ -48,22 +49,23 @@ function normalizeDevicePublicKey(value: unknown): DevicePublicKey | undefined {
   return { kty: "EC", crv: "P-256", x: value.x, y: value.y };
 }
 
-function normalizePushDeviceToken(value: unknown): PushDeviceToken | undefined {
+function normalizePushRegistration(value: unknown): PushRegistration | undefined {
   if (!isRecord(value)) return undefined;
-  if (typeof value.deviceId !== "string" || value.deviceId.trim().length === 0) return undefined;
-  if (typeof value.token !== "string" || value.token.trim().length === 0) return undefined;
-  if (value.tokenType !== "apns" && value.tokenType !== "liveactivity") return undefined;
-  if (value.environment !== "sandbox" && value.environment !== "production") return undefined;
+  for (const key of ["deviceId", "keyId", "publicKey", "sendToken"] as const) {
+    if (typeof value[key] !== "string" || (value[key] as string).length === 0) return undefined;
+  }
+  if (!Number.isSafeInteger(value.nextSeq) || (value.nextSeq as number) < 1) return undefined;
   const registeredAt =
     typeof value.registeredAt === "number" && Number.isFinite(value.registeredAt)
       ? value.registeredAt
       : 0;
   return {
-    deviceId: value.deviceId,
-    tokenType: value.tokenType,
-    token: value.token,
-    environment: value.environment,
+    deviceId: value.deviceId as string,
+    keyId: value.keyId as string,
+    publicKey: value.publicKey as string,
+    sendToken: value.sendToken as string,
     registeredAt,
+    nextSeq: value.nextSeq as number,
   };
 }
 
@@ -165,7 +167,8 @@ function normalizeConfig(
     "pairingTokenExpiresAt",
     "authDevices",
     "authAccessTokens",
-    "pushDeviceTokens",
+    "push",
+    "pushRegistrations",
     "autoTitle",
     "asr",
     "providerQuotas",
@@ -627,21 +630,55 @@ function normalizeConfig(
     });
   }
 
-  if ("pushDeviceTokens" in obj && Array.isArray(obj.pushDeviceTokens)) {
-    const entries = obj.pushDeviceTokens as unknown[];
-    const tokens = entries.flatMap((value) => {
-      const token = normalizePushDeviceToken(value);
-      return token ? [token] : [];
+  if ("push" in obj) {
+    if (!isRecord(obj.push)) {
+      errors.push("config.push: expected object");
+      changed = true;
+    } else {
+      const pushObj = obj.push;
+      if (strictUnknown) {
+        for (const key of Object.keys(pushObj)) {
+          if (key !== "mode" && key !== "relays") errors.push(`config.push.${key}: unknown key`);
+        }
+      }
+      const mode = pushObj.mode ?? "off";
+      if (mode !== "off" && mode !== "relay") {
+        errors.push("config.push.mode: expected off or relay");
+        changed = true;
+      } else {
+        const push: PushConfig = { mode };
+        if ("relays" in pushObj) {
+          const parsed = parseRelayOrigins(pushObj.relays);
+          if (parsed.ok) {
+            push.relays = parsed.value;
+          } else {
+            errors.push(`config.push.relays: ${parsed.error}`);
+            changed = true;
+          }
+        }
+        if (push.mode === "relay" && !push.relays) {
+          errors.push("config.push.relays: required when push.mode is relay");
+          changed = true;
+        }
+        config.push = push;
+      }
+    }
+  }
+
+  if ("pushRegistrations" in obj && Array.isArray(obj.pushRegistrations)) {
+    const entries = obj.pushRegistrations as unknown[];
+    const registrations = entries.flatMap((value) => {
+      const registration = normalizePushRegistration(value);
+      return registration ? [registration] : [];
     });
-    // A token without its paired device or APNs environment cannot be addressed; the app
-    // registers again on its next launch.
-    if (tokens.length !== entries.length) {
+    // An unreadable registration cannot be sealed to; the app registers again.
+    if (registrations.length !== entries.length) {
       changed = true;
       warnings.push(
-        `config.pushDeviceTokens: dropped ${entries.length - tokens.length} without a paired device or APNs environment`,
+        `config.pushRegistrations: dropped ${entries.length - registrations.length} invalid`,
       );
     }
-    config.pushDeviceTokens = tokens;
+    config.pushRegistrations = registrations;
   }
   // Auto-title configuration
   if ("autoTitle" in obj && isRecord(obj.autoTitle)) {

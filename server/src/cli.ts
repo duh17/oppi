@@ -9,9 +9,9 @@
 import * as c from "./ansi.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { renderTerminal as renderQR } from "./qr.js";
-import { readFileSync, existsSync, rmdirSync, statSync } from "node:fs";
+import { existsSync, rmdirSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { basename, dirname, join, resolve as resolvePath } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { runCli } from "./cli/runner.js";
 import {
   getLocalHostname,
@@ -29,7 +29,6 @@ import {
   resolveHostEnv,
 } from "./host-env.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
-import type { APNsConfig } from "./push.js";
 import {
   detectTailscaleHostname,
   isTailscaleHostname,
@@ -78,39 +77,6 @@ import type { ServerRestartMode } from "./types/server-update.js";
 import { cmdConfig } from "./cli/commands/config.js";
 import { parseDurationMs } from "./cli/commands/wait.js";
 import { setCapturedCliExitCode, writeJsonEnvelope } from "./cli/output.js";
-
-function loadAPNsConfig(storage: Storage): APNsConfig | undefined {
-  const dataDir = storage.getDataDir();
-  const apnsConfigPath = join(dataDir, "apns.json");
-
-  if (!existsSync(apnsConfigPath)) return undefined;
-
-  try {
-    const raw = JSON.parse(readFileSync(apnsConfigPath, "utf-8")) as Partial<
-      Record<keyof APNsConfig, unknown>
-    >;
-    const { keyPath, keyId, teamId, bundleId } = raw;
-    if (
-      typeof keyPath !== "string" ||
-      !keyPath ||
-      typeof keyId !== "string" ||
-      !keyId ||
-      typeof teamId !== "string" ||
-      !teamId ||
-      typeof bundleId !== "string" ||
-      !bundleId
-    ) {
-      console.log(c.yellow("  ⚠️  apns.json incomplete — need keyPath, keyId, teamId, bundleId"));
-      return undefined;
-    }
-    // The APNs environment is per device token, not per server: apps send theirs.
-    return { keyPath: resolvePath(dataDir, keyPath), keyId, teamId, bundleId };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.log(c.yellow(`  ⚠️  apns.json parse error: ${message}`));
-    return undefined;
-  }
-}
 
 function resolveInviteHost(config: ServerConfig, hostOverride?: string): string | null {
   if (hostOverride?.trim()) return hostOverride.trim();
@@ -282,8 +248,6 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
     console.log("");
   }
 
-  // Load APNs config from config file if present
-  const apnsConfig = loadAPNsConfig(storage);
   let shuttingDown = false;
 
   async function stopServing(target: Server, reason?: string): Promise<void> {
@@ -313,7 +277,7 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
       () => stopServing(server),
       async () => {
         // stop() is terminal for a Server; replace it rather than calling start twice.
-        server = new Server(storage, apnsConfig, {
+        server = new Server(storage, {
           onRestartAfterUpdate,
           restartNeededVersion: targetVersion,
         });
@@ -325,7 +289,7 @@ async function cmdServe(storage: Storage, pairHost?: string): Promise<void> {
       process.exit(1);
     });
   };
-  let server = new Server(storage, apnsConfig, { onRestartAfterUpdate });
+  let server = new Server(storage, { onRestartAfterUpdate });
 
   async function shutdown(code: number, reason?: string): Promise<void> {
     await stopServing(server, reason);

@@ -1,6 +1,6 @@
 // ─── Server Config ───
 
-import type { PushDeviceToken } from "./push.js";
+import type { PushConfig, PushRegistration } from "./push.js";
 
 export type TlsMode = "auto" | "tailscale" | "cloudflare" | "self-signed" | "manual" | "disabled";
 
@@ -127,8 +127,10 @@ export interface ServerConfig {
   // Device-key auth state (issued during pairing)
   authDevices?: DeviceRecord[];
   authAccessTokens?: AccessTokenRecord[];
-  // Push notification state (written by iOS client registration)
-  pushDeviceTokens?: PushDeviceToken[];
+  /** End-to-end-encrypted push through a relay. Omitted means `off`. */
+  push?: PushConfig;
+  // Push registrations (written by PUT /me/push-registration from paired devices)
+  pushRegistrations?: PushRegistration[];
 
   /**
    * Auto-title configuration. When enabled, generates concise task titles

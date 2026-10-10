@@ -31,14 +31,16 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(calls == 2)
     }
 
-    @Test func onlyAServerAdvertisingPushGetsThisDevicesTokenOncePerConfiguration() async {
+    @Test func onlyAPushingServerTheUserOptedInForGetsAPushKeyOncePerConfiguration() async throws {
         let connection = makeConnection()
         connection.setAPIClientForTesting(makeMockAPIClient())
+        let serverId = try #require(connection.currentServerId)
         let push = PushRegistration.shared
         var registered: [String?] = []
         push._onRegisterForTesting = { registered.append($0) }
         defer {
             push._onRegisterForTesting = nil
+            PushRegistration.setEnabled(false, serverId: serverId)
             cleanup(connection)
         }
 
@@ -47,15 +49,25 @@ struct ServerConnectionStreamRecoveryTests {
             try self.mockServerInfoResponse(for: request, pushNotifications: advertisesPush)
         }
 
-        // A server without apns.json: the app never registers for remote push.
+        // push.mode off on the server: the app never registers for remote push.
+        await connection.refreshStreamCapabilities()
+        #expect(registered.isEmpty)
+        #expect(connection.pushRelay == nil)
+
+        // The server pushes, but the user has not opted in for it.
+        advertisesPush = true
         await connection.refreshStreamCapabilities()
         #expect(registered.isEmpty)
         #expect(!connection.pushNotificationsAvailable)
 
-        advertisesPush = true
-        await connection.refreshStreamCapabilities()
-        await connection.refreshStreamCapabilities()
-        #expect(registered == [connection.currentServerId])
+        PushRegistration.setEnabled(true, serverId: serverId)
+        let reconnected = makeConnection()
+        reconnected.setAPIClientForTesting(makeMockAPIClient())
+        defer { cleanup(reconnected) }
+        await reconnected.refreshStreamCapabilities()
+        await reconnected.refreshStreamCapabilities()
+        #expect(registered == [serverId])
+        #expect(reconnected.pushNotificationsAvailable)
     }
 
     @Test func knownGoodCapabilitiesSurviveTransientRefreshFailure() async {
@@ -628,7 +640,9 @@ struct ServerConnectionStreamRecoveryTests {
         appEventStream: Bool = false,
         pushNotifications: Bool = false
     ) throws -> (Data, HTTPURLResponse) {
-        let pushCapability = pushNotifications ? ",\n            \"pushNotifications\": { \"version\": 1 }" : ""
+        let pushCapability = pushNotifications
+            ? ",\n            \"pushNotifications\": { \"version\": 1, \"relay\": \"https://push.example.test\" }"
+            : ""
         let appEventCapability = appEventStream ? ",\n            \"appEventStream\": { \"version\": 1 }" : ""
         let data = Data("""
         {

@@ -171,11 +171,12 @@ export const SERVER_METRIC_REGISTRY = {
   },
   "server.push_send_ms": {
     unit: "ms",
-    description: "APNs push send latency. Tagged by push_type.",
+    description: "Encrypted push seal-and-relay latency. Tagged by result.",
   },
   "server.push_result": {
     unit: "count",
-    description: "Push send results. Tagged by push_type, success (true/false).",
+    description:
+      "Encrypted push results. Tagged by result (delivered, gone, rejected, unavailable, failed).",
   },
   "server.broadcast_fanout": {
     unit: "count",

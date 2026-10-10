@@ -819,13 +819,14 @@ describe("oppi config", () => {
     storage.updateConfig({
       token: secrets.owner,
       pairingToken: secrets.pairing,
-      pushDeviceTokens: [
+      pushRegistrations: [
         {
           deviceId: "dev_config_display",
-          tokenType: "apns",
-          token: secrets.push,
-          environment: "production",
+          keyId: "config-display-key-id",
+          publicKey: "config-display-public-key",
+          sendToken: secrets.push,
           registeredAt: 1,
+          nextSeq: 1,
         },
       ],
       runtimeEnv: { OPENAI_API_KEY: secrets.runtime },
@@ -851,12 +852,12 @@ describe("oppi config", () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain('"token": "[REDACTED]"');
     expect(stdout).toContain('"pairingToken": "[REDACTED]"');
-    expect(stdout).toContain('"pushDeviceTokens": "[REDACTED 1 token]"');
+    expect(stdout).toContain('"pushRegistrations": "[REDACTED 1 push registration]"');
     expect(stdout).toContain('"OPENAI_API_KEY": "[REDACTED]"');
     for (const secret of Object.values(secrets)) expect(stdout).not.toContain(secret);
   });
 
-  it.each(["token", "pairingToken", "pushDeviceTokens", "runtimeEnv.OPENAI_API_KEY", "runtimeEnv"])(
+  it.each(["token", "pairingToken", "pushRegistrations", "runtimeEnv.OPENAI_API_KEY", "runtimeEnv"])(
     "config get redacts %s",
     (key) => {
       seedConfigDisplaySecrets();

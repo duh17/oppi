@@ -126,7 +126,6 @@ const GENERIC_EXTENSION_SURFACE_IDENTITY_BRANCH_FULL_FILES = new Set([
   "server/src/app-event-stream.ts",
   "server/src/extension-ui-contract.ts",
   "server/src/extension-ui-state.ts",
-  "server/src/live-activity.ts",
   "server/src/pi-tui-mirror-runtime.ts",
   "server/src/sdk-ui-bridge.ts",
   "server/src/durable-ui-projection.ts",
@@ -1534,5 +1533,92 @@ export function findMacLayerViolations(repoRoot, files = undefined) {
     }
   }
 
+  return sortArchitectureViolations(violations);
+}
+
+// ─── Push relay ───
+
+export const RELAY_ARCHITECTURE_GUIDE = "protocol/push/spec.md#6-threat-model";
+
+/** Packages that could open an envelope. The relay must never carry decryption code. */
+const RELAY_FORBIDDEN_PACKAGE = /(hpke|x-?wing|ml-?kem|mlkem|post-quantum|noble)/i;
+
+function makeRelayViolation({ rule, file, line, column, reason, remediation, target }) {
+  return {
+    rule,
+    file,
+    importer: file,
+    target,
+    line,
+    column,
+    reason,
+    remediation,
+    guide: RELAY_ARCHITECTURE_GUIDE,
+  };
+}
+
+/**
+ * relay/ stands alone and cannot decrypt: it imports nothing from server/ or clients/, no
+ * HPKE/X-Wing/ML-KEM package, and never calls `subtle.decrypt`.
+ */
+export function findRelayLayerViolations(repoRoot, files = undefined) {
+  const candidateFiles = (
+    files ??
+    ["src", "tests"].flatMap((dir) =>
+      listFilesRecursively(path.join(repoRoot, "relay", dir), ".ts").map((absolutePath) =>
+        normalizeRepoPath(path.relative(repoRoot, absolutePath)),
+      ),
+    )
+  ).filter((file) => file.startsWith("relay/") && file.endsWith(".ts"));
+
+  const violations = [];
+  for (const file of candidateFiles) {
+    const absolutePath = path.join(repoRoot, file);
+    for (const entry of readImportEntriesFromFile(absolutePath)) {
+      const target = resolveRelativeModule(repoRoot, file, entry.specifier);
+      if (target !== null && !target.startsWith("relay/")) {
+        violations.push(
+          makeRelayViolation({
+            rule: "relay-standalone",
+            file,
+            target,
+            line: entry.line,
+            column: entry.column,
+            reason: "relay/ must not import code outside relay/.",
+            remediation: "Keep the relay self-contained; duplicate the small piece it needs.",
+          }),
+        );
+      }
+      if (target === null && RELAY_FORBIDDEN_PACKAGE.test(entry.specifier)) {
+        violations.push(
+          makeRelayViolation({
+            rule: "relay-no-decryption",
+            file,
+            target: entry.specifier,
+            line: entry.line,
+            column: entry.column,
+            reason: "relay/ must not depend on an HPKE, X-Wing, or ML-KEM library.",
+            remediation: "The relay checks envelope size and version only; it never opens one.",
+          }),
+        );
+      }
+    }
+    const source = readFileSync(absolutePath, "utf8");
+    const decrypt = /\bsubtle\s*\.\s*decrypt\b|\bcreateDecipheriv\b/.exec(source);
+    if (decrypt) {
+      const { line, column } = lineAndColumnForIndex(source, decrypt.index);
+      violations.push(
+        makeRelayViolation({
+          rule: "relay-no-decryption",
+          file,
+          target: decrypt[0],
+          line,
+          column,
+          reason: "relay/ must contain no decryption code.",
+          remediation: "The relay checks envelope size and version only; it never opens one.",
+        }),
+      );
+    }
+  }
   return sortArchitectureViolations(violations);
 }

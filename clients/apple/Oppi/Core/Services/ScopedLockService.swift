@@ -406,6 +406,8 @@ final class ScopedLockService {
     private func save() {
         let stored = flags.map { StoredFlag(scope: $0, workspaceId: sessionWorkspaceIds[$0]) }
         defaults.set(try? JSONEncoder().encode(stored), forKey: Self.flagsKey)
+        // The Notification Service Extension redacts pushes for locked scopes.
+        PushRegistration.publishRedactionSnapshot(flags: flags)
     }
 
     private static func loadFlags(from defaults: UserDefaults) -> [StoredFlag] {

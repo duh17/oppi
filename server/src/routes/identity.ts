@@ -13,7 +13,8 @@ import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contrac
 import { isDictationStreamEnabled } from "../dictation-types.js";
 import { MAX_WORKSPACE_FILE_EDIT_BYTES } from "../file-serving-policy.js";
 import { isDeviceAccessPrincipal, type RequestPrincipal } from "../request-principal.js";
-import type { RegisterDeviceTokenRequest, WorkspaceFileEditingCapability } from "../types.js";
+import { checkPushRegistration } from "../push/registration.js";
+import type { PushRegistrationRequest, WorkspaceFileEditingCapability } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import {
   aggregateDailyDetail,
@@ -32,8 +33,6 @@ const CHALLENGE_WINDOW_MS = 60_000;
 const CHALLENGE_MAX_PER_WINDOW = 8;
 /** Concurrent `tailscale` proofs; taken before spawn so 503/hangs cannot flood. */
 const TAILSCALE_PROOF_MAX_CONCURRENT = 2;
-/** APNs device tokens are hex (32 bytes today); the bound keeps the APNs request path sane. */
-const APNS_DEVICE_TOKEN_PATTERN = /^[0-9a-f]{16,400}$/i;
 
 const log = createLogger({ base: { component: "route_identity" } });
 
@@ -333,8 +332,9 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
           version: 1,
           capabilities: [...EXTENSION_NATIVE_UI_SERVER_CAPABILITIES],
         },
-        // APNs configured: paired apps register device tokens with POST /me/device-token.
-        pushNotifications: ctx.pushNotificationsAvailable ? { version: 1 } : undefined,
+        // Relay mode: paired apps that opt in register with this relay, then PUT
+        // /me/push-registration (protocol/push/spec.md, section 5).
+        pushNotifications: pushRelayCapability(),
       },
       stats: {
         workspaceCount: workspaces.length,
@@ -364,8 +364,16 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     helpers.json(res, await getter());
   }
 
-  /** Tokens belong to the calling paired device, so revoking it stops its pushes. */
-  async function handleRegisterDeviceToken(
+  function pushRelayCapability(): { version: 1; relay: string } | undefined {
+    const primary = ctx.push?.sender.relays()?.[0];
+    return primary ? { version: 1, relay: primary } : undefined;
+  }
+
+  /**
+   * The calling paired device's push key and relay send token, signed by its device key.
+   * Revoking the device removes the registration.
+   */
+  async function handlePutPushRegistration(
     req: IncomingMessage,
     res: ServerResponse,
     principal: RequestPrincipal | undefined,
@@ -374,42 +382,60 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       helpers.error(res, 403, "Push registration requires a paired device credential");
       return;
     }
-    const body = await helpers.parseBody<Partial<RegisterDeviceTokenRequest>>(req);
-    const deviceToken = typeof body.deviceToken === "string" ? body.deviceToken.trim() : "";
-    if (!deviceToken) {
-      helpers.error(res, 400, "deviceToken required");
+    const push = ctx.push;
+    const primaryRelay = push?.sender.relays()?.[0];
+    if (!push || !primaryRelay) {
+      helpers.error(res, 409, "push_disabled");
       return;
     }
-    if (!APNS_DEVICE_TOKEN_PATTERN.test(deviceToken)) {
-      helpers.error(res, 400, "deviceToken must be a hex APNs token");
-      return;
-    }
-    const tokenType = body.tokenType ?? "apns";
-    if (tokenType !== "apns" && tokenType !== "liveactivity") {
-      helpers.error(res, 400, 'tokenType must be "apns" or "liveactivity"');
-      return;
-    }
-    const environment = body.apnsEnvironment;
-    if (environment !== "sandbox" && environment !== "production") {
-      helpers.error(res, 400, 'apnsEnvironment must be "sandbox" or "production"');
-      return;
-    }
-
-    const stored = ctx.storage.registerPushDeviceToken({
-      deviceId: principal.deviceId,
-      tokenType,
-      token: deviceToken.toLowerCase(),
-      environment,
-    });
-    if (!stored) {
+    const device = ctx.storage
+      .listDevices()
+      .find((item) => item.id === principal.deviceId && item.revokedAt === undefined);
+    if (!device) {
       helpers.error(res, 403, "Unknown or revoked device");
       return;
     }
-    log.info("identity.push.device_token.registered", {
-      tokenType,
-      environment,
-      apnsConfigured: ctx.pushNotificationsAvailable === true,
+    const body =
+      await helpers.parseBody<Partial<Record<keyof PushRegistrationRequest, unknown>>>(req);
+    const check = checkPushRegistration({
+      body,
+      deviceId: device.id,
+      devicePublicKey: device.publicKey,
+      serverFingerprint: push.serverFingerprint,
+      primaryRelay,
+      now: Date.now(),
     });
+    if (!check.ok) {
+      log.warn("identity.push.registration_rejected", { status: check.status, error: check.error });
+      helpers.error(res, check.status, check.error);
+      return;
+    }
+
+    const replaced = ctx.storage.setPushRegistration({
+      deviceId: device.id,
+      keyId: check.keyId,
+      publicKey: check.publicKey,
+      sendToken: check.sendToken,
+    });
+    if (replaced === false) {
+      helpers.error(res, 403, "Unknown or revoked device");
+      return;
+    }
+    if (replaced) push.sender.releasePermission(replaced);
+    log.info("identity.push.registered", { device: device.id });
+    helpers.json(res, { serverPublicKey: push.serverPublicKey, keyId: check.keyId });
+  }
+
+  function handleDeletePushRegistration(
+    res: ServerResponse,
+    principal: RequestPrincipal | undefined,
+  ): void {
+    if (!isDeviceAccessPrincipal(principal)) {
+      helpers.error(res, 403, "Push registration requires a paired device credential");
+      return;
+    }
+    const removed = ctx.storage.removePushRegistration(principal.deviceId);
+    if (removed) ctx.push?.sender.releasePermission(removed);
     helpers.json(res, { ok: true });
   }
 
@@ -540,10 +566,15 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
   }
 
   function handleRevokeDevice(_req: IncomingMessage, res: ServerResponse, deviceId: string): void {
+    const pushRegistration = ctx.push
+      ? ctx.storage.getPushRegistrations().find((entry) => entry.deviceId === deviceId)
+      : undefined;
+    // Removes the device's push registration in the same write.
     if (!ctx.storage.revokeDevice(deviceId)) {
       helpers.error(res, 404, "Unknown or already-revoked device");
       return;
     }
+    if (pushRegistration) ctx.push?.sender.releasePermission(pushRegistration);
     log.warn("auth.device_revoked", { device: deviceId });
     ctx.onDeviceRevoked?.(deviceId);
     helpers.json(res, { ok: true });
@@ -554,7 +585,10 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       helpers.error(res, 403, "Local admin only");
       return;
     }
+    const pushRegistrations = ctx.push ? ctx.storage.getPushRegistrations() : [];
+    // Revokes every device and removes their push registrations.
     ctx.storage.rotateToken();
+    for (const registration of pushRegistrations) ctx.push?.sender.releasePermission(registration);
     // An emergency owner rotation must immediately sever every already-open
     // remote device socket; the cleared device/access-token state alone only
     // affects future upgrades.
@@ -619,8 +653,12 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       await handleListModels(res);
       return true;
     }
-    if (path === "/me/device-token" && method === "POST") {
-      await handleRegisterDeviceToken(req, res, principal);
+    if (path === "/me/push-registration" && method === "PUT") {
+      await handlePutPushRegistration(req, res, principal);
+      return true;
+    }
+    if (path === "/me/push-registration" && method === "DELETE") {
+      handleDeletePushRegistration(res, principal);
       return true;
     }
     if (path === "/server/auto-title" && method === "GET") {

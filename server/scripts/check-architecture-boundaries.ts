@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   findIosLayerViolations,
   findMacLayerViolations,
+  findRelayLayerViolations,
   findServerLayerViolations,
 } from "./architecture-layer-rules.mjs"; // kept as .mjs — also imported by eslint.config.js under Node
 
@@ -25,7 +26,7 @@ function parseArgs(argv) {
         throw new Error("Missing value for --scope");
       }
 
-      if (!["all", "server", "ios", "mac"].includes(next)) {
+      if (!["all", "server", "ios", "mac", "relay"].includes(next)) {
         throw new Error(`Invalid --scope value: ${next}`);
       }
 
@@ -132,6 +133,10 @@ function run(options) {
 
   if (options.scope === "all" || options.scope === "mac") {
     checks.push(...findMacLayerViolations(repoRoot));
+  }
+
+  if (options.scope === "all" || options.scope === "relay") {
+    checks.push(...findRelayLayerViolations(repoRoot));
   }
 
   const seen = new Set();

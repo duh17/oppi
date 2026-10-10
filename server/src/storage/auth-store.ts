@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 import { generateId } from "../id.js";
-import type { PushDeviceToken, PushTokenType } from "../types.js";
+import type { PushRegistration } from "../types.js";
 import type { ConfigStore } from "./config-store.js";
 
 /** Longest pairing invite life. Bounds how long a leaked single-use link can pair a device. */
@@ -34,6 +34,7 @@ export class AuthStore {
     return config.token;
   }
 
+  /** New owner token; every paired device is revoked and loses its push registration. */
   rotateToken(): string {
     const token = AuthStore.generateOwnerToken();
     const revokedAt = Date.now();
@@ -43,7 +44,7 @@ export class AuthStore {
       pairingTokenExpiresAt: undefined,
       authDevices: (config.authDevices ?? []).map((device) => ({ ...device, revokedAt })),
       authAccessTokens: [],
-      pushDeviceTokens: [],
+      pushRegistrations: [],
     }));
     return token;
   }
@@ -73,42 +74,76 @@ export class AuthStore {
     return hostname().split(".")[0] || "owner";
   }
 
-  getPushDeviceTokens(tokenType: PushTokenType): PushDeviceToken[] {
-    return (this.configStore.getConfig().pushDeviceTokens ?? []).filter(
-      (entry) => entry.tokenType === tokenType,
-    );
+  getPushRegistrations(): PushRegistration[] {
+    return this.configStore.getConfig().pushRegistrations ?? [];
   }
 
   /**
-   * Store a device's token of one type, replacing its previous one. The token value moves
-   * off any other device (a re-paired install keeps its APNs token). Returns false, storing
-   * nothing, when the device is unknown or revoked by the time the write runs.
+   * Store a device's push registration, replacing its previous one. Sequence numbers start
+   * at 1 for a new key and continue for the same key. Returns the replaced registration when
+   * its send token differs (the caller releases it at the relay), `null` when there was none,
+   * and `false`, storing nothing, when the device is unknown or revoked when the write runs.
    */
-  registerPushDeviceToken(registration: Omit<PushDeviceToken, "registeredAt">): boolean {
-    let stored = false;
+  setPushRegistration(
+    registration: Omit<PushRegistration, "registeredAt" | "nextSeq">,
+  ): PushRegistration | null | false {
+    let result: PushRegistration | null | false = false;
     this.configStore.mutate((config) => {
       const device = (config.authDevices ?? []).find((item) => item.id === registration.deviceId);
       if (!device || device.revokedAt !== undefined) return {};
-      stored = true;
-      const kept = (config.pushDeviceTokens ?? []).filter(
-        (entry) =>
-          entry.token !== registration.token &&
-          !(entry.deviceId === registration.deviceId && entry.tokenType === registration.tokenType),
+      const existing = (config.pushRegistrations ?? []).find(
+        (entry) => entry.deviceId === registration.deviceId,
       );
-      return { pushDeviceTokens: [...kept, { ...registration, registeredAt: Date.now() }] };
+      result = existing && existing.sendToken !== registration.sendToken ? existing : null;
+      const nextSeq = existing?.keyId === registration.keyId ? existing.nextSeq : 1;
+      const kept = (config.pushRegistrations ?? []).filter(
+        (entry) => entry.deviceId !== registration.deviceId,
+      );
+      return {
+        pushRegistrations: [...kept, { ...registration, registeredAt: Date.now(), nextSeq }],
+      };
     });
-    return stored;
+    return result;
   }
 
-  /** Drop a token APNs rejected or a finished Live Activity no longer uses. */
-  removePushDeviceToken(token: string): boolean {
-    let removed = false;
+  /**
+   * Reserve the next sequence number for a device's current key, persisted before the push
+   * is sealed so a restart never reuses one. Null when the device has no registration for
+   * that key any more.
+   */
+  takePushSequence(deviceId: string, keyId: string): number | null {
+    let seq: number | null = null;
     this.configStore.mutate((config) => {
-      const tokens = config.pushDeviceTokens ?? [];
-      const kept = tokens.filter((entry) => entry.token !== token);
-      if (kept.length === tokens.length) return {};
-      removed = true;
-      return { pushDeviceTokens: kept };
+      const registrations = config.pushRegistrations ?? [];
+      const current = registrations.find(
+        (entry) => entry.deviceId === deviceId && entry.keyId === keyId,
+      );
+      if (!current) return {};
+      seq = current.nextSeq;
+      return {
+        pushRegistrations: registrations.map((entry) =>
+          entry === current ? { ...entry, nextSeq: entry.nextSeq + 1 } : entry,
+        ),
+      };
+    });
+    return seq;
+  }
+
+  /**
+   * Forget a device's registration. With `sendToken`, only when it still holds that token, so
+   * a stale relay `410` cannot remove a newer registration. Returns the removed registration.
+   */
+  removePushRegistration(deviceId: string, sendToken?: string): PushRegistration | null {
+    let removed: PushRegistration | null = null;
+    this.configStore.mutate((config) => {
+      const registrations = config.pushRegistrations ?? [];
+      const match = registrations.find(
+        (entry) =>
+          entry.deviceId === deviceId && (sendToken === undefined || entry.sendToken === sendToken),
+      );
+      if (!match) return {};
+      removed = match;
+      return { pushRegistrations: registrations.filter((entry) => entry !== match) };
     });
     return removed;
   }

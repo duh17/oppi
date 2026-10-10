@@ -255,8 +255,15 @@ final class ServerConnection {
     private(set) var durableSessionsAvailable = false
     /// The server advertises experimental live H.264 (`capabilities.desktopLiveView`).
     private(set) var desktopLiveViewAvailable = false
-    /// The server sends APNs pushes (`capabilities.pushNotifications`).
-    private(set) var pushNotificationsAvailable = false
+    /// Relay the server pushes through (`capabilities.pushNotifications`); nil when it does not.
+    private(set) var pushRelay: URL?
+
+    /// The server pushes and the user turned push on for it, so it skips this device's push
+    /// only while this device holds a live stream.
+    var pushNotificationsAvailable: Bool {
+        guard pushRelay != nil, let currentServerId else { return false }
+        return PushRegistration.isEnabled(serverId: currentServerId)
+    }
 
     // Stores
     let sessionStore: SessionStore
@@ -984,7 +991,7 @@ final class ServerConnection {
         self.dictationStreamAvailable = false
         self.durableSessionsAvailable = false
         self.desktopLiveViewAvailable = false
-        self.pushNotificationsAvailable = false
+        self.pushRelay = nil
         self.appEventStreamAvailable = false
         self.appEventStreamTransportState = .disconnected
         self.missingRequiredSplitStreamCapabilities = []
@@ -1401,12 +1408,18 @@ final class ServerConnection {
         controlSessionsAvailable = capabilities?.controlSessions?.version ?? 0 >= 1
         durableSessionsAvailable = capabilities?.durableSessions?.version ?? 0 >= 1
         desktopLiveViewAvailable = capabilities?.desktopLiveView?.version ?? 0 >= 1
-        let pushWasAvailable = pushNotificationsAvailable
-        pushNotificationsAvailable = capabilities?.advertisesPushNotifications ?? false
-        // Only a server that sends pushes gets this device's token, once per configuration.
-        // With no such server the app never registers with APNs or asks for permission.
-        if pushNotificationsAvailable, !pushWasAvailable, let apiClient {
-            PushRegistration.shared.serverAdvertisesPush(api: apiClient, serverId: currentServerId)
+        let previousRelay = pushRelay
+        pushRelay = capabilities?.pushRelay
+        // Only a server that pushes, and that the user opted in for, gets this device's push
+        // key, once per configuration. Otherwise the app never registers with APNs or the
+        // relay, and never asks for notification permission.
+        if let pushRelay, pushRelay != previousRelay, let apiClient {
+            PushRegistration.shared.serverAdvertisesPush(
+                api: apiClient,
+                serverId: currentServerId,
+                deviceId: credentials?.deviceCredential?.deviceId,
+                relay: pushRelay
+            )
         }
         missingRequiredSplitStreamCapabilities = ServerInfo.Capabilities
             .missingRequiredSplitStreamCapabilities(in: capabilities)
@@ -3089,12 +3102,12 @@ final class ServerConnection {
         appEventStream: Bool = false,
         durableSessions: Bool = false,
         desktopLiveView: Bool = false,
-        pushNotifications: Bool = false
+        pushRelay: URL? = nil
     ) {
         dictationStreamAvailable = dictationStream
         durableSessionsAvailable = durableSessions
         desktopLiveViewAvailable = desktopLiveView
-        pushNotificationsAvailable = pushNotifications
+        self.pushRelay = pushRelay
         appEventStreamAvailable = appEventStream
         var missing: [String] = []
         if !sessionStream { missing.append("sessionStream") }

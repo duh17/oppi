@@ -302,7 +302,7 @@ describe("ServerUpdateService", () => {
         mode,
         () => server.stop(),
         async () => {
-          server = new Server(storage, undefined, {
+          server = new Server(storage, {
             onRestartAfterUpdate,
             restartNeededVersion: targetVersion,
           });
@@ -312,7 +312,7 @@ describe("ServerUpdateService", () => {
         (restartMode) => restartUpdatedProcess(restartMode, () => false),
       ).catch(rejectRestore);
     };
-    server = new Server(storage, undefined, { onRestartAfterUpdate });
+    server = new Server(storage, { onRestartAfterUpdate });
     try {
       Object.defineProperty(process, "execve", {
         configurable: true,

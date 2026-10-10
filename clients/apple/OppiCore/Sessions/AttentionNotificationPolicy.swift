@@ -8,10 +8,10 @@ import Foundation
 /// are also the tap-routing categories for remote session-event payloads
 /// (ended, done, error, blocked).
 enum AttentionNotificationPolicy: Sendable {
-    static let askCategoryId = "ASK_REQUEST"
-    static let sessionDoneCategoryId = "SESSION_DONE"
-    static let sessionErrorCategoryId = "SESSION_ERROR"
-    static let sessionBlockedCategoryId = "SESSION_BLOCKED"
+    static let askCategoryId = SessionNotificationCategory.ask
+    static let sessionDoneCategoryId = SessionNotificationCategory.sessionDone
+    static let sessionErrorCategoryId = SessionNotificationCategory.sessionError
+    static let sessionBlockedCategoryId = SessionNotificationCategory.sessionBlocked
 
     static let sessionCategoryIds = [
         askCategoryId,

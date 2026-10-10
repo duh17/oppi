@@ -70,6 +70,15 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
     type: "boolean",
     desc: "Show legacy Codex plan-wide usage on the official OpenAI row (same account/workspace; default false; restart)",
   },
+  push: { type: "json", desc: "Push config JSON object" },
+  "push.mode": {
+    type: "string",
+    desc: "Push notifications: off (default) or relay (end-to-end encrypted through push.relays)",
+  },
+  "push.relays": {
+    type: "json",
+    desc: "Push relay origins JSON array: [primary] or [primary, standby]",
+  },
   asr: { type: "json", desc: "ASR config JSON object" },
   "asr.backend": { type: "string", desc: "STT backend: http" },
   "asr.provider": { type: "string", desc: "STT provider: http or xai" },
@@ -242,6 +251,8 @@ export function cmdConfig(
             key === "proxy" ||
             key.startsWith("proxy.") ||
             key.startsWith("experimental.") ||
+            key === "push" ||
+            key.startsWith("push.") ||
             key === "providerQuotas" ||
             key.startsWith("providerQuotas.")
               ? "Restart the Oppi server for this change to take effect."

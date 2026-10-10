@@ -15,7 +15,7 @@ import { networkInterfaces, type NetworkInterfaceInfo } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { spawnSync } from "node:child_process";
-import { timingSafeEqual } from "node:crypto";
+import { createPrivateKey, timingSafeEqual } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import type { Storage } from "./storage.js";
 import {
@@ -33,7 +33,6 @@ import { normalizeRegisteredPathPattern } from "./routes/registry.js";
 import { httpOpsMetricSamples, observeHttpResponseBody } from "./http-request-metrics.js";
 import { defaultModelRefFromGlobalSettings, ModelCatalog } from "./model-catalog.js";
 import { ExtensionProviderCatalog } from "./extension-model-discovery.js";
-import { LiveActivityBridge } from "./live-activity.js";
 import type { ProgramStatusSync } from "./program-status.js";
 import { SessionPushNotifier } from "./session-push-notifier.js";
 import { AgentScheduleRunner } from "./agent-schedule-runner.js";
@@ -64,7 +63,7 @@ import {
   resumeSessionsAfterRestart,
 } from "./session-restart-resume.js";
 
-import { createPushClient, type PushClient, type APNsConfig } from "./push.js";
+import { PushSender } from "./push/push-sender.js";
 
 import type {
   Session,
@@ -437,7 +436,7 @@ export class Server {
   private readonly serverResources: ServerResourceService;
   private skillsInitialized = false;
   private reportedMissingWorkspaceSkills = new Set<string>();
-  private push: PushClient;
+  private push: PushSender;
   private httpServer?: ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>;
   private readonly localApiServer: ReturnType<typeof createServer>;
   private readonly localApiSocket: string;
@@ -450,6 +449,8 @@ export class Server {
 
   private readonly piExecutable: string;
   private readonly identityFingerprint: string;
+  /** Base64url raw Ed25519 identity public key; signs push envelopes. */
+  private readonly identityPublicKey: string;
   private bonjourAdvertiser: BonjourAdvertiser | null = null;
   private modelRuntime!: ModelRuntime;
   private modelRegistry!: ModelRegistry;
@@ -472,9 +473,7 @@ export class Server {
   // Server operational metrics (latencies, counts, errors)
   private opsMetrics: ServerMetricCollector;
 
-  // Live Activity push bridge (debounced APNs updates)
-  private liveActivity: LiveActivityBridge;
-  // Regular APNs alerts for terminal/error session events.
+  // End-to-end-encrypted session alerts through the push relay.
   private sessionPushNotifier: SessionPushNotifier;
 
   // Full-text search index (SQLite FTS5)
@@ -510,7 +509,6 @@ export class Server {
 
   constructor(
     storage: Storage,
-    apnsConfig?: APNsConfig,
     options?: {
       desktopCompanionStillClient?: Pick<DesktopCompanionStillClient, "fetchCurrentStill">;
       desktopCompanionViewSessionClient?: Pick<
@@ -547,6 +545,7 @@ export class Server {
     const config = storage.getConfig();
     const identity = ensureIdentityMaterial(identityConfigForDataDir(dataDir));
     this.identityFingerprint = identity.fingerprint;
+    this.identityPublicKey = identity.publicKeyRaw;
     this.serverResources = new ServerResourceService({
       dataDir,
       agentDir: getAgentDir(),
@@ -561,11 +560,10 @@ export class Server {
     const bundledSkillsDir = join(serverRoot, "skills");
     this.skillRegistry = new SkillRegistry(existsSync(bundledSkillsDir) ? [bundledSkillsDir] : []);
 
-    this.push = createPushClient(apnsConfig, {
+    this.push = new PushSender(this.storage, {
+      signingKey: createPrivateKey(identity.privateKeyPem),
       metrics: this.opsMetrics,
-      onTokenRejected: (token) => this.storage.removePushDeviceToken(token),
     });
-    this.liveActivity = new LiveActivityBridge(this.push, this.storage);
     this.sessionPushNotifier = new SessionPushNotifier(this.push, this.storage, {
       isDevicePresent: (deviceId) => this.isDevicePresent(deviceId),
     });
@@ -681,7 +679,6 @@ export class Server {
     });
 
     const handleSessionEvent = (payload: SessionBroadcastEvent): void => {
-      this.liveActivity.handleSessionEvent(payload);
       this.sessionPushNotifier.handleSessionEvent(payload);
       this.appEventStreamMux.handleSessionBroadcastEvent(payload);
     };
@@ -913,7 +910,11 @@ export class Server {
       piCliVersion: optionalPiCliVersion(Server.detectPiVersion(this.piExecutable)),
       serverUpdate: this.serverUpdate,
       onDeviceRevoked: (deviceId) => this.closeConnectionsForDevice(deviceId),
-      pushNotificationsAvailable: this.push.enabled,
+      push: {
+        sender: this.push,
+        serverPublicKey: this.identityPublicKey,
+        serverFingerprint: this.identityFingerprint,
+      },
       onOwnerTokenRotated: () => this.closeAllDeviceConnections(),
       stopWorkspaceVm: (workspaceId) => SdkBackend.stopWorkspaceVm(workspaceId),
       desktopCompanionStillClient: this.desktopCompanionStillClient,
@@ -1113,8 +1114,6 @@ export class Server {
       }
       await this.sessions.close();
       await SdkBackend.stopAllWorkspaceVms();
-      this.liveActivity.shutdown();
-      this.push.shutdown();
       this.searchIndex?.close();
       await this.closeWebSocketServer();
     } catch (error: unknown) {

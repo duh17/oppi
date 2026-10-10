@@ -449,8 +449,8 @@ describe("identity module", () => {
     });
   });
 
-  it("advertises pushNotifications in GET /server/info only when APNs is configured", async () => {
-    async function capabilities(pushNotificationsAvailable: boolean | undefined) {
+  it("advertises pushNotifications in GET /server/info only in relay mode", async () => {
+    async function capabilities(relays: string[] | undefined) {
       const ctx = {
         storage: {
           getConfig: vi.fn(() => ({ configVersion: 2 })),
@@ -467,7 +467,11 @@ describe("identity module", () => {
         serverStartedAt: Date.now(),
         serverVersion: "test",
         piVersion: "test",
-        pushNotificationsAvailable,
+        push: {
+          sender: { relays: () => relays },
+          serverPublicKey: "server-public-key",
+          serverFingerprint: "sha256:fixture",
+        },
       } as unknown as RouteContext;
       const res = makeResponse();
       await createIdentityRoutes(
@@ -483,10 +487,12 @@ describe("identity module", () => {
       return (JSON.parse(res.body) as { capabilities: Record<string, unknown> }).capabilities;
     }
 
-    // No apns.json: the server composes a no-op push client and advertises nothing.
+    // push.mode off (the default) advertises nothing, so apps never register or prompt.
     expect(await capabilities(undefined)).not.toHaveProperty("pushNotifications");
-    expect(await capabilities(false)).not.toHaveProperty("pushNotifications");
-    expect((await capabilities(true)).pushNotifications).toEqual({ version: 1 });
+    expect(
+      (await capabilities(["https://push.example.test", "https://standby.example.test"]))
+        .pushNotifications,
+    ).toEqual({ version: 1, relay: "https://push.example.test" });
   });
 
   it("uses ctx.piVersion as Pi SDK and includes piCliVersion when a TUI/CLI version is known", async () => {

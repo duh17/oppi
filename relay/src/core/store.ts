@@ -1,0 +1,142 @@
+/**
+ * What the relay stores (protocol/push/spec.md §3.4) and the atomic operations adapters
+ * provide. Node keeps records in memory; Cloudflare keeps one Durable Object per
+ * registration. Every method is atomic for its registration.
+ */
+
+import { hashesEqual } from "./bytes.js";
+
+export type ApnsEnvironment = "sandbox" | "production";
+
+export interface PermissionRecord {
+  id: string;
+  /** base64url SHA-256 of the send token's secret part. */
+  secretHash: string;
+}
+
+export interface QuotaState {
+  /** UTC day `YYYY-MM-DD` the daily count belongs to. */
+  day: string;
+  dayCount: number;
+  /** Start (ms) of the current one-minute window. */
+  minuteStart: number;
+  minuteCount: number;
+}
+
+export interface RegistrationRecord {
+  id: string;
+  secretHash: string;
+  apnsToken: string;
+  environment: ApnsEnvironment;
+  attested: boolean;
+  /** base64url DER SubjectPublicKeyInfo of the App Attest key, when attested. */
+  appAttestPublicKey?: string;
+  appAttestCounter?: number;
+  createdAt: number;
+  permissions: PermissionRecord[];
+  quota: QuotaState;
+}
+
+export interface QuotaLimits {
+  attestedPerDay: number;
+  unattestedPerDay: number;
+  perMinute: number;
+}
+
+export const DEFAULT_QUOTA_LIMITS: QuotaLimits = {
+  attestedPerDay: 500,
+  unattestedPerDay: 100,
+  perMinute: 30,
+};
+
+export const MAX_PERMISSIONS_PER_REGISTRATION = 16;
+
+export type PushAuthorization =
+  | { ok: true; apnsToken: string; environment: ApnsEnvironment }
+  | { ok: false; reason: "gone" }
+  | { ok: false; reason: "quota"; retryAfterSeconds: number };
+
+export type AddPermissionResult = "ok" | "limit" | "gone";
+
+export interface RelayStore {
+  putChallenge(challenge: string, expiresAt: number): Promise<void>;
+  /** True only the first time, before expiry; the challenge is gone afterwards. */
+  consumeChallenge(challenge: string, now: number): Promise<boolean>;
+  createRegistration(record: RegistrationRecord): Promise<void>;
+  getRegistration(id: string): Promise<RegistrationRecord | null>;
+  deleteRegistration(id: string): Promise<void>;
+  /** Store `counter` only when it exceeds the stored App Attest counter. */
+  advanceAssertionCounter(id: string, counter: number): Promise<boolean>;
+  addPermission(id: string, permission: PermissionRecord): Promise<AddPermissionResult>;
+  deletePermission(id: string, permissionId: string): Promise<void>;
+  /** Check the permission's secret and charge one push to the registration's quota. */
+  authorizePush(
+    id: string,
+    permissionId: string,
+    secretHash: string,
+    now: number,
+  ): Promise<PushAuthorization>;
+}
+
+export function emptyQuota(): QuotaState {
+  return { day: "", dayCount: 0, minuteStart: 0, minuteCount: 0 };
+}
+
+// ─── Pure rules both stores apply inside their atomic sections ───
+
+export function applyAssertionCounter(record: RegistrationRecord, counter: number): boolean {
+  if (!record.attested || counter <= (record.appAttestCounter ?? 0)) return false;
+  record.appAttestCounter = counter;
+  return true;
+}
+
+export function applyAddPermission(
+  record: RegistrationRecord,
+  permission: PermissionRecord,
+): AddPermissionResult {
+  if (record.permissions.length >= MAX_PERMISSIONS_PER_REGISTRATION) return "limit";
+  record.permissions.push(permission);
+  return "ok";
+}
+
+export function applyDeletePermission(record: RegistrationRecord, permissionId: string): void {
+  record.permissions = record.permissions.filter((entry) => entry.id !== permissionId);
+}
+
+export function applyAuthorizePush(
+  record: RegistrationRecord,
+  permissionId: string,
+  secretHash: string,
+  now: number,
+  limits: QuotaLimits = DEFAULT_QUOTA_LIMITS,
+): PushAuthorization {
+  const permission = record.permissions.find((entry) => entry.id === permissionId);
+  if (!permission || !hashesEqual(permission.secretHash, secretHash)) {
+    return { ok: false, reason: "gone" };
+  }
+  const day = new Date(now).toISOString().slice(0, 10);
+  const quota = record.quota;
+  if (quota.day !== day) {
+    quota.day = day;
+    quota.dayCount = 0;
+  }
+  if (now - quota.minuteStart >= 60_000) {
+    quota.minuteStart = now;
+    quota.minuteCount = 0;
+  }
+  const dailyLimit = record.attested ? limits.attestedPerDay : limits.unattestedPerDay;
+  if (quota.dayCount >= dailyLimit) {
+    const nextDay = Date.parse(`${day}T00:00:00Z`) + 86_400_000;
+    return { ok: false, reason: "quota", retryAfterSeconds: Math.ceil((nextDay - now) / 1000) };
+  }
+  if (quota.minuteCount >= limits.perMinute) {
+    return {
+      ok: false,
+      reason: "quota",
+      retryAfterSeconds: Math.max(1, Math.ceil((quota.minuteStart + 60_000 - now) / 1000)),
+    };
+  }
+  quota.dayCount += 1;
+  quota.minuteCount += 1;
+  return { ok: true, apnsToken: record.apnsToken, environment: record.environment };
+}

@@ -107,7 +107,7 @@ function rawP1363ToDer(signature: Buffer): Buffer {
   return Buffer.concat([Buffer.from([0x30]), derLength(body.length), body]);
 }
 
-function verifyDeviceSignature(
+export function verifyDeviceSignature(
   publicKey: DevicePublicKey,
   data: Buffer,
   signature: Buffer,
@@ -393,7 +393,7 @@ export class DeviceAuthStore {
           (item) => item.deviceId !== deviceId,
         ),
         // A revoked device stops receiving pushes in the same write.
-        pushDeviceTokens: (config.pushDeviceTokens ?? []).filter(
+        pushRegistrations: (config.pushRegistrations ?? []).filter(
           (item) => item.deviceId !== deviceId,
         ),
       };

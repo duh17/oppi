@@ -351,7 +351,9 @@ struct ScopedLockSurfaceTests {
         _ = conn.configure(credentials: makeTestCredentials(fingerprint: "sha256:scoped-srv"))
         let serverId = try #require(conn.currentServerId)
         conn.scopedLocks = harness.locks
-        conn.setSplitStreamCapabilitiesForTesting(appEventStream: true, pushNotifications: true)
+        conn.setSplitStreamCapabilitiesForTesting(appEventStream: true, pushRelay: URL(string: "https://push.example.test"))
+        PushRegistration.setEnabled(true, serverId: serverId)
+        defer { PushRegistration.setEnabled(false, serverId: serverId) }
         var session = makeTestSession(
             id: "s2",
             workspaceId: "w1",

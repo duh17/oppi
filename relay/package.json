@@ -1,0 +1,24 @@
+{
+  "name": "oppi-push-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "End-to-end-encrypted push relay for Oppi. Carries sealed envelopes to APNs; holds no decryption code.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "start": "node dist/node/main.js",
+    "test": "npm run build && vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.1",
+    "miniflare": "3.20250718.3",
+    "typescript": "6.0.3",
+    "vitest": "5.0.3",
+    "wrangler": "4.149.0"
+  }
+}

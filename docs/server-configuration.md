@@ -82,38 +82,35 @@ oppi server restart
 
 Use `oppi config get runtimeEnv` and `oppi config get extensions.voice` to inspect. Extension-specific auth and models stay in the extension docs or its settings, not in core Oppi config.
 
-## Push notifications (APNs)
+## Push notifications
 
-The server can push lock-screen alerts to paired iPhones and iPads through Apple Push Notification service (APNs). It is off until `apns.json` exists in the data directory (`~/.config/oppi/apns.json` by default). APNs accepts only a key from the Apple Developer team that signs the app, so this works for the team that built your Oppi app: the App Store/TestFlight build needs that team's key, and a fork built under your own team needs yours.
+Push is off by default. When you turn it on, the server sends end-to-end-encrypted lock-screen alerts to paired iPhones and iPads through a push relay and Apple Push Notification service (APNs). The server never talks to APNs and holds no Apple key: the relay does. Content is encrypted on your server to a key that only the phone holds, so the relay and Apple see ciphertext, never titles, session names, or questions. [protocol/push/spec.md](../protocol/push/spec.md) is the full design, including what the relay can see.
 
-```json
-{
-  "keyPath": "/Users/you/.config/oppi/AuthKey_ABC123DEFG.p8",
-  "keyId": "ABC123DEFG",
-  "teamId": "TEAM123456",
-  "bundleId": "dev.chenda.Oppi"
-}
+Turn it on with the relay's origin, and optionally a standby. Set the relays first: relay mode without them is rejected.
+
+```bash
+oppi config set push.relays '["https://push.example.com"]'
+oppi config set push.mode relay
+oppi server restart
 ```
 
-| Field | Value |
+| Key | Value |
 | --- | --- |
-| `keyPath` | The APNs auth key (`.p8`) from Certificates, Identifiers & Profiles → Keys. Absolute, or relative to the data directory. Keep it `chmod 600`. |
-| `keyId` | The key's 10-character Key ID. |
-| `teamId` | The 10-character Team ID that signs the app. |
-| `bundleId` | The app's bundle ID, used as the APNs topic. |
+| `push.mode` | `off` (default) or `relay`. |
+| `push.relays` | `[primary]` or `[primary, standby]` origins: `https`, or `http` on loopback for local testing. No path. Required in relay mode. |
 
-There is no environment setting. Each app sends its own APNs environment with its token, read from the `aps-environment` it was signed with: an Xcode development build registers a `sandbox` token, and TestFlight and App Store builds register `production` tokens. The server sends each token to the matching host (`api.sandbox.push.apple.com` or `api.push.apple.com`), so one server can serve both kinds of build. The key must be allowed for the environments you use: a team key works for both, and an environment-specific key only for its own.
+Restart the server after changing `push`. In relay mode, `/server/info` advertises `capabilities.pushNotifications` with the primary relay. Each user still opts in per server on the phone (**Server Settings → Push Notifications**, off by default); only then does the app register with APNs and the relay, ask for notification permission, and send this server its push key.
 
-Restart the server after adding, changing, or removing `apns.json`. Startup logs `apns.configured` (or `apns.setup.failed` when the key cannot be read), and `/server/info` then advertises `capabilities.pushNotifications`. Without `apns.json` the server advertises nothing and the app never registers for push. When the app connects to a server that advertises it, the app registers with APNs, asks for notification permission once APNs issues a token, and sends the token to that server.
-
-The app can register only if its build is signed with the Push Notifications capability (`aps-environment`). Current Oppi app builds are not: the App ID does not have Push Notifications enabled, so their APNs registration fails and no token reaches the server, even with `apns.json` in place.
+Current Oppi app builds do not carry the Push Notifications capability or the extension that decrypts pushes yet, so they cannot register even with relay mode on. There is no hosted Oppi relay yet either. You can run the relay in `relay/` yourself (Node, or Cloudflare Workers); it needs an APNs key from the Apple Developer team that signs your app, so it works for the Oppi builds of that team only. See [relay/README.md](../relay/README.md).
 
 What the server does:
 
-- **Tokens:** each token is stored with the paired device that registered it (`pushDeviceTokens` in `config.json`; `oppi config show` redacts them). Re-registering replaces that device's token. Revoking the device or rotating the owner credential removes its tokens, and so do APNs `410` responses and `400` `BadDeviceToken` or `DeviceTokenNotForTopic`. Other failures, such as a bad key (`403`), keep the token and log `apns.push.failed`.
+- **Registrations:** each paired device that opts in sends its X-Wing public key and a relay send token, signed by its pairing key (`PUT /me/push-registration`). The server stores them with that device (`pushRegistrations` in `config.json`; `oppi config show` redacts them). Revoking the device or rotating the owner credential removes them and asks the relay to release the send token. A relay `410` from the primary removes them too.
+- **Encryption:** each push is a fixed-size envelope (HPKE with X-Wing, AES-256-GCM) signed with the server's Ed25519 identity key, with a sequence number and timestamp the phone checks. A device without a push key gets nothing; there is no unencrypted fallback.
+- **Relays:** pushes go to the primary. Network errors, timeouts, and `5xx` move to the standby. A standby must accept the primary's send tokens, for example the same Worker on a second hostname.
 - **Events:** **Needs Approval**, **Question**, or **Sign-in Needed** when a session enters `blocked`; **Session Done** when a top-level session enters `done`; ended and error alerts.
 - **Presence:** `blocked` and `done` skip any device that holds an open app-event or session stream, because that device already shows the change. Other devices still get the push, so an open Mac or iPad does not silence the phone. An iPhone that stays connected in the background while an agent works posts its own **Session Done** notification instead. A stream that was never closed, because the app was suspended or lost its network, keeps its device present until the server's ping timeout drops it, up to about 90 seconds; a `blocked` or `done` in that window is not pushed to that device.
-- **Payload:** a fixed title and body, the session name as subtitle, and the session ID, sent to Apple unencrypted. App Lock and scoped locks on the phone do not change push content.
+- **Content:** a title, the session name, and a fixed body (an ended session's reason), all inside the envelope. On the phone, App Lock and scoped locks hide the session name. Logs record only outcomes such as `push.not_delivered` and `push.registration_pruned`.
 
 ## Extensions
 

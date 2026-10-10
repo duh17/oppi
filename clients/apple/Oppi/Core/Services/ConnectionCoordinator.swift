@@ -1059,6 +1059,9 @@ final class ConnectionCoordinator {
               serverStore.server(for: id) == nil else { return }
         // Device-local lock flags for the server, its workspaces, and sessions.
         ScopedLockService.shared.forgetServer(id)
+        // Push keys and the relay permission for this server. The transport is gone, so the
+        // server forgets this device's registration when its relay permission 410s.
+        await PushRegistration.shared.disable(serverId: id, api: nil, relay: removedConnection?.pushRelay)
         await purgeLocalData(for: id, connection: removedConnection)
 
         // If we removed the active server, switch to the first remaining

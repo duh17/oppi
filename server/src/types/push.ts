@@ -1,32 +1,43 @@
 // ─── Push ───
 
-/**
- * APNs host a device token belongs to. Tokens only work on the host that issued them:
- * Xcode development-signed builds get `sandbox` tokens; TestFlight and App Store builds
- * get `production` tokens.
- */
-export type APNsEnvironment = "sandbox" | "production";
+/** Session events that push (protocol/push/spec.md §5). */
+export type PushEvent = "blocked" | "done" | "error" | "ended";
 
-/** "apns" for regular alerts, "liveactivity" for a Live Activity push token. */
-export type PushTokenType = "apns" | "liveactivity";
+/** `off`: no pushes (default). `relay`: end-to-end-encrypted pushes through a push relay. */
+export type PushMode = "off" | "relay";
 
-export interface RegisterDeviceTokenRequest {
-  /** APNs device token (hex string from iOS) */
-  deviceToken: string;
-  tokenType?: PushTokenType;
-  /** Environment of the app's signed `aps-environment` entitlement. */
-  apnsEnvironment: APNsEnvironment;
+export interface PushConfig {
+  mode: PushMode;
+  /** `[primary, standby]` relay origins. Required in relay mode. */
+  relays?: string[];
+}
+
+/** Body of `PUT /me/push-registration` (spec §5). */
+export interface PushRegistrationRequest {
+  keyId: string;
+  /** Base64url of the raw X-Wing public key (1216 bytes). */
+  publicKey: string;
+  /** Relay send permission minted by the phone for this server. */
+  sendToken: string;
+  /** Relay origin the send token was minted at; must be this server's primary. */
+  relay: string;
+  issuedAt: number;
+  /** Base64url P-256 `r || s` by the device's enrolled key. */
+  signature: string;
 }
 
 /**
- * One stored push token. Owned by the paired device that registered it: revoking that
- * device removes it, and APNs rejections prune it.
+ * One paired device's push registration. Owned by that device: revoking it removes the
+ * registration, and a relay `410` from the primary prunes it.
  */
-export interface PushDeviceToken {
+export interface PushRegistration {
   /** `DeviceRecord.id` of the registering device. */
   deviceId: string;
-  tokenType: PushTokenType;
-  token: string;
-  environment: APNsEnvironment;
+  keyId: string;
+  /** Base64url of the raw X-Wing public key. */
+  publicKey: string;
+  sendToken: string;
   registeredAt: number;
+  /** Next envelope sequence number for this key; persisted so restarts never reuse one. */
+  nextSeq: number;
 }

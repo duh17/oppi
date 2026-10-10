@@ -143,7 +143,12 @@ struct ServerInfoVersionTests {
             return try JSONDecoder().decode(ServerInfo.self, from: data).capabilities
         }
 
-        #expect(try capabilities(#"{"pushNotifications":{"version":1}}"#)?.advertisesPushNotifications == true)
-        #expect(try capabilities(#"{"appEventStream":{"version":1}}"#)?.advertisesPushNotifications == false)
+        #expect(try capabilities(#"{"pushNotifications":{"version":1,"relay":"https://push.example.test"}}"#)?.pushRelay
+            == URL(string: "https://push.example.test"))
+        // Local testing against a loopback relay.
+        #expect(try capabilities(#"{"pushNotifications":{"version":1,"relay":"http://127.0.0.1:8787"}}"#)?.pushRelay
+            == URL(string: "http://127.0.0.1:8787"))
+        #expect(try capabilities(#"{"pushNotifications":{"version":1,"relay":"http://push.example.test"}}"#)?.pushRelay == nil)
+        #expect(try capabilities(#"{"appEventStream":{"version":1}}"#)?.pushRelay == nil)
     }
 }

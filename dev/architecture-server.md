@@ -33,13 +33,13 @@ The server owns:
 - terminal Pi TUI mirror registration and command proxying,
 - session event projection into durable sequence numbers, summaries, media, search, and SQLite read models,
 - extension UI relay and attention state,
-- telemetry, push, Live Activity updates, package version via getPackageInfo(), and diagnostics.
+- telemetry, end-to-end-encrypted push through a relay, package version via getPackageInfo(), and diagnostics.
 
 The server does not render the chat timeline. It sends protocol messages and HTTP snapshots for the Apple client to render.
 
 ### Program status
 
-`Session.programStatus` / `SessionSummary.programStatus` is the one status vocabulary for every session (OSC 7501: `idle`, `working`, `done`, `blocked` with a `kind`, `error`). `server/src/program-status.ts` is its single owner: `trackProgramRunEvent` folds Pi events (the same rules as Pi 1.1.0's terminal reporter, including `agent_settled.aborted`), `deriveProgramStatus` is the table over lifecycle status, run tracker, and pending user-reply dialogs, and `syncProgramStatus` stores the result. Sync runs after each Pi event (`SessionEventProcessor`), on lifecycle and dialog messages and before persistence (`SessionBroadcaster`), and in the mirror's bridge-state path, so managed and mirrored sessions share one function. `Storage.saveSession` also normalizes every `stopped` and `error` row (a fresh, host-less derive from the stored outcome) and writes `programStatus` back onto the caller's object, which is why a stop of a disconnected mirror never leaves `working`/`blocked` behind; `starting` rows are deliberately excluded so a stop mid-start keeps the last outcome. The value persists with the session (`program_status_json`), which is how a stopped session keeps done/error across a restart; startup marks crash orphans stopped and backfills sessions that predate it. Lifecycle `Session.status` stays for controls. Consumers read program status: list and app-event summaries, the Live Activity bridge, `blocked`/`done` pushes (`SessionPushNotifier`, skipping each paired device that holds an app-event or focused stream, throttled per session and kind, `done` for sessions without a parent, fixed body text; push tokens belong to a paired device and carry their APNs environment, and `APNsClient` routes each to its host and prunes retired tokens), and `oppi session wait` (`--program-status` also writes it to the terminal as OSC 7501 via `cli/program-status-osc.ts`). The `message` is the session name, a dialog title, the first question of an `ask`, or the first line of an error (a typed launch failure has none); never a prompt or model output. Push bodies do not carry it. `editor` dialogs count as blocking user replies everywhere `isPendingUserReplyRequest` is used.
+`Session.programStatus` / `SessionSummary.programStatus` is the one status vocabulary for every session (OSC 7501: `idle`, `working`, `done`, `blocked` with a `kind`, `error`). `server/src/program-status.ts` is its single owner: `trackProgramRunEvent` folds Pi events (the same rules as Pi 1.1.0's terminal reporter, including `agent_settled.aborted`), `deriveProgramStatus` is the table over lifecycle status, run tracker, and pending user-reply dialogs, and `syncProgramStatus` stores the result. Sync runs after each Pi event (`SessionEventProcessor`), on lifecycle and dialog messages and before persistence (`SessionBroadcaster`), and in the mirror's bridge-state path, so managed and mirrored sessions share one function. `Storage.saveSession` also normalizes every `stopped` and `error` row (a fresh, host-less derive from the stored outcome) and writes `programStatus` back onto the caller's object, which is why a stop of a disconnected mirror never leaves `working`/`blocked` behind; `starting` rows are deliberately excluded so a stop mid-start keeps the last outcome. The value persists with the session (`program_status_json`), which is how a stopped session keeps done/error across a restart; startup marks crash orphans stopped and backfills sessions that predate it. Lifecycle `Session.status` stays for controls. Consumers read program status: list and app-event summaries, `blocked`/`done` pushes (`SessionPushNotifier`, skipping each paired device that holds an app-event or focused stream, throttled per session and kind, `done` for sessions without a parent, fixed body text; see [Push](#push)), and `oppi session wait` (`--program-status` also writes it to the terminal as OSC 7501 via `cli/program-status-osc.ts`). The `message` is the session name, a dialog title, the first question of an `ask`, or the first line of an error (a typed launch failure has none); never a prompt or model output. Push bodies do not carry it. `editor` dialogs count as blocking user replies everywhere `isPendingUserReplyRequest` is used.
 
 ## Server topology
 
@@ -86,7 +86,7 @@ graph TD
 
   subgraph Infrastructure[Shared infrastructure]
     ExtensionRelay[Extension UI relay<br/>sdk-ui-bridge.ts]
-    Ops[Search, metrics,<br/>push, live activity]
+    Ops[Search, metrics,<br/>encrypted push]
   end
 
   Client --> Root
@@ -126,6 +126,17 @@ graph TD
   Sessions --> ExtensionRelay
   Sessions --> Ops
 ```
+
+## Push
+
+Push is relay-only and end to end encrypted ([protocol/push/spec.md](../protocol/push/spec.md)); the server holds no APNs key and opens no connection to Apple. `push.mode` is `off` by default. `server/src/push/` owns it:
+
+- `envelope.ts`: the only way to make a `SealedPushEnvelope` (HPKE X-Wing to the device's push key, Ed25519 signature by the server identity key, fixed 512-byte padded plaintext).
+- `relay-client.ts`: relay API v1 server calls. It accepts only a `SealedPushEnvelope`, tries `[primary, standby]`, and prunes only on a primary `410`.
+- `push-sender.ts`: per-device sealing with a persisted sequence number, collapse IDs, and best-effort permission release.
+- `registration.ts`: `PUT /me/push-registration` checks; the device's enrolled P-256 key signs the push key and send token.
+
+`PushRegistration` records live on `ServerConfig.pushRegistrations`, one per paired device; revoking the device or rotating the owner token removes them in the same write. The standalone relay is `relay/` (core, Node and Cloudflare adapters); it imports nothing from `server/` or `clients/` and no HPKE/X-Wing package, which `check-architecture-boundaries.ts --scope relay` enforces. Test vectors in `protocol/push/vectors/` change only through `protocol/push/scripts/generate-vectors.sh` and `npm run push:canary -- --write-capture`.
 
 ## Protocol boundary
 

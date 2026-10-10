@@ -2537,21 +2537,44 @@ struct APIClientTests {
         #expect(step == 2)
     }
 
-    // MARK: - Device Token
+    // MARK: - Push Registration
 
-    @Test func registerDeviceTokenSendsItsAPNsEnvironment() async throws {
+    @Test func putPushRegistrationSendsTheSignedKeyAndReadsTheServerKey() async throws {
         let client = makeClient()
         defer { cleanup() }
 
         MockURLProtocol.handler = { request in
-            #expect(request.httpMethod == "POST")
-            #expect(request.url?.path.hasSuffix("/me/device-token") == true)
-            let json = try? JSONSerialization.jsonObject(with: self.requestBodyData(request)) as? [String: String]
-            #expect(json == ["deviceToken": "abc123", "tokenType": "apns", "apnsEnvironment": "production"])
-            return self.mockResponse(json: "{}")
+            #expect(request.httpMethod == "PUT")
+            #expect(request.url?.path.hasSuffix("/me/push-registration") == true)
+            let json = try? JSONSerialization.jsonObject(with: self.requestBodyData(request)) as? [String: Any]
+            #expect(json?["keyId"] as? String == "kid")
+            #expect(json?["sendToken"] as? String == "osp1.r.p.s")
+            #expect(json?["issuedAt"] as? Int64 == 1_760_000_000_000)
+            return self.mockResponse(json: #"{"serverPublicKey":"spk","keyId":"kid"}"#)
         }
 
-        try await client.registerDeviceToken("abc123", apnsEnvironment: .production)
+        let response = try await client.putPushRegistration(PushRegistrationRequest(
+            keyId: "kid",
+            publicKey: "pk",
+            sendToken: "osp1.r.p.s",
+            relay: "https://push.example.test",
+            issuedAt: 1_760_000_000_000,
+            signature: "sig"
+        ))
+        #expect(response == PushRegistrationResponse(serverPublicKey: "spk", keyId: "kid"))
+    }
+
+    @Test func deletePushRegistrationUsesDelete() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { request in
+            #expect(request.httpMethod == "DELETE")
+            #expect(request.url?.path.hasSuffix("/me/push-registration") == true)
+            return self.mockResponse(json: #"{"ok":true}"#)
+        }
+
+        try await client.deletePushRegistration()
     }
 
     // MARK: - Diagnostics

@@ -143,7 +143,7 @@ describe("GET /desktop/stills/current HTTPS auth shell", () => {
     if (!enrolled) throw new Error("enrollment failed");
     deviceToken = enrolled.accessToken;
     fetchCurrentStill.mockImplementation(async () => makeStill());
-    server = new Server(storage, undefined, {
+    server = new Server(storage, {
       desktopCompanionStillClient: { fetchCurrentStill },
     });
     await server.start();

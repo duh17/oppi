@@ -2426,15 +2426,18 @@ actor APIClient: ClientLogUploading {
         try await getSessionFileData(sessionId: sessionId, path: path)
     }
 
-    // MARK: - Device Token
+    // MARK: - Push Registration
 
-    /// Register APNs device token with the server.
-    func registerDeviceToken(_ token: String, apnsEnvironment: APNsEnvironment) async throws {
-        struct Body: Encodable { let deviceToken: String; let tokenType: String; let apnsEnvironment: String }
-        _ = try await post(
-            "/me/device-token",
-            body: Body(deviceToken: token, tokenType: "apns", apnsEnvironment: apnsEnvironment.rawValue)
-        )
+    /// Give the server this device's push key and relay send token (protocol/push/spec.md, section 5).
+    func putPushRegistration(_ registration: PushRegistrationRequest) async throws -> PushRegistrationResponse {
+        let data = try await put("/me/push-registration", body: registration)
+        return try JSONDecoder().decode(PushRegistrationResponse.self, from: data)
+    }
+
+    /// The server forgets this device's push key and send token.
+    func deletePushRegistration() async throws {
+        let (data, response) = try await request("DELETE", path: "/me/push-registration")
+        try checkStatus(response, data: data)
     }
 
     // MARK: - Diagnostics

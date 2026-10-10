@@ -17,6 +17,7 @@ import type { ServerResourceService } from "../server-resource-service.js";
 import type { ServerUpdateService } from "../server-update.js";
 import type { McpService } from "../mcp-service.js";
 import type { ServerMetricCollector } from "../server-metric-collector.js";
+import type { PushSender } from "../push/push-sender.js";
 
 /** Services needed by route handlers — injected by Server. */
 export interface RouteContext {
@@ -47,8 +48,16 @@ export interface RouteContext {
   serverUpdate?: ServerUpdateService;
   /** Close upgraded sockets owned by a newly revoked device. */
   onDeviceRevoked?: (deviceId: string) => void;
-  /** APNs is configured (`apns.json`); `/server/info` advertises it so apps register tokens. */
-  pushNotificationsAvailable?: boolean;
+  /**
+   * End-to-end-encrypted push (protocol/push/spec.md). In relay mode `/server/info` advertises
+   * the primary relay so apps register; `/me/push-registration` stores their keys.
+   */
+  push?: {
+    sender: PushSender;
+    /** Base64url raw Ed25519 identity public key; the app checks it against its pin. */
+    serverPublicKey: string;
+    serverFingerprint: string;
+  };
   /** Close every network device socket when the owner token rotates. */
   onOwnerTokenRotated?: () => void;
   /** Stop the sandbox VM for a deleted workspace. Composed in server.ts. */

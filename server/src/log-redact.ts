@@ -17,7 +17,7 @@ const SENSITIVE_EXACT_NORMALIZED_KEYS = new Set([
   "authdevicetokens",
   "device",
   "deviceid",
-  "pushdevicetokens",
+  "pushregistrations",
 ]);
 
 const SENSITIVE_NORMALIZED_KEY_TERMS = [

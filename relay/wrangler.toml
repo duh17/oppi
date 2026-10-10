@@ -1,0 +1,29 @@
+# Cloudflare Worker for the Oppi push relay. No account ID and no secrets live here.
+# Secrets: wrangler secret put APNS_KEY_P8 | APNS_KEY_ID | APNS_TEAM_ID (see README.md).
+name = "oppi-push-relay"
+main = "src/cloudflare/worker.ts"
+compatibility_date = "2026-10-01"
+
+# The relay keeps no request logs: Workers Logs and invocation logs (method and URL) stay off.
+[observability]
+enabled = false
+
+[observability.logs]
+enabled = false
+invocation_logs = false
+
+[[durable_objects.bindings]]
+name = "REGISTRATIONS"
+class_name = "RegistrationObject"
+
+[[durable_objects.bindings]]
+name = "CHALLENGES"
+class_name = "ChallengeObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RegistrationObject", "ChallengeObject"]
+
+[vars]
+APP_ID = "AZAQMY4SPZ.dev.chenda.Oppi"
+BUNDLE_ID = "dev.chenda.Oppi"

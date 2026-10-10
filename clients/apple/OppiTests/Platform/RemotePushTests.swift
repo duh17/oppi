@@ -62,10 +62,15 @@ struct RemotePushTests {
     }
 
     /// Delivers the request a `working -> done` app-event summary schedules, or nil.
-    private func doneBanner(serverPushes: Bool) async -> DeliveredBanner? {
+    private func doneBanner(serverPushes: Bool, optedIn: Bool = true) async -> DeliveredBanner? {
         let connection = ServerConnection()
         _ = connection.configure(credentials: makeTestCredentials(fingerprint: "sha256:push-srv"))
-        connection.setSplitStreamCapabilitiesForTesting(appEventStream: true, pushNotifications: serverPushes)
+        connection.setSplitStreamCapabilitiesForTesting(
+            appEventStream: true,
+            pushRelay: serverPushes ? URL(string: "https://push.example.test") : nil
+        )
+        PushRegistration.setEnabled(optedIn, serverId: "sha256:push-srv")
+        defer { PushRegistration.setEnabled(false, serverId: "sha256:push-srv") }
         let session = working()
         connection.sessionStore.upsert(session)
 
@@ -108,6 +113,11 @@ struct RemotePushTests {
 
     @Test func serverWithoutPushKeepsDoneInApp() async {
         #expect(await doneBanner(serverPushes: false) == nil)
+    }
+
+    /// Without the opt-in the server never pushes to this device, so it has nothing to skip.
+    @Test func pushingServerKeepsDoneInAppUntilTheUserOptsIn() async {
+        #expect(await doneBanner(serverPushes: true, optedIn: false) == nil)
     }
 }
 

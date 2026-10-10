@@ -1,6 +1,6 @@
 # Privacy Policy
 
-_Last updated: 2026-09-27_
+_Last updated: 2026-10-10_
 
 This policy describes the current Oppi Apple client and the Oppi server that you run yourself. Oppi is a native client for a paired, self-hosted Oppi server. That server runs Pi through its SDK; Pi does not ship a server mode. Oppi does not provide a hosted Oppi account service, a central session store, or an Oppi-operated external analytics service. Pi may collect its own install or update telemetry outside this policy; see Pi's documentation for that behavior.
 
@@ -14,6 +14,7 @@ You choose the server, workspace, model providers, speech-to-text service, and t
 - Dictation can use Apple's on-device speech APIs or audio sent through the paired server to its configured speech-to-text backend.
 - Model, speech, and voice providers can receive the content needed for the operation you choose. Their privacy policies and retention rules apply.
 - Public builds upload diagnostics only after you enable **Settings → Privacy & Security → Send Diagnostics**. Diagnostics go to your paired server, not to a hosted Oppi service.
+- Push notifications are off unless both the server operator and you turn them on. When on, alert content is encrypted on your server to a key that only your device holds; a push relay and Apple carry it without being able to read it. See [Push notifications](#push-notifications).
 - Remote connections use authenticated HTTPS/WSS, including LAN and Tailscale HTTPS. The network path can see ordinary connection metadata such as IP addresses, hostnames, timing, and traffic volume.
 - Unsaved workspace file edits are kept as protected draft files in the app's sandbox until the paired server confirms the save, or until you choose Use Disk Version.
 - Removing a server from the app removes its local pairing credential and the session history, lists, and file indexes cached for it on this device. It does not delete the server, workspace files, session history on the server, provider data, or backups.
@@ -60,9 +61,9 @@ Files the app and the Share extension store use iOS Data Protection class *Compl
 
 ### App Lock
 
-**Settings → Privacy & Security → App Lock** (Off, Immediately, or after 1, 5, or 15 minutes in the background) asks for Face ID, Touch ID, or the device passcode before Oppi shows content. The device passcode also unlocks Oppi. Oppi never locks while it is open. The timeout uses the system's monotonic clock, so changing the date and time does not extend it. While it is on, the app-switcher snapshot is covered, Oppi's own local notifications and Live Activities never show session text, the Share sheet asks every time before it lists workspaces, and removing a server, revoking a device, deleting a workspace, changing provider credentials or signing in, and turning off Confirm New Servers ask first. Audio and video keep playing while Oppi is locked, in the background, from Lock Screen controls, and in Picture in Picture. While Oppi is locked, `oppi://` links and notification taps wait for unlock, and Siri and Shortcuts open Oppi to unlock before starting a session and list no servers or workspaces. Push notifications sent by a paired server are not covered and can include a session name. App Lock protects against someone holding your unlocked device. It does not encrypt anything further, and it does not protect data on your servers or on other paired devices. The setting is stored in the shared App Group preferences so the Share extension can honor it.
+**Settings → Privacy & Security → App Lock** (Off, Immediately, or after 1, 5, or 15 minutes in the background) asks for Face ID, Touch ID, or the device passcode before Oppi shows content. The device passcode also unlocks Oppi. Oppi never locks while it is open. The timeout uses the system's monotonic clock, so changing the date and time does not extend it. While it is on, the app-switcher snapshot is covered, Oppi's own local notifications and Live Activities never show session text, the Share sheet asks every time before it lists workspaces, and removing a server, revoking a device, deleting a workspace, changing provider credentials or signing in, and turning off Confirm New Servers ask first. Audio and video keep playing while Oppi is locked, in the background, from Lock Screen controls, and in Picture in Picture. While Oppi is locked, `oppi://` links and notification taps wait for unlock, and Siri and Shortcuts open Oppi to unlock before starting a session and list no servers or workspaces. Push notifications from a paired server show no session name while App Lock is on. App Lock protects against someone holding your unlocked device. It does not encrypt anything further, and it does not protect data on your servers or on other paired devices. The setting is stored in the shared App Group preferences so the Share extension can honor it.
 
-**Server, workspace, and session locks.** Server Settings and Workspace Settings have a **Lock** toggle, and a session locks from its long-press menu. Opening a locked item, or starting a session in one from Quick Session, Siri, or Shortcuts, asks for Face ID, Touch ID, or the device passcode first; if Siri cannot bring Oppi forward to ask, nothing is sent. A locked server covers its workspaces and sessions, and a locked workspace covers its sessions. An unlock lasts until Oppi locks again, or, with App Lock off, until Oppi leaves the foreground; leaving then covers the app-switcher snapshot. Locks never stop or hold back audio or video. Locked items show their name only in lists, search, and Thread view, and Oppi's own ask notifications and Live Activities hide their text. Incognito sessions are always locked while App Lock is on. Turning a lock off asks for device authentication. These locks work with App Lock off. They are stored on this device only (keyed by server identity and workspace or session ID), are never sent to a server, and are removed with their server, workspace, or session. Like App Lock, they protect against someone holding your unlocked device, not data on your servers or other paired devices. Server push notifications can still include a session name.
+**Server, workspace, and session locks.** Server Settings and Workspace Settings have a **Lock** toggle, and a session locks from its long-press menu. Opening a locked item, or starting a session in one from Quick Session, Siri, or Shortcuts, asks for Face ID, Touch ID, or the device passcode first; if Siri cannot bring Oppi forward to ask, nothing is sent. A locked server covers its workspaces and sessions, and a locked workspace covers its sessions. An unlock lasts until Oppi locks again, or, with App Lock off, until Oppi leaves the foreground; leaving then covers the app-switcher snapshot. Locks never stop or hold back audio or video. Locked items show their name only in lists, search, and Thread view, and Oppi's own ask notifications and Live Activities hide their text. Incognito sessions are always locked while App Lock is on. Turning a lock off asks for device authentication. These locks work with App Lock off. They are stored on this device only (keyed by server identity and workspace or session ID), are never sent to a server, and are removed with their server, workspace, or session. Like App Lock, they protect against someone holding your unlocked device, not data on your servers or other paired devices. Push notifications for a locked server, workspace, or session show no session name.
 
 **Settings → Storage & About → Clear Local Cache** clears the timeline cache, the file-browser index, and any leftover HTTP cache. It does not delete the paired server, server workspaces, Pi session files, provider data, or backups. Removing the app is a device-level control and does not delete server-side data.
 
@@ -129,6 +130,27 @@ The endpoint can be local to the server host or remote. For a remote endpoint, t
 
 Voice replies are generated by the paired server and its configured extensions/providers. Generated audio can be streamed to the app or stored as a session attachment for later playback.
 
+## Push notifications
+
+Push notifications are off by default. They work only when the paired server's operator sets `push.mode` to `relay` and you turn on **Push Notifications** for that server in Server Settings. Before turning on, the app shows what the relay can see. Current App Store and TestFlight builds cannot register for push yet.
+
+**How content is protected.** When you turn push on, your device creates a separate encryption key for that server (post-quantum hybrid X-Wing). The private key stays in this device's Keychain, readable after the first unlock so alerts can open while the phone is locked, and it never syncs or moves to another device. The device sends only the public key to your server, signed with the device's pairing key. Your server encrypts each alert (its title, the session name, and a short fixed message) to that key and signs it with its identity key. A Notification Service Extension on your device checks the signature, decrypts the alert, and rejects old or repeated ones. While App Lock is on, or a server, workspace, or session lock covers the session, it shows the alert type without the session name. Anything it cannot verify shows only "Oppi: You have a new notification."
+
+**The push relay.** Apple delivers pushes only from the developer team that signs the app, so a relay holds that team's Apple key and forwards your server's encrypted alerts to Apple. Your server names the relay. Oppi does not operate a hosted relay yet; if Chaos Donkey offers one later, this section will name it before it is used. The relay code is in the Oppi repository (`relay/`), and its protocol and threat model are in `protocol/push/spec.md`.
+
+The relay receives and can see:
+
+- your device's Apple push token and whether it is a development or production build;
+- whether your device passed Apple's App Attest check, and its App Attest public key;
+- your server's IP address when it sends an alert, the time of each alert, and its fixed size;
+- an opaque per-device collapse ID, so a newer alert for the same session can replace an older one.
+
+The relay stores the push token, environment, App Attest public key and counter, hashes of its access secrets, the send permissions you created (one per server), and daily alert counts. It does not store alerts, IP addresses, or request logs, and it cannot decrypt alerts: it has no key and no decryption code. It deletes a registration when Apple reports the token is no longer valid, when you turn push off, or when you remove the server.
+
+**Apple.** Apple Push Notification service sees the same push token, timing, and size, and delivers the encrypted alert to your device. Apple's privacy policy applies.
+
+**Turning it off.** Turning push off for a server, or revoking this device on the server, deletes this device's push registration on that server and asks the relay to delete the send permission. Removing the server from the app asks the relay to delete the send permission; the server then deletes the registration the next time it tries to push, when the relay refuses it. Your device deletes the server's push keys when you turn push off or remove the server.
+
 ## Network metadata
 
 After pairing, Oppi uses authenticated HTTPS/WSS. Automatic routing evaluates verified LAN HTTPS and paired HTTPS; Tailscale HTTPS is supported. The local CLI stays on an owner-only Unix socket.
@@ -164,6 +186,7 @@ You control whether to:
 - Select, send, or cancel a prompt attachment.
 - Connect or disconnect a model-provider credential on the paired server.
 - Enable or disable public-build diagnostics upload.
+- Turn push notifications on or off for each paired server.
 - Delete sessions and clear the local timeline cache.
 - Configure or disable speech-to-text, text-to-speech, and model providers on the server.
 

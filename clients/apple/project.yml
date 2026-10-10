@@ -540,6 +540,50 @@ targets:
         DEVELOPMENT_TEAM: AZAQMY4SPZ
         CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION: "YES"
 
+  # Opens end-to-end-encrypted pushes (protocol/push/spec.md). Not embedded in Oppi yet: its
+  # App ID (dev.chenda.Oppi.NotificationService, App Groups: group.oppi) and the app's
+  # Push Notifications capability must exist in the Apple Developer portal first, or
+  # automatic signing would register them on the next device or TestFlight build.
+  # Build-check it alone with the OppiNotificationService scheme on a simulator.
+  OppiNotificationService:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: OppiNotificationService
+        type: group
+        excludes:
+          - "Info.plist"
+          - "*.entitlements"
+      - path: OppiCore/Push
+        type: group
+      - path: Shared/Push
+        type: group
+      - path: Shared/Constants
+        type: group
+      - path: OppiCore/Client/CrossProcessFileLock.swift
+        type: file
+    entitlements:
+      path: OppiNotificationService/OppiNotificationService.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - $(APP_GROUP_IDENTIFIER)
+    info:
+      path: OppiNotificationService/Info.plist
+      properties:
+        CFBundleDisplayName: Oppi
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.chenda.Oppi.NotificationService
+        MARKETING_VERSION: "1.1.2"
+        CURRENT_PROJECT_VERSION: 54
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: AZAQMY4SPZ
+
   OppiTests:
     type: bundle.unit-test
     platform: iOS
@@ -767,6 +811,11 @@ schemes:
         - name: OppiPerfTests
         - name: OppiUITests
         - name: OppiE2ETests
+
+  OppiNotificationService:
+    build:
+      targets:
+        OppiNotificationService: all
 
   OppiMac:
     build:

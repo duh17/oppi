@@ -69,10 +69,25 @@ struct ServerInfo: Codable, Sendable, Equatable {
         var durableSessions: CapabilityVersion? = nil
         /// Experimental live H.264 of a granted Mac window (`experimental.desktopLiveView`).
         var desktopLiveView: CapabilityVersion? = nil
-        /// APNs is configured: register this device's token with `POST /me/device-token`.
-        var pushNotifications: CapabilityVersion? = nil
+        /// The server pushes end to end encrypted through this relay (`push.mode` relay).
+        var pushNotifications: PushNotificationsCapability? = nil
 
-        var advertisesPushNotifications: Bool { pushNotifications?.version ?? 0 >= 1 }
+        /// The relay origin, when the server pushes and names an https relay (http only on
+        /// loopback, for local testing).
+        var pushRelay: URL? {
+            guard let capability = pushNotifications, capability.version >= 1,
+                  let relay = capability.relay, let url = URL(string: relay), let host = url.host() else { return nil }
+            if url.scheme == "https" { return url }
+            let loopback = host == "127.0.0.1" || host == "localhost" || host == "::1"
+            return url.scheme == "http" && loopback ? url : nil
+        }
+    }
+
+    struct PushNotificationsCapability: Codable, Sendable, Equatable {
+        let version: Int
+        /// Primary relay origin. Optional so an unexpected shape degrades to "no push" instead
+        /// of failing the whole server-info decode.
+        let relay: String?
     }
 
     struct WorkspaceFileEditingCapability: Codable, Sendable, Equatable {

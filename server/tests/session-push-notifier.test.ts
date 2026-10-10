@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { ProgramStatusSync } from "../src/program-status.js";
 import { SessionPushNotifier } from "../src/session-push-notifier.js";
-import type { PushClient, SessionEventPushPayload } from "../src/push.js";
+import type { PushNotification, PushSender } from "../src/push/push-sender.js";
 import type { SessionBroadcastEvent } from "../src/session-broadcast.js";
 import type { Storage } from "../src/storage.js";
-import type { ProgramStatus, PushDeviceToken, Session } from "../src/types.js";
+import type { ProgramStatus, PushRegistration, Session } from "../src/types.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   const now = Date.now();
@@ -22,47 +22,44 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-function makePush() {
-  const sendSessionEventPush = vi.fn(async () => true);
+/** Push registration of paired device "dev-<name>". */
+function target(name: string): PushRegistration {
   return {
-    sendSessionEventPush,
-    sendLiveActivityUpdate: vi.fn(async () => true),
-    endLiveActivity: vi.fn(async () => true),
-    shutdown: vi.fn(),
-  } as unknown as PushClient & {
-    sendSessionEventPush: ReturnType<
-      typeof vi.fn<(...args: [PushDeviceToken, SessionEventPushPayload]) => Promise<boolean>>
-    >;
+    deviceId: `dev-${name}`,
+    keyId: `kid-${name}`,
+    publicKey: "public-key",
+    sendToken: `token-${name}`,
+    registeredAt: 1,
+    nextSeq: 1,
   };
+}
+
+type MockPush = PushSender & {
+  send: ReturnType<
+    typeof vi.fn<(registration: PushRegistration, notification: PushNotification) => Promise<null>>
+  >;
+};
+
+/** `devices` is read on every push, so tests can add a registration later. */
+function makePush(devices: string[]): MockPush {
+  return {
+    registrations: vi.fn(() => devices.map(target)),
+    send: vi.fn(async () => null),
+  } as unknown as MockPush;
 }
 
 type MockStorage = Storage & {
-  getPushDeviceTokens: ReturnType<typeof vi.fn<(tokenType: string) => PushDeviceToken[]>>;
   getSession: ReturnType<typeof vi.fn<(id: string) => Session | undefined>>;
 };
 
-/** Stored APNs token "token-x", owned by paired device "dev-token-x". */
-function target(token: string): PushDeviceToken {
+function makeStorage(session: Session | undefined = makeSession()): MockStorage {
   return {
-    deviceId: `dev-${token}`,
-    tokenType: "apns",
-    token,
-    environment: "production",
-    registeredAt: 1,
-  };
-}
-
-function makeStorage(tokens: string[], session: Session | undefined = makeSession()): MockStorage {
-  return {
-    getPushDeviceTokens: vi.fn((tokenType: string) =>
-      tokenType === "apns" ? tokens.map(target) : [],
-    ),
     getSession: vi.fn((id: string) => (session?.id === id ? session : undefined)),
   } as unknown as MockStorage;
 }
 
 function makeNotifier(
-  push: PushClient,
+  push: PushSender,
   storage: Storage,
   options: { presentDevices?: Iterable<string>; now?: () => number } = {},
 ) {
@@ -98,77 +95,89 @@ function change(
 }
 
 describe("SessionPushNotifier", () => {
-  it("sends session-ended alerts to every registered APNs token", () => {
-    const push = makePush();
-    const storage = makeStorage(["token-a", "token-b"], makeSession({ name: "Deploy fix" }));
+  it("seals a session-ended alert separately for every registered device", () => {
+    const push = makePush(["phone", "ipad"]);
+    const storage = makeStorage(makeSession({ name: "Deploy fix" }));
     const notifier = makeNotifier(push, storage);
 
     notifier.handleSessionEvent(event("s1", { type: "session_ended", reason: "completed" }));
 
-    expect(push.sendSessionEventPush).toHaveBeenCalledTimes(2);
-    expect(push.sendSessionEventPush).toHaveBeenNthCalledWith(1, target("token-a"), {
-      sessionId: "s1",
-      sessionName: "Deploy fix",
+    const expected: PushNotification = {
       event: "ended",
-      reason: "completed",
-    });
-    expect(push.sendSessionEventPush).toHaveBeenNthCalledWith(2, target("token-b"), {
+      title: "Session Ended",
+      body: "completed",
       sessionId: "s1",
-      sessionName: "Deploy fix",
-      event: "ended",
-      reason: "completed",
-    });
+      workspaceId: "w1",
+      subtitle: "Deploy fix",
+    };
+    expect(push.send.mock.calls).toEqual([
+      [target("phone"), expected],
+      [target("ipad"), expected],
+    ]);
   });
 
-  it("redacts non-retry error alert bodies before sending to APNs", () => {
-    const push = makePush();
-    const storage = makeStorage(["token-a"], makeSession({ name: "Bug hunt" }));
-    const notifier = makeNotifier(push, storage);
+  it("marks incognito sessions so the phone can redact them under App Lock", () => {
+    const push = makePush(["phone"]);
+    const notifier = makeNotifier(push, makeStorage(makeSession({ ephemeral: true })));
+
+    notifier.handleSessionEvent(event("s1", { type: "session_ended", reason: "" }));
+
+    expect(push.send).toHaveBeenCalledWith(
+      target("phone"),
+      expect.objectContaining({ incognito: true, body: "The session ended." }),
+    );
+  });
+
+  it("replaces non-retry error text with a fixed body", () => {
+    const push = makePush(["phone"]);
+    const notifier = makeNotifier(push, makeStorage(makeSession({ name: "Bug hunt" })));
     const rawError =
       "model crashed while reading /Users/alice/.ssh/id_rsa with bearer token sk_secret";
 
     notifier.handleSessionEvent(event("s1", { type: "error", error: rawError }));
 
-    expect(push.sendSessionEventPush).toHaveBeenCalledWith(target("token-a"), {
-      sessionId: "s1",
-      sessionName: "Bug hunt",
-      event: "error",
-      reason: "Open Oppi to review the session error.",
-    });
-    expect(JSON.stringify(push.sendSessionEventPush.mock.calls)).not.toContain(rawError);
+    expect(push.send).toHaveBeenCalledWith(
+      target("phone"),
+      expect.objectContaining({
+        event: "error",
+        title: "Session Error",
+        body: "Open Oppi to review the session error.",
+      }),
+    );
+    expect(JSON.stringify(push.send.mock.calls)).not.toContain(rawError);
   });
 
   it("ignores retry errors without loading the session", () => {
-    const push = makePush();
-    const storage = makeStorage(["token-a"]);
+    const push = makePush(["phone"]);
+    const storage = makeStorage();
     const notifier = makeNotifier(push, storage);
 
     notifier.handleSessionEvent(event("s1", { type: "error", error: "Retrying (3/5)" }));
 
     expect(storage.getSession).not.toHaveBeenCalled();
-    expect(push.sendSessionEventPush).not.toHaveBeenCalled();
+    expect(push.send).not.toHaveBeenCalled();
   });
 
-  it("ignores terminal events without regular APNs tokens before loading the session", () => {
-    const push = makePush();
-    const storage = makeStorage([]);
+  it("sends nothing and loads no session when no device has a push key", () => {
+    const push = makePush([]);
+    const storage = makeStorage();
     const notifier = makeNotifier(push, storage);
 
     notifier.handleSessionEvent(event("s1", { type: "session_ended", reason: "done" }));
 
     expect(storage.getSession).not.toHaveBeenCalled();
-    expect(push.sendSessionEventPush).not.toHaveBeenCalled();
+    expect(push.send).not.toHaveBeenCalled();
   });
 
   describe("program status pushes", () => {
     it.each([
-      ["permission", "Waiting for your approval."],
-      ["question", "Waiting for your answer."],
-      ["auth", "Waiting for you to sign in."],
-    ] as const)("pushes on entering blocked (%s) with a fixed body", (kind, reason) => {
-      const push = makePush();
+      ["permission", "Needs Approval", "Waiting for your approval."],
+      ["question", "Question", "Waiting for your answer."],
+      ["auth", "Sign-in Needed", "Waiting for you to sign in."],
+    ] as const)("pushes on entering blocked (%s) with fixed text", (kind, title, body) => {
+      const push = makePush(["phone"]);
       const session = makeSession({ name: "Deploy" });
-      const notifier = makeNotifier(push, makeStorage(["token-a"], session));
+      const notifier = makeNotifier(push, makeStorage(session));
 
       notifier.handleProgramStatusChange(
         session,
@@ -178,103 +187,107 @@ describe("SessionPushNotifier", () => {
         ),
       );
 
-      expect(push.sendSessionEventPush).toHaveBeenCalledWith(target("token-a"), {
-        sessionId: "s1",
-        sessionName: "Deploy",
+      expect(push.send).toHaveBeenCalledWith(target("phone"), {
         event: "blocked",
         kind,
-        reason,
+        title,
+        body,
+        sessionId: "s1",
+        workspaceId: "w1",
+        subtitle: "Deploy",
       });
-      // The dialog title lives in program status; it never reaches the lock screen.
-      expect(JSON.stringify(push.sendSessionEventPush.mock.calls)).not.toContain("alice");
+      // The dialog title lives in program status; v1 pushes never carry it.
+      expect(JSON.stringify(push.send.mock.calls)).not.toContain("alice");
     });
 
     it("treats a blocked status without a kind as a question", () => {
-      const push = makePush();
+      const push = makePush(["phone"]);
       const session = makeSession();
-      const notifier = makeNotifier(push, makeStorage(["token-a"], session));
+      const notifier = makeNotifier(push, makeStorage(session));
 
       notifier.handleProgramStatusChange(
         session,
         change({ state: "working" }, { state: "blocked" }),
       );
 
-      expect(push.sendSessionEventPush).toHaveBeenCalledWith(
-        target("token-a"),
-        expect.objectContaining({ kind: "question", reason: "Waiting for your answer." }),
+      expect(push.send).toHaveBeenCalledWith(
+        target("phone"),
+        expect.objectContaining({ kind: "question", body: "Waiting for your answer." }),
       );
     });
 
-    it("pushes on entering done with a fixed body and no session or model text", () => {
-      const push = makePush();
+    it("pushes on entering done with a fixed body and no model text", () => {
+      const push = makePush(["phone"]);
       const session = makeSession({
         name: "Fix login",
         lastMessage: "SECRET assistant output",
         firstMessage: "SECRET prompt",
       });
-      const notifier = makeNotifier(push, makeStorage(["token-a"], session));
+      const notifier = makeNotifier(push, makeStorage(session));
 
       notifier.handleProgramStatusChange(
         session,
         change({ state: "working" }, { state: "done", message: "Fix login" }),
       );
 
-      expect(push.sendSessionEventPush).toHaveBeenCalledTimes(1);
-      expect(push.sendSessionEventPush).toHaveBeenCalledWith(target("token-a"), {
-        sessionId: "s1",
-        sessionName: "Fix login",
-        event: "done",
-        reason: "The run finished.",
-      });
-      expect(JSON.stringify(push.sendSessionEventPush.mock.calls)).not.toContain("SECRET");
+      expect(push.send).toHaveBeenCalledTimes(1);
+      expect(push.send).toHaveBeenCalledWith(
+        target("phone"),
+        expect.objectContaining({
+          event: "done",
+          title: "Session Done",
+          body: "The run finished.",
+        }),
+      );
+      expect(JSON.stringify(push.send.mock.calls)).not.toContain("SECRET");
     });
 
     it("pushes no done for a delegated session, but still pushes its blocked", () => {
-      const push = makePush();
+      const push = makePush(["phone"]);
       const child = makeSession({
         id: "child",
         launch: { status: "created", requestedAt: 1, parentSessionId: "parent" },
       });
-      const notifier = makeNotifier(push, makeStorage(["token-a"], child));
+      const notifier = makeNotifier(push, makeStorage(child));
 
       notifier.handleProgramStatusChange(child, change({ state: "working" }, { state: "done" }));
-      expect(push.sendSessionEventPush).not.toHaveBeenCalled();
+      expect(push.send).not.toHaveBeenCalled();
 
       notifier.handleProgramStatusChange(
         child,
         change({ state: "working" }, { state: "blocked", kind: "permission" }),
       );
-      expect(push.sendSessionEventPush).toHaveBeenCalledTimes(1);
-      expect(push.sendSessionEventPush).toHaveBeenCalledWith(
-        target("token-a"),
+      expect(push.send).toHaveBeenCalledTimes(1);
+      expect(push.send).toHaveBeenCalledWith(
+        target("phone"),
         expect.objectContaining({ sessionId: "child", event: "blocked" }),
       );
     });
 
     it("still pushes done for a top-level session that has launch metadata", () => {
-      const push = makePush();
+      const push = makePush(["phone"]);
       const session = makeSession({ launch: { status: "created", requestedAt: 1 } });
-      const notifier = makeNotifier(push, makeStorage(["token-a"], session));
+      const notifier = makeNotifier(push, makeStorage(session));
 
       notifier.handleProgramStatusChange(session, change({ state: "working" }, { state: "done" }));
 
-      expect(push.sendSessionEventPush).toHaveBeenCalledTimes(1);
+      expect(push.send).toHaveBeenCalledTimes(1);
     });
 
     it.each(["idle", "working", "error"] as const)("does not push on entering %s", (state) => {
-      const push = makePush();
+      const push = makePush(["phone"]);
       const session = makeSession();
-      const notifier = makeNotifier(push, makeStorage(["token-a"], session));
+      const notifier = makeNotifier(push, makeStorage(session));
 
       notifier.handleProgramStatusChange(session, change({ state: "done" }, { state }));
 
-      expect(push.sendSessionEventPush).not.toHaveBeenCalled();
+      expect(push.send).not.toHaveBeenCalled();
     });
 
     it("does not push for message-only changes or a first-ever status", () => {
-      const push = makePush();
+      const push = makePush(["phone"]);
       const session = makeSession();
-      const notifier = makeNotifier(push, makeStorage(["token-a"], session));
+      const notifier = makeNotifier(push, makeStorage(session));
 
       notifier.handleProgramStatusChange(
         session,
@@ -282,13 +295,13 @@ describe("SessionPushNotifier", () => {
       );
       notifier.handleProgramStatusChange(session, change(undefined, { state: "done" }));
 
-      expect(push.sendSessionEventPush).not.toHaveBeenCalled();
+      expect(push.send).not.toHaveBeenCalled();
     });
 
     it("skips only devices that are present: an open iPad does not silence the phone", () => {
-      const push = makePush();
+      const push = makePush(["phone", "ipad"]);
       const session = makeSession();
-      const notifier = makeNotifier(push, makeStorage(["phone", "ipad"], session), {
+      const notifier = makeNotifier(push, makeStorage(session), {
         presentDevices: ["dev-ipad"],
       });
 
@@ -298,54 +311,50 @@ describe("SessionPushNotifier", () => {
       );
       notifier.handleProgramStatusChange(session, change({ state: "working" }, { state: "done" }));
 
-      expect(push.sendSessionEventPush.mock.calls.map(([sent]) => sent.token)).toEqual([
-        "phone",
-        "phone",
+      expect(push.send.mock.calls.map(([sent]) => sent.deviceId)).toEqual([
+        "dev-phone",
+        "dev-phone",
       ]);
     });
 
     it("stays silent while the only device is present, and pushes once it leaves", () => {
-      const push = makePush();
+      const push = makePush(["phone"]);
       const session = makeSession();
       const present = new Set(["dev-phone"]);
-      const notifier = new SessionPushNotifier(push, makeStorage(["phone"], session), {
+      const notifier = new SessionPushNotifier(push, makeStorage(session), {
         isDevicePresent: (deviceId) => present.has(deviceId),
       });
       const toDone = change({ state: "working" }, { state: "done" });
 
       notifier.handleProgramStatusChange(session, toDone);
-      expect(push.sendSessionEventPush).not.toHaveBeenCalled();
+      expect(push.send).not.toHaveBeenCalled();
 
       // A skipped push starts no throttle: the next transition after leaving still pushes.
       present.clear();
       notifier.handleProgramStatusChange(session, toDone);
-      expect(push.sendSessionEventPush).toHaveBeenCalledTimes(1);
+      expect(push.send).toHaveBeenCalledTimes(1);
     });
 
     it("keeps sending ended and error alerts while the device is present", () => {
-      const push = makePush();
-      const notifier = makeNotifier(push, makeStorage(["token-a"]), {
-        presentDevices: ["dev-token-a"],
-      });
+      const push = makePush(["phone"]);
+      const notifier = makeNotifier(push, makeStorage(), { presentDevices: ["dev-phone"] });
 
       notifier.handleSessionEvent(event("s1", { type: "session_ended", reason: "completed" }));
 
-      expect(push.sendSessionEventPush).toHaveBeenCalledTimes(1);
+      expect(push.send).toHaveBeenCalledTimes(1);
     });
 
     it("rate-limits per session and kind, then allows a later transition", () => {
-      const push = makePush();
+      const push = makePush(["phone"]);
       const session = makeSession();
       let now = 1_000_000;
-      const notifier = makeNotifier(push, makeStorage(["token-a"], session), {
-        now: () => now,
-      });
+      const notifier = makeNotifier(push, makeStorage(session), { now: () => now });
       const toDone = change({ state: "working" }, { state: "done" });
 
       notifier.handleProgramStatusChange(session, toDone);
       now += 10_000;
       notifier.handleProgramStatusChange(session, toDone);
-      expect(push.sendSessionEventPush).toHaveBeenCalledTimes(1);
+      expect(push.send).toHaveBeenCalledTimes(1);
 
       // A different kind, and a different session, are not throttled by that push.
       notifier.handleProgramStatusChange(
@@ -353,26 +362,25 @@ describe("SessionPushNotifier", () => {
         change({ state: "working" }, { state: "blocked", kind: "question", message: "Q?" }),
       );
       notifier.handleProgramStatusChange(makeSession({ id: "s2" }), toDone);
-      expect(push.sendSessionEventPush).toHaveBeenCalledTimes(3);
+      expect(push.send).toHaveBeenCalledTimes(3);
 
       now += 60_000;
       notifier.handleProgramStatusChange(session, toDone);
-      expect(push.sendSessionEventPush).toHaveBeenCalledTimes(4);
+      expect(push.send).toHaveBeenCalledTimes(4);
     });
 
-    it("does not start the throttle when there is no device token", () => {
-      const push = makePush();
+    it("does not start the throttle when no device has a push key", () => {
+      const devices: string[] = [];
+      const push = makePush(devices);
       const session = makeSession();
-      const tokens: string[] = [];
-      const storage = makeStorage(tokens, session);
-      const notifier = makeNotifier(push, storage);
+      const notifier = makeNotifier(push, makeStorage(session));
       const toDone = change({ state: "working" }, { state: "done" });
 
       notifier.handleProgramStatusChange(session, toDone);
-      tokens.push("token-a");
+      devices.push("phone");
       notifier.handleProgramStatusChange(session, toDone);
 
-      expect(push.sendSessionEventPush).toHaveBeenCalledTimes(1);
+      expect(push.send).toHaveBeenCalledTimes(1);
     });
   });
 });
