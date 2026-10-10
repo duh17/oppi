@@ -78,8 +78,9 @@ enum ChatTimelineChromeStyle: Equatable {
     }
 
     /// Assistant reply. Standard prose is full width with room for the
-    /// hanging avatar; the conversation card stops short of the trailing
-    /// edge so the gutter says who is speaking without a caption.
+    /// hanging avatar; the conversation card also spans the row. The
+    /// trailing, tinted user bubble already says who is speaking, and a
+    /// trailing gutter here starved tables and code blocks on phones.
     var assistantBubble: TimelineChromeSurface {
         switch self {
         case .standard:
@@ -90,8 +91,7 @@ enum ChatTimelineChromeStyle: Equatable {
         case .conversation:
             TimelineChromeSurface(
                 shape: .roundedRect(radius: Self.conversationCornerRadius, curve: .continuous),
-                padding: NSDirectionalEdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 14),
-                margins: NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 28)
+                padding: NSDirectionalEdgeInsets(top: 10, leading: 14, bottom: 10, trailing: 14)
             )
         }
     }

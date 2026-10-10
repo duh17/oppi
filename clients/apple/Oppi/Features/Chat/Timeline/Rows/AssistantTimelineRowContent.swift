@@ -272,7 +272,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
 
     /// Standard rows hang the avatar beside the first lines of full-width
     /// prose. Conversation rows drop the avatar (the title names the Agent)
-    /// and paint the reply as a card that stops short of the trailing edge.
+    /// and paint the reply as a full-width card.
     private func applyChromeGeometry(_ style: ChatTimelineChromeStyle) {
         guard appliedChromeStyle != style else { return }
         appliedChromeStyle = style
