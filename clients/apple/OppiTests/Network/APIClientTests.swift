@@ -2539,17 +2539,19 @@ struct APIClientTests {
 
     // MARK: - Device Token
 
-    @Test func registerDeviceToken() async throws {
+    @Test func registerDeviceTokenSendsItsAPNsEnvironment() async throws {
         let client = makeClient()
         defer { cleanup() }
 
         MockURLProtocol.handler = { request in
             #expect(request.httpMethod == "POST")
             #expect(request.url?.path.hasSuffix("/me/device-token") == true)
+            let json = try? JSONSerialization.jsonObject(with: self.requestBodyData(request)) as? [String: String]
+            #expect(json == ["deviceToken": "abc123", "tokenType": "apns", "apnsEnvironment": "production"])
             return self.mockResponse(json: "{}")
         }
 
-        try await client.registerDeviceToken("abc123")
+        try await client.registerDeviceToken("abc123", apnsEnvironment: .production)
     }
 
     // MARK: - Diagnostics

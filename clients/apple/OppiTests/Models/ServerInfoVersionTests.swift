@@ -136,4 +136,14 @@ struct ServerInfoVersionTests {
         let info = try JSONDecoder().decode(ServerInfo.self, from: data)
         #expect(info.capabilities?.controlSessions?.version == 1)
     }
+
+    @Test func pushRegistrationFollowsThePushNotificationsCapability() throws {
+        func capabilities(_ json: String) throws -> ServerInfo.Capabilities? {
+            let data = Data(#"{"name":"test","version":"1","uptime":1,"os":"darwin","arch":"arm64","hostname":"test","nodeVersion":"v24","piVersion":"1","configVersion":1,"capabilities":\#(json),"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":0,"modelCount":0}}"#.utf8)
+            return try JSONDecoder().decode(ServerInfo.self, from: data).capabilities
+        }
+
+        #expect(try capabilities(#"{"pushNotifications":{"version":1}}"#)?.advertisesPushNotifications == true)
+        #expect(try capabilities(#"{"appEventStream":{"version":1}}"#)?.advertisesPushNotifications == false)
+    }
 }

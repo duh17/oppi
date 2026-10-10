@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LiveActivityBridge } from "../src/live-activity.js";
-import type { PushClient } from "../src/push.js";
+import type { PushClient, PushTarget } from "../src/push.js";
 import type { Storage } from "../src/storage.js";
 import type { Session } from "../src/types.js";
 import type { SessionBroadcastEvent } from "../src/sessions.js";
@@ -45,23 +45,23 @@ function makePush(): PushClient & {
     sendSessionEventPush: vi.fn(async () => true),
     sendLiveActivityUpdate: vi.fn(
       async (
-        token: string,
+        target: PushTarget,
         contentState: Record<string, unknown>,
         staleDate?: number,
         priority: 5 | 10 = 5,
       ) => {
-        updates.push({ token, contentState, staleDate, priority });
+        updates.push({ token: target.token, contentState, staleDate, priority });
         return true;
       },
     ),
     endLiveActivity: vi.fn(
       async (
-        token: string,
+        target: PushTarget,
         contentState: Record<string, unknown>,
         _dismissalDate?: number,
         priority: 5 | 10 = 10,
       ) => {
-        ends.push({ token, contentState, priority });
+        ends.push({ token: target.token, contentState, priority });
         return true;
       },
     ),
@@ -84,10 +84,24 @@ function makeStorageStub(
   let token = liveActivityToken;
   const stub = {
     clearedToken: false,
-    getLiveActivityToken: vi.fn(() => token ?? undefined),
-    setLiveActivityToken: vi.fn((t: string | null) => {
-      token = t;
-      if (t === null) stub.clearedToken = true;
+    getPushDeviceTokens: vi.fn((tokenType: string) =>
+      token && tokenType === "liveactivity"
+        ? [
+            {
+              deviceId: "dev_live",
+              tokenType,
+              token,
+              environment: "sandbox",
+              registeredAt: 1,
+            },
+          ]
+        : [],
+    ),
+    removePushDeviceToken: vi.fn((removed: string) => {
+      if (removed !== token) return false;
+      token = null;
+      stub.clearedToken = true;
+      return true;
     }),
     getSession: vi.fn((id: string) => sessions.find((s) => s.id === id)),
     listSessions: vi.fn(() => sessions),

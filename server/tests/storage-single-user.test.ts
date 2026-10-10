@@ -63,8 +63,15 @@ describe("Storage pairing", () => {
     storage.updateConfig({
       pairingToken: "pt_rotation-fixture-secret",
       pairingTokenExpiresAt: Date.now() + 60_000,
-      pushDeviceTokens: ["push-rotation-fixture-secret"],
-      liveActivityToken: "live-rotation-fixture-secret",
+      pushDeviceTokens: [
+        {
+          deviceId: "dev_rotation_fixture",
+          tokenType: "apns",
+          token: "push-rotation-fixture-secret",
+          environment: "production",
+          registeredAt: 1,
+        },
+      ],
     });
 
     storage.rotateToken();
@@ -74,7 +81,6 @@ describe("Storage pairing", () => {
     expect(config.pairingTokenExpiresAt).toBeUndefined();
     expect(config.authAccessTokens).toEqual([]);
     expect(config.pushDeviceTokens).toEqual([]);
-    expect(config.liveActivityToken).toBeUndefined();
   });
 
   it("token persisted in config.json not users.json", () => {

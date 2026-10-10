@@ -449,6 +449,46 @@ describe("identity module", () => {
     });
   });
 
+  it("advertises pushNotifications in GET /server/info only when APNs is configured", async () => {
+    async function capabilities(pushNotificationsAvailable: boolean | undefined) {
+      const ctx = {
+        storage: {
+          getConfig: vi.fn(() => ({ configVersion: 2 })),
+          listWorkspaces: vi.fn(() => []),
+          listSessions: vi.fn(() => []),
+        },
+        sessions: {
+          durableSessionsAvailable: () => false,
+          conversationStreamAvailable: () => false,
+        },
+        sessionRuntimes: { getActiveSessionIds: vi.fn(() => new Set()) },
+        skillRegistry: { list: vi.fn(() => []) },
+        getModelCatalog: vi.fn(() => []),
+        serverStartedAt: Date.now(),
+        serverVersion: "test",
+        piVersion: "test",
+        pushNotificationsAvailable,
+      } as unknown as RouteContext;
+      const res = makeResponse();
+      await createIdentityRoutes(
+        ctx,
+        createRouteHelpers(),
+      )({
+        method: "GET",
+        path: "/server/info",
+        url: new URL("http://localhost/server/info"),
+        req: {} as never,
+        res: res as never,
+      });
+      return (JSON.parse(res.body) as { capabilities: Record<string, unknown> }).capabilities;
+    }
+
+    // No apns.json: the server composes a no-op push client and advertises nothing.
+    expect(await capabilities(undefined)).not.toHaveProperty("pushNotifications");
+    expect(await capabilities(false)).not.toHaveProperty("pushNotifications");
+    expect((await capabilities(true)).pushNotifications).toEqual({ version: 1 });
+  });
+
   it("uses ctx.piVersion as Pi SDK and includes piCliVersion when a TUI/CLI version is known", async () => {
     const ctx = {
       storage: {
@@ -502,7 +542,7 @@ describe("identity module", () => {
         sessions: {
           getActiveSessionIds: vi.fn(() => new Set()),
           durableSessionsAvailable: () => false,
-        conversationStreamAvailable: () => false,
+          conversationStreamAvailable: () => false,
         },
         sessionRuntimes: {
           getActiveSessionIds: vi.fn(() => new Set()),

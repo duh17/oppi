@@ -21,6 +21,7 @@ import {
   createPushClient,
   redactTokenForLog,
   type APNsConfig,
+  type PushTarget,
 } from "../src/push.js";
 
 type RequestHeaders = Record<string, string | number>;
@@ -135,6 +136,14 @@ function mockHttp2ConnectionError(error: Error): MockAPNsConnection[] {
   return connections;
 }
 
+function sandbox(token: string): PushTarget {
+  return { token, environment: "sandbox" };
+}
+
+function production(token: string): PushTarget {
+  return { token, environment: "production" };
+}
+
 function makeMetrics(): { metrics: ServerMetricCollector; record: ReturnType<typeof vi.fn> } {
   const record = vi.fn();
   return {
@@ -153,16 +162,18 @@ describe("push", () => {
 
     expect(client).toBeInstanceOf(NoopAPNsClient);
     await expect(
-      client.sendSessionEventPush("device-token", {
+      client.sendSessionEventPush(sandbox("device-token"), {
         sessionId: "session-1",
         event: "ended",
         reason: "done",
       }),
     ).resolves.toBe(false);
-    await expect(client.sendLiveActivityUpdate("live-token", { status: "running" })).resolves.toBe(
+    await expect(
+      client.sendLiveActivityUpdate(sandbox("live-token"), { status: "running" }),
+    ).resolves.toBe(false);
+    await expect(client.endLiveActivity(sandbox("live-token"), { status: "done" })).resolves.toBe(
       false,
     );
-    await expect(client.endLiveActivity("live-token", { status: "done" })).resolves.toBe(false);
     expect(() => client.shutdown()).not.toThrow();
   });
 
@@ -180,9 +191,9 @@ describe("push", () => {
   it("sends session-ended alerts with sandbox APNs headers and success metrics", async () => {
     const connections = mockHttp2([{ kind: "response", status: 200 }]);
     const { metrics, record } = makeMetrics();
-    const client = new APNsClient(createTestConfig(), metrics);
+    const client = new APNsClient(createTestConfig(), { metrics });
 
-    const result = await client.sendSessionEventPush("device-token-123", {
+    const result = await client.sendSessionEventPush(sandbox("device-token-123"), {
       sessionId: "session-1",
       sessionName: "Coverage run",
       event: "ended",
@@ -226,9 +237,9 @@ describe("push", () => {
 
   it("sends session-error alerts with production host and active priority", async () => {
     const connections = mockHttp2([{ kind: "response", status: 200 }]);
-    const client = new APNsClient(createTestConfig({ environment: "production" }));
+    const client = new APNsClient(createTestConfig());
 
-    const result = await client.sendSessionEventPush("device-token-456", {
+    const result = await client.sendSessionEventPush(production("device-token-456"), {
       sessionId: "session-2",
       event: "error",
       reason: "Agent stopped",
@@ -259,7 +270,7 @@ describe("push", () => {
     const connections = mockHttp2([{ kind: "response", status: 200 }]);
     const client = new APNsClient(createTestConfig());
 
-    await client.sendSessionEventPush("device-token-789", {
+    await client.sendSessionEventPush(sandbox("device-token-789"), {
       sessionId: "session-3",
       sessionName: "Deploy",
       event: "blocked",
@@ -286,7 +297,7 @@ describe("push", () => {
     const connections = mockHttp2([{ kind: "response", status: 200 }]);
     const client = new APNsClient(createTestConfig());
 
-    await client.sendSessionEventPush("device-token-790", {
+    await client.sendSessionEventPush(sandbox("device-token-790"), {
       sessionId: "session-4",
       event: "done",
       reason: "Fix login",
@@ -311,7 +322,7 @@ describe("push", () => {
     const client = new APNsClient(createTestConfig());
 
     const result = await client.sendLiveActivityUpdate(
-      "live-token-1",
+      sandbox("live-token-1"),
       { status: "running", progress: 0.5 },
       staleDate,
       10,
@@ -339,7 +350,7 @@ describe("push", () => {
     const client = new APNsClient(createTestConfig());
 
     const beforeDismissal = Math.floor(Date.now() / 1000) + 300;
-    const result = await client.endLiveActivity("live-token-2", { status: "done" });
+    const result = await client.endLiveActivity(sandbox("live-token-2"), { status: "done" });
     const afterDismissal = Math.floor(Date.now() / 1000) + 300;
 
     expect(result).toBe(true);
@@ -364,9 +375,9 @@ describe("push", () => {
       { kind: "response", status: 410, body: JSON.stringify({ reason: "Unregistered" }) },
     ]);
     const { metrics, record } = makeMetrics();
-    const client = new APNsClient(createTestConfig(), metrics);
+    const client = new APNsClient(createTestConfig(), { metrics });
 
-    const result = await client.sendSessionEventPush("sensitive-device-token", {
+    const result = await client.sendSessionEventPush(sandbox("sensitive-device-token"), {
       sessionId: "session-3",
       event: "ended",
       reason: "done",
@@ -383,9 +394,9 @@ describe("push", () => {
   it("returns false and records failure metrics when an APNs request errors", async () => {
     mockHttp2([{ kind: "request-error", error: new Error("stream reset") }]);
     const { metrics, record } = makeMetrics();
-    const client = new APNsClient(createTestConfig(), metrics);
+    const client = new APNsClient(createTestConfig(), { metrics });
 
-    const result = await client.sendSessionEventPush("device-token", {
+    const result = await client.sendSessionEventPush(sandbox("device-token"), {
       sessionId: "session-4",
       event: "ended",
       reason: "done",
@@ -406,14 +417,14 @@ describe("push", () => {
     const client = new APNsClient(createTestConfig());
 
     await expect(
-      client.sendSessionEventPush("device-token-1", {
+      client.sendSessionEventPush(sandbox("device-token-1"), {
         sessionId: "session-5",
         event: "ended",
         reason: "done",
       }),
     ).resolves.toBe(true);
     await expect(
-      client.sendLiveActivityUpdate("live-token-3", { status: "running" }),
+      client.sendLiveActivityUpdate(sandbox("live-token-3"), { status: "running" }),
     ).resolves.toBe(true);
 
     expect(http2ConnectMock).toHaveBeenCalledTimes(1);
@@ -428,12 +439,76 @@ describe("push", () => {
     const client = new APNsClient(createTestConfig());
 
     await expect(
-      client.sendSessionEventPush("device-token", {
+      client.sendSessionEventPush(sandbox("device-token"), {
         sessionId: "session-6",
         event: "ended",
         reason: "done",
       }),
     ).rejects.toThrow("tls failed");
     expect(connections[0].requests).toHaveLength(0);
+  });
+
+  it("routes each token to its own environment's host over one connection per host", async () => {
+    const connections = mockHttp2([]);
+    const client = new APNsClient(createTestConfig());
+    const payload = { sessionId: "s", event: "done", reason: "r" } as const;
+
+    await Promise.all([
+      client.sendSessionEventPush(production("aa11"), payload),
+      client.sendSessionEventPush(sandbox("bb22"), payload),
+      client.sendSessionEventPush(production("cc33"), payload),
+    ]);
+
+    const pathsByHost = Object.fromEntries(
+      connections.map((connection) => [
+        connection.url,
+        connection.requests.map((sent) => sent.headers[":path"]),
+      ]),
+    );
+    expect(connections).toHaveLength(2);
+    expect(pathsByHost).toEqual({
+      "https://api.push.apple.com": ["/3/device/aa11", "/3/device/cc33"],
+      "https://api.sandbox.push.apple.com": ["/3/device/bb22"],
+    });
+  });
+
+  it.each([
+    [410, "Unregistered"],
+    [410, "ExpiredToken"],
+    [400, "BadDeviceToken"],
+    [400, "DeviceTokenNotForTopic"],
+  ])("reports a retired token on %i %s", async (status, reason) => {
+    mockHttp2([{ kind: "response", status, body: JSON.stringify({ reason }) }]);
+    const onTokenRejected = vi.fn();
+    const client = new APNsClient(createTestConfig(), { onTokenRejected });
+
+    await client.sendSessionEventPush(production("dead0001"), {
+      sessionId: "s",
+      event: "done",
+      reason: "r",
+    });
+
+    expect(onTokenRejected).toHaveBeenCalledExactlyOnceWith("dead0001", reason);
+  });
+
+  it.each([
+    [400, "BadTopic"],
+    [403, "InvalidProviderToken"],
+    [429, "TooManyRequests"],
+    [500, "InternalServerError"],
+    [503, "ServiceUnavailable"],
+  ])("keeps the token on %i %s", async (status, reason) => {
+    mockHttp2([{ kind: "response", status, body: JSON.stringify({ reason }) }]);
+    const onTokenRejected = vi.fn();
+    const client = new APNsClient(createTestConfig(), { onTokenRejected });
+
+    const sent = await client.sendSessionEventPush(production("live0001"), {
+      sessionId: "s",
+      event: "done",
+      reason: "r",
+    });
+
+    expect(sent).toBe(false);
+    expect(onTokenRejected).not.toHaveBeenCalled();
   });
 });

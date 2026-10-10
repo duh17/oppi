@@ -1197,16 +1197,6 @@ final class ConnectionCoordinator {
         }
     }
 
-    // MARK: - Push Registration
-
-    /// Register push token with all paired servers.
-    func registerPushWithAllServers() async {
-        guard ReleaseFeatures.remotePushNotificationsEnabled else {
-            return
-        }
-        await PushRegistration.shared.registerWithAllServers(using: self)
-    }
-
     // MARK: - Cross-Server Queries
 
     struct SessionLookupResult {

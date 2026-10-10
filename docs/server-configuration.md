@@ -1,6 +1,6 @@
 # Server configuration
 
-Operator guide for the local Oppi server: config CLI, dictation (ASR), voice/TTS runtime settings, and extensions.
+Operator guide for the local Oppi server: config CLI, dictation (ASR), voice/TTS runtime settings, push notifications, and extensions.
 
 Config file: `~/.config/oppi/config.json`
 Data directory: `~/.config/oppi/` (override with `OPPI_DATA_DIR` or `--data-dir`)
@@ -81,6 +81,39 @@ oppi server restart
 ```
 
 Use `oppi config get runtimeEnv` and `oppi config get extensions.voice` to inspect. Extension-specific auth and models stay in the extension docs or its settings, not in core Oppi config.
+
+## Push notifications (APNs)
+
+The server can push lock-screen alerts to paired iPhones and iPads through Apple Push Notification service (APNs). It is off until `apns.json` exists in the data directory (`~/.config/oppi/apns.json` by default). APNs accepts only a key from the Apple Developer team that signs the app, so this works for the team that built your Oppi app: the App Store/TestFlight build needs that team's key, and a fork built under your own team needs yours.
+
+```json
+{
+  "keyPath": "/Users/you/.config/oppi/AuthKey_ABC123DEFG.p8",
+  "keyId": "ABC123DEFG",
+  "teamId": "TEAM123456",
+  "bundleId": "dev.chenda.Oppi"
+}
+```
+
+| Field | Value |
+| --- | --- |
+| `keyPath` | The APNs auth key (`.p8`) from Certificates, Identifiers & Profiles → Keys. Absolute, or relative to the data directory. Keep it `chmod 600`. |
+| `keyId` | The key's 10-character Key ID. |
+| `teamId` | The 10-character Team ID that signs the app. |
+| `bundleId` | The app's bundle ID, used as the APNs topic. |
+
+There is no environment setting. Each app sends its own APNs environment with its token, read from the `aps-environment` it was signed with: an Xcode development build registers a `sandbox` token, and TestFlight and App Store builds register `production` tokens. The server sends each token to the matching host (`api.sandbox.push.apple.com` or `api.push.apple.com`), so one server can serve both kinds of build. The key must be allowed for the environments you use: a team key works for both, and an environment-specific key only for its own.
+
+Restart the server after adding, changing, or removing `apns.json`. Startup logs `apns.configured` (or `apns.setup.failed` when the key cannot be read), and `/server/info` then advertises `capabilities.pushNotifications`. Without `apns.json` the server advertises nothing and the app never registers for push. When the app connects to a server that advertises it, the app registers with APNs, asks for notification permission once APNs issues a token, and sends the token to that server.
+
+The app can register only if its build is signed with the Push Notifications capability (`aps-environment`). Current Oppi app builds are not: the App ID does not have Push Notifications enabled, so their APNs registration fails and no token reaches the server, even with `apns.json` in place.
+
+What the server does:
+
+- **Tokens:** each token is stored with the paired device that registered it (`pushDeviceTokens` in `config.json`; `oppi config show` redacts them). Re-registering replaces that device's token. Revoking the device or rotating the owner credential removes its tokens, and so do APNs `410` responses and `400` `BadDeviceToken` or `DeviceTokenNotForTopic`. Other failures, such as a bad key (`403`), keep the token and log `apns.push.failed`.
+- **Events:** **Needs Approval**, **Question**, or **Sign-in Needed** when a session enters `blocked`; **Session Done** when a top-level session enters `done`; ended and error alerts.
+- **Presence:** `blocked` and `done` skip any device that holds an open app-event or session stream, because that device already shows the change. Other devices still get the push, so an open Mac or iPad does not silence the phone. An iPhone that stays connected in the background while an agent works posts its own **Session Done** notification instead. A stream that was never closed, because the app was suspended or lost its network, keeps its device present until the server's ping timeout drops it, up to about 90 seconds; a `blocked` or `done` in that window is not pushed to that device.
+- **Payload:** a fixed title and body, the session name as subtitle, and the session ID, sent to Apple unencrypted. App Lock and scoped locks on the phone do not change push content.
 
 ## Extensions
 

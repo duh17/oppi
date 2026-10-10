@@ -31,6 +31,33 @@ struct ServerConnectionStreamRecoveryTests {
         #expect(calls == 2)
     }
 
+    @Test func onlyAServerAdvertisingPushGetsThisDevicesTokenOncePerConfiguration() async {
+        let connection = makeConnection()
+        connection.setAPIClientForTesting(makeMockAPIClient())
+        let push = PushRegistration.shared
+        var registered: [String?] = []
+        push._onRegisterForTesting = { registered.append($0) }
+        defer {
+            push._onRegisterForTesting = nil
+            cleanup(connection)
+        }
+
+        var advertisesPush = false
+        TestURLProtocol.handler = { request in
+            try self.mockServerInfoResponse(for: request, pushNotifications: advertisesPush)
+        }
+
+        // A server without apns.json: the app never registers for remote push.
+        await connection.refreshStreamCapabilities()
+        #expect(registered.isEmpty)
+        #expect(!connection.pushNotificationsAvailable)
+
+        advertisesPush = true
+        await connection.refreshStreamCapabilities()
+        await connection.refreshStreamCapabilities()
+        #expect(registered == [connection.currentServerId])
+    }
+
     @Test func knownGoodCapabilitiesSurviveTransientRefreshFailure() async {
         let connection = makeConnection()
         connection.setAPIClientForTesting(makeMockAPIClient())
@@ -598,8 +625,10 @@ struct ServerConnectionStreamRecoveryTests {
 
     private func mockServerInfoResponse(
         for request: URLRequest,
-        appEventStream: Bool = false
+        appEventStream: Bool = false,
+        pushNotifications: Bool = false
     ) throws -> (Data, HTTPURLResponse) {
+        let pushCapability = pushNotifications ? ",\n            \"pushNotifications\": { \"version\": 1 }" : ""
         let appEventCapability = appEventStream ? ",\n            \"appEventStream\": { \"version\": 1 }" : ""
         let data = Data("""
         {
@@ -613,7 +642,7 @@ struct ServerConnectionStreamRecoveryTests {
           "piVersion": "0.0.0-test",
           "configVersion": 2,
           "capabilities": {
-            "sessionStream": { "version": 1 }\(appEventCapability)
+            "sessionStream": { "version": 1 }\(appEventCapability)\(pushCapability)
           },
           "stats": {
             "workspaceCount": 1,

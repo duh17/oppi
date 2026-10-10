@@ -190,8 +190,8 @@ export class LiveActivityBridge {
     }
     this.pending = null;
 
-    const token = this.storage.getLiveActivityToken();
-    if (!token) {
+    const targets = this.storage.getPushDeviceTokens("liveactivity");
+    if (targets.length === 0) {
       return;
     }
 
@@ -199,18 +199,22 @@ export class LiveActivityBridge {
     const payload: Record<string, unknown> = { ...contentState };
 
     if (pending.end) {
-      void this.push
-        .endLiveActivity(token, payload, undefined, pending.priority ?? 10)
-        .then((ok) => {
-          if (ok) {
-            this.storage.setLiveActivityToken(null);
-          }
-        });
+      for (const target of targets) {
+        void this.push
+          .endLiveActivity(target, payload, undefined, pending.priority ?? 10)
+          .then((ok) => {
+            if (ok) {
+              this.storage.removePushDeviceToken(target.token);
+            }
+          });
+      }
       return;
     }
 
     const staleDate = Date.now() + 2 * 60 * 1000;
-    void this.push.sendLiveActivityUpdate(token, payload, staleDate, pending.priority ?? 5);
+    for (const target of targets) {
+      void this.push.sendLiveActivityUpdate(target, payload, staleDate, pending.priority ?? 5);
+    }
   }
 
   private buildContentState(pending: PendingLiveActivityUpdate): LiveActivityContentState {

@@ -412,20 +412,25 @@ struct AppLockRedactionTests {
         #expect(manager.currentState.primaryLastActivity == String(localized: "Working"))
     }
 
-    @Test func turningAppLockOnRemovesOnlyAskNotifications() {
-        func request(_ identifier: String, category: String) -> UNNotificationRequest {
+    @Test func turningAppLockOnRemovesOppisOwnAskAndDoneBannersButNotRemotePushes() {
+        func request(_ identifier: String, category: String, sessionId: String) -> UNNotificationRequest {
             let content = UNMutableNotificationContent()
             content.categoryIdentifier = category
             content.body = "Rotate the prod key?"
+            content.userInfo = ["sessionId": sessionId]
             return UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         }
         let requests = [
-            request("ask-s1", category: AttentionNotificationPolicy.askCategoryId),
-            request("done-s1", category: AttentionNotificationPolicy.sessionDoneCategoryId),
-            request("ask-s2", category: AttentionNotificationPolicy.askCategoryId),
+            request("ask-s1", category: AttentionNotificationPolicy.askCategoryId, sessionId: "s1"),
+            request("done-s1", category: AttentionNotificationPolicy.sessionDoneCategoryId, sessionId: "s1"),
+            request("6F1C2A9E-REMOTE", category: AttentionNotificationPolicy.sessionDoneCategoryId, sessionId: "s2"),
+            request("err-s2", category: AttentionNotificationPolicy.sessionErrorCategoryId, sessionId: "s2"),
+            request("ask-s2", category: AttentionNotificationPolicy.askCategoryId, sessionId: "s2"),
         ]
 
-        #expect(AttentionNotificationService.askIdentifiers(in: requests) == ["ask-s1", "ask-s2"])
+        #expect(
+            AttentionNotificationService.lockSensitiveIdentifiers(in: requests) == ["ask-s1", "done-s1", "ask-s2"]
+        )
     }
 
     @Test func askNotificationHidesQuestionTextWhileAppLockIsOn() {

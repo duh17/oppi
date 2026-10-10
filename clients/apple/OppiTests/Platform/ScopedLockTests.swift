@@ -345,6 +345,53 @@ struct ScopedLockSurfaceTests {
         #expect(body == String(localized: "Open Oppi to answer a question."))
     }
 
+    @Test func aBackgroundDoneBannerNeverNamesALockedSession() async throws {
+        let harness = ScopedHarness(appLock: .off, outcomes: [])
+        let conn = ServerConnection()
+        _ = conn.configure(credentials: makeTestCredentials(fingerprint: "sha256:scoped-srv"))
+        let serverId = try #require(conn.currentServerId)
+        conn.scopedLocks = harness.locks
+        conn.setSplitStreamCapabilitiesForTesting(appEventStream: true, pushNotifications: true)
+        var session = makeTestSession(
+            id: "s2",
+            workspaceId: "w1",
+            name: "Rotate prod key",
+            status: .busy,
+            programStatus: ProgramStatus(state: .working, since: Date(timeIntervalSince1970: 1))
+        )
+        conn.sessionStore.upsert(session)
+        harness.locks.lock(.workspace(serverId: serverId, workspaceId: "w1"))
+
+        let service = AttentionNotificationService.shared
+        let previousState = service._applicationStateForTesting
+        defer {
+            service._applicationStateForTesting = previousState
+            service._deliverForTesting = nil
+            service._appLockEnabledForTesting = nil
+        }
+        service._applicationStateForTesting = .background
+        service._appLockEnabledForTesting = false
+
+        session.status = .ready
+        session.programStatus = ProgramStatus(state: .done, since: Date(timeIntervalSince1970: 2))
+        let subtitle: String? = await withCheckedContinuation { continuation in
+            let once = ResumeOnce(continuation)
+            service._deliverForTesting = { once.resume($0.content.subtitle) }
+            conn.handleAppEvent(.sessionSummary(
+                sessionId: "s2",
+                workspaceId: "w1",
+                emittedAt: 2,
+                summary: SessionSummary(from: session)
+            ))
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                once.resume(nil)
+            }
+        }
+
+        #expect(subtitle?.isEmpty == true)
+    }
+
     @Test func anOpenUnlockCoversTheSwitcherUntilOppiLeavesWithAppLockOff() async {
         let harness = ScopedHarness(appLock: .off, outcomes: [.success])
         harness.locks.lock(.session(serverId: "srv", sessionId: "s1"))

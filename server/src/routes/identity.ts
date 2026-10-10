@@ -12,6 +12,7 @@ import { SourceRateLimiter } from "../source-rate-limit.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
 import { isDictationStreamEnabled } from "../dictation-types.js";
 import { MAX_WORKSPACE_FILE_EDIT_BYTES } from "../file-serving-policy.js";
+import { isDeviceAccessPrincipal, type RequestPrincipal } from "../request-principal.js";
 import type { RegisterDeviceTokenRequest, WorkspaceFileEditingCapability } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 import {
@@ -31,6 +32,8 @@ const CHALLENGE_WINDOW_MS = 60_000;
 const CHALLENGE_MAX_PER_WINDOW = 8;
 /** Concurrent `tailscale` proofs; taken before spawn so 503/hangs cannot flood. */
 const TAILSCALE_PROOF_MAX_CONCURRENT = 2;
+/** APNs device tokens are hex (32 bytes today); the bound keeps the APNs request path sane. */
+const APNS_DEVICE_TOKEN_PATTERN = /^[0-9a-f]{16,400}$/i;
 
 const log = createLogger({ base: { component: "route_identity" } });
 
@@ -330,6 +333,8 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
           version: 1,
           capabilities: [...EXTENSION_NATIVE_UI_SERVER_CAPABILITIES],
         },
+        // APNs configured: paired apps register device tokens with POST /me/device-token.
+        pushNotifications: ctx.pushNotificationsAvailable ? { version: 1 } : undefined,
       },
       stats: {
         workspaceCount: workspaces.length,
@@ -359,29 +364,52 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     helpers.json(res, await getter());
   }
 
+  /** Tokens belong to the calling paired device, so revoking it stops its pushes. */
   async function handleRegisterDeviceToken(
     req: IncomingMessage,
     res: ServerResponse,
+    principal: RequestPrincipal | undefined,
   ): Promise<void> {
-    const body = await helpers.parseBody<RegisterDeviceTokenRequest>(req);
-    if (!body.deviceToken) {
+    if (!isDeviceAccessPrincipal(principal)) {
+      helpers.error(res, 403, "Push registration requires a paired device credential");
+      return;
+    }
+    const body = await helpers.parseBody<Partial<RegisterDeviceTokenRequest>>(req);
+    const deviceToken = typeof body.deviceToken === "string" ? body.deviceToken.trim() : "";
+    if (!deviceToken) {
       helpers.error(res, 400, "deviceToken required");
       return;
     }
-
-    const tokenType = body.tokenType || "apns";
-    if (tokenType === "liveactivity") {
-      ctx.storage.setLiveActivityToken(body.deviceToken);
-      log.info("identity.push.live_activity_token.registered", {
-        owner: ctx.storage.getOwnerName(),
-      });
-    } else {
-      ctx.storage.addPushDeviceToken(body.deviceToken);
-      log.info("identity.push.device_token.registered", {
-        owner: ctx.storage.getOwnerName(),
-      });
+    if (!APNS_DEVICE_TOKEN_PATTERN.test(deviceToken)) {
+      helpers.error(res, 400, "deviceToken must be a hex APNs token");
+      return;
+    }
+    const tokenType = body.tokenType ?? "apns";
+    if (tokenType !== "apns" && tokenType !== "liveactivity") {
+      helpers.error(res, 400, 'tokenType must be "apns" or "liveactivity"');
+      return;
+    }
+    const environment = body.apnsEnvironment;
+    if (environment !== "sandbox" && environment !== "production") {
+      helpers.error(res, 400, 'apnsEnvironment must be "sandbox" or "production"');
+      return;
     }
 
+    const stored = ctx.storage.registerPushDeviceToken({
+      deviceId: principal.deviceId,
+      tokenType,
+      token: deviceToken.toLowerCase(),
+      environment,
+    });
+    if (!stored) {
+      helpers.error(res, 403, "Unknown or revoked device");
+      return;
+    }
+    log.info("identity.push.device_token.registered", {
+      tokenType,
+      environment,
+      apnsConfigured: ctx.pushNotificationsAvailable === true,
+    });
     helpers.json(res, { ok: true });
   }
 
@@ -535,7 +563,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     helpers.json(res, { ok: true });
   }
 
-  return async ({ method, path, url, req, res }) => {
+  return async ({ method, path, url, req, res, principal }) => {
     if (path === "/pair/tailscale" && method === "POST") {
       await handleTailscalePairInvite(req, res);
       return true;
@@ -592,7 +620,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return true;
     }
     if (path === "/me/device-token" && method === "POST") {
-      await handleRegisterDeviceToken(req, res);
+      await handleRegisterDeviceToken(req, res, principal);
       return true;
     }
     if (path === "/server/auto-title" && method === "GET") {

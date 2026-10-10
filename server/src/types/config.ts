@@ -1,5 +1,7 @@
 // ─── Server Config ───
 
+import type { PushDeviceToken } from "./push.js";
+
 export type TlsMode = "auto" | "tailscale" | "cloudflare" | "self-signed" | "manual" | "disabled";
 
 export interface TlsConfig {
@@ -126,8 +128,7 @@ export interface ServerConfig {
   authDevices?: DeviceRecord[];
   authAccessTokens?: AccessTokenRecord[];
   // Push notification state (written by iOS client registration)
-  pushDeviceTokens?: string[];
-  liveActivityToken?: string;
+  pushDeviceTokens?: PushDeviceToken[];
 
   /**
    * Auto-title configuration. When enabled, generates concise task titles

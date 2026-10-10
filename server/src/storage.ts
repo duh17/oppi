@@ -45,6 +45,8 @@ import { WorkspaceStore } from "./storage/workspace-store.js";
 import type { MobileOutputGuideSettingsSnapshot } from "./mobile-output-guide-settings.js";
 import type {
   CreateWorkspaceRequest,
+  PushDeviceToken,
+  PushTokenType,
   ServerConfig,
   Session,
   SessionInteraction,
@@ -307,20 +309,16 @@ export class Storage {
     return this.authStore.getOwnerName();
   }
 
-  getPushDeviceTokens(): string[] {
-    return this.authStore.getPushDeviceTokens();
+  getPushDeviceTokens(tokenType: PushTokenType): PushDeviceToken[] {
+    return this.authStore.getPushDeviceTokens(tokenType);
   }
 
-  addPushDeviceToken(token: string): void {
-    this.authStore.addPushDeviceToken(token);
+  registerPushDeviceToken(registration: Omit<PushDeviceToken, "registeredAt">): boolean {
+    return this.authStore.registerPushDeviceToken(registration);
   }
 
-  setLiveActivityToken(token: string | null): void {
-    this.authStore.setLiveActivityToken(token);
-  }
-
-  getLiveActivityToken(): string | undefined {
-    return this.authStore.getLiveActivityToken();
+  removePushDeviceToken(token: string): boolean {
+    return this.authStore.removePushDeviceToken(token);
   }
 
   // ─── Sessions ───

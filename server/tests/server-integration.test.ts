@@ -27,10 +27,18 @@ let storage: Storage;
 let server: Server;
 let baseUrl: string;
 let token: string;
+let deviceId: string;
 let originalTlsRejectUnauthorized: string | undefined;
 
 const authDeviceToken = "dt_test_auth_device_token";
 const pushOnlyToken = "apns_test_push_only_token";
+const pushOnlyRecord = {
+  deviceId: "dev_push_fixture",
+  tokenType: "apns" as const,
+  token: pushOnlyToken,
+  environment: "sandbox" as const,
+  registeredAt: 1,
+};
 
 function devicePublicKey(): { kty: string; crv: string; x: string; y: string } {
   const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -112,7 +120,7 @@ beforeAll(async () => {
     port: 0,
     host: "127.0.0.1",
     tls: { mode: "self-signed" },
-    pushDeviceTokens: [pushOnlyToken],
+    pushDeviceTokens: [pushOnlyRecord],
   });
   storage.ensurePaired();
   const enrolled = storage.enrollViaPairing(storage.issuePairingToken(), {
@@ -121,6 +129,7 @@ beforeAll(async () => {
   });
   if (!enrolled) throw new Error("enrollment failed");
   token = enrolled.accessToken;
+  deviceId = enrolled.deviceId;
   server = new Server(storage);
   await server.start();
   baseUrl = `https://127.0.0.1:${server.port}`;
@@ -228,7 +237,7 @@ describe("auth", () => {
       port: 0,
       host: "127.0.0.1",
       tls: { mode: "disabled" },
-      pushDeviceTokens: [pushOnlyToken],
+      pushDeviceTokens: [pushOnlyRecord],
     });
     rotationStorage.ensurePaired();
     const rotationServer = new Server(rotationStorage);
@@ -1284,16 +1293,26 @@ describe("removed user skills API", () => {
 // ── Device token ──
 
 describe("device token API", () => {
-  it("POST /me/device-token registers token", async () => {
+  it("POST /me/device-token stores the token for the calling device and its APNs environment", async () => {
     const res = await post("/me/device-token", {
-      deviceToken: "fake-apns-token-abc123",
+      deviceToken: "ABCDEF0123456789ABCDEF0123456789",
+      apnsEnvironment: "production",
     });
     expect(res.status).toBe(200);
+    expect(storage.getPushDeviceTokens("apns")).toContainEqual(
+      expect.objectContaining({
+        deviceId,
+        token: "abcdef0123456789abcdef0123456789",
+        environment: "production",
+      }),
+    );
   });
 
-  it("POST /me/device-token rejects missing token", async () => {
-    const res = await post("/me/device-token", {});
-    expect(res.status).toBe(400);
+  it("POST /me/device-token rejects a missing token or APNs environment", async () => {
+    expect((await post("/me/device-token", {})).status).toBe(400);
+    expect(
+      (await post("/me/device-token", { deviceToken: "abcdef0123456789abcdef0123456789" })).status,
+    ).toBe(400);
   });
 
   it("DELETE /me/device-token is not part of the HTTP API", async () => {

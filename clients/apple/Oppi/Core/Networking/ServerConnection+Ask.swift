@@ -25,6 +25,29 @@ extension ServerConnection {
         }
     }
 
+    /// A session entered `done` while this app is not active. A pushing server skips any
+    /// device holding a live stream, and agent keep-alive holds this app's streams open in
+    /// the background, so the banner comes from here instead. Servers without push keep
+    /// `done` in-app, as before.
+    func notifySessionDoneIfEntered(previous: Session?, current: Session) {
+        guard ReleaseFeatures.localAttentionNotificationsEnabled,
+              pushNotificationsAvailable,
+              AttentionNotificationPolicy.enteredDone(previous: previous, current: current) else { return }
+        AttentionNotificationService.shared.notifySessionDoneIfNeeded(
+            sessionId: current.id,
+            sessionName: current.name,
+            hidesSessionName: sessionTextIsLocked(current)
+        )
+    }
+
+    /// Same rule as `askTextIsLocked` for a known session.
+    func sessionTextIsLocked(_ session: Session) -> @MainActor () -> Bool {
+        guard let serverId = currentServerId else { return { false } }
+        let target = ScopedLockTarget.session(session, serverId: serverId)
+        let locks = scopedLocks
+        return { locks.hidesContentOutsideApp(target) }
+    }
+
     /// A locked session, workspace, or server never puts question text in
     /// Oppi's notification, unlocked or not: the banner outlives the unlock.
     func askTextIsLocked(_ ask: AskRequest) -> @MainActor () -> Bool {

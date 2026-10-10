@@ -7,12 +7,13 @@ private let notificationLogger = Logger(subsystem: AppIdentifiers.subsystem, cat
 
 /// Manages local notifications for attention requests received while the app is running.
 ///
-/// Fires alerts when:
+/// Fires ask alerts when:
 /// - App is backgrounded/inactive (lock screen/banner)
 /// - App is foregrounded but the request is for a different session
 ///
-/// This keeps agent questions and extension prompts visible while working across sessions
-/// without enabling remote APNs push registration.
+/// This keeps agent questions and extension prompts visible while working across sessions.
+/// It also posts the `done` banner a pushing server skips while this device holds a live
+/// stream in the background. Remote APNs registration lives in `PushRegistration`.
 @MainActor
 final class AttentionNotificationService: NSObject, UNUserNotificationCenterDelegate {
     static let shared = AttentionNotificationService()
@@ -20,7 +21,8 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
     /// Category ID for agent questions. Tapping opens the owning session.
     nonisolated static let askCategoryId = AttentionNotificationPolicy.askCategoryId
 
-    /// Remote session-ended and session-done alerts. Tapping opens the owning session.
+    /// Remote session-ended and session-done alerts, and the local `done` banner while
+    /// backgrounded. Tapping opens the owning session.
     nonisolated static let sessionDoneCategoryId = AttentionNotificationPolicy.sessionDoneCategoryId
 
     /// Remote session-error alerts. Tapping opens the owning session.
@@ -126,6 +128,39 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         }
     }
 
+    /// Post the `done` banner the server skipped: a device holding a live stream gets no
+    /// push, and agent keep-alive holds the stream open while the app is in the background.
+    /// Only while the app is not active, like the push it replaces.
+    /// - Parameter hidesSessionName: true when a scoped lock covers the session; read when
+    ///   the request is added.
+    func notifySessionDoneIfNeeded(
+        sessionId: String,
+        sessionName: String?,
+        hidesSessionName: @escaping @MainActor () -> Bool
+    ) {
+        let appState = _applicationStateForTesting ?? UIApplication.shared.applicationState
+        guard appState != .active else { return }
+
+        schedule(identifier: AttentionNotificationPolicy.sessionDoneRequestIdentifier(sessionId: sessionId)) { [self] in
+            let payload = AttentionNotificationPolicy.sessionDonePayload(
+                sessionId: sessionId,
+                sessionName: sessionName,
+                revealsSessionName: !(_appLockEnabledForTesting ?? AppLockService.shared.isEnabled)
+                    && !hidesSessionName()
+            )
+            let content = UNMutableNotificationContent()
+            content.title = payload.title
+            content.subtitle = payload.subtitle
+            content.body = payload.body
+            content.categoryIdentifier = payload.categoryIdentifier
+            content.userInfo = payload.userInfo
+            content.threadIdentifier = payload.threadIdentifier
+            content.targetContentIdentifier = payload.targetContentIdentifier
+            content.interruptionLevel = .passive
+            return content
+        }
+    }
+
     nonisolated static func shouldNotify(
         isAppActive: Bool,
         requestSessionId: String,
@@ -149,22 +184,35 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         )
     }
 
-    /// App Lock turned on: remove delivered and pending ask notifications,
-    /// which may show question text from before.
-    func removeAskNotifications() {
+    /// App Lock or a new lock turned on: remove delivered and pending local
+    /// notifications that may show text from before (ask questions, session names
+    /// in `done` banners).
+    func removeLockSensitiveNotifications() {
         guard !_skipSchedulingForTesting else { return }
         let center = UNUserNotificationCenter.current()
         Task { @MainActor in
             let delivered = await center.deliveredNotifications().map(\.request)
             let pending = await center.pendingNotificationRequests()
-            center.removeDeliveredNotifications(withIdentifiers: Self.askIdentifiers(in: delivered))
-            center.removePendingNotificationRequests(withIdentifiers: Self.askIdentifiers(in: pending))
+            center.removeDeliveredNotifications(withIdentifiers: Self.lockSensitiveIdentifiers(in: delivered))
+            center.removePendingNotificationRequests(withIdentifiers: Self.lockSensitiveIdentifiers(in: pending))
         }
     }
 
-    nonisolated static func askIdentifiers(in requests: [UNNotificationRequest]) -> [String] {
+    /// Oppi's own ask and `done` banners. Remote pushes share the `done` category but not
+    /// the local request identifier, and stay: a lock never covered them.
+    nonisolated static func lockSensitiveIdentifiers(in requests: [UNNotificationRequest]) -> [String] {
         requests
-            .filter { $0.content.categoryIdentifier == askCategoryId }
+            .filter { request in
+                switch request.content.categoryIdentifier {
+                case askCategoryId:
+                    return true
+                case sessionDoneCategoryId:
+                    guard let sessionId = request.content.userInfo["sessionId"] as? String else { return false }
+                    return request.identifier == AttentionNotificationPolicy.sessionDoneRequestIdentifier(sessionId: sessionId)
+                default:
+                    return false
+                }
+            }
             .map(\.identifier)
     }
 

@@ -1,8 +1,9 @@
 /**
  * APNs push notification sender.
  *
- * Uses HTTP/2 persistent connection to Apple's Push Notification service.
- * Token-based auth (.p8 key), connection reuse, automatic JWT refresh.
+ * Token-based auth (.p8 key) with automatic JWT refresh. Each token carries its APNs
+ * environment, and the client keeps one persistent HTTP/2 connection per environment
+ * host, so sandbox (Xcode) and production (TestFlight/App Store) tokens can be mixed.
  *
  * No-op when not configured — server works fine without push.
  */
@@ -12,7 +13,7 @@ import { createPrivateKey, createSign, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import { createLogger } from "./logger.js";
-import type { ProgramStatusKind } from "./types.js";
+import type { APNsEnvironment, ProgramStatusKind, PushDeviceToken } from "./types.js";
 
 // ─── Config ───
 
@@ -25,8 +26,15 @@ export interface APNsConfig {
   teamId: string;
   /** App bundle ID (used as APNs topic) */
   bundleId: string;
-  /** "production" or "sandbox" (default: "sandbox") */
-  environment?: "production" | "sandbox";
+}
+
+/** Where one push goes: the token and the APNs host that issued it. */
+export type PushTarget = Pick<PushDeviceToken, "token" | "environment">;
+
+export interface PushClientOptions {
+  metrics?: ServerMetricCollector;
+  /** APNs says this token can never be delivered again; the owner drops it. */
+  onTokenRejected?: (token: string, reason: string) => void;
 }
 
 // ─── Push Payloads ───
@@ -68,10 +76,20 @@ function sessionEventPresentation(payload: SessionEventPushPayload): {
 
 // ─── APNs Client ───
 
-const APNS_HOSTS = {
+const APNS_HOSTS: Record<APNsEnvironment, string> = {
   production: "api.push.apple.com",
   sandbox: "api.sandbox.push.apple.com",
-} as const;
+};
+
+/**
+ * Responses that retire a token: 410 (the app is gone from the device, or the token
+ * expired), and 400 for a token that is malformed, from the other environment, or for
+ * another topic. Other failures (auth, throttling, server errors) leave the token alone.
+ */
+function isRetiredToken(status: number, reason: string): boolean {
+  if (status === 410) return true;
+  return status === 400 && (reason === "BadDeviceToken" || reason === "DeviceTokenNotForTopic");
+}
 
 // JWT is valid for 1 hour; refresh at 50 minutes to avoid edge cases.
 const JWT_REFRESH_MS = 50 * 60 * 1000;
@@ -83,19 +101,21 @@ export function redactTokenForLog(token: string): string {
 }
 
 export class APNsClient {
+  readonly enabled = true;
   private config: APNsConfig;
   private privateKey: KeyObject;
-  private host: string;
   private metrics?: ServerMetricCollector;
+  private onTokenRejected?: (token: string, reason: string) => void;
 
-  private connection: ClientHttp2Session | null = null;
+  private readonly openConnections = new Map<APNsEnvironment, ClientHttp2Session>();
+  private readonly pendingConnections = new Map<APNsEnvironment, Promise<ClientHttp2Session>>();
   private jwt: string = "";
   private jwtExpiresAt = 0;
 
-  constructor(config: APNsConfig, metrics?: ServerMetricCollector) {
+  constructor(config: APNsConfig, options: PushClientOptions = {}) {
     this.config = config;
-    this.host = APNS_HOSTS[config.environment || "sandbox"];
-    this.metrics = metrics;
+    this.metrics = options.metrics;
+    this.onTokenRejected = options.onTokenRejected;
 
     const keyPem = readFileSync(config.keyPath, "utf-8");
     this.privateKey = createPrivateKey(keyPem);
@@ -108,7 +128,7 @@ export class APNsClient {
    * Blocked and error alert immediately; ended and done are passive.
    */
   async sendSessionEventPush(
-    deviceToken: string,
+    target: PushTarget,
     payload: SessionEventPushPayload,
   ): Promise<boolean> {
     const presentation = sessionEventPresentation(payload);
@@ -129,7 +149,7 @@ export class APNsClient {
       ...(payload.kind ? { kind: payload.kind } : {}),
     };
 
-    return this.send(deviceToken, apnsPayload, {
+    return this.send(target, apnsPayload, {
       pushType: "alert",
       priority: presentation.urgent ? 10 : 5,
     });
@@ -139,7 +159,7 @@ export class APNsClient {
    * Send a Live Activity update push.
    */
   async sendLiveActivityUpdate(
-    pushToken: string,
+    target: PushTarget,
     contentState: Record<string, unknown>,
     staleDate?: number,
     priority: 5 | 10 = 5,
@@ -154,7 +174,7 @@ export class APNsClient {
       },
     };
 
-    return this.send(pushToken, apnsPayload, {
+    return this.send(target, apnsPayload, {
       pushType: "liveactivity",
       priority,
       topic: `${this.config.bundleId}.push-type.liveactivity`,
@@ -165,7 +185,7 @@ export class APNsClient {
    * End a Live Activity via push.
    */
   async endLiveActivity(
-    pushToken: string,
+    target: PushTarget,
     contentState: Record<string, unknown>,
     dismissalDate?: number,
     priority: 5 | 10 = 10,
@@ -181,7 +201,7 @@ export class APNsClient {
       },
     };
 
-    return this.send(pushToken, apnsPayload, {
+    return this.send(target, apnsPayload, {
       pushType: "liveactivity",
       priority,
       topic: `${this.config.bundleId}.push-type.liveactivity`,
@@ -189,24 +209,23 @@ export class APNsClient {
   }
 
   /**
-   * Close the HTTP/2 connection.
+   * Close the HTTP/2 connections.
    */
   shutdown(): void {
-    if (this.connection) {
-      this.connection.close();
-      this.connection = null;
-    }
+    for (const connection of this.openConnections.values()) connection.close();
+    this.openConnections.clear();
   }
 
   // ─── Private ───
 
   private async send(
-    deviceToken: string,
+    target: PushTarget,
     payload: Record<string, unknown>,
     opts: { pushType: string; priority: number; expiration?: number; topic?: string },
   ): Promise<boolean> {
     const sendStart = Date.now();
-    const conn = await this.getConnection();
+    const deviceToken = target.token;
+    const conn = await this.getConnection(target.environment);
     const jwt = this.getJWT();
     const topic = opts.topic || this.config.bundleId;
 
@@ -262,17 +281,18 @@ export class APNsClient {
           log.error("apns.push.failed", {
             status: responseStatus,
             reason,
+            environment: target.environment,
             deviceToken: redactTokenForLog(deviceToken),
           });
 
-          // Handle specific APNs errors
-          if (responseStatus === 410 || reason === "Unregistered") {
-            log.warn("apns.device_token_unregistered", {
+          if (isRetiredToken(responseStatus, reason)) {
+            log.warn("apns.device_token_retired", {
               status: responseStatus,
               reason,
+              environment: target.environment,
               deviceToken: redactTokenForLog(deviceToken),
             });
-            // Caller should remove this token
+            this.onTokenRejected?.(deviceToken, reason);
           }
 
           resolve(false);
@@ -297,34 +317,51 @@ export class APNsClient {
     });
   }
 
-  private async getConnection(): Promise<ClientHttp2Session> {
-    if (this.connection && !this.connection.closed && !this.connection.destroyed) {
-      return this.connection;
+  /** One shared connection per environment host; concurrent sends wait on the same connect. */
+  private async getConnection(environment: APNsEnvironment): Promise<ClientHttp2Session> {
+    const open = this.openConnections.get(environment);
+    if (open && !open.closed && !open.destroyed) {
+      return open;
     }
+    return this.pendingConnections.get(environment) ?? this.connect(environment);
+  }
 
-    return new Promise((resolve, reject) => {
-      const conn = http2Connect(`https://${this.host}`);
+  private connect(environment: APNsEnvironment): Promise<ClientHttp2Session> {
+    const host = APNS_HOSTS[environment];
+    const pending = new Promise<ClientHttp2Session>((resolve, reject) => {
+      const conn = http2Connect(`https://${host}`);
+      const forget = (): void => {
+        if (this.openConnections.get(environment) === conn)
+          this.openConnections.delete(environment);
+      };
 
       conn.on("connect", () => {
-        this.connection = conn;
+        this.openConnections.set(environment, conn);
         resolve(conn);
       });
 
       conn.on("error", (err) => {
-        log.error("apns.connection.error", { error: err.message });
-        this.connection = null;
+        log.error("apns.connection.error", { host, error: err.message });
+        forget();
         reject(err);
       });
 
       conn.on("goaway", () => {
-        log.warn("apns.connection_goaway", { host: this.host });
-        this.connection = null;
+        log.warn("apns.connection_goaway", { host });
+        forget();
       });
 
-      conn.on("close", () => {
-        this.connection = null;
-      });
+      conn.on("close", forget);
     });
+    this.pendingConnections.set(environment, pending);
+    // Settled either way (including a synchronous connect throw): the next send starts fresh.
+    const settle = (): void => {
+      if (this.pendingConnections.get(environment) === pending) {
+        this.pendingConnections.delete(environment);
+      }
+    };
+    pending.then(settle, settle);
+    return pending;
   }
 
   private getJWT(): string {
@@ -362,14 +399,15 @@ export class APNsClient {
  * All sends are silent no-ops.
  */
 export class NoopAPNsClient {
+  readonly enabled = false;
   async sendSessionEventPush(
-    _deviceToken: string,
+    _target: PushTarget,
     _payload: SessionEventPushPayload,
   ): Promise<boolean> {
     return false;
   }
   async sendLiveActivityUpdate(
-    _pushToken: string,
+    _target: PushTarget,
     _contentState: Record<string, unknown>,
     _staleDate?: number,
     _priority: 5 | 10 = 5,
@@ -377,7 +415,7 @@ export class NoopAPNsClient {
     return false;
   }
   async endLiveActivity(
-    _pushToken: string,
+    _target: PushTarget,
     _contentState: Record<string, unknown>,
     _dismissalDate?: number,
     _priority: 5 | 10 = 10,
@@ -391,7 +429,7 @@ export class NoopAPNsClient {
 
 export type PushClient = APNsClient | NoopAPNsClient;
 
-export function createPushClient(config?: APNsConfig, metrics?: ServerMetricCollector): PushClient {
+export function createPushClient(config?: APNsConfig, options: PushClientOptions = {}): PushClient {
   if (!config) {
     log.info("apns.not_configured", {
       enabled: false,
@@ -401,9 +439,9 @@ export function createPushClient(config?: APNsConfig, metrics?: ServerMetricColl
   }
 
   try {
-    const client = new APNsClient(config, metrics);
+    const client = new APNsClient(config, options);
     log.info("apns.configured", {
-      environment: config.environment || "sandbox",
+      topic: config.bundleId,
       enabled: true,
     });
     return client;

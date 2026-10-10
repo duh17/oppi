@@ -462,6 +462,8 @@ export class Server {
   // Track all WebSocket connections for lifecycle/resource accounting.
   private connections: Set<WebSocket> = new Set();
   private socketPrincipals: Map<WebSocket, SocketPrincipal> = new Map();
+  /** Paired device behind each open app-event or focused session stream: its push presence. */
+  private presenceSocketDevices: Map<WebSocket, string> = new Map();
   private accessExpiryTimers: Map<WebSocket, ReturnType<typeof setTimeout>> = new Map();
 
   // Server resource utilization sampler (CPU, memory, sessions)
@@ -559,12 +561,13 @@ export class Server {
     const bundledSkillsDir = join(serverRoot, "skills");
     this.skillRegistry = new SkillRegistry(existsSync(bundledSkillsDir) ? [bundledSkillsDir] : []);
 
-    this.push = createPushClient(apnsConfig, this.opsMetrics);
+    this.push = createPushClient(apnsConfig, {
+      metrics: this.opsMetrics,
+      onTokenRejected: (token) => this.storage.removePushDeviceToken(token),
+    });
     this.liveActivity = new LiveActivityBridge(this.push, this.storage);
     this.sessionPushNotifier = new SessionPushNotifier(this.push, this.storage, {
-      // A client with an open app-event or focused session stream already shows the change.
-      isClientConnected: () =>
-        this.appEventStreamMux.hasSubscribers() || this.boundSessionStreamMux.hasLiveConnections(),
+      isDevicePresent: (deviceId) => this.isDevicePresent(deviceId),
     });
     this.sessions = new SessionManager(storage, this.opsMetrics);
     this.sessions.contextWindowResolver = (modelId: string) =>
@@ -910,6 +913,7 @@ export class Server {
       piCliVersion: optionalPiCliVersion(Server.detectPiVersion(this.piExecutable)),
       serverUpdate: this.serverUpdate,
       onDeviceRevoked: (deviceId) => this.closeConnectionsForDevice(deviceId),
+      pushNotificationsAvailable: this.push.enabled,
       onOwnerTokenRotated: () => this.closeAllDeviceConnections(),
       stopWorkspaceVm: (workspaceId) => SdkBackend.stopWorkspaceVm(workspaceId),
       desktopCompanionStillClient: this.desktopCompanionStillClient,
@@ -1316,6 +1320,23 @@ export class Server {
     }
   }
 
+  /**
+   * A device holding an app-event or focused session stream sees state changes itself, so
+   * blocked/done pushes skip it. Owner (local socket) streams belong to no device and never
+   * silence anyone's pushes.
+   */
+  private notePresenceSocket(ws: WebSocket): void {
+    const principal = this.socketPrincipals.get(ws);
+    if (principal?.kind === "device") this.presenceSocketDevices.set(ws, principal.deviceId);
+  }
+
+  private isDevicePresent(deviceId: string): boolean {
+    for (const presentDeviceId of this.presenceSocketDevices.values()) {
+      if (presentDeviceId === deviceId) return true;
+    }
+    return false;
+  }
+
   private closeConnectionsForDevice(deviceId: string): void {
     for (const [ws, principal] of this.socketPrincipals) {
       if (principal.kind === "device" && principal.deviceId === deviceId) {
@@ -1712,6 +1733,7 @@ export class Server {
       ws.on("close", () => {
         this.clearAccessExpiryTimer(ws);
         this.socketPrincipals.delete(ws);
+        this.presenceSocketDevices.delete(ws);
       });
       if (principal.kind === "device" && principal.tokenClass === "at_" && principal.expiresAt) {
         this.scheduleAccessTokenExpiry(ws, principal.expiresAt);
@@ -1745,6 +1767,7 @@ export class Server {
         ws.close(1008, "Session not found");
         return;
       }
+      this.notePresenceSocket(ws);
       if (route.sessionStreamMatch.scope === "workspace") {
         void this.boundSessionStreamMux.handleWebSocket(
           route.sessionStreamMatch.workspaceId,
@@ -1762,6 +1785,7 @@ export class Server {
       return;
     }
     if (route.appEventStreamMatch) {
+      this.notePresenceSocket(ws);
       this.appEventStreamMux.handleWebSocket(ws, route.upgradeReceivedAt);
       return;
     }

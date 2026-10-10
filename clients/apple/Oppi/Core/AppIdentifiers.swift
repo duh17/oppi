@@ -19,14 +19,9 @@ enum AppIdentifiers {
 /// once reliability is proven.
 enum ReleaseFeatures {
     /// Local, in-process notifications for attention requests received while
-    /// the app has launched. This does not register with APNs or upload a
-    /// device token to paired servers.
+    /// the app has launched. Remote APNs registration is separate: it follows
+    /// each paired server's `capabilities.pushNotifications` (`PushRegistration`).
     static let localAttentionNotificationsEnabled = true
-
-    /// Remote APNs push registration and server fallback notifications.
-    /// Keep disabled until payload privacy, entitlements, and provisioning are
-    /// reviewed together.
-    static let remotePushNotificationsEnabled = false
 
     /// Live Activity codepath availability (runtime opt-in handled by
     /// `AppPreferences.LiveActivity`).

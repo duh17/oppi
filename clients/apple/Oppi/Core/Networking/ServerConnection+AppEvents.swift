@@ -124,6 +124,9 @@ extension ServerConnection {
         let previousSession = sessionStore.session(id: normalized.id)
         let previousWorkspaceId = previousSession?.workspaceId
         sessionStore.applySummary(normalized)
+        if let currentSession = sessionStore.session(id: normalized.id) {
+            notifySessionDoneIfEntered(previous: previousSession, current: currentSession)
+        }
         if let previousWorkspaceId, previousWorkspaceId != normalized.workspaceId {
             syncWorkspaceSummary(workspaceId: previousWorkspaceId)
         }

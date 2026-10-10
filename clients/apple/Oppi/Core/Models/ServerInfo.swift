@@ -69,6 +69,10 @@ struct ServerInfo: Codable, Sendable, Equatable {
         var durableSessions: CapabilityVersion? = nil
         /// Experimental live H.264 of a granted Mac window (`experimental.desktopLiveView`).
         var desktopLiveView: CapabilityVersion? = nil
+        /// APNs is configured: register this device's token with `POST /me/device-token`.
+        var pushNotifications: CapabilityVersion? = nil
+
+        var advertisesPushNotifications: Bool { pushNotifications?.version ?? 0 >= 1 }
     }
 
     struct WorkspaceFileEditingCapability: Codable, Sendable, Equatable {

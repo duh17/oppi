@@ -430,11 +430,12 @@ final class ScopedLockService {
         }
     }
 
-    /// A new lock: delivered ask notifications may show its question text,
-    /// and the Live Activity its session name; both follow the lock now.
+    /// A new lock: delivered ask and `done` notifications may show its question
+    /// text or session name, and the Live Activity its session name; all follow
+    /// the lock now.
     static func clearContentShownBeforeLock() {
         if ReleaseFeatures.localAttentionNotificationsEnabled {
-            AttentionNotificationService.shared.removeAskNotifications()
+            AttentionNotificationService.shared.removeLockSensitiveNotifications()
         }
         if ReleaseFeatures.liveActivitiesEnabled {
             LiveActivityManager.shared.recoverIfNeeded()

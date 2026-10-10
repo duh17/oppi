@@ -2,10 +2,11 @@ import Foundation
 
 /// UIKit-free attention-notification policy shared by iOS and Mac painters.
 ///
-/// Local banners exist for agent asks. `SESSION_DONE` / `SESSION_ERROR` /
-/// `SESSION_BLOCKED` are tap-routing categories for remote session-event
-/// payloads (ended, done, error, blocked); this policy does not build local
-/// banners for them because iOS does not post those locally.
+/// Local banners exist for agent asks, and for `done` while the app runs in the
+/// background on a server that pushes: that server skips its push to a device
+/// holding a live stream. `SESSION_DONE` / `SESSION_ERROR` / `SESSION_BLOCKED`
+/// are also the tap-routing categories for remote session-event payloads
+/// (ended, done, error, blocked).
 enum AttentionNotificationPolicy: Sendable {
     static let askCategoryId = "ASK_REQUEST"
     static let sessionDoneCategoryId = "SESSION_DONE"
@@ -45,6 +46,46 @@ enum AttentionNotificationPolicy: Sendable {
 
     static func askRequestIdentifier(sessionId: String) -> String {
         "ask-\(sessionId)"
+    }
+
+    static func sessionDoneRequestIdentifier(sessionId: String) -> String {
+        "done-\(sessionId)"
+    }
+
+    /// A store update that moves a top-level session into `done`, matching the server's
+    /// `done` push rule: delegated sessions report to their parent, and a first-seen status
+    /// is not a transition.
+    static func enteredDone(previous: Session?, current: Session) -> Bool {
+        guard current.parentSessionId == nil,
+              current.programStatus?.state == .done,
+              let previousState = previous?.programStatus?.state else {
+            return false
+        }
+        return previousState != .done
+    }
+
+    /// Local stand-in for the server's `done` push: same title, body, category, and
+    /// payload keys. The push names the session; this banner hides the name while App Lock
+    /// or a scoped lock covers it, like ask banners.
+    static func sessionDonePayload(
+        sessionId: String,
+        sessionName: String?,
+        revealsSessionName: Bool
+    ) -> AttentionNotificationPayload {
+        let name = sessionName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return AttentionNotificationPayload(
+            identifier: sessionDoneRequestIdentifier(sessionId: sessionId),
+            title: String(localized: "Session Done"),
+            subtitle: revealsSessionName ? name : "",
+            body: String(localized: "The run finished."),
+            categoryIdentifier: sessionDoneCategoryId,
+            userInfo: [
+                "event": "done",
+                "sessionId": sessionId,
+            ],
+            threadIdentifier: sessionId,
+            targetContentIdentifier: sessionId
+        )
     }
 
     /// Body that names no question text.

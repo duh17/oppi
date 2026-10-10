@@ -4,124 +4,113 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Push")
 
-/// Manages remote push notification registration and device token forwarding.
+/// Registers this device for APNs and hands its token to paired servers that send pushes.
 ///
-/// Flow:
-/// 1. Request notification authorization (after successful server connection)
-/// 2. Register with APNs (UIApplication.shared.registerForRemoteNotifications)
-/// 3. Forward device token to server (POST /me/device-token)
+/// Remote push is server-driven: a server advertises `capabilities.pushNotifications`
+/// once its operator configures APNs (`apns.json`), and `ServerConnection` calls
+/// `serverAdvertisesPush(api:serverId:)` when it loads that capability. A server that does not
+/// advertise it is never sent a token; with no such server the app never registers with
+/// APNs or asks for notification permission. Permission is asked only after APNs issues a
+/// token, so a build without the Push Notifications entitlement never prompts.
 ///
-/// Uses UIApplicationDelegate callbacks for token delivery.
+/// `UIApplicationDelegate` delivers the token (see `AppDelegate`).
 @MainActor
 final class PushRegistration {
     static let shared = PushRegistration()
 
-    private(set) var isRegistered = false
+    /// This process's APNs token. iOS issues it in response to the first
+    /// `registerForRemoteNotifications()` of each launch, as Apple recommends.
     private var deviceToken: String?
-    private weak var coordinator: ConnectionCoordinator?
+    private var tokenWaiters: [CheckedContinuation<String?, Never>] = []
+
+    #if DEBUG
+    /// Replaces the APNs registration a server's push capability starts.
+    var _onRegisterForTesting: ((String?) -> Void)?
+    #endif
 
     private init() {}
 
-    /// Configure with the app's transport owner. The active server may not be
-    /// prepared yet when APNs registration starts during launch.
-    func configure(coordinator: ConnectionCoordinator) {
-        self.coordinator = coordinator
-    }
-
-    /// Request notification permission and register for remote notifications.
-    /// Call AFTER successful server connection to maximize grant rate.
-    func requestAndRegister() async {
+    /// A paired server advertised push: send it this device's token, with this build's
+    /// APNs environment. The server ties it to this paired device.
+    func serverAdvertisesPush(api: APIClient, serverId: String?) {
         #if DEBUG
+        if let onRegister = _onRegisterForTesting {
+            onRegister(serverId)
+            return
+        }
         // Screenshot previews must not raise the system permission alert.
         if ScreenshotPreviewConfig.isEnabled { return }
         #endif
-        let center = UNUserNotificationCenter.current()
-
-        // Check current authorization status first
-        let settings = await center.notificationSettings()
-
-        if settings.authorizationStatus == .notDetermined {
-            // First time — request permission
-            do {
-                let granted = try await center.requestAuthorization(options: [
-                    .alert, .sound, .badge, .providesAppNotificationSettings
-                ])
-                if granted {
-                    logger.warning("Notification permission granted")
-                } else {
-                    logger.error("Notification permission denied")
-                    return
-                }
-            } catch {
-                logger.error("Failed to request notification permission: \(error)")
-                return
-            }
-        } else if settings.authorizationStatus == .denied {
-            logger.warning("Notifications denied — user must enable in Settings")
-            return
-        }
-
-        // Register for remote notifications (triggers didRegisterForRemoteNotificationsWithDeviceToken)
-        UIApplication.shared.registerForRemoteNotifications()
+        Task { await register(with: api, serverId: serverId) }
     }
 
-    /// Called from AppDelegate when APNs device token is received.
+    private func register(with api: APIClient, serverId: String?) async {
+        let server = serverId?.prefix(16) ?? "unknown"
+        guard let environment = APNsEnvironment.current else {
+            logger.error("Push registration skipped for server \(server, privacy: .public): the embedded provisioning profile has no aps-environment")
+            return
+        }
+        guard let token = await currentDeviceToken(), await notificationsAuthorized() else { return }
+        do {
+            try await api.registerDeviceToken(token, apnsEnvironment: environment)
+            logger.info("Push token registered with server \(server, privacy: .public) (\(environment.rawValue, privacy: .public))")
+        } catch {
+            logger.error("Push token registration failed for server \(server, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Called from AppDelegate when APNs issues the device token.
     func didRegisterForRemoteNotifications(deviceToken data: Data) {
         let token = data.map { String(format: "%02x", $0) }.joined()
-        self.deviceToken = token
-        logger.warning("Device token received (chars: \(token.count))")
-
-        // Forward to server
-        Task {
-            await sendTokenToServer(token, tokenType: "apns")
-        }
+        deviceToken = token
+        resumeTokenWaiters(with: token)
     }
 
-    /// Called from AppDelegate when registration fails.
+    /// Called from AppDelegate when APNs registration fails, including on a build
+    /// signed without the Push Notifications entitlement.
     func didFailToRegisterForRemoteNotifications(error: Error) {
-        logger.error("Failed to register for remote notifications: \(error)")
+        logger.error("Failed to register for remote notifications: \(error.localizedDescription, privacy: .public)")
+        resumeTokenWaiters(with: nil)
     }
 
-    /// Forward the device token to the server.
-    func sendTokenToServer(_ token: String, tokenType: String = "apns") async {
-        guard let coordinator,
-              let serverId = coordinator.activeServerId,
-              let api = await coordinator.apiClientReady(for: serverId) else {
-            logger.warning("Cannot send token — active server transport is unavailable")
-            return
-        }
-
-        do {
-            try await api.registerDeviceToken(token, tokenType: tokenType)
-            isRegistered = true
-            logger.warning("Device token registered with server (type: \(tokenType))")
-        } catch {
-            logger.error("Failed to register device token: \(error)")
-        }
-    }
-
-    /// Register the device token with ALL paired servers (multi-server support).
-    ///
-    /// Each server gets a separate registration call. Failures are per-server
-    /// and don't block others.
-    func registerWithAllServers(using coordinator: ConnectionCoordinator) async {
-        guard let token = deviceToken else {
-            logger.warning("No device token yet — skipping multi-server registration")
-            return
-        }
-
-        for server in coordinator.serverStore.servers {
-            let serverId = server.id
-            guard let api = await coordinator.apiClientReady(for: serverId) else {
-                logger.error("Push token registration skipped; transport unavailable for server \(serverId.prefix(16), privacy: .public)")
-                continue
+    /// APNs registration needs no notification permission; asking for it waits until a
+    /// token proves this build can receive pushes.
+    private func currentDeviceToken() async -> String? {
+        if let deviceToken { return deviceToken }
+        return await withCheckedContinuation { continuation in
+            tokenWaiters.append(continuation)
+            if tokenWaiters.count == 1 {
+                UIApplication.shared.registerForRemoteNotifications()
             }
+        }
+    }
+
+    private func resumeTokenWaiters(with token: String?) {
+        let waiters = tokenWaiters
+        tokenWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume(returning: token)
+        }
+    }
+
+    /// Ask on first use. A denied permission keeps the token off the server: it could only
+    /// deliver alerts iOS would not show.
+    private func notificationsAuthorized() async -> Bool {
+        let center = UNUserNotificationCenter.current()
+        switch await center.notificationSettings().authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            return true
+        case .notDetermined:
             do {
-                try await api.registerDeviceToken(token, tokenType: "apns")
-                logger.warning("Push token registered with server \(serverId.prefix(16), privacy: .public)")
+                return try await center.requestAuthorization(options: [.alert, .sound, .badge])
             } catch {
-                logger.error("Push token registration failed for server \(serverId.prefix(16), privacy: .public): \(error.localizedDescription, privacy: .public)")
+                logger.error("Failed to request notification permission: \(error.localizedDescription, privacy: .public)")
+                return false
             }
+        case .denied:
+            return false
+        @unknown default:
+            return false
         }
     }
 }

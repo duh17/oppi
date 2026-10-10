@@ -47,6 +47,8 @@ export interface RouteContext {
   serverUpdate?: ServerUpdateService;
   /** Close upgraded sockets owned by a newly revoked device. */
   onDeviceRevoked?: (deviceId: string) => void;
+  /** APNs is configured (`apns.json`); `/server/info` advertises it so apps register tokens. */
+  pushNotificationsAvailable?: boolean;
   /** Close every network device socket when the owner token rotates. */
   onOwnerTokenRotated?: () => void;
   /** Stop the sandbox VM for a deleted workspace. Composed in server.ts. */

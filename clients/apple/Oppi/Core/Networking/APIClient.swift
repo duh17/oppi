@@ -2429,9 +2429,12 @@ actor APIClient: ClientLogUploading {
     // MARK: - Device Token
 
     /// Register APNs device token with the server.
-    func registerDeviceToken(_ token: String, tokenType: String = "apns") async throws {
-        struct Body: Encodable { let deviceToken: String; let tokenType: String }
-        _ = try await post("/me/device-token", body: Body(deviceToken: token, tokenType: tokenType))
+    func registerDeviceToken(_ token: String, apnsEnvironment: APNsEnvironment) async throws {
+        struct Body: Encodable { let deviceToken: String; let tokenType: String; let apnsEnvironment: String }
+        _ = try await post(
+            "/me/device-token",
+            body: Body(deviceToken: token, tokenType: "apns", apnsEnvironment: apnsEnvironment.rawValue)
+        )
     }
 
     // MARK: - Diagnostics

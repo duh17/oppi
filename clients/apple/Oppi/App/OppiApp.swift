@@ -1592,10 +1592,6 @@ struct OppiApp: App {
                 MetricKitService.shared.setUploadClient(api)
                 await selectedConnection.refreshWorkspaceCatalog(force: true)
             }
-            if ReleaseFeatures.remotePushNotificationsEnabled {
-                await PushRegistration.shared.requestAndRegister()
-                await coordinator.registerPushWithAllServers()
-            }
 #if DEBUG
             if !isE2EInviteLaunch {
                 selectedConnection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.name)"
@@ -1762,10 +1758,6 @@ struct OppiApp: App {
                        let activeConnection = coordinator.connection(for: activeServerId),
                        activeConnection.credentials == nil {
                         await coordinator.recoverUnconfiguredServerAfterBoundary(activeServerId)
-                        if activeConnection.credentials != nil,
-                           ReleaseFeatures.remotePushNotificationsEnabled {
-                            await coordinator.registerPushWithAllServers()
-                        }
                     } else {
                         await connection.reconnectIfNeeded()
                     }
@@ -1922,11 +1914,6 @@ struct OppiApp: App {
 
         let notificationService = AttentionNotificationService.shared
         notificationService.configureForLaunch()
-
-        // Configure remote push registration only when the APNs lane is enabled.
-        if ReleaseFeatures.remotePushNotificationsEnabled {
-            PushRegistration.shared.configure(coordinator: coordinator)
-        }
 
         // Navigate to session when user taps an attention notification body.
         // The service may deliver a tap latched before this handler was wired.
@@ -2106,12 +2093,6 @@ struct OppiApp: App {
             launchOutcome = refreshOutcome.overall
             workspaceRefreshOutcome = refreshOutcome.workspace
             sessionRefreshOutcome = refreshOutcome.session
-        }
-
-        // 6. Register for remote push notifications with all paired servers.
-        if ReleaseFeatures.remotePushNotificationsEnabled {
-            await PushRegistration.shared.requestAndRegister()
-            await coordinator.registerPushWithAllServers()
         }
     }
 

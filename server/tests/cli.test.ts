@@ -813,15 +813,21 @@ describe("oppi config", () => {
       owner: "sk_owner-config-display-secret",
       pairing: "pt_pairing-config-display-secret",
       push: "apns-config-display-secret",
-      liveActivity: "live-config-display-secret",
       runtime: "runtime-config-display-secret",
     };
     const storage = new Storage(dataDir);
     storage.updateConfig({
       token: secrets.owner,
       pairingToken: secrets.pairing,
-      pushDeviceTokens: [secrets.push],
-      liveActivityToken: secrets.liveActivity,
+      pushDeviceTokens: [
+        {
+          deviceId: "dev_config_display",
+          tokenType: "apns",
+          token: secrets.push,
+          environment: "production",
+          registeredAt: 1,
+        },
+      ],
       runtimeEnv: { OPENAI_API_KEY: secrets.runtime },
     });
     return secrets;
@@ -846,25 +852,20 @@ describe("oppi config", () => {
     expect(stdout).toContain('"token": "[REDACTED]"');
     expect(stdout).toContain('"pairingToken": "[REDACTED]"');
     expect(stdout).toContain('"pushDeviceTokens": "[REDACTED 1 token]"');
-    expect(stdout).toContain('"liveActivityToken": "[REDACTED]"');
     expect(stdout).toContain('"OPENAI_API_KEY": "[REDACTED]"');
     for (const secret of Object.values(secrets)) expect(stdout).not.toContain(secret);
   });
 
-  it.each([
-    "token",
-    "pairingToken",
-    "pushDeviceTokens",
-    "liveActivityToken",
-    "runtimeEnv.OPENAI_API_KEY",
-    "runtimeEnv",
-  ])("config get redacts %s", (key) => {
-    seedConfigDisplaySecrets();
-    const { stdout, exitCode } = run(["config", "get", key]);
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain("[REDACTED");
-    expect(stdout).not.toContain("config-display-secret");
-  });
+  it.each(["token", "pairingToken", "pushDeviceTokens", "runtimeEnv.OPENAI_API_KEY", "runtimeEnv"])(
+    "config get redacts %s",
+    (key) => {
+      seedConfigDisplaySecrets();
+      const { stdout, exitCode } = run(["config", "get", key]);
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain("[REDACTED");
+      expect(stdout).not.toContain("config-display-secret");
+    },
+  );
 
   it("config set output and errors never echo runtime secrets", () => {
     const secret = "runtime-set-output-secret";

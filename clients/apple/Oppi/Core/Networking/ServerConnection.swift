@@ -255,6 +255,8 @@ final class ServerConnection {
     private(set) var durableSessionsAvailable = false
     /// The server advertises experimental live H.264 (`capabilities.desktopLiveView`).
     private(set) var desktopLiveViewAvailable = false
+    /// The server sends APNs pushes (`capabilities.pushNotifications`).
+    private(set) var pushNotificationsAvailable = false
 
     // Stores
     let sessionStore: SessionStore
@@ -982,6 +984,7 @@ final class ServerConnection {
         self.dictationStreamAvailable = false
         self.durableSessionsAvailable = false
         self.desktopLiveViewAvailable = false
+        self.pushNotificationsAvailable = false
         self.appEventStreamAvailable = false
         self.appEventStreamTransportState = .disconnected
         self.missingRequiredSplitStreamCapabilities = []
@@ -1398,6 +1401,13 @@ final class ServerConnection {
         controlSessionsAvailable = capabilities?.controlSessions?.version ?? 0 >= 1
         durableSessionsAvailable = capabilities?.durableSessions?.version ?? 0 >= 1
         desktopLiveViewAvailable = capabilities?.desktopLiveView?.version ?? 0 >= 1
+        let pushWasAvailable = pushNotificationsAvailable
+        pushNotificationsAvailable = capabilities?.advertisesPushNotifications ?? false
+        // Only a server that sends pushes gets this device's token, once per configuration.
+        // With no such server the app never registers with APNs or asks for permission.
+        if pushNotificationsAvailable, !pushWasAvailable, let apiClient {
+            PushRegistration.shared.serverAdvertisesPush(api: apiClient, serverId: currentServerId)
+        }
         missingRequiredSplitStreamCapabilities = ServerInfo.Capabilities
             .missingRequiredSplitStreamCapabilities(in: capabilities)
         streamCapabilitiesRefreshFailed = false
@@ -3078,11 +3088,13 @@ final class ServerConnection {
         dictationStream: Bool = false,
         appEventStream: Bool = false,
         durableSessions: Bool = false,
-        desktopLiveView: Bool = false
+        desktopLiveView: Bool = false,
+        pushNotifications: Bool = false
     ) {
         dictationStreamAvailable = dictationStream
         durableSessionsAvailable = durableSessions
         desktopLiveViewAvailable = desktopLiveView
+        pushNotificationsAvailable = pushNotifications
         appEventStreamAvailable = appEventStream
         var missing: [String] = []
         if !sessionStream { missing.append("sessionStream") }

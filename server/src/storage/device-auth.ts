@@ -392,6 +392,10 @@ export class DeviceAuthStore {
         authAccessTokens: (config.authAccessTokens ?? []).filter(
           (item) => item.deviceId !== deviceId,
         ),
+        // A revoked device stops receiving pushes in the same write.
+        pushDeviceTokens: (config.pushDeviceTokens ?? []).filter(
+          (item) => item.deviceId !== deviceId,
+        ),
       };
     });
     return changed;

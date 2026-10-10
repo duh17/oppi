@@ -22,7 +22,7 @@ import {
   parsePublicUrl,
   parseTrustedPeers,
 } from "../proxy-config.js";
-import type { DevicePublicKey, ServerConfig } from "../types.js";
+import type { DevicePublicKey, PushDeviceToken, ServerConfig } from "../types.js";
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
 const CONFIG_VERSION = 2;
@@ -46,6 +46,25 @@ function normalizeDevicePublicKey(value: unknown): DevicePublicKey | undefined {
   if (typeof value.x !== "string" || value.x.trim().length === 0) return undefined;
   if (typeof value.y !== "string" || value.y.trim().length === 0) return undefined;
   return { kty: "EC", crv: "P-256", x: value.x, y: value.y };
+}
+
+function normalizePushDeviceToken(value: unknown): PushDeviceToken | undefined {
+  if (!isRecord(value)) return undefined;
+  if (typeof value.deviceId !== "string" || value.deviceId.trim().length === 0) return undefined;
+  if (typeof value.token !== "string" || value.token.trim().length === 0) return undefined;
+  if (value.tokenType !== "apns" && value.tokenType !== "liveactivity") return undefined;
+  if (value.environment !== "sandbox" && value.environment !== "production") return undefined;
+  const registeredAt =
+    typeof value.registeredAt === "number" && Number.isFinite(value.registeredAt)
+      ? value.registeredAt
+      : 0;
+  return {
+    deviceId: value.deviceId,
+    tokenType: value.tokenType,
+    token: value.token,
+    environment: value.environment,
+    registeredAt,
+  };
 }
 
 function defaultRuntimePathEntries(): string[] {
@@ -147,7 +166,6 @@ function normalizeConfig(
     "authDevices",
     "authAccessTokens",
     "pushDeviceTokens",
-    "liveActivityToken",
     "autoTitle",
     "asr",
     "providerQuotas",
@@ -610,13 +628,20 @@ function normalizeConfig(
   }
 
   if ("pushDeviceTokens" in obj && Array.isArray(obj.pushDeviceTokens)) {
-    config.pushDeviceTokens = (obj.pushDeviceTokens as unknown[]).filter(
-      (t): t is string => typeof t === "string",
-    );
-  }
-
-  if ("liveActivityToken" in obj && typeof obj.liveActivityToken === "string") {
-    config.liveActivityToken = obj.liveActivityToken;
+    const entries = obj.pushDeviceTokens as unknown[];
+    const tokens = entries.flatMap((value) => {
+      const token = normalizePushDeviceToken(value);
+      return token ? [token] : [];
+    });
+    // A token without its paired device or APNs environment cannot be addressed; the app
+    // registers again on its next launch.
+    if (tokens.length !== entries.length) {
+      changed = true;
+      warnings.push(
+        `config.pushDeviceTokens: dropped ${entries.length - tokens.length} without a paired device or APNs environment`,
+      );
+    }
+    config.pushDeviceTokens = tokens;
   }
   // Auto-title configuration
   if ("autoTitle" in obj && isRecord(obj.autoTitle)) {

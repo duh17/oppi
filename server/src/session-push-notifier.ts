@@ -20,8 +20,8 @@ const BLOCKED_REASON = {
 const DONE_REASON = "The run finished.";
 
 export interface SessionPushNotifierOptions {
-  /** True while any Apple client holds a live app-event or focused session stream. */
-  isClientConnected: () => boolean;
+  /** True while this paired device holds a live app-event or focused session stream. */
+  isDevicePresent: (deviceId: string) => boolean;
   now?: () => number;
 }
 
@@ -29,9 +29,10 @@ export interface SessionPushNotifierOptions {
  * Sends regular APNs alerts for session events.
  *
  * `ended` and `error` fire on their lifecycle events. `blocked` and `done` fire on program
- * status transitions, only while no Apple client is connected (a connected client already
- * shows them) and at most once a minute per session and kind. `done` is for top-level
- * sessions only; delegated sessions report to their parent, but their `blocked` still pushes.
+ * status transitions, at most once a minute per session and kind, and skip each device that
+ * is present (holds a live stream, so the app already shows the change or posts its own
+ * banner). An open Mac or iPad never silences the phone. `done` is for top-level sessions
+ * only; delegated sessions report to their parent, but their `blocked` still pushes.
  * The body is fixed text: a lock-screen push never carries a dialog title, a question, an
  * error, or the session name (the subtitle is the only session text).
  */
@@ -52,7 +53,7 @@ export class SessionPushNotifier {
     if (!notification) {
       return;
     }
-    this.deliver(notification);
+    this.deliver(notification, { skipPresent: false });
   }
 
   /** Push on entering `blocked` or `done`. Same-state updates (message, kind) never push. */
@@ -61,14 +62,13 @@ export class SessionPushNotifier {
     if (!previous || previous.state === current.state) return;
     if (current.state !== "blocked" && current.state !== "done") return;
     if (current.state === "done" && session.launch?.parentSessionId) return;
-    if (this.options.isClientConnected()) return;
 
     const throttleKey = `${session.id}:${current.state}`;
     const now = this.now();
     const last = this.lastProgramPushAt.get(throttleKey);
     if (last !== undefined && now - last < PROGRAM_STATUS_PUSH_MIN_INTERVAL_MS) return;
 
-    if (this.deliver(this.programStatusNotification(session.id, current))) {
+    if (this.deliver(this.programStatusNotification(session.id, current), { skipPresent: true })) {
       // Entries older than the interval no longer throttle anything; keep the map bounded.
       for (const [key, at] of this.lastProgramPushAt) {
         if (now - at >= PROGRAM_STATUS_PUSH_MIN_INTERVAL_MS) this.lastProgramPushAt.delete(key);
@@ -88,9 +88,14 @@ export class SessionPushNotifier {
     return { sessionId, event: "done", reason: DONE_REASON };
   }
 
-  /** Returns whether a push was attempted (a device token existed). */
-  private deliver(notification: SessionEventPushPayload): boolean {
-    const tokens = this.storage.getPushDeviceTokens();
+  /** Returns whether a push was attempted (some device had a token and was not skipped). */
+  private deliver(
+    notification: SessionEventPushPayload,
+    options: { skipPresent: boolean },
+  ): boolean {
+    const tokens = this.storage
+      .getPushDeviceTokens("apns")
+      .filter((entry) => !options.skipPresent || !this.options.isDevicePresent(entry.deviceId));
     if (tokens.length === 0) {
       return false;
     }

@@ -195,6 +195,7 @@ extension ServerConnection {
             currentSession: currentSession
         )
         emitSessionUsageMetricsIfNeeded(currentSession)
+        notifySessionDoneIfEntered(previous: previousSession, current: currentSession)
 
         if let previousWorkspaceId = previousSession?.workspaceId,
            previousWorkspaceId != currentSession.workspaceId {

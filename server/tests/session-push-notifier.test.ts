@@ -5,7 +5,7 @@ import { SessionPushNotifier } from "../src/session-push-notifier.js";
 import type { PushClient, SessionEventPushPayload } from "../src/push.js";
 import type { SessionBroadcastEvent } from "../src/session-broadcast.js";
 import type { Storage } from "../src/storage.js";
-import type { ProgramStatus, Session } from "../src/types.js";
+import type { ProgramStatus, PushDeviceToken, Session } from "../src/types.js";
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   const now = Date.now();
@@ -31,19 +31,32 @@ function makePush() {
     shutdown: vi.fn(),
   } as unknown as PushClient & {
     sendSessionEventPush: ReturnType<
-      typeof vi.fn<(...args: [string, SessionEventPushPayload]) => Promise<boolean>>
+      typeof vi.fn<(...args: [PushDeviceToken, SessionEventPushPayload]) => Promise<boolean>>
     >;
   };
 }
 
 type MockStorage = Storage & {
-  getPushDeviceTokens: ReturnType<typeof vi.fn<() => string[]>>;
+  getPushDeviceTokens: ReturnType<typeof vi.fn<(tokenType: string) => PushDeviceToken[]>>;
   getSession: ReturnType<typeof vi.fn<(id: string) => Session | undefined>>;
 };
 
+/** Stored APNs token "token-x", owned by paired device "dev-token-x". */
+function target(token: string): PushDeviceToken {
+  return {
+    deviceId: `dev-${token}`,
+    tokenType: "apns",
+    token,
+    environment: "production",
+    registeredAt: 1,
+  };
+}
+
 function makeStorage(tokens: string[], session: Session | undefined = makeSession()): MockStorage {
   return {
-    getPushDeviceTokens: vi.fn(() => tokens),
+    getPushDeviceTokens: vi.fn((tokenType: string) =>
+      tokenType === "apns" ? tokens.map(target) : [],
+    ),
     getSession: vi.fn((id: string) => (session?.id === id ? session : undefined)),
   } as unknown as MockStorage;
 }
@@ -51,10 +64,11 @@ function makeStorage(tokens: string[], session: Session | undefined = makeSessio
 function makeNotifier(
   push: PushClient,
   storage: Storage,
-  options: { connected?: boolean; now?: () => number } = {},
+  options: { presentDevices?: Iterable<string>; now?: () => number } = {},
 ) {
+  const present = new Set(options.presentDevices ?? []);
   return new SessionPushNotifier(push, storage, {
-    isClientConnected: () => options.connected ?? false,
+    isDevicePresent: (deviceId) => present.has(deviceId),
     ...(options.now ? { now: options.now } : {}),
   });
 }
@@ -92,13 +106,13 @@ describe("SessionPushNotifier", () => {
     notifier.handleSessionEvent(event("s1", { type: "session_ended", reason: "completed" }));
 
     expect(push.sendSessionEventPush).toHaveBeenCalledTimes(2);
-    expect(push.sendSessionEventPush).toHaveBeenNthCalledWith(1, "token-a", {
+    expect(push.sendSessionEventPush).toHaveBeenNthCalledWith(1, target("token-a"), {
       sessionId: "s1",
       sessionName: "Deploy fix",
       event: "ended",
       reason: "completed",
     });
-    expect(push.sendSessionEventPush).toHaveBeenNthCalledWith(2, "token-b", {
+    expect(push.sendSessionEventPush).toHaveBeenNthCalledWith(2, target("token-b"), {
       sessionId: "s1",
       sessionName: "Deploy fix",
       event: "ended",
@@ -115,7 +129,7 @@ describe("SessionPushNotifier", () => {
 
     notifier.handleSessionEvent(event("s1", { type: "error", error: rawError }));
 
-    expect(push.sendSessionEventPush).toHaveBeenCalledWith("token-a", {
+    expect(push.sendSessionEventPush).toHaveBeenCalledWith(target("token-a"), {
       sessionId: "s1",
       sessionName: "Bug hunt",
       event: "error",
@@ -164,7 +178,7 @@ describe("SessionPushNotifier", () => {
         ),
       );
 
-      expect(push.sendSessionEventPush).toHaveBeenCalledWith("token-a", {
+      expect(push.sendSessionEventPush).toHaveBeenCalledWith(target("token-a"), {
         sessionId: "s1",
         sessionName: "Deploy",
         event: "blocked",
@@ -186,7 +200,7 @@ describe("SessionPushNotifier", () => {
       );
 
       expect(push.sendSessionEventPush).toHaveBeenCalledWith(
-        "token-a",
+        target("token-a"),
         expect.objectContaining({ kind: "question", reason: "Waiting for your answer." }),
       );
     });
@@ -206,7 +220,7 @@ describe("SessionPushNotifier", () => {
       );
 
       expect(push.sendSessionEventPush).toHaveBeenCalledTimes(1);
-      expect(push.sendSessionEventPush).toHaveBeenCalledWith("token-a", {
+      expect(push.sendSessionEventPush).toHaveBeenCalledWith(target("token-a"), {
         sessionId: "s1",
         sessionName: "Fix login",
         event: "done",
@@ -232,7 +246,7 @@ describe("SessionPushNotifier", () => {
       );
       expect(push.sendSessionEventPush).toHaveBeenCalledTimes(1);
       expect(push.sendSessionEventPush).toHaveBeenCalledWith(
-        "token-a",
+        target("token-a"),
         expect.objectContaining({ sessionId: "child", event: "blocked" }),
       );
     });
@@ -242,10 +256,7 @@ describe("SessionPushNotifier", () => {
       const session = makeSession({ launch: { status: "created", requestedAt: 1 } });
       const notifier = makeNotifier(push, makeStorage(["token-a"], session));
 
-      notifier.handleProgramStatusChange(
-        session,
-        change({ state: "working" }, { state: "done" }),
-      );
+      notifier.handleProgramStatusChange(session, change({ state: "working" }, { state: "done" }));
 
       expect(push.sendSessionEventPush).toHaveBeenCalledTimes(1);
     });
@@ -274,10 +285,12 @@ describe("SessionPushNotifier", () => {
       expect(push.sendSessionEventPush).not.toHaveBeenCalled();
     });
 
-    it("stays silent while an Apple client is connected", () => {
+    it("skips only devices that are present: an open iPad does not silence the phone", () => {
       const push = makePush();
       const session = makeSession();
-      const notifier = makeNotifier(push, makeStorage(["token-a"], session), { connected: true });
+      const notifier = makeNotifier(push, makeStorage(["phone", "ipad"], session), {
+        presentDevices: ["dev-ipad"],
+      });
 
       notifier.handleProgramStatusChange(
         session,
@@ -285,12 +298,35 @@ describe("SessionPushNotifier", () => {
       );
       notifier.handleProgramStatusChange(session, change({ state: "working" }, { state: "done" }));
 
-      expect(push.sendSessionEventPush).not.toHaveBeenCalled();
+      expect(push.sendSessionEventPush.mock.calls.map(([sent]) => sent.token)).toEqual([
+        "phone",
+        "phone",
+      ]);
     });
 
-    it("keeps sending ended and error alerts while a client is connected", () => {
+    it("stays silent while the only device is present, and pushes once it leaves", () => {
       const push = makePush();
-      const notifier = makeNotifier(push, makeStorage(["token-a"]), { connected: true });
+      const session = makeSession();
+      const present = new Set(["dev-phone"]);
+      const notifier = new SessionPushNotifier(push, makeStorage(["phone"], session), {
+        isDevicePresent: (deviceId) => present.has(deviceId),
+      });
+      const toDone = change({ state: "working" }, { state: "done" });
+
+      notifier.handleProgramStatusChange(session, toDone);
+      expect(push.sendSessionEventPush).not.toHaveBeenCalled();
+
+      // A skipped push starts no throttle: the next transition after leaving still pushes.
+      present.clear();
+      notifier.handleProgramStatusChange(session, toDone);
+      expect(push.sendSessionEventPush).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps sending ended and error alerts while the device is present", () => {
+      const push = makePush();
+      const notifier = makeNotifier(push, makeStorage(["token-a"]), {
+        presentDevices: ["dev-token-a"],
+      });
 
       notifier.handleSessionEvent(event("s1", { type: "session_ended", reason: "completed" }));
 
