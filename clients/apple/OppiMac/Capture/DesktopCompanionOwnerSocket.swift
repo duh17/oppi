@@ -10,6 +10,7 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
 
     let shareGate: DesktopStillShareGate
     let viewGrantGate: DesktopViewGrantGate
+    let liveView: (any DesktopLiveViewStreaming)?
     let runtimeRoot: URL
     let runtimeDirectory: URL
     let socketPath: String
@@ -34,11 +35,13 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
     init(
         shareGate: DesktopStillShareGate,
         viewGrantGate: DesktopViewGrantGate,
+        liveView: (any DesktopLiveViewStreaming)? = nil,
         runtimeRoot: URL = DesktopCompanionOwnerSocketPath.defaultRuntimeRoot(),
         peerAuthorizer: any DesktopOwnerSocketPeerAuthorizing = SameUserDesktopOwnerSocketPeerAuthorizer()
     ) {
         self.shareGate = shareGate
         self.viewGrantGate = viewGrantGate
+        self.liveView = liveView
         self.runtimeRoot = runtimeRoot
         self.peerAuthorizer = peerAuthorizer
         let socketURL = DesktopCompanionOwnerSocketPath.socketURL(runtimeRoot: runtimeRoot)
@@ -116,6 +119,7 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
     }
 
     func stop() {
+        liveView?.stop()
         stateLock.lock()
         let alreadyStopped = stopped && listenFD < 0 && heldLock == nil && !started
         if alreadyStopped {
@@ -173,7 +177,10 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
     }
 
     private func handle(clientFD: Int32) {
-        defer { Darwin.close(clientFD) }
+        var closeWhenDone = true
+        defer {
+            if closeWhenDone { Darwin.close(clientFD) }
+        }
         var nosig = Int32(1)
         _ = setsockopt(clientFD, SOL_SOCKET, SO_NOSIGPIPE, &nosig, socklen_t(MemoryLayout<Int32>.size))
 
@@ -222,6 +229,13 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
 
         if request.path == "/view/session" {
             writeViewSession(fd: clientFD, headers: request.headers)
+            return
+        }
+
+        if request.path == DesktopViewStreamWire.path {
+            if beginViewStream(fd: clientFD, headers: request.headers) {
+                closeWhenDone = false
+            }
             return
         }
 
@@ -281,6 +295,89 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
                 ],
                 body: still.pngData
             )
+        }
+    }
+
+    /// Returns true when this fd is now owned by the live-view session.
+    private func beginViewStream(fd: Int32, headers: [String: String]) -> Bool {
+        guard let liveView else {
+            writeResponse(
+                fd: fd,
+                status: 403,
+                reason: "Forbidden",
+                contentType: "text/plain; charset=utf-8",
+                headers: [:],
+                body: Data(DesktopViewGrantHTTP.unavailableBody.utf8)
+            )
+            return false
+        }
+        guard let deviceId = DesktopViewGrantHTTP.deviceID(from: headers) else {
+            writeResponse(
+                fd: fd,
+                status: 400,
+                reason: "Bad Request",
+                contentType: "text/plain; charset=utf-8",
+                headers: [:],
+                body: Data(DesktopViewGrantHTTP.missingDeviceIDBody.utf8)
+            )
+            return false
+        }
+        if liveView.isActive {
+            writeResponse(
+                fd: fd,
+                status: 409,
+                reason: "Conflict",
+                contentType: "text/plain; charset=utf-8",
+                headers: [:],
+                body: Data(DesktopViewStreamWire.alreadyStreamingBody.utf8)
+            )
+            return false
+        }
+        let deviceName = DesktopViewGrantHTTP.deviceName(from: headers)
+        guard let grant = viewGrantGate.current() else {
+            writeResponse(
+                fd: fd,
+                status: 403,
+                reason: "Forbidden",
+                contentType: "text/plain; charset=utf-8",
+                headers: [:],
+                body: Data(DesktopViewGrantHTTP.unavailableBody.utf8)
+            )
+            return false
+        }
+        guard grant.deviceId == deviceId else {
+            writeResponse(
+                fd: fd,
+                status: 403,
+                reason: "Forbidden",
+                contentType: "text/plain; charset=utf-8",
+                headers: [:],
+                body: Data(DesktopViewGrantHTTP.notBoundBody.utf8)
+            )
+            return false
+        }
+        let upgrade = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: \(DesktopViewStreamWire.companionUpgrade)\r\nConnection: Upgrade\r\n\r\n"
+        let upgradeData = Data(upgrade.utf8)
+        var offset = 0
+        while offset < upgradeData.count {
+            let written = upgradeData.withUnsafeBytes { raw -> Int in
+                guard let base = raw.baseAddress else { return -1 }
+                return Darwin.write(fd, base.advanced(by: offset), upgradeData.count - offset)
+            }
+            if written < 0 {
+                if errno == EINTR { continue }
+                return false
+            }
+            if written == 0 { return false }
+            offset += written
+        }
+        switch liveView.attach(fd: fd, deviceId: deviceId, deviceName: deviceName) {
+        case .success:
+            return true
+        case .failure(.alreadyStreaming):
+            return false
+        case .failure:
+            return false
         }
     }
 

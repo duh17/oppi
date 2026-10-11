@@ -20,6 +20,10 @@ import {
   CONVERSATION_STREAM_SNAPSHOT_FILE,
   serializeConversationStreamFixture,
 } from "./conversation-stream-fixtures.js";
+import {
+  DESKTOP_VIEW_STREAM_SNAPSHOT_FILE,
+  serializeDesktopViewStreamFixture,
+} from "./desktop-view-stream-fixtures.js";
 
 const messages = buildCanonicalServerMessages();
 const expectedSnapshot = serializeProtocolFixture(SERVER_MESSAGES_FIXTURE_DESCRIPTION, messages);
@@ -96,6 +100,17 @@ describe("protocol snapshots", () => {
       assertProtocolFixtureBytes(
         "conversation-stream.json",
         serializeConversationStreamFixture(),
+        tracked,
+      ),
+    ).not.toThrow();
+  });
+
+  it("matches the committed experimental desktop view stream fixture byte-for-byte", () => {
+    const tracked = readFileSync(DESKTOP_VIEW_STREAM_SNAPSHOT_FILE, "utf-8");
+    expect(() =>
+      assertProtocolFixtureBytes(
+        "desktop-view-stream.json",
+        serializeDesktopViewStreamFixture(),
         tracked,
       ),
     ).not.toThrow();

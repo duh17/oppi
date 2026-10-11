@@ -1,0 +1,153 @@
+{
+  "_meta": {
+    "description": "Experimental desktop live-view stream frames — updated by npm run protocol:fixtures:update",
+    "generated": "static",
+    "messageCount": 10
+  },
+  "messages": {
+    "phone.hello": {
+      "type": "hello",
+      "version": 1,
+      "features": [
+        "h264-annexb"
+      ],
+      "grantId": "11111111-1111-4111-8111-111111111111",
+      "deviceId": "dev-paired-1",
+      "surface": {
+        "windowId": 42,
+        "title": "Notes"
+      },
+      "width": 1280,
+      "height": 800,
+      "expiresAt": "2026-10-10T12:00:00.000Z"
+    },
+    "phone.ping": {
+      "type": "ping",
+      "t": 1770000000000
+    },
+    "phone.pong": {
+      "type": "pong",
+      "t": 1770000000000
+    },
+    "phone.ack": {
+      "type": "ack",
+      "frameId": 1,
+      "receivedAt": 1770000000100
+    },
+    "phone.error_grant_revoked": {
+      "type": "error",
+      "code": 4104,
+      "message": "View grant revoked",
+      "fatal": true
+    },
+    "companion.hello": {
+      "type": "hello",
+      "version": 1,
+      "features": [
+        "h264-annexb"
+      ],
+      "grantId": "11111111-1111-4111-8111-111111111111",
+      "deviceId": "dev-paired-1",
+      "surface": {
+        "windowId": 42,
+        "title": "Notes"
+      },
+      "width": 1280,
+      "height": 800,
+      "expiresAt": "2026-10-10T12:00:00.000Z"
+    },
+    "companion.encode": {
+      "type": "encode",
+      "frameId": 1,
+      "bitrate": 1800000,
+      "fps": 30,
+      "scale": 0.25,
+      "keyframe": true
+    },
+    "companion.error_grant_revoked": {
+      "type": "error",
+      "code": 4104,
+      "message": "View grant revoked",
+      "fatal": true
+    },
+    "compat.unknown_type": {
+      "type": "future_control",
+      "extra": true
+    },
+    "wire": {
+      "streamPath": "/desktop/view/stream",
+      "companionPath": "/view/stream",
+      "companionUpgrade": "oppi-desktop-view",
+      "version": 1,
+      "mediaHeaderBytes": 24,
+      "companionFrameJson": 1,
+      "companionFrameMedia": 2,
+      "annexB": true,
+      "mediaLayout": {
+        "version": {
+          "offset": 0,
+          "bits": 8
+        },
+        "flags": {
+          "offset": 1,
+          "bits": 8,
+          "keyframeBit": 0
+        },
+        "headerBytes": {
+          "offset": 2,
+          "bits": 8
+        },
+        "reserved": {
+          "offset": 3,
+          "bits": 8
+        },
+        "frameId": {
+          "offset": 4,
+          "bits": 32,
+          "endian": "be"
+        },
+        "capturedAtMs": {
+          "offset": 8,
+          "bits": 64,
+          "endian": "be"
+        },
+        "width": {
+          "offset": 16,
+          "bits": 16,
+          "endian": "be"
+        },
+        "height": {
+          "offset": 18,
+          "bits": 16,
+          "endian": "be"
+        },
+        "payloadBytes": {
+          "offset": 20,
+          "bits": 32,
+          "endian": "be"
+        },
+        "payload": {
+          "offset": 24,
+          "format": "h264-annexb"
+        }
+      },
+      "fatalErrorRange": {
+        "min": 4100,
+        "max": 4199
+      },
+      "errors": {
+        "protocolFatal": 4100,
+        "grantUnavailable": 4102,
+        "grantNotBound": 4103,
+        "grantRevoked": 4104,
+        "grantExpired": 4105,
+        "surfaceGone": 4106,
+        "deviceRevoked": 4107,
+        "flagOff": 4108,
+        "backpressureCap": 4109,
+        "alreadyStreaming": 4110,
+        "companionUnavailable": 4111
+      }
+    }
+  }
+}

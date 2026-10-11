@@ -84,7 +84,9 @@ export interface ServerConfig {
 
   /** Opt-in runtime experiments. Requires a server restart. */
   experimental?: {
-    serverDurable: boolean;
+    serverDurable?: boolean;
+    /** Mac → Node live H.264 view lane. Default off. */
+    desktopLiveView?: boolean;
   };
 
   /** Provider quota display options. */

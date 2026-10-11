@@ -144,6 +144,27 @@ describe("config command agent safety", () => {
     expect(bad.ok).toBe(false);
   });
 
+  it("persists the experimental desktop live view flag through config set and requires restart", async () => {
+    const dataDir = makeDataDir();
+    const options = { dataDir, captureHuman: true, forceJson: true } as const;
+    const key = "experimental.desktopLiveView";
+    expect(createCliConfigStorage(dataDir).getConfig().experimental?.desktopLiveView ?? false).toBe(
+      false,
+    );
+    const set = await runCli(["config", "set", key, "true"], options);
+    expect(set.json).toMatchObject({
+      ok: true,
+      data: {
+        key,
+        value: true,
+        restartHint: "Restart the Oppi server for this change to take effect.",
+      },
+    });
+    expect(createCliConfigStorage(dataDir).getConfig().experimental).toEqual({
+      desktopLiveView: true,
+    });
+  });
+
   it("sets the OpenAI Codex plan quota opt-in and hints that the running server needs a restart", async () => {
     const dataDir = makeDataDir();
     const key = "providerQuotas.openaiUseCodexPlan";

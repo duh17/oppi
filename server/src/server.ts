@@ -100,7 +100,10 @@ import {
 } from "./local-api-socket.js";
 import { DesktopCompanionStillClient } from "./desktop-companion-still-client.js";
 import { DesktopCompanionViewSessionClient } from "./desktop-companion-view-session-client.js";
-import type { RequestPrincipal } from "./request-principal.js";
+import { DesktopCompanionViewStreamClient } from "./desktop-companion-view-stream-client.js";
+import { DesktopViewStreamMux } from "./desktop-view-stream.js";
+import { isDeviceAccessPrincipal, type RequestPrincipal } from "./request-principal.js";
+import { DESKTOP_VIEW_STREAM_PATH } from "./types/protocol.js";
 import { allowsTrustedPrivateHttpBind, trustConfigFromServerConfig } from "./proxy-config.js";
 import {
   isAllowedWebSocketOrigin,
@@ -479,6 +482,7 @@ export class Server {
   private appEventStreamMux!: AppEventStreamMux;
   private boundSessionStreamMux!: BoundSessionStreamMux;
   private dictationStreamMux!: DictationStreamMux;
+  private desktopViewStreamMux!: DesktopViewStreamMux;
   private mirrorRuntime!: PiTuiMirrorRuntime;
   private sessionRuntimes!: SessionRuntimes;
   // REST route handler (dispatch + all HTTP handlers)
@@ -500,6 +504,7 @@ export class Server {
     DesktopCompanionViewSessionClient,
     "fetchViewSession"
   >;
+  private readonly desktopCompanionViewStreamClient: DesktopCompanionViewStreamClient;
 
   constructor(
     storage: Storage,
@@ -510,15 +515,26 @@ export class Server {
         DesktopCompanionViewSessionClient,
         "fetchViewSession"
       >;
+      desktopCompanionRuntimeRoot?: string;
+      desktopCompanionViewStreamClient?: DesktopCompanionViewStreamClient;
       onRestartAfterUpdate?: (mode: ServerRestartMode, targetVersion: string) => void;
       restartNeededVersion?: string;
     },
   ) {
     this.storage = storage;
     this.desktopCompanionStillClient =
-      options?.desktopCompanionStillClient ?? new DesktopCompanionStillClient();
+      options?.desktopCompanionStillClient ??
+      new DesktopCompanionStillClient({ runtimeRoot: options?.desktopCompanionRuntimeRoot });
     this.desktopCompanionViewSessionClient =
-      options?.desktopCompanionViewSessionClient ?? new DesktopCompanionViewSessionClient();
+      options?.desktopCompanionViewSessionClient ??
+      new DesktopCompanionViewSessionClient({
+        runtimeRoot: options?.desktopCompanionRuntimeRoot,
+      });
+    this.desktopCompanionViewStreamClient =
+      options?.desktopCompanionViewStreamClient ??
+      new DesktopCompanionViewStreamClient({
+        runtimeRoot: options?.desktopCompanionRuntimeRoot,
+      });
     this.serverUpdate = new ServerUpdateService({
       onRestart: options?.onRestartAfterUpdate,
       restartNeededVersion: options?.restartNeededVersion,
@@ -621,6 +637,11 @@ export class Server {
     });
     this.boundSessionStreamMux = new BoundSessionStreamMux(streamContext);
     this.dictationStreamMux = new DictationStreamMux(streamContext);
+    this.desktopViewStreamMux = new DesktopViewStreamMux({
+      connectCompanion: (input) => this.desktopCompanionViewStreamClient.connect(input),
+      trackConnection: (ws) => this.trackConnection(ws),
+      untrackConnection: (ws) => this.untrackConnection(ws),
+    });
 
     // Server resource utilization sampler
     this.resourceSampler = new ServerResourceSampler({
@@ -1647,7 +1668,17 @@ export class Server {
     const sessionStreamMatch = matchFocusedSessionStreamPath(url.pathname);
     const appEventStreamMatch = url.pathname === "/app/events/stream";
     const dictationStreamMatch = url.pathname === "/dictation/stream";
-    if (!sessionStreamMatch && !appEventStreamMatch && !dictationStreamMatch) {
+    const desktopViewStreamMatch = url.pathname === DESKTOP_VIEW_STREAM_PATH;
+    if (desktopViewStreamMatch) {
+      const liveViewOn = this.storage.getConfig().experimental?.desktopLiveView === true;
+      if (!liveViewOn || !isDeviceAccessPrincipal(principal) || principal.deviceId.trim() === "") {
+        writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
+          Connection: "close",
+          "Content-Length": "0",
+        });
+        return;
+      }
+    } else if (!sessionStreamMatch && !appEventStreamMatch && !dictationStreamMatch) {
       writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
         Connection: "close",
         "Content-Length": "0",
@@ -1687,6 +1718,7 @@ export class Server {
         sessionStreamMatch,
         appEventStreamMatch,
         dictationStreamMatch,
+        desktopViewStreamMatch,
         upgradeReceivedAt,
       });
     });
@@ -1698,6 +1730,7 @@ export class Server {
       sessionStreamMatch: FocusedSessionStreamPath | null;
       appEventStreamMatch: boolean;
       dictationStreamMatch: boolean;
+      desktopViewStreamMatch: boolean;
       upgradeReceivedAt: number;
     },
   ): void {
@@ -1739,6 +1772,23 @@ export class Server {
           ? { expiresAt: principal.expiresAt }
           : undefined,
       );
+      return;
+    }
+    if (route.desktopViewStreamMatch) {
+      const principal = this.socketPrincipals.get(ws);
+      if (!isDeviceAccessPrincipal(principal) || principal.deviceId.trim() === "") {
+        ws.close(1008, "Not found");
+        return;
+      }
+      const name = this.storage
+        .listDevices?.()
+        .find((device) => device.id === principal.deviceId)
+        ?.name?.trim();
+      this.desktopViewStreamMux.handleWebSocket(ws, {
+        deviceId: principal.deviceId,
+        deviceName: name && name.length > 0 ? name : undefined,
+        expiresAt: principal.expiresAt,
+      });
       return;
     }
     ws.close(1008, "Unsupported WebSocket endpoint");

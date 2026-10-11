@@ -6,6 +6,7 @@
   "files": [
     "tests/protocol-fixtures.ts",
     "tests/conversation-stream-fixtures.ts",
+    "tests/desktop-view-stream-fixtures.ts",
     "scripts/update-protocol-fixtures.ts"
   ],
   "include": []

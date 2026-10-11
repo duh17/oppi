@@ -9,6 +9,7 @@ enum DesktopCaptureCopy {
     static let previewStopped = "Preview stopped"
     static let previewUnavailable = "Preview unavailable"
     static let viewSessionCaption = "View session—not live delivery"
+    static let viewSessionLiveCaption = "View session—live"
     static let viewGrantPending = "View session—waiting for this iPhone to claim. Not live delivery."
     static let viewGrantHint =
         "Off by default. Independent of still share. This is a view session, not live delivery, not shared live."

@@ -20,6 +20,7 @@ final class DesktopCaptureSession {
 
     let shareGate: DesktopStillShareGate
     let viewGrantGate: DesktopViewGrantGate
+    let liveViewSource: DesktopLiveViewSource
 
     var stillLabel: String? { still == nil ? nil : Self.stillCaption }
     var previewLabel: String? {
@@ -81,11 +82,13 @@ final class DesktopCaptureSession {
     init(
         service: any DesktopCaptureServicing,
         shareGate: DesktopStillShareGate = DesktopStillShareGate(),
-        viewGrantGate: DesktopViewGrantGate = DesktopViewGrantGate()
+        viewGrantGate: DesktopViewGrantGate = DesktopViewGrantGate(),
+        liveViewSource: DesktopLiveViewSource = DesktopLiveViewSource()
     ) {
         self.service = service
         self.shareGate = shareGate
         self.viewGrantGate = viewGrantGate
+        self.liveViewSource = liveViewSource
         self.service.delegate = self
     }
 
@@ -169,6 +172,7 @@ final class DesktopCaptureSession {
         revokeAllGrants()
         still = nil
         failure = nil
+        publishLiveViewSource()
     }
 
     func grantView() {
@@ -207,6 +211,9 @@ final class DesktopCaptureSession {
             device = trimmedName
         } else {
             device = "this iPhone"
+        }
+        if viewGrantGate.isLiveDelivery {
+            return "View session—live to \(device)."
         }
         let remaining = DesktopViewGrantHTTP.remainingPhrase(expiresAt: grant.expiresAt, now: now)
         return "View session granted to \(device) · \(remaining). Not live delivery."
@@ -294,6 +301,17 @@ final class DesktopCaptureSession {
         still = nil
         selection = surface
         failure = nil
+        publishLiveViewSource()
+    }
+
+    private func publishLiveViewSource() {
+        guard let selection else {
+            liveViewSource.update(nil)
+            return
+        }
+        liveViewSource.update(
+            DesktopLiveViewSource.Snapshot(surface: selection, width: 0, height: 0)
+        )
     }
 
     private func haltLocalPreview(to newState: DesktopLocalPreviewState) {
@@ -434,6 +452,7 @@ extension DesktopCaptureSession: DesktopCaptureServiceDelegate {
         still = nil
         selection = nil
         failure = .unavailable
+        publishLiveViewSource()
     }
 }
 

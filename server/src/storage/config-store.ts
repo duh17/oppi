@@ -218,13 +218,27 @@ function normalizeConfig(
       errors.push("config.experimental: expected object");
     } else {
       for (const key of Object.keys(obj.experimental)) {
-        if (key !== "serverDurable" && strictUnknown)
+        if (key !== "serverDurable" && key !== "desktopLiveView" && strictUnknown) {
           errors.push(`config.experimental.${key}: unknown key`);
+        }
       }
-      if (typeof obj.experimental.serverDurable !== "boolean") {
-        errors.push("config.experimental.serverDurable: expected boolean");
-      } else {
-        config.experimental = { serverDurable: obj.experimental.serverDurable };
+      const experimental: { serverDurable?: boolean; desktopLiveView?: boolean } = {};
+      if ("serverDurable" in obj.experimental) {
+        if (typeof obj.experimental.serverDurable !== "boolean") {
+          errors.push("config.experimental.serverDurable: expected boolean");
+        } else {
+          experimental.serverDurable = obj.experimental.serverDurable;
+        }
+      }
+      if ("desktopLiveView" in obj.experimental) {
+        if (typeof obj.experimental.desktopLiveView !== "boolean") {
+          errors.push("config.experimental.desktopLiveView: expected boolean");
+        } else {
+          experimental.desktopLiveView = obj.experimental.desktopLiveView;
+        }
+      }
+      if (Object.keys(experimental).length > 0) {
+        config.experimental = experimental;
       }
     }
   }

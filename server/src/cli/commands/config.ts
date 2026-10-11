@@ -40,6 +40,10 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
     type: "boolean",
     desc: "Make durable sessions available; only creates that ask for engine durable use it (experimental; default false; restart). Existing durable sessions keep working when off",
   },
+  "experimental.desktopLiveView": {
+    type: "boolean",
+    desc: "Mac live H.264 view lane to paired devices (experimental; default false; restart)",
+  },
   tls: { type: "json", desc: "TLS config JSON object" },
   "tls.mode": { type: "string", desc: "TLS mode" },
   "tls.certPath": { type: "string", desc: "Manual TLS certificate path" },

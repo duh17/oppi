@@ -799,6 +799,105 @@ export interface ConversationStreamAttach {
   requestId?: string;
 }
 
+// ── Desktop live view stream (experimental, capabilities.desktopLiveView v1) ──
+//
+// Dedicated WSS `/desktop/view/stream` plus companion `/view/stream` upgrade.
+// Control is JSON text (phone) or JSON companion frames; video is binary with a
+// fixed 24-byte header. Outside ServerMessage/ClientMessage until slice 2.
+// Fatal application error codes 4100–4199 must not trigger reconnect.
+
+export const DESKTOP_VIEW_STREAM_PATH = "/desktop/view/stream";
+export const DESKTOP_VIEW_COMPANION_PATH = "/view/stream";
+export const DESKTOP_VIEW_COMPANION_UPGRADE = "oppi-desktop-view";
+export const DESKTOP_VIEW_WIRE_VERSION = 1;
+export const DESKTOP_VIEW_FEATURE_H264_ANNEXB = "h264-annexb";
+
+/** Companion mux: JSON UTF-8 control. */
+export const DESKTOP_VIEW_COMPANION_FRAME_JSON = 1;
+/** Companion mux: phone-wire media bytes (forwarded unchanged on WSS binary). */
+export const DESKTOP_VIEW_COMPANION_FRAME_MEDIA = 2;
+
+/** Phone-wire media header size. Payload is Annex-B H.264. */
+export const DESKTOP_VIEW_MEDIA_HEADER_BYTES = 24;
+
+export const DESKTOP_VIEW_FATAL_ERROR_MIN = 4100;
+export const DESKTOP_VIEW_FATAL_ERROR_MAX = 4199;
+
+export const DESKTOP_VIEW_ERROR = {
+  protocolFatal: 4100,
+  grantUnavailable: 4102,
+  grantNotBound: 4103,
+  grantRevoked: 4104,
+  grantExpired: 4105,
+  surfaceGone: 4106,
+  deviceRevoked: 4107,
+  flagOff: 4108,
+  backpressureCap: 4109,
+  alreadyStreaming: 4110,
+  companionUnavailable: 4111,
+} as const;
+
+export type DesktopViewErrorCode = (typeof DESKTOP_VIEW_ERROR)[keyof typeof DESKTOP_VIEW_ERROR];
+
+export function isDesktopViewFatalError(code: number): boolean {
+  return code >= DESKTOP_VIEW_FATAL_ERROR_MIN && code <= DESKTOP_VIEW_FATAL_ERROR_MAX;
+}
+
+export type DesktopViewSurface = {
+  windowId: number;
+  title: string;
+};
+
+export type DesktopViewHello = {
+  type: "hello";
+  version: number;
+  features: string[];
+  grantId: string;
+  deviceId: string;
+  surface: DesktopViewSurface;
+  width: number;
+  height: number;
+  expiresAt?: string;
+};
+
+export type DesktopViewEncode = {
+  type: "encode";
+  frameId: number;
+  bitrate: number;
+  fps: number;
+  scale: number;
+  keyframe?: boolean;
+};
+
+export type DesktopViewAck = {
+  type: "ack";
+  frameId: number;
+  receivedAt: number;
+};
+
+export type DesktopViewPing = {
+  type: "ping";
+  t: number;
+};
+
+export type DesktopViewPong = {
+  type: "pong";
+  t: number;
+};
+
+export type DesktopViewErrorMessage = {
+  type: "error";
+  code: number;
+  message: string;
+  fatal?: boolean;
+};
+
+export type DesktopViewPhoneControl =
+  DesktopViewHello | DesktopViewAck | DesktopViewPing | DesktopViewPong | DesktopViewErrorMessage;
+
+export type DesktopViewCompanionControl =
+  DesktopViewHello | DesktopViewEncode | DesktopViewErrorMessage;
+
 // ── HTTP model catalog (GET /models) ──
 
 export type ModelAuthKind = "subscription" | "local" | "apiKey";

@@ -325,6 +325,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
         durableSessions: ctx.sessions.durableSessionsAvailable() ? { version: 1 } : undefined,
         // Experimental: `attach` on a durable session's focused stream sends snapshot/update.
         conversationStream: ctx.sessions.conversationStreamAvailable() ? { version: 1 } : undefined,
+        desktopLiveView: config.experimental?.desktopLiveView === true ? { version: 1 } : undefined,
         extensionNativeUI: {
           version: 1,
           capabilities: [...EXTENSION_NATIVE_UI_SERVER_CAPABILITIES],

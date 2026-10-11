@@ -19,6 +19,7 @@ This page keeps the rules that always apply. Read only the detail page for the a
 | [Read models and event stream](architecture-server/read-models.md) | Session list and history read models; App event stream |
 | [Tool inspection](architecture-server/tool-inspection.md) | Producer facts; mobile-renderer registry; full tool-output ownership |
 | [Durable conversation stream](architecture-server/durable-conversation-stream.md) | Experimental `attach` / `snapshot` / `update` replica of a durable conversation on the focused socket |
+| [Desktop live-view lane](architecture-server/desktop-live-view.md) | Experimental Mac → Node H.264 view stream, rate control, companion upgrade, bench |
 | [Cleanup targets and code map](architecture-server/code-map.md) | Server cleanup targets; Where to look in code |
 
 ## Server responsibilities

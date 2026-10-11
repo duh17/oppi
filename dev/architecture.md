@@ -124,6 +124,7 @@ Oppi keeps workspace navigation HTTP-first. WebSockets carry live state where st
 | Focused session catch-up                    | HTTP GET                    | Missed durable focused-session events after reconnect                                                    |
 | Mirror bridge                               | Bidirectional WebSocket     | Terminal-owned session registration, takeover, commands, queue, extension UI proxying                    |
 | Dictation stream                            | Bidirectional JSON + binary | Dictation control frames, PCM audio, transcript events                                                   |
+| Desktop live-view stream                    | Bidirectional JSON + binary | Experimental H.264 of a granted Mac window; device `at_` only; off unless `experimental.desktopLiveView` |
 
 ## Prompt to pixel
 

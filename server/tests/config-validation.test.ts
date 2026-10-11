@@ -45,6 +45,17 @@ describe("Storage config validation", () => {
     expect(Storage.getDefaultConfig(dir).experimental?.serverDurable ?? false).toBe(false);
   });
 
+  it.each([true, false])("validates the opt-in desktop live view boolean %s", (desktopLiveView) => {
+    const result = Storage.validateConfig(
+      { ...Storage.getDefaultConfig(dir), experimental: { desktopLiveView } },
+      dir,
+      true,
+    );
+    expect(result.valid).toBe(true);
+    expect(result.config?.experimental?.desktopLiveView).toBe(desktopLiveView);
+    expect(Storage.getDefaultConfig(dir).experimental?.desktopLiveView ?? false).toBe(false);
+  });
+
   it.each(["true", 1, null, {}])("rejects malformed durable flag %j", (serverDurable) => {
     const result = Storage.validateConfig(
       { ...Storage.getDefaultConfig(dir), experimental: { serverDurable } },

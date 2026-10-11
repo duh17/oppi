@@ -13,21 +13,30 @@ final class MacCaptureRuntime {
     init() {
         let shareGate = DesktopStillShareGate()
         let viewGrantGate = DesktopViewGrantGate()
+        let liveViewSource = DesktopLiveViewSource()
+        let sck = ScreenCaptureKitDesktopCaptureService()
         session = DesktopCaptureSession(
-            service: ScreenCaptureKitDesktopCaptureService(),
+            service: sck,
             shareGate: shareGate,
-            viewGrantGate: viewGrantGate
+            viewGrantGate: viewGrantGate,
+            liveViewSource: liveViewSource
         )
         guard !Self.isRunningUnderTests else {
             ownerSocket = nil
             return
         }
         let captureSession = session
+        let liveView = DesktopLiveViewSession(
+            grantGate: viewGrantGate,
+            source: liveViewSource,
+            capturer: MainActorLiveViewCapturer(service: sck)
+        )
         var startedSocket: DesktopCompanionOwnerSocket?
         do {
             let socket = DesktopCompanionOwnerSocket(
                 shareGate: shareGate,
-                viewGrantGate: viewGrantGate
+                viewGrantGate: viewGrantGate,
+                liveView: liveView
             )
             try socket.start()
             startedSocket = socket

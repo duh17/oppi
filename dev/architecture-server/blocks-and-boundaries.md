@@ -55,4 +55,5 @@ WebSocket upgrade paths are explicit:
 | `/control-sessions/:sessionId/stream`                 | `BoundSessionStreamMux` | control-focused timeline through the same runtime path   |
 | `/app/events/stream`                                  | `AppEventStreamMux`     | app-wide session row and extension UI attention events   |
 | `/dictation/stream`                                   | `DictationStreamMux`    | dictation control and binary audio                       |
+| `/desktop/view/stream`                                | `DesktopViewStreamMux`  | experimental live H.264 of a granted Mac window          |
 | `/mirror/v1/bridge` (owner Unix socket only)          | `PiTuiMirrorRuntime`    | terminal Pi TUI mirror registration and command proxying |
