@@ -15,7 +15,7 @@ export interface PushConfig {
 /** Body of `PUT /me/push-registration` (spec §5). */
 export interface PushRegistrationRequest {
   keyId: string;
-  /** Base64url of the raw X-Wing public key (1216 bytes). */
+  /** Base64url of the raw X25519 public key (32 bytes). */
   publicKey: string;
   /** Relay send permission minted by the phone for this server. */
   sendToken: string;
@@ -34,7 +34,7 @@ export interface PushRegistration {
   /** `DeviceRecord.id` of the registering device. */
   deviceId: string;
   keyId: string;
-  /** Base64url of the raw X-Wing public key. */
+  /** Base64url of the raw X25519 public key. */
   publicKey: string;
   sendToken: string;
   registeredAt: number;

@@ -11,8 +11,8 @@ import { openPushEnvelopeForTest } from "./helpers/push-envelope-open.js";
 
 const vectors = JSON.parse(
   readFileSync(new URL("../../protocol/push/vectors/cryptokit-hpke.json", import.meta.url), "utf8"),
-) as { recipient: { seed: string; publicKey: string; keyId: string } };
-const recipientSeed = Buffer.from(vectors.recipient.seed, "base64url");
+) as { recipient: { privateKey: string; publicKey: string; keyId: string } };
+const recipientPrivateKey = Buffer.from(vectors.recipient.privateKey, "base64url");
 
 const PRIMARY = "https://primary.example.test";
 const STANDBY = "https://standby.example.test";
@@ -117,13 +117,11 @@ describe("PushSender", () => {
     expect(JSON.stringify(calls)).not.toContain("Deploy");
     expect(JSON.stringify(calls)).not.toContain("Needs Approval");
 
-    const opened = await Promise.all(
-      calls.map((call) =>
-        openPushEnvelopeForTest(call.body.envelope, {
-          recipientSeed,
-          serverPublicKey: signing.publicKey,
-        }),
-      ),
+    const opened = calls.map((call) =>
+      openPushEnvelopeForTest(call.body.envelope, {
+        recipientPrivateKey,
+        serverPublicKey: signing.publicKey,
+      }),
     );
     expect(opened.map((plaintext) => plaintext.seq)).toEqual([1, 2]);
     expect(opened[0]).toMatchObject({ ...notification, v: 1 });

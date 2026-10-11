@@ -1,30 +1,32 @@
 /**
- * Push envelope v1 (protocol/push/spec.md §2): HPKE X-Wing encryption to the phone's push
- * key, signed with the server's Ed25519 identity key.
+ * Push envelope v1 (protocol/push/spec.md §2): HPKE (DHKEM(X25519), HKDF-SHA256,
+ * ChaCha20-Poly1305) encryption to the phone's push key, signed with the server's Ed25519
+ * identity key.
  *
  * `SealedPushEnvelope` is the only thing the relay client sends, and only
  * `sealPushEnvelope` makes one. There is no plaintext push path.
  */
 
 import { createHash, sign as signEd25519, type KeyObject } from "node:crypto";
-import { Aes256Gcm, CipherSuite, HkdfSha256 } from "@hpke/core";
-import { XWing } from "@hpke/hybridkem-x-wing";
 import type { ProgramStatusKind, PushEvent } from "../types.js";
+import { HPKE_TAG_BYTES, HPKE_X25519_KEY_BYTES, hpkeSeal } from "./hpke.js";
 
 export const PUSH_ENVELOPE_VERSION = 0x01;
 export const PUSH_KEY_ID_BYTES = 16;
-export const XWING_PUBLIC_KEY_BYTES = 1216;
-export const XWING_ENC_BYTES = 1120;
+/** Raw X25519 push public key and HPKE `enc`. */
+export const PUSH_PUBLIC_KEY_BYTES = HPKE_X25519_KEY_BYTES;
+const PUSH_ENC_BYTES = HPKE_X25519_KEY_BYTES;
 export const PUSH_PADDED_PLAINTEXT_BYTES = 512;
 export const PUSH_MAX_PLAINTEXT_JSON_BYTES = PUSH_PADDED_PLAINTEXT_BYTES - 2;
-const AEAD_TAG_BYTES = 16;
-export const PUSH_CIPHERTEXT_BYTES = PUSH_PADDED_PLAINTEXT_BYTES + AEAD_TAG_BYTES;
-export const PUSH_SIGNATURE_BYTES = 64;
-const HEADER_BYTES = 1 + PUSH_KEY_ID_BYTES;
-const SIGNED_BYTES = HEADER_BYTES + XWING_ENC_BYTES + PUSH_CIPHERTEXT_BYTES;
-export const PUSH_ENVELOPE_BYTES = SIGNED_BYTES + PUSH_SIGNATURE_BYTES;
+const PUSH_CIPHERTEXT_BYTES = PUSH_PADDED_PLAINTEXT_BYTES + HPKE_TAG_BYTES;
+const PUSH_SIGNATURE_BYTES = 64;
+export const PUSH_HEADER_BYTES = 1 + PUSH_KEY_ID_BYTES;
+export const PUSH_CIPHERTEXT_OFFSET = PUSH_HEADER_BYTES + PUSH_ENC_BYTES;
+export const PUSH_SIGNED_BYTES = PUSH_CIPHERTEXT_OFFSET + PUSH_CIPHERTEXT_BYTES;
+/** 641 bytes: `version || kid || enc || ct || sig`. */
+export const PUSH_ENVELOPE_BYTES = PUSH_SIGNED_BYTES + PUSH_SIGNATURE_BYTES;
 
-const HPKE_INFO = new TextEncoder().encode("oppi-push-envelope-v1");
+export const PUSH_HPKE_INFO = Buffer.from("oppi-push-envelope-v1", "utf8");
 const SIGNATURE_LABEL = Buffer.from("oppi-push-envelope-v1-sig\0", "utf8");
 
 declare const sealedPushEnvelope: unique symbol;
@@ -47,9 +49,7 @@ export interface PushPlaintext {
   body: string;
 }
 
-const suite = new CipherSuite({ kem: new XWing(), kdf: new HkdfSha256(), aead: new Aes256Gcm() });
-
-/** `kid`: the first 16 bytes of SHA-256 of the raw X-Wing public key, base64url. */
+/** `kid`: the first 16 bytes of SHA-256 of the raw X25519 public key, base64url. */
 export function pushKeyId(publicKey: Uint8Array): string {
   return createHash("sha256")
     .update(publicKey)
@@ -104,7 +104,7 @@ export function padPushPlaintext(json: Uint8Array): Buffer {
 }
 
 export interface SealPushEnvelopeInput {
-  /** Raw X-Wing public key the phone registered (1216 bytes). */
+  /** Raw X25519 public key the phone registered (32 bytes). */
   recipientPublicKey: Uint8Array;
   plaintext: PushPlaintext;
   /** The server's Ed25519 identity private key. */
@@ -112,7 +112,7 @@ export interface SealPushEnvelopeInput {
 }
 
 /** Encrypt, sign, and encode one push. Throws on a malformed key; never falls back. */
-export async function sealPushEnvelope(input: SealPushEnvelopeInput): Promise<SealedPushEnvelope> {
+export function sealPushEnvelope(input: SealPushEnvelopeInput): SealedPushEnvelope {
   return sealPaddedPlaintext({
     recipientPublicKey: input.recipientPublicKey,
     paddedPlaintext: padPushPlaintext(encodePushPlaintextJSON(input.plaintext)),
@@ -124,33 +124,30 @@ export async function sealPushEnvelope(input: SealPushEnvelopeInput): Promise<Se
  * Seal exact padded bytes. Exported for the vector generator, which also needs envelopes with
  * deliberately invalid padding; production code calls `sealPushEnvelope`.
  */
-export async function sealPaddedPlaintext(input: {
+export function sealPaddedPlaintext(input: {
   recipientPublicKey: Uint8Array;
   paddedPlaintext: Uint8Array;
   signingKey: KeyObject;
-}): Promise<SealedPushEnvelope> {
+}): SealedPushEnvelope {
   const { recipientPublicKey, paddedPlaintext, signingKey } = input;
-  if (recipientPublicKey.length !== XWING_PUBLIC_KEY_BYTES) {
-    throw new Error("push public key must be a 1216-byte X-Wing key");
+  if (recipientPublicKey.length !== PUSH_PUBLIC_KEY_BYTES) {
+    throw new Error("push public key must be a 32-byte X25519 key");
   }
   if (paddedPlaintext.length !== PUSH_PADDED_PLAINTEXT_BYTES) {
     throw new Error("padded push plaintext must be 512 bytes");
   }
 
-  const header = Buffer.alloc(HEADER_BYTES);
+  const header = Buffer.alloc(PUSH_HEADER_BYTES);
   header[0] = PUSH_ENVELOPE_VERSION;
   Buffer.from(pushKeyId(recipientPublicKey), "base64url").copy(header, 1);
 
-  const recipientKey = await suite.kem.importKey("raw", toArrayBuffer(recipientPublicKey), true);
-  const sender = await suite.createSenderContext({
-    recipientPublicKey: recipientKey,
-    info: toArrayBuffer(HPKE_INFO),
+  const { enc, ciphertext } = hpkeSeal({
+    recipientPublicKey,
+    info: PUSH_HPKE_INFO,
+    aad: header,
+    plaintext: paddedPlaintext,
   });
-  const ciphertext = Buffer.from(
-    await sender.seal(toArrayBuffer(paddedPlaintext), toArrayBuffer(header)),
-  );
-  const enc = Buffer.from(sender.enc);
-  if (enc.length !== XWING_ENC_BYTES || ciphertext.length !== PUSH_CIPHERTEXT_BYTES) {
+  if (enc.length !== PUSH_ENC_BYTES || ciphertext.length !== PUSH_CIPHERTEXT_BYTES) {
     throw new Error("unexpected HPKE output size");
   }
 
@@ -160,8 +157,4 @@ export async function sealPaddedPlaintext(input: {
     throw new Error("push signing key must be Ed25519");
   }
   return Buffer.concat([signed, signature]).toString("base64url") as SealedPushEnvelope;
-}
-
-function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }

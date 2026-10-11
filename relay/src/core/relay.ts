@@ -26,8 +26,8 @@ import {
 } from "./store.js";
 import { parseCertificate, pemToDer, type Certificate } from "./x509.js";
 
-export const ENVELOPE_BYTES = 1729;
-export const ENVELOPE_BASE64URL_LENGTH = 2306;
+export const ENVELOPE_BYTES = 641;
+export const ENVELOPE_BASE64URL_LENGTH = 855;
 const ENVELOPE_VERSION = 0x01;
 const MAX_BODY_BYTES = 8 * 1024;
 const MAX_TTL_SECONDS = 3600;

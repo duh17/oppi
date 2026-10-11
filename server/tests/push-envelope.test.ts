@@ -11,7 +11,8 @@ import {
   sealPushEnvelope,
   type PushPlaintext,
 } from "../src/push/envelope.js";
-import { openPushEnvelopeForTest, openHpkeForTest } from "./helpers/push-envelope-open.js";
+import { hpkeOpen } from "../src/push/hpke.js";
+import { openPushEnvelopeForTest } from "./helpers/push-envelope-open.js";
 
 const vectorsDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -20,14 +21,14 @@ const vectorsDir = path.resolve(
 
 interface CryptoKitVectors {
   info: string;
-  recipient: { seed: string; publicKey: string; keyId: string };
+  recipient: { privateKey: string; publicKey: string; keyId: string };
   cases: Array<{ plaintext: string; aad: string; enc: string; ciphertext: string }>;
 }
 
 const cryptokit = JSON.parse(
   readFileSync(path.join(vectorsDir, "cryptokit-hpke.json"), "utf8"),
 ) as CryptoKitVectors;
-const recipientSeed = Buffer.from(cryptokit.recipient.seed, "base64url");
+const recipientPrivateKey = Buffer.from(cryptokit.recipient.privateKey, "base64url");
 const recipientPublicKey = Buffer.from(cryptokit.recipient.publicKey, "base64url");
 
 function plaintext(overrides: Partial<PushPlaintext> = {}): PushPlaintext {
@@ -46,11 +47,11 @@ function plaintext(overrides: Partial<PushPlaintext> = {}): PushPlaintext {
 }
 
 describe("push envelope v1 against CryptoKit", () => {
-  it("opens every HPKE message CryptoKit sealed to the push key", async () => {
+  it("opens every HPKE message CryptoKit sealed to the push key", () => {
     expect(cryptokit.cases.length).toBeGreaterThan(0);
     for (const vector of cryptokit.cases) {
-      const opened = await openHpkeForTest({
-        recipientSeed,
+      const opened = hpkeOpen({
+        recipientPrivateKey,
         info: Buffer.from(cryptokit.info, "base64url"),
         aad: Buffer.from(vector.aad, "base64url"),
         enc: Buffer.from(vector.enc, "base64url"),
@@ -68,13 +69,13 @@ describe("push envelope v1 against CryptoKit", () => {
 describe("sealPushEnvelope", () => {
   const { privateKey: signingKey, publicKey: serverPublicKey } = generateKeyPairSync("ed25519");
 
-  it("produces a fixed-size envelope that verifies and opens to the plaintext", async () => {
-    const short = await sealPushEnvelope({
+  it("produces a fixed-size envelope that verifies and opens to the plaintext", () => {
+    const short = sealPushEnvelope({
       recipientPublicKey,
       plaintext: plaintext({ subtitle: "a" }),
       signingKey,
     });
-    const long = await sealPushEnvelope({
+    const long = sealPushEnvelope({
       recipientPublicKey,
       plaintext: plaintext({ subtitle: "b".repeat(300) }),
       signingKey,
@@ -82,30 +83,30 @@ describe("sealPushEnvelope", () => {
     expect(Buffer.from(short, "base64url")).toHaveLength(PUSH_ENVELOPE_BYTES);
     expect(Buffer.from(long, "base64url")).toHaveLength(PUSH_ENVELOPE_BYTES);
 
-    const opened = await openPushEnvelopeForTest(short, { recipientSeed, serverPublicKey });
+    const opened = openPushEnvelopeForTest(short, { recipientPrivateKey, serverPublicKey });
     expect(opened).toEqual(plaintext({ subtitle: "a" }));
   });
 
-  it("rejects a signature by another server key", async () => {
-    const sealed = await sealPushEnvelope({
+  it("rejects a signature by another server key", () => {
+    const sealed = sealPushEnvelope({
       recipientPublicKey,
       plaintext: plaintext(),
       signingKey,
     });
     const other = generateKeyPairSync("ed25519").publicKey;
-    await expect(
-      openPushEnvelopeForTest(sealed, { recipientSeed, serverPublicKey: other }),
-    ).rejects.toThrow("signature");
+    expect(() =>
+      openPushEnvelopeForTest(sealed, { recipientPrivateKey, serverPublicKey: other }),
+    ).toThrow("signature");
   });
 
-  it("refuses a key that is not a 1216-byte X-Wing public key", async () => {
-    await expect(
+  it("refuses a key that is not a 32-byte X25519 public key", () => {
+    expect(() =>
       sealPushEnvelope({
-        recipientPublicKey: recipientPublicKey.subarray(0, 32),
+        recipientPublicKey: Buffer.concat([recipientPublicKey, Buffer.alloc(1)]),
         plaintext: plaintext(),
         signingKey,
       }),
-    ).rejects.toThrow("X-Wing");
+    ).toThrow("32-byte X25519");
   });
 });
 

@@ -21,7 +21,7 @@ sequenceDiagram
   App->>Relay: POST /v1/challenge
   App->>Relay: POST /v1/registrations (APNs token, App Attest or unsupported)
   App->>Relay: POST /v1/registrations/{id}/permissions
-  App->>Srv: PUT /me/push-registration (X-Wing public key + send token, signed by device key)
+  App->>Srv: PUT /me/push-registration (X25519 push public key + send token, signed by device key)
   Srv-->>App: server Ed25519 public key
   Srv->>Relay: POST /v1/push (Bearer send token, sealed envelope)
   Relay->>APNs: fixed alert template + envelope
@@ -35,10 +35,10 @@ sequenceDiagram
 | --- | --- | --- | --- |
 | Server identity key | Oppi server (`identity_ed25519`) | Ed25519 | Signs every envelope. The app pins its fingerprint `sha256:<base64url(SHA-256(raw public key))>` at pairing. |
 | Device key | App (Secure Enclave when available) | ECDSA P-256 | Existing pairing key. Signs the push registration so a TLS-terminating proxy cannot swap the push key or send token. |
-| Push key | App, one per paired server | X-Wing (ML-KEM-768 + X25519) | HPKE recipient key. The 32-byte seed lives in the keychain shared with the extension, `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. Never leaves the phone. |
+| Push key | App, one per paired server | X25519 | HPKE recipient key. The 32-byte raw private key lives in the keychain shared with the extension, `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`. Never leaves the phone. |
 | App Attest key | App (Secure Enclave) | ECDSA P-256 | Proves a genuine Oppi build to the relay at registration; signs relay management requests. |
 
-`keyId` (`kid`) is the first 16 bytes of `SHA-256(push public key)`; text form is base64url
+`keyId` (`kid`) is the first 16 bytes of `SHA-256(raw 32-byte push public key)`; text form is base64url
 without padding (22 characters).
 
 The app rotates a push key after 30 days at its next registration and keeps the previous
@@ -54,22 +54,24 @@ All lengths are bytes. Base64url is RFC 4648 §5 without padding.
 | --- | --- | --- |
 | 0 | 1 | `version` = `0x01` |
 | 1 | 16 | `kid` |
-| 17 | 1120 | `enc`: X-Wing encapsulated key |
-| 1137 | 528 | `ct`: HPKE ciphertext of the 512-byte padded plaintext plus a 16-byte tag |
-| 1665 | 64 | `sig`: Ed25519 signature |
+| 17 | 32 | `enc`: HPKE encapsulated key (the sender's ephemeral X25519 public key) |
+| 49 | 528 | `ct`: HPKE ciphertext of the 512-byte padded plaintext plus a 16-byte tag |
+| 577 | 64 | `sig`: Ed25519 signature |
 
-Total: **1729 bytes**, **2306** base64url characters. Every v1 envelope has exactly this
+Total: **641 bytes**, **855** base64url characters. Every v1 envelope has exactly this
 length, so size reveals nothing about content.
 
 ### 2.1 Encryption
 
 HPKE (RFC 9180) base mode, single shot, with ciphersuite:
 
-- KEM: X-Wing, `0x647a` (CryptoKit `XWingMLKEM768X25519`, draft-connolly-cfrg-xwing-kem).
+- KEM: DHKEM(X25519, HKDF-SHA256), `0x0020`.
 - KDF: HKDF-SHA256, `0x0001`.
-- AEAD: AES-256-GCM, `0x0002`.
+- AEAD: ChaCha20-Poly1305, `0x0003`.
 
-CryptoKit names this suite `HPKE.Ciphersuite.XWingMLKEM768X25519_SHA256_AES_GCM_256`.
+CryptoKit names this suite `HPKE.Ciphersuite.Curve25519_SHA256_ChachaPoly`. The push public
+key is the raw 32-byte X25519 key (`Curve25519.KeyAgreement.PublicKey.rawRepresentation`).
+Both ends reject an all-zero X25519 shared secret (RFC 9180 §7.1.4).
 
 - `info` = UTF-8 `oppi-push-envelope-v1`
 - `aad` = envelope bytes `[0, 17)` (`version || kid`)
@@ -77,7 +79,7 @@ CryptoKit names this suite `HPKE.Ciphersuite.XWingMLKEM768X25519_SHA256_AES_GCM_
 ### 2.2 Signature
 
 `sig` = Ed25519 over UTF-8 `oppi-push-envelope-v1-sig`, one `0x00` byte, then envelope
-bytes `[0, 1665)`. The signature covers the version, `kid`, `enc`, and `ct`.
+bytes `[0, 577)`. The signature covers the version, `kid`, `enc`, and `ct`.
 
 ### 2.3 Padded plaintext
 
@@ -121,7 +123,7 @@ Receivers ignore unknown fields.
 
 In order. Any failure shows the fixed fallback (§4) and nothing from the push.
 
-1. `e` in the APNs payload decodes to exactly 1729 bytes with `version` `0x01`.
+1. `e` in the APNs payload decodes to exactly 641 bytes with `version` `0x01`.
 2. A push key with this `kid` exists on the phone. Its record names the paired server and
    holds that server's Ed25519 public key, checked against the pinned fingerprint when
    stored.
@@ -224,10 +226,10 @@ was revoked, or its registration was deleted.
 **`POST /v1/push`**
 
 ```json
-{ "envelope": "<2306 base64url chars>", "collapseId": "<22 base64url chars>", "ttl": 3600 }
+{ "envelope": "<855 base64url chars>", "collapseId": "<22 base64url chars>", "ttl": 3600 }
 ```
 
-- `envelope`: required; must decode to exactly 1729 bytes starting with `0x01`
+- `envelope`: required; must decode to exactly 641 bytes starting with `0x01`
   (`413 envelope_size` otherwise, `400 bad_envelope` for a wrong version or alphabet). The
   relay does not and cannot open it.
 - `collapseId`: optional; keyed hash chosen by the server (§5).
@@ -290,7 +292,7 @@ any field from a push that failed a check. Without Apple's
 ```json
 {
   "keyId": "<22 chars>",
-  "publicKey": "<base64url 1216 bytes>",
+  "publicKey": "<base64url 32 bytes>",
   "sendToken": "osp1....",
   "relay": "<primary origin>",
   "issuedAt": 1760000000000,
@@ -338,9 +340,11 @@ any field from a push that failed a check. Without Apple's
 IP address (to the relay); the time of each push; one fixed size; the collapse ID's
 per-device-and-session linkability; the attested flag; registration and permission counts.
 
-**Post-quantum:** X-Wing protects recorded ciphertext against a future quantum computer.
-The Ed25519 signature is classical; forging it would need a quantum computer at the time
-of the attack, so there is nothing to harvest.
+**Post-quantum:** out of scope for v1. The KEM is classical X25519, so someone who records
+envelopes today could read them with a future quantum computer. A post-quantum or hybrid KEM
+can return later as a new envelope `version`. The Ed25519 signature is classical too;
+forging it would need a quantum computer at the time of the attack, so there is nothing to
+harvest.
 
 **Out of scope for v1:** notification rules, a delivery log, Live Activities, a standby on
 another cloud, and the independent cryptographic review.
@@ -351,7 +355,7 @@ another cloud, and the independent cryptographic review.
 (`cd server && npm run push:vectors:update`, which runs
 `protocol/push/scripts/generate-vectors.sh`, and `npm run push:canary -- --write-capture`):
 
-- `cryptokit-hpke.json`: HPKE ciphertexts sealed by CryptoKit to a test X-Wing key; the server
+- `cryptokit-hpke.json`: HPKE ciphertexts sealed by CryptoKit to a test X25519 key; the server
   suite opens them.
 - `server-envelopes.json`: envelopes sealed and signed by the server code; the Apple tests
   verify and open them and check that each negative case fails for its named reason. Also the
@@ -362,6 +366,10 @@ another cloud, and the independent cryptographic review.
 
 Ordinary tests never rewrite them.
 
+The server's HPKE code (`server/src/push/hpke.ts`, Node's built-in `crypto` only) is also
+checked against RFC 9180 Appendix A.2.1, the official vector for this suite in base mode
+(`server/tests/fixtures/hpke-rfc9180-a2.json`).
+
 ## 8. Canary proof
 
 `cd server && npm run push:canary` (needs `npm ci` in `relay/`) runs real server sealing
@@ -370,12 +378,3 @@ the local Workers runtime, to a mock APNs. Session name, session ID, workspace I
 reason are canary strings. The run fails if any canary appears, raw or base64, base64url,
 hex, UTF-16, or JSON-escaped, in the relay's input, logs, storage, or APNs output, or if any
 captured envelope does not open back to them. It does not contact real APNs or Cloudflare.
-
-## 9. Interoperability
-
-X-Wing in CryptoKit (iOS 26 and macOS 26 SDKs) and `@hpke/hybridkem-x-wing` 0.7.0 (written
-against draft-connolly-cfrg-xwing-kem-06) interoperate in both directions: the same 32-byte
-seed gives identical public keys, and each side opens the other's HPKE messages (the vectors
-above). `@noble/post-quantum` 0.7.1 (draft -10) also derived the same public key from that
-seed and decapsulated a CryptoKit ciphertext to the same shared secret when this was checked,
-so drafts -06 and -10 agree on the wire for this suite.

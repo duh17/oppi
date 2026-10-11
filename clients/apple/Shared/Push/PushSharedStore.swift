@@ -15,8 +15,8 @@ enum PushSharedStore {
     // MARK: - Push keys
 
     struct KeyRecord: Codable, Equatable, Sendable {
-        /// 32-byte X-Wing private key seed.
-        let seed: Data
+        /// 32-byte raw X25519 private key.
+        let privateKey: Data
         let serverId: String
         /// Raw Ed25519 identity key of that server, checked against its pinned fingerprint.
         let serverPublicKey: Data
@@ -24,13 +24,13 @@ enum PushSharedStore {
 
         var keyId: Data {
             get throws {
-                let key = try XWingMLKEM768X25519.PrivateKey(seedRepresentation: seed, publicKey: nil)
+                let key = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: privateKey)
                 return PushEnvelope.keyId(forPublicKey: key.publicKey.rawRepresentation)
             }
         }
 
         var material: PushKeyMaterial {
-            PushKeyMaterial(seed: seed, serverPublicKey: serverPublicKey, serverId: serverId)
+            PushKeyMaterial(privateKey: privateKey, serverPublicKey: serverPublicKey, serverId: serverId)
         }
     }
 

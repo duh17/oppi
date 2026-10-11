@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerate the push test vectors (protocol/push/spec.md §7). Ordinary tests never run this.
 # CryptoKit first: the server generator seals to the CryptoKit-derived recipient key.
-# Needs macOS 26+ (CryptoKit X-Wing) and `npm ci` in server/.
+# Needs macOS 14+ (CryptoKit HPKE) and `npm ci` in server/.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

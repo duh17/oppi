@@ -14,7 +14,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Push
 /// 1. gets this device's APNs token and notification permission;
 /// 2. registers the token with the relay, with App Attest when the device supports it;
 /// 3. mints a send permission for this server at the relay;
-/// 4. sends the server this device's X-Wing public key for that server and the send
+/// 4. sends the server this device's X25519 push public key for that server and the send
 ///    token, signed by the device's pairing key;
 /// 5. checks the server's Ed25519 key against the fingerprint pinned at pairing and stores
 ///    it with the private key for the Notification Service Extension.
@@ -172,7 +172,7 @@ final class PushRegistration {
             throw PushRegistrationError.serverKeyMismatch
         }
         try PushSharedStore.saveKey(PushSharedStore.KeyRecord(
-            seed: key.privateKey.seedRepresentation,
+            privateKey: key.privateKey.rawRepresentation,
             serverId: serverId,
             serverPublicKey: serverPublicKey,
             createdAt: key.createdAt
@@ -198,7 +198,7 @@ final class PushRegistration {
     // MARK: - Keys
 
     private struct PendingKey {
-        let privateKey: XWingMLKEM768X25519.PrivateKey
+        let privateKey: Curve25519.KeyAgreement.PrivateKey
         let createdAt: Date
     }
 
@@ -206,10 +206,10 @@ final class PushRegistration {
     private func currentOrNewKey(serverId: String) throws -> PendingKey {
         if let newest = PushSharedStore.allKeys().first(where: { $0.serverId == serverId }),
            Date().timeIntervalSince(newest.createdAt) < Self.keyRotationInterval,
-           let privateKey = try? XWingMLKEM768X25519.PrivateKey(seedRepresentation: newest.seed, publicKey: nil) {
+           let privateKey = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: newest.privateKey) {
             return PendingKey(privateKey: privateKey, createdAt: newest.createdAt)
         }
-        return PendingKey(privateKey: try XWingMLKEM768X25519.PrivateKey.generate(), createdAt: Date())
+        return PendingKey(privateKey: Curve25519.KeyAgreement.PrivateKey(), createdAt: Date())
     }
 
     /// Keep the newest keys for a server: the previous one still opens pushes sealed before

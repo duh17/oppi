@@ -12,8 +12,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  PUSH_CIPHERTEXT_OFFSET,
   PUSH_ENVELOPE_BYTES,
   PUSH_PADDED_PLAINTEXT_BYTES,
+  PUSH_SIGNED_BYTES,
   encodePushPlaintextJSON,
   padPushPlaintext,
   pushKeyId,
@@ -26,8 +28,8 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../
 const vectorsDir = path.join(repoRoot, "protocol/push/vectors");
 
 interface CryptoKitVectors {
-  recipient: { seed: string; publicKey: string; keyId: string };
-  other: { seed: string; publicKey: string; keyId: string };
+  recipient: { privateKey: string; publicKey: string; keyId: string };
+  other: { privateKey: string; publicKey: string; keyId: string };
 }
 
 const cryptokit = JSON.parse(
@@ -58,11 +60,8 @@ const impostorKey = ed25519FromSeed(Buffer.alloc(32, 0x24));
 /** Fixed receiver clock for every case. */
 const NOW = 1_760_000_000_000;
 const SIGNATURE_LABEL = Buffer.from("oppi-push-envelope-v1-sig\0", "utf8");
-const SIGNED_BYTES = PUSH_ENVELOPE_BYTES - 64;
-const CIPHERTEXT_OFFSET = 1 + 16 + 1120;
-
 function resign(envelope: Buffer, key: KeyObject = serverKey): Buffer {
-  const signed = envelope.subarray(0, SIGNED_BYTES);
+  const signed = envelope.subarray(0, PUSH_SIGNED_BYTES);
   return Buffer.concat([signed, sign(null, Buffer.concat([SIGNATURE_LABEL, signed]), key)]);
 }
 
@@ -82,8 +81,8 @@ function base(seq: number, overrides: Partial<PushPlaintext> = {}): PushPlaintex
   };
 }
 
-async function seal(plaintext: PushPlaintext, to: Buffer = recipientPublicKey): Promise<Buffer> {
-  const sealed = await sealPushEnvelope({
+function seal(plaintext: PushPlaintext, to: Buffer = recipientPublicKey): Buffer {
+  const sealed = sealPushEnvelope({
     recipientPublicKey: to,
     plaintext,
     signingKey: serverKey,
@@ -91,8 +90,8 @@ async function seal(plaintext: PushPlaintext, to: Buffer = recipientPublicKey): 
   return Buffer.from(sealed, "base64url");
 }
 
-async function sealPadded(padded: Buffer): Promise<Buffer> {
-  const sealed = await sealPaddedPlaintext({
+function sealPadded(padded: Buffer): Buffer {
+  const sealed = sealPaddedPlaintext({
     recipientPublicKey,
     paddedPlaintext: padded,
     signingKey: serverKey,
@@ -101,8 +100,8 @@ async function sealPadded(padded: Buffer): Promise<Buffer> {
 }
 
 const valid: Array<{ name: string; envelope: string; plaintext: unknown }> = [];
-async function addValid(name: string, plaintext: PushPlaintext): Promise<Buffer> {
-  const envelope = await seal(plaintext);
+function addValid(name: string, plaintext: PushPlaintext): Buffer {
+  const envelope = seal(plaintext);
   valid.push({
     name,
     envelope: envelope.toString("base64url"),
@@ -111,8 +110,8 @@ async function addValid(name: string, plaintext: PushPlaintext): Promise<Buffer>
   return envelope;
 }
 
-const blocked = await addValid("blocked-permission", base(1));
-await addValid(
+const blocked = addValid("blocked-permission", base(1));
+addValid(
   "done-no-workspace",
   base(2, {
     event: "done",
@@ -122,7 +121,7 @@ await addValid(
     body: "The run finished.",
   }),
 );
-await addValid(
+addValid(
   "incognito-error",
   base(3, {
     event: "error",
@@ -132,7 +131,7 @@ await addValid(
     body: "Open Oppi to review the session error.",
   }),
 );
-await addValid(
+addValid(
   "long-subtitle-shortened",
   base(4, {
     kind: "question",
@@ -141,7 +140,7 @@ await addValid(
     body: "Waiting for your answer.",
   }),
 );
-await addValid(
+addValid(
   "far-ahead-seq",
   base(100, { kind: "auth", title: "Sign-in Needed", body: "Waiting for you to sign in." }),
 );
@@ -152,7 +151,7 @@ function addInvalid(name: string, envelope: Buffer, reason: string): void {
 }
 
 const flipped = Buffer.from(blocked);
-flipped[CIPHERTEXT_OFFSET + 10] ^= 0x01;
+flipped[PUSH_CIPHERTEXT_OFFSET + 10] ^= 0x01;
 addInvalid("tampered-ciphertext", flipped, "signature");
 
 const badSig = Buffer.from(blocked);
@@ -161,14 +160,14 @@ addInvalid("tampered-signature", badSig, "signature");
 
 addInvalid("resigned-tampered-ciphertext", resign(flipped), "decrypt");
 addInvalid("wrong-signer", resign(blocked, impostorKey), "signature");
-addInvalid("other-recipient-key", await seal(base(5), otherPublicKey), "unknownKey");
+addInvalid("other-recipient-key", seal(base(5), otherPublicKey), "unknownKey");
 
-const otherWithOurKid = await seal(base(6), otherPublicKey);
+const otherWithOurKid = seal(base(6), otherPublicKey);
 Buffer.from(cryptokit.recipient.keyId, "base64url").copy(otherWithOurKid, 1);
 addInvalid("other-recipient-key-relabelled", resign(otherWithOurKid), "decrypt");
 
-addInvalid("stale", await seal(base(7, { ts: NOW - 3_901_000 })), "stale");
-addInvalid("future", await seal(base(8, { ts: NOW + 301_000 })), "stale");
+addInvalid("stale", seal(base(7, { ts: NOW - 3_901_000 })), "stale");
+addInvalid("future", seal(base(8, { ts: NOW + 301_000 })), "stale");
 addInvalid("oversize", Buffer.concat([blocked, Buffer.alloc(1)]), "size");
 addInvalid("truncated", blocked.subarray(0, PUSH_ENVELOPE_BYTES - 1), "size");
 
@@ -178,20 +177,16 @@ addInvalid("wrong-version", resign(wrongVersion), "version");
 
 const nonzeroPadding = padPushPlaintext(encodePushPlaintextJSON(base(9)));
 nonzeroPadding[PUSH_PADDED_PLAINTEXT_BYTES - 1] = 0x01;
-addInvalid("nonzero-padding", await sealPadded(nonzeroPadding), "plaintext");
+addInvalid("nonzero-padding", sealPadded(nonzeroPadding), "plaintext");
 
 const overlongLength = Buffer.alloc(PUSH_PADDED_PLAINTEXT_BYTES);
 overlongLength.writeUInt16BE(511, 0);
-addInvalid("length-over-510", await sealPadded(overlongLength), "plaintext");
+addInvalid("length-over-510", sealPadded(overlongLength), "plaintext");
 
-addInvalid(
-  "not-json",
-  await sealPadded(padPushPlaintext(Buffer.from("not json", "utf8"))),
-  "plaintext",
-);
+addInvalid("not-json", sealPadded(padPushPlaintext(Buffer.from("not json", "utf8"))), "plaintext");
 addInvalid(
   "plaintext-version-2",
-  await sealPadded(padPushPlaintext(Buffer.from(JSON.stringify({ ...base(10), v: 2 }), "utf8"))),
+  sealPadded(padPushPlaintext(Buffer.from(JSON.stringify({ ...base(10), v: 2 }), "utf8"))),
   "plaintext",
 );
 
@@ -222,7 +217,7 @@ const output = {
       "Push envelope v1 vectors sealed and signed by server/src/push/envelope.ts. Test keys only.",
     generator: "server/scripts/generate-push-vectors.ts",
     reasons: {
-      size: "not exactly 1729 bytes",
+      size: `not exactly ${PUSH_ENVELOPE_BYTES} bytes`,
       version: "version byte is not 0x01",
       unknownKey: "no push key with this kid",
       signature: "Ed25519 signature does not verify",

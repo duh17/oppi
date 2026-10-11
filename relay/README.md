@@ -34,7 +34,7 @@ expiration of at most an hour, and the payload
 | `src/cloudflare/` | Worker entry, one SQLite-backed Durable Object per registration and per challenge, `fetch` APNs sender. |
 | `tests/` | One suite run against both adapters (Cloudflare in the local Workers runtime), plus Node-only clock and App Attest cases with a test CA. |
 
-`relay/` imports nothing from `server/` or `clients/` and no HPKE, X-Wing, or ML-KEM package;
+`relay/` imports nothing from `server/` or `clients/` and no HPKE or KEM package;
 `cd server && bun scripts/check-architecture-boundaries.ts --scope relay` enforces it.
 
 ## Run on Node

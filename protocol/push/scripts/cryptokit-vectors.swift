@@ -1,10 +1,9 @@
 // CryptoKit side of the push test vectors (protocol/push/spec.md §7).
-// Seals HPKE messages with the envelope v1 parameters to a fixed test X-Wing key.
-// The server suite must open them. Run through generate-vectors.sh; needs macOS 26+.
+// Seals HPKE messages with the envelope v1 parameters to a fixed test X25519 key.
+// The server suite must open them. Run through generate-vectors.sh.
 import CryptoKit
 import Foundation
 
-func hex(_ data: Data) -> String { data.map { String(format: "%02x", $0) }.joined() }
 func base64url(_ data: Data) -> String {
     data.base64EncodedString()
         .replacingOccurrences(of: "+", with: "-")
@@ -12,16 +11,16 @@ func base64url(_ data: Data) -> String {
         .replacingOccurrences(of: "=", with: "")
 }
 
-// Test-only seeds. Never use these keys outside tests.
-let recipientSeed = Data((0..<32).map { UInt8($0) })
-let otherSeed = Data((0..<32).map { UInt8(0xff - $0) })
-let suite = HPKE.Ciphersuite.XWingMLKEM768X25519_SHA256_AES_GCM_256
+// Test-only private keys. Never use these keys outside tests.
+let recipientRaw = Data((0..<32).map { UInt8($0) })
+let otherRaw = Data((0..<32).map { UInt8(0xff - $0) })
+let suite = HPKE.Ciphersuite.Curve25519_SHA256_ChachaPoly
 let info = Data("oppi-push-envelope-v1".utf8)
 
 func keyId(_ publicKey: Data) -> Data { Data(SHA256.hash(data: publicKey).prefix(16)) }
 
-let recipient = try XWingMLKEM768X25519.PrivateKey(seedRepresentation: recipientSeed, publicKey: nil)
-let other = try XWingMLKEM768X25519.PrivateKey(seedRepresentation: otherSeed, publicKey: nil)
+let recipient = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: recipientRaw)
+let other = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: otherRaw)
 let publicKey = recipient.publicKey.rawRepresentation
 let kid = keyId(publicKey)
 
@@ -40,18 +39,18 @@ for message in ["{\"v\":1,\"note\":\"sealed by CryptoKit\"}", "short", String(re
 
 let output: [String: Any] = [
     "_meta": [
-        "description": "HPKE X-Wing/HKDF-SHA256/AES-256-GCM messages sealed by CryptoKit with the push envelope v1 info. Test keys only.",
+        "description": "HPKE DHKEM(X25519)/HKDF-SHA256/ChaCha20-Poly1305 messages sealed by CryptoKit with the push envelope v1 info. Test keys only.",
         "generator": "protocol/push/scripts/cryptokit-vectors.swift",
-        "suite": "XWingMLKEM768X25519_SHA256_AES_GCM_256",
+        "suite": "Curve25519_SHA256_ChachaPoly",
     ],
     "info": base64url(info),
     "recipient": [
-        "seed": base64url(recipientSeed),
+        "privateKey": base64url(recipientRaw),
         "publicKey": base64url(publicKey),
         "keyId": base64url(kid),
     ],
     "other": [
-        "seed": base64url(otherSeed),
+        "privateKey": base64url(otherRaw),
         "publicKey": base64url(other.publicKey.rawRepresentation),
         "keyId": base64url(keyId(other.publicKey.rawRepresentation)),
     ],

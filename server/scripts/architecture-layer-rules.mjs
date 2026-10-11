@@ -1541,7 +1541,7 @@ export function findMacLayerViolations(repoRoot, files = undefined) {
 export const RELAY_ARCHITECTURE_GUIDE = "protocol/push/spec.md#6-threat-model";
 
 /** Packages that could open an envelope. The relay must never carry decryption code. */
-const RELAY_FORBIDDEN_PACKAGE = /(hpke|x-?wing|ml-?kem|mlkem|post-quantum|noble)/i;
+const RELAY_FORBIDDEN_PACKAGE = /(hpke|ml-?kem|x-?wing|post-quantum|noble)/i;
 
 function makeRelayViolation({ rule, file, line, column, reason, remediation, target }) {
   return {
@@ -1559,7 +1559,7 @@ function makeRelayViolation({ rule, file, line, column, reason, remediation, tar
 
 /**
  * relay/ stands alone and cannot decrypt: it imports nothing from server/ or clients/, no
- * HPKE/X-Wing/ML-KEM package, and never calls `subtle.decrypt`.
+ * HPKE or KEM package, and never calls `subtle.decrypt`.
  */
 export function findRelayLayerViolations(repoRoot, files = undefined) {
   const candidateFiles = (
@@ -1597,7 +1597,7 @@ export function findRelayLayerViolations(repoRoot, files = undefined) {
             target: entry.specifier,
             line: entry.line,
             column: entry.column,
-            reason: "relay/ must not depend on an HPKE, X-Wing, or ML-KEM library.",
+            reason: "relay/ must not depend on an HPKE or KEM library.",
             remediation: "The relay checks envelope size and version only; it never opens one.",
           }),
         );

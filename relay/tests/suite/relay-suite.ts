@@ -67,7 +67,7 @@ export async function call(
   };
 }
 
-export function fakeEnvelope(version = 0x01, length = 1729): string {
+export function fakeEnvelope(version = 0x01, length = 641): string {
   const bytes = randomBytes(length);
   bytes[0] = version;
   return bytes.toString("base64url");
@@ -226,8 +226,8 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
     it("accepts only exact v1 envelopes and known fields", async () => {
       const sendToken = await mintSendToken(harness, await registerUnattested(harness));
       const push = (body: unknown) => call(harness, "POST", "/v1/push", { bearer: sendToken, body });
-      expect((await push({ envelope: fakeEnvelope(0x01, 1730) })).json.error).toBe("envelope_size");
-      expect((await push({ envelope: fakeEnvelope(0x01, 1728) })).json.error).toBe("envelope_size");
+      expect((await push({ envelope: fakeEnvelope(0x01, 642) })).json.error).toBe("envelope_size");
+      expect((await push({ envelope: fakeEnvelope(0x01, 640) })).json.error).toBe("envelope_size");
       expect((await push({ envelope: fakeEnvelope(0x02) })).json.error).toBe("bad_envelope");
       expect((await push({ envelope: `+${fakeEnvelope().slice(1)}` })).json.error).toBe("bad_envelope");
       expect((await push({ envelope: fakeEnvelope(), title: "plaintext" })).json.error).toBe("unknown_field");

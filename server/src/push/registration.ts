@@ -7,7 +7,7 @@
 import { createHash } from "node:crypto";
 import { verifyDeviceSignature } from "../storage/device-auth.js";
 import type { DevicePublicKey, PushRegistrationRequest } from "../types.js";
-import { XWING_PUBLIC_KEY_BYTES, pushKeyId } from "./envelope.js";
+import { PUSH_PUBLIC_KEY_BYTES, pushKeyId } from "./envelope.js";
 
 /** How far `issuedAt` may be from the server clock. */
 export const PUSH_REGISTRATION_MAX_SKEW_MS = 10 * 60 * 1000;
@@ -68,8 +68,8 @@ export function checkPushRegistration(input: {
     };
   }
   const publicKeyBytes = Buffer.from(publicKey, "base64url");
-  if (publicKeyBytes.length !== XWING_PUBLIC_KEY_BYTES) {
-    return { ok: false, status: 400, error: "publicKey must be a 1216-byte X-Wing key" };
+  if (publicKeyBytes.length !== PUSH_PUBLIC_KEY_BYTES) {
+    return { ok: false, status: 400, error: "publicKey must be a 32-byte X25519 key" };
   }
   if (pushKeyId(publicKeyBytes) !== keyId) {
     return { ok: false, status: 400, error: "keyId does not match publicKey" };

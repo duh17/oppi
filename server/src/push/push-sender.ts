@@ -97,7 +97,7 @@ export class PushSender {
 
     let result: RelaySendResult | { status: "failed" };
     try {
-      const envelope = await sealPushEnvelope({
+      const envelope = sealPushEnvelope({
         recipientPublicKey: Buffer.from(registration.publicKey, "base64url"),
         plaintext: {
           v: 1,

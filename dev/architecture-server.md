@@ -131,12 +131,13 @@ graph TD
 
 Push is relay-only and end to end encrypted ([protocol/push/spec.md](../protocol/push/spec.md)); the server holds no APNs key and opens no connection to Apple. `push.mode` is `off` by default. `server/src/push/` owns it:
 
-- `envelope.ts`: the only way to make a `SealedPushEnvelope` (HPKE X-Wing to the device's push key, Ed25519 signature by the server identity key, fixed 512-byte padded plaintext).
+- `envelope.ts`: the only way to make a `SealedPushEnvelope` (HPKE to the device's X25519 push key, Ed25519 signature by the server identity key, fixed 512-byte padded plaintext).
+- `hpke.ts`: RFC 9180 base mode, single shot, for DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 / ChaCha20-Poly1305, composed from `node:crypto` primitives only; checked against RFC 9180 Appendix A.2.1. Push uses no third-party crypto package.
 - `relay-client.ts`: relay API v1 server calls. It accepts only a `SealedPushEnvelope`, tries `[primary, standby]`, and prunes only on a primary `410`.
 - `push-sender.ts`: per-device sealing with a persisted sequence number, collapse IDs, and best-effort permission release.
 - `registration.ts`: `PUT /me/push-registration` checks; the device's enrolled P-256 key signs the push key and send token.
 
-`PushRegistration` records live on `ServerConfig.pushRegistrations`, one per paired device; revoking the device or rotating the owner token removes them in the same write. The standalone relay is `relay/` (core, Node and Cloudflare adapters); it imports nothing from `server/` or `clients/` and no HPKE/X-Wing package, which `check-architecture-boundaries.ts --scope relay` enforces. Test vectors in `protocol/push/vectors/` change only through `protocol/push/scripts/generate-vectors.sh` and `npm run push:canary -- --write-capture`.
+`PushRegistration` records live on `ServerConfig.pushRegistrations`, one per paired device; revoking the device or rotating the owner token removes them in the same write. The standalone relay is `relay/` (core, Node and Cloudflare adapters); it imports nothing from `server/` or `clients/` and no HPKE or KEM package, which `check-architecture-boundaries.ts --scope relay` enforces. Test vectors in `protocol/push/vectors/` change only through `protocol/push/scripts/generate-vectors.sh` and `npm run push:canary -- --write-capture`.
 
 ## Protocol boundary
 

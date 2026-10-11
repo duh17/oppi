@@ -16,7 +16,7 @@ struct PushEnvelopeTests {
         .deletingLastPathComponent()
 
     struct ServerVectors: Decodable {
-        struct Recipient: Decodable { let seed: String; let publicKey: String; let keyId: String }
+        struct Recipient: Decodable { let privateKey: String; let publicKey: String; let keyId: String }
         struct Server: Decodable { let publicKey: String; let fingerprint: String }
         struct Valid: Decodable { let name: String; let envelope: String }
         struct Invalid: Decodable { let name: String; let envelope: String; let reason: String }
@@ -61,7 +61,7 @@ struct PushEnvelopeTests {
 
     static func keyLookup(_ vectors: ServerVectors) throws -> (Data) -> PushKeyMaterial? {
         let material = PushKeyMaterial(
-            seed: try #require(Data(base64URLEncodedPushString: vectors.recipient.seed)),
+            privateKey: try #require(Data(base64URLEncodedPushString: vectors.recipient.privateKey)),
             serverPublicKey: try #require(Data(base64URLEncodedPushString: vectors.server.publicKey)),
             serverId: serverId
         )
@@ -101,8 +101,8 @@ struct PushEnvelopeTests {
     @Test func derivesTheServersKeyIdFromThePublicKey() throws {
         let vectors = try Self.vectors()
         let publicKey = try #require(Data(base64URLEncodedPushString: vectors.recipient.publicKey))
-        let seed = try #require(Data(base64URLEncodedPushString: vectors.recipient.seed))
-        let derived = try XWingMLKEM768X25519.PrivateKey(seedRepresentation: seed, publicKey: nil).publicKey
+        let privateKey = try #require(Data(base64URLEncodedPushString: vectors.recipient.privateKey))
+        let derived = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: privateKey).publicKey
         #expect(derived.rawRepresentation == publicKey)
         #expect(PushEnvelope.keyId(forPublicKey: publicKey).base64URLEncodedPushString == vectors.recipient.keyId)
     }

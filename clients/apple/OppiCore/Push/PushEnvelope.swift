@@ -1,13 +1,14 @@
 import CryptoKit
 import Foundation
 
-/// Push envelope v1 (protocol/push/spec.md §2): HPKE X-Wing ciphertext signed by the paired
+/// Push envelope v1 (protocol/push/spec.md §2): HPKE ciphertext (DHKEM(X25519), HKDF-SHA256,
+/// ChaCha20-Poly1305) signed by the paired
 /// server's Ed25519 identity key. Opened only on this device, by the Notification Service
 /// Extension; the relay and APNs carry it without the key.
 enum PushEnvelope {
     static let version: UInt8 = 0x01
     static let keyIdLength = 16
-    static let encapsulatedKeyLength = 1120
+    static let encapsulatedKeyLength = 32
     static let paddedPlaintextLength = 512
     static let ciphertextLength = paddedPlaintextLength + 16
     static let signatureLength = 64
@@ -17,13 +18,13 @@ enum PushEnvelope {
 
     static let hpkeInfo = Data("oppi-push-envelope-v1".utf8)
     static let signatureLabel = Data("oppi-push-envelope-v1-sig".utf8) + Data([0])
-    static let ciphersuite = HPKE.Ciphersuite.XWingMLKEM768X25519_SHA256_AES_GCM_256
+    static let ciphersuite = HPKE.Ciphersuite.Curve25519_SHA256_ChachaPoly
 
     /// Pushes older than the relay's longest TTL, plus clock skew, are stale.
     static let maxAge: TimeInterval = 3600 + 300
     static let maxClockSkew: TimeInterval = 300
 
-    /// `kid`: the first 16 bytes of SHA-256 of the raw X-Wing public key.
+    /// `kid`: the first 16 bytes of SHA-256 of the raw X25519 public key.
     static func keyId(forPublicKey publicKey: Data) -> Data {
         Data(SHA256.hash(data: publicKey).prefix(keyIdLength))
     }
@@ -68,8 +69,8 @@ struct PushPlaintext: Decodable, Equatable, Sendable {
 
 /// What the extension needs to open envelopes for one paired server's push key.
 struct PushKeyMaterial: Sendable {
-    /// 32-byte X-Wing private key seed.
-    let seed: Data
+    /// 32-byte raw X25519 private key (`Curve25519.KeyAgreement.PrivateKey.rawRepresentation`).
+    let privateKey: Data
     /// Raw Ed25519 identity public key of the server this key belongs to.
     let serverPublicKey: Data
     /// `PairedServer.id` (the server identity fingerprint).
@@ -113,7 +114,7 @@ enum PushEnvelopeOpener {
 
         let padded: Data
         do {
-            let privateKey = try XWingMLKEM768X25519.PrivateKey(seedRepresentation: material.seed, publicKey: nil)
+            let privateKey = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: material.privateKey)
             var recipient = try HPKE.Recipient(
                 privateKey: privateKey,
                 ciphersuite: PushEnvelope.ciphersuite,

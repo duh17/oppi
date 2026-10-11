@@ -331,7 +331,7 @@ async function runCanary(
     const vectors = JSON.parse(
       readFileSync(path.join(vectorsDir, "cryptokit-hpke.json"), "utf8"),
     ) as {
-      recipient: { seed: string; publicKey: string; keyId: string };
+      recipient: { privateKey: string; publicKey: string; keyId: string };
     };
     storage.updateConfig({ push: { mode: "relay", relays: [proxy.url] } });
     storage.setPushRegistration({
@@ -423,8 +423,8 @@ async function runCanary(
         fail(`${name}: APNs payload is not the fixed template`);
       }
       opened.push(
-        await openPushEnvelopeForTest(payload.e, {
-          recipientSeed: Buffer.from(vectors.recipient.seed, "base64url"),
+        openPushEnvelopeForTest(payload.e, {
+          recipientPrivateKey: Buffer.from(vectors.recipient.privateKey, "base64url"),
           serverPublicKey: serverPublicKey,
         }),
       );

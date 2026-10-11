@@ -17,7 +17,7 @@ struct PushCanaryCaptureTests {
     }
 
     struct CryptoKitVectors: Decodable {
-        struct Key: Decodable { let seed: String; let keyId: String }
+        struct Key: Decodable { let privateKey: String; let keyId: String }
         let recipient: Key
         let other: Key
     }
@@ -49,17 +49,17 @@ struct PushCanaryCaptureTests {
         try #require(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any])
     }
 
-    private func material(seed: String) throws -> PushKeyMaterial {
+    private func material(privateKey: String) throws -> PushKeyMaterial {
         PushKeyMaterial(
-            seed: try #require(Data(base64URLEncodedPushString: seed)),
+            privateKey: try #require(Data(base64URLEncodedPushString: privateKey)),
             serverPublicKey: try #require(Data(base64URLEncodedPushString: capture.serverPublicKey)),
             serverId: capture.serverFingerprint
         )
     }
 
     /// Opens payloads in order against one replay state, like the extension does.
-    private func opener(seed: String) throws -> (([AnyHashable: Any]) -> PushAlertPresentation) {
-        let material = try material(seed: seed)
+    private func opener(privateKey: String) throws -> (([AnyHashable: Any]) -> PushAlertPresentation) {
+        let material = try material(privateKey: privateKey)
         let keyId = try #require(Data(base64URLEncodedPushString: keys.recipient.keyId))
         let now = Date(timeIntervalSince1970: capture.now / 1000)
         var window = PushReplayWindow()
@@ -88,7 +88,7 @@ struct PushCanaryCaptureTests {
         let serverKey = try #require(Data(base64URLEncodedPushString: capture.serverPublicKey))
         #expect(PushRegistrationSignature.serverFingerprint(forPublicKey: serverKey) == capture.serverFingerprint)
 
-        let open = try opener(seed: keys.recipient.seed)
+        let open = try opener(privateKey: keys.recipient.privateKey)
         let alerts = try capture.apnsPayloads.map { open(try userInfo($0)) }
         let name = try #require(capture.canaries["sessionName"])
         // The four sends ran concurrently, so APNs saw them in any order.
@@ -100,7 +100,7 @@ struct PushCanaryCaptureTests {
     }
 
     @Test func aReplayedPushShowsTheFallback() throws {
-        let open = try opener(seed: keys.recipient.seed)
+        let open = try opener(privateKey: keys.recipient.privateKey)
         let first = try userInfo(try #require(capture.apnsPayloads.first))
         #expect(open(first) != .fallback)
         #expect(open(first) == .fallback)
@@ -112,18 +112,18 @@ struct PushCanaryCaptureTests {
         let index = envelope.count / 2
         envelope[index] = envelope[index] == "A" ? "B" : "A"
         info["e"] = String(envelope)
-        #expect(try opener(seed: keys.recipient.seed)(info) == .fallback)
+        #expect(try opener(privateKey: keys.recipient.privateKey)(info) == .fallback)
     }
 
     @Test func anotherKeyCannotOpenIt() throws {
-        // The right key ID with another device's seed: HPKE refuses.
+        // The right key ID with another device's private key: HPKE refuses.
         let info = try userInfo(try #require(capture.apnsPayloads.first))
-        #expect(try opener(seed: keys.other.seed)(info) == .fallback)
+        #expect(try opener(privateKey: keys.other.privateKey)(info) == .fallback)
     }
 
     @Test func anOversizedEnvelopeShowsTheFallback() throws {
         var info = try userInfo(try #require(capture.apnsPayloads.first))
         info["e"] = try #require(info["e"] as? String) + "AAAA"
-        #expect(try opener(seed: keys.recipient.seed)(info) == .fallback)
+        #expect(try opener(privateKey: keys.recipient.privateKey)(info) == .fallback)
     }
 }
