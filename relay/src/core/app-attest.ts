@@ -85,6 +85,8 @@ export async function verifyAttestation(input: {
   for (const cert of [leaf, intermediate, input.trustRoot]) {
     if (input.now < cert.notBefore || input.now > cert.notAfter) return fail("certificate_validity");
   }
+  // Only a CA may issue the credential certificate.
+  if (!intermediate.isCA) return fail("chain");
   if (!(await isIssuedBy(leaf, intermediate)) || !(await isIssuedBy(intermediate, input.trustRoot))) {
     return fail("chain");
   }

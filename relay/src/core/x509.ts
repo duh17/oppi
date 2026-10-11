@@ -89,6 +89,7 @@ export const OID = {
   p256: "1.2.840.10045.3.1.7",
   p384: "1.3.132.0.34",
   appAttestNonce: "1.2.840.113635.100.8.2",
+  basicConstraints: "2.5.29.19",
 } as const;
 
 export interface Certificate {
@@ -106,6 +107,25 @@ export interface Certificate {
   /** DER ECDSA-Sig-Value. */
   signature: Uint8Array;
   extensions: Map<string, Uint8Array>;
+  /** basicConstraints `cA` is TRUE. False when the extension is absent (RFC 5280 4.2.1.9). */
+  isCA: boolean;
+}
+
+/**
+ * `BasicConstraints ::= SEQUENCE { cA BOOLEAN DEFAULT FALSE, pathLenConstraint INTEGER OPTIONAL }`.
+ * True only for a well-formed DER TRUE (`0xff`). Anything else, malformed included, reads as
+ * not a CA: this only ever withholds trust, so it never rejects a certificate that does not
+ * need to be a CA.
+ */
+function basicConstraintsIsCA(value: Uint8Array): boolean {
+  try {
+    const sequence = readDer(value);
+    if (sequence.tag !== 0x30 || sequence.end !== value.length) return false;
+    const [first] = derChildren(sequence);
+    return first?.tag === 0x01 && first.content.length === 1 && first.content[0] === 0xff;
+  } catch {
+    return false;
+  }
 }
 
 export function parseCertificate(der: Uint8Array): Certificate {
@@ -140,6 +160,7 @@ export function parseCertificate(der: Uint8Array): Certificate {
     }
   }
 
+  const basicConstraints = extensions.get(OID.basicConstraints);
   const [algOid] = derChildren(algNode);
   return {
     tbs: tbsNode.der,
@@ -153,6 +174,7 @@ export function parseCertificate(der: Uint8Array): Certificate {
     signatureAlgorithm: algOid ? oidToString(algOid.content) : "",
     signature: sigNode.content.subarray(1),
     extensions,
+    isCA: basicConstraints ? basicConstraintsIsCA(basicConstraints) : false,
   };
 }
 

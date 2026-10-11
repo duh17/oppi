@@ -167,7 +167,16 @@ export interface AppAttestCA {
   intermediateDer: Uint8Array;
 }
 
-export async function createCA(now: number): Promise<AppAttestCA> {
+/** basicConstraints values: `cA` TRUE (as Apple's CAs carry), or `cA` omitted (FALSE). */
+const BASIC_CONSTRAINTS_OID = "2.5.29.19";
+const CA_TRUE = seq(tlv(0x01, Uint8Array.of(0xff)));
+const CA_FALSE = seq();
+
+export async function createCA(
+  now: number,
+  /** basicConstraints on the intermediate: `ca` like Apple's, or a non-CA certificate. */
+  intermediateConstraints: "ca" | "not-ca" | "absent" = "ca",
+): Promise<AppAttestCA> {
   const root = await generateKey("P-384");
   const intermediate = await generateKey("P-384");
   const rootDer = await certificate({
@@ -178,6 +187,7 @@ export async function createCA(now: number): Promise<AppAttestCA> {
     issuerKey: root,
     notBefore: now - 365 * DAY,
     notAfter: now + 3650 * DAY,
+    extensions: [{ oid: BASIC_CONSTRAINTS_OID, value: CA_TRUE }],
   });
   const intermediateDer = await certificate({
     serial: 2,
@@ -187,6 +197,15 @@ export async function createCA(now: number): Promise<AppAttestCA> {
     issuerKey: root,
     notBefore: now - 365 * DAY,
     notAfter: now + 3650 * DAY,
+    extensions:
+      intermediateConstraints === "absent"
+        ? []
+        : [
+            {
+              oid: BASIC_CONSTRAINTS_OID,
+              value: intermediateConstraints === "ca" ? CA_TRUE : CA_FALSE,
+            },
+          ],
   });
   return { rootPem: toPem(rootDer), root, intermediate, intermediateDer };
 }

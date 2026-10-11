@@ -295,6 +295,19 @@ describe("App Attest (node adapter with a test root)", () => {
     });
   });
 
+  it.each(["not-ca", "absent"] as const)(
+    "rejects a chain whose intermediate is not a CA (basicConstraints %s)",
+    async (constraints) => {
+      await harness.close();
+      ca = await createCA(Date.now(), constraints);
+      harness = await startHarness({ trustRootPem: ca.rootPem });
+      expect((await attest("sandbox")).response).toMatchObject({
+        status: 401,
+        json: { error: "attestation_invalid" },
+      });
+    },
+  );
+
   it("rejects an attestation for a different key ID", async () => {
     const address = nextAddress();
     const challenge = (await call(harness, "POST", "/v1/challenge", { address })).json.challenge as string;
