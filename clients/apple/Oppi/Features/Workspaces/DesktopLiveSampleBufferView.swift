@@ -59,7 +59,6 @@ final class DesktopLiveSampleBufferView: UIView, UIScrollViewDelegate, UIGesture
         guard let layer = videoView.sampleLayer else { return false }
         if layer.status == .failed {
             layer.flush()
-            return false
         }
         layer.enqueue(sample)
         if layer.status == .failed {

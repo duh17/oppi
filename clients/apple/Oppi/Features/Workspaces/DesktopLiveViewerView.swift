@@ -39,7 +39,8 @@ struct DesktopLiveViewerView: View {
         }
         .task {
             let next = DesktopLiveViewerModel {
-                connection?.makeDesktopLiveViewStreamClient()
+                guard let client = connection?.makeDesktopLiveViewStreamClient() else { return nil }
+                return (events: client.connect(), disconnect: { client.disconnect() })
             }
             model = next
             next.appear()
@@ -117,24 +118,9 @@ struct DesktopLiveViewerView: View {
     }
 
     private func statusChip(_ presentation: DesktopLivePresentation) -> some View {
-        let title = presentation.windowTitle
         let status = presentation.statusText
         let age = presentation.detailText
-        let text: String = {
-            if status == "Live", let title {
-                return "Live · \(title)"
-            }
-            if let age, let title {
-                return "\(status) · \(title) · \(age)"
-            }
-            if let age {
-                return "\(status) · \(age)"
-            }
-            if let title {
-                return "\(status) · \(title)"
-            }
-            return status
-        }()
+        let text = age.map { "\(status) · \($0)" } ?? status
         return Text(text)
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(.themeFg)

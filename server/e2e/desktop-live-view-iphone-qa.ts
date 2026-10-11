@@ -53,17 +53,25 @@ mkdirSync(join(companionRoot, "run"), { recursive: true });
 
 let paused = false;
 let frameIndex = 0;
+let lastPausedSend = 0;
+let activeCompanion: Socket | undefined;
 const controlPath = process.env.OPPI_DV_QA_CONTROL;
+
+function writeMedia(socket: Socket, encode: Record<string, unknown>): void {
+  if (!socket.destroyed && socket.writable) {
+    socket.write(encodeCompanionMedia(nextFrame(encode)));
+  }
+}
 
 function nextFrame(encode: Record<string, unknown>): Buffer {
   const wantKey = encode.keyframe === true || Number(encode.frameId) === 1;
   const frames = fixture.frames;
-  let chosen = frames[frameIndex % frames.length]!;
-  if (wantKey) {
-    const key = frames.find((frame) => frame.keyframe) ?? chosen;
-    chosen = key;
+  let chosen = frames[0]!;
+  for (let i = 0; i < frames.length; i += 1) {
+    chosen = frames[frameIndex % frames.length]!;
+    frameIndex += 1;
+    if (!wantKey || chosen.keyframe) break;
   }
-  frameIndex += 1;
   return encodeMediaFrame(
     {
       keyframe: chosen.keyframe || wantKey,
@@ -74,6 +82,21 @@ function nextFrame(encode: Record<string, unknown>): Buffer {
     },
     Buffer.from(chosen.avccHex, "hex"),
   );
+}
+
+if (controlPath) {
+  setInterval(() => {
+    let nowPaused = false;
+    try {
+      nowPaused = readFileSync(controlPath, "utf8").trim() === "pause";
+    } catch {
+      nowPaused = false;
+    }
+    if (paused && !nowPaused && activeCompanion) {
+      writeMedia(activeCompanion, { frameId: 1, keyframe: true });
+    }
+    paused = nowPaused;
+  }, 100);
 }
 
 async function listenCompanion(runtimeRoot: string): Promise<{ close: () => void }> {
@@ -90,15 +113,13 @@ async function listenCompanion(runtimeRoot: string): Promise<{ close: () => void
       for (const frame of reader.push(chunk)) {
         const parsed = parseControlJson(frame.payload);
         if (parsed?.type !== "encode") continue;
-        if (controlPath) {
-          try {
-            paused = readFileSync(controlPath, "utf8").trim() === "pause";
-          } catch {
-            paused = false;
-          }
+        if (paused) {
+          setTimeout(() => {
+            if (activeCompanion === socket) writeMedia(socket, parsed);
+          }, 2_200);
+          continue;
         }
-        if (paused) continue;
-        write(encodeCompanionMedia(nextFrame(parsed)));
+        writeMedia(socket, parsed);
       }
     };
     socket.on("data", (chunk) => {
@@ -123,6 +144,10 @@ async function listenCompanion(runtimeRoot: string): Promise<{ close: () => void
         ),
       );
       upgraded = true;
+      activeCompanion = socket;
+      socket.on("close", () => {
+        if (activeCompanion === socket) activeCompanion = undefined;
+      });
       write(
         encodeCompanionJson({
           type: "hello",

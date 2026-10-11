@@ -86,6 +86,41 @@ struct DesktopLiveViewSessionTests {
         #expect(failed.contains("window"))
     }
 
+    @Test @MainActor func backgroundCloseDoesNotTearDownTheForegroundStream() async {
+        let fake = LiveViewStreamFake()
+        let model = DesktopLiveViewerModel(open: { fake.open() }, clock: { 100 })
+        model.appear()
+        await waitUntil { fake.connectCount == 1 }
+        fake.sendHello()
+        #expect(model.presentation.statusText == "Connecting")
+        #expect(model.connectCount == 1)
+
+        model.backgrounded()
+        model.foregrounded()
+        await waitUntil { fake.connectCount == 2 }
+        fake.sendHello()
+        try? await Task.sleep(for: .milliseconds(700))
+        #expect(fake.connectCount == 2)
+        #expect(model.connectCount == 2)
+        guard case .connecting = model.presentation else {
+            Issue.record("stale close restarted backoff: \(model.presentation)")
+            return
+        }
+    }
+
+    @Test @MainActor func transientCloseWhileVisibleReconnects() async {
+        let fake = LiveViewStreamFake()
+        let model = DesktopLiveViewerModel(open: { fake.open() }, clock: { 100 })
+        model.appear()
+        await waitUntil { fake.connectCount == 1 }
+        fake.sendHello()
+        fake.sendClosed(code: 1006, reason: "")
+        await waitUntil { model.presentation.statusText == "Reconnecting" }
+        await waitUntil(timeoutMs: 2000) { fake.connectCount == 2 }
+        fake.sendHello()
+        #expect(model.connectCount == 2)
+    }
+
     @Test @MainActor func experimentsToggleCountsAndGatesTheRow() {
         let key = AppPreferences.Experiments.desktopLiveViewKey
         let previous = UserDefaults.standard.object(forKey: key)
@@ -110,5 +145,59 @@ struct DesktopLiveViewSessionTests {
         )
         #expect(phone.last?.target == .desktopStill)
         #expect(phone.filter { $0.target.isReleaseEnabled }.last?.target == .desktopStill)
+    }
+}
+
+@MainActor
+private final class LiveViewStreamFake {
+    private(set) var connectCount = 0
+    private var continuation: AsyncStream<DesktopLiveViewStreamClient.Event>.Continuation?
+
+    func open() -> DesktopLiveViewerModel.Opening {
+        connectCount += 1
+        let stream = AsyncStream<DesktopLiveViewStreamClient.Event> { continuation in
+            self.continuation = continuation
+        }
+        return (
+            events: stream,
+            disconnect: { [weak self] in
+                let pending = self?.continuation
+                self?.continuation = nil
+                Task { @MainActor in
+                    pending?.yield(.closed(code: 1001, reason: "goingAway"))
+                    pending?.finish()
+                }
+            }
+        )
+    }
+
+    func sendHello() {
+        continuation?.yield(.hello(
+            DesktopViewHello(
+                version: 1,
+                features: [DesktopViewStream.featureAvcc],
+                grantId: "g",
+                deviceId: "d",
+                surface: DesktopViewSurface(windowId: 1, title: "Notes"),
+                expiresAt: nil
+            )
+        ))
+    }
+
+    func sendClosed(code: Int, reason: String) {
+        continuation?.yield(.closed(code: code, reason: reason))
+        continuation?.finish()
+    }
+}
+
+@MainActor
+private func waitUntil(
+    timeoutMs: Int = 1000,
+    _ condition: @escaping @MainActor () -> Bool
+) async {
+    let deadline = Date().addingTimeInterval(TimeInterval(timeoutMs) / 1000)
+    while Date() < deadline {
+        if condition() { return }
+        try? await Task.sleep(for: .milliseconds(10))
     }
 }
