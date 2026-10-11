@@ -50,6 +50,9 @@ final class DesktopLiveViewerModel {
 
     func attachPicture(_ view: DesktopLiveSampleBufferView) {
         picture = view
+        view.onDecodeFailed = { [weak self] in
+            self?.dropAndReconnect()
+        }
         applyPictureAccessibility()
     }
 
@@ -70,9 +73,15 @@ final class DesktopLiveViewerModel {
     }
 
     func setSceneActive(_ active: Bool) {
-        concealPicture = !active
-        if concealPicture {
+        if !active {
+            concealPicture = true
             picture?.clearPicture()
+            return
+        }
+        let wasConcealed = concealPicture
+        concealPicture = false
+        if wasConcealed, visible, !fatal {
+            dropAndReconnect()
         }
     }
 
@@ -98,7 +107,7 @@ final class DesktopLiveViewerModel {
         if isVisible {
             visible = true
             if fatal { return }
-            if !forceStart, startTask != nil || consumeTask != nil { return }
+            if !forceStart, startTask != nil || consumeTask != nil || reconnectTask != nil { return }
             requestStart()
         } else {
             visible = false
@@ -192,24 +201,14 @@ final class DesktopLiveViewerModel {
             mutateArrival { $0.onHello(title: hello.surface.title, now: self.clock()) }
             applyPictureAccessibility()
         case .media(let header, let payload):
+            if concealPicture {
+                return
+            }
             guard let sample = decoder.sampleBuffer(payload: payload, header: header) else {
                 return
             }
-            if concealPicture {
-                hasPicture = true
-                reconnectAttempt = 0
-                mutateArrival { $0.onFrame(now: self.clock()) }
-                applyPictureAccessibility()
-                return
-            }
             if picture?.enqueue(sample) == false {
-                decoder.reset()
-                disconnect?()
-                disconnect = nil
-                consumeTask = nil
-                tickTask?.cancel()
-                tickTask = nil
-                scheduleReconnect(generation: generation)
+                dropAndReconnect()
                 return
             }
             hasPicture = true
@@ -241,6 +240,21 @@ final class DesktopLiveViewerModel {
             }
             scheduleReconnect(generation: generation)
         }
+    }
+
+    /// Drop decoder state and the current socket so the next open starts with an IDR.
+    private func dropAndReconnect() {
+        decoder.reset()
+        sessionGeneration += 1
+        let generation = sessionGeneration
+        startTask?.cancel()
+        startTask = nil
+        consumeTask = nil
+        tickTask?.cancel()
+        tickTask = nil
+        disconnect?()
+        disconnect = nil
+        scheduleReconnect(generation: generation)
     }
 
     private func failClosed(code: Int?, reason: String?, serverMessage: String?) {

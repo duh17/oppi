@@ -147,6 +147,30 @@ struct DesktopLiveViewSessionTests {
         #expect(message == "Couldn't show the live remote screen.")
     }
 
+    @Test @MainActor func inactiveFlushReconnectsInsteadOfLiveOverBlack() async throws {
+        let fake = LiveViewStreamFake()
+        let model = DesktopLiveViewerModel(open: { fake.open() }, clock: { 100 })
+        model.appear()
+        await waitUntil { fake.connectCount == 1 }
+        fake.sendHello()
+        try fake.sendIDR()
+        await waitUntil { model.presentation.statusText == "Live" }
+        #expect(model.connectCount == 1)
+
+        model.setSceneActive(false)
+        try fake.sendIDR()
+        model.setSceneActive(true)
+        model.foregrounded()
+        #expect(model.presentation.statusText != "Live")
+        await waitUntil(timeoutMs: 2000) { fake.connectCount == 2 }
+        #expect(model.connectCount == 2)
+        fake.sendHello()
+        #expect(model.presentation.statusText != "Live")
+        try fake.sendIDR()
+        await waitUntil { model.presentation.statusText == "Live" }
+        #expect(model.connectCount == 2)
+    }
+
     @Test @MainActor func transientCloseWhileVisibleReconnects() async {
         let fake = LiveViewStreamFake()
         let model = DesktopLiveViewerModel(open: { fake.open() }, clock: { 100 })
@@ -235,6 +259,11 @@ private final class LiveViewStreamFake {
         ))
     }
 
+    func sendIDR() throws {
+        let idr = try loadLiveViewIDR()
+        continuation?.yield(.media(header: idr.header, payload: idr.avcc))
+    }
+
     func sendError(_ error: DesktopViewErrorMessage) {
         continuation?.yield(.error(error))
     }
@@ -255,4 +284,34 @@ private func waitUntil(
         if condition() { return }
         try? await Task.sleep(for: .milliseconds(10))
     }
+}
+
+private func loadLiveViewIDR() throws -> (header: DesktopViewMediaHeader, avcc: Data) {
+    let url = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appendingPathComponent("Fixtures/desktop-live-view-avcc.json")
+    let json = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+    let frames = json?["frames"] as? [[String: Any]] ?? []
+    let frame = try #require(frames.first { $0["frameId"] as? Int == 1 })
+    let hex = try #require(frame["avccHex"] as? String)
+    var avcc = Data()
+    var index = hex.startIndex
+    while index < hex.endIndex {
+        let next = hex.index(index, offsetBy: 2, limitedBy: hex.endIndex) ?? hex.endIndex
+        if let byte = UInt8(hex[index..<next], radix: 16) {
+            avcc.append(byte)
+        }
+        index = next
+    }
+    let header = DesktopViewMediaHeader(
+        version: 1,
+        keyframe: true,
+        frameId: 1,
+        capturedAtMs: 1_770_000_000_001,
+        width: 320,
+        height: 180,
+        payloadBytes: UInt32(avcc.count)
+    )
+    return (header, avcc)
 }

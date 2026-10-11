@@ -638,6 +638,7 @@ export class Server {
     this.boundSessionStreamMux = new BoundSessionStreamMux(streamContext);
     this.dictationStreamMux = new DictationStreamMux(streamContext);
     this.desktopViewStreamMux = new DesktopViewStreamMux({
+      claimViewSession: (input) => this.desktopCompanionViewSessionClient.fetchViewSession(input),
       connectCompanion: (input) => this.desktopCompanionViewStreamClient.connect(input),
       trackConnection: (ws) => this.trackConnection(ws),
       untrackConnection: (ws) => this.untrackConnection(ws),

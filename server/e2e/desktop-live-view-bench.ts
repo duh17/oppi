@@ -113,9 +113,7 @@ async function main(): Promise<void> {
     results.push(await runPreset(preset));
   }
   printTable(results);
-  const failed = results.flatMap((row) =>
-    row.verdicts.filter((item) => item.gate && !item.pass),
-  );
+  const failed = results.flatMap((row) => row.verdicts.filter((item) => item.gate && !item.pass));
   if (failed.length > 0) {
     for (const item of failed) console.error(`FAIL ${item.target}: ${item.detail}`);
     process.exitCode = 1;
@@ -341,6 +339,24 @@ function listenCompanion(
       buf = Buffer.concat([buf, chunk]);
       const sep = buf.indexOf("\r\n\r\n");
       if (sep < 0) return;
+      const headerText = buf.subarray(0, sep).toString("utf8");
+      const requestLine = headerText.split("\r\n")[0] ?? "";
+      if (requestLine.startsWith("GET /view/session")) {
+        const body = JSON.stringify({
+          grantId: "11111111-1111-4111-8111-111111111111",
+          capability: "view",
+          deviceId,
+          expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+          caption: "View session\u2014not live delivery",
+        });
+        write(
+          Buffer.from(
+            `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+          ),
+        );
+        socket.end();
+        return;
+      }
       write(
         Buffer.from(
           "HTTP/1.1 101 Switching Protocols\r\nUpgrade: oppi-desktop-view\r\nConnection: Upgrade\r\n\r\n",

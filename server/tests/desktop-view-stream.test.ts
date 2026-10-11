@@ -9,6 +9,7 @@ import { WebSocket } from "ws";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { desktopCompanionOwnerSocketPath } from "../src/desktop-companion-still-client.js";
+import { DesktopCompanionViewSessionClient } from "../src/desktop-companion-view-session-client.js";
 import { DesktopCompanionViewStreamClient } from "../src/desktop-companion-view-stream-client.js";
 import {
   DESKTOP_VIEW_HARD_BYTE_CAP,
@@ -103,13 +104,17 @@ class FakePhoneSocket {
 
 type FakeCompanionOptions = {
   deviceId: string;
+  boundDeviceId?: string;
   status?: number;
   body?: string;
   hello?: Record<string, unknown>;
   onEncode?: (encode: Record<string, unknown>, socket: Socket) => void;
+  onSession?: (deviceId: string) => void;
   closeAfterHelloMs?: number;
   errorBeforeClose?: Record<string, unknown>;
 };
+
+const VIEW_SESSION_CAPTION = "View session\u2014not live delivery";
 
 function companionRoot(): string {
   const root = tempDir("oppi-dv-comp-");
@@ -122,6 +127,7 @@ async function listenFakeCompanion(
   options: FakeCompanionOptions,
 ): Promise<NetServer> {
   const socketPath = desktopCompanionOwnerSocketPath(runtimeRoot);
+  let boundDeviceId = options.boundDeviceId;
   const server = createServer((socket) => {
     socket.on("error", () => {});
     let buf = Buffer.alloc(0);
@@ -152,6 +158,33 @@ async function listenFakeCompanion(
         if (idx < 0) continue;
         headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
       }
+      const device = headers["x-oppi-device-id"] ?? "";
+      if (requestLine.startsWith("GET /view/session")) {
+        if (!device) {
+          socket.end("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+          return;
+        }
+        if (boundDeviceId && boundDeviceId !== device) {
+          const body = "view session not granted\n";
+          socket.end(
+            `HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+          );
+          return;
+        }
+        boundDeviceId = device;
+        options.onSession?.(device);
+        const body = JSON.stringify({
+          grantId: "11111111-1111-4111-8111-111111111111",
+          capability: "view",
+          deviceId: device,
+          expiresAt: "2026-10-10T12:00:00.000Z",
+          caption: VIEW_SESSION_CAPTION,
+        });
+        socket.end(
+          `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+        );
+        return;
+      }
       if (!requestLine.startsWith("GET /view/stream")) {
         socket.end("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         return;
@@ -163,8 +196,7 @@ async function listenFakeCompanion(
         );
         return;
       }
-      const device = headers["x-oppi-device-id"];
-      if (device !== options.deviceId) {
+      if (!boundDeviceId || device !== boundDeviceId) {
         const body = "view session not granted\n";
         socket.end(
           `HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
@@ -198,6 +230,16 @@ async function listenFakeCompanion(
     server.on("error", reject);
   });
   return server;
+}
+
+function muxFor(runtimeRoot: string, extra: { now?: () => number } = {}): DesktopViewStreamMux {
+  const sessions = new DesktopCompanionViewSessionClient({ runtimeRoot });
+  const streams = new DesktopCompanionViewStreamClient({ runtimeRoot });
+  return new DesktopViewStreamMux({
+    claimViewSession: (input) => sessions.fetchViewSession(input),
+    connectCompanion: (input) => streams.connect(input),
+    now: extra.now,
+  });
 }
 
 function mediaFrame(frameId: number, bytes = 64): Buffer {
@@ -247,10 +289,7 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       },
     });
     try {
-      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
-      const mux = new DesktopViewStreamMux({
-        connectCompanion: (input) => client.connect(input),
-      });
+      const mux = muxFor(root);
       const phone = new FakePhoneSocket();
       mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
       await waitFor(() => phone.textMessages().some((msg) => msg.type === "ping"));
@@ -282,10 +321,7 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       closeAfterHelloMs: 20,
     });
     try {
-      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
-      const mux = new DesktopViewStreamMux({
-        connectCompanion: (input) => client.connect(input),
-      });
+      const mux = muxFor(root);
       const phone = new FakePhoneSocket();
       mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
       await waitFor(() => phone.closeCode === 4000);
@@ -304,10 +340,7 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       closeAfterHelloMs: 20,
     });
     try {
-      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
-      const mux = new DesktopViewStreamMux({
-        connectCompanion: (input) => client.connect(input),
-      });
+      const mux = muxFor(root);
       const phone = new FakePhoneSocket();
       mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
       await waitFor(() => phone.closeCode === 4000);
@@ -333,10 +366,7 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       closeAfterHelloMs: 20,
     });
     try {
-      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
-      const mux = new DesktopViewStreamMux({
-        connectCompanion: (input) => client.connect(input),
-      });
+      const mux = muxFor(root);
       const phone = new FakePhoneSocket();
       mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
       await waitFor(() => phone.closeCode === 4000);
@@ -358,10 +388,7 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       },
     });
     try {
-      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
-      const mux = new DesktopViewStreamMux({
-        connectCompanion: (input) => client.connect(input),
-      });
+      const mux = muxFor(root);
       const first = new FakePhoneSocket();
       mux.handleWebSocket(first as unknown as WebSocket, { deviceId: "dev-1" });
       await waitFor(() => first.textMessages().some((msg) => msg.type === "hello"));
@@ -373,12 +400,51 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       expect(already?.fatal).toBe(false);
 
       const other = new FakePhoneSocket();
-      const mux2 = new DesktopViewStreamMux({
-        connectCompanion: (input) => client.connect(input),
-      });
+      const mux2 = muxFor(root);
       mux2.handleWebSocket(other as unknown as WebSocket, { deviceId: "dev-other" });
       await waitFor(() => other.closeCode === 4000);
       expect(other.closeReason).toBe("grant_not_bound");
+    } finally {
+      companion.close();
+    }
+  });
+
+  it("claims an unbound grant before attaching the stream", async () => {
+    const root = companionRoot();
+    const claimed: string[] = [];
+    const companion = await listenFakeCompanion(root, {
+      deviceId: "dev-1",
+      onSession: (deviceId) => claimed.push(deviceId),
+      onEncode: (encode, socket) => {
+        socket.write(encodeCompanionMedia(mediaFrame(encode.frameId as number)));
+      },
+    });
+    try {
+      const mux = muxFor(root);
+      const phone = new FakePhoneSocket();
+      mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
+      await waitFor(() => phone.textMessages().some((msg) => msg.type === "hello"));
+      expect(claimed).toEqual(["dev-1"]);
+    } finally {
+      companion.close();
+    }
+  });
+
+  it("refuses a stream when the grant is bound to another device", async () => {
+    const root = companionRoot();
+    const companion = await listenFakeCompanion(root, {
+      deviceId: "dev-1",
+      boundDeviceId: "dev-other",
+    });
+    try {
+      const mux = muxFor(root);
+      const phone = new FakePhoneSocket();
+      mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
+      await waitFor(() => phone.closeCode === 4000);
+      expect(phone.closeReason).toBe("grant_not_bound");
+      const error = phone.textMessages().find((msg) => msg.type === "error");
+      expect(error?.code).toBe(DESKTOP_VIEW_ERROR.grantNotBound);
+      expect(error?.fatal).toBe(true);
     } finally {
       companion.close();
     }
@@ -395,10 +461,7 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       },
     });
     try {
-      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
-      const mux = new DesktopViewStreamMux({
-        connectCompanion: (input) => client.connect(input),
-      });
+      const mux = muxFor(root);
       mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
       await waitFor(() => phone.textMessages().some((msg) => msg.type === "ping"));
       const ping = phone.textMessages().find((msg) => msg.type === "ping");
@@ -423,11 +486,7 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       },
     });
     try {
-      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
-      const mux = new DesktopViewStreamMux({
-        connectCompanion: (input) => client.connect(input),
-        now: () => nowMs,
-      });
+      const mux = muxFor(root, { now: () => nowMs });
       const phone = new FakePhoneSocket();
       mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
       await waitFor(() => phone.textMessages().some((msg) => msg.type === "ping"));
@@ -443,7 +502,10 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
         3_000,
       );
       nowMs += DESKTOP_VIEW_PING_RTT_WINDOW_MS + 1;
-      const queued = phone.textMessages().filter((msg) => msg.type === "ping").at(-1);
+      const queued = phone
+        .textMessages()
+        .filter((msg) => msg.type === "ping")
+        .at(-1);
       phone.emitText({ type: "pong", t: queued?.t });
       await delay(200);
       expect(encoded).toEqual([1]);
@@ -454,7 +516,10 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
         () => phone.textMessages().filter((msg) => msg.type === "ping").length > pingsAtIdle,
         3_000,
       );
-      const idle = phone.textMessages().filter((msg) => msg.type === "ping").at(-1);
+      const idle = phone
+        .textMessages()
+        .filter((msg) => msg.type === "ping")
+        .at(-1);
       nowMs += 10;
       phone.emitText({ type: "pong", t: idle?.t });
       await waitFor(() => encoded.length === 2);
@@ -475,11 +540,7 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       },
     });
     try {
-      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
-      const mux = new DesktopViewStreamMux({
-        connectCompanion: (input) => client.connect(input),
-        now: () => nowMs,
-      });
+      const mux = muxFor(root, { now: () => nowMs });
       const phone = new FakePhoneSocket();
       mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
       await waitFor(() => phone.textMessages().some((msg) => msg.type === "ping"));
@@ -502,7 +563,10 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
         () => phone.textMessages().filter((msg) => msg.type === "ping").length > pingsAtDrain,
         3_000,
       );
-      const idle = phone.textMessages().filter((msg) => msg.type === "ping").at(-1);
+      const idle = phone
+        .textMessages()
+        .filter((msg) => msg.type === "ping")
+        .at(-1);
       nowMs += 10;
       phone.emitText({ type: "pong", t: idle?.t });
       await waitFor(() => encoded.length > pausedAt);
@@ -523,10 +587,7 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       },
     });
     try {
-      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
-      const mux = new DesktopViewStreamMux({
-        connectCompanion: (input) => client.connect(input),
-      });
+      const mux = muxFor(root);
       const phone = new FakePhoneSocket();
       mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
       await waitFor(() => phone.textMessages().some((msg) => msg.type === "ping"));
@@ -552,10 +613,7 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       },
     });
     try {
-      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
-      const mux = new DesktopViewStreamMux({
-        connectCompanion: (input) => client.connect(input),
-      });
+      const mux = muxFor(root);
       const phone = new FakePhoneSocket();
       mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
       await waitFor(() => phone.closeCode === 4000);
@@ -577,10 +635,7 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       },
     });
     try {
-      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root2 });
-      const mux = new DesktopViewStreamMux({
-        connectCompanion: (input) => client.connect(input),
-      });
+      const mux = muxFor(root2);
       const phone = new FakePhoneSocket();
       mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
       await waitFor(() => phone.closeCode === 4000);

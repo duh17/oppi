@@ -20,6 +20,8 @@ sequenceDiagram
   participant N as Node relay
   participant M as OppiMac
   P->>N: WSS /desktop/view/stream (device at_)
+  N->>M: companion.sock GET /view/session (claim grant)
+  M-->>N: grant JSON bound to this device
   N->>M: companion.sock GET /view/stream Upgrade 101
   M-->>N: hello JSON
   N-->>P: hello JSON
@@ -31,7 +33,7 @@ sequenceDiagram
   P->>N: ack
 ```
 
-Flag off or an owner principal is HTTP 404 before upgrade (network owner `sk_` is still 401). Connect requires the Mac grant bound to this device. One live stream per process. Grant revoke/expiry, surface loss, and device revoke close the socket.
+Flag off or an owner principal is HTTP 404 before upgrade (network owner `sk_` is still 401). Node claims the Mac view grant for this device (`GET /view/session`) before the companion stream upgrade. One live stream per process. Grant revoke/expiry, surface loss, and device revoke close the socket.
 
 ## Wire
 
@@ -87,7 +89,7 @@ Settings → Experiments → **Live Remote Screen** (device-local, default off).
 
 The viewer opens a dedicated `URLSessionWebSocketTask` to `/desktop/view/stream` with the device token — never the session or app-event stream. It replies `pong` to every `ping` and `ack`s each media frame on receipt, before decode. A failed ack/pong send ends the stream with a non-fatal close. HTTP 404 on upgrade (flag off, non-device principal) is terminal with the generic failure; HTTP 401 refreshes the device token and retries. AVCC payloads become a `CMFormatDescription` on each IDR (always replaced) and a `CMSampleBuffer` with `DisplayImmediately` for `AVSampleBufferDisplayLayer`. The zoom view is sized to the aspect-fit picture rect and letterboxed in the scroll view, so pinch and double-tap 2× magnify the picture; a same-aspect rung change keeps that on-screen rect. A broken P-frame chain closes and reconnects so the new stream starts with an IDR.
 
-**Live** is frame arrival, not the socket being open: more than 2 s without a frame shows Reconnecting or Paused with the last-frame age. Pinch-zoom, pan, and double-tap fit ↔ 2× (same owner as the VoiceOver action). Landscape is allowed. Any scene phase other than `.active` flushes the display layer and drops the Live chip before an App Switcher snapshot. The stream closes on background, view disappear, and device lock, and reconnects on return. Fatal codes 4100–4109 and `grant_*` close reasons show a specific message and do not auto-reconnect; 4001/4002 and other closes use capped backoff (0.5–8 s) while the view is visible. Frames are not stored, cached, logged, or sent to telemetry.
+**Live** is frame arrival, not the socket being open: more than 2 s without a frame shows Reconnecting or Paused with the last-frame age. Pinch-zoom, pan, and double-tap fit ↔ 2× (same owner as the VoiceOver action). Landscape is allowed. Any scene phase other than `.active` flushes the display layer and drops the Live chip before an App Switcher snapshot. Returning to `.active` after that flush reconnects so the new stream starts with an IDR; concealed frames do not count as Live. The stream closes on background, view disappear, and device lock, and reconnects on return. Fatal codes 4100–4109 and `grant_*` close reasons show a specific message and do not auto-reconnect; 4001/4002 and other closes use capped backoff (0.5–8 s) while the view is visible. Frames are not stored, cached, logged, or sent to telemetry.
 
 Apple models: `clients/apple/OppiCore/Models/DesktopViewStream.swift`. Decode/display stays in Oppi (`DesktopLiveH264Decoder`, `DesktopLiveViewerView`). No Mac UI.
 

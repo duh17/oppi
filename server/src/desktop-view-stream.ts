@@ -7,6 +7,10 @@ import type { Socket } from "node:net";
 import type { WebSocket } from "ws";
 
 import {
+  DesktopCompanionViewSessionError,
+  type DesktopCompanionViewSessionClient,
+} from "./desktop-companion-view-session-client.js";
+import {
   DesktopCompanionViewStreamError,
   type DesktopCompanionViewStreamClient,
 } from "./desktop-companion-view-stream-client.js";
@@ -38,9 +42,11 @@ const ENCODE_WATCHDOG_MS = 5_000;
 
 export type DesktopViewStreamAccess = {
   deviceId: string;
+  deviceName?: string;
 };
 
 type StreamDeps = {
+  claimViewSession: DesktopCompanionViewSessionClient["fetchViewSession"];
   connectCompanion: DesktopCompanionViewStreamClient["connect"];
   now?: () => number;
   trackConnection?: (ws: WebSocket) => void;
@@ -163,10 +169,17 @@ export class DesktopViewStreamMux {
     };
 
     void this.deps
-      .connectCompanion({
+      .claimViewSession({
         deviceId: access.deviceId,
+        deviceName: access.deviceName,
         signal: abort.signal,
       })
+      .then(() =>
+        this.deps.connectCompanion({
+          deviceId: access.deviceId,
+          signal: abort.signal,
+        }),
+      )
       .then((stream) => {
         if (relay.closed) {
           stream.socket.destroy();
@@ -280,6 +293,10 @@ export class DesktopViewStreamMux {
         });
       })
       .catch((error: unknown) => {
+        if (error instanceof DesktopCompanionViewSessionError) {
+          teardown(mapSessionError(error), error.message);
+          return;
+        }
         if (error instanceof DesktopCompanionViewStreamError) {
           teardown(error.code, error.message);
           return;
@@ -316,6 +333,20 @@ function controlPayload(data: WebSocket.RawData): Buffer {
 function writeCompanion(socket: Socket | undefined, bytes: Buffer): void {
   if (!socket || socket.destroyed) return;
   socket.write(bytes);
+}
+
+function mapSessionError(error: DesktopCompanionViewSessionError): number {
+  switch (error.code) {
+    case "not_bound":
+      return DESKTOP_VIEW_ERROR.grantNotBound;
+    case "unavailable":
+      return DESKTOP_VIEW_ERROR.grantUnavailable;
+    case "missing_device_id":
+    case "malformed_session":
+      return DESKTOP_VIEW_ERROR.protocolFatal;
+    default:
+      return DESKTOP_VIEW_ERROR.companionUnavailable;
+  }
 }
 
 function closeReason(code: number): string {

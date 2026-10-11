@@ -5,6 +5,8 @@ import UIKit
 /// Aspect-fit H.264 picture with pinch-zoom, pan, and double-tap fit ↔ 2×.
 /// Zoom lives on `UIScrollView` so it does not fight the navigation pop gesture.
 final class DesktopLiveSampleBufferView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+    var onDecodeFailed: (() -> Void)?
+
     private let scrollView = UIScrollView()
     private let videoView = SampleLayerView()
     private let doubleTap = UITapGestureRecognizer()
@@ -36,6 +38,22 @@ final class DesktopLiveSampleBufferView: UIView, UIScrollViewDelegate, UIGesture
         doubleTap.delegate = self
         scrollView.addGestureRecognizer(doubleTap)
         updateZoomAccessibilityActions()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleDecodeFailed),
+            name: .AVSampleBufferDisplayLayerFailedToDecode,
+            object: videoView.sampleLayer
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func handleDecodeFailed() {
+        Task { @MainActor in
+            self.onDecodeFailed?()
+        }
     }
 
     @available(*, unavailable)
@@ -67,12 +85,8 @@ final class DesktopLiveSampleBufferView: UIView, UIScrollViewDelegate, UIGesture
             }
         }
         guard let layer = videoView.sampleLayer else { return false }
-        if layer.status == .failed {
-            layer.flush()
-        }
         layer.enqueue(sample)
         if layer.status == .failed {
-            layer.flush()
             return false
         }
         return true
