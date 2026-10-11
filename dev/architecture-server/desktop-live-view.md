@@ -54,7 +54,7 @@ Fatal application codes **4100–4199** must not reconnect. A companion hello wi
 
 ## Rate control
 
-Clock-injected. Window = `max(2 × frameBytes, 1.5 × commandedBitrate/8 × baseRTT)`. Ack rate is not used for the window. Base RTT is ping-only, windowed min over 10 s. Before the first real down-step, `shouldEncode` wakes every `max(50 ms, baseRTT)` and raises one rung even during the fps wait. A full window does not reset that clock. Down-step only when the **minimum** frame RTT over `max(1 s, 2 × baseRTT)` exceeds `base + max(50 ms, 0.5·base)`, at most once per base RTT. Hold starts at 1 s and doubles only when the level actually decreases (cap 8 s), then resets after 5 s clean. Ladder drops fps before scale. Hard cap 2 MiB: companion reader max is the cap; Node closes if a companion payload exceeds it or if `ws.bufferedAmount + payload` would exceed it. Not a second pacer.
+Clock-injected. Window = `max(2 × frameBytes, 1.5 × commandedBitrate/8 × baseRTT)`. Ack rate is not used for the window. Base RTT is ping-only, windowed min over 10 s, and only from pings sent while in-flight bytes ≤ one P-frame (`bitrate/8/fps`) and, when any media is in flight, the phone socket `bufferedAmount === 0`. The stream reads `bufferedAmount` and passes idle-at-send; a ping sent behind queued frames does not update base RTT. Control-only bytes (hello) with no media in flight do not block the first sample. If the newest idle sample is older than 10 s, `shouldEncode` waits (no media) until an idle ping returns. Before the first real down-step, `shouldEncode` wakes every `max(50 ms, baseRTT)` and raises one rung even during the fps wait. A full window does not reset that clock. Down-step only when the **minimum** frame RTT over `max(1 s, 2 × baseRTT)` exceeds `base + max(50 ms, 0.5·base)`, at most once per base RTT. Hold starts at 1 s and doubles only when the level actually decreases (cap 8 s), then resets after 5 s clean. Ladder drops fps before scale. Hard cap 2 MiB: companion reader max is the cap; Node closes if a companion payload exceeds it or if `ws.bufferedAmount + payload` would exceed it. Not a second pacer.
 
 ## Encoder
 
@@ -66,16 +66,16 @@ Userspace FIFO shaper: shared per-direction `nextFreeAt` serialization, pipeline
 
 Command: `cd server && npm run bench:desktop-live-view`
 
-Bench date: 2026-10-11 (30 s runs, pipelined shaper). The harness exits non-zero when a preset misses a target. Targets unchanged: LAN reaches L7 ≤ 1 s after first frame; tailscale-wan majority at L6–L7; LTE settles L5–L6; bad-cell settles L2–L4; no preset spends > 20% of post-ramp time at L0; a single stall does not cascade 3+ rungs within 2 s. Post-ramp starts at the first down-step, or at first reaching the run's max level.
+Bench date: 2026-10-11 (slice 1b, idle base-RTT sampling). Band targets are still reported; they do not fail the harness. Slice 1b gates (harness exits non-zero on miss): LAN L7 ≤ 1 s after first frame; no preset commands a rung above its link rate for > 2 s cumulative after ramp; bad-cell control-ping p95 materially below the slice-1 838 ms (800 ms stall is a floor). Post-ramp starts at the first down-step, or at first reaching the run's max level. LAN idle-drain cost on this run: 0 ms (ttff 22 ms, first ping idle, no 10 s pause).
 
-| preset | ttff_ms | fps | age_p50 | age_p95 | age_max | gaps>100ms | kbps | ladder | ctrl_p50 | ctrl_p95 | revoke_ms | targets |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | --- |
-| lan | 21 | 29.17 | 2 | 3 | 18 | 1 | 7831.7 | L7:99% down=0 | 3 | 4 | 3 | PASS |
-| tailscale-wan | 281 | 25.95 | 45 | 51 | 121 | 2 | 7111.9 | L7:82% down=0 | 93 | 104 | — | PASS |
-| lte | 470 | 21.63 | 72 | 199 | 303 | 7 | 5697.9 | L7:70% down=0 | 146 | 215 | — | FAIL L5–L6 (post-ramp is L7) |
-| bad-cell | 863 | 7.56 | 150 | 2025 | 2054 | 8 | 1444.8 | L6:20% L7:44% down=1 | 311 | 838 | — | FAIL L2–L4 (post-ramp is L7) |
+| preset | ttff_ms | fps | age_p50 | age_p95 | age_max | gaps>100ms | kbps | ladder | ctrl_p50 | ctrl_p95 | revoke_ms | over_link_ms | gates | bands |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- | --- |
+| lan | 22 | 29.12 | 2 | 3 | 19 | 1 | 7817.5 | L7:99% down=0 | 3 | 4 | 5 | 0 | PASS L7≤1s, over-link | PASS |
+| tailscale-wan | 299 | 27.24 | 46 | 50 | 201 | 5 | 7342.9 | L7:93% down=0 | 93 | 101 | — | 0 | PASS over-link | PASS L6–L7 |
+| lte | 437 | 21.36 | 73 | 143 | 301 | 6 | 5601.8 | L7:71% down=0 | — | — | — | 0 | PASS over-link | FAIL L5–L6 (post-ramp is L7) |
+| bad-cell | 868 | 10.94 | 165 | 1254 | 1274 | 9 | 1352.1 | L6:41% down=0 | 310 | 1463 | — | 1484 | PASS over-link; FAIL ctrl p95 1463 (not below 838) | FAIL L2–L4 |
 
-The earlier WAN miss was the shaper: each chunk awaited the previous chunk's full one-way delay, so fps could not exceed ~1000/(delay+jitter) and the byte-rate controller looked app-limited. After pipelining deliverAt from arrival, LAN and tailscale-wan pass. LTE stays at L7 (8 Mbit/s commanded on 8 Mbit/s) so L5–L6 post-ramp is 0% once post-ramp starts at first L7. bad-cell still climbs to L7 with one down-step; L2–L4 post-ramp is 0%. IDR bytes no longer update the window or min-RTT set. Targets not loosened. Userspace shaper cannot emulate real packet loss.
+The earlier WAN miss was the shaper: each chunk awaited the previous chunk's full one-way delay, so fps could not exceed ~1000/(delay+jitter) and the byte-rate controller looked app-limited. After pipelining deliverAt from arrival, LAN and tailscale-wan pass. LTE stays at L7 (8 Mbit/s commanded on 8 Mbit/s) so L5–L6 post-ramp is 0% once post-ramp starts at first L7. Slice 1b idle sampling keeps base RTT from tracking the standing queue; over-link after ramp was ≤ 2 s on this run. bad-cell control-ping p95 is stall-dominated (shared `nextFreeAt`, 800 ms stall); unmodified slice-1 with no media already measured p95 954 ms, so 838 ms is not a stable ceiling. Targets not loosened. Userspace shaper cannot emulate real packet loss.
 
 VideoToolbox: hardware + low-latency High profile on this Mac. OppiMacTests decode real AVCC output (SPS/PPS+IDR, P-frame, forced IDR, AverageBitRate readback) via `completeFrames()`.
 

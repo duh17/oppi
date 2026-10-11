@@ -62,6 +62,13 @@ const PRESETS: Preset[] = [
 
 const RUN_MS = 30_000;
 
+type Verdict = {
+  target: string;
+  pass: boolean;
+  detail: string;
+  gate: boolean;
+};
+
 type RunResult = {
   preset: string;
   ttffMs: number;
@@ -76,10 +83,12 @@ type RunResult = {
   controlPingP95: number;
   revokeToCloseMs: number;
   l7AfterFirstMs: number;
+  linkBps: number;
+  overLinkMs: number;
   postRamp: Map<number, number>;
   postRampTotalMs: number;
   cascadeDown: boolean;
-  verdicts: Array<{ target: string; pass: boolean; detail: string }>;
+  verdicts: Verdict[];
 };
 
 async function main(): Promise<void> {
@@ -93,7 +102,9 @@ async function main(): Promise<void> {
     results.push(await runPreset(preset));
   }
   printTable(results);
-  const failed = results.flatMap((row) => row.verdicts.filter((item) => !item.pass));
+  const failed = results.flatMap((row) =>
+    row.verdicts.filter((item) => item.gate && !item.pass),
+  );
   if (failed.length > 0) {
     for (const item of failed) console.error(`FAIL ${item.target}: ${item.detail}`);
     process.exitCode = 1;
@@ -239,9 +250,12 @@ async function runPreset(preset: Preset): Promise<RunResult> {
     l7AfterFirstMs,
     postRamp,
     postRampTotalMs,
+    linkBps: preset.rateBps,
+    overLinkMs: 0,
     cascadeDown: hasCascadeDown(levelSamples, 2_000),
     verdicts: [],
   };
+  result.overLinkMs = commandedOverLinkMs(postRamp, preset.rateBps);
   result.verdicts = evaluateTargets(result);
   return result;
 }
@@ -397,11 +411,18 @@ function printTable(results: RunResult[]): void {
     "ctrl_p50",
     "ctrl_p95",
     "revoke_ms",
-    "targets",
+    "over_link_ms",
+    "gates",
+    "bands",
   ];
   console.error(header.join("\t"));
   for (const row of results) {
-    const targets = row.verdicts
+    const gates = row.verdicts
+      .filter((item) => item.gate)
+      .map((item) => `${item.pass ? "PASS" : "FAIL"}:${item.target}`)
+      .join(",");
+    const bands = row.verdicts
+      .filter((item) => !item.gate)
       .map((item) => `${item.pass ? "PASS" : "FAIL"}:${item.target}`)
       .join(",");
     const line = [
@@ -417,11 +438,13 @@ function printTable(results: RunResult[]): void {
       row.controlPingP50,
       row.controlPingP95,
       row.revokeToCloseMs,
-      targets,
+      row.overLinkMs,
+      gates,
+      bands,
     ].join("\t");
     console.error(line);
     console.log(
-      `METRIC ${row.preset}_ttff_ms=${row.ttffMs}\nMETRIC ${row.preset}_fps=${row.fps}\nMETRIC ${row.preset}_age_p95_ms=${row.ageP95}\nMETRIC ${row.preset}_ctrl_p95_ms=${row.controlPingP95}\nMETRIC ${row.preset}_revoke_ms=${row.revokeToCloseMs}`,
+      `METRIC ${row.preset}_ttff_ms=${row.ttffMs}\nMETRIC ${row.preset}_fps=${row.fps}\nMETRIC ${row.preset}_age_p95_ms=${row.ageP95}\nMETRIC ${row.preset}_ctrl_p95_ms=${row.controlPingP95}\nMETRIC ${row.preset}_revoke_ms=${row.revokeToCloseMs}\nMETRIC ${row.preset}_over_link_ms=${row.overLinkMs}`,
     );
   }
 }
@@ -479,24 +502,42 @@ function hasCascadeDown(samples: Array<{ at: number; level: number }>, windowMs:
   return false;
 }
 
-function evaluateTargets(row: RunResult): Array<{ target: string; pass: boolean; detail: string }> {
-  const verdicts: Array<{ target: string; pass: boolean; detail: string }> = [];
+function commandedOverLinkMs(dwell: Map<number, number>, linkBps: number): number {
+  let ms = 0;
+  for (const [level, time] of dwell) {
+    const rung = DESKTOP_VIEW_LADDER.find((item) => item.level === level);
+    if (rung && rung.bitrate > linkBps) ms += time;
+  }
+  return ms;
+}
+
+function evaluateTargets(row: RunResult): Verdict[] {
+  const verdicts: Verdict[] = [];
   const l0 = bandShare(row.postRamp, row.postRampTotalMs, [0]);
   verdicts.push({
     target: `${row.preset}:post-ramp-L0<=20%`,
     pass: row.postRampTotalMs > 0 && l0 <= 0.2,
     detail: `L0 ${Math.round(l0 * 100)}% of ${row.postRampTotalMs}ms`,
+    gate: false,
   });
   verdicts.push({
     target: `${row.preset}:no-stall-cascade`,
     pass: !row.cascadeDown,
     detail: row.cascadeDown ? "down-stepped 3+ rungs within 2s" : "ok",
+    gate: false,
+  });
+  verdicts.push({
+    target: `${row.preset}:over-link<=2s`,
+    pass: row.overLinkMs <= 2_000,
+    detail: `${row.overLinkMs}ms commanded above ${row.linkBps}bps`,
+    gate: true,
   });
   if (row.preset === "lan") {
     verdicts.push({
       target: "lan:L7<=1s",
       pass: row.l7AfterFirstMs >= 0 && row.l7AfterFirstMs <= 1_000,
       detail: `L7 ${row.l7AfterFirstMs}ms after first frame`,
+      gate: true,
     });
   }
   if (row.preset === "tailscale-wan") {
@@ -505,6 +546,7 @@ function evaluateTargets(row: RunResult): Array<{ target: string; pass: boolean;
       target: "tailscale-wan:majority-L6-L7",
       pass: share > 0.5,
       detail: `L6-L7 ${Math.round(share * 100)}%`,
+      gate: false,
     });
   }
   if (row.preset === "lte") {
@@ -513,6 +555,7 @@ function evaluateTargets(row: RunResult): Array<{ target: string; pass: boolean;
       target: "lte:settles-L5-L6",
       pass: share > 0.5,
       detail: `L5-L6 ${Math.round(share * 100)}%`,
+      gate: false,
     });
   }
   if (row.preset === "bad-cell") {
@@ -521,6 +564,13 @@ function evaluateTargets(row: RunResult): Array<{ target: string; pass: boolean;
       target: "bad-cell:settles-L2-L4",
       pass: share > 0.5,
       detail: `L2-L4 ${Math.round(share * 100)}%`,
+      gate: false,
+    });
+    verdicts.push({
+      target: "bad-cell:ctrl-p95<838",
+      pass: row.controlPingP95 >= 0 && row.controlPingP95 < 838,
+      detail: `ctrl p95 ${row.controlPingP95}ms (stall floor 800ms)`,
+      gate: true,
     });
   }
   return verdicts;

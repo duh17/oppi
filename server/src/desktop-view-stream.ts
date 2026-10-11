@@ -71,6 +71,7 @@ export class DesktopViewStreamMux {
     const now = this.deps.now ?? Date.now;
     const controller = new DesktopViewRateController({ now });
     const abort = new AbortController();
+    const pingIdleAtSend = new Map<number, boolean>();
     let encodeOutstanding = false;
     let sawHello = false;
     let waitTimer: ReturnType<typeof setTimeout> | undefined;
@@ -110,7 +111,9 @@ export class DesktopViewStreamMux {
       const parsed = parseControlJson(payload);
       if (!parsed || typeof parsed.type !== "string") return;
       if (parsed.type === "pong" && typeof parsed.t === "number") {
-        controller.onRttSample(now() - parsed.t);
+        const idleAtSend = pingIdleAtSend.get(parsed.t) === true;
+        pingIdleAtSend.delete(parsed.t);
+        controller.onRttSample(now() - parsed.t, now(), idleAtSend);
         maybeEncode();
         return;
       }
@@ -236,7 +239,17 @@ export class DesktopViewStreamMux {
               };
               this.sendJson(ws, phoneHello);
               const sendPing = (): void => {
-                this.sendJson(ws, { type: "ping", t: now() });
+                const t = now();
+                const snap = controller.snapshot();
+                const pFrameBytes = Math.max(1, Math.ceil(snap.bitrate / 8 / snap.fps));
+                const inFlight = controller.inFlightBytes();
+                // Control bytes (hello) may sit in bufferedAmount with no media in
+                // flight; those pings are still idle. A ping behind queued frames is not.
+                pingIdleAtSend.set(
+                  t,
+                  inFlight <= pFrameBytes && (inFlight === 0 || ws.bufferedAmount === 0),
+                );
+                this.sendJson(ws, { type: "ping", t });
               };
               sendPing();
               pingTimer = setInterval(sendPing, PING_INTERVAL_MS);

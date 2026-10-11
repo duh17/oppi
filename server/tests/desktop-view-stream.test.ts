@@ -10,7 +10,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { desktopCompanionOwnerSocketPath } from "../src/desktop-companion-still-client.js";
 import { DesktopCompanionViewStreamClient } from "../src/desktop-companion-view-stream-client.js";
-import { DESKTOP_VIEW_HARD_BYTE_CAP } from "../src/desktop-view-rate-controller.js";
+import {
+  DESKTOP_VIEW_HARD_BYTE_CAP,
+  DESKTOP_VIEW_PING_RTT_WINDOW_MS,
+} from "../src/desktop-view-rate-controller.js";
 import { DesktopViewStreamMux } from "../src/desktop-view-stream.js";
 import {
   CompanionFrameReader,
@@ -328,9 +331,11 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
 
   it("closes when bufferedAmount plus the next frame exceeds the cap", async () => {
     const root = companionRoot();
+    const phone = new FakePhoneSocket();
     const companion = await listenFakeCompanion(root, {
       deviceId: "dev-1",
       onEncode: (encode, socket) => {
+        phone.bufferedAmount = DESKTOP_VIEW_HARD_BYTE_CAP;
         socket.write(encodeCompanionMedia(mediaFrame(encode.frameId as number, 80)));
       },
     });
@@ -339,8 +344,6 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       const mux = new DesktopViewStreamMux({
         connectCompanion: (input) => client.connect(input),
       });
-      const phone = new FakePhoneSocket();
-      phone.bufferedAmount = DESKTOP_VIEW_HARD_BYTE_CAP;
       mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
       await waitFor(() => phone.textMessages().some((msg) => msg.type === "ping"));
       const ping = phone.textMessages().find((msg) => msg.type === "ping");
@@ -348,6 +351,106 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       await waitFor(() => phone.closeCode === 4000);
       expect(phone.closeReason).toBe("backpressure_cap");
       expect(phone.binaryMessages()).toHaveLength(0);
+    } finally {
+      companion.close();
+    }
+  });
+
+  it("does not treat a ping as idle while a frame is still buffered on the phone socket", async () => {
+    const root = companionRoot();
+    const encoded: number[] = [];
+    let nowMs = 5_000;
+    const companion = await listenFakeCompanion(root, {
+      deviceId: "dev-1",
+      onEncode: (encode, socket) => {
+        encoded.push(encode.frameId as number);
+        socket.write(encodeCompanionMedia(mediaFrame(encode.frameId as number, 8)));
+      },
+    });
+    try {
+      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
+      const mux = new DesktopViewStreamMux({
+        connectCompanion: (input) => client.connect(input),
+        now: () => nowMs,
+      });
+      const phone = new FakePhoneSocket();
+      mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
+      await waitFor(() => phone.textMessages().some((msg) => msg.type === "ping"));
+      nowMs += 10;
+      const firstPing = phone.textMessages().find((msg) => msg.type === "ping");
+      phone.emitText({ type: "pong", t: firstPing?.t });
+      await waitFor(() => encoded.length === 1);
+      phone.bufferedAmount = 128;
+
+      const pingsAfterFrame = phone.textMessages().filter((msg) => msg.type === "ping").length;
+      await waitFor(
+        () => phone.textMessages().filter((msg) => msg.type === "ping").length > pingsAfterFrame,
+        3_000,
+      );
+      nowMs += DESKTOP_VIEW_PING_RTT_WINDOW_MS + 1;
+      const queued = phone.textMessages().filter((msg) => msg.type === "ping").at(-1);
+      phone.emitText({ type: "pong", t: queued?.t });
+      await delay(200);
+      expect(encoded).toEqual([1]);
+
+      phone.bufferedAmount = 0;
+      const pingsAtIdle = phone.textMessages().filter((msg) => msg.type === "ping").length;
+      await waitFor(
+        () => phone.textMessages().filter((msg) => msg.type === "ping").length > pingsAtIdle,
+        3_000,
+      );
+      const idle = phone.textMessages().filter((msg) => msg.type === "ping").at(-1);
+      nowMs += 10;
+      phone.emitText({ type: "pong", t: idle?.t });
+      await waitFor(() => encoded.length === 2);
+    } finally {
+      companion.close();
+    }
+  });
+
+  it("pauses encodes after a stale idle sample until an idle ping returns", async () => {
+    const root = companionRoot();
+    const encoded: number[] = [];
+    let nowMs = 5_000;
+    const companion = await listenFakeCompanion(root, {
+      deviceId: "dev-1",
+      onEncode: (encode, socket) => {
+        encoded.push(encode.frameId as number);
+        socket.write(encodeCompanionMedia(mediaFrame(encode.frameId as number, 64_000)));
+      },
+    });
+    try {
+      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
+      const mux = new DesktopViewStreamMux({
+        connectCompanion: (input) => client.connect(input),
+        now: () => nowMs,
+      });
+      const phone = new FakePhoneSocket();
+      mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
+      await waitFor(() => phone.textMessages().some((msg) => msg.type === "ping"));
+      nowMs += 10;
+      const firstPing = phone.textMessages().find((msg) => msg.type === "ping");
+      phone.emitText({ type: "pong", t: firstPing?.t });
+      await waitFor(() => encoded.length === 1);
+      nowMs += 250;
+      phone.emitText({ type: "ack", frameId: encoded[0], receivedAt: nowMs });
+      await waitFor(() => encoded.length === 2);
+
+      nowMs += DESKTOP_VIEW_PING_RTT_WINDOW_MS + 1;
+      phone.emitText({ type: "ack", frameId: encoded[1], receivedAt: nowMs });
+      await delay(200);
+      const pausedAt = encoded.length;
+      expect(pausedAt).toBe(2);
+
+      const pingsAtDrain = phone.textMessages().filter((msg) => msg.type === "ping").length;
+      await waitFor(
+        () => phone.textMessages().filter((msg) => msg.type === "ping").length > pingsAtDrain,
+        3_000,
+      );
+      const idle = phone.textMessages().filter((msg) => msg.type === "ping").at(-1);
+      nowMs += 10;
+      phone.emitText({ type: "pong", t: idle?.t });
+      await waitFor(() => encoded.length > pausedAt);
     } finally {
       companion.close();
     }

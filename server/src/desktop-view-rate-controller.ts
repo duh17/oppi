@@ -2,8 +2,11 @@
  * Transport-neutral live-view rate controller.
  *
  * Window: max(2 × frameBytes, 1.5 × commandedBitrate/8 × baseRtt).
- * Ping RTT is the only baseRtt source (10 s windowed min). Down-step uses the
- * minimum frame RTT over max(1 s, 2 × baseRtt). Ladder drops fps before resolution.
+ * Ping RTT is the only baseRtt source (10 s windowed min), and only from pings
+ * marked idle-at-send. A ping sent behind queued frames never updates base RTT.
+ * If the newest idle sample is older than 10 s, shouldEncode waits until one
+ * returns. Down-step uses the minimum frame RTT over max(1 s, 2 × baseRtt).
+ * Ladder drops fps before resolution.
  */
 
 export type DesktopViewQualityRung = {
@@ -84,6 +87,7 @@ export class DesktopViewRateController {
   private level = 0;
   private readonly pingRtts: PingSample[] = [];
   private baseRttMs: number | undefined;
+  private lastIdleSampleAt: number | undefined;
   private readonly inFlight = new Map<number, InFlightFrame>();
   private readonly frameRtts: FrameRttSample[] = [];
   private healthySince: number | undefined;
@@ -103,9 +107,11 @@ export class DesktopViewRateController {
     this.lastScale = this.rung().scale;
   }
 
-  onRttSample(rttMs: number, now = this.clock.now()): void {
+  onRttSample(rttMs: number, now = this.clock.now(), idleAtSend = true): void {
+    if (!idleAtSend) return;
     if (!Number.isFinite(rttMs) || rttMs <= 0) return;
     this.pingRtts.push({ at: now, rtt: rttMs });
+    this.lastIdleSampleAt = now;
     const start = now - DESKTOP_VIEW_PING_RTT_WINDOW_MS;
     while (this.pingRtts.length > 0) {
       const oldest = this.pingRtts[0];
@@ -182,6 +188,12 @@ export class DesktopViewRateController {
 
   shouldEncode(now = this.clock.now(), allowEncode = true): DesktopViewRateDecision {
     if (this.baseRttMs === undefined) return { kind: "wait" };
+    if (
+      this.lastIdleSampleAt === undefined ||
+      now - this.lastIdleSampleAt > DESKTOP_VIEW_PING_RTT_WINDOW_MS
+    ) {
+      return { kind: "wait" };
+    }
 
     const estimated = this.estimatedFrameBytes();
     const inFlight = this.inFlightBytes();

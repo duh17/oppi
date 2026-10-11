@@ -4,6 +4,7 @@ import {
   DESKTOP_VIEW_HARD_BYTE_CAP,
   DESKTOP_VIEW_LADDER,
   DESKTOP_VIEW_MIN_IN_FLIGHT_FRAMES,
+  DESKTOP_VIEW_PING_RTT_WINDOW_MS,
   DESKTOP_VIEW_RAMP_MIN_MS,
   DESKTOP_VIEW_STEP_UP_HOLD_MS,
   DESKTOP_VIEW_WINDOW_GAIN,
@@ -17,8 +18,30 @@ class FakeClock {
 
 function seeded(clock: FakeClock, rttMs = 20): DesktopViewRateController {
   const controller = new DesktopViewRateController({ now: clock.now });
-  controller.onRttSample(rttMs);
+  controller.onRttSample(rttMs, clock.nowMs, true);
   return controller;
+}
+
+function pFrameBytes(controller: DesktopViewRateController): number {
+  const snap = controller.snapshot();
+  return Math.max(1, Math.ceil(snap.bitrate / 8 / snap.fps));
+}
+
+function rampHealthy(
+  controller: DesktopViewRateController,
+  clock: FakeClock,
+  rttMs = 5,
+): void {
+  const origin = clock.nowMs;
+  for (let step = 0; step <= 20 && controller.snapshot().level < 7; step += 1) {
+    clock.nowMs = origin + step * DESKTOP_VIEW_RAMP_MIN_MS;
+    const decision = controller.shouldEncode();
+    if (decision.kind !== "encode") continue;
+    const bytes = pFrameBytes(controller);
+    controller.onFrameSent(decision.command.frameId, bytes, clock.nowMs);
+    clock.nowMs += rttMs;
+    controller.onAck(decision.command.frameId);
+  }
 }
 
 function encodeOrThrow(controller: DesktopViewRateController) {
@@ -33,10 +56,12 @@ function floodSlow(
   clock: FakeClock,
   rttMs: number,
   durationMs: number,
+  idlePingRttMs = 20,
 ): void {
   const start = clock.nowMs;
   while (clock.nowMs - start < durationMs) {
     clock.nowMs += 40;
+    controller.onRttSample(idlePingRttMs, clock.nowMs, true);
     const decision = controller.shouldEncode();
     if (decision.kind !== "encode") continue;
     controller.onFrameSent(decision.command.frameId, 1_000, clock.nowMs);
@@ -227,6 +252,103 @@ describe("DesktopViewRateController", () => {
     const commandedBps = DESKTOP_VIEW_LADDER[0]!.bitrate / 8;
     const bdp = Math.ceil(DESKTOP_VIEW_WINDOW_GAIN * commandedBps * (20 / 1000));
     expect(snap.windowBytes).toBe(Math.max(DESKTOP_VIEW_MIN_IN_FLIGHT_FRAMES * pBytes, bdp));
+  });
+
+  it("does not raise base RTT from pings sent while frames are queued", () => {
+    const clock = new FakeClock();
+    const controller = seeded(clock, 20);
+    const first = encodeOrThrow(controller);
+    const bytes = pFrameBytes(controller);
+    controller.onFrameSent(first.command.frameId, bytes, clock.nowMs);
+    clock.nowMs += 1000 / DESKTOP_VIEW_LADDER[0]!.fps;
+    const second = encodeOrThrow(controller);
+    controller.onFrameSent(second.command.frameId, bytes, clock.nowMs);
+    expect(controller.inFlightBytes()).toBeGreaterThan(bytes);
+
+    clock.nowMs += DESKTOP_VIEW_PING_RTT_WINDOW_MS + 1;
+    controller.onRttSample(400, clock.nowMs, false);
+    expect(controller.snapshot().baseRttMs).toBe(20);
+    expect(controller.shouldEncode().kind).toBe("wait");
+  });
+
+  it("pauses encodes when the idle sample is stale until an idle ping returns", () => {
+    const clock = new FakeClock();
+    const controller = seeded(clock, 20);
+    const first = encodeOrThrow(controller);
+    controller.onFrameSent(first.command.frameId, 1_000, clock.nowMs);
+    clock.nowMs += 10;
+    controller.onAck(first.command.frameId);
+
+    clock.nowMs += DESKTOP_VIEW_PING_RTT_WINDOW_MS + 1;
+    expect(controller.shouldEncode()).toEqual({ kind: "wait" });
+
+    controller.onRttSample(400, clock.nowMs, false);
+    expect(controller.shouldEncode()).toEqual({ kind: "wait" });
+    expect(controller.snapshot().baseRttMs).toBe(20);
+
+    controller.onRttSample(22, clock.nowMs, true);
+    expect(controller.shouldEncode().kind).toBe("encode");
+  });
+
+  it("down-steps a too-high rung within a bounded time once idle sampling resumes", () => {
+    const clock = new FakeClock();
+    const controller = seeded(clock, 20);
+    rampHealthy(controller, clock, 5);
+    expect(controller.snapshot().level).toBe(7);
+
+    const bytes = pFrameBytes(controller);
+    clock.nowMs += 40;
+    const queuedA = encodeOrThrow(controller);
+    controller.onFrameSent(queuedA.command.frameId, bytes, clock.nowMs);
+    clock.nowMs += 40;
+    const queuedB = encodeOrThrow(controller);
+    controller.onFrameSent(queuedB.command.frameId, bytes, clock.nowMs);
+    expect(controller.inFlightBytes()).toBeGreaterThan(bytes);
+
+    clock.nowMs += DESKTOP_VIEW_PING_RTT_WINDOW_MS + 1;
+    controller.onRttSample(400, clock.nowMs, false);
+    expect(controller.snapshot().baseRttMs).toBe(20);
+    expect(controller.shouldEncode().kind).toBe("wait");
+
+    controller.onAck(queuedA.command.frameId);
+    controller.onAck(queuedB.command.frameId);
+    expect(controller.shouldEncode().kind).toBe("wait");
+
+    const resumeAt = clock.nowMs;
+    controller.onRttSample(20, clock.nowMs, true);
+    floodSlow(controller, clock, 200, 2_500);
+    expect(controller.snapshot().level).toBeLessThan(7);
+    expect(clock.nowMs - resumeAt).toBeLessThan(3_000);
+  });
+
+  it("ramps a healthy LAN-like link to L7 within 1s without an idle drain pause", () => {
+    const clock = new FakeClock();
+    const controller = seeded(clock, 5);
+    const start = clock.nowMs;
+    let staleWaits = 0;
+    let drainPauseMs = 0;
+    for (let step = 0; step <= 20 && controller.snapshot().level < 7; step += 1) {
+      clock.nowMs = start + step * DESKTOP_VIEW_RAMP_MIN_MS;
+      controller.onRttSample(5, clock.nowMs, true);
+      const decision = controller.shouldEncode();
+      if (
+        decision.kind === "wait" &&
+        decision.afterMs === undefined &&
+        controller.snapshot().baseRttMs !== undefined
+      ) {
+        staleWaits += 1;
+        drainPauseMs += DESKTOP_VIEW_RAMP_MIN_MS;
+      }
+      if (decision.kind !== "encode") continue;
+      const bytes = pFrameBytes(controller);
+      controller.onFrameSent(decision.command.frameId, bytes, clock.nowMs);
+      clock.nowMs += 5;
+      controller.onAck(decision.command.frameId);
+    }
+    expect(controller.snapshot().level).toBe(7);
+    expect(clock.nowMs - start).toBeLessThanOrEqual(1_000);
+    expect(staleWaits).toBe(0);
+    expect(drainPauseMs).toBe(0);
   });
 
   it("does not down-step from one IDR larger than twice the P-frame", () => {
