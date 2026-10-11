@@ -42,7 +42,10 @@ final class DesktopLiveViewerModel {
     private var reconnectTask: Task<Void, Never>?
     private var startTask: Task<Void, Never>?
     private var pendingClose: Task<Void, Never>?
-    private var picture: (any DesktopLivePicture)?
+    /// The sample-buffer view is a display sink, not UI state. Writing the
+    /// existential on every `updateUIView` cannot be coalesced by `@Observable`
+    /// and retriggers the representable in a main-thread loop.
+    @ObservationIgnored private var picture: (any DesktopLivePicture)?
     private var sessionGeneration = 0
     private var reconnectAttempt = 0
     private var visible = false
@@ -61,6 +64,7 @@ final class DesktopLiveViewerModel {
     }
 
     func attachPicture(_ view: some DesktopLivePicture) {
+        guard picture !== view else { return }
         picture = view
         view.onDecodeFailed = { [weak self] in
             self?.dropAndReconnect()

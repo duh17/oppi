@@ -1,5 +1,6 @@
 import CoreMedia
 import Foundation
+import Observation
 import Testing
 import UIKit
 @testable import Oppi
@@ -172,6 +173,21 @@ struct DesktopLiveViewSessionTests {
         #expect(model.connectCount == 2)
     }
 
+    @Test @MainActor func attachingTheSamePictureTwiceDoesNotTriggerObservation() {
+        let picture = FailedUntilFlushPicture()
+        let model = DesktopLiveViewerModel(open: { nil })
+        model.attachPicture(picture)
+        let flag = ObservationChangeFlag()
+        withObservationTracking {
+            // Reads `picture` through the same accessibility path updateUIView uses.
+            model.tickForTesting(now: 0)
+        } onChange: {
+            flag.didChange = true
+        }
+        model.attachPicture(picture)
+        #expect(!flag.didChange)
+    }
+
     @Test @MainActor func failedLayerFlushReconnectsAndShowsNextIDR() async throws {
         let fake = LiveViewStreamFake()
         let picture = FailedUntilFlushPicture()
@@ -230,6 +246,10 @@ struct DesktopLiveViewSessionTests {
         #expect(phone.last?.target == .desktopStill)
         #expect(phone.filter { $0.target.isReleaseEnabled }.last?.target == .desktopStill)
     }
+}
+
+private final class ObservationChangeFlag: @unchecked Sendable {
+    var didChange = false
 }
 
 @MainActor
