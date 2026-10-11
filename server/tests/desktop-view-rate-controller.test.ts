@@ -321,6 +321,35 @@ describe("DesktopViewRateController", () => {
     expect(clock.nowMs - resumeAt).toBeLessThan(3_000);
   });
 
+  it("down-steps L7 when P-frame RTT stays above threshold on a slower link", () => {
+    const clock = new FakeClock();
+    const controller = seeded(clock, 240);
+    const origin = clock.nowMs;
+    for (let step = 0; step <= 40 && controller.snapshot().level < 7; step += 1) {
+      clock.nowMs = origin + step * 240;
+      const decision = controller.shouldEncode();
+      if (decision.kind !== "encode") continue;
+      const size = pFrameBytes(controller);
+      controller.onFrameSent(decision.command.frameId, size, clock.nowMs);
+      clock.nowMs += 5;
+      controller.onAck(decision.command.frameId);
+    }
+    expect(controller.snapshot().level).toBe(7);
+    const start = clock.nowMs;
+    const bytes = pFrameBytes(controller);
+    while (clock.nowMs - start < 2_500) {
+      clock.nowMs += 40;
+      controller.onRttSample(240, clock.nowMs, true);
+      const decision = controller.shouldEncode();
+      if (decision.kind !== "encode") continue;
+      controller.onFrameSent(decision.command.frameId, bytes, clock.nowMs);
+      clock.nowMs += 1_500;
+      controller.onAck(decision.command.frameId);
+    }
+    expect(controller.snapshot().level).toBeLessThan(7);
+    expect(clock.nowMs - start).toBeLessThan(4_000);
+  });
+
   it("ramps a healthy LAN-like link to L7 within 1s without an idle drain pause", () => {
     const clock = new FakeClock();
     const controller = seeded(clock, 5);

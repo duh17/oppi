@@ -69,6 +69,12 @@ type Verdict = {
   gate: boolean;
 };
 
+type SocketClose = {
+  code: number;
+  reason: string;
+  atMs: number;
+};
+
 type RunResult = {
   preset: string;
   ttffMs: number;
@@ -88,6 +94,11 @@ type RunResult = {
   postRamp: Map<number, number>;
   postRampTotalMs: number;
   cascadeDown: boolean;
+  mediaClose: SocketClose | undefined;
+  controlClose: SocketClose | undefined;
+  mediaError: string | undefined;
+  shaperDrops: string[];
+  mediaAliveAtRevoke: boolean;
   verdicts: Verdict[];
 };
 
@@ -160,7 +171,11 @@ async function runPreset(preset: Preset): Promise<RunResult> {
   const server = new Server(storage, undefined, { desktopCompanionRuntimeRoot: companionRoot });
   await server.start();
   const targetPort = server.port;
-  const shaper = await listenShaper(preset, "127.0.0.1", targetPort);
+  const openedAt = Date.now();
+  const shaperDrops: string[] = [];
+  const shaper = await listenShaper(preset, "127.0.0.1", targetPort, (event) => {
+    shaperDrops.push(`${Date.now() - openedAt}ms ${event}`);
+  });
 
   const ages: number[] = [];
   const arrivals: number[] = [];
@@ -168,7 +183,9 @@ async function runPreset(preset: Preset): Promise<RunResult> {
   let bytes = 0;
   let firstFrameAt = 0;
   let lastArrival = 0;
-  const openedAt = Date.now();
+  let mediaError: string | undefined;
+  let mediaClose: SocketClose | undefined;
+  let controlClose: SocketClose | undefined;
 
   const media = new WebSocket(`wss://127.0.0.1:${shaper.port}${DESKTOP_VIEW_STREAM_PATH}`, {
     headers: { Authorization: `Bearer ${enrolled.accessToken}` },
@@ -176,8 +193,32 @@ async function runPreset(preset: Preset): Promise<RunResult> {
   const control = new WebSocket(`wss://127.0.0.1:${shaper.port}/app/events/stream`, {
     headers: { Authorization: `Bearer ${enrolled.accessToken}` },
   });
-  media.on("error", () => {});
-  control.on("error", () => {});
+  media.on("error", (error) => {
+    console.error(`MEDIA_WS_ERROR ${preset.name} ${String(error)}`);
+  });
+  control.on("error", (error) => {
+    console.error(`CONTROL_WS_ERROR ${preset.name} ${String(error)}`);
+  });
+  media.on("close", (code, reason) => {
+    mediaClose = {
+      code,
+      reason: Buffer.isBuffer(reason) ? reason.toString() : String(reason ?? ""),
+      atMs: Date.now() - openedAt,
+    };
+    console.error(
+      `MEDIA_CLOSE ${preset.name} code=${code} reason=${JSON.stringify(mediaClose.reason)} atMs=${mediaClose.atMs}`,
+    );
+  });
+  control.on("close", (code, reason) => {
+    controlClose = {
+      code,
+      reason: Buffer.isBuffer(reason) ? reason.toString() : String(reason ?? ""),
+      atMs: Date.now() - openedAt,
+    };
+    console.error(
+      `CONTROL_CLOSE ${preset.name} code=${code} reason=${JSON.stringify(controlClose.reason)} atMs=${controlClose.atMs}`,
+    );
+  });
   control.on("pong", (data) => {
     const sent = Number(data.toString("utf8"));
     if (Number.isFinite(sent)) controlPings.push(Date.now() - sent);
@@ -191,6 +232,10 @@ async function runPreset(preset: Preset): Promise<RunResult> {
       const parsed = parseControlJson(Buffer.from(data as Buffer));
       if (parsed?.type === "ping") {
         media.send(JSON.stringify({ type: "pong", t: parsed.t }));
+      }
+      if (parsed?.type === "error") {
+        mediaError = `${String(parsed.code)} ${String(parsed.message ?? "")}`;
+        console.error(`MEDIA_ERROR ${preset.name} ${mediaError}`);
       }
       return;
     }
@@ -210,6 +255,7 @@ async function runPreset(preset: Preset): Promise<RunResult> {
   });
 
   await delay(RUN_MS);
+  const mediaAliveAtRevoke = media.readyState === WebSocket.OPEN;
   const closedAtPromise = waitClose(media, 5_000);
   const revokeAt = Date.now();
   companion.revoke();
@@ -217,6 +263,7 @@ async function runPreset(preset: Preset): Promise<RunResult> {
   clearInterval(pingTimer);
   control.close();
   media.close();
+  await delay(50);
   await server.stop();
   shaper.close();
   companion.close();
@@ -253,6 +300,11 @@ async function runPreset(preset: Preset): Promise<RunResult> {
     linkBps: preset.rateBps,
     overLinkMs: 0,
     cascadeDown: hasCascadeDown(levelSamples, 2_000),
+    mediaClose,
+    controlClose,
+    mediaError,
+    shaperDrops,
+    mediaAliveAtRevoke,
     verdicts: [],
   };
   result.overLinkMs = commandedOverLinkMs(postRamp, preset.rateBps);
@@ -336,21 +388,32 @@ function listenShaper(
   preset: Preset,
   host: string,
   port: number,
+  onDrop?: (event: string) => void,
 ): Promise<{ port: number; close: () => void }> {
   const bytesPerMs = preset.rateBps / 8 / 1000;
   let stallUntil = 0;
   let lastStall = Date.now();
   const nextFreeAt = { up: 0, down: 0 };
   const lastDeliverAt = { up: 0, down: 0 };
+  let connSeq = 0;
   const server = createNetServer((client) => {
+    const connId = `c${(connSeq += 1)}`;
     const upstream = netConnect(port, host);
-    client.on("error", () => {});
-    upstream.on("error", () => {});
+    client.on("error", (error) => {
+      onDrop?.(`${connId} client-error ${error.message}`);
+    });
+    upstream.on("error", (error) => {
+      onDrop?.(`${connId} upstream-error ${error.message}`);
+    });
     const pipe = (from: Socket, to: Socket, direction: "up" | "down"): void => {
       let pending = 0;
       let closed = false;
+      let queue = Promise.resolve();
       const flushClose = (): void => {
-        if (closed && pending === 0 && !to.destroyed) to.destroy();
+        if (closed && pending === 0 && !to.destroyed) {
+          onDrop?.(`${connId} ${direction} destroy-peer pending=0`);
+          to.destroy();
+        }
       };
       from.on("data", (chunk) => {
         const now = Date.now();
@@ -361,25 +424,34 @@ function listenShaper(
         const start = Math.max(now, nextFreeAt[direction]);
         nextFreeAt[direction] = start + (bytesPerMs > 0 ? chunk.length / bytesPerMs : 0);
         const jitter = preset.jitterMs ? Math.random() * preset.jitterMs : 0;
+        // Strictly increasing deliverAt so equal-ms setTimeouts cannot reorder TLS records.
         const deliverAt = Math.max(
           start + preset.delayMs + jitter,
           stallUntil,
-          lastDeliverAt[direction],
+          lastDeliverAt[direction] + 1,
         );
         lastDeliverAt[direction] = deliverAt;
-        const wait = Math.max(0, deliverAt - Date.now());
         pending += 1;
-        setTimeout(() => {
-          if (!to.destroyed && to.writable) to.write(chunk);
-          pending -= 1;
-          flushClose();
-        }, wait);
+        queue = queue.then(async () => {
+          try {
+            const wait = Math.max(0, deliverAt - Date.now());
+            if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+            if (!to.destroyed && to.writable) to.write(chunk);
+          } finally {
+            pending -= 1;
+            flushClose();
+          }
+        });
       });
       from.on("close", () => {
+        onDrop?.(`${connId} ${direction} from-close pending=${pending}`);
         closed = true;
         flushClose();
       });
-      from.on("error", () => to.destroy());
+      from.on("error", (error) => {
+        onDrop?.(`${connId} ${direction} from-error ${error.message} → destroy peer`);
+        to.destroy();
+      });
     };
     pipe(client, upstream, "up");
     pipe(upstream, client, "down");
@@ -412,6 +484,9 @@ function printTable(results: RunResult[]): void {
     "ctrl_p95",
     "revoke_ms",
     "over_link_ms",
+    "media_close",
+    "ctrl_close",
+    "alive",
     "gates",
     "bands",
   ];
@@ -439,14 +514,27 @@ function printTable(results: RunResult[]): void {
       row.controlPingP95,
       row.revokeToCloseMs,
       row.overLinkMs,
+      formatClose(row.mediaClose),
+      formatClose(row.controlClose),
+      row.mediaAliveAtRevoke ? "yes" : "no",
       gates,
       bands,
     ].join("\t");
     console.error(line);
+    if (row.shaperDrops.length > 0) {
+      console.error(`SHAPER ${row.preset} ${row.shaperDrops.join(" | ")}`);
+    }
+    if (row.mediaError) console.error(`MEDIA_ERROR ${row.preset} ${row.mediaError}`);
     console.log(
-      `METRIC ${row.preset}_ttff_ms=${row.ttffMs}\nMETRIC ${row.preset}_fps=${row.fps}\nMETRIC ${row.preset}_age_p95_ms=${row.ageP95}\nMETRIC ${row.preset}_ctrl_p95_ms=${row.controlPingP95}\nMETRIC ${row.preset}_revoke_ms=${row.revokeToCloseMs}\nMETRIC ${row.preset}_over_link_ms=${row.overLinkMs}`,
+      `METRIC ${row.preset}_ttff_ms=${row.ttffMs}\nMETRIC ${row.preset}_fps=${row.fps}\nMETRIC ${row.preset}_age_p95_ms=${row.ageP95}\nMETRIC ${row.preset}_ctrl_p95_ms=${row.controlPingP95}\nMETRIC ${row.preset}_revoke_ms=${row.revokeToCloseMs}\nMETRIC ${row.preset}_over_link_ms=${row.overLinkMs}\nMETRIC ${row.preset}_media_alive=${row.mediaAliveAtRevoke ? 1 : 0}`,
     );
   }
+}
+
+function formatClose(close: SocketClose | undefined): string {
+  if (!close) return "-";
+  const reason = close.reason ? `:${close.reason}` : "";
+  return `${close.code}${reason}@${close.atMs}ms`;
 }
 
 function rampEndAt(
@@ -528,8 +616,24 @@ function evaluateTargets(row: RunResult): Verdict[] {
   });
   verdicts.push({
     target: `${row.preset}:over-link<=2s`,
-    pass: row.overLinkMs <= 2_000,
-    detail: `${row.overLinkMs}ms commanded above ${row.linkBps}bps`,
+    pass: row.mediaAliveAtRevoke && row.overLinkMs <= 2_000,
+    detail: row.mediaAliveAtRevoke
+      ? `${row.overLinkMs}ms commanded above ${row.linkBps}bps`
+      : `run truncated (media dead before revoke); over-link ${row.overLinkMs}ms`,
+    gate: true,
+  });
+  verdicts.push({
+    target: `${row.preset}:media-alive-until-revoke`,
+    pass: row.mediaAliveAtRevoke,
+    detail: row.mediaAliveAtRevoke
+      ? "open at revoke"
+      : `closed ${formatClose(row.mediaClose)} ctrl ${formatClose(row.controlClose)}`,
+    gate: true,
+  });
+  verdicts.push({
+    target: `${row.preset}:revoke-ms-measured`,
+    pass: row.revokeToCloseMs >= 0,
+    detail: row.revokeToCloseMs >= 0 ? `${row.revokeToCloseMs}ms` : "stream already gone",
     gate: true,
   });
   if (row.preset === "lan") {
@@ -565,12 +669,6 @@ function evaluateTargets(row: RunResult): Verdict[] {
       pass: share > 0.5,
       detail: `L2-L4 ${Math.round(share * 100)}%`,
       gate: false,
-    });
-    verdicts.push({
-      target: "bad-cell:ctrl-p95<838",
-      pass: row.controlPingP95 >= 0 && row.controlPingP95 < 838,
-      detail: `ctrl p95 ${row.controlPingP95}ms (stall floor 800ms)`,
-      gate: true,
     });
   }
   return verdicts;

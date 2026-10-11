@@ -5,8 +5,9 @@
  * Ping RTT is the only baseRtt source (10 s windowed min), and only from pings
  * marked idle-at-send. A ping sent behind queued frames never updates base RTT.
  * If the newest idle sample is older than 10 s, shouldEncode waits until one
- * returns. Down-step uses the minimum frame RTT over max(1 s, 2 × baseRtt).
- * Ladder drops fps before resolution.
+ * returns. Down-step uses the minimum frame RTT over max(1 s, 2 × baseRtt),
+ * keeping at least two samples so a frame RTT longer than that window can still
+ * step down. Ladder drops fps before resolution.
  */
 
 export type DesktopViewQualityRung = {
@@ -137,7 +138,9 @@ export class DesktopViewRateController {
     const frameRtt = now - pending.sentAt;
     this.frameRtts.push({ at: now, rtt: frameRtt });
     const observeMs = Math.max(1_000, 2 * base);
-    while (this.frameRtts.length > 0) {
+    // Keep at least two samples: when frame RTT exceeds observeMs, acks are
+    // farther apart than the window and pruning to 0/1 would never down-step.
+    while (this.frameRtts.length > 2) {
       const oldest = this.frameRtts[0];
       if (!oldest || now - oldest.at <= observeMs) break;
       this.frameRtts.shift();

@@ -12,6 +12,7 @@ import {
 } from "./desktop-companion-view-stream-client.js";
 import {
   DESKTOP_VIEW_HARD_BYTE_CAP,
+  DESKTOP_VIEW_PING_RTT_WINDOW_MS,
   DesktopViewRateController,
 } from "./desktop-view-rate-controller.js";
 import {
@@ -240,6 +241,10 @@ export class DesktopViewStreamMux {
               this.sendJson(ws, phoneHello);
               const sendPing = (): void => {
                 const t = now();
+                const staleBefore = t - DESKTOP_VIEW_PING_RTT_WINDOW_MS;
+                for (const sentAt of pingIdleAtSend.keys()) {
+                  if (sentAt < staleBefore) pingIdleAtSend.delete(sentAt);
+                }
                 const snap = controller.snapshot();
                 const pFrameBytes = Math.max(1, Math.ceil(snap.bitrate / 8 / snap.fps));
                 const inFlight = controller.inFlightBytes();
