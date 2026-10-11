@@ -803,7 +803,8 @@ export interface ConversationStreamAttach {
 //
 // Dedicated WSS `/desktop/view/stream` plus companion `/view/stream` upgrade.
 // Control is JSON text (phone) or JSON companion frames; video is binary with a
-// fixed 24-byte header. Outside ServerMessage/ClientMessage until slice 2.
+// fixed 24-byte header. Outside ServerMessage/ClientMessage; Apple models are
+// `OppiCore/Models/DesktopViewStream.swift`.
 // Fatal application error codes 4100–4199 must not trigger reconnect.
 
 export const DESKTOP_VIEW_STREAM_PATH = "/desktop/view/stream";

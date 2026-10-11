@@ -286,19 +286,33 @@ struct DesktopCurrentStillViewerModelTests {
         #expect(shared.map(\.target) == [.agents, .schedules, .skills, .extensions, .mcpServers])
 
         let phone = WorkspaceSidebarPrimaryUtilities.items(for: .phone, sshTerminalEnabled: false, hasSSHProfile: false)
-        #expect(phone.map(\.target) == [.agents, .schedules, .skills, .extensions, .mcpServers, .desktopStill])
-        #expect(phone.last?.title == "Remote Screen")
-        #expect(phone.last?.systemImage == "macwindow")
-        #expect(phone.last?.accessibilityIdentifier == "workspace.desktopStill.open")
-        #expect(phone.last?.minimumHitHeight == 44)
-        #expect(phone.last?.accessibilityHint == "Inspect the current remote screen")
-        #expect(
-            !phone.filter { $0.target.isReleaseEnabled }.map(\.target).contains(.desktopStill)
+        #expect(phone.map(\.target) == [.agents, .schedules, .skills, .extensions, .mcpServers])
+        #expect(!phone.map(\.target).contains(.desktopStill))
+
+        let livePhone = WorkspaceSidebarPrimaryUtilities.items(
+            for: .phone,
+            sshTerminalEnabled: false,
+            hasSSHProfile: false,
+            desktopLiveViewAvailable: true
         )
+        #expect(livePhone.last?.target == .desktopStill)
+        #expect(livePhone.last?.title == "Remote Screen")
+        #expect(livePhone.last?.systemImage == "macwindow")
+        #expect(livePhone.last?.accessibilityIdentifier == "workspace.desktopStill.open")
+        #expect(livePhone.last?.minimumHitHeight == 44)
+        #expect(livePhone.last?.accessibilityHint == "Inspect the current remote screen")
 
         let pad = WorkspaceSidebarPrimaryUtilities.items(for: .pad, sshTerminalEnabled: false, hasSSHProfile: false)
         #expect(pad.map(\.target) == [.agents, .schedules, .skills, .extensions, .mcpServers])
         #expect(!pad.map(\.target).contains(.desktopStill))
+        #expect(
+            !WorkspaceSidebarPrimaryUtilities.items(
+                for: .pad,
+                sshTerminalEnabled: false,
+                hasSSHProfile: false,
+                desktopLiveViewAvailable: true
+            ).map(\.target).contains(.desktopStill)
+        )
     }
 
     @Test func desktopStillUtilityDoesNotOpenWhenReleaseDisabled() {

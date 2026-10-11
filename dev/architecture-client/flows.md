@@ -19,6 +19,7 @@ graph TD
   Client --> SessionWS[Focused session stream<br/>workspace or /control-sessions/:sessionId/stream]
   Client --> SessionCatchup[Focused session catch-up<br/>workspace or /control-sessions/:sessionId/events]
   Client --> AudioWS[Dictation stream<br/>/dictation/stream]
+  Client --> DesktopLiveWS[Desktop live-view stream<br/>/desktop/view/stream]
 
   WorkspaceHTTP --> Home[Workspace catalog and summaries]
   WorkspaceHTTP --> Recent[Recent session summaries across workspaces]
@@ -32,6 +33,7 @@ graph TD
   SessionWS --> Chat[Focused session timeline and commands]
   SessionCatchup --> Replay[Durable session event repair]
   AudioWS --> Dictation[Dictation and audio input]
+  DesktopLiveWS --> RemoteScreen[Live Remote Screen]
 ```
 
 The global app event stream and focused session stream stay separate. App events update lists and attention across workspaces. Focused session streams carry timeline events, commands, queue state, and session-specific UI messages. `SessionRouteScope` selects workspace-owned or declared control-session paths; both scopes feed the same `ChatSessionManager` and reducer. iOS paints that result with UIKit; Mac paints it with AppKit/SwiftUI.

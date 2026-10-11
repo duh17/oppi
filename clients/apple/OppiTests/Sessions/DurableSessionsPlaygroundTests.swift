@@ -28,7 +28,11 @@ struct DurableSessionsPlaygroundTests {
             if let terminal { #expect(withTerminal[terminal + 1] == .durableSessions) }
 
             let withoutTerminal = WorkspaceSidebarPrimaryUtilities.items(
-                for: idiom, sshTerminalEnabled: false, hasSSHProfile: false, durableSessionsAvailable: true
+                for: idiom,
+                sshTerminalEnabled: false,
+                hasSSHProfile: false,
+                durableSessionsAvailable: true,
+                desktopLiveViewAvailable: idiom == .phone
             ).map(\.target)
             #expect(withTerminal.first == .controlConversation)
             #expect(withoutTerminal.first == .controlConversation)

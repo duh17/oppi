@@ -120,6 +120,10 @@ The same sidebar starts with **Oppi Control**: the server's one durable control 
 
 From the CLI, `oppi session create --workspace <id> --prompt <text> --engine durable` starts a durable session; it fails while the server flag is off. Adding `--agent` fails too: saved Agents can't start durable sessions yet.
 
+## Live Remote Screen experiment
+
+Turn on **Settings → Experiments → Live Remote Screen** (off by default, saved on this device). When the visible server advertises live remote screen (`oppi config set experimental.desktopLiveView true` and a restart), iPhone shows **Remote Screen** in the workspace sidebar. It plays the Mac window that was granted to this phone. Live means a frame arrived recently; if nothing arrives for a couple of seconds the status becomes Paused or Reconnecting with how old the last picture is. Pinch to zoom, drag to pan, double-tap to fit or zoom to 2×. The stream stops when Oppi backgrounds, the screen locks, or you leave the viewer, and it does not save frames. Turn the experiment off to keep the still viewer, or hide the row when the still viewer is not released.
+
 ## Models and quota
 
 Pick models from the in-app picker. Remaining provider quota and pace live on **Server Settings** → **Model Providers**. The CLI also has `oppi quota` and `oppi models`. See [Provider quotas](provider-quotas.md).

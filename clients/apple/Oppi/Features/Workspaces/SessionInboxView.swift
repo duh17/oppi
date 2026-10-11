@@ -166,7 +166,8 @@ enum WorkspaceSidebarPrimaryUtilities {
         for idiom: UIUserInterfaceIdiom,
         sshTerminalEnabled: Bool,
         hasSSHProfile: Bool,
-        durableSessionsAvailable: Bool = false
+        durableSessionsAvailable: Bool = false,
+        desktopLiveViewAvailable: Bool = false
     ) -> [WorkspaceSidebarPrimaryUtilityItem] {
         var result = items
         if sshTerminalEnabled && hasSSHProfile {
@@ -180,7 +181,9 @@ enum WorkspaceSidebarPrimaryUtilities {
             result.insert(controlConversation, at: 0)
             result.append(durableSessions)
         }
-        if idiom == .phone { result.append(desktopStill) }
+        if idiom == .phone, ReleaseFeatures.desktopStillEnabled || desktopLiveViewAvailable {
+            result.append(desktopStill)
+        }
         return result
     }
 }
@@ -298,6 +301,7 @@ struct SessionInboxView: View {
     @State private var collapsedStoppedGroupIDs: Set<String> = []
     @State private var hasAutoOpenedE2EWorkspace = false
     @State private var hasAutoOpenedE2ESession = false
+    @State private var hasAutoOpenedRemoteScreen = false
     @State private var providerSetupState: ProviderSetupState = .unknown
     @FocusState private var isSearchFieldFocused: Bool
     @State private var presentsNowPlayingPlayer = false
@@ -729,7 +733,12 @@ struct SessionInboxView: View {
                 case .controlConversation:
                     ControlConversationDestinationView()
                 case .desktopStill:
-                    DesktopCurrentStillViewerView()
+                    if AppPreferences.Experiments.desktopLiveViewEnabled,
+                       activeConnection?.desktopLiveViewAvailable == true {
+                        DesktopLiveViewerView(connection: activeConnection)
+                    } else {
+                        DesktopCurrentStillViewerView()
+                    }
                 case .manageServers:
                     ServerView()
                 case .appSettings:
@@ -1392,6 +1401,18 @@ struct SessionInboxView: View {
     private func applyE2ELaunchHintsIfNeeded() {
         autoOpenE2EWorkspaceIfRequested()
         autoOpenE2ESessionIfRequested()
+        autoOpenRemoteScreenIfRequested()
+    }
+
+    private func autoOpenRemoteScreenIfRequested() {
+        guard !hasAutoOpenedRemoteScreen,
+              ProcessInfo.processInfo.environment["OPPI_E2E_OPEN_REMOTE_SCREEN"] == "1",
+              navigation.workspacePath.isEmpty,
+              WorkspaceUtilityNavTarget.desktopStill.isReleaseEnabled,
+              ReleaseFeatures.desktopStillEnabled || activeConnection?.desktopLiveViewAvailable == true
+        else { return }
+        hasAutoOpenedRemoteScreen = true
+        navigation.openWorkspaceUtility(.desktopStill)
     }
 
     private func autoOpenE2EWorkspaceIfRequested() {
@@ -1718,6 +1739,7 @@ struct WorkspaceSessionInboxStackRootView: View {
 struct WorkspaceSidebarView: View {
     @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var sshTerminalEnabled = false
     @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var durableSessionsEnabled = false
+    @AppStorage(AppPreferences.Experiments.desktopLiveViewKey) private var desktopLiveViewEnabled = false
     @AppStorage(SSHTerminalProfileStore.catalogKey) private var sshCatalogData = Data()
     @AppStorage(SSHTerminalProfileStore.storageKey) private var sshLegacyProfileData = Data()
     @Environment(ConnectionCoordinator.self) private var coordinator
@@ -1763,6 +1785,12 @@ struct WorkspaceSidebarView: View {
                                 serverOffersDurable: selectedServer
                                     .flatMap { coordinator.connection(for: $0.id) }?
                                     .durableSessionsAvailable == true
+                            ),
+                            desktopLiveViewAvailable: DesktopLiveViewPlayground.isAvailable(
+                                experimentEnabled: desktopLiveViewEnabled,
+                                serverOffers: selectedServer
+                                    .flatMap { coordinator.connection(for: $0.id) }?
+                                    .desktopLiveViewAvailable == true
                             )
                         )
                             .filter { $0.target.isReleaseEnabled },

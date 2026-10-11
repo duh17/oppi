@@ -81,4 +81,14 @@ Down-step root cause: observe window `max(1 s, 2×base)` pruned samples whose ac
 
 VideoToolbox: hardware + low-latency High profile on this Mac. OppiMacTests decode real AVCC output (SPS/PPS+IDR, P-frame, forced IDR, AverageBitRate readback) via `completeFrames()`.
 
-Chen's leftover: real ScreenCaptureKit through OppiMac once slice 2 shows it on the phone.
+## iPhone viewer (slice 2)
+
+Settings → Experiments → **Live Remote Screen** (device-local, default off). The Remote Screen row appears on iPhone when `ReleaseFeatures.desktopStillEnabled` **or** (the experiment is on and `/server/info` advertises `capabilities.desktopLiveView`). Experiment off leaves the still viewer unchanged.
+
+The viewer opens a dedicated `URLSessionWebSocketTask` to `/desktop/view/stream` with the device token — never the session or app-event stream. It replies `pong` to every `ping` and `ack`s each media frame on receipt, before decode. AVCC payloads become a `CMFormatDescription` on each IDR (replaced on size change) and a `CMSampleBuffer` with `DisplayImmediately` for `AVSampleBufferDisplayLayer`. The picture aspect-fits a fixed container so a quality-rung scale change does not resize the on-screen image. A broken P-frame chain waits for the next IDR.
+
+**Live** is frame arrival, not the socket being open: more than 2 s without a frame shows Reconnecting or Paused with the last-frame age. Pinch-zoom, pan, and double-tap fit ↔ 2× (same owner as the VoiceOver action). Landscape is allowed. The stream closes on background, view disappear, and device lock, and reconnects on return. Fatal codes 4100–4199 and `grant_*` close reasons show a specific message and do not auto-reconnect; other closes use capped backoff while the view is visible. Frames are not stored, cached, logged, or sent to telemetry.
+
+Apple models: `clients/apple/OppiCore/Models/DesktopViewStream.swift`. Decode/display stays in Oppi (`DesktopLiveH264Decoder`, `DesktopLiveViewerView`). No Mac UI.
+
+Chen's leftover: real ScreenCaptureKit through OppiMac once this viewer shows it on the phone.

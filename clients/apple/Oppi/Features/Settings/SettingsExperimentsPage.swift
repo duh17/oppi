@@ -5,6 +5,7 @@ struct SettingsExperimentsPage: View {
 
     @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var sshTerminalEnabled = false
     @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var durableSessionsEnabled = false
+    @AppStorage(AppPreferences.Experiments.desktopLiveViewKey) private var desktopLiveViewEnabled = false
 
     /// How many experiments are currently on, for the root row summary.
     @MainActor
@@ -14,6 +15,7 @@ struct SettingsExperimentsPage: View {
             sessionThreadsEnabled,
             AppPreferences.Experiments.sshTerminalEnabled,
             AppPreferences.Experiments.durableSessionsEnabled,
+            AppPreferences.Experiments.desktopLiveViewEnabled,
         ].filter { $0 }.count
     }
 
@@ -44,6 +46,13 @@ struct SettingsExperimentsPage: View {
                     .accessibilityIdentifier("settings.experiments.durableSessions")
             } footer: {
                 Text("Adds a Durable list for starting and finding durable sessions on servers that offer them. Experiments are early builds with rough edges.")
+            }
+
+            Section {
+                Toggle("Live Remote Screen", isOn: $desktopLiveViewEnabled)
+                    .accessibilityIdentifier("settings.experiments.desktopLiveView")
+            } footer: {
+                Text("Shows a live view of a granted Mac window on iPhone when the server offers Live Remote Screen. Off keeps the still viewer. Frames are not saved.")
             }
         }
         .settingsPage("Experiments")

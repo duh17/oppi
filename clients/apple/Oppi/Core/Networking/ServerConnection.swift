@@ -253,6 +253,8 @@ final class ServerConnection {
     private(set) var controlSessionsAvailable = false
     /// The server accepts durable-engine creates. Gates the Durable playground.
     private(set) var durableSessionsAvailable = false
+    /// The server advertises experimental live H.264 (`capabilities.desktopLiveView`).
+    private(set) var desktopLiveViewAvailable = false
 
     // Stores
     let sessionStore: SessionStore
@@ -979,6 +981,7 @@ final class ServerConnection {
         self.connectedServerVersion = nil
         self.dictationStreamAvailable = false
         self.durableSessionsAvailable = false
+        self.desktopLiveViewAvailable = false
         self.appEventStreamAvailable = false
         self.appEventStreamTransportState = .disconnected
         self.missingRequiredSplitStreamCapabilities = []
@@ -1360,6 +1363,7 @@ final class ServerConnection {
                 if !hadLoadedCapabilities {
                     self.dictationStreamAvailable = false
                     self.appEventStreamAvailable = false
+                    self.desktopLiveViewAvailable = false
                     self.disconnectAppEventStream()
                     self.missingRequiredSplitStreamCapabilities = []
                     self.streamCapabilitiesLoaded = false
@@ -1393,6 +1397,7 @@ final class ServerConnection {
         appEventStreamAvailable = capabilities?.appEventStream?.version ?? 0 >= 1
         controlSessionsAvailable = capabilities?.controlSessions?.version ?? 0 >= 1
         durableSessionsAvailable = capabilities?.durableSessions?.version ?? 0 >= 1
+        desktopLiveViewAvailable = capabilities?.desktopLiveView?.version ?? 0 >= 1
         missingRequiredSplitStreamCapabilities = ServerInfo.Capabilities
             .missingRequiredSplitStreamCapabilities(in: capabilities)
         streamCapabilitiesRefreshFailed = false
@@ -2865,6 +2870,26 @@ final class ServerConnection {
         return client
     }
 
+    func makeDesktopLiveViewStreamClient() -> DesktopLiveViewStreamClient? {
+        guard let selection = endpointSelection,
+              let credentials else { return nil }
+        let session = httpAuthSession
+        let currentTokenProvider: (@Sendable () async throws -> String)?
+        if let session {
+            currentTokenProvider = { try await session.currentAccessToken() }
+        } else {
+            currentTokenProvider = nil
+        }
+        return DesktopLiveViewStreamClient(
+            baseURL: selection.baseURL,
+            token: credentials.effectiveAccessToken,
+            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint,
+            tlsServerName: selection.tlsServerName,
+            tailnetRoute: configuredTailnetRoute,
+            currentTokenProvider: currentTokenProvider
+        )
+    }
+
     func startAppEventStreamIfAvailable() {
         guard appEventStreamAvailable,
               let selection = endpointSelection,
@@ -3048,10 +3073,12 @@ final class ServerConnection {
         sessionStream: Bool = true,
         dictationStream: Bool = false,
         appEventStream: Bool = false,
-        durableSessions: Bool = false
+        durableSessions: Bool = false,
+        desktopLiveView: Bool = false
     ) {
         dictationStreamAvailable = dictationStream
         durableSessionsAvailable = durableSessions
+        desktopLiveViewAvailable = desktopLiveView
         appEventStreamAvailable = appEventStream
         var missing: [String] = []
         if !sessionStream { missing.append("sessionStream") }

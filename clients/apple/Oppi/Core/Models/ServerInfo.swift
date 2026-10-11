@@ -67,6 +67,8 @@ struct ServerInfo: Codable, Sendable, Equatable {
         var workspaceFileEditing: WorkspaceFileEditingCapability? = nil
         /// Create requests may ask for `engine: "durable"` (`experimental.serverDurable`).
         var durableSessions: CapabilityVersion? = nil
+        /// Experimental live H.264 of a granted Mac window (`experimental.desktopLiveView`).
+        var desktopLiveView: CapabilityVersion? = nil
     }
 
     struct WorkspaceFileEditingCapability: Codable, Sendable, Equatable {
