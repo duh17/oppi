@@ -1,6 +1,7 @@
 import CoreMedia
 import Foundation
 import Testing
+import UIKit
 @testable import Oppi
 
 @Suite("Desktop live view media")
@@ -12,12 +13,13 @@ struct DesktopLiveViewMediaTests {
         #expect(nals.contains { $0.isPPS })
         #expect(nals.contains { $0.isIDR })
         let sets = try #require(DesktopViewAVCC.parameterSets(in: idr.avcc))
-        #expect((sets.sps[0] & 0x1f) == 7)
-        #expect((sets.pps[0] & 0x1f) == 8)
-        let picture = try #require(DesktopViewAVCC.picturePayload(from: idr.avcc))
-        let pictureNals = try #require(DesktopViewAVCC.nalus(in: picture))
-        #expect(pictureNals.allSatisfy { $0.isSlice })
-        #expect(!pictureNals.contains { $0.isSPS })
+        #expect(sets.sps.isSPS)
+        #expect(sets.pps.isPPS)
+        #expect((idr.avcc[sets.sps.start] & 0x1f) == 7)
+        #expect((idr.avcc[sets.pps.start] & 0x1f) == 8)
+        let slices = nals.filter(\.isSlice)
+        #expect(!slices.isEmpty)
+        #expect(nals.contains { $0.isSPS })
     }
 
     @Test func formatDescriptionAndSampleBufferComeFromRealH264() throws {
@@ -62,6 +64,30 @@ struct DesktopLiveViewMediaTests {
         #expect(dimensions.height == 90)
     }
 
+    @Test @MainActor func zoomViewSizesToAspectFitPicture() throws {
+        let fixture = try loadFixture()
+        let decoder = DesktopLiveH264Decoder()
+        let idr = try fixture.frame(id: 1)
+        let sample = try #require(decoder.sampleBuffer(payload: idr.avcc, header: idr.header))
+        let view = DesktopLiveSampleBufferView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        view.layoutIfNeeded()
+        #expect(view.enqueue(sample))
+        view.layoutIfNeeded()
+        let scroll = try #require(view.subviews.first as? UIScrollView)
+        let video = try #require(scroll.subviews.first)
+        let first = video.frame
+        #expect(abs((first.width / first.height) - (320.0 / 180.0)) < 0.02)
+        #expect(first.width <= 390)
+        #expect(first.height < 844)
+
+        let alt = try fixture.frame(id: 4)
+        let resized = try #require(decoder.sampleBuffer(payload: alt.avcc, header: alt.header))
+        #expect(view.enqueue(resized))
+        view.layoutIfNeeded()
+        #expect(abs(video.frame.width - first.width) < 1)
+        #expect(abs(video.frame.height - first.height) < 1)
+    }
+
     @Test func phoneWireFrameParsesCommittedFixture() throws {
         let idr = try loadFixture().frame(id: 1)
         let wire = DesktopViewMediaCodec.encodeFrame(header: idr.header, payload: idr.avcc)
@@ -70,6 +96,10 @@ struct DesktopLiveViewMediaTests {
         #expect(parsed.header.frameId == 1)
         #expect(parsed.header.width == 320)
         #expect(parsed.payload == idr.avcc)
+
+        let decoder = DesktopLiveH264Decoder()
+        let fromWire = try #require(decoder.sampleBuffer(payload: wire, header: parsed.header))
+        #expect(CMSampleBufferIsValid(fromWire))
     }
 
     private func displayImmediately(_ sample: CMSampleBuffer) -> Bool {

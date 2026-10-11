@@ -2875,10 +2875,13 @@ final class ServerConnection {
               let credentials else { return nil }
         let session = httpAuthSession
         let currentTokenProvider: (@Sendable () async throws -> String)?
+        let refreshTokenProvider: (@Sendable () async throws -> String)?
         if let session {
             currentTokenProvider = { try await session.currentAccessToken() }
+            refreshTokenProvider = { try await session.refreshAccessToken() }
         } else {
             currentTokenProvider = nil
+            refreshTokenProvider = nil
         }
         return DesktopLiveViewStreamClient(
             baseURL: selection.baseURL,
@@ -2886,7 +2889,8 @@ final class ServerConnection {
             tlsCertFingerprint: credentials.normalizedTLSCertFingerprint,
             tlsServerName: selection.tlsServerName,
             tailnetRoute: configuredTailnetRoute,
-            currentTokenProvider: currentTokenProvider
+            currentTokenProvider: currentTokenProvider,
+            refreshTokenProvider: refreshTokenProvider
         )
     }
 

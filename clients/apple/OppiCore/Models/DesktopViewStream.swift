@@ -9,7 +9,7 @@ enum DesktopViewStream {
     static let mediaHeaderBytes = 24
     static let flagKeyframe: UInt8 = 1 << 0
     static let fatalErrorMin = 4100
-    static let fatalErrorMax = 4199
+    static let fatalErrorMax = 4109
     static let staleInterval: TimeInterval = 2
 
     enum ErrorCode {
@@ -22,8 +22,10 @@ enum DesktopViewStream {
         static let deviceRevoked = 4107
         static let flagOff = 4108
         static let backpressureCap = 4109
-        static let alreadyStreaming = 4110
-        static let companionUnavailable = 4111
+        /// Application JSON code (WebSocket close stays 4000). Reconnectable.
+        static let alreadyStreaming = 4001
+        /// Application JSON code (WebSocket close stays 4000). Reconnectable.
+        static let companionUnavailable = 4002
     }
 
     static func isFatalErrorCode(_ code: Int) -> Bool {
@@ -54,15 +56,6 @@ struct DesktopViewHello: Codable, Equatable, Sendable {
 
 struct DesktopViewPing: Codable, Equatable, Sendable {
     var t: Int64
-}
-
-struct DesktopViewPong: Codable, Equatable, Sendable {
-    var t: Int64
-}
-
-struct DesktopViewAck: Codable, Equatable, Sendable {
-    var frameId: UInt32
-    var receivedAt: Int64
 }
 
 struct DesktopViewErrorMessage: Codable, Equatable, Sendable {
@@ -112,25 +105,13 @@ enum DesktopViewPhoneOutbound: Equatable, Sendable {
     case pong(t: Int64)
     case ack(frameId: UInt32, receivedAt: Int64)
 
-    func encode() throws -> Data {
-        let encoder = JSONEncoder()
+    func encode() -> Data {
         switch self {
         case .pong(let t):
-            return try encoder.encode(WirePong(t: t))
+            Data("{\"type\":\"pong\",\"t\":\(t)}".utf8)
         case .ack(let frameId, let receivedAt):
-            return try encoder.encode(WireAck(frameId: frameId, receivedAt: receivedAt))
+            Data("{\"type\":\"ack\",\"frameId\":\(frameId),\"receivedAt\":\(receivedAt)}".utf8)
         }
-    }
-
-    private struct WirePong: Encodable {
-        let type = "pong"
-        var t: Int64
-    }
-
-    private struct WireAck: Encodable {
-        let type = "ack"
-        var frameId: UInt32
-        var receivedAt: Int64
     }
 }
 
@@ -150,7 +131,7 @@ enum DesktopViewMediaParseError: Error, Equatable {
 }
 
 enum DesktopViewMediaCodec {
-    static func parseFrame(_ data: Data) throws -> (header: DesktopViewMediaHeader, payload: Data) {
+    static func parseHeader(_ data: Data) throws -> DesktopViewMediaHeader {
         guard data.count >= DesktopViewStream.mediaHeaderBytes else {
             throw DesktopViewMediaParseError.truncated
         }
@@ -171,6 +152,12 @@ enum DesktopViewMediaCodec {
         guard data.count >= end else {
             throw DesktopViewMediaParseError.truncated
         }
+        return header
+    }
+
+    static func parseFrame(_ data: Data) throws -> (header: DesktopViewMediaHeader, payload: Data) {
+        let header = try parseHeader(data)
+        let end = DesktopViewStream.mediaHeaderBytes + Int(header.payloadBytes)
         return (header, data.subdata(in: DesktopViewStream.mediaHeaderBytes..<end))
     }
 
@@ -201,42 +188,51 @@ struct DesktopViewAVCCNAL: Equatable, Sendable {
 }
 
 enum DesktopViewAVCC {
-    static func nalus(in payload: Data) -> [DesktopViewAVCCNAL]? {
-        var offset = 0
-        var nals: [DesktopViewAVCCNAL] = []
-        while offset < payload.count {
-            guard offset + 4 <= payload.count else { return nil }
-            let length = Int(readUInt32BE(payload, at: offset))
-            offset += 4
-            guard length > 0, offset + length <= payload.count else { return nil }
-            let bytes = payload.subdata(in: offset..<(offset + length))
-            offset += length
-            nals.append(DesktopViewAVCCNAL(type: bytes[0] & 0x1f, bytes: bytes))
+    struct Span: Equatable, Sendable {
+        var type: UInt8
+        var start: Int
+        var length: Int
+
+        var isSPS: Bool { type == 7 }
+        var isPPS: Bool { type == 8 }
+        var isIDR: Bool { type == 5 }
+        var isSlice: Bool { type == 1 || type == 5 }
+    }
+
+    static func spans(in payload: Data, offset: Int = 0, count: Int? = nil) -> [Span]? {
+        var index = offset
+        let end = offset + (count ?? (payload.count - offset))
+        guard end <= payload.count else { return nil }
+        var nals: [Span] = []
+        while index < end {
+            guard index + 4 <= end else { return nil }
+            let length = Int(readUInt32BE(payload, at: index))
+            let nalStart = index + 4
+            guard length > 0, nalStart + length <= end else { return nil }
+            nals.append(Span(type: payload[nalStart] & 0x1f, start: nalStart, length: length))
+            index = nalStart + length
         }
         return nals
     }
 
-    static func parameterSets(in payload: Data) -> (sps: Data, pps: Data)? {
-        guard let nals = nalus(in: payload),
-              let sps = nals.first(where: \.isSPS)?.bytes,
-              let pps = nals.first(where: \.isPPS)?.bytes
+    static func nalus(in payload: Data) -> [DesktopViewAVCCNAL]? {
+        guard let spans = spans(in: payload) else { return nil }
+        return spans.map { span in
+            DesktopViewAVCCNAL(
+                type: span.type,
+                bytes: payload.subdata(in: span.start..<(span.start + span.length))
+            )
+        }
+    }
+
+    static func parameterSets(in payload: Data, offset: Int = 0, count: Int? = nil) -> (sps: Span, pps: Span)? {
+        guard let nals = spans(in: payload, offset: offset, count: count),
+              let sps = nals.first(where: \.isSPS),
+              let pps = nals.first(where: \.isPPS)
         else {
             return nil
         }
         return (sps, pps)
-    }
-
-    static func picturePayload(from payload: Data) -> Data? {
-        guard let nals = nalus(in: payload) else { return nil }
-        let pictures = nals.filter(\.isSlice)
-        guard !pictures.isEmpty else { return nil }
-        var out = Data()
-        for nal in pictures {
-            var length = UInt32(nal.bytes.count).bigEndian
-            out.append(Data(bytes: &length, count: 4))
-            out.append(nal.bytes)
-        }
-        return out
     }
 }
 
@@ -313,8 +309,6 @@ enum DesktopLiveReconnectPolicy {
         "device_revoked",
         "flag_off",
         "backpressure_cap",
-        "already_streaming",
-        "companion_unavailable",
     ]
 
     private static func reasonToken(_ reason: String?) -> String? {

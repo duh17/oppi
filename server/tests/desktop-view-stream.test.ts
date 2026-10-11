@@ -297,6 +297,58 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
     }
   });
 
+  it("maps a companion close without an error frame to companionUnavailable", async () => {
+    const root = companionRoot();
+    const companion = await listenFakeCompanion(root, {
+      deviceId: "dev-1",
+      closeAfterHelloMs: 20,
+    });
+    try {
+      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
+      const mux = new DesktopViewStreamMux({
+        connectCompanion: (input) => client.connect(input),
+      });
+      const phone = new FakePhoneSocket();
+      mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
+      await waitFor(() => phone.closeCode === 4000);
+      expect(phone.closeReason).toBe("companion_unavailable");
+      const error = phone.textMessages().find((msg) => msg.type === "error");
+      expect(error?.code).toBe(DESKTOP_VIEW_ERROR.companionUnavailable);
+      expect(error?.fatal).toBe(false);
+    } finally {
+      companion.close();
+    }
+  });
+
+  it("keeps an explicit surfaceGone companion error as surfaceGone", async () => {
+    const root = companionRoot();
+    const companion = await listenFakeCompanion(root, {
+      deviceId: "dev-1",
+      errorBeforeClose: {
+        type: "error",
+        code: DESKTOP_VIEW_ERROR.surfaceGone,
+        message: "That Mac window is no longer available",
+        fatal: true,
+      },
+      closeAfterHelloMs: 20,
+    });
+    try {
+      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
+      const mux = new DesktopViewStreamMux({
+        connectCompanion: (input) => client.connect(input),
+      });
+      const phone = new FakePhoneSocket();
+      mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
+      await waitFor(() => phone.closeCode === 4000);
+      expect(phone.closeReason).toBe("surface_gone");
+      const error = phone.textMessages().find((msg) => msg.type === "error");
+      expect(error?.code).toBe(DESKTOP_VIEW_ERROR.surfaceGone);
+      expect(error?.fatal).toBe(true);
+    } finally {
+      companion.close();
+    }
+  });
+
   it("refuses a second stream and maps not-bound companion 403", async () => {
     const root = companionRoot();
     const companion = await listenFakeCompanion(root, {
@@ -316,6 +368,9 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       const second = new FakePhoneSocket();
       mux.handleWebSocket(second as unknown as WebSocket, { deviceId: "dev-1" });
       expect(second.closeReason).toBe("already_streaming");
+      const already = second.textMessages().find((msg) => msg.type === "error");
+      expect(already?.code).toBe(DESKTOP_VIEW_ERROR.alreadyStreaming);
+      expect(already?.fatal).toBe(false);
 
       const other = new FakePhoneSocket();
       const mux2 = new DesktopViewStreamMux({

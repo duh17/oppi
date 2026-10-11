@@ -129,7 +129,7 @@
       },
       "fatalErrorRange": {
         "min": 4100,
-        "max": 4199
+        "max": 4109
       },
       "errors": {
         "protocolFatal": 4100,
@@ -141,8 +141,8 @@
         "deviceRevoked": 4107,
         "flagOff": 4108,
         "backpressureCap": 4109,
-        "alreadyStreaming": 4110,
-        "companionUnavailable": 4111
+        "alreadyStreaming": 4001,
+        "companionUnavailable": 4002
       }
     }
   }

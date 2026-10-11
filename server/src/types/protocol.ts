@@ -805,7 +805,8 @@ export interface ConversationStreamAttach {
 // Control is JSON text (phone) or JSON companion frames; video is binary with a
 // fixed 24-byte header. Outside ServerMessage/ClientMessage; Apple models are
 // `OppiCore/Models/DesktopViewStream.swift`.
-// Fatal application error codes 4100–4199 must not trigger reconnect.
+// Fatal application error codes 4100–4109 must not trigger reconnect.
+// 4001 alreadyStreaming and 4002 companionUnavailable are reconnectable.
 
 export const DESKTOP_VIEW_STREAM_PATH = "/desktop/view/stream";
 export const DESKTOP_VIEW_COMPANION_PATH = "/view/stream";
@@ -822,7 +823,7 @@ export const DESKTOP_VIEW_COMPANION_FRAME_MEDIA = 2;
 export const DESKTOP_VIEW_MEDIA_HEADER_BYTES = 24;
 
 export const DESKTOP_VIEW_FATAL_ERROR_MIN = 4100;
-export const DESKTOP_VIEW_FATAL_ERROR_MAX = 4199;
+export const DESKTOP_VIEW_FATAL_ERROR_MAX = 4109;
 
 export const DESKTOP_VIEW_ERROR = {
   protocolFatal: 4100,
@@ -834,8 +835,8 @@ export const DESKTOP_VIEW_ERROR = {
   deviceRevoked: 4107,
   flagOff: 4108,
   backpressureCap: 4109,
-  alreadyStreaming: 4110,
-  companionUnavailable: 4111,
+  alreadyStreaming: 4001,
+  companionUnavailable: 4002,
 } as const;
 
 export type DesktopViewErrorCode = (typeof DESKTOP_VIEW_ERROR)[keyof typeof DESKTOP_VIEW_ERROR];

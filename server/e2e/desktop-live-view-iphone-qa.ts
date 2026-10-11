@@ -86,12 +86,22 @@ function nextFrame(encode: Record<string, unknown>): Buffer {
 
 if (controlPath) {
   setInterval(() => {
-    let nowPaused = false;
+    let command = "";
     try {
-      nowPaused = readFileSync(controlPath, "utf8").trim() === "pause";
+      command = readFileSync(controlPath, "utf8").trim();
     } catch {
-      nowPaused = false;
+      command = "";
     }
+    if (command === "drop") {
+      activeCompanion?.end();
+      try {
+        writeFileSync(controlPath, "resume\n");
+      } catch {
+        // ignore
+      }
+      command = "resume";
+    }
+    const nowPaused = command === "pause";
     if (paused && !nowPaused && activeCompanion) {
       writeMedia(activeCompanion, { frameId: 1, keyframe: true });
     }
@@ -199,7 +209,7 @@ const infoPath = process.env.OPPI_DV_QA_INFO ?? join(tmpdir(), "oppi-dv-iphone-q
 writeFileSync(infoPath, `${JSON.stringify(info, null, 2)}\n`);
 console.log(infoPath);
 console.log(JSON.stringify(info, null, 2));
-console.error("stdin: pause | resume | quit; SIGUSR1 pause, SIGUSR2 resume");
+console.error("stdin: pause | resume | drop | quit; SIGUSR1 pause, SIGUSR2 resume");
 
 const rl = createInterface({ input: process.stdin, terminal: false });
 const shutdown = async (): Promise<void> => {
@@ -218,6 +228,9 @@ rl.on("line", (line) => {
   } else if (command === "resume") {
     paused = false;
     console.error("resumed");
+  } else if (command === "drop") {
+    activeCompanion?.end();
+    console.error("dropped companion");
   } else if (command === "quit" || command === "exit") {
     void shutdown();
   }

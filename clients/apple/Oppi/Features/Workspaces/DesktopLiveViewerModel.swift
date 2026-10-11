@@ -5,8 +5,8 @@ import Observation
 ///
 /// A session generation drops events from a socket this model already stopped.
 /// That close is not a drop: treating it as one restarted backoff and tore down
-/// the replacement stream after background. Node also refuses a second stream
-/// (`already_streaming`, fatal 4110) until the previous WebSocket has closed.
+/// the replacement stream after background. Node refuses a second stream with
+/// reconnectable `alreadyStreaming` (4001) until the previous WebSocket has closed.
 @MainActor
 @Observable
 final class DesktopLiveViewerModel {
@@ -38,6 +38,7 @@ final class DesktopLiveViewerModel {
     private var lastErrorCode: Int?
     private var lastErrorReason: String?
     private var lastErrorMessage: String?
+    private var concealPicture = false
 
     init(
         open: @escaping () -> Opening?,
@@ -66,6 +67,13 @@ final class DesktopLiveViewerModel {
 
     func foregrounded() {
         setVisible(true)
+    }
+
+    func setSceneActive(_ active: Bool) {
+        concealPicture = !active
+        if concealPicture {
+            picture?.clearPicture()
+        }
     }
 
     func retry() {
@@ -187,8 +195,21 @@ final class DesktopLiveViewerModel {
             guard let sample = decoder.sampleBuffer(payload: payload, header: header) else {
                 return
             }
+            if concealPicture {
+                hasPicture = true
+                reconnectAttempt = 0
+                mutateArrival { $0.onFrame(now: self.clock()) }
+                applyPictureAccessibility()
+                return
+            }
             if picture?.enqueue(sample) == false {
-                decoder.noteBrokenChain()
+                decoder.reset()
+                disconnect?()
+                disconnect = nil
+                consumeTask = nil
+                tickTask?.cancel()
+                tickTask = nil
+                scheduleReconnect(generation: generation)
                 return
             }
             hasPicture = true

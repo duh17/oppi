@@ -49,7 +49,7 @@ struct DesktopViewStreamTests {
 
     @Test func ackAndPongMatchFixtureShape() throws {
         let messages = try loadFixture()
-        let ack = try JSONSerialization.jsonObject(with: try DesktopViewPhoneOutbound.ack(
+        let ack = try JSONSerialization.jsonObject(with: DesktopViewPhoneOutbound.ack(
             frameId: 1,
             receivedAt: 1_770_000_000_100
         ).encode()) as? [String: Any]
@@ -58,7 +58,7 @@ struct DesktopViewStreamTests {
         #expect(ack?["frameId"] as? Int == expectedAck?["frameId"] as? Int)
         #expect(ack?["receivedAt"] as? Int == expectedAck?["receivedAt"] as? Int)
 
-        let pong = try JSONSerialization.jsonObject(with: try DesktopViewPhoneOutbound.pong(t: 1_770_000_000_000).encode()) as? [String: Any]
+        let pong = try JSONSerialization.jsonObject(with: DesktopViewPhoneOutbound.pong(t: 1_770_000_000_000).encode()) as? [String: Any]
         let expectedPong = try JSONSerialization.jsonObject(with: try json(messages, key: "phone.pong")) as? [String: Any]
         #expect(pong?["type"] as? String == "pong")
         #expect(pong?["t"] as? Int == expectedPong?["t"] as? Int)
@@ -77,8 +77,14 @@ struct DesktopViewStreamTests {
         let errors = try #require(wire["errors"] as? [String: Int])
         #expect(errors["grantRevoked"] == DesktopViewStream.ErrorCode.grantRevoked)
         #expect(errors["surfaceGone"] == DesktopViewStream.ErrorCode.surfaceGone)
+        #expect(errors["alreadyStreaming"] == DesktopViewStream.ErrorCode.alreadyStreaming)
+        #expect(errors["companionUnavailable"] == DesktopViewStream.ErrorCode.companionUnavailable)
         #expect(DesktopViewStream.isFatalErrorCode(4100))
-        #expect(DesktopViewStream.isFatalErrorCode(4199))
+        #expect(DesktopViewStream.isFatalErrorCode(4109))
+        #expect(!DesktopViewStream.isFatalErrorCode(4001))
+        #expect(!DesktopViewStream.isFatalErrorCode(4002))
+        #expect(!DesktopViewStream.isFatalErrorCode(4110))
+        #expect(!DesktopViewStream.isFatalErrorCode(4199))
         #expect(!DesktopViewStream.isFatalErrorCode(4099))
         #expect(!DesktopViewStream.isFatalErrorCode(4200))
     }

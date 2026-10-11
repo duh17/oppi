@@ -47,11 +47,13 @@ struct DesktopLiveViewerView: View {
         }
         .onAppear {
             model?.appear()
+            model?.setSceneActive(scenePhase == .active && !AppLockService.shared.isLocked)
         }
         .onDisappear {
             model?.disappear()
         }
         .onChange(of: scenePhase) { _, phase in
+            model?.setSceneActive(phase == .active && !AppLockService.shared.isLocked)
             switch phase {
             case .background:
                 model?.backgrounded()
@@ -64,6 +66,7 @@ struct DesktopLiveViewerView: View {
             }
         }
         .onChange(of: AppLockService.shared.isLocked) { _, locked in
+            model?.setSceneActive(scenePhase == .active && !locked)
             if locked {
                 model?.backgrounded()
             } else if scenePhase == .active {
@@ -111,8 +114,10 @@ struct DesktopLiveViewerView: View {
             )
             .ignoresSafeArea(edges: .bottom)
 
-            statusChip(model.arrival.presentation)
-                .padding(.top, 8)
+            if scenePhase == .active, !AppLockService.shared.isLocked {
+                statusChip(model.arrival.presentation)
+                    .padding(.top, 8)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -128,8 +133,7 @@ struct DesktopLiveViewerView: View {
             .padding(.vertical, 6)
             .themedSurface(.floatingControl, in: Capsule())
             .accessibilityIdentifier("desktop.live.status")
-            .accessibilityLabel(status)
-            .accessibilityValue(statusValue(presentation))
+            .accessibilityHidden(true)
     }
 
     private func retryButton(_ model: DesktopLiveViewerModel) -> some View {

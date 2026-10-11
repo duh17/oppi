@@ -273,7 +273,7 @@ export class DesktopViewStreamMux {
           onBytes(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
         });
         stream.socket.on("close", () => {
-          teardown(DESKTOP_VIEW_ERROR.surfaceGone, "Desktop view companion closed");
+          teardown(DESKTOP_VIEW_ERROR.companionUnavailable, "Desktop companion is unavailable");
         });
         stream.socket.on("error", () => {
           teardown(DESKTOP_VIEW_ERROR.companionUnavailable, "Desktop companion is unavailable");

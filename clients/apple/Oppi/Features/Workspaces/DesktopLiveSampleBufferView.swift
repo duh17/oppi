@@ -9,6 +9,7 @@ final class DesktopLiveSampleBufferView: UIView, UIScrollViewDelegate, UIGesture
     private let videoView = SampleLayerView()
     private let doubleTap = UITapGestureRecognizer()
     private var lastBounds: CGSize = .zero
+    private var videoSize: CGSize = .zero
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -46,16 +47,25 @@ final class DesktopLiveSampleBufferView: UIView, UIScrollViewDelegate, UIGesture
         let size = scrollView.bounds.size
         if size != lastBounds {
             lastBounds = size
-            videoView.frame = CGRect(origin: .zero, size: size)
-            scrollView.contentSize = size
-            if scrollView.zoomScale != 1 {
-                scrollView.setZoomScale(1, animated: false)
-            }
+            layoutPicture(resetZoom: true)
         }
     }
 
     @discardableResult
     func enqueue(_ sample: CMSampleBuffer) -> Bool {
+        if let format = CMSampleBufferGetFormatDescription(sample) {
+            let dims = CMVideoFormatDescriptionGetDimensions(format)
+            let next = CGSize(width: CGFloat(dims.width), height: CGFloat(dims.height))
+            if next != videoSize {
+                let sameAspect = videoSize.width > 0
+                    && abs(next.width / next.height - videoSize.width / videoSize.height) < 0.001
+                videoSize = next
+                videoView.sampleLayer?.videoGravity = .resize
+                if !sameAspect {
+                    layoutPicture(resetZoom: false)
+                }
+            }
+        }
         guard let layer = videoView.sampleLayer else { return false }
         if layer.status == .failed {
             layer.flush()
@@ -79,12 +89,46 @@ final class DesktopLiveSampleBufferView: UIView, UIScrollViewDelegate, UIGesture
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? { videoView }
 
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        centerPicture()
+    }
+
     func scrollViewDidEndZooming(
         _ scrollView: UIScrollView,
         with view: UIView?,
         atScale scale: CGFloat
     ) {
+        centerPicture()
         updateZoomAccessibilityActions()
+    }
+
+    private func layoutPicture(resetZoom: Bool) {
+        let boundsSize = scrollView.bounds.size
+        guard boundsSize.width > 0, boundsSize.height > 0 else { return }
+        let fit: CGSize
+        if videoSize.width > 0, videoSize.height > 0 {
+            let scale = min(boundsSize.width / videoSize.width, boundsSize.height / videoSize.height)
+            fit = CGSize(
+                width: floor(videoSize.width * scale),
+                height: floor(videoSize.height * scale)
+            )
+        } else {
+            fit = boundsSize
+        }
+        if resetZoom, scrollView.zoomScale != 1 {
+            scrollView.setZoomScale(1, animated: false)
+        }
+        videoView.frame = CGRect(origin: .zero, size: fit)
+        scrollView.contentSize = fit
+        centerPicture()
+    }
+
+    private func centerPicture() {
+        let boundsSize = scrollView.bounds.size
+        var frame = videoView.frame
+        frame.origin.x = frame.size.width < boundsSize.width ? (boundsSize.width - frame.size.width) / 2 : 0
+        frame.origin.y = frame.size.height < boundsSize.height ? (boundsSize.height - frame.size.height) / 2 : 0
+        videoView.frame = frame
     }
 
     @objc private func handleDoubleTap() {

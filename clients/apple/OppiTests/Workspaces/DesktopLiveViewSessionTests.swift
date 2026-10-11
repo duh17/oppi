@@ -60,7 +60,10 @@ struct DesktopLiveViewSessionTests {
         #expect(DesktopLiveReconnectPolicy.isFatal(code: 4104, reason: nil))
         #expect(DesktopLiveReconnectPolicy.isFatal(code: 4000, reason: "grant_revoked"))
         #expect(DesktopLiveReconnectPolicy.isFatal(code: 4106, reason: "surface_gone"))
-        #expect(DesktopLiveReconnectPolicy.isFatal(code: 4111, reason: nil))
+        #expect(DesktopLiveReconnectPolicy.isFatal(code: 4109, reason: nil))
+        #expect(!DesktopLiveReconnectPolicy.isFatal(code: 4001, reason: "already_streaming"))
+        #expect(!DesktopLiveReconnectPolicy.isFatal(code: 4002, reason: "companion_unavailable"))
+        #expect(!DesktopLiveReconnectPolicy.isFatal(code: 4111, reason: nil))
         #expect(!DesktopLiveReconnectPolicy.isFatal(code: 1006, reason: ""))
         #expect(!DesktopLiveReconnectPolicy.isFatal(code: 1001, reason: nil))
         #expect(DesktopLiveReconnectPolicy.isGrant(4103, reason: "grant_not_bound"))
@@ -108,6 +111,42 @@ struct DesktopLiveViewSessionTests {
         }
     }
 
+    @Test @MainActor func alreadyStreamingOnReconnectRecoversOnTheNextAttempt() async {
+        let fake = LiveViewStreamFake()
+        let model = DesktopLiveViewerModel(open: { fake.open() }, clock: { 100 })
+        model.appear()
+        await waitUntil { fake.connectCount == 1 }
+        fake.sendHello()
+        fake.failNextWithAlreadyStreaming = 1
+        model.backgrounded()
+        model.foregrounded()
+        await waitUntil { fake.connectCount == 2 }
+        await waitUntil { model.presentation.statusText == "Reconnecting" }
+        await waitUntil(timeoutMs: 2000) { fake.connectCount == 3 }
+        fake.sendHello()
+        #expect(model.connectCount == 3)
+        guard case .connecting = model.presentation else {
+            Issue.record("already-streaming stayed fatal: \(model.presentation)")
+            return
+        }
+    }
+
+    @Test @MainActor func http404UpgradeStopsWithoutRetry() async {
+        let fake = LiveViewStreamFake()
+        let model = DesktopLiveViewerModel(open: { fake.open() }, clock: { 100 })
+        model.appear()
+        await waitUntil { fake.connectCount == 1 }
+        fake.sendError(DesktopViewErrorMessage(code: 0, message: "", fatal: true))
+        await waitUntil { model.presentation.statusText == "Can't show Remote Screen" }
+        try? await Task.sleep(for: .milliseconds(700))
+        #expect(fake.connectCount == 1)
+        guard case .failed(let message) = model.presentation else {
+            Issue.record("expected generic failure, got \(model.presentation)")
+            return
+        }
+        #expect(message == "Couldn't show the live remote screen.")
+    }
+
     @Test @MainActor func transientCloseWhileVisibleReconnects() async {
         let fake = LiveViewStreamFake()
         let model = DesktopLiveViewerModel(open: { fake.open() }, clock: { 100 })
@@ -151,12 +190,24 @@ struct DesktopLiveViewSessionTests {
 @MainActor
 private final class LiveViewStreamFake {
     private(set) var connectCount = 0
+    var failNextWithAlreadyStreaming = 0
     private var continuation: AsyncStream<DesktopLiveViewStreamClient.Event>.Continuation?
 
     func open() -> DesktopLiveViewerModel.Opening {
         connectCount += 1
         let stream = AsyncStream<DesktopLiveViewStreamClient.Event> { continuation in
             self.continuation = continuation
+            if self.failNextWithAlreadyStreaming > 0 {
+                self.failNextWithAlreadyStreaming -= 1
+                continuation.yield(.error(DesktopViewErrorMessage(
+                    code: DesktopViewStream.ErrorCode.alreadyStreaming,
+                    message: "Desktop view stream is already active",
+                    fatal: false
+                )))
+                continuation.yield(.closed(code: 4000, reason: "already_streaming"))
+                continuation.finish()
+                self.continuation = nil
+            }
         }
         return (
             events: stream,
@@ -182,6 +233,10 @@ private final class LiveViewStreamFake {
                 expiresAt: nil
             )
         ))
+    }
+
+    func sendError(_ error: DesktopViewErrorMessage) {
+        continuation?.yield(.error(error))
     }
 
     func sendClosed(code: Int, reason: String) {

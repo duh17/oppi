@@ -2,19 +2,15 @@ import CoreMedia
 import Foundation
 
 /// Builds `CMSampleBuffer`s from AVCC phone-wire payloads for `AVSampleBufferDisplayLayer`.
-/// Format description is created on each IDR and replaced when the coded size changes.
+/// Format description is replaced on every IDR. Slice bytes are copied once into the block buffer.
 final class DesktopLiveH264Decoder: @unchecked Sendable {
     private let lock = NSLock()
     private var format: CMFormatDescription?
-    private var formatWidth: Int = 0
-    private var formatHeight: Int = 0
     private var waitingForIDR = true
 
     func reset() {
         lock.lock()
         format = nil
-        formatWidth = 0
-        formatHeight = 0
         waitingForIDR = true
         lock.unlock()
     }
@@ -33,63 +29,70 @@ final class DesktopLiveH264Decoder: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
+        let avccCount = Int(header.payloadBytes)
+        let avccOffset: Int
+        if payload.count == avccCount {
+            avccOffset = 0
+        } else if payload.count >= DesktopViewStream.mediaHeaderBytes + avccCount {
+            avccOffset = DesktopViewStream.mediaHeaderBytes
+        } else {
+            waitingForIDR = true
+            return nil
+        }
+        guard let nals = DesktopViewAVCC.spans(in: payload, offset: avccOffset, count: avccCount) else {
+            waitingForIDR = true
+            return nil
+        }
+
         if header.keyframe {
-            guard let sets = DesktopViewAVCC.parameterSets(in: payload),
-                  let next = Self.makeFormatDescription(sps: sets.sps, pps: sets.pps)
+            guard let sps = nals.first(where: \.isSPS),
+                  let pps = nals.first(where: \.isPPS),
+                  let next = Self.makeFormatDescription(payload: payload, sps: sps, pps: pps)
             else {
                 waitingForIDR = true
                 return nil
             }
-            let width = Int(header.width)
-            let height = Int(header.height)
-            if format == nil || width != formatWidth || height != formatHeight {
-                format = next
-                formatWidth = width
-                formatHeight = height
-            } else {
-                format = next
-            }
+            format = next
             waitingForIDR = false
         } else if waitingForIDR || format == nil {
             return nil
         }
 
-        guard let format,
-              let picture = DesktopViewAVCC.picturePayload(from: payload)
-        else {
+        let slices = nals.filter(\.isSlice)
+        guard let format, !slices.isEmpty else {
             waitingForIDR = true
             return nil
         }
-        return Self.makeSampleBuffer(avcc: picture, format: format)
+        return Self.makeSampleBuffer(payload: payload, slices: slices, format: format)
     }
 
-    private static func makeFormatDescription(sps: Data, pps: Data) -> CMFormatDescription? {
+    private static func makeFormatDescription(
+        payload: Data,
+        sps: DesktopViewAVCC.Span,
+        pps: DesktopViewAVCC.Span
+    ) -> CMFormatDescription? {
         var format: CMFormatDescription?
-        let status = sps.withUnsafeBytes { spsRaw in
-            pps.withUnsafeBytes { ppsRaw in
-                guard let spsBase = spsRaw.bindMemory(to: UInt8.self).baseAddress,
-                      let ppsBase = ppsRaw.bindMemory(to: UInt8.self).baseAddress
-                else {
-                    return Int32(kCMFormatDescriptionError_InvalidParameter)
-                }
-                let pointers: [UnsafePointer<UInt8>] = [spsBase, ppsBase]
-                let sizes: [Int] = [sps.count, pps.count]
-                return pointers.withUnsafeBufferPointer { pointerBuf in
-                    sizes.withUnsafeBufferPointer { sizeBuf in
-                        guard let pointerBase = pointerBuf.baseAddress,
-                              let sizeBase = sizeBuf.baseAddress
-                        else {
-                            return Int32(kCMFormatDescriptionError_InvalidParameter)
-                        }
-                        return CMVideoFormatDescriptionCreateFromH264ParameterSets(
-                            allocator: kCFAllocatorDefault,
-                            parameterSetCount: 2,
-                            parameterSetPointers: pointerBase,
-                            parameterSetSizes: sizeBase,
-                            nalUnitHeaderLength: 4,
-                            formatDescriptionOut: &format
-                        )
+        let status = payload.withUnsafeBytes { raw in
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
+                return Int32(kCMFormatDescriptionError_InvalidParameter)
+            }
+            let pointers: [UnsafePointer<UInt8>] = [base + sps.start, base + pps.start]
+            let sizes: [Int] = [sps.length, pps.length]
+            return pointers.withUnsafeBufferPointer { pointerBuf in
+                sizes.withUnsafeBufferPointer { sizeBuf in
+                    guard let pointerBase = pointerBuf.baseAddress,
+                          let sizeBase = sizeBuf.baseAddress
+                    else {
+                        return Int32(kCMFormatDescriptionError_InvalidParameter)
                     }
+                    return CMVideoFormatDescriptionCreateFromH264ParameterSets(
+                        allocator: kCFAllocatorDefault,
+                        parameterSetCount: 2,
+                        parameterSetPointers: pointerBase,
+                        parameterSetSizes: sizeBase,
+                        nalUnitHeaderLength: 4,
+                        formatDescriptionOut: &format
+                    )
                 }
             }
         }
@@ -98,11 +101,12 @@ final class DesktopLiveH264Decoder: @unchecked Sendable {
     }
 
     private static func makeSampleBuffer(
-        avcc: Data,
+        payload: Data,
+        slices: [DesktopViewAVCC.Span],
         format: CMFormatDescription
     ) -> CMSampleBuffer? {
+        let length = slices.reduce(0) { $0 + 4 + $1.length }
         var block: CMBlockBuffer?
-        let length = avcc.count
         var status = CMBlockBufferCreateWithMemoryBlock(
             allocator: kCFAllocatorDefault,
             memoryBlock: nil,
@@ -115,16 +119,22 @@ final class DesktopLiveH264Decoder: @unchecked Sendable {
             blockBufferOut: &block
         )
         guard status == noErr, let block else { return nil }
-        status = avcc.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress else {
+        status = payload.withUnsafeBytes { raw in
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
                 return Int32(kCMBlockBufferBadLengthParameterErr)
             }
-            return CMBlockBufferReplaceDataBytes(
-                with: base,
-                blockBuffer: block,
-                offsetIntoDestination: 0,
-                dataLength: length
-            )
+            var dest = 0
+            for nal in slices {
+                let copy = CMBlockBufferReplaceDataBytes(
+                    with: base + nal.start - 4,
+                    blockBuffer: block,
+                    offsetIntoDestination: dest,
+                    dataLength: 4 + nal.length
+                )
+                if copy != noErr { return copy }
+                dest += 4 + nal.length
+            }
+            return noErr
         }
         guard status == noErr else { return nil }
 
