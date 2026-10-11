@@ -9,7 +9,7 @@
       "type": "hello",
       "version": 1,
       "features": [
-        "h264-annexb"
+        "h264-avcc"
       ],
       "grantId": "11111111-1111-4111-8111-111111111111",
       "deviceId": "dev-paired-1",
@@ -17,8 +17,6 @@
         "windowId": 42,
         "title": "Notes"
       },
-      "width": 1280,
-      "height": 800,
       "expiresAt": "2026-10-10T12:00:00.000Z"
     },
     "phone.ping": {
@@ -44,7 +42,7 @@
       "type": "hello",
       "version": 1,
       "features": [
-        "h264-annexb"
+        "h264-avcc"
       ],
       "grantId": "11111111-1111-4111-8111-111111111111",
       "deviceId": "dev-paired-1",
@@ -52,8 +50,6 @@
         "windowId": 42,
         "title": "Notes"
       },
-      "width": 1280,
-      "height": 800,
       "expiresAt": "2026-10-10T12:00:00.000Z"
     },
     "companion.encode": {
@@ -82,7 +78,7 @@
       "mediaHeaderBytes": 24,
       "companionFrameJson": 1,
       "companionFrameMedia": 2,
-      "annexB": true,
+      "avcc": true,
       "mediaLayout": {
         "version": {
           "offset": 0,
@@ -128,7 +124,7 @@
         },
         "payload": {
           "offset": 24,
-          "format": "h264-annexb"
+          "format": "h264-avcc"
         }
       },
       "fatalErrorRange": {

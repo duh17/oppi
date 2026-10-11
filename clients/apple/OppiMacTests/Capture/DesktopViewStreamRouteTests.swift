@@ -1,3 +1,4 @@
+import CoreVideo
 import Darwin
 import Foundation
 import Testing
@@ -38,6 +39,9 @@ struct DesktopViewStreamRouteTests {
         var leftover = stream.leftover
         let hello = try waitForJSON(fd: stream.fd, leftover: &leftover) { $0["type"] as? String == "hello" }
         #expect(hello["deviceId"] as? String == "phone-1")
+        #expect(hello["width"] == nil)
+        #expect(hello["height"] == nil)
+        #expect((hello["features"] as? [String]) == [DesktopViewStreamWire.featureAvcc])
         #expect(harness.session.viewGrantStatusText.contains("live to Chen iPhone"))
         #expect(!harness.session.viewGrantStatusText.localizedCaseInsensitiveContains("not live"))
 
@@ -52,9 +56,12 @@ struct DesktopViewStreamRouteTests {
             throw LiveStreamTestError.invalidResponse
         }
         try writeAll(fd: stream.fd, data: encode)
+        harness.capturer.emit(try makeRouteNV12())
         let media = try waitForMedia(fd: stream.fd, leftover: &leftover)
         #expect(media.count > DesktopViewStreamWire.mediaHeaderBytes)
-        #expect(harness.live.encodedFrameIds == [1])
+        #expect(harness.encoder.encodedFrameIds == [1])
+        #expect(harness.capturer.lastFps == 10)
+        #expect(harness.capturer.lastScale == 0.5)
     }
 
     @Test func revokeClosesAnOpenStream() throws {
@@ -83,7 +90,9 @@ private final class LiveSocketHarness {
     let runtimeRoot: URL
     let fake: FakeDesktopCaptureService
     let session: DesktopCaptureSession
-    let live: FakeDesktopLiveView
+    let encoder: FakeDesktopFrameEncoder
+    let capturer: FakeLiveViewCapturer
+    let live: DesktopLiveViewSession
     let socket: DesktopCompanionOwnerSocket
     private var toreDown = false
 
@@ -99,7 +108,14 @@ private final class LiveSocketHarness {
             viewGrantGate: viewGrantGate,
             liveViewSource: source
         )
-        live = FakeDesktopLiveView(grantGate: viewGrantGate, source: source)
+        encoder = FakeDesktopFrameEncoder()
+        capturer = FakeLiveViewCapturer()
+        live = DesktopLiveViewSession(
+            grantGate: viewGrantGate,
+            source: source,
+            encoder: encoder,
+            capturer: capturer
+        )
         socket = DesktopCompanionOwnerSocket(
             shareGate: shareGate,
             viewGrantGate: viewGrantGate,
@@ -117,136 +133,74 @@ private final class LiveSocketHarness {
     }
 }
 
-final class FakeDesktopLiveView: DesktopLiveViewStreaming, @unchecked Sendable {
-    private(set) var encodedFrameIds: [UInt32] = []
-    private let grantGate: DesktopViewGrantGate
-    private let source: DesktopLiveViewSource
+final class FakeDesktopFrameEncoder: DesktopFrameEncoding, @unchecked Sendable {
     private let lock = NSLock()
-    private var fd: Int32 = -1
-    private var stopped = true
-    private let queue = DispatchQueue(label: "dev.chenda.OppiMacTests.fake-live")
+    private var commands: [DesktopH264EncodeCommand] = []
 
-    var isActive: Bool {
+    var encodedFrameIds: [UInt32] {
         lock.lock()
         defer { lock.unlock() }
-        return !stopped && fd >= 0
+        return commands.map(\.frameId)
     }
 
-    init(grantGate: DesktopViewGrantGate, source: DesktopLiveViewSource) {
-        self.grantGate = grantGate
-        self.source = source
-        grantGate.setInvalidationHandler { [weak self] in
-            self?.fail(code: DesktopViewStreamWire.errorGrantRevoked, message: "View grant revoked")
-        }
-    }
-
-    func attach(fd: Int32, deviceId: String, deviceName: String?) -> Result<Void, DesktopLiveViewAttachFailure> {
-        guard let grant = grantGate.current(), grant.deviceId == deviceId else {
-            return .failure(grantGate.current() == nil ? .unavailable : .notBound)
-        }
-        guard let snapshot = source.current() else { return .failure(.unavailable) }
+    func encode(
+        buffer: CVPixelBuffer,
+        capturedAt: Date,
+        command: DesktopH264EncodeCommand,
+        deliver: @escaping (Data) -> Void
+    ) {
         lock.lock()
-        self.fd = fd
-        stopped = false
+        commands.append(command)
         lock.unlock()
-        grantGate.setLiveDelivery(true)
-        let hello: [String: Any] = [
-            "type": "hello",
-            "version": Int(DesktopViewStreamWire.version),
-            "features": [DesktopViewStreamWire.featureAnnexB],
-            "grantId": grant.grantId.uuidString,
-            "deviceId": deviceId,
-            "surface": [
-                "windowId": Int(snapshot.surface.surfaceID.windowID),
-                "title": snapshot.surface.title,
-            ],
-            "width": 64,
-            "height": 36,
-        ]
-        if let data = DesktopViewStreamWire.jsonFrame(hello) {
-            write(data)
-        }
-        queue.async { [weak self] in
-            self?.readLoop()
-        }
-        _ = deviceName
-        return .success(())
+        let media = DesktopViewStreamWire.mediaCompanionFrame(
+            header: .init(
+                keyframe: command.keyframe,
+                frameId: command.frameId,
+                capturedAtMs: UInt64(capturedAt.timeIntervalSince1970 * 1000),
+                width: UInt16(CVPixelBufferGetWidth(buffer)),
+                height: UInt16(CVPixelBufferGetHeight(buffer)),
+                payloadBytes: 8
+            ),
+            avcc: Data(repeating: 0xAA, count: 8)
+        )
+        deliver(media)
     }
 
-    func stop() {
-        fail(code: DesktopViewStreamWire.errorSurfaceGone, message: "stopped")
-    }
+    func invalidate() {}
+}
 
-    private func readLoop() {
-        var chunk = [UInt8](repeating: 0, count: 4096)
-        let reader = DesktopViewCompanionReader()
-        while true {
-            lock.lock()
-            let current = fd
-            let isStopped = stopped
-            lock.unlock()
-            if isStopped || current < 0 { return }
-            let count = chunk.withUnsafeMutableBytes { raw in
-                Darwin.read(current, raw.baseAddress, raw.count)
-            }
-            if count <= 0 { return }
-            let frames = (try? reader.push(Data(chunk.prefix(count)))) ?? []
-            for frame in frames {
-                guard frame.type == DesktopViewStreamWire.jsonType,
-                      let json = DesktopViewStreamWire.parseJSON(frame.payload),
-                      json["type"] as? String == "encode"
-                else { continue }
-                let frameId = (json["frameId"] as? NSNumber)?.uint32Value ?? 0
-                lock.lock()
-                encodedFrameIds.append(frameId)
-                lock.unlock()
-                let media = DesktopViewStreamWire.mediaCompanionFrame(
-                    header: .init(
-                        keyframe: true,
-                        frameId: frameId,
-                        capturedAtMs: 1_770_000_000_000,
-                        width: 64,
-                        height: 36,
-                        payloadBytes: 8
-                    ),
-                    annexB: Data(repeating: 0xAA, count: 8)
-                )
-                write(media)
-            }
-        }
-    }
+final class FakeLiveViewCapturer: DesktopLiveViewCapturing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var offer: (@Sendable (CVPixelBuffer, Date) -> Void)?
+    private(set) var lastFps: Double?
+    private(set) var lastScale: Double?
 
-    private func fail(code: Int, message: String) {
+    func startLiveView(offer: @escaping @Sendable (CVPixelBuffer, Date) -> Void, fps: Double, scale: Double) {
         lock.lock()
-        let current = fd
-        let already = stopped
-        stopped = true
-        fd = -1
+        self.offer = offer
+        lastFps = fps
+        lastScale = scale
         lock.unlock()
-        if already { return }
-        grantGate.setLiveDelivery(false)
-        if current >= 0 {
-            if let data = DesktopViewStreamWire.jsonFrame([
-                "type": "error",
-                "code": code,
-                "message": message,
-                "fatal": true,
-            ]) {
-                write(data, fd: current)
-            }
-            Darwin.shutdown(current, SHUT_RDWR)
-            Darwin.close(current)
-        }
     }
 
-    private func write(_ data: Data, fd override: Int32? = nil) {
+    func updateLiveView(fps: Double, scale: Double) {
         lock.lock()
-        let current = override ?? fd
+        lastFps = fps
+        lastScale = scale
         lock.unlock()
-        guard current >= 0 else { return }
-        _ = data.withUnsafeBytes { raw in
-            Darwin.write(current, raw.baseAddress, data.count)
-        }
+    }
+
+    func stopLiveView() {
+        lock.lock()
+        offer = nil
+        lock.unlock()
+    }
+
+    func emit(_ buffer: CVPixelBuffer, at capturedAt: Date = Date()) {
+        lock.lock()
+        let offer = self.offer
+        lock.unlock()
+        offer?(buffer, capturedAt)
     }
 }
 
@@ -260,6 +214,21 @@ private enum LiveStreamTestError: Error {
     case connectFailed
     case timeout
     case invalidResponse
+    case pixelBuffer
+}
+
+private func makeRouteNV12() throws -> CVPixelBuffer {
+    var buffer: CVPixelBuffer?
+    let status = CVPixelBufferCreate(
+        kCFAllocatorDefault,
+        64,
+        36,
+        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+        nil,
+        &buffer
+    )
+    guard status == kCVReturnSuccess, let buffer else { throw LiveStreamTestError.pixelBuffer }
+    return buffer
 }
 
 private func unixHTTPGet(
@@ -328,7 +297,6 @@ private func waitForJSON(
         leftover = Data()
         for frame in frames where frame.type == DesktopViewStreamWire.jsonType {
             if let json = DesktopViewStreamWire.parseJSON(frame.payload), match(json) {
-                leftover.append(contentsOf: [])
                 return json
             }
         }

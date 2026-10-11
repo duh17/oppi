@@ -20,7 +20,7 @@ import {
   DESKTOP_VIEW_COMPANION_FRAME_JSON,
   DESKTOP_VIEW_COMPANION_FRAME_MEDIA,
   DESKTOP_VIEW_ERROR,
-  DESKTOP_VIEW_FEATURE_H264_ANNEXB,
+  DESKTOP_VIEW_FEATURE_H264_AVCC,
   DESKTOP_VIEW_WIRE_VERSION,
   isDesktopViewFatalError,
   type DesktopViewCompanionControl,
@@ -30,11 +30,11 @@ import {
 } from "./types/protocol.js";
 
 const WS_CLOSE_POLICY = 4000;
+const PING_INTERVAL_MS = 1_000;
+const ENCODE_WATCHDOG_MS = 5_000;
 
 export type DesktopViewStreamAccess = {
   deviceId: string;
-  deviceName?: string;
-  expiresAt?: number;
 };
 
 type StreamDeps = {
@@ -56,10 +56,6 @@ export class DesktopViewStreamMux {
 
   constructor(private readonly deps: StreamDeps) {}
 
-  get activeCount(): number {
-    return this.active && !this.active.closed ? 1 : 0;
-  }
-
   handleWebSocket(ws: WebSocket, access: DesktopViewStreamAccess): void {
     this.deps.trackConnection?.(ws);
     if (this.active && !this.active.closed) {
@@ -75,50 +71,45 @@ export class DesktopViewStreamMux {
     const abort = new AbortController();
     let encodeOutstanding = false;
     let sawHello = false;
-    let paceTimer: ReturnType<typeof setTimeout> | undefined;
+    let waitTimer: ReturnType<typeof setTimeout> | undefined;
+    let pingTimer: ReturnType<typeof setInterval> | undefined;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
 
-    const closeBoth = (code: DesktopViewErrorCode | number, message: string): void => {
+    const teardown = (code?: DesktopViewErrorCode | number, message?: string): void => {
       if (relay.closed) return;
       relay.closed = true;
       abort.abort();
-      if (paceTimer) clearTimeout(paceTimer);
+      if (waitTimer) clearTimeout(waitTimer);
+      if (pingTimer) clearInterval(pingTimer);
+      if (watchdog) clearTimeout(watchdog);
       if (this.active === relay) this.active = undefined;
       try {
         relay.companion?.destroy();
       } catch {
         // Socket may already be closed.
       }
-      this.sendJson(ws, {
-        type: "error",
-        code,
-        message,
-        fatal: isDesktopViewFatalError(code),
-      });
-      if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) {
-        ws.close(WS_CLOSE_POLICY, closeReason(code));
+      if (code !== undefined && message !== undefined) {
+        this.sendJson(ws, {
+          type: "error",
+          code,
+          message,
+          fatal: isDesktopViewFatalError(code),
+        });
+        if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) {
+          ws.close(WS_CLOSE_POLICY, closeReason(code));
+        }
       }
       this.deps.untrackConnection?.(ws);
     };
 
     ws.on("close", () => {
-      if (relay.closed) return;
-      relay.closed = true;
-      abort.abort();
-      if (paceTimer) clearTimeout(paceTimer);
-      if (this.active === relay) this.active = undefined;
-      try {
-        relay.companion?.destroy();
-      } catch {
-        // already closed
-      }
-      this.deps.untrackConnection?.(ws);
+      teardown();
     });
 
     ws.on("message", (data, isBinary) => {
       if (relay.closed || isBinary) return;
-      const payload =
-        typeof data === "string" ? data : Buffer.from(data as Buffer).toString("utf8");
-      const parsed = parseControlJson(Buffer.from(payload, "utf8"));
+      const payload = controlPayload(data);
+      const parsed = parseControlJson(payload);
       if (!parsed || typeof parsed.type !== "string") return;
       if (parsed.type === "pong" && typeof parsed.t === "number") {
         controller.onRttSample(now() - parsed.t);
@@ -137,22 +128,26 @@ export class DesktopViewStreamMux {
 
     const maybeEncode = (): void => {
       if (relay.closed || encodeOutstanding || !sawHello) return;
-      if (paceTimer) {
-        clearTimeout(paceTimer);
-        paceTimer = undefined;
+      if (waitTimer) {
+        clearTimeout(waitTimer);
+        waitTimer = undefined;
       }
       const decision = controller.shouldEncode(now());
       if (decision.kind === "wait") {
         if (decision.afterMs !== undefined && decision.afterMs > 0) {
-          paceTimer = setTimeout(maybeEncode, decision.afterMs);
+          waitTimer = setTimeout(maybeEncode, decision.afterMs);
         }
         return;
       }
       if (decision.kind === "close") {
-        closeBoth(DESKTOP_VIEW_ERROR.backpressureCap, "Desktop view in-flight byte cap exceeded");
+        teardown(DESKTOP_VIEW_ERROR.backpressureCap, "Desktop view in-flight byte cap exceeded");
         return;
       }
       encodeOutstanding = true;
+      if (watchdog) clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        teardown(DESKTOP_VIEW_ERROR.companionUnavailable, "Desktop companion is unavailable");
+      }, ENCODE_WATCHDOG_MS);
       const command: DesktopViewCompanionControl = {
         type: "encode",
         frameId: decision.command.frameId,
@@ -162,13 +157,11 @@ export class DesktopViewStreamMux {
         keyframe: decision.command.keyframe || undefined,
       };
       writeCompanion(relay.companion, encodeCompanionJson(command));
-      paceTimer = setTimeout(maybeEncode, Math.max(1, 1000 / decision.command.fps));
     };
 
     void this.deps
       .connectCompanion({
         deviceId: access.deviceId,
-        deviceName: access.deviceName,
         signal: abort.signal,
       })
       .then((stream) => {
@@ -184,17 +177,18 @@ export class DesktopViewStreamMux {
           try {
             frames = reader.push(chunk);
           } catch {
-            closeBoth(
-              DESKTOP_VIEW_ERROR.protocolFatal,
-              "Desktop view companion framing is invalid",
-            );
+            teardown(DESKTOP_VIEW_ERROR.protocolFatal, "Desktop view companion framing is invalid");
             return;
           }
           for (const frame of frames) {
             if (frame.type === DESKTOP_VIEW_COMPANION_FRAME_MEDIA) {
               encodeOutstanding = false;
+              if (watchdog) {
+                clearTimeout(watchdog);
+                watchdog = undefined;
+              }
               if (ws.readyState !== ws.OPEN) continue;
-              ws.send(frame.payload, { binary: true });
+              ws.send(frame.payload, { binary: true, compress: false });
               const frameId = frame.payload.length >= 8 ? frame.payload.readUInt32BE(4) : 0;
               controller.onFrameSent(frameId, frame.payload.length, now());
               maybeEncode();
@@ -206,7 +200,7 @@ export class DesktopViewStreamMux {
             if (parsed.type === "hello") {
               const hello = parsed as unknown as DesktopViewHello;
               if (hello.deviceId !== access.deviceId) {
-                closeBoth(
+                teardown(
                   DESKTOP_VIEW_ERROR.grantNotBound,
                   "Desktop view session is not granted to this device",
                 );
@@ -219,20 +213,22 @@ export class DesktopViewStreamMux {
                 version: DESKTOP_VIEW_WIRE_VERSION,
                 features: hello.features?.length
                   ? hello.features
-                  : [DESKTOP_VIEW_FEATURE_H264_ANNEXB],
+                  : [DESKTOP_VIEW_FEATURE_H264_AVCC],
                 grantId: hello.grantId,
                 deviceId: hello.deviceId,
                 surface: hello.surface,
-                width: hello.width,
-                height: hello.height,
                 expiresAt: hello.expiresAt,
               };
               this.sendJson(ws, phoneHello);
-              this.sendJson(ws, { type: "ping", t: now() });
+              const sendPing = (): void => {
+                this.sendJson(ws, { type: "ping", t: now() });
+              };
+              sendPing();
+              pingTimer = setInterval(sendPing, PING_INTERVAL_MS);
               continue;
             }
             if (parsed.type === "error" && typeof parsed.code === "number") {
-              closeBoth(
+              teardown(
                 parsed.code,
                 typeof parsed.message === "string" ? parsed.message : "Desktop view error",
               );
@@ -244,43 +240,19 @@ export class DesktopViewStreamMux {
           onBytes(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
         });
         stream.socket.on("close", () => {
-          if (relay.closed) return;
-          closeBoth(DESKTOP_VIEW_ERROR.surfaceGone, "Desktop view companion closed");
+          teardown(DESKTOP_VIEW_ERROR.surfaceGone, "Desktop view companion closed");
         });
         stream.socket.on("error", () => {
-          if (relay.closed) return;
-          closeBoth(DESKTOP_VIEW_ERROR.companionUnavailable, "Desktop companion is unavailable");
+          teardown(DESKTOP_VIEW_ERROR.companionUnavailable, "Desktop companion is unavailable");
         });
       })
       .catch((error: unknown) => {
-        if (relay.closed) return;
         if (error instanceof DesktopCompanionViewStreamError) {
-          closeBoth(error.code, error.message);
+          teardown(error.code, error.message);
           return;
         }
-        closeBoth(DESKTOP_VIEW_ERROR.companionUnavailable, "Desktop companion is unavailable");
+        teardown(DESKTOP_VIEW_ERROR.companionUnavailable, "Desktop companion is unavailable");
       });
-  }
-
-  closeAll(code = DESKTOP_VIEW_ERROR.flagOff, message = "Desktop live view is off"): void {
-    const relay = this.active;
-    if (!relay || relay.closed) return;
-    relay.closed = true;
-    this.active = undefined;
-    try {
-      relay.companion?.destroy();
-    } catch {
-      // already closed
-    }
-    this.sendJson(relay.phone, {
-      type: "error",
-      code,
-      message,
-      fatal: isDesktopViewFatalError(code),
-    });
-    if (relay.phone.readyState === relay.phone.OPEN) {
-      relay.phone.close(WS_CLOSE_POLICY, closeReason(code));
-    }
   }
 
   private fail(ws: WebSocket, code: number, message: string): void {
@@ -299,6 +271,13 @@ export class DesktopViewStreamMux {
     if (ws.readyState !== ws.OPEN && ws.readyState !== ws.CONNECTING) return;
     ws.send(JSON.stringify(value));
   }
+}
+
+function controlPayload(data: WebSocket.RawData): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  if (typeof data === "string") return Buffer.from(data, "utf8");
+  if (Array.isArray(data)) return Buffer.concat(data);
+  return Buffer.from(data);
 }
 
 function writeCompanion(socket: Socket | undefined, bytes: Buffer): void {

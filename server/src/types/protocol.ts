@@ -810,14 +810,14 @@ export const DESKTOP_VIEW_STREAM_PATH = "/desktop/view/stream";
 export const DESKTOP_VIEW_COMPANION_PATH = "/view/stream";
 export const DESKTOP_VIEW_COMPANION_UPGRADE = "oppi-desktop-view";
 export const DESKTOP_VIEW_WIRE_VERSION = 1;
-export const DESKTOP_VIEW_FEATURE_H264_ANNEXB = "h264-annexb";
+export const DESKTOP_VIEW_FEATURE_H264_AVCC = "h264-avcc";
 
 /** Companion mux: JSON UTF-8 control. */
 export const DESKTOP_VIEW_COMPANION_FRAME_JSON = 1;
 /** Companion mux: phone-wire media bytes (forwarded unchanged on WSS binary). */
 export const DESKTOP_VIEW_COMPANION_FRAME_MEDIA = 2;
 
-/** Phone-wire media header size. Payload is Annex-B H.264. */
+/** Phone-wire media header size. Payload is length-prefixed (AVCC) H.264. */
 export const DESKTOP_VIEW_MEDIA_HEADER_BYTES = 24;
 
 export const DESKTOP_VIEW_FATAL_ERROR_MIN = 4100;
@@ -855,8 +855,6 @@ export type DesktopViewHello = {
   grantId: string;
   deviceId: string;
   surface: DesktopViewSurface;
-  width: number;
-  height: number;
   expiresAt?: string;
 };
 

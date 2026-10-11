@@ -7,10 +7,7 @@ import { request as httpRequest } from "node:http";
 import type { Socket } from "node:net";
 
 import { desktopCompanionOwnerSocketPath } from "./desktop-companion-still-client.js";
-import {
-  DESKTOP_COMPANION_VIEW_DEVICE_ID_HEADER,
-  DESKTOP_COMPANION_VIEW_DEVICE_NAME_HEADER,
-} from "./desktop-companion-view-session-client.js";
+import { DESKTOP_COMPANION_VIEW_DEVICE_ID_HEADER } from "./desktop-companion-view-session-client.js";
 import {
   DESKTOP_VIEW_COMPANION_PATH,
   DESKTOP_VIEW_COMPANION_UPGRADE,
@@ -34,7 +31,6 @@ export type DesktopCompanionViewStream = {
 
 export type DesktopCompanionViewStreamConnectInput = {
   deviceId: string;
-  deviceName?: string;
   signal?: AbortSignal;
 };
 
@@ -79,9 +75,6 @@ export class DesktopCompanionViewStreamClient {
         Upgrade: DESKTOP_VIEW_COMPANION_UPGRADE,
         [DESKTOP_COMPANION_VIEW_DEVICE_ID_HEADER]: deviceId,
       };
-      if (input.deviceName && input.deviceName.trim()) {
-        headers[DESKTOP_COMPANION_VIEW_DEVICE_NAME_HEADER] = input.deviceName.trim();
-      }
 
       const req = httpRequest({
         socketPath: this.socketPath,

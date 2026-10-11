@@ -10,12 +10,12 @@ enum DesktopLiveViewAttachFailure: Error, Equatable {
 
 protocol DesktopLiveViewStreaming: AnyObject {
     var isActive: Bool { get }
-    func attach(fd: Int32, deviceId: String, deviceName: String?) -> Result<Void, DesktopLiveViewAttachFailure>
+    func attach(fd: Int32, deviceId: String) -> Result<Void, DesktopLiveViewAttachFailure>
     func stop()
 }
 
 protocol DesktopLiveViewCapturing: AnyObject {
-    func startLiveView(mailbox: DesktopLiveViewPixelMailbox, fps: Double, scale: Double)
+    func startLiveView(offer: @escaping @Sendable (CVPixelBuffer, Date) -> Void, fps: Double, scale: Double)
     func updateLiveView(fps: Double, scale: Double)
     func stopLiveView()
 }
@@ -23,8 +23,6 @@ protocol DesktopLiveViewCapturing: AnyObject {
 final class DesktopLiveViewSource: @unchecked Sendable {
     struct Snapshot: Equatable, Sendable {
         var surface: CaptureSurface
-        var width: Int
-        var height: Int
     }
 
     private let lock = NSLock()
@@ -44,16 +42,23 @@ final class DesktopLiveViewSource: @unchecked Sendable {
 }
 
 final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendable {
-    let mailbox = DesktopLiveViewPixelMailbox()
     private let grantGate: DesktopViewGrantGate
     private let source: DesktopLiveViewSource
-    private let encoder: DesktopH264Encoder
+    private let encoder: any DesktopFrameEncoding
     private let capturer: (any DesktopLiveViewCapturing)?
-    private let queue = DispatchQueue(label: "dev.chenda.OppiMac.live-view")
+    private let readQueue = DispatchQueue(label: "dev.chenda.OppiMac.live-view.read")
+    private let timerQueue = DispatchQueue(label: "dev.chenda.OppiMac.live-view.timer")
     private let lock = NSLock()
+    private let writeLock = NSLock()
     private var fd: Int32 = -1
     private var pending: DesktopH264EncodeCommand?
+    private var held: (buffer: CVPixelBuffer, capturedAt: Date)?
+    private var lastEncodedCapturedAt: Date?
+    private var lastFps: Double?
+    private var lastScale: Double?
     private var stopped = true
+    private var idleWork: DispatchWorkItem?
+    private var expiryWork: DispatchWorkItem?
 
     var isActive: Bool {
         lock.lock()
@@ -64,7 +69,7 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
     init(
         grantGate: DesktopViewGrantGate,
         source: DesktopLiveViewSource,
-        encoder: DesktopH264Encoder = DesktopH264Encoder(),
+        encoder: any DesktopFrameEncoding = DesktopH264Encoder(),
         capturer: (any DesktopLiveViewCapturing)? = nil
     ) {
         self.grantGate = grantGate
@@ -76,7 +81,7 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
         }
     }
 
-    func attach(fd: Int32, deviceId: String, deviceName: String?) -> Result<Void, DesktopLiveViewAttachFailure> {
+    func attach(fd: Int32, deviceId: String) -> Result<Void, DesktopLiveViewAttachFailure> {
         lock.lock()
         if !stopped && self.fd >= 0 {
             lock.unlock()
@@ -94,33 +99,37 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
         lock.lock()
         self.fd = fd
         stopped = false
+        pending = nil
+        held = nil
+        lastEncodedCapturedAt = nil
+        lastFps = 30
+        lastScale = 1
         lock.unlock()
-        mailbox.reset()
         grantGate.setLiveDelivery(true)
-        capturer?.startLiveView(mailbox: mailbox, fps: 30, scale: 1)
+        capturer?.startLiveView(offer: { [weak self] buffer, capturedAt in
+            self?.offer(buffer, capturedAt: capturedAt)
+        }, fps: 30, scale: 1)
+        scheduleExpiry(grant.expiresAt)
 
         let hello: [String: Any] = [
             "type": "hello",
             "version": Int(DesktopViewStreamWire.version),
-            "features": [DesktopViewStreamWire.featureAnnexB],
+            "features": [DesktopViewStreamWire.featureAvcc],
             "grantId": grant.grantId.uuidString,
             "deviceId": deviceId,
             "surface": [
                 "windowId": Int(snapshot.surface.surfaceID.windowID),
                 "title": snapshot.surface.title,
             ],
-            "width": snapshot.width,
-            "height": snapshot.height,
             "expiresAt": DesktopStillShareHTTP.date(grant.expiresAt),
         ]
         if let frame = DesktopViewStreamWire.jsonFrame(hello) {
             writeAll(frame)
         }
 
-        queue.async { [weak self] in
+        readQueue.async { [weak self] in
             self?.readLoop(expectedDevice: deviceId)
         }
-        _ = deviceName
         return .success(())
     }
 
@@ -128,9 +137,18 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
         fail(code: DesktopViewStreamWire.errorSurfaceGone, message: "Desktop view stopped")
     }
 
-    func offerForTests(_ buffer: CVPixelBuffer) {
-        mailbox.offer(buffer)
-        encodePendingIfPossible()
+    func offer(_ buffer: CVPixelBuffer, capturedAt: Date) {
+        lock.lock()
+        if stopped {
+            lock.unlock()
+            return
+        }
+        held = (buffer, capturedAt)
+        let command = takePendingLocked(allowStale: false)
+        lock.unlock()
+        if let command {
+            startEncode(buffer: buffer, capturedAt: capturedAt, command: command)
+        }
     }
 
     private func readLoop(expectedDevice: String) {
@@ -142,8 +160,13 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
             let isStopped = stopped
             lock.unlock()
             if isStopped || current < 0 { return }
-            if grantGate.current()?.deviceId != expectedDevice {
-                fail(code: DesktopViewStreamWire.errorGrantRevoked, message: "View grant revoked")
+            if let grant = grantGate.current() {
+                if grant.deviceId != expectedDevice {
+                    fail(code: DesktopViewStreamWire.errorGrantRevoked, message: "View grant revoked")
+                    return
+                }
+            } else {
+                fail(code: DesktopViewStreamWire.errorGrantExpired, message: "View grant expired")
                 return
             }
             let count = chunk.withUnsafeMutableBytes { raw in
@@ -162,7 +185,7 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
             do {
                 frames = try reader.push(Data(chunk.prefix(count)))
             } catch {
-                fail(code: DesktopViewStreamWire.errorGrantRevoked, message: "Desktop view framing is invalid")
+                fail(code: DesktopViewStreamWire.errorProtocolFatal, message: "Desktop view framing is invalid")
                 return
             }
             for frame in frames {
@@ -186,24 +209,74 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
                 scale: doubleValue(json["scale"]) ?? 1,
                 keyframe: json["keyframe"] as? Bool ?? false
             )
-            capturer?.updateLiveView(fps: command.fps, scale: command.scale)
             lock.lock()
+            let fpsChanged = lastFps != command.fps
+            let scaleChanged = lastScale != command.scale
+            lastFps = command.fps
+            lastScale = command.scale
             pending = command
+            let taken = takePendingLocked(allowStale: command.keyframe)
+            let frame = held
             lock.unlock()
-            encodePendingIfPossible()
+            if fpsChanged || scaleChanged {
+                capturer?.updateLiveView(fps: command.fps, scale: command.scale)
+            }
+            if let taken, let frame {
+                startEncode(buffer: frame.buffer, capturedAt: frame.capturedAt, command: taken)
+            } else {
+                armIdleRefresh()
+            }
         }
     }
 
-    private func encodePendingIfPossible() {
-        lock.lock()
-        let command = pending
-        lock.unlock()
-        guard let command, let buffer = mailbox.peek() else { return }
-        lock.lock()
+    private func takePendingLocked(allowStale: Bool) -> DesktopH264EncodeCommand? {
+        guard let command = pending, let held else { return nil }
+        if !allowStale, let last = lastEncodedCapturedAt, held.capturedAt <= last {
+            return nil
+        }
         pending = nil
+        lastEncodedCapturedAt = held.capturedAt
+        idleWork?.cancel()
+        idleWork = nil
+        return command
+    }
+
+    private func armIdleRefresh() {
+        idleWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.idleEncode()
+        }
+        idleWork = work
+        timerQueue.asyncAfter(deadline: .now() + 1, execute: work)
+    }
+
+    private func idleEncode() {
+        lock.lock()
+        let taken = takePendingLocked(allowStale: true)
+        let held = self.held
         lock.unlock()
-        encoder.encode(buffer: buffer, capturedAt: Date(), command: command) { [weak self] data in
+        if let taken, let held {
+            startEncode(buffer: held.buffer, capturedAt: held.capturedAt, command: taken)
+        }
+    }
+
+    private func startEncode(buffer: CVPixelBuffer, capturedAt: Date, command: DesktopH264EncodeCommand) {
+        encoder.encode(buffer: buffer, capturedAt: capturedAt, command: command) { [weak self] data in
             self?.writeAll(data)
+        }
+    }
+
+    private func scheduleExpiry(_ expiresAt: Date) {
+        expiryWork?.cancel()
+        let delay = expiresAt.timeIntervalSinceNow
+        let work = DispatchWorkItem { [weak self] in
+            self?.fail(code: DesktopViewStreamWire.errorGrantExpired, message: "View grant expired")
+        }
+        expiryWork = work
+        if delay <= 0 {
+            timerQueue.async(execute: work)
+        } else {
+            timerQueue.asyncAfter(deadline: .now() + delay, execute: work)
         }
     }
 
@@ -213,11 +286,16 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
         let already = stopped
         stopped = true
         fd = -1
+        pending = nil
+        held = nil
+        idleWork?.cancel()
+        idleWork = nil
+        expiryWork?.cancel()
+        expiryWork = nil
         lock.unlock()
         if already { return }
         grantGate.setLiveDelivery(false)
         capturer?.stopLiveView()
-        mailbox.close()
         encoder.invalidate()
         if current >= 0 {
             if let frame = DesktopViewStreamWire.jsonFrame([
@@ -234,22 +312,33 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
     }
 
     private func writeAll(_ data: Data, fd override: Int32? = nil) {
+        writeLock.lock()
         lock.lock()
         let current = override ?? fd
         lock.unlock()
-        guard current >= 0 else { return }
-        var offset = 0
-        while offset < data.count {
-            let written = data.withUnsafeBytes { raw -> Int in
-                guard let base = raw.baseAddress else { return -1 }
-                return Darwin.write(current, base.advanced(by: offset), data.count - offset)
+        var failed = false
+        if current >= 0 {
+            var offset = 0
+            while offset < data.count {
+                let written = data.withUnsafeBytes { raw -> Int in
+                    guard let base = raw.baseAddress else { return -1 }
+                    return Darwin.write(current, base.advanced(by: offset), data.count - offset)
+                }
+                if written < 0 {
+                    if errno == EINTR { continue }
+                    failed = true
+                    break
+                }
+                if written == 0 {
+                    failed = true
+                    break
+                }
+                offset += written
             }
-            if written < 0 {
-                if errno == EINTR { continue }
-                return
-            }
-            if written == 0 { return }
-            offset += written
+        }
+        writeLock.unlock()
+        if failed {
+            fail(code: DesktopViewStreamWire.errorSurfaceGone, message: "Desktop view companion closed")
         }
     }
 }

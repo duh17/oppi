@@ -170,14 +170,18 @@ final class ScreenCaptureKitDesktopCaptureService: NSObject, DesktopCaptureServi
         return .permissionDenied
     }
 
-    func startLiveViewOnMain(mailbox: DesktopLiveViewPixelMailbox, fps: Double, scale: Double) {
+    func startLiveViewOnMain(
+        offer: @escaping @Sendable (CVPixelBuffer, Date) -> Void,
+        fps: Double,
+        scale: Double
+    ) {
         guard liveViewProducer == nil, retiringLiveViewProducer == nil else { return }
         guard let filter = selectedFilter, let surface = selectedSurface else { return }
         let producer = DesktopSCStreamLiveViewProducer(
             surface: surface,
             filter: filter,
             configuration: Self.makeLiveViewConfiguration(filter: filter, fps: fps, scale: scale),
-            mailbox: mailbox,
+            offer: offer,
             surfaceUnavailable: { [weak self] unavailable in
                 Task { @MainActor in
                     self?.delegate?.desktopCaptureServiceSurfaceBecameUnavailable(unavailable)
@@ -582,7 +586,7 @@ final class DesktopSCStreamLiveViewProducer: NSObject, SCStreamOutput, SCStreamD
     private let filter: SCContentFilter
     private var configuration: SCStreamConfiguration
     private let captureQueue = DispatchQueue(label: "dev.chenda.OppiMac.live-view-sck")
-    private let mailbox: DesktopLiveViewPixelMailbox
+    private let offer: @Sendable (CVPixelBuffer, Date) -> Void
     private let surfaceUnavailable: @Sendable (CaptureSurface) -> Void
     private let finished: @Sendable (DesktopSCStreamLiveViewProducer) -> Void
     private let lock = NSLock()
@@ -593,14 +597,14 @@ final class DesktopSCStreamLiveViewProducer: NSObject, SCStreamOutput, SCStreamD
         surface: CaptureSurface,
         filter: SCContentFilter,
         configuration: SCStreamConfiguration,
-        mailbox: DesktopLiveViewPixelMailbox,
+        offer: @escaping @Sendable (CVPixelBuffer, Date) -> Void,
         surfaceUnavailable: @escaping @Sendable (CaptureSurface) -> Void,
         finished: @escaping @Sendable (DesktopSCStreamLiveViewProducer) -> Void
     ) {
         self.surface = surface
         self.filter = filter
         self.configuration = configuration
-        self.mailbox = mailbox
+        self.offer = offer
         self.surfaceUnavailable = surfaceUnavailable
         self.finished = finished
         super.init()
@@ -670,7 +674,16 @@ final class DesktopSCStreamLiveViewProducer: NSObject, SCStreamOutput, SCStreamD
         lock.unlock()
         guard !invalid else { return }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        mailbox.offer(pixelBuffer)
+        offer(pixelBuffer, captureDate(from: sampleBuffer))
+    }
+
+    private func captureDate(from sampleBuffer: CMSampleBuffer) -> Date {
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        guard pts.isValid, pts.isNumeric else { return Date() }
+        let host = CMClockGetTime(CMClockGetHostTimeClock())
+        let delta = CMTimeGetSeconds(CMTimeSubtract(host, pts))
+        guard delta.isFinite else { return Date() }
+        return Date().addingTimeInterval(-delta)
     }
 
     nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -693,9 +706,9 @@ final class MainActorLiveViewCapturer: DesktopLiveViewCapturing, @unchecked Send
         self.service = service
     }
 
-    func startLiveView(mailbox: DesktopLiveViewPixelMailbox, fps: Double, scale: Double) {
+    func startLiveView(offer: @escaping @Sendable (CVPixelBuffer, Date) -> Void, fps: Double, scale: Double) {
         Task { @MainActor in
-            self.service.startLiveViewOnMain(mailbox: mailbox, fps: fps, scale: scale)
+            self.service.startLiveViewOnMain(offer: offer, fps: fps, scale: scale)
         }
     }
 

@@ -24,7 +24,7 @@ import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
 import {
   DESKTOP_VIEW_ERROR,
-  DESKTOP_VIEW_FEATURE_H264_ANNEXB,
+  DESKTOP_VIEW_FEATURE_H264_AVCC,
   DESKTOP_VIEW_STREAM_PATH,
   DESKTOP_VIEW_WIRE_VERSION,
 } from "../src/types/protocol.js";
@@ -62,7 +62,7 @@ class FakePhoneSocket {
     this.handlers.set(event, list);
   }
 
-  send(data: Buffer | string, options?: { binary?: boolean }): void {
+  send(data: Buffer | string, options?: { binary?: boolean; compress?: boolean }): void {
     this.sent.push({ data, binary: options?.binary });
   }
 
@@ -170,12 +170,10 @@ async function listenFakeCompanion(
       const hello = options.hello ?? {
         type: "hello",
         version: DESKTOP_VIEW_WIRE_VERSION,
-        features: [DESKTOP_VIEW_FEATURE_H264_ANNEXB],
+        features: [DESKTOP_VIEW_FEATURE_H264_AVCC],
         grantId: "11111111-1111-4111-8111-111111111111",
         deviceId: options.deviceId,
         surface: { windowId: 7, title: "Notes" },
-        width: 640,
-        height: 360,
       };
       socket.write(encodeCompanionJson(hello));
       if (leftover.length > 0) handleFrames(leftover);
@@ -207,6 +205,18 @@ function mediaFrame(frameId: number, bytes = 64): Buffer {
   );
 }
 
+describe("CompanionFrameReader", () => {
+  it("reassembles a frame split across chunks without requiring a later ack", () => {
+    const reader = new CompanionFrameReader();
+    const frame = encodeCompanionJson({ type: "hello", deviceId: "dev-1" });
+    expect(reader.push(frame.subarray(0, 3))).toEqual([]);
+    const rest = reader.push(frame.subarray(3));
+    expect(rest).toHaveLength(1);
+    expect(rest[0]?.type).toBe(1);
+    expect(parseControlJson(rest[0]!.payload)?.type).toBe("hello");
+  });
+});
+
 describe("desktop live view capability", () => {
   it("omits desktopLiveView unless the experiment flag is on", async () => {
     const off = await getCapabilities({ experimental: { serverDurable: false } });
@@ -217,7 +227,7 @@ describe("desktop live view capability", () => {
 });
 
 describe("DesktopViewStreamMux over a real unix companion", () => {
-  it("forwards phone-wire media unchanged and paces with acks", async () => {
+  it("forwards phone-wire media unchanged; no acks allow exactly two encodes", async () => {
     const root = companionRoot();
     const encoded: number[] = [];
     const companion = await listenFakeCompanion(root, {
@@ -238,13 +248,14 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       await waitFor(() => phone.textMessages().some((msg) => msg.type === "ping"));
       const ping = phone.textMessages().find((msg) => msg.type === "ping");
       phone.emitText({ type: "pong", t: ping?.t });
-      await waitFor(() => phone.binaryMessages().length >= 1);
+      await waitFor(() => encoded.length === 2);
+      await delay(200);
+      expect(encoded).toEqual([1, 2]);
       const first = phone.binaryMessages()[0]!;
       expect(first.equals(mediaFrame(1, 80))).toBe(true);
-      expect(encoded.length).toBeGreaterThanOrEqual(1);
       phone.emitText({ type: "ack", frameId: 1, receivedAt: Date.now() });
-      await waitFor(() => phone.binaryMessages().length >= 2);
-      expect(mux.activeCount).toBe(1);
+      await waitFor(() => encoded.length === 3);
+      expect(encoded).toEqual([1, 2, 3]);
     } finally {
       companion.close();
     }
@@ -273,7 +284,6 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       expect(phone.closeReason).toBe("grant_revoked");
       const error = phone.textMessages().find((msg) => msg.type === "error");
       expect(error?.code).toBe(DESKTOP_VIEW_ERROR.grantRevoked);
-      expect(mux.activeCount).toBe(0);
     } finally {
       companion.close();
     }
@@ -450,6 +460,10 @@ async function waitFor(predicate: () => boolean, ms = 2_000): Promise<void> {
     if (Date.now() - start > ms) throw new Error("waitFor timeout");
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function websocketHttpStatus(url: string, token: string): Promise<number> {

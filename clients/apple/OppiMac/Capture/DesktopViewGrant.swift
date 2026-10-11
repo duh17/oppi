@@ -24,7 +24,6 @@ final class DesktopViewGrantGate: @unchecked Sendable {
     private let clock: @Sendable () -> Date
     private var grant: DesktopViewGrant?
     private var liveDelivery = false
-    private var pendingInvalidation = false
     private var invalidationHandler: (@Sendable () -> Void)?
 
     init(clock: @escaping @Sendable () -> Date = { Date() }) {
@@ -80,13 +79,8 @@ final class DesktopViewGrantGate: @unchecked Sendable {
 
     func current() -> DesktopViewGrant? {
         lock.lock()
-        let grant = activeGrantLocked()
-        let fire = pendingInvalidation
-        pendingInvalidation = false
-        let handler = fire ? invalidationHandler : nil
-        lock.unlock()
-        handler?()
-        return grant
+        defer { lock.unlock() }
+        return activeGrantLocked()
     }
 
     func claim(deviceId: String, deviceName: String?) -> Result<DesktopViewGrant, DesktopViewGrantClaimFailure> {
@@ -127,7 +121,6 @@ final class DesktopViewGrantGate: @unchecked Sendable {
         if clock() >= grant.expiresAt {
             self.grant = nil
             liveDelivery = false
-            pendingInvalidation = true
             return nil
         }
         return grant

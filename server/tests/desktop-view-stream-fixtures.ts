@@ -6,7 +6,7 @@ import {
   DESKTOP_VIEW_COMPANION_PATH,
   DESKTOP_VIEW_COMPANION_UPGRADE,
   DESKTOP_VIEW_ERROR,
-  DESKTOP_VIEW_FEATURE_H264_ANNEXB,
+  DESKTOP_VIEW_FEATURE_H264_AVCC,
   DESKTOP_VIEW_FATAL_ERROR_MAX,
   DESKTOP_VIEW_FATAL_ERROR_MIN,
   DESKTOP_VIEW_MEDIA_HEADER_BYTES,
@@ -32,12 +32,10 @@ export const DESKTOP_VIEW_STREAM_FIXTURE_DESCRIPTION =
 const hello: DesktopViewHello = {
   type: "hello",
   version: DESKTOP_VIEW_WIRE_VERSION,
-  features: [DESKTOP_VIEW_FEATURE_H264_ANNEXB],
+  features: [DESKTOP_VIEW_FEATURE_H264_AVCC],
   grantId: "11111111-1111-4111-8111-111111111111",
   deviceId: "dev-paired-1",
   surface: { windowId: 42, title: "Notes" },
-  width: 1280,
-  height: 800,
   expiresAt: "2026-10-10T12:00:00.000Z",
 };
 
@@ -100,7 +98,7 @@ export function buildDesktopViewStreamMessages(): Record<string, unknown> {
       mediaHeaderBytes: DESKTOP_VIEW_MEDIA_HEADER_BYTES,
       companionFrameJson: DESKTOP_VIEW_COMPANION_FRAME_JSON,
       companionFrameMedia: DESKTOP_VIEW_COMPANION_FRAME_MEDIA,
-      annexB: true,
+      avcc: true,
       mediaLayout: {
         version: { offset: 0, bits: 8 },
         flags: { offset: 1, bits: 8, keyframeBit: 0 },
@@ -111,7 +109,7 @@ export function buildDesktopViewStreamMessages(): Record<string, unknown> {
         width: { offset: 16, bits: 16, endian: "be" },
         height: { offset: 18, bits: 16, endian: "be" },
         payloadBytes: { offset: 20, bits: 32, endian: "be" },
-        payload: { offset: 24, format: "h264-annexb" },
+        payload: { offset: 24, format: "h264-avcc" },
       },
       fatalErrorRange: { min: DESKTOP_VIEW_FATAL_ERROR_MIN, max: DESKTOP_VIEW_FATAL_ERROR_MAX },
       errors: DESKTOP_VIEW_ERROR,

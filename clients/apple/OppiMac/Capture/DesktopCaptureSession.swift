@@ -309,9 +309,7 @@ final class DesktopCaptureSession {
             liveViewSource.update(nil)
             return
         }
-        liveViewSource.update(
-            DesktopLiveViewSource.Snapshot(surface: selection, width: 0, height: 0)
-        )
+        liveViewSource.update(DesktopLiveViewSource.Snapshot(surface: selection))
     }
 
     private func haltLocalPreview(to newState: DesktopLocalPreviewState) {

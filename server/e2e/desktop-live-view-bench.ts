@@ -5,7 +5,7 @@
  */
 
 import { createServer as createNetServer, connect as netConnect, type Socket } from "node:net";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, randomFillSync } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +25,7 @@ import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
 import {
   DESKTOP_VIEW_ERROR,
-  DESKTOP_VIEW_FEATURE_H264_ANNEXB,
+  DESKTOP_VIEW_FEATURE_H264_AVCC,
   DESKTOP_VIEW_STREAM_PATH,
   DESKTOP_VIEW_WIRE_VERSION,
 } from "../src/types/protocol.js";
@@ -60,7 +60,7 @@ const PRESETS: Preset[] = [
   },
 ];
 
-const RUN_MS = 4_000;
+const RUN_MS = 15_000;
 
 type RunResult = {
   preset: string;
@@ -112,15 +112,18 @@ async function runPreset(preset: Preset): Promise<RunResult> {
   });
   if (!enrolled) throw new Error("enrollment failed");
 
-  const levels: number[] = [];
+  const levelSamples: Array<{ at: number; level: number }> = [];
   const companion = await listenCompanion(companionRoot, enrolled.deviceId, (encode) => {
     const fps = Number(encode.fps) || 15;
     const bitrate = Number(encode.bitrate) || 800_000;
     const matched = DESKTOP_VIEW_LADDER.find(
       (rung) => rung.fps === Number(encode.fps) && rung.scale === Number(encode.scale),
     );
-    levels.push(matched?.level ?? 0);
-    const bytes = Math.max(64, Math.ceil(bitrate / 8 / fps));
+    levelSamples.push({ at: Date.now(), level: matched?.level ?? 0 });
+    const pBytes = Math.max(64, Math.ceil(bitrate / 8 / fps));
+    const bytes = encode.keyframe === true || Number(encode.frameId) === 1 ? pBytes * 6 : pBytes;
+    const payload = Buffer.allocUnsafe(bytes);
+    randomFillSync(payload);
     return encodeMediaFrame(
       {
         keyframe: encode.keyframe === true || Number(encode.frameId) === 1,
@@ -129,7 +132,7 @@ async function runPreset(preset: Preset): Promise<RunResult> {
         width: 640,
         height: 360,
       },
-      Buffer.alloc(bytes, 0x11),
+      payload,
     );
   });
 
@@ -143,6 +146,7 @@ async function runPreset(preset: Preset): Promise<RunResult> {
   const controlPings: number[] = [];
   let bytes = 0;
   let firstFrameAt = 0;
+  let lastArrival = 0;
   const openedAt = Date.now();
 
   const media = new WebSocket(`wss://127.0.0.1:${shaper.port}${DESKTOP_VIEW_STREAM_PATH}`, {
@@ -172,6 +176,7 @@ async function runPreset(preset: Preset): Promise<RunResult> {
     const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as Buffer);
     const now = Date.now();
     if (firstFrameAt === 0) firstFrameAt = now;
+    lastArrival = now;
     arrivals.push(now);
     bytes += buf.length;
     try {
@@ -199,19 +204,19 @@ async function runPreset(preset: Preset): Promise<RunResult> {
   if (previousTls === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
   else process.env.NODE_TLS_REJECT_UNAUTHORIZED = previousTls;
 
-  const durationSec = Math.max(0.001, ((firstFrameAt || Date.now()) === 0 ? RUN_MS : RUN_MS) / 1000);
+  const spanMs = Math.max(1, (lastArrival || Date.now()) - (firstFrameAt || Date.now()));
+  const spanSec = spanMs / 1000;
   const gaps = arrivals.filter((at, i) => i > 0 && at - arrivals[i - 1]! > 100).length;
-  const fps = arrivals.length / (RUN_MS / 1000);
   return {
     preset: preset.name,
     ttffMs: firstFrameAt ? firstFrameAt - openedAt : -1,
-    fps: round(fps, 2),
+    fps: round(arrivals.length / spanSec, 2),
     ageP50: percentile(ages, 0.5),
     ageP95: percentile(ages, 0.95),
     ageMax: ages.length ? Math.max(...ages) : -1,
     gapsOver100: gaps,
-    bitrateKbps: round((bytes * 8) / durationSec / 1000, 1),
-    ladder: summarizeLadder(levels),
+    bitrateKbps: round((bytes * 8) / spanSec / 1000, 1),
+    ladder: summarizeLadder(levelSamples, lastArrival || Date.now()),
     controlPingP50: percentile(controlPings, 0.5),
     controlPingP95: percentile(controlPings, 0.95),
     revokeToCloseMs: closedAt ? closedAt - revokeAt : -1,
@@ -257,12 +262,10 @@ function listenCompanion(
         encodeCompanionJson({
           type: "hello",
           version: DESKTOP_VIEW_WIRE_VERSION,
-          features: [DESKTOP_VIEW_FEATURE_H264_ANNEXB],
+          features: [DESKTOP_VIEW_FEATURE_H264_AVCC],
           grantId: "11111111-1111-4111-8111-111111111111",
           deviceId,
           surface: { windowId: 1, title: "Bench" },
-          width: 640,
-          height: 360,
         }),
       );
       const leftover = buf.subarray(sep + 4);
@@ -299,9 +302,10 @@ function listenShaper(
   const bytesPerMs = preset.rateBps / 8 / 1000;
   let stallUntil = 0;
   let lastStall = Date.now();
+  const nextFreeAt = { up: 0, down: 0 };
   const server = createNetServer((client) => {
     const upstream = netConnect(port, host);
-    const pipe = (from: Socket, to: Socket): void => {
+    const pipe = (from: Socket, to: Socket, direction: "up" | "down"): void => {
       let chain = Promise.resolve();
       from.on("data", (chunk) => {
         chain = chain.then(async () => {
@@ -310,11 +314,12 @@ function listenShaper(
             lastStall = now;
             stallUntil = now + preset.stallMs;
           }
+          const start = Math.max(now, nextFreeAt[direction]);
+          nextFreeAt[direction] = start + (bytesPerMs > 0 ? chunk.length / bytesPerMs : 0);
           const jitter = preset.jitterMs ? Math.random() * preset.jitterMs : 0;
-          const wait = Math.max(0, stallUntil - Date.now()) + preset.delayMs + jitter;
+          const deliverAt = Math.max(start + preset.delayMs + jitter, stallUntil);
+          const wait = Math.max(0, deliverAt - Date.now());
           if (wait > 0) await delay(wait);
-          const minMs = bytesPerMs > 0 ? chunk.length / bytesPerMs : 0;
-          if (minMs > 1) await delay(minMs);
           if (!to.destroyed && to.writable) to.write(chunk);
         });
       });
@@ -323,8 +328,8 @@ function listenShaper(
       });
       from.on("error", () => to.destroy());
     };
-    pipe(client, upstream);
-    pipe(upstream, client);
+    pipe(client, upstream, "up");
+    pipe(upstream, client, "down");
   });
   return new Promise((resolve, reject) => {
     server.listen(0, "127.0.0.1", () => {
@@ -377,12 +382,21 @@ function printTable(results: RunResult[]): void {
   }
 }
 
-function summarizeLadder(levels: number[]): string {
-  if (levels.length === 0) return "-";
-  const first = levels[0];
-  const last = levels[levels.length - 1];
-  const max = Math.max(...levels);
-  return `${first}->${max}->${last}`;
+function summarizeLadder(samples: Array<{ at: number; level: number }>, endAt: number): string {
+  if (samples.length === 0) return "-";
+  const dwell = new Map<number, number>();
+  let down = 0;
+  for (let i = 0; i < samples.length; i += 1) {
+    const current = samples[i]!;
+    const nextAt = samples[i + 1]?.at ?? endAt;
+    dwell.set(current.level, (dwell.get(current.level) ?? 0) + Math.max(0, nextAt - current.at));
+    if (i > 0 && current.level < samples[i - 1]!.level) down += 1;
+  }
+  const total = [...dwell.values()].reduce((sum, ms) => sum + ms, 0) || 1;
+  const parts = [...dwell.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([level, ms]) => `L${level}:${Math.round((ms / total) * 100)}%`);
+  return `${parts.join(" ")} down=${down}`;
 }
 
 function percentile(values: number[], p: number): number {

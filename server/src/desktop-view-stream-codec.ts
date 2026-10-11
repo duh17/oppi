@@ -1,7 +1,8 @@
 /**
  * Desktop live-view wire codec.
  *
- * Phone WSS: JSON text control; binary media = 24-byte header + Annex-B H.264.
+ * Phone WSS: JSON text control; binary media = 24-byte header + AVCC H.264
+ * (4-byte NAL lengths; SPS/PPS prepended as length-prefixed NALUs on IDR).
  * Companion unix stream after 101: length-prefixed frames wrapping JSON or the
  * same media bytes Node forwards unchanged to `ws.send`.
  */
@@ -53,31 +54,76 @@ export function encodeCompanionMedia(phoneWire: Buffer): Buffer {
 }
 
 export class CompanionFrameReader {
-  private buf: Buffer = Buffer.alloc(0);
+  private chunks: Buffer[] = [];
+  private total = 0;
 
   push(chunk: Buffer): CompanionFrame[] {
-    this.buf = this.buf.length === 0 ? Buffer.from(chunk) : Buffer.concat([this.buf, chunk]);
+    if (chunk.length === 0) return [];
+    this.chunks.push(chunk);
+    this.total += chunk.length;
     const frames: CompanionFrame[] = [];
-    while (this.buf.length >= 5) {
-      const length = this.buf.readUInt32BE(0);
+    while (this.total >= 5) {
+      const length = this.peekUInt32BE();
       if (!Number.isSafeInteger(length) || length < 1 || length > DESKTOP_VIEW_MAX_FRAME_BYTES) {
         throw new Error("Desktop view companion frame length is invalid");
       }
-      if (this.buf.length < 4 + length) break;
-      const type = this.buf[4] ?? 0;
-      const payload = this.buf.subarray(5, 4 + length);
-      frames.push({ type, payload });
-      this.buf = this.buf.subarray(4 + length);
+      const frameSize = 4 + length;
+      if (this.total < frameSize) break;
+      const frame = this.take(frameSize);
+      frames.push({ type: frame[4] ?? 0, payload: frame.subarray(5) });
     }
     return frames;
+  }
+
+  private peekUInt32BE(): number {
+    const first = this.chunks[0];
+    if (first && first.length >= 4) return first.readUInt32BE(0);
+    const head = Buffer.allocUnsafe(4);
+    let offset = 0;
+    for (const chunk of this.chunks) {
+      const n = Math.min(chunk.length, 4 - offset);
+      chunk.copy(head, offset, 0, n);
+      offset += n;
+      if (offset === 4) break;
+    }
+    return head.readUInt32BE(0);
+  }
+
+  private take(n: number): Buffer {
+    const first = this.chunks[0];
+    if (first && first.length >= n) {
+      const out = first.subarray(0, n);
+      if (first.length === n) this.chunks.shift();
+      else this.chunks[0] = first.subarray(n);
+      this.total -= n;
+      return out;
+    }
+    const parts: Buffer[] = [];
+    let remaining = n;
+    while (remaining > 0) {
+      const chunk = this.chunks[0];
+      if (!chunk) break;
+      if (chunk.length <= remaining) {
+        parts.push(chunk);
+        remaining -= chunk.length;
+        this.chunks.shift();
+      } else {
+        parts.push(chunk.subarray(0, remaining));
+        this.chunks[0] = chunk.subarray(remaining);
+        remaining = 0;
+      }
+    }
+    this.total -= n;
+    const only = parts[0];
+    return parts.length === 1 && only ? only : Buffer.concat(parts);
   }
 }
 
 export function encodeMediaFrame(
   header: Omit<DesktopViewMediaHeader, "version" | "payloadBytes">,
-  annexB: Buffer,
+  avcc: Buffer,
 ): Buffer {
-  const out = Buffer.allocUnsafe(DESKTOP_VIEW_MEDIA_HEADER_BYTES + annexB.length);
+  const out = Buffer.allocUnsafe(DESKTOP_VIEW_MEDIA_HEADER_BYTES + avcc.length);
   writeMediaHeader(out, {
     version: DESKTOP_VIEW_WIRE_VERSION,
     keyframe: header.keyframe,
@@ -85,9 +131,9 @@ export function encodeMediaFrame(
     capturedAtMs: header.capturedAtMs,
     width: header.width,
     height: header.height,
-    payloadBytes: annexB.length,
+    payloadBytes: avcc.length,
   });
-  annexB.copy(out, DESKTOP_VIEW_MEDIA_HEADER_BYTES);
+  avcc.copy(out, DESKTOP_VIEW_MEDIA_HEADER_BYTES);
   return out;
 }
 

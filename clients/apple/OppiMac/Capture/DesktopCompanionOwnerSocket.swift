@@ -333,7 +333,6 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
             )
             return false
         }
-        let deviceName = DesktopViewGrantHTTP.deviceName(from: headers)
         guard let grant = viewGrantGate.current() else {
             writeResponse(
                 fd: fd,
@@ -371,7 +370,7 @@ final class DesktopCompanionOwnerSocket: @unchecked Sendable {
             if written == 0 { return false }
             offset += written
         }
-        switch liveView.attach(fd: fd, deviceId: deviceId, deviceName: deviceName) {
+        switch liveView.attach(fd: fd, deviceId: deviceId) {
         case .success:
             return true
         case .failure(.alreadyStreaming):

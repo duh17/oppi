@@ -1780,14 +1780,8 @@ export class Server {
         ws.close(1008, "Not found");
         return;
       }
-      const name = this.storage
-        .listDevices?.()
-        .find((device) => device.id === principal.deviceId)
-        ?.name?.trim();
       this.desktopViewStreamMux.handleWebSocket(ws, {
         deviceId: principal.deviceId,
-        deviceName: name && name.length > 0 ? name : undefined,
-        expiresAt: principal.expiresAt,
       });
       return;
     }

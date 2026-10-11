@@ -8,9 +8,10 @@ enum DesktopViewStreamWire {
     static let jsonType: UInt8 = 1
     static let mediaType: UInt8 = 2
     static let flagKeyframe: UInt8 = 1
-    static let featureAnnexB = "h264-annexb"
+    static let featureAvcc = "h264-avcc"
     static let maxFrameBytes = 16 * 1024 * 1024
 
+    static let errorProtocolFatal = 4100
     static let errorGrantUnavailable = 4102
     static let errorGrantNotBound = 4103
     static let errorGrantRevoked = 4104
@@ -45,19 +46,29 @@ enum DesktopViewStreamWire {
         return companionFrame(type: jsonType, payload: payload)
     }
 
-    static func mediaCompanionFrame(header: MediaHeader, annexB: Data) -> Data {
+    /// Test helper. Production frames are filled in one allocation by the encoder.
+    static func mediaCompanionFrame(header: MediaHeader, avcc: Data) -> Data {
         var payload = Data(count: mediaHeaderBytes)
-        payload[0] = version
-        payload[1] = header.keyframe ? flagKeyframe : 0
-        payload[2] = UInt8(mediaHeaderBytes)
-        payload[3] = 0
-        writeUInt32BE(header.frameId, into: &payload, at: 4)
-        writeUInt64BE(header.capturedAtMs, into: &payload, at: 8)
-        writeUInt16BE(header.width, into: &payload, at: 16)
-        writeUInt16BE(header.height, into: &payload, at: 18)
-        writeUInt32BE(UInt32(annexB.count), into: &payload, at: 20)
-        payload.append(annexB)
+        writeMediaHeader(header, payloadBytes: UInt32(avcc.count), into: &payload, at: 0)
+        payload.append(avcc)
         return companionFrame(type: mediaType, payload: payload)
+    }
+
+    static func writeMediaHeader(
+        _ header: MediaHeader,
+        payloadBytes: UInt32,
+        into data: inout Data,
+        at offset: Int
+    ) {
+        data[offset] = version
+        data[offset + 1] = header.keyframe ? flagKeyframe : 0
+        data[offset + 2] = UInt8(mediaHeaderBytes)
+        data[offset + 3] = 0
+        writeUInt32BE(header.frameId, into: &data, at: offset + 4)
+        writeUInt64BE(header.capturedAtMs, into: &data, at: offset + 8)
+        writeUInt16BE(header.width, into: &data, at: offset + 16)
+        writeUInt16BE(header.height, into: &data, at: offset + 18)
+        writeUInt32BE(payloadBytes, into: &data, at: offset + 20)
     }
 
     static func parseJSON(_ payload: Data) -> [String: Any]? {
@@ -95,24 +106,24 @@ enum DesktopViewStreamWireError: Error {
     case invalidLength
 }
 
-private func writeUInt16BE(_ value: UInt16, into data: inout Data, at offset: Int) {
+func writeUInt16BE(_ value: UInt16, into data: inout Data, at offset: Int) {
     data[offset] = UInt8(value >> 8)
     data[offset + 1] = UInt8(value & 0xFF)
 }
 
-private func writeUInt32BE(_ value: UInt32, into data: inout Data, at offset: Int) {
+func writeUInt32BE(_ value: UInt32, into data: inout Data, at offset: Int) {
     data[offset] = UInt8(value >> 24)
     data[offset + 1] = UInt8((value >> 16) & 0xFF)
     data[offset + 2] = UInt8((value >> 8) & 0xFF)
     data[offset + 3] = UInt8(value & 0xFF)
 }
 
-private func writeUInt64BE(_ value: UInt64, into data: inout Data, at offset: Int) {
+func writeUInt64BE(_ value: UInt64, into data: inout Data, at offset: Int) {
     writeUInt32BE(UInt32(value >> 32), into: &data, at: offset)
     writeUInt32BE(UInt32(value & 0xFFFF_FFFF), into: &data, at: offset + 4)
 }
 
-private func readUInt32BE(_ data: Data, at offset: Int) -> UInt32 {
+func readUInt32BE(_ data: Data, at offset: Int) -> UInt32 {
     UInt32(data[offset]) << 24
         | UInt32(data[offset + 1]) << 16
         | UInt32(data[offset + 2]) << 8

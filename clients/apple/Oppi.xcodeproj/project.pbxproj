@@ -1842,7 +1842,6 @@
 		E91AF9EC096ED037C96FB307 /* MermaidQuadrantRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B1AAD026AA75319F22E703B /* MermaidQuadrantRenderer.swift */; };
 		E95F7BF4C10478118033700D /* MarkdownInlineUSDZTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD5C27087DEF06F8D1B5B921 /* MarkdownInlineUSDZTests.swift */; };
 		E97045F6F22D62B3984FFD45 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 6027C6A9952DDB33A451CAF9 /* Localizable.xcstrings */; };
-		E9872D2FC064391968585A03 /* DesktopLiveViewPixelMailbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = E66BE6C8714CEE1059793585 /* DesktopLiveViewPixelMailbox.swift */; };
 		E991B47B7E4D0303F3B05793 /* ChatActionHandlerRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1F54EBF5A2788A7C540F408 /* ChatActionHandlerRecoveryTests.swift */; };
 		E99FFEAFDFEC26F736E8574C /* MermaidStateParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53B61B6C8D1C32195EA104E4 /* MermaidStateParser.swift */; };
 		E9A64341BA9CC2F1B72A6F74 /* ToolTimelineRowFullScreenSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9DBF54613493ABEF41C3818 /* ToolTimelineRowFullScreenSupport.swift */; };
@@ -3632,7 +3631,6 @@
 		E650A3D439375A9CB6AD624C /* ServerConnection+ModelCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ServerConnection+ModelCommands.swift"; sourceTree = "<group>"; };
 		E664E7DE10A5B6E028DEB6D2 /* PaperKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PaperKit.framework; path = System/Library/Frameworks/PaperKit.framework; sourceTree = SDKROOT; };
 		E669818A177E15546B537121 /* OrgAttributedStringRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrgAttributedStringRenderer.swift; sourceTree = "<group>"; };
-		E66BE6C8714CEE1059793585 /* DesktopLiveViewPixelMailbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopLiveViewPixelMailbox.swift; sourceTree = "<group>"; };
 		E68FFE421F8D984376C30215 /* ServerConnectionTypesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConnectionTypesTests.swift; sourceTree = "<group>"; };
 		E6AF4FDC773E7E05A74CECB5 /* ChatTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatTimelineView.swift; sourceTree = "<group>"; };
 		E6B019606BF2DD52FC888AF2 /* DesktopCompanionOwnerSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopCompanionOwnerSocket.swift; sourceTree = "<group>"; };
@@ -4212,7 +4210,6 @@
 				E6B019606BF2DD52FC888AF2 /* DesktopCompanionOwnerSocket.swift */,
 				9EFF2F48CDE8A0B5419786AD /* DesktopH264Encoder.swift */,
 				5F3E1953FCFD7C151A4E08DE /* DesktopLatestFrameMailbox.swift */,
-				E66BE6C8714CEE1059793585 /* DesktopLiveViewPixelMailbox.swift */,
 				96390D7E6E7AC47DAB3D2392 /* DesktopLiveViewSession.swift */,
 				9C1A932BF5D13F41E19D8792 /* DesktopStillShare.swift */,
 				40D0DB56D2F654F67020B27B /* DesktopViewGrant.swift */,
@@ -7447,7 +7444,6 @@
 				9ED436A8092A70D03CE42D1E /* DesktopCompanionOwnerSocket.swift in Sources */,
 				16BEA65C66699C1D1A83E5C0 /* DesktopH264Encoder.swift in Sources */,
 				7A32C42681F1F5E48DC892DE /* DesktopLatestFrameMailbox.swift in Sources */,
-				E9872D2FC064391968585A03 /* DesktopLiveViewPixelMailbox.swift in Sources */,
 				4CB489704A02F4E6B96521F8 /* DesktopLiveViewSession.swift in Sources */,
 				4AE67B5911721E9C323DDDAD /* DesktopStillShare.swift in Sources */,
 				C9DC606EE283C170B9A10D98 /* DesktopViewGrant.swift in Sources */,
