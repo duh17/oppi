@@ -1,4 +1,5 @@
 import Foundation
+import os
 import UserNotifications
 
 /// Opens Oppi's end-to-end-encrypted pushes (protocol/push/spec.md §2.5-§2.6) on this device.
@@ -6,7 +7,8 @@ import UserNotifications
 /// The outer alert from the relay is fixed text. This extension verifies the server's
 /// signature, decrypts with this device's push key, checks freshness and replay, applies App
 /// Lock and scoped-lock redaction, and shows the result. Anything that fails a check, or a
-/// timeout, shows the fixed fallback: never a field from the failed push.
+/// timeout, shows the fixed fallback: never a field from the failed push. Each fallback logs
+/// its rejection reason, and nothing from the push.
 final class NotificationService: UNNotificationServiceExtension {
     private var contentHandler: ((UNNotificationContent) -> Void)?
 
@@ -15,17 +17,26 @@ final class NotificationService: UNNotificationServiceExtension {
         withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
     ) {
         self.contentHandler = contentHandler
-        let presentation = PushNotificationOpening.presentation(
+        let now = Date()
+        let result = PushNotificationOpening.open(
             userInfo: request.content.userInfo,
-            now: Date(),
+            now: now,
             key: { PushSharedStore.loadKey(keyId: $0)?.material },
-            acceptSequence: { PushSharedStore.acceptSequence($0, keyId: $1) },
-            redaction: { PushSharedStore.loadRedactionSnapshot() }
+            acceptMessage: { PushSharedStore.acceptMessage($0, keyId: $1, now: now) }
         )
-        deliver(presentation)
+        if case .failure(let reason) = result {
+            PushSharedStore.logger.notice("Push shown as fallback: \(reason.rawValue, privacy: .public)")
+        }
+        deliver(PushNotificationOpening.presentation(
+            for: result,
+            redaction: { PushSharedStore.loadRedactionSnapshot() }
+        ))
     }
 
     override func serviceExtensionTimeWillExpire() {
+        if contentHandler != nil {
+            PushSharedStore.logger.notice("Push shown as fallback: timeout")
+        }
         deliver(.fallback)
     }
 

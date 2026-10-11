@@ -334,12 +334,14 @@ async function runCanary(
       recipient: { privateKey: string; publicKey: string; keyId: string };
     };
     storage.updateConfig({ push: { mode: "relay", relays: [proxy.url] } });
-    storage.setPushRegistration({
-      deviceId: enrolled.deviceId,
-      keyId: vectors.recipient.keyId,
-      publicKey: vectors.recipient.publicKey,
-      sendToken: await mintSendToken(proxy.url),
-    });
+    const register = async () =>
+      storage.setPushRegistration({
+        deviceId: enrolled.deviceId,
+        keyId: vectors.recipient.keyId,
+        publicKey: vectors.recipient.publicKey,
+        sendToken: await mintSendToken(proxy.url),
+      });
+    await register();
     const session = storage.createSession(canaries.sessionName, undefined, {
       id: canaries.sessionId,
     });
@@ -390,8 +392,28 @@ async function runCanary(
       fail(`${name}: expected 4 delivered pushes, got ${JSON.stringify(settled)}`);
     }
 
+    // The server forgets the registration (a relay 410 prune, revoke, or token rotation) and
+    // the phone registers the same push key again. The next push must still open on a phone
+    // that already accepted the first four (Apple PushCanaryCaptureTests).
+    storage.removePushRegistration(enrolled.deviceId);
+    await register();
+    const [reregistered] = storage.getPushRegistrations();
+    if (!reregistered) fail(`${name}: re-registration missing`);
+    const afterReregistration = await sender.send(reregistered, {
+      event: "blocked",
+      kind: "question",
+      sessionId: canaries.sessionId,
+      workspaceId: canaries.workspaceId,
+      title: "Question",
+      subtitle: canaries.sessionName,
+      body: "Waiting for your answer.",
+    });
+    if (afterReregistration?.status !== "delivered") {
+      fail(`${name}: push after re-registration not delivered: ${JSON.stringify(afterReregistration)}`);
+    }
+
     const apns = relay.apns();
-    if (apns.length !== 4) fail(`${name}: expected 4 APNs requests, saw ${apns.length}`);
+    if (apns.length !== 5) fail(`${name}: expected 5 APNs requests, saw ${apns.length}`);
     const surfaces = {
       "relay input": proxy.input(),
       "relay logs": relay.logs(),
@@ -434,7 +456,7 @@ async function runCanary(
       if (!decrypted.includes(canary)) fail(`${name}: ${label} canary did not survive encryption`);
     }
     console.log(
-      `PASS ${name}: 4 pushes; canaries absent from relay input (${surfaces["relay input"].length} B), logs (${surfaces["relay logs"].length} B), storage (${surfaces["relay storage"].length} B), APNs output (${surfaces["APNs output"].length} B); all 4 envelopes open to them`,
+      `PASS ${name}: 5 pushes (1 after re-registering the same key); canaries absent from relay input (${surfaces["relay input"].length} B), logs (${surfaces["relay logs"].length} B), storage (${surfaces["relay storage"].length} B), APNs output (${surfaces["APNs output"].length} B); all 5 envelopes open to them`,
     );
     return {
       canaries,

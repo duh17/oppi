@@ -38,6 +38,4 @@ export interface PushRegistration {
   publicKey: string;
   sendToken: string;
   registeredAt: number;
-  /** Next envelope sequence number for this key; persisted so restarts never reuse one. */
-  nextSeq: number;
 }

@@ -79,13 +79,13 @@ export class AuthStore {
   }
 
   /**
-   * Store a device's push registration, replacing its previous one. Sequence numbers start
-   * at 1 for a new key and continue for the same key. Returns the replaced registration when
-   * its send token differs (the caller releases it at the relay), `null` when there was none,
-   * and `false`, storing nothing, when the device is unknown or revoked when the write runs.
+   * Store a device's push registration, replacing its previous one. Returns the replaced
+   * registration when its send token differs (the caller releases it at the relay), `null`
+   * when there was none, and `false`, storing nothing, when the device is unknown or revoked
+   * when the write runs.
    */
   setPushRegistration(
-    registration: Omit<PushRegistration, "registeredAt" | "nextSeq">,
+    registration: Omit<PushRegistration, "registeredAt">,
   ): PushRegistration | null | false {
     let result: PushRegistration | null | false = false;
     this.configStore.mutate((config) => {
@@ -95,38 +95,14 @@ export class AuthStore {
         (entry) => entry.deviceId === registration.deviceId,
       );
       result = existing && existing.sendToken !== registration.sendToken ? existing : null;
-      const nextSeq = existing?.keyId === registration.keyId ? existing.nextSeq : 1;
       const kept = (config.pushRegistrations ?? []).filter(
         (entry) => entry.deviceId !== registration.deviceId,
       );
       return {
-        pushRegistrations: [...kept, { ...registration, registeredAt: Date.now(), nextSeq }],
+        pushRegistrations: [...kept, { ...registration, registeredAt: Date.now() }],
       };
     });
     return result;
-  }
-
-  /**
-   * Reserve the next sequence number for a device's current key, persisted before the push
-   * is sealed so a restart never reuses one. Null when the device has no registration for
-   * that key any more.
-   */
-  takePushSequence(deviceId: string, keyId: string): number | null {
-    let seq: number | null = null;
-    this.configStore.mutate((config) => {
-      const registrations = config.pushRegistrations ?? [];
-      const current = registrations.find(
-        (entry) => entry.deviceId === deviceId && entry.keyId === keyId,
-      );
-      if (!current) return {};
-      seq = current.nextSeq;
-      return {
-        pushRegistrations: registrations.map((entry) =>
-          entry === current ? { ...entry, nextSeq: entry.nextSeq + 1 } : entry,
-        ),
-      };
-    });
-    return seq;
   }
 
   /**

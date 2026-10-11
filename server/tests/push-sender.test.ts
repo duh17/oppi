@@ -95,8 +95,9 @@ describe("PushSender", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("relays a sealed envelope only the device key opens, with increasing sequence numbers", async () => {
+  it("relays a sealed envelope only the device key opens, without rewriting config per push", async () => {
     storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+    const configBefore = readFileSync(join(dataDir, "config.json"), "utf8");
     const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
     const push = sender(fetchImpl);
     const [registration] = push.registrations();
@@ -123,10 +124,23 @@ describe("PushSender", () => {
         serverPublicKey: signing.publicKey,
       }),
     );
-    expect(opened.map((plaintext) => plaintext.seq)).toEqual([1, 2]);
     expect(opened[0]).toMatchObject({ ...notification, v: 1 });
-    // Sequence numbers survive a restart.
-    expect(new Storage(dataDir).getPushRegistrations()[0]?.nextSeq).toBe(3);
+    expect(opened[0]).not.toHaveProperty("seq");
+    // Replay protection needs no server state: sending writes nothing.
+    expect(readFileSync(join(dataDir, "config.json"), "utf8")).toBe(configBefore);
+  });
+
+  it("sends nothing to a registration that was replaced after the caller listed it", async () => {
+    storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+    const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
+    const push = sender(fetchImpl);
+    const [listed] = push.registrations();
+    if (!listed) throw new Error("missing registration");
+
+    storage.setPushRegistration({ ...listed, sendToken: "osp1.r_a.p_b.secret-b" });
+
+    expect(await push.send(listed, notification)).toBeNull();
+    expect(calls).toHaveLength(0);
   });
 
   it("fails over to the standby on a network error or 5xx", async () => {

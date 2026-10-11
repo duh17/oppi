@@ -70,7 +70,6 @@ describe("Storage pairing", () => {
           publicKey: "rotation-public-key",
           sendToken: "push-rotation-fixture-secret",
           registeredAt: 1,
-          nextSeq: 1,
         },
       ],
     });

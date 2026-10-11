@@ -105,23 +105,6 @@ describe("push registration storage", () => {
     expect(register(phone)).toBe(false);
   });
 
-  it("continues the sequence for the same key and restarts it for a new key", () => {
-    const phone = enroll();
-    register(phone);
-    expect(storage.takePushSequence(phone, "kid-1")).toBe(1);
-    expect(storage.takePushSequence(phone, "kid-1")).toBe(2);
-
-    // Re-registering the same key (a new send token) must not reuse a sequence number.
-    expect(register(phone, "kid-1", "osp1.r.p.two")).toMatchObject({ sendToken: "osp1.r.p.one" });
-    // Persisted: a restarted server continues from the stored counter.
-    storage = new Storage(dataDir);
-    expect(storage.takePushSequence(phone, "kid-1")).toBe(3);
-
-    register(phone, "kid-2", "osp1.r.p.two");
-    expect(storage.takePushSequence(phone, "kid-2")).toBe(1);
-    expect(storage.takePushSequence(phone, "kid-1")).toBeNull();
-  });
-
   it("a 410 for an old send token does not remove a newer registration", () => {
     const phone = enroll();
     register(phone, "kid-1", "osp1.r.p.old");

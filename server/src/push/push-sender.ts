@@ -17,7 +17,7 @@ const log = createLogger({ base: { component: "push" } });
 /** Alerts expire at the relay's maximum TTL. */
 const PUSH_TTL_SECONDS = 3600;
 
-/** What one push says, before sequence number and timestamp. */
+/** What one push says, before its timestamp. */
 export interface PushNotification {
   event: PushEvent;
   kind?: ProgramStatusKind;
@@ -32,7 +32,6 @@ export interface PushNotification {
 export interface PushSenderStorage {
   getConfig(): Pick<ServerConfig, "push">;
   getPushRegistrations(): PushRegistration[];
-  takePushSequence(deviceId: string, keyId: string): number | null;
   removePushRegistration(deviceId: string, sendToken?: string): PushRegistration | null;
 }
 
@@ -91,9 +90,17 @@ export class PushSender {
   ): Promise<RelaySendResult | { status: "failed" } | null> {
     const relays = this.relays();
     if (!relays) return null;
+    // A device revoked or re-registered since the caller listed registrations gets nothing.
+    const current = this.storage
+      .getPushRegistrations()
+      .some(
+        (entry) =>
+          entry.deviceId === registration.deviceId &&
+          entry.keyId === registration.keyId &&
+          entry.sendToken === registration.sendToken,
+      );
+    if (!current) return null;
     const startedAt = this.now();
-    const seq = this.storage.takePushSequence(registration.deviceId, registration.keyId);
-    if (seq === null) return null;
 
     let result: RelaySendResult | { status: "failed" };
     try {
@@ -101,7 +108,6 @@ export class PushSender {
         recipientPublicKey: Buffer.from(registration.publicKey, "base64url"),
         plaintext: {
           v: 1,
-          seq,
           ts: this.now(),
           event: notification.event,
           ...(notification.kind ? { kind: notification.kind } : {}),

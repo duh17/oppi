@@ -54,7 +54,6 @@ struct PushPlaintext: Decodable, Equatable, Sendable {
     }
 
     let v: Int
-    let seq: UInt64
     /// Unix milliseconds when the server sealed it.
     let ts: Int64
     let event: Event
@@ -79,6 +78,9 @@ struct PushKeyMaterial: Sendable {
 
 struct OpenedPushEnvelope: Sendable {
     let keyId: Data
+    /// The HPKE `enc`: a fresh ephemeral X25519 public key per push, covered by the signature,
+    /// so it identifies the push for replay checks (spec §2.5 step 7).
+    let messageId: Data
     let serverId: String
     let plaintext: PushPlaintext
 }
@@ -130,7 +132,12 @@ enum PushEnvelopeOpener {
         let sealedAt = Date(timeIntervalSince1970: TimeInterval(plaintext.ts) / 1000)
         let age = now.timeIntervalSince(sealedAt)
         guard age <= PushEnvelope.maxAge, age >= -PushEnvelope.maxClockSkew else { throw .stale }
-        return OpenedPushEnvelope(keyId: keyId, serverId: material.serverId, plaintext: plaintext)
+        return OpenedPushEnvelope(
+            keyId: keyId,
+            messageId: encapsulatedKey,
+            serverId: material.serverId,
+            plaintext: plaintext
+        )
     }
 
     /// `uint16 length || JSON || zero padding` (spec §2.3).
@@ -148,32 +155,37 @@ enum PushEnvelopeOpener {
     }
 }
 
-/// Replay state for one push key (spec §2.5 step 7): the highest sequence number seen and
-/// which of the 64 below it arrived. APNs can reorder pushes, so a strictly increasing
-/// check would drop real ones.
-struct PushReplayWindow: Codable, Equatable, Sendable {
-    static let size: UInt64 = 64
+/// Replay state (spec §2.5 step 7): per push key, the message id (HPKE `enc`) of every push
+/// accepted within the freshness window, with when it was accepted. The server keeps no
+/// replay state, so re-registering the same key, a restored server config, or a server
+/// restart cannot collide with ids this phone has already seen, and APNs reordering is
+/// harmless.
+struct PushReplayLedger: Codable, Equatable, Sendable {
+    /// How long an accepted push can still pass the freshness check: its `ts` may be up to
+    /// `maxClockSkew` ahead of this phone's clock and stays fresh `maxAge` after `ts`.
+    /// Entries older than this are pruned; freshness already rejects their replays.
+    static let window: TimeInterval = PushEnvelope.maxAge + PushEnvelope.maxClockSkew
 
-    private(set) var highest: UInt64 = 0
-    /// Bit `i` set: `highest - i` was seen (bit 0 is `highest` itself).
-    private(set) var seen: UInt64 = 0
+    /// kid (base64url) → message id (base64url) → accepted at (Unix seconds).
+    private(set) var accepted: [String: [String: TimeInterval]] = [:]
 
-    /// Records `seq` and returns true when it is new and inside the window.
-    mutating func accept(_ seq: UInt64) -> Bool {
-        guard seq > 0 else { return false }
-        if seq > highest {
-            let shift = seq - highest
-            seen = shift >= Self.size ? 0 : seen << shift
-            seen |= 1
-            highest = seq
-            return true
+    /// Records `messageId` for `keyId`; false when it was already accepted within the window.
+    mutating func accept(messageId: Data, keyId: Data, now: Date) -> Bool {
+        let cutoff = now.timeIntervalSince1970 - Self.window
+        accepted = accepted.compactMapValues { ids in
+            let kept = ids.filter { $0.value >= cutoff }
+            return kept.isEmpty ? nil : kept
         }
-        let offset = highest - seq
-        guard offset < Self.size else { return false }
-        let bit: UInt64 = 1 << offset
-        guard seen & bit == 0 else { return false }
-        seen |= bit
+        let kid = keyId.base64URLEncodedPushString
+        let id = messageId.base64URLEncodedPushString
+        guard accepted[kid]?[id] == nil else { return false }
+        accepted[kid, default: [:]][id] = now.timeIntervalSince1970
         return true
+    }
+
+    /// Drops entries for keys no longer on the phone.
+    mutating func retainKeys(_ keyIds: Set<String>) {
+        accepted = accepted.filter { keyIds.contains($0.key) }
     }
 }
 

@@ -30,7 +30,6 @@ function target(name: string): PushRegistration {
     publicKey: "public-key",
     sendToken: `token-${name}`,
     registeredAt: 1,
-    nextSeq: 1,
   };
 }
 

@@ -125,34 +125,114 @@ struct PushEnvelopeTests {
 
     // MARK: - Replay
 
-    @Test func acceptsReorderedPushesButNotReplaysOrOnesBelowTheWindow() {
-        var window = PushReplayWindow()
-        let results = [5, 3, 5, 3, 100, 37, 36, 0].map { window.accept(UInt64($0)) }
-        // New, reordered, replay, replay, far ahead, oldest in window, below window, zero.
-        #expect(results == [true, true, false, false, true, true, false, false])
+    /// Opens envelopes against one in-memory replay ledger, like the extension's stored one.
+    private static func ledgerOpener(
+        _ vectors: ServerVectors
+    ) throws -> (_ envelope: String, _ now: Date) -> Result<OpenedPushEnvelope, PushEnvelopeRejection> {
+        let key = try keyLookup(vectors)
+        var ledger = PushReplayLedger()
+        return { envelope, now in
+            PushNotificationOpening.open(
+                userInfo: ["e": envelope],
+                now: now,
+                key: key,
+                acceptMessage: { ledger.accept(messageId: $0, keyId: $1, now: now) }
+            )
+        }
     }
 
-    @Test func aReplayedEnvelopeShowsTheFallback() throws {
+    private static func rejection(_ result: Result<OpenedPushEnvelope, PushEnvelopeRejection>) -> PushEnvelopeRejection? {
+        if case .failure(let reason) = result { return reason }
+        return nil
+    }
+
+    @Test func distinctPushesOpenInAnyOrder() throws {
         let vectors = try Self.vectors()
-        let key = try Self.keyLookup(vectors)
-        let envelope = try #require(vectors.valid.first).envelope
-        var windows: [Data: PushReplayWindow] = [:]
-        func present() -> PushAlertPresentation {
-            PushNotificationOpening.presentation(
-                userInfo: ["e": envelope],
-                now: Self.now(vectors),
-                key: key,
-                acceptSequence: { seq, keyId in
-                    var window = windows[keyId] ?? PushReplayWindow()
-                    defer { windows[keyId] = window }
-                    return window.accept(seq)
-                },
-                redaction: { PushRedactionSnapshot(appLockEnabled: false, lockedScopes: []) }
+        let open = try Self.ledgerOpener(vectors)
+        for vector in vectors.valid.reversed() {
+            #expect(Self.rejection(open(vector.envelope, Self.now(vectors))) == nil, "\(vector.name)")
+        }
+    }
+
+    @Test func aReplayIsRejectedForAsLongAsTheEnvelopeIsFresh() throws {
+        let vectors = try Self.vectors()
+        let open = try Self.ledgerOpener(vectors)
+        // Sealed 5 s before `now`.
+        let envelope = try #require(vectors.valid.first { $0.name == "blocked-permission" }).envelope
+        let now = Self.now(vectors)
+
+        #expect(Self.rejection(open(envelope, now)) == nil)
+        #expect(Self.rejection(open(envelope, now)) == .replay)
+        // Its last fresh second: the ledger still remembers it.
+        #expect(Self.rejection(open(envelope, now.addingTimeInterval(PushEnvelope.maxAge - 5))) == .replay)
+        #expect(Self.rejection(open(envelope, now.addingTimeInterval(PushEnvelope.maxAge - 4))) == .stale)
+    }
+
+    @Test func theLedgerOutlivesAPushSealedAtTheClockSkewLimit() {
+        // A push whose `ts` is maxClockSkew ahead stays fresh maxAge + maxClockSkew after it is
+        // accepted; the ledger must not forget it sooner.
+        var ledger = PushReplayLedger()
+        let keyId = Data(repeating: 1, count: 16)
+        let messageId = Data(repeating: 2, count: 32)
+        let acceptedAt = Date(timeIntervalSince1970: 1_760_000_000)
+        let first = ledger.accept(messageId: messageId, keyId: keyId, now: acceptedAt)
+        let lastFresh = acceptedAt.addingTimeInterval(PushEnvelope.maxClockSkew + PushEnvelope.maxAge)
+        let replayAtLastFreshSecond = ledger.accept(messageId: messageId, keyId: keyId, now: lastFresh)
+        #expect(first)
+        #expect(!replayAtLastFreshSecond)
+    }
+
+    // MARK: - Replay ledger file
+
+    private static func temporaryDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("push-replay-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    @Test func aCorruptReplayLedgerIsResetInsteadOfRejectingEveryPush() throws {
+        let directory = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("replay.json")
+        try Data("{\"not\": \"a ledger\"".utf8).write(to: url)
+        let keyId = Data(repeating: 1, count: 16)
+        let now = Date()
+        func accept(_ byte: UInt8) -> Bool {
+            PushSharedStore.acceptMessage(
+                Data(repeating: byte, count: 32),
+                keyId: keyId,
+                now: now,
+                ledgerURL: url,
+                liveKeyIds: { [keyId.base64URLEncodedPushString] }
             )
         }
 
-        #expect(present().title == "Needs Approval")
-        #expect(present() == .fallback)
+        #expect(accept(1))
+        // The reset ledger is saved and enforced again.
+        #expect(!accept(1))
+        #expect(accept(2))
+        #expect((try? JSONDecoder().decode(PushReplayLedger.self, from: Data(contentsOf: url))) != nil)
+    }
+
+    @Test func aReplayLedgerThatCannotBeSavedRejectsThePush() throws {
+        let directory = try Self.temporaryDirectory()
+        let url = directory.appendingPathComponent("replay.json")
+        try Data("corrupt".utf8).write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let accepted = PushSharedStore.acceptMessage(
+            Data(repeating: 1, count: 32),
+            keyId: Data(repeating: 1, count: 16),
+            now: Date(),
+            ledgerURL: url,
+            liveKeyIds: { [] }
+        )
+        #expect(!accepted)
     }
 
     // MARK: - Presentation
@@ -167,7 +247,7 @@ struct PushEnvelopeTests {
             userInfo: ["aps": ["alert": ["title": "Oppi"]], "e": envelope],
             now: Self.now(vectors),
             key: try Self.keyLookup(vectors),
-            acceptSequence: { _, _ in true },
+            acceptMessage: { _, _ in true },
             redaction: { redaction }
         )
     }
@@ -237,7 +317,7 @@ struct PushEnvelopeTests {
             userInfo: ["aps": ["alert": ["title": "Leaked title", "body": "Leaked body"]]],
             now: Date(),
             key: { _ in nil },
-            acceptSequence: { _, _ in true },
+            acceptMessage: { _, _ in true },
             redaction: { PushRedactionSnapshot(appLockEnabled: false, lockedScopes: []) }
         )
         #expect(alert == .fallback)

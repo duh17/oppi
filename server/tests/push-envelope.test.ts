@@ -34,7 +34,6 @@ const recipientPublicKey = Buffer.from(cryptokit.recipient.publicKey, "base64url
 function plaintext(overrides: Partial<PushPlaintext> = {}): PushPlaintext {
   return {
     v: 1,
-    seq: 1,
     ts: 1_760_000_000_000,
     event: "blocked",
     kind: "permission",

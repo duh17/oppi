@@ -1,17 +1,23 @@
 import CryptoKit
 import Foundation
+import os
 import Security
 
 /// Push state the app writes and the Notification Service Extension reads, while the phone
 /// may be locked (spec §1, §2.5, §2.6):
 ///
 /// - push keys in the shared keychain group, `AfterFirstUnlockThisDeviceOnly`;
-/// - the redaction snapshot and per-key replay windows as App Group files with
+/// - the redaction snapshot and the replay ledger as App Group files with
 ///   `completeUntilFirstUserAuthentication` protection.
 ///
-/// Every read failure fails closed: no key means the fallback text, an unreadable snapshot
-/// means everything is redacted, an unreadable replay file rejects the push.
+/// Read failures fail closed: no key means the fallback text and an unreadable snapshot
+/// means everything is redacted. An unreadable replay ledger is reset instead, so one bad
+/// file cannot turn every later push into the fallback; a ledger that cannot be saved
+/// rejects the push.
 enum PushSharedStore {
+    /// Same subsystem and category as the app's push logging. Never log plaintext or keys.
+    static let logger = Logger(subsystem: "dev.chenda.Oppi", category: "Push")
+
     // MARK: - Push keys
 
     struct KeyRecord: Codable, Equatable, Sendable {
@@ -126,31 +132,65 @@ enum PushSharedStore {
         return snapshot
     }
 
-    // MARK: Replay windows
+    // MARK: Replay ledger
 
-    /// Record `seq` for `keyId`. False for a replay, or when the state cannot be read or saved.
-    static func acceptSequence(_ seq: UInt64, keyId: Data) -> Bool {
+    /// Record a push's message id for `keyId` (spec §2.5 step 7). False for a replay, or when
+    /// the ledger cannot be locked or saved.
+    static func acceptMessage(_ messageId: Data, keyId: Data, now: Date) -> Bool {
         guard let directory = try? stateDirectory(),
               let container = try? CrossProcessFileLock.appGroupContainer(
                 identifier: SharedConstants.appGroupIdentifier
-              ) else { return false }
-        let url = directory.appendingPathComponent("replay.json")
-        let accepted = try? CrossProcessFileLock.withLock(serverId: "push-replay", container: container) { () throws -> Bool in
-            var windows: [String: PushReplayWindow] = [:]
-            if FileManager.default.fileExists(atPath: url.path) {
-                windows = try JSONDecoder().decode([String: PushReplayWindow].self, from: Data(contentsOf: url))
-            }
-            let account = keyId.base64URLEncodedPushString
-            var window = windows[account] ?? PushReplayWindow()
-            guard window.accept(seq) else { return false }
-            windows[account] = window
-            // Windows for deleted keys go with them.
-            let liveKeys = Set(allKeys().compactMap { try? $0.keyId.base64URLEncodedPushString })
-            windows = windows.filter { liveKeys.contains($0.key) || $0.key == account }
-            try write(JSONEncoder().encode(windows), to: url)
-            return true
+              ) else {
+            logger.error("Push replay ledger unavailable; showing the fallback")
+            return false
+        }
+        let accepted = try? CrossProcessFileLock.withLock(serverId: "push-replay", container: container) {
+            acceptMessage(
+                messageId,
+                keyId: keyId,
+                now: now,
+                ledgerURL: directory.appendingPathComponent("replay.json"),
+                liveKeyIds: { Set(allKeys().compactMap { try? $0.keyId.base64URLEncodedPushString }) }
+            )
         }
         return accepted ?? false
+    }
+
+    /// The ledger read-modify-write; the caller holds the cross-process lock.
+    static func acceptMessage(
+        _ messageId: Data,
+        keyId: Data,
+        now: Date,
+        ledgerURL url: URL,
+        liveKeyIds: () -> Set<String>
+    ) -> Bool {
+        var ledger = PushReplayLedger()
+        if FileManager.default.fileExists(atPath: url.path) {
+            do {
+                ledger = try JSONDecoder().decode(PushReplayLedger.self, from: Data(contentsOf: url))
+            } catch {
+                // Resetting forgets ids accepted within the last window, so a replay of one of
+                // them could show once more. Keeping the bad file would show the fallback for
+                // every push from now on.
+                let nsError = error as NSError
+                logger.error(
+                    "Push replay ledger unreadable (\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)); resetting it"
+                )
+            }
+        }
+        guard ledger.accept(messageId: messageId, keyId: keyId, now: now) else { return false }
+        // Entries for deleted keys go with them.
+        ledger.retainKeys(liveKeyIds().union([keyId.base64URLEncodedPushString]))
+        do {
+            try write(JSONEncoder().encode(ledger), to: url)
+            return true
+        } catch {
+            let nsError = error as NSError
+            logger.error(
+                "Push replay ledger not saved (\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)); showing the fallback"
+            )
+            return false
+        }
     }
 }
 

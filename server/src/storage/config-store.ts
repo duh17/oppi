@@ -54,7 +54,6 @@ function normalizePushRegistration(value: unknown): PushRegistration | undefined
   for (const key of ["deviceId", "keyId", "publicKey", "sendToken"] as const) {
     if (typeof value[key] !== "string" || (value[key] as string).length === 0) return undefined;
   }
-  if (!Number.isSafeInteger(value.nextSeq) || (value.nextSeq as number) < 1) return undefined;
   const registeredAt =
     typeof value.registeredAt === "number" && Number.isFinite(value.registeredAt)
       ? value.registeredAt
@@ -65,7 +64,6 @@ function normalizePushRegistration(value: unknown): PushRegistration | undefined
     publicKey: value.publicKey as string,
     sendToken: value.sendToken as string,
     registeredAt,
-    nextSeq: value.nextSeq as number,
   };
 }
 

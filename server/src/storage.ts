@@ -313,13 +313,9 @@ export class Storage {
   }
 
   setPushRegistration(
-    registration: Omit<PushRegistration, "registeredAt" | "nextSeq">,
+    registration: Omit<PushRegistration, "registeredAt">,
   ): PushRegistration | null | false {
     return this.authStore.setPushRegistration(registration);
-  }
-
-  takePushSequence(deviceId: string, keyId: string): number | null {
-    return this.authStore.takePushSequence(deviceId, keyId);
   }
 
   removePushRegistration(deviceId: string, sendToken?: string): PushRegistration | null {

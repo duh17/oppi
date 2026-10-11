@@ -136,6 +136,8 @@ Push notifications are off by default. They work only when the paired server's o
 
 **How content is protected.** When you turn push on, your device creates a separate encryption key for that server (X25519). The private key stays in this device's Keychain, readable after the first unlock so alerts can open while the phone is locked, and it never syncs or moves to another device. The device sends only the public key to your server, signed with the device's pairing key. Your server encrypts each alert (its title, the session name, and a short fixed message) to that key and signs it with its identity key. A Notification Service Extension on your device checks the signature, decrypts the alert, and rejects old or repeated ones. While App Lock is on, or a server, workspace, or session lock covers the session, it shows the alert type without the session name. Anything it cannot verify shows only "Oppi: You have a new notification."
 
+What this does not cover: someone who holds the relay's Apple key, or controls the relay's hosting account, can send a notification with any text that never reaches the extension, so it shows as sent. Tapping an Oppi notification only opens the session it names. Notifications have no Approve, Deny, or Reply actions, so a forged one can mislead you but cannot act for you; approve or answer from inside the app.
+
 **The push relay.** Apple delivers pushes only from the developer team that signs the app, so a relay holds that team's Apple key and forwards your server's encrypted alerts to Apple. Your server names the relay. Oppi does not operate a hosted relay yet; if Chaos Donkey offers one later, this section will name it before it is used. The relay code is in the Oppi repository (`relay/`), and its protocol and threat model are in `protocol/push/spec.md`.
 
 The relay receives and can see:
@@ -147,7 +149,7 @@ The relay receives and can see:
 
 The relay stores the push token, environment, App Attest public key and counter, hashes of its access secrets, the send permissions you created (one per server), and daily alert counts. It does not store alerts, IP addresses, or request logs, and it cannot decrypt alerts: it has no key and no decryption code. It deletes a registration when Apple reports the token is no longer valid, when you turn push off, or when you remove the server.
 
-**Apple.** Apple Push Notification service sees the same push token, timing, and size, and delivers the encrypted alert to your device. Apple's privacy policy applies.
+**Apple.** Apple Push Notification service sees the same push token, environment, timing, size, and collapse ID, the alert's expiry, and the relay's IP address (not your server's), and delivers the encrypted alert to your device. Your device gets its push token from Apple. On devices that support App Attest, turning push on also asks Apple's App Attest service to attest a key, so Apple learns that this Oppi install uses push. Apple's privacy policy applies.
 
 **Turning it off.** Turning push off for a server, or revoking this device on the server, deletes this device's push registration on that server and asks the relay to delete the send permission. Removing the server from the app asks the relay to delete the send permission; the server then deletes the registration the next time it tries to push, when the relay refuses it. Your device deletes the server's push keys when you turn push off or remove the server.
 

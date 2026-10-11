@@ -91,7 +91,6 @@ bytes `[0, 577)`. The signature covers the version, `kid`, `enc`, and `ct`.
 ```json
 {
   "v": 1,
-  "seq": 7,
   "ts": 1760000000000,
   "event": "blocked",
   "kind": "permission",
@@ -107,7 +106,6 @@ bytes `[0, 577)`. The signature covers the version, `kid`, `enc`, and `ct`.
 | Field | Rule |
 | --- | --- |
 | `v` | `1` |
-| `seq` | Positive integer, strictly increasing per `kid` on the server. Persisted, so it survives restarts. |
 | `ts` | Server time in Unix milliseconds when sealed. |
 | `event` | `blocked`, `done`, `error`, or `ended` |
 | `kind` | `blocked` only: `permission`, `question`, or `auth` |
@@ -117,7 +115,8 @@ bytes `[0, 577)`. The signature covers the version, `kid`, `enc`, and `ct`.
 | `title`, `body` | Display text |
 | `subtitle` | Session name; the server shortens it until the JSON fits 510 bytes, and drops it when nothing else fits |
 
-Receivers ignore unknown fields.
+Receivers ignore unknown fields. There is no sequence number: the server keeps no per-push
+state, and replay protection uses the envelope's `enc` (§2.5 step 7).
 
 ### 2.5 Receiver checks (Notification Service Extension)
 
@@ -132,8 +131,28 @@ In order. Any failure shows the fixed fallback (§4) and nothing from the push.
 5. Padding and JSON are valid and `v` is `1`.
 6. Freshness: `ts` is no more than 3,900 s old (relay TTL 3,600 s plus 300 s clock skew) and
    no more than 300 s in the future.
-7. Replay: per `kid`, the extension keeps the highest `seq` seen and a 64-entry window
-   below it. It rejects a `seq` at or below `highest − 64`, or one already seen.
+7. Replay: `enc` is the message ID. The sender draws a fresh ephemeral X25519 key for every
+   push, and the signature covers it, so a repeated `enc` is a replay. Per `kid`, the
+   extension keeps the `enc` of every push it accepted in the last 4,200 s (the 3,900 s
+   maximum age plus the 300 s by which `ts` may be ahead, so an accepted push is remembered for
+   as long as it can pass step 6) and rejects a repeat. Older entries are pruned. Because
+   nothing depends on server state, re-registering the same key, a restored server config, or
+   APNs reordering never rejects a real push.
+
+   The ledger is an App Group file. If it cannot be read or decoded, the extension logs that,
+   resets it, and continues: a replay of a push accepted within the last 4,200 s could then
+   show once more, which is better than every later push showing the fallback. If the ledger
+   cannot be saved, the push is rejected.
+
+   Known limit: pruning uses the phone's wall clock. If the clock runs more than 300 s fast
+   while a later push is accepted, that write can prune an earlier push's `enc`; after the
+   clock is corrected, a replay of the earlier push is fresh again and shows once more. The
+   replay can only repeat a genuine alert the phone already showed, so v1 accepts this rather
+   than keeping a monotonic clock across reboots.
+
+The extension logs each fallback's rejection reason (`size`, `version`, `unknownKey`,
+`signature`, `decrypt`, `plaintext`, `stale`, `replay`, or a timeout) with `os.Logger`,
+subsystem `dev.chenda.Oppi`, category `Push`. It never logs plaintext or key material.
 
 ### 2.6 Redaction
 
@@ -329,12 +348,43 @@ any field from a push that failed a check. Without Apple's
 
 | Party | Can | Cannot |
 | --- | --- | --- |
-| Relay operator, Cloudflare | See APNs tokens, environments, server IP addresses, push timing, collapse IDs, and whether a registration is attested. Drop, delay, or duplicate pushes. Send pushes that show the fixed fallback text. | Read content; forge content (Ed25519); replay accepted pushes (sequence window and freshness); learn content length (fixed size); learn urgency or session grouping (set inside the ciphertext). |
+| Relay operator, Cloudflare | See APNs tokens, environments, server IP addresses, push timing, collapse IDs, and whether a registration is attested. Drop, delay, or duplicate pushes. Send pushes that show the fixed fallback text. | Read content; forge content (Ed25519); replay accepted pushes (`enc` ledger and freshness; one exception after a phone clock correction, §2.5 step 7); learn content length (fixed size); learn urgency or session grouping (set inside the ciphertext). |
 | Apple (APNs) | Same metadata as the relay, minus server addresses. | Same as the relay. |
 | Network attacker between app and server, including a TLS-terminating proxy | See the push public key and send token. | Substitute either: the device key signs both. |
 | Holder of a stolen send token | Push fallback-text alerts to one device until the token is revoked. | Read or forge content. |
 | Another paired server | Push to the phone with its own token. | Decrypt or forge pushes for other servers: keys are per server. |
 | The Oppi server | Everything; it is the source. | n/a (trusted) |
+
+### 6.1 Practical threats, most severe first
+
+End-to-end encryption protects what a push says. It does not decide which alerts reach the
+Lock Screen. These are the threats that remain, ranked by how much harm they can do in
+practice.
+
+1. **Forged plaintext alerts (phishing).** Whoever holds the team's APNs key, or controls the
+   relay deployment or its Cloudflare account, can send APNs any payload, including an alert
+   without `mutable-content`. iOS shows that alert as sent; the extension never runs, so no
+   signature check applies. The text can say anything, for example "Approve the deploy now".
+   Encryption cannot prevent this. Mitigations:
+   - key and account hygiene for the relay operator (`relay/README.md`, "Operator security");
+   - **app invariant: a notification tap only opens Oppi to a session. It never approves,
+     denies, answers, or replies.** Session notification categories register no actions, and
+     the tap handler only navigates. A forged alert can mislead a person, but tapping it cannot
+     act on anyone's behalf. Any future notification action breaks this invariant and needs its
+     own authentication design.
+2. **Fallback spam.** A leaked send token or a hostile relay can push the fixed fallback alert
+   ("Oppi: You have a new notification.") to one device. It carries no attacker text. Relay
+   quotas bound a leaked token (§3.3: daily and per-minute limits per registration); revoking
+   the device or turning push off ends it. A hostile relay is not bound by its own quotas, but
+   it can already do worse (threat 1). Apple's `com.apple.developer.usernotifications.filtering` entitlement, if
+   granted, would let the extension drop such pushes instead of showing the fallback (§4).
+3. **Lock Screen exposure.** Someone holding the phone can read a decrypted alert on the Lock
+   Screen. App Lock and scoped locks remove the session name (§2.6); iOS **Settings →
+   Notifications → Show Previews → When Unlocked** hides alert text until the phone is unlocked.
+4. **Push key theft (out of scope).** The private push key is a keychain item with
+   `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`: it never moves to another device
+   through a backup or iCloud Keychain, and only Oppi and its extension can read it. Taking it needs full device compromise, and
+   an attacker with that can already open Oppi itself.
 
 **Metadata that leaks by design:** device APNs token and environment; the sending server's
 IP address (to the relay); the time of each push; one fixed size; the collapse ID's
@@ -362,7 +412,8 @@ another cloud, and the independent cryptographic review.
   registration-signature bytes both sides must build.
 - `canary-capture.json`: APNs payloads the Node relay produced in the canary run; the Apple
   tests decrypt them back to the canaries and check that tampered, replayed, wrong-key, and
-  oversized copies show the fallback.
+  oversized copies show the fallback. The last payload was sealed after the server forgot the
+  registration and the phone registered the same push key again; it must open too.
 
 Ordinary tests never rewrite them.
 

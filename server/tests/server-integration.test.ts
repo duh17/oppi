@@ -48,7 +48,6 @@ const pushOnlyRecord = {
   publicKey: "fixture-public-key",
   sendToken: pushOnlyToken,
   registeredAt: 1,
-  nextSeq: 1,
 };
 const deviceKeys = generateKeyPairSync("ec", { namedCurve: "P-256" });
 
@@ -1377,7 +1376,7 @@ describe("push registration API", () => {
     const fingerprint = `sha256:${createHash("sha256").update(Buffer.from(body.serverPublicKey, "base64url")).digest("base64url")}`;
     expect(fingerprint).toBe(identity.fingerprint);
     expect(storage.getPushRegistrations()).toContainEqual(
-      expect.objectContaining({ deviceId, keyId: pushVectors.recipient.keyId, nextSeq: 1 }),
+      expect.objectContaining({ deviceId, keyId: pushVectors.recipient.keyId }),
     );
   });
 

@@ -14,7 +14,7 @@ The protocol, the envelope, and the threat model are in
 | --- | --- | --- |
 | Device registration | APNs token, sandbox or production, App Attest attestation | Token, environment, App Attest public key and counter, `SHA-256` of the registration secret |
 | Send permissions | — | Permission ID and `SHA-256` of its secret, up to 16 per registration |
-| Each push | Server IP address, time, a 1,729-byte envelope it cannot open, an optional collapse ID | Daily and per-minute counts only |
+| Each push | Server IP address, time, a 641-byte envelope it cannot open, an optional collapse ID | Daily and per-minute counts only |
 
 No envelopes, IP addresses, request bodies, or request logs are stored. Logs carry event names
 and status codes only. Client addresses feed in-memory rate limits and are never written down.
@@ -77,6 +77,49 @@ Not automated yet. The steps, for whoever owns the account:
 `wrangler.toml` holds no account ID or secrets, and turns Workers Logs and invocation logs off.
 The local Workers runtime cannot speak HTTP/2 to APNs, so real delivery is only testable after
 deploying; tests use a mock.
+
+## Operator security
+
+End-to-end encryption does not protect against a stolen APNs key or a taken-over relay
+account. Either lets an attacker send any alert text to every registered phone, bypassing the
+extension (spec "Practical threats", threat 1). Treat the APNs key and the Cloudflare account
+as the most sensitive parts of the deployment.
+
+**APNs key.** Since February 2025 Apple offers restricted keys
+([announcement](https://developer.apple.com/news/?id=wy4tb0uo),
+[details](https://developer.apple.com/documentation/usernotifications/establishing-a-token-based-connection-to-apns)):
+
+- Use a **topic-specific key** limited to the Oppi bundle ID (`dev.chenda.Oppi`), so a leak
+  cannot push to the team's other apps.
+- Restricted keys are **per environment** (Sandbox or Production). Use one key per environment.
+  Limitation: this relay signs sandbox and production pushes with the same key
+  (`APNS_KEY_P8`, `APNS_KEY_ID`). With a production-only key, pushes to development builds
+  fail, and the reverse. Until the relay takes one key per environment, either accept that a
+  deployment serves one environment, or use a key enabled for both environments and accept
+  the wider blast radius.
+- Keep the `.p8` only as Worker secrets (`wrangler secret put`). Do not commit it, put it in
+  `wrangler.toml` or `vars`, or leave copies in Downloads or a shared drive after uploading.
+  On Node, keep `APNS_KEY_PATH` readable only by the relay's user.
+
+**Cloudflare account.**
+
+- Sign in with a passkey or hardware security key as the second factor; no SMS.
+- Use API tokens limited to this account's Workers scripts and the relay hostname's zone
+  routes, not the Global API Key. Delete tokens a CI or laptop no longer needs.
+- Turn on usage and billing notifications so unexpected request volume is visible.
+
+**Rotating the APNs key** (after a suspected leak, or a departing account holder):
+
+1. Revoke the old key in Apple Developer "Certificates, Identifiers & Profiles", Keys. APNs
+   then rejects tokens signed with it, so pushes fail until step 4.
+2. Create a new key with the same restrictions and download the `.p8` (Apple offers it once).
+3. `npx wrangler secret put APNS_KEY_P8` (the new file's contents) and
+   `npx wrangler secret put APNS_KEY_ID`.
+4. `npx wrangler deploy`, then delete the local `.p8`.
+
+Revoking first closes the leak at the cost of a few minutes without pushes. For routine
+rotation with no suspected leak, create the new key and deploy before revoking the old one.
+Registrations, permissions, and send tokens are independent of the APNs key and keep working.
 
 ## Test
 

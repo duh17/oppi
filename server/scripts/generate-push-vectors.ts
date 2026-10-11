@@ -65,10 +65,9 @@ function resign(envelope: Buffer, key: KeyObject = serverKey): Buffer {
   return Buffer.concat([signed, sign(null, Buffer.concat([SIGNATURE_LABEL, signed]), key)]);
 }
 
-function base(seq: number, overrides: Partial<PushPlaintext> = {}): PushPlaintext {
+function base(overrides: Partial<PushPlaintext> = {}): PushPlaintext {
   return {
     v: 1,
-    seq,
     ts: NOW - 5_000,
     event: "blocked",
     kind: "permission",
@@ -110,10 +109,10 @@ function addValid(name: string, plaintext: PushPlaintext): Buffer {
   return envelope;
 }
 
-const blocked = addValid("blocked-permission", base(1));
+const blocked = addValid("blocked-permission", base());
 addValid(
   "done-no-workspace",
-  base(2, {
+  base({
     event: "done",
     kind: undefined,
     workspaceId: undefined,
@@ -123,7 +122,7 @@ addValid(
 );
 addValid(
   "incognito-error",
-  base(3, {
+  base({
     event: "error",
     kind: undefined,
     incognito: true,
@@ -133,7 +132,7 @@ addValid(
 );
 addValid(
   "long-subtitle-shortened",
-  base(4, {
+  base({
     kind: "question",
     title: "Question",
     subtitle: "名".repeat(400),
@@ -141,8 +140,8 @@ addValid(
   }),
 );
 addValid(
-  "far-ahead-seq",
-  base(100, { kind: "auth", title: "Sign-in Needed", body: "Waiting for you to sign in." }),
+  "blocked-auth",
+  base({ kind: "auth", title: "Sign-in Needed", body: "Waiting for you to sign in." }),
 );
 
 const invalid: Array<{ name: string; envelope: string; reason: string }> = [];
@@ -160,14 +159,14 @@ addInvalid("tampered-signature", badSig, "signature");
 
 addInvalid("resigned-tampered-ciphertext", resign(flipped), "decrypt");
 addInvalid("wrong-signer", resign(blocked, impostorKey), "signature");
-addInvalid("other-recipient-key", seal(base(5), otherPublicKey), "unknownKey");
+addInvalid("other-recipient-key", seal(base(), otherPublicKey), "unknownKey");
 
-const otherWithOurKid = seal(base(6), otherPublicKey);
+const otherWithOurKid = seal(base(), otherPublicKey);
 Buffer.from(cryptokit.recipient.keyId, "base64url").copy(otherWithOurKid, 1);
 addInvalid("other-recipient-key-relabelled", resign(otherWithOurKid), "decrypt");
 
-addInvalid("stale", seal(base(7, { ts: NOW - 3_901_000 })), "stale");
-addInvalid("future", seal(base(8, { ts: NOW + 301_000 })), "stale");
+addInvalid("stale", seal(base({ ts: NOW - 3_901_000 })), "stale");
+addInvalid("future", seal(base({ ts: NOW + 301_000 })), "stale");
 addInvalid("oversize", Buffer.concat([blocked, Buffer.alloc(1)]), "size");
 addInvalid("truncated", blocked.subarray(0, PUSH_ENVELOPE_BYTES - 1), "size");
 
@@ -175,7 +174,7 @@ const wrongVersion = Buffer.from(blocked);
 wrongVersion[0] = 0x02;
 addInvalid("wrong-version", resign(wrongVersion), "version");
 
-const nonzeroPadding = padPushPlaintext(encodePushPlaintextJSON(base(9)));
+const nonzeroPadding = padPushPlaintext(encodePushPlaintextJSON(base()));
 nonzeroPadding[PUSH_PADDED_PLAINTEXT_BYTES - 1] = 0x01;
 addInvalid("nonzero-padding", sealPadded(nonzeroPadding), "plaintext");
 
@@ -186,7 +185,7 @@ addInvalid("length-over-510", sealPadded(overlongLength), "plaintext");
 addInvalid("not-json", sealPadded(padPushPlaintext(Buffer.from("not json", "utf8"))), "plaintext");
 addInvalid(
   "plaintext-version-2",
-  sealPadded(padPushPlaintext(Buffer.from(JSON.stringify({ ...base(10), v: 2 }), "utf8"))),
+  sealPadded(padPushPlaintext(Buffer.from(JSON.stringify({ ...base(), v: 2 }), "utf8"))),
   "plaintext",
 );
 
@@ -224,7 +223,8 @@ const output = {
       decrypt: "HPKE open fails",
       plaintext: "padding, JSON, or v invalid",
       stale: "ts more than 3900 s before now or more than 300 s after",
-      replay: "seq already seen or at or below highest - 64 (stateful; build from valid cases)",
+      replay:
+        "enc already accepted for this kid within 4200 s (maxAge + maxClockSkew); stateful, build from valid cases",
     },
   },
   now: NOW,

@@ -826,7 +826,6 @@ describe("oppi config", () => {
           publicKey: "config-display-public-key",
           sendToken: secrets.push,
           registeredAt: 1,
-          nextSeq: 1,
         },
       ],
       runtimeEnv: { OPENAI_API_KEY: secrets.runtime },

@@ -37,7 +37,6 @@ export type SealedPushEnvelope = string & { readonly [sealedPushEnvelope]: true 
 /** Decrypted push content (spec §2.4). */
 export interface PushPlaintext {
   v: 1;
-  seq: number;
   ts: number;
   event: PushEvent;
   kind?: ProgramStatusKind;
