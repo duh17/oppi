@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Phone-wire contract for experimental `WSS /desktop/view/stream`.
@@ -473,34 +474,54 @@ struct DesktopLiveArrivalMachine: Equatable, Sendable {
     }
 }
 
-private func readUInt16BE(_ data: Data, at offset: Int) -> UInt16 {
+// Shared by OppiCore and OppiMac (OppiCore is compiled into the OppiMac module).
+func readUInt16BE(_ data: Data, at offset: Int) -> UInt16 {
     UInt16(data[offset]) << 8 | UInt16(data[offset + 1])
 }
 
-private func readUInt32BE(_ data: Data, at offset: Int) -> UInt32 {
+func readUInt32BE(_ data: Data, at offset: Int) -> UInt32 {
     UInt32(data[offset]) << 24
         | UInt32(data[offset + 1]) << 16
         | UInt32(data[offset + 2]) << 8
         | UInt32(data[offset + 3])
 }
 
-private func readUInt64BE(_ data: Data, at offset: Int) -> UInt64 {
+func readUInt64BE(_ data: Data, at offset: Int) -> UInt64 {
     UInt64(readUInt32BE(data, at: offset)) << 32 | UInt64(readUInt32BE(data, at: offset + 4))
 }
 
-private func writeUInt16BE(_ value: UInt16, into data: inout Data, at offset: Int) {
-    data[offset] = UInt8(truncatingIfNeeded: value >> 8)
-    data[offset + 1] = UInt8(truncatingIfNeeded: value)
+func writeUInt16BE(_ value: UInt16, to base: UnsafeMutableRawPointer, at offset: Int) {
+    var be = value.bigEndian
+    memcpy(base.advanced(by: offset), &be, 2)
 }
 
-private func writeUInt32BE(_ value: UInt32, into data: inout Data, at offset: Int) {
-    data[offset] = UInt8(truncatingIfNeeded: value >> 24)
-    data[offset + 1] = UInt8(truncatingIfNeeded: value >> 16)
-    data[offset + 2] = UInt8(truncatingIfNeeded: value >> 8)
-    data[offset + 3] = UInt8(truncatingIfNeeded: value)
+func writeUInt32BE(_ value: UInt32, to base: UnsafeMutableRawPointer, at offset: Int) {
+    var be = value.bigEndian
+    memcpy(base.advanced(by: offset), &be, 4)
 }
 
-private func writeUInt64BE(_ value: UInt64, into data: inout Data, at offset: Int) {
-    writeUInt32BE(UInt32(value >> 32), into: &data, at: offset)
-    writeUInt32BE(UInt32(truncatingIfNeeded: value), into: &data, at: offset + 4)
+func writeUInt64BE(_ value: UInt64, to base: UnsafeMutableRawPointer, at offset: Int) {
+    var be = value.bigEndian
+    memcpy(base.advanced(by: offset), &be, 8)
+}
+
+func writeUInt16BE(_ value: UInt16, into data: inout Data, at offset: Int) {
+    data.withUnsafeMutableBytes { raw in
+        guard let base = raw.baseAddress else { return }
+        writeUInt16BE(value, to: base, at: offset)
+    }
+}
+
+func writeUInt32BE(_ value: UInt32, into data: inout Data, at offset: Int) {
+    data.withUnsafeMutableBytes { raw in
+        guard let base = raw.baseAddress else { return }
+        writeUInt32BE(value, to: base, at: offset)
+    }
+}
+
+func writeUInt64BE(_ value: UInt64, into data: inout Data, at offset: Int) {
+    data.withUnsafeMutableBytes { raw in
+        guard let base = raw.baseAddress else { return }
+        writeUInt64BE(value, to: base, at: offset)
+    }
 }

@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 
 enum DesktopViewStreamWire {
@@ -116,47 +115,4 @@ final class DesktopViewCompanionReader {
 
 enum DesktopViewStreamWireError: Error {
     case invalidLength
-}
-
-func writeUInt16BE(_ value: UInt16, to base: UnsafeMutableRawPointer, at offset: Int) {
-    var be = value.bigEndian
-    memcpy(base.advanced(by: offset), &be, 2)
-}
-
-func writeUInt32BE(_ value: UInt32, to base: UnsafeMutableRawPointer, at offset: Int) {
-    var be = value.bigEndian
-    memcpy(base.advanced(by: offset), &be, 4)
-}
-
-func writeUInt64BE(_ value: UInt64, to base: UnsafeMutableRawPointer, at offset: Int) {
-    writeUInt32BE(UInt32(value >> 32), to: base, at: offset)
-    writeUInt32BE(UInt32(value & 0xFFFF_FFFF), to: base, at: offset + 4)
-}
-
-func writeUInt16BE(_ value: UInt16, into data: inout Data, at offset: Int) {
-    data.withUnsafeMutableBytes { raw in
-        guard let base = raw.baseAddress else { return }
-        writeUInt16BE(value, to: base, at: offset)
-    }
-}
-
-func writeUInt32BE(_ value: UInt32, into data: inout Data, at offset: Int) {
-    data.withUnsafeMutableBytes { raw in
-        guard let base = raw.baseAddress else { return }
-        writeUInt32BE(value, to: base, at: offset)
-    }
-}
-
-func writeUInt64BE(_ value: UInt64, into data: inout Data, at offset: Int) {
-    data.withUnsafeMutableBytes { raw in
-        guard let base = raw.baseAddress else { return }
-        writeUInt64BE(value, to: base, at: offset)
-    }
-}
-
-func readUInt32BE(_ data: Data, at offset: Int) -> UInt32 {
-    UInt32(data[offset]) << 24
-        | UInt32(data[offset + 1]) << 16
-        | UInt32(data[offset + 2]) << 8
-        | UInt32(data[offset + 3])
 }
