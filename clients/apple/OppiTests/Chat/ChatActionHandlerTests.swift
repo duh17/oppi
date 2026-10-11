@@ -1312,6 +1312,83 @@ struct ChatActionHandlerTests {
         #expect(sessionStore.sessions.first(where: { $0.id == "s1" })?.name == "Fix Timeline Message Ordering")
     }
 
+    /// The on-device title lands seconds after the prompt. If the user opened
+    /// another session meanwhile, the rename must not ride that session's stream.
+    @Test func regressionAutoTitleDoesNotRenameSessionFocusedAfterPrompt() async {
+        UserDefaults.standard.set("onDevice", forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        defer {
+            UserDefaults.standard.removeObject(forKey: ChatActionHandler.autoTitleProviderDefaultsKey)
+        }
+
+        let handler = ChatActionHandler()
+        let connection = ServerConnection()
+        let sessionStore = SessionStore()
+
+        sessionStore.upsert(makeTestSession(
+            id: "s1", name: nil, messageCount: 0,
+            firstMessage: "review the gliff architecture"
+        ))
+        sessionStore.upsert(makeTestSession(id: "s2", name: nil, messageCount: 3))
+        connection._setActiveSessionIdForTesting("s1")
+        let pipe = TestEventPipeline(sessionId: "s1", connection: connection)
+
+        let titleReady = AsyncStream.makeStream(of: Void.self)
+        var titleRequested = false
+        handler._generateSessionTitleForTesting = { _ in
+            titleRequested = true
+            for await _ in titleReady.stream { break }
+            return "Review Gliff Architecture"
+        }
+
+        var streamedNames: [String] = []
+        connection._sendMessageForTesting = { message in
+            switch message {
+            case .prompt(_, _, _, let requestId, let clientTurnId):
+                guard let requestId, let clientTurnId else { return }
+                pipe.handle(
+                    .turnAck(
+                        command: "prompt",
+                        clientTurnId: clientTurnId,
+                        stage: .dispatched,
+                        requestId: requestId,
+                        duplicate: false
+                    ),
+                    sessionId: "s1"
+                )
+            case .setSessionName(let name, _):
+                streamedNames.append(name)
+            default:
+                break
+            }
+        }
+
+        _ = handler.sendPrompt(
+            text: "review the gliff architecture",
+            attachments: [],
+            isBusy: false,
+            connection: connection,
+            reducer: TimelineReducer(),
+            sessionId: "s1",
+            sessionStore: sessionStore
+        )
+        _ = await waitForTestCondition(timeoutMs: 800) {
+            await MainActor.run { titleRequested }
+        }
+
+        // User opens another session while the model is still generating.
+        connection._setActiveSessionIdForTesting("s2")
+        titleReady.continuation.yield()
+        titleReady.continuation.finish()
+
+        // Before the fix the name rode the s2-bound stream within a few ms.
+        _ = await waitForTestCondition(timeoutMs: 800) {
+            await MainActor.run { !streamedNames.isEmpty }
+        }
+
+        #expect(streamedNames.isEmpty)
+        #expect(sessionStore.sessions.first(where: { $0.id == "s2" })?.name == nil)
+    }
+
     @Test func regressionSecondHandlerSkipsWhenFirstHandlerAlreadySetName() async {
         // After a successful auto-title, a recreated handler must not
         // re-generate — the session.name guard blocks it.
@@ -1509,6 +1586,7 @@ struct ChatActionHandlerTests {
         let sessionStore = SessionStore()
 
         sessionStore.upsert(makeTestSession(id: "s1", name: "Old name", messageCount: 0))
+        connection._setActiveSessionIdForTesting("s1")
 
         var sentName: String?
 
@@ -1542,6 +1620,7 @@ struct ChatActionHandlerTests {
         let sessionStore = SessionStore()
 
         sessionStore.upsert(makeTestSession(id: "s1", name: "Old", messageCount: 0))
+        connection._setActiveSessionIdForTesting("s1")
 
         var sentName: String?
         connection._sendMessageForTesting = { message in
@@ -1606,6 +1685,7 @@ struct ChatActionHandlerTests {
         let sessionStore = SessionStore()
 
         sessionStore.upsert(makeTestSession(id: "s1", name: "Original", messageCount: 0))
+        connection._setActiveSessionIdForTesting("s1")
 
         connection._sendMessageForTesting = { message in
             if case .setSessionName = message {

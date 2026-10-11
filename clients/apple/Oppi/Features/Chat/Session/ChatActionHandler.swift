@@ -664,7 +664,7 @@ final class ChatActionHandler {
 
         Task { @MainActor in
             do {
-                try await connection.setSessionName(normalized)
+                try await connection.setSessionName(normalized, sessionId: sessionId)
             } catch {
                 if var rollback = sessionStore.sessions.first(where: { $0.id == sessionId }) {
                     rollback.name = previousName
@@ -722,7 +722,7 @@ final class ChatActionHandler {
             sessionStore.upsert(latest)
 
             do {
-                try await connection.setSessionName(generated)
+                try await connection.setSessionName(generated, sessionId: sessionId)
             } catch {
                 log.error("Auto title set_session_name failed: \(error.localizedDescription, privacy: .public)")
                 if var rollback = sessionStore.sessions.first(where: { $0.id == sessionId }),

@@ -182,8 +182,22 @@ extension ServerConnection {
         try await send(.newSession())
     }
 
-    func setSessionName(_ name: String) async throws {
-        try await send(.setSessionName(name: name))
+    /// Renames `sessionId`, never whichever session holds focus at send time.
+    /// On-device auto-title finishes seconds after the prompt, often after the user
+    /// opened another session; a focus-following send renamed that other session.
+    /// The focused stream carries the rename only when bound to this session (the
+    /// server rejects a mismatched envelope if focus moves mid-send); otherwise the
+    /// session-addressed HTTP command does.
+    func setSessionName(_ name: String, sessionId: String) async throws {
+        let message = ClientMessage.setSessionName(name: name)
+        if isFocusedSession(sessionId) {
+            try await sender.dispatchSend(message, sessionIdOverride: sessionId)
+            return
+        }
+        guard let routeScope = sessionStore.routeScope(for: sessionId), let apiClient else {
+            throw WebSocketError.notConnected
+        }
+        try await apiClient.sendSessionCommand(scope: routeScope, sessionId: sessionId, message: message)
     }
 
     func compact(instructions: String? = nil) async throws {

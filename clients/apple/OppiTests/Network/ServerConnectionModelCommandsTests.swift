@@ -2,7 +2,8 @@ import Foundation
 import Testing
 @testable import Oppi
 
-@Suite("ServerConnection+ModelCommands")
+/// Serialized: the HTTP-fallback tests share `ModelSwitchURLProtocol.handler`.
+@Suite("ServerConnection+ModelCommands", .serialized)
 @MainActor
 struct ServerConnectionModelCommandsTests {
     @Test func setModelSendsCorrectClientMessage() async throws {
@@ -151,6 +152,47 @@ struct ServerConnectionModelCommandsTests {
         #expect((payload["requestId"] as? String)?.isEmpty == false)
     }
 
+    /// Auto-title can finish after the user opened another session. Renaming an
+    /// unfocused session must address it over HTTP, not ride the focused stream.
+    @Test func setSessionNameForUnfocusedSessionUsesItsHTTPCommandRoute() async throws {
+        let (connection, _) = makeTestConnection(sessionId: "s2")
+        defer { ModelSwitchURLProtocol.handler = nil }
+        connection.sessionStore.upsert(makeTestSession(id: "s1", workspaceId: "w1"))
+        connection.sessionStore.upsert(makeTestSession(id: "s2", workspaceId: "w1"))
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [ModelSwitchURLProtocol.self]
+        connection.setAPIClientForTesting(APIClient(
+            baseURL: URL(string: "http://localhost:7749")!,
+            token: "sk_test",
+            configuration: config
+        ))
+        let streamSink = CapturedClientMessages()
+        connection._sendMessageForTesting = { message in await streamSink.append(message) }
+        let requests = CapturedRequests()
+        ModelSwitchURLProtocol.handler = { request in
+            requests.append(request)
+            let body = Data(#"{"messages":[{"type":"command_result","command":"set_session_name","success":true}]}"#.utf8)
+            let response = (try #require(HTTPURLResponse(
+                url: (testUnwrap(request.url)),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: ["Content-Type": "application/json"]
+            )))
+            return (body, response)
+        }
+
+        try await connection.setSessionName("Review Gliff Architecture", sessionId: "s1")
+
+        #expect(await streamSink.messages.isEmpty)
+        let request = try #require(requests.all.first)
+        #expect(request.url?.path == "/workspaces/w1/sessions/s1/command")
+        let payload = try #require(request.bodyData.flatMap {
+            try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+        })
+        #expect(payload["type"] as? String == "set_session_name")
+        #expect(payload["name"] as? String == "Review Gliff Architecture")
+    }
+
     /// Socket N's `connected` can finish downstream handling after socket N+1's
     /// `stream_connected`. Only the new socket's own `connected` may mark readiness.
     @Test func lateConnectedHandlingDoesNotRestoreBootstrapAfterReconnect() async {
@@ -221,7 +263,7 @@ struct ServerConnectionModelCommandsTests {
         }
 
         try await connection.newSession()
-        try await connection.setSessionName("rename me")
+        try await connection.setSessionName("rename me", sessionId: "s1")
         try await connection.compact(instructions: "keep important stuff")
 
         async let shareTask = connection.shareSession()
