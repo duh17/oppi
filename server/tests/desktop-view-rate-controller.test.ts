@@ -66,18 +66,18 @@ describe("DesktopViewRateController", () => {
     const first = controller.shouldEncode();
     expect(first.kind).toBe("encode");
     if (first.kind !== "encode") return;
-    const frameBytes = 8_000;
-    controller.onFrameSent(first.command.frameId, frameBytes);
+    const pBytes = Math.ceil(DESKTOP_VIEW_LADDER[0]!.bitrate / 8 / DESKTOP_VIEW_LADDER[0]!.fps);
+    controller.onFrameSent(first.command.frameId, pBytes);
     expect(controller.shouldEncode().kind).toBe("wait");
 
     clock.nowMs += 1000 / DESKTOP_VIEW_LADDER[0]!.fps;
     const second = controller.shouldEncode();
     expect(second.kind).toBe("encode");
     if (second.kind !== "encode") return;
-    controller.onFrameSent(second.command.frameId, frameBytes);
+    controller.onFrameSent(second.command.frameId, pBytes);
 
-    expect(controller.inFlightBytes()).toBe(2 * frameBytes);
-    expect(controller.windowBytes()).toBe(DESKTOP_VIEW_MIN_IN_FLIGHT_FRAMES * frameBytes);
+    expect(controller.inFlightBytes()).toBe(2 * pBytes);
+    expect(controller.windowBytes()).toBe(DESKTOP_VIEW_MIN_IN_FLIGHT_FRAMES * pBytes);
     expect(controller.shouldEncode().kind).toBe("wait");
   });
 
@@ -219,12 +219,33 @@ describe("DesktopViewRateController", () => {
     const clock = new FakeClock();
     const controller = seeded(clock, 20);
     const first = encodeOrThrow(controller);
-    controller.onFrameSent(first.command.frameId, 10, clock.nowMs);
+    const pBytes = Math.ceil(DESKTOP_VIEW_LADDER[0]!.bitrate / 8 / DESKTOP_VIEW_LADDER[0]!.fps);
+    controller.onFrameSent(first.command.frameId, pBytes, clock.nowMs);
     clock.nowMs += 20;
     controller.onAck(first.command.frameId);
     const snap = controller.snapshot();
     const commandedBps = DESKTOP_VIEW_LADDER[0]!.bitrate / 8;
     const bdp = Math.ceil(DESKTOP_VIEW_WINDOW_GAIN * commandedBps * (20 / 1000));
-    expect(snap.windowBytes).toBe(Math.max(DESKTOP_VIEW_MIN_IN_FLIGHT_FRAMES * 10, bdp));
+    expect(snap.windowBytes).toBe(Math.max(DESKTOP_VIEW_MIN_IN_FLIGHT_FRAMES * pBytes, bdp));
+  });
+
+  it("does not down-step from one IDR larger than twice the P-frame", () => {
+    const clock = new FakeClock();
+    const controller = seeded(clock, 20);
+    const pBytes = Math.ceil(DESKTOP_VIEW_LADDER[0]!.bitrate / 8 / DESKTOP_VIEW_LADDER[0]!.fps);
+    const send = (bytes: number, rtt: number): void => {
+      clock.nowMs += 1000 / 30;
+      const decision = controller.shouldEncode();
+      if (decision.kind !== "encode") return;
+      controller.onFrameSent(decision.command.frameId, bytes, clock.nowMs);
+      clock.nowMs += rtt;
+      controller.onAck(decision.command.frameId);
+    };
+    for (let i = 0; i < 20; i += 1) send(pBytes, 10);
+    const level = controller.snapshot().level;
+    expect(level).toBeGreaterThan(0);
+    send(pBytes * 6, 250);
+    for (let i = 0; i < 8; i += 1) send(pBytes, 10);
+    expect(controller.snapshot().level).toBeGreaterThanOrEqual(level);
   });
 });

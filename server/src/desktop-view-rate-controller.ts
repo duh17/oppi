@@ -66,6 +66,7 @@ export type DesktopViewRateSnapshot = {
 type InFlightFrame = {
   bytes: number;
   sentAt: number;
+  rttSample: boolean;
 };
 
 type PingSample = {
@@ -85,7 +86,6 @@ export class DesktopViewRateController {
   private baseRttMs: number | undefined;
   private readonly inFlight = new Map<number, InFlightFrame>();
   private readonly frameRtts: FrameRttSample[] = [];
-  private lastFrameBytes = 0;
   private healthySince: number | undefined;
   private sentAny = false;
   private lastScale: number;
@@ -116,8 +116,9 @@ export class DesktopViewRateController {
   }
 
   onFrameSent(frameId: number, bytes: number, sentAt = this.clock.now()): void {
-    this.inFlight.set(frameId, { bytes, sentAt });
-    this.lastFrameBytes = bytes;
+    const pBytes = this.pFrameBytes();
+    const rttSample = bytes <= 2 * pBytes;
+    this.inFlight.set(frameId, { bytes, sentAt, rttSample });
     this.sentAny = true;
   }
 
@@ -126,7 +127,7 @@ export class DesktopViewRateController {
     if (!pending) return;
     this.inFlight.delete(frameId);
     const base = this.baseRttMs;
-    if (base === undefined) return;
+    if (base === undefined || !pending.rttSample) return;
     const frameRtt = now - pending.sentAt;
     this.frameRtts.push({ at: now, rtt: frameRtt });
     const observeMs = Math.max(1_000, 2 * base);
@@ -280,7 +281,10 @@ export class DesktopViewRateController {
   }
 
   private estimatedFrameBytes(): number {
-    if (this.lastFrameBytes > 0) return this.lastFrameBytes;
+    return this.pFrameBytes();
+  }
+
+  private pFrameBytes(): number {
     const rung = this.rung();
     return Math.max(1, Math.ceil(rung.bitrate / 8 / rung.fps));
   }

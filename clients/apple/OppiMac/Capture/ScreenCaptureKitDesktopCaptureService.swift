@@ -196,6 +196,7 @@ final class ScreenCaptureKitDesktopCaptureService: NSObject, DesktopCaptureServi
     }
 
     func stopLiveViewOnMain() {
+        pendingLiveViewStart = nil
         guard let producer = liveViewProducer else { return }
         liveViewProducer = nil
         retiringLiveViewProducer = producer

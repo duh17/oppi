@@ -60,7 +60,7 @@ const PRESETS: Preset[] = [
   },
 ];
 
-const RUN_MS = 15_000;
+const RUN_MS = 30_000;
 
 type RunResult = {
   preset: string;
@@ -199,7 +199,7 @@ async function runPreset(preset: Preset): Promise<RunResult> {
   });
 
   await delay(RUN_MS);
-  const closedAtPromise = waitClose(media, 2_000);
+  const closedAtPromise = waitClose(media, 5_000);
   const revokeAt = Date.now();
   companion.revoke();
   const closedAt = await closedAtPromise;
@@ -220,7 +220,7 @@ async function runPreset(preset: Preset): Promise<RunResult> {
   const gaps = arrivals.filter((at, i) => i > 0 && at - arrivals[i - 1]! > 100).length;
   const firstL7 = levelSamples.find((sample) => sample.level === 7);
   const l7AfterFirstMs = firstFrameAt && firstL7 ? Math.max(0, firstL7.at - firstFrameAt) : -1;
-  const postRampStart = firstFrameAt ? firstFrameAt + 1_000 : endAt;
+  const postRampStart = rampEndAt(levelSamples, firstFrameAt, endAt);
   const postRamp = dwellByLevel(levelSamples, postRampStart, endAt);
   const postRampTotalMs = [...postRamp.values()].reduce((sum, ms) => sum + ms, 0);
   const result: RunResult = {
@@ -254,6 +254,7 @@ function listenCompanion(
   const path = desktopCompanionOwnerSocketPath(runtimeRoot);
   let active: Socket | undefined;
   const server = createNetServer((socket) => {
+    socket.on("error", () => {});
     let buf = Buffer.alloc(0);
     let upgraded = false;
     const reader = new CompanionFrameReader();
@@ -326,28 +327,43 @@ function listenShaper(
   let stallUntil = 0;
   let lastStall = Date.now();
   const nextFreeAt = { up: 0, down: 0 };
+  const lastDeliverAt = { up: 0, down: 0 };
   const server = createNetServer((client) => {
     const upstream = netConnect(port, host);
+    client.on("error", () => {});
+    upstream.on("error", () => {});
     const pipe = (from: Socket, to: Socket, direction: "up" | "down"): void => {
-      let chain = Promise.resolve();
+      let pending = 0;
+      let closed = false;
+      const flushClose = (): void => {
+        if (closed && pending === 0 && !to.destroyed) to.destroy();
+      };
       from.on("data", (chunk) => {
-        chain = chain.then(async () => {
-          const now = Date.now();
-          if (preset.stallEveryMs > 0 && now - lastStall >= preset.stallEveryMs) {
-            lastStall = now;
-            stallUntil = now + preset.stallMs;
-          }
-          const start = Math.max(now, nextFreeAt[direction]);
-          nextFreeAt[direction] = start + (bytesPerMs > 0 ? chunk.length / bytesPerMs : 0);
-          const jitter = preset.jitterMs ? Math.random() * preset.jitterMs : 0;
-          const deliverAt = Math.max(start + preset.delayMs + jitter, stallUntil);
-          const wait = Math.max(0, deliverAt - Date.now());
-          if (wait > 0) await delay(wait);
+        const now = Date.now();
+        if (preset.stallEveryMs > 0 && now - lastStall >= preset.stallEveryMs) {
+          lastStall = now;
+          stallUntil = now + preset.stallMs;
+        }
+        const start = Math.max(now, nextFreeAt[direction]);
+        nextFreeAt[direction] = start + (bytesPerMs > 0 ? chunk.length / bytesPerMs : 0);
+        const jitter = preset.jitterMs ? Math.random() * preset.jitterMs : 0;
+        const deliverAt = Math.max(
+          start + preset.delayMs + jitter,
+          stallUntil,
+          lastDeliverAt[direction],
+        );
+        lastDeliverAt[direction] = deliverAt;
+        const wait = Math.max(0, deliverAt - Date.now());
+        pending += 1;
+        setTimeout(() => {
           if (!to.destroyed && to.writable) to.write(chunk);
-        });
+          pending -= 1;
+          flushClose();
+        }, wait);
       });
       from.on("close", () => {
-        void chain.finally(() => to.destroy());
+        closed = true;
+        flushClose();
       });
       from.on("error", () => to.destroy());
     };
@@ -408,6 +424,20 @@ function printTable(results: RunResult[]): void {
       `METRIC ${row.preset}_ttff_ms=${row.ttffMs}\nMETRIC ${row.preset}_fps=${row.fps}\nMETRIC ${row.preset}_age_p95_ms=${row.ageP95}\nMETRIC ${row.preset}_ctrl_p95_ms=${row.controlPingP95}\nMETRIC ${row.preset}_revoke_ms=${row.revokeToCloseMs}`,
     );
   }
+}
+
+function rampEndAt(
+  samples: Array<{ at: number; level: number }>,
+  firstFrameAt: number,
+  endAt: number,
+): number {
+  for (let i = 1; i < samples.length; i += 1) {
+    if (samples[i]!.level < samples[i - 1]!.level) return samples[i]!.at;
+  }
+  let maxLevel = 0;
+  for (const sample of samples) maxLevel = Math.max(maxLevel, sample.level);
+  const steady = samples.find((sample) => sample.level === maxLevel);
+  return steady?.at ?? firstFrameAt ?? endAt;
 }
 
 function dwellByLevel(

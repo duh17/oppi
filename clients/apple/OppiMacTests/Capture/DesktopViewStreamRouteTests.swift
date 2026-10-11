@@ -180,6 +180,41 @@ struct DesktopViewStreamRouteTests {
         #expect(flags.finished)
         #expect(!flags.unavailable)
     }
+
+    @Test func stopDuringRetireDoesNotStartQueuedCapture() throws {
+        let harness = try LiveSocketHarness()
+        defer { harness.tearDown() }
+        pickWindow(harness.session, harness.fake, makeSurface(windowID: 406, title: "Notes"))
+        harness.session.grantView()
+        _ = try harness.session.viewGrantGate.claim(deviceId: "phone-1", deviceName: "Chen iPhone").get()
+        let first = try unixUpgrade(
+            socketPath: harness.socket.socketPath,
+            path: DesktopViewStreamWire.path,
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        var leftover = first.leftover
+        _ = try waitForJSON(fd: first.fd, leftover: &leftover) { $0["type"] as? String == "hello" }
+        #expect(harness.capturer.startCount == 1)
+        harness.live.stop()
+        _ = try waitForJSON(fd: first.fd, leftover: &leftover) { $0["type"] as? String == "error" }
+        #expect(harness.capturer.isRetiring)
+
+        let second = try unixUpgrade(
+            socketPath: harness.socket.socketPath,
+            path: DesktopViewStreamWire.path,
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        defer { Darwin.close(second.fd) }
+        var secondLeftover = second.leftover
+        _ = try waitForJSON(fd: second.fd, leftover: &secondLeftover) { $0["type"] as? String == "hello" }
+        #expect(harness.capturer.startCount == 1)
+        #expect(harness.capturer.hasPendingStart)
+        harness.live.stop()
+        _ = try waitForJSON(fd: second.fd, leftover: &secondLeftover) { $0["type"] as? String == "error" }
+        harness.capturer.completeRetire()
+        #expect(harness.capturer.startCount == 1)
+        #expect(!harness.capturer.hasPendingStart)
+    }
 }
 
 private final class StopFlags: @unchecked Sendable {
@@ -299,6 +334,25 @@ final class FakeLiveViewCapturer: DesktopLiveViewCapturing, @unchecked Sendable 
     private(set) var lastFps: Double?
     private(set) var lastScale: Double?
     private(set) var startCount = 0
+    private var retiring = false
+    private var pending: (
+        offer: @Sendable (CVPixelBuffer, Date) -> Void,
+        ended: @Sendable () -> Void,
+        fps: Double,
+        scale: Double
+    )?
+
+    var hasPendingStart: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return pending != nil
+    }
+
+    var isRetiring: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return retiring
+    }
 
     func startLiveView(
         offer: @escaping @Sendable (CVPixelBuffer, Date) -> Void,
@@ -307,11 +361,12 @@ final class FakeLiveViewCapturer: DesktopLiveViewCapturing, @unchecked Sendable 
         scale: Double
     ) {
         lock.lock()
-        self.offer = offer
-        self.ended = ended
-        lastFps = fps
-        lastScale = scale
-        startCount += 1
+        if self.offer != nil || retiring {
+            pending = (offer, ended, fps, scale)
+            lock.unlock()
+            return
+        }
+        applyStartLocked(offer: offer, ended: ended, fps: fps, scale: scale)
         lock.unlock()
     }
 
@@ -324,9 +379,38 @@ final class FakeLiveViewCapturer: DesktopLiveViewCapturing, @unchecked Sendable 
 
     func stopLiveView() {
         lock.lock()
+        pending = nil
+        let hadProducer = offer != nil
         offer = nil
         ended = nil
+        if hadProducer {
+            retiring = true
+        }
         lock.unlock()
+    }
+
+    func completeRetire() {
+        lock.lock()
+        retiring = false
+        let queued = pending
+        pending = nil
+        if let queued {
+            applyStartLocked(offer: queued.offer, ended: queued.ended, fps: queued.fps, scale: queued.scale)
+        }
+        lock.unlock()
+    }
+
+    private func applyStartLocked(
+        offer: @escaping @Sendable (CVPixelBuffer, Date) -> Void,
+        ended: @escaping @Sendable () -> Void,
+        fps: Double,
+        scale: Double
+    ) {
+        self.offer = offer
+        self.ended = ended
+        lastFps = fps
+        lastScale = scale
+        startCount += 1
     }
 
     func emit(_ buffer: CVPixelBuffer, at capturedAt: Date = Date()) {

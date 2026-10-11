@@ -232,7 +232,7 @@ describe("desktop live view capability", () => {
 });
 
 describe("DesktopViewStreamMux over a real unix companion", () => {
-  it("forwards phone-wire media unchanged; no acks allow exactly two encodes", async () => {
+  it("forwards phone-wire media unchanged; no acks fill the window, next encode after ack", async () => {
     const root = companionRoot();
     const encoded: number[] = [];
     const companion = await listenFakeCompanion(root, {
@@ -253,14 +253,14 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       await waitFor(() => phone.textMessages().some((msg) => msg.type === "ping"));
       const ping = phone.textMessages().find((msg) => msg.type === "ping");
       phone.emitText({ type: "pong", t: ping?.t });
-      await waitFor(() => encoded.length === 2);
+      await waitFor(() => encoded.length === 1);
       await delay(200);
-      expect(encoded).toEqual([1, 2]);
+      expect(encoded).toEqual([1]);
       const first = phone.binaryMessages()[0]!;
       expect(first.equals(mediaFrame(1, 64_000))).toBe(true);
       phone.emitText({ type: "ack", frameId: 1, receivedAt: Date.now() });
-      await waitFor(() => encoded.length === 3);
-      expect(encoded).toEqual([1, 2, 3]);
+      await waitFor(() => encoded.length === 2);
+      expect(encoded).toEqual([1, 2]);
     } finally {
       companion.close();
     }
