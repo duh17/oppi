@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreMedia
 import Foundation
 import Testing
@@ -39,6 +40,31 @@ struct DesktopLiveViewMediaTests {
         let pSample = try #require(decoder.sampleBuffer(payload: p.avcc, header: p.header))
         #expect(CMSampleBufferIsValid(pSample))
         #expect(displayImmediately(pSample))
+        #expect(attachment(idrSample, kCMSampleAttachmentKey_DependsOnOthers) == false)
+        #expect(attachment(pSample, kCMSampleAttachmentKey_DependsOnOthers) == true)
+        #expect(attachment(pSample, kCMSampleAttachmentKey_NotSync) == true)
+    }
+
+    @Test @MainActor func decodeFailedNotificationFromBackgroundHopsToMain() async throws {
+        let view = DesktopLiveSampleBufferView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        view.layoutIfNeeded()
+        let scroll = try #require(view.subviews.first as? UIScrollView)
+        let video = try #require(scroll.subviews.first)
+        let layer = try #require(video.layer as? AVSampleBufferDisplayLayer)
+        var called = false
+        view.onDecodeFailed = { called = true }
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                NotificationCenter.default.post(
+                    name: .AVSampleBufferDisplayLayerFailedToDecode,
+                    object: layer
+                )
+                DispatchQueue.main.async {
+                    cont.resume()
+                }
+            }
+        }
+        #expect(called)
     }
 
     @Test func pFrameWithoutIDRWaitsAndSizeChangeReplacesFormat() throws {
@@ -103,19 +129,22 @@ struct DesktopLiveViewMediaTests {
     }
 
     private func displayImmediately(_ sample: CMSampleBuffer) -> Bool {
+        attachment(sample, kCMSampleAttachmentKey_DisplayImmediately) == true
+    }
+
+    private func attachment(_ sample: CMSampleBuffer, _ key: CFString) -> Bool? {
         guard let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false),
               CFArrayGetCount(attachments) > 0
         else {
-            return false
+            return nil
         }
         let dict = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFDictionary.self)
-        guard let value = CFDictionaryGetValue(
-            dict,
-            Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque()
-        ) else {
-            return false
+        guard let value = CFDictionaryGetValue(dict, Unmanaged.passUnretained(key).toOpaque()) else {
+            return nil
         }
-        return value == Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
+        if value == Unmanaged.passUnretained(kCFBooleanTrue).toOpaque() { return true }
+        if value == Unmanaged.passUnretained(kCFBooleanFalse).toOpaque() { return false }
+        return nil
     }
 
     private func loadFixture() throws -> AVCCFixture {

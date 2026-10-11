@@ -63,7 +63,13 @@ final class DesktopLiveH264Decoder: @unchecked Sendable {
             waitingForIDR = true
             return nil
         }
-        return Self.makeSampleBuffer(payload: payload, slices: slices, format: format)
+        return Self.makeSampleBuffer(
+            payload: payload,
+            slices: slices,
+            format: format,
+            keyframe: header.keyframe,
+            capturedAtMs: header.capturedAtMs
+        )
     }
 
     private static func makeFormatDescription(
@@ -103,7 +109,9 @@ final class DesktopLiveH264Decoder: @unchecked Sendable {
     private static func makeSampleBuffer(
         payload: Data,
         slices: [DesktopViewAVCC.Span],
-        format: CMFormatDescription
+        format: CMFormatDescription,
+        keyframe: Bool,
+        capturedAtMs: UInt64
     ) -> CMSampleBuffer? {
         let length = slices.reduce(0) { $0 + 4 + $1.length }
         var block: CMBlockBuffer?
@@ -139,9 +147,10 @@ final class DesktopLiveH264Decoder: @unchecked Sendable {
         guard status == noErr else { return nil }
 
         var sample = CMSampleBuffer?.none
+        let pts = CMTime(value: CMTimeValue(capturedAtMs), timescale: 1000)
         var timing = CMSampleTimingInfo(
             duration: .invalid,
-            presentationTimeStamp: .zero,
+            presentationTimeStamp: pts,
             decodeTimeStamp: .invalid
         )
         var sampleSize = length
@@ -165,6 +174,19 @@ final class DesktopLiveH264Decoder: @unchecked Sendable {
                 Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
                 Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
             )
+            // Without this, VT treats a P-frame as a sync sample and fails the first P after IDR.
+            CFDictionarySetValue(
+                dict,
+                Unmanaged.passUnretained(kCMSampleAttachmentKey_DependsOnOthers).toOpaque(),
+                Unmanaged.passUnretained(keyframe ? kCFBooleanFalse : kCFBooleanTrue).toOpaque()
+            )
+            if !keyframe {
+                CFDictionarySetValue(
+                    dict,
+                    Unmanaged.passUnretained(kCMSampleAttachmentKey_NotSync).toOpaque(),
+                    Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
+                )
+            }
         }
         return sample
     }

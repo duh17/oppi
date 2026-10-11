@@ -317,6 +317,7 @@ function listenCompanion(
 ): Promise<{ close: () => void; revoke: () => void }> {
   const path = desktopCompanionOwnerSocketPath(runtimeRoot);
   let active: Socket | undefined;
+  let claimedDeviceId: string | undefined;
   const server = createNetServer((socket) => {
     socket.on("error", () => {});
     let buf = Buffer.alloc(0);
@@ -341,17 +342,57 @@ function listenCompanion(
       if (sep < 0) return;
       const headerText = buf.subarray(0, sep).toString("utf8");
       const requestLine = headerText.split("\r\n")[0] ?? "";
+      const device =
+        headerText
+          .split("\r\n")
+          .find((line) => line.toLowerCase().startsWith("x-oppi-device-id:"))
+          ?.slice("x-oppi-device-id:".length)
+          .trim() ?? "";
       if (requestLine.startsWith("GET /view/session")) {
+        if (!device) {
+          write(
+            Buffer.from(
+              "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            ),
+          );
+          socket.end();
+          return;
+        }
+        if (claimedDeviceId && claimedDeviceId !== device) {
+          const body = "view session not granted\n";
+          write(
+            Buffer.from(
+              `HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+            ),
+          );
+          socket.end();
+          return;
+        }
+        claimedDeviceId = device;
         const body = JSON.stringify({
           grantId: "11111111-1111-4111-8111-111111111111",
           capability: "view",
-          deviceId,
+          deviceId: device,
           expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
           caption: "View session\u2014not live delivery",
         });
         write(
           Buffer.from(
             `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+          ),
+        );
+        socket.end();
+        return;
+      }
+      if (
+        !requestLine.startsWith("GET /view/stream") ||
+        !claimedDeviceId ||
+        device !== claimedDeviceId
+      ) {
+        const body = "view session not granted\n";
+        write(
+          Buffer.from(
+            `HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
           ),
         );
         socket.end();

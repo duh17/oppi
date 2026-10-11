@@ -50,7 +50,9 @@ final class DesktopLiveSampleBufferView: UIView, UIScrollViewDelegate, UIGesture
         NotificationCenter.default.removeObserver(self)
     }
 
-    @objc private func handleDecodeFailed() {
+    /// AVFoundation posts this on a decoder thread. A main-actor `@objc` selector
+    /// traps in `_checkExpectedExecutor`; hop after the nonisolated entry.
+    @objc nonisolated private func handleDecodeFailed() {
         Task { @MainActor in
             self.onDecodeFailed?()
         }

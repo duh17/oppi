@@ -1,5 +1,17 @@
+import CoreMedia
 import Foundation
 import Observation
+
+@MainActor
+protocol DesktopLivePicture: AnyObject {
+    var onDecodeFailed: (() -> Void)? { get set }
+    @discardableResult
+    func enqueue(_ sample: CMSampleBuffer) -> Bool
+    func clearPicture()
+    func setAccessibilityChrome(label: String, value: String)
+}
+
+extension DesktopLiveSampleBufferView: DesktopLivePicture {}
 
 /// Connects the dedicated live-view socket, decodes, and owns live/stale chrome.
 ///
@@ -30,7 +42,7 @@ final class DesktopLiveViewerModel {
     private var reconnectTask: Task<Void, Never>?
     private var startTask: Task<Void, Never>?
     private var pendingClose: Task<Void, Never>?
-    private var picture: DesktopLiveSampleBufferView?
+    private var picture: (any DesktopLivePicture)?
     private var sessionGeneration = 0
     private var reconnectAttempt = 0
     private var visible = false
@@ -48,7 +60,7 @@ final class DesktopLiveViewerModel {
         self.clock = clock
     }
 
-    func attachPicture(_ view: DesktopLiveSampleBufferView) {
+    func attachPicture(_ view: some DesktopLivePicture) {
         picture = view
         view.onDecodeFailed = { [weak self] in
             self?.dropAndReconnect()
@@ -245,6 +257,8 @@ final class DesktopLiveViewerModel {
     /// Drop decoder state and the current socket so the next open starts with an IDR.
     private func dropAndReconnect() {
         decoder.reset()
+        // The display layer stays `.failed` until flush; without this the next IDR is rejected.
+        picture?.clearPicture()
         sessionGeneration += 1
         let generation = sessionGeneration
         startTask?.cancel()

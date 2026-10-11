@@ -1781,8 +1781,13 @@ export class Server {
         ws.close(1008, "Not found");
         return;
       }
+      const storedName = this.storage
+        .listDevices()
+        .find((device) => device.id === principal.deviceId)
+        ?.name?.trim();
       this.desktopViewStreamMux.handleWebSocket(ws, {
         deviceId: principal.deviceId,
+        deviceName: storedName && storedName.length > 0 ? storedName : undefined,
       });
       return;
     }

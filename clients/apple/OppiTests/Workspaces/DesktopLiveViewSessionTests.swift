@@ -1,3 +1,4 @@
+import CoreMedia
 import Foundation
 import Testing
 import UIKit
@@ -171,6 +172,26 @@ struct DesktopLiveViewSessionTests {
         #expect(model.connectCount == 2)
     }
 
+    @Test @MainActor func failedLayerFlushReconnectsAndShowsNextIDR() async throws {
+        let fake = LiveViewStreamFake()
+        let picture = FailedUntilFlushPicture()
+        let model = DesktopLiveViewerModel(open: { fake.open() }, clock: { 100 })
+        model.attachPicture(picture)
+        model.appear()
+        await waitUntil { fake.connectCount == 1 }
+        fake.sendHello()
+        try fake.sendIDR()
+        await waitUntil { picture.clearCount >= 1 }
+        #expect(model.presentation.statusText != "Live")
+        await waitUntil(timeoutMs: 2000) { fake.connectCount == 2 }
+        fake.sendHello()
+        try fake.sendIDR()
+        await waitUntil { model.presentation.statusText == "Live" }
+        #expect(model.presentation.statusText == "Live")
+        #expect(picture.enqueuedAfterFlush >= 1)
+        #expect(model.connectCount == 2)
+    }
+
     @Test @MainActor func transientCloseWhileVisibleReconnects() async {
         let fake = LiveViewStreamFake()
         let model = DesktopLiveViewerModel(open: { fake.open() }, clock: { 100 })
@@ -209,6 +230,29 @@ struct DesktopLiveViewSessionTests {
         #expect(phone.last?.target == .desktopStill)
         #expect(phone.filter { $0.target.isReleaseEnabled }.last?.target == .desktopStill)
     }
+}
+
+@MainActor
+private final class FailedUntilFlushPicture: DesktopLivePicture {
+    var onDecodeFailed: (() -> Void)?
+    private(set) var clearCount = 0
+    private(set) var enqueuedAfterFlush = 0
+    private var failedUntilFlush = true
+
+    func enqueue(_: CMSampleBuffer) -> Bool {
+        if failedUntilFlush {
+            return false
+        }
+        enqueuedAfterFlush += 1
+        return true
+    }
+
+    func clearPicture() {
+        clearCount += 1
+        failedUntilFlush = false
+    }
+
+    func setAccessibilityChrome(label _: String, value _: String) {}
 }
 
 @MainActor
