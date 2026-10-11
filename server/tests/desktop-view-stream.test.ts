@@ -1,3 +1,4 @@
+import { request as httpRequest } from "node:http";
 import { createServer, type Server as NetServer, type Socket } from "node:net";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { desktopCompanionOwnerSocketPath } from "../src/desktop-companion-still-client.js";
 import { DesktopCompanionViewStreamClient } from "../src/desktop-companion-view-stream-client.js";
+import { DESKTOP_VIEW_HARD_BYTE_CAP } from "../src/desktop-view-rate-controller.js";
 import { DesktopViewStreamMux } from "../src/desktop-view-stream.js";
 import {
   CompanionFrameReader,
@@ -22,6 +24,7 @@ import { createIdentityRoutes } from "../src/routes/identity.js";
 import type { RouteContext } from "../src/routes/types.js";
 import { Server } from "../src/server.js";
 import { Storage } from "../src/storage.js";
+import { CLOCK_SKEW_MS, WS_CLOSE_AUTH_EXPIRED } from "../src/storage/device-auth.js";
 import {
   DESKTOP_VIEW_ERROR,
   DESKTOP_VIEW_FEATURE_H264_AVCC,
@@ -51,6 +54,7 @@ class FakePhoneSocket {
   CONNECTING = 0;
   CLOSING = 2;
   CLOSED = 3;
+  bufferedAmount = 0;
   sent: Array<{ data: Buffer | string; binary?: boolean }> = [];
   closeCode: number | undefined;
   closeReason: string | undefined;
@@ -116,6 +120,7 @@ async function listenFakeCompanion(
 ): Promise<NetServer> {
   const socketPath = desktopCompanionOwnerSocketPath(runtimeRoot);
   const server = createServer((socket) => {
+    socket.on("error", () => {});
     let buf = Buffer.alloc(0);
     let upgraded = false;
     const reader = new CompanionFrameReader();
@@ -234,7 +239,7 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       deviceId: "dev-1",
       onEncode: (encode, socket) => {
         encoded.push(encode.frameId as number);
-        const frame = mediaFrame(encode.frameId as number, 80);
+        const frame = mediaFrame(encode.frameId as number, 64_000);
         socket.write(encodeCompanionMedia(frame));
       },
     });
@@ -252,7 +257,7 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       await delay(200);
       expect(encoded).toEqual([1, 2]);
       const first = phone.binaryMessages()[0]!;
-      expect(first.equals(mediaFrame(1, 80))).toBe(true);
+      expect(first.equals(mediaFrame(1, 64_000))).toBe(true);
       phone.emitText({ type: "ack", frameId: 1, receivedAt: Date.now() });
       await waitFor(() => encoded.length === 3);
       expect(encoded).toEqual([1, 2, 3]);
@@ -320,10 +325,116 @@ describe("DesktopViewStreamMux over a real unix companion", () => {
       companion.close();
     }
   });
+
+  it("closes when bufferedAmount plus the next frame exceeds the cap", async () => {
+    const root = companionRoot();
+    const companion = await listenFakeCompanion(root, {
+      deviceId: "dev-1",
+      onEncode: (encode, socket) => {
+        socket.write(encodeCompanionMedia(mediaFrame(encode.frameId as number, 80)));
+      },
+    });
+    try {
+      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
+      const mux = new DesktopViewStreamMux({
+        connectCompanion: (input) => client.connect(input),
+      });
+      const phone = new FakePhoneSocket();
+      phone.bufferedAmount = DESKTOP_VIEW_HARD_BYTE_CAP;
+      mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
+      await waitFor(() => phone.textMessages().some((msg) => msg.type === "ping"));
+      const ping = phone.textMessages().find((msg) => msg.type === "ping");
+      phone.emitText({ type: "pong", t: ping?.t });
+      await waitFor(() => phone.closeCode === 4000);
+      expect(phone.closeReason).toBe("backpressure_cap");
+      expect(phone.binaryMessages()).toHaveLength(0);
+    } finally {
+      companion.close();
+    }
+  });
+
+  it("closes when a companion frame length exceeds the cap", async () => {
+    const root = companionRoot();
+    const companion = await listenFakeCompanion(root, {
+      deviceId: "dev-1",
+      onEncode: (_encode, socket) => {
+        const prefix = Buffer.alloc(5);
+        prefix.writeUInt32BE(DESKTOP_VIEW_HARD_BYTE_CAP + 1, 0);
+        prefix[4] = 2;
+        socket.write(prefix);
+      },
+    });
+    try {
+      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
+      const mux = new DesktopViewStreamMux({
+        connectCompanion: (input) => client.connect(input),
+      });
+      const phone = new FakePhoneSocket();
+      mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
+      await waitFor(() => phone.textMessages().some((msg) => msg.type === "ping"));
+      const ping = phone.textMessages().find((msg) => msg.type === "ping");
+      phone.emitText({ type: "pong", t: ping?.t });
+      await waitFor(() => phone.closeCode === 4000);
+      expect(phone.closeReason).toBe("protocol_fatal");
+    } finally {
+      companion.close();
+    }
+  });
+
+  it("closes a hello with missing features or the wrong version as protocol fatal", async () => {
+    const root = companionRoot();
+    const missing = await listenFakeCompanion(root, {
+      deviceId: "dev-1",
+      hello: {
+        type: "hello",
+        version: 1,
+        grantId: "11111111-1111-4111-8111-111111111111",
+        deviceId: "dev-1",
+        surface: { windowId: 7, title: "Notes" },
+      },
+    });
+    try {
+      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root });
+      const mux = new DesktopViewStreamMux({
+        connectCompanion: (input) => client.connect(input),
+      });
+      const phone = new FakePhoneSocket();
+      mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
+      await waitFor(() => phone.closeCode === 4000);
+      expect(phone.closeReason).toBe("protocol_fatal");
+    } finally {
+      missing.close();
+    }
+
+    const root2 = companionRoot();
+    const wrongVersion = await listenFakeCompanion(root2, {
+      deviceId: "dev-1",
+      hello: {
+        type: "hello",
+        version: 2,
+        features: [DESKTOP_VIEW_FEATURE_H264_AVCC],
+        grantId: "11111111-1111-4111-8111-111111111111",
+        deviceId: "dev-1",
+        surface: { windowId: 7, title: "Notes" },
+      },
+    });
+    try {
+      const client = new DesktopCompanionViewStreamClient({ runtimeRoot: root2 });
+      const mux = new DesktopViewStreamMux({
+        connectCompanion: (input) => client.connect(input),
+      });
+      const phone = new FakePhoneSocket();
+      mux.handleWebSocket(phone as unknown as WebSocket, { deviceId: "dev-1" });
+      await waitFor(() => phone.closeCode === 4000);
+      expect(phone.closeReason).toBe("protocol_fatal");
+    } finally {
+      wrongVersion.close();
+    }
+  });
 });
 
 describe("GET /desktop/view/stream HTTPS auth shell", () => {
-  it("404s owner, flag-off, and wrong path; admits a paired device when on", async () => {
+  it("401s network owner, 404s flag-off, and admits a paired device when on", async () => {
     const dataDir = tempDir("oppi-dv-https-");
     const runtimeRoot = companionRoot();
     const storage = new Storage(dataDir);
@@ -412,6 +523,44 @@ describe("GET /desktop/view/stream HTTPS auth shell", () => {
       else process.env.NODE_TLS_REJECT_UNAUTHORIZED = previous;
     }
   }, 20_000);
+
+  it("closes an open relay when the device is revoked", async () => {
+    const started = await startPairedLiveView();
+    try {
+      const ws = openLiveView(started.baseUrl, started.accessToken);
+      await waitForHello(ws);
+      const closed = waitWsClose(ws);
+      const revoke = await unixRequest(
+        started.server.socketPath,
+        `/auth/devices/${started.deviceId}`,
+        "DELETE",
+        started.ownerToken,
+      );
+      expect(revoke.status).toBe(200);
+      expect((await closed).code).toBe(1008);
+    } finally {
+      await started.stop();
+    }
+  }, 20_000);
+
+  it("closes an open relay when the access token expires", async () => {
+    const started = await startPairedLiveView();
+    try {
+      started.storage.mutateConfig((config) => ({
+        authAccessTokens: (config.authAccessTokens ?? []).map((token) =>
+          token.deviceId === started.deviceId
+            ? { ...token, expiresAt: Date.now() - CLOCK_SKEW_MS + 200 }
+            : token,
+        ),
+      }));
+      const ws = openLiveView(started.baseUrl, started.accessToken);
+      await waitForHello(ws);
+      const closed = await waitWsClose(ws, 5_000);
+      expect(closed.code).toBe(WS_CLOSE_AUTH_EXPIRED);
+    } finally {
+      await started.stop();
+    }
+  }, 20_000);
 });
 
 async function getCapabilities(config: Record<string, unknown>): Promise<{
@@ -452,6 +601,117 @@ async function getCapabilities(config: Record<string, unknown>): Promise<{
   });
   return (JSON.parse(res.body) as { capabilities: { desktopLiveView?: { version: number } } })
     .capabilities;
+}
+
+async function startPairedLiveView(): Promise<{
+  server: Server;
+  storage: Storage;
+  baseUrl: string;
+  accessToken: string;
+  ownerToken: string;
+  deviceId: string;
+  stop: () => Promise<void>;
+}> {
+  const dataDir = tempDir("oppi-dv-relay-");
+  const runtimeRoot = companionRoot();
+  const storage = new Storage(dataDir);
+  storage.updateConfig({
+    port: 0,
+    host: "127.0.0.1",
+    tls: { mode: "self-signed" },
+    experimental: { desktopLiveView: true },
+  });
+  storage.ensurePaired();
+  const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const jwk = publicKey.export({ format: "jwk" }) as { x: string; y: string };
+  const enrolled = storage.enrollViaPairing(storage.issuePairingToken(), {
+    publicKey: { kty: "EC", crv: "P-256", x: jwk.x, y: jwk.y },
+    name: "view-device",
+  });
+  if (!enrolled) throw new Error("enrollment failed");
+  const bound = await listenFakeCompanion(runtimeRoot, {
+    deviceId: enrolled.deviceId,
+    onEncode: (encode, socket) => {
+      if (socket.destroyed || !socket.writable) return;
+      socket.write(encodeCompanionMedia(mediaFrame(encode.frameId as number)));
+    },
+  });
+  const previous = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+  const server = new Server(storage, undefined, { desktopCompanionRuntimeRoot: runtimeRoot });
+  await server.start();
+  const ownerToken = storage.getToken();
+  if (!ownerToken) throw new Error("missing owner token");
+  return {
+    server,
+    storage,
+    baseUrl: `https://127.0.0.1:${server.port}`,
+    accessToken: enrolled.accessToken,
+    ownerToken,
+    deviceId: enrolled.deviceId,
+    stop: async () => {
+      await server.stop();
+      bound.close();
+      if (previous === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+      else process.env.NODE_TLS_REJECT_UNAUTHORIZED = previous;
+    },
+  };
+}
+
+function openLiveView(baseUrl: string, token: string): WebSocket {
+  return new WebSocket(`${baseUrl.replace("https", "wss")}${DESKTOP_VIEW_STREAM_PATH}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+function waitForHello(ws: WebSocket): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("hello timeout")), 5_000);
+    ws.on("message", (data, binary) => {
+      if (binary) return;
+      const parsed = JSON.parse(data.toString()) as Record<string, unknown>;
+      if (parsed.type === "hello") {
+        clearTimeout(timer);
+        resolve(parsed);
+      }
+      if (parsed.type === "ping") {
+        ws.send(JSON.stringify({ type: "pong", t: parsed.t }));
+      }
+    });
+    ws.on("error", reject);
+  });
+}
+
+function waitWsClose(ws: WebSocket, ms = 5_000): Promise<{ code: number }> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      ws.terminate();
+      reject(new Error("close timeout"));
+    }, ms);
+    ws.once("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code });
+    });
+  });
+}
+
+function unixRequest(
+  socketPath: string,
+  path: string,
+  method: string,
+  token: string,
+): Promise<{ status: number }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      { socketPath, path, method, headers: { Authorization: `Bearer ${token}` } },
+      (res) => {
+        res.resume();
+        res.on("end", () => resolve({ status: res.statusCode ?? 0 }));
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
 }
 
 async function waitFor(predicate: () => boolean, ms = 2_000): Promise<void> {

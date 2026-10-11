@@ -27,6 +27,12 @@ final class ScreenCaptureKitDesktopCaptureService: NSObject, DesktopCaptureServi
     private var retiringProducer: DesktopSCStreamPreviewProducer?
     private var liveViewProducer: DesktopSCStreamLiveViewProducer?
     private var retiringLiveViewProducer: DesktopSCStreamLiveViewProducer?
+    private var pendingLiveViewStart: (
+        offer: @Sendable (CVPixelBuffer, Date) -> Void,
+        ended: @Sendable () -> Void,
+        fps: Double,
+        scale: Double
+    )?
 
     func presentWindowPicker() {
         let picker = SCContentSharingPicker.shared
@@ -172,29 +178,16 @@ final class ScreenCaptureKitDesktopCaptureService: NSObject, DesktopCaptureServi
 
     func startLiveViewOnMain(
         offer: @escaping @Sendable (CVPixelBuffer, Date) -> Void,
+        ended: @escaping @Sendable () -> Void,
         fps: Double,
         scale: Double
     ) {
-        guard liveViewProducer == nil, retiringLiveViewProducer == nil else { return }
-        guard let filter = selectedFilter, let surface = selectedSurface else { return }
-        let producer = DesktopSCStreamLiveViewProducer(
-            surface: surface,
-            filter: filter,
-            configuration: Self.makeLiveViewConfiguration(filter: filter, fps: fps, scale: scale),
-            offer: offer,
-            surfaceUnavailable: { [weak self] unavailable in
-                Task { @MainActor in
-                    self?.delegate?.desktopCaptureServiceSurfaceBecameUnavailable(unavailable)
-                }
-            },
-            finished: { [weak self] producer in
-                Task { @MainActor in
-                    self?.liveViewProducerDidFinish(producer)
-                }
-            }
-        )
-        liveViewProducer = producer
-        producer.start()
+        let start = (offer: offer, ended: ended, fps: fps, scale: scale)
+        if liveViewProducer != nil || retiringLiveViewProducer != nil {
+            pendingLiveViewStart = start
+            return
+        }
+        beginLiveView(start)
     }
 
     func updateLiveViewOnMain(fps: Double, scale: Double) {
@@ -216,6 +209,44 @@ final class ScreenCaptureKitDesktopCaptureService: NSObject, DesktopCaptureServi
         if retiringLiveViewProducer === producer {
             retiringLiveViewProducer = nil
         }
+        if liveViewProducer == nil, retiringLiveViewProducer == nil, let pending = pendingLiveViewStart {
+            pendingLiveViewStart = nil
+            beginLiveView(pending)
+        }
+    }
+
+    private func beginLiveView(
+        _ start: (
+            offer: @Sendable (CVPixelBuffer, Date) -> Void,
+            ended: @Sendable () -> Void,
+            fps: Double,
+            scale: Double
+        )
+    ) {
+        guard let filter = selectedFilter, let surface = selectedSurface else {
+            start.ended()
+            return
+        }
+        let producer = DesktopSCStreamLiveViewProducer(
+            surface: surface,
+            offer: start.offer,
+            ended: start.ended,
+            surfaceUnavailable: { [weak self] unavailable in
+                Task { @MainActor in
+                    self?.delegate?.desktopCaptureServiceSurfaceBecameUnavailable(unavailable)
+                }
+            },
+            finished: { [weak self] producer in
+                Task { @MainActor in
+                    self?.liveViewProducerDidFinish(producer)
+                }
+            }
+        )
+        liveViewProducer = producer
+        producer.start(
+            filter: filter,
+            configuration: Self.makeLiveViewConfiguration(filter: filter, fps: start.fps, scale: start.scale)
+        )
     }
 
     private static func makeLiveViewConfiguration(
@@ -583,39 +614,37 @@ final class DesktopSCStreamPreviewProducer: NSObject, SCStreamOutput, SCStreamDe
 /// NV12 SCStream for the live-view encoder. No CGImage or CIContext.
 final class DesktopSCStreamLiveViewProducer: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     private let surface: CaptureSurface
-    private let filter: SCContentFilter
-    private var configuration: SCStreamConfiguration
     private let captureQueue = DispatchQueue(label: "dev.chenda.OppiMac.live-view-sck")
     private let offer: @Sendable (CVPixelBuffer, Date) -> Void
+    private let ended: @Sendable () -> Void
     private let surfaceUnavailable: @Sendable (CaptureSurface) -> Void
     private let finished: @Sendable (DesktopSCStreamLiveViewProducer) -> Void
     private let lock = NSLock()
     private var stream: SCStream?
+    private var configuration: SCStreamConfiguration?
     private var invalidated = false
 
     init(
         surface: CaptureSurface,
-        filter: SCContentFilter,
-        configuration: SCStreamConfiguration,
         offer: @escaping @Sendable (CVPixelBuffer, Date) -> Void,
+        ended: @escaping @Sendable () -> Void,
         surfaceUnavailable: @escaping @Sendable (CaptureSurface) -> Void,
         finished: @escaping @Sendable (DesktopSCStreamLiveViewProducer) -> Void
     ) {
         self.surface = surface
-        self.filter = filter
-        self.configuration = configuration
         self.offer = offer
+        self.ended = ended
         self.surfaceUnavailable = surfaceUnavailable
         self.finished = finished
         super.init()
     }
 
-    func start() {
+    func start(filter: SCContentFilter, configuration: SCStreamConfiguration) {
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         do {
             try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: captureQueue)
         } catch {
-            finished(self)
+            handleStartFailure()
             return
         }
         lock.lock()
@@ -625,12 +654,13 @@ final class DesktopSCStreamLiveViewProducer: NSObject, SCStreamOutput, SCStreamD
             finished(self)
             return
         }
+        self.configuration = configuration
         self.stream = stream
         lock.unlock()
         stream.startCapture { [weak self] error in
             guard let self else { return }
             if error != nil {
-                self.invalidateAndStop()
+                self.handleStartFailure()
             }
         }
     }
@@ -663,6 +693,38 @@ final class DesktopSCStreamLiveViewProducer: NSObject, SCStreamOutput, SCStreamD
         }
     }
 
+    func handleDidStop(_ error: Error) {
+        lock.lock()
+        if invalidated {
+            lock.unlock()
+            return
+        }
+        invalidated = true
+        self.stream = nil
+        lock.unlock()
+        let failure = ScreenCaptureKitDesktopCaptureService.mapError(error)
+        if failure == .unavailable {
+            surfaceUnavailable(surface)
+        }
+        ended()
+        finished(self)
+    }
+
+    func handleStartFailure() {
+        lock.lock()
+        if invalidated {
+            lock.unlock()
+            return
+        }
+        invalidated = true
+        let stream = self.stream
+        self.stream = nil
+        lock.unlock()
+        stream?.stopCapture { _ in }
+        ended()
+        finished(self)
+    }
+
     nonisolated func stream(
         _ stream: SCStream,
         didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
@@ -687,15 +749,7 @@ final class DesktopSCStreamLiveViewProducer: NSObject, SCStreamOutput, SCStreamD
     }
 
     nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
-        lock.lock()
-        invalidated = true
-        self.stream = nil
-        lock.unlock()
-        let failure = ScreenCaptureKitDesktopCaptureService.mapError(error)
-        if failure == .unavailable {
-            surfaceUnavailable(surface)
-        }
-        finished(self)
+        handleDidStop(error)
     }
 }
 
@@ -706,9 +760,14 @@ final class MainActorLiveViewCapturer: DesktopLiveViewCapturing, @unchecked Send
         self.service = service
     }
 
-    func startLiveView(offer: @escaping @Sendable (CVPixelBuffer, Date) -> Void, fps: Double, scale: Double) {
+    func startLiveView(
+        offer: @escaping @Sendable (CVPixelBuffer, Date) -> Void,
+        ended: @escaping @Sendable () -> Void,
+        fps: Double,
+        scale: Double
+    ) {
         Task { @MainActor in
-            self.service.startLiveViewOnMain(offer: offer, fps: fps, scale: scale)
+            self.service.startLiveViewOnMain(offer: offer, ended: ended, fps: fps, scale: scale)
         }
     }
 

@@ -10,7 +10,10 @@ import {
   DesktopCompanionViewStreamError,
   type DesktopCompanionViewStreamClient,
 } from "./desktop-companion-view-stream-client.js";
-import { DesktopViewRateController } from "./desktop-view-rate-controller.js";
+import {
+  DESKTOP_VIEW_HARD_BYTE_CAP,
+  DesktopViewRateController,
+} from "./desktop-view-rate-controller.js";
 import {
   CompanionFrameReader,
   encodeCompanionJson,
@@ -20,7 +23,6 @@ import {
   DESKTOP_VIEW_COMPANION_FRAME_JSON,
   DESKTOP_VIEW_COMPANION_FRAME_MEDIA,
   DESKTOP_VIEW_ERROR,
-  DESKTOP_VIEW_FEATURE_H264_AVCC,
   DESKTOP_VIEW_WIRE_VERSION,
   isDesktopViewFatalError,
   type DesktopViewCompanionControl,
@@ -83,11 +85,7 @@ export class DesktopViewStreamMux {
       if (pingTimer) clearInterval(pingTimer);
       if (watchdog) clearTimeout(watchdog);
       if (this.active === relay) this.active = undefined;
-      try {
-        relay.companion?.destroy();
-      } catch {
-        // Socket may already be closed.
-      }
+      relay.companion?.destroy();
       if (code !== undefined && message !== undefined) {
         this.sendJson(ws, {
           type: "error",
@@ -127,12 +125,12 @@ export class DesktopViewStreamMux {
     });
 
     const maybeEncode = (): void => {
-      if (relay.closed || encodeOutstanding || !sawHello) return;
+      if (relay.closed || !sawHello) return;
       if (waitTimer) {
         clearTimeout(waitTimer);
         waitTimer = undefined;
       }
-      const decision = controller.shouldEncode(now());
+      const decision = controller.shouldEncode(now(), !encodeOutstanding);
       if (decision.kind === "wait") {
         if (decision.afterMs !== undefined && decision.afterMs > 0) {
           waitTimer = setTimeout(maybeEncode, decision.afterMs);
@@ -157,6 +155,7 @@ export class DesktopViewStreamMux {
         keyframe: decision.command.keyframe || undefined,
       };
       writeCompanion(relay.companion, encodeCompanionJson(command));
+      maybeEncode();
     };
 
     void this.deps
@@ -170,7 +169,7 @@ export class DesktopViewStreamMux {
           return;
         }
         relay.companion = stream.socket;
-        const reader = new CompanionFrameReader();
+        const reader = new CompanionFrameReader(DESKTOP_VIEW_HARD_BYTE_CAP);
         const onBytes = (chunk: Buffer): void => {
           if (relay.closed) return;
           let frames;
@@ -188,6 +187,16 @@ export class DesktopViewStreamMux {
                 watchdog = undefined;
               }
               if (ws.readyState !== ws.OPEN) continue;
+              if (
+                frame.payload.length > DESKTOP_VIEW_HARD_BYTE_CAP ||
+                ws.bufferedAmount + frame.payload.length > DESKTOP_VIEW_HARD_BYTE_CAP
+              ) {
+                teardown(
+                  DESKTOP_VIEW_ERROR.backpressureCap,
+                  "Desktop view in-flight byte cap exceeded",
+                );
+                return;
+              }
               ws.send(frame.payload, { binary: true, compress: false });
               const frameId = frame.payload.length >= 8 ? frame.payload.readUInt32BE(4) : 0;
               controller.onFrameSent(frameId, frame.payload.length, now());
@@ -199,6 +208,14 @@ export class DesktopViewStreamMux {
             if (!parsed || typeof parsed.type !== "string") continue;
             if (parsed.type === "hello") {
               const hello = parsed as unknown as DesktopViewHello;
+              if (
+                hello.version !== DESKTOP_VIEW_WIRE_VERSION ||
+                !Array.isArray(hello.features) ||
+                hello.features.length === 0
+              ) {
+                teardown(DESKTOP_VIEW_ERROR.protocolFatal, "Desktop view hello is invalid");
+                return;
+              }
               if (hello.deviceId !== access.deviceId) {
                 teardown(
                   DESKTOP_VIEW_ERROR.grantNotBound,
@@ -210,10 +227,8 @@ export class DesktopViewStreamMux {
               relay.grantId = hello.grantId;
               const phoneHello: DesktopViewPhoneControl = {
                 type: "hello",
-                version: DESKTOP_VIEW_WIRE_VERSION,
-                features: hello.features?.length
-                  ? hello.features
-                  : [DESKTOP_VIEW_FEATURE_H264_AVCC],
+                version: hello.version,
+                features: hello.features,
                 grantId: hello.grantId,
                 deviceId: hello.deviceId,
                 surface: hello.surface,

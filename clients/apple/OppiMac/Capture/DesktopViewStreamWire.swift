@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 enum DesktopViewStreamWire {
@@ -57,18 +58,29 @@ enum DesktopViewStreamWire {
     static func writeMediaHeader(
         _ header: MediaHeader,
         payloadBytes: UInt32,
+        to base: UnsafeMutableRawPointer
+    ) {
+        base.storeBytes(of: version, toByteOffset: 0, as: UInt8.self)
+        base.storeBytes(of: header.keyframe ? flagKeyframe : 0, toByteOffset: 1, as: UInt8.self)
+        base.storeBytes(of: UInt8(mediaHeaderBytes), toByteOffset: 2, as: UInt8.self)
+        base.storeBytes(of: UInt8(0), toByteOffset: 3, as: UInt8.self)
+        writeUInt32BE(header.frameId, to: base, at: 4)
+        writeUInt64BE(header.capturedAtMs, to: base, at: 8)
+        writeUInt16BE(header.width, to: base, at: 16)
+        writeUInt16BE(header.height, to: base, at: 18)
+        writeUInt32BE(payloadBytes, to: base, at: 20)
+    }
+
+    static func writeMediaHeader(
+        _ header: MediaHeader,
+        payloadBytes: UInt32,
         into data: inout Data,
         at offset: Int
     ) {
-        data[offset] = version
-        data[offset + 1] = header.keyframe ? flagKeyframe : 0
-        data[offset + 2] = UInt8(mediaHeaderBytes)
-        data[offset + 3] = 0
-        writeUInt32BE(header.frameId, into: &data, at: offset + 4)
-        writeUInt64BE(header.capturedAtMs, into: &data, at: offset + 8)
-        writeUInt16BE(header.width, into: &data, at: offset + 16)
-        writeUInt16BE(header.height, into: &data, at: offset + 18)
-        writeUInt32BE(payloadBytes, into: &data, at: offset + 20)
+        data.withUnsafeMutableBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            writeMediaHeader(header, payloadBytes: payloadBytes, to: base.advanced(by: offset))
+        }
     }
 
     static func parseJSON(_ payload: Data) -> [String: Any]? {
@@ -106,21 +118,40 @@ enum DesktopViewStreamWireError: Error {
     case invalidLength
 }
 
+func writeUInt16BE(_ value: UInt16, to base: UnsafeMutableRawPointer, at offset: Int) {
+    var be = value.bigEndian
+    memcpy(base.advanced(by: offset), &be, 2)
+}
+
+func writeUInt32BE(_ value: UInt32, to base: UnsafeMutableRawPointer, at offset: Int) {
+    var be = value.bigEndian
+    memcpy(base.advanced(by: offset), &be, 4)
+}
+
+func writeUInt64BE(_ value: UInt64, to base: UnsafeMutableRawPointer, at offset: Int) {
+    writeUInt32BE(UInt32(value >> 32), to: base, at: offset)
+    writeUInt32BE(UInt32(value & 0xFFFF_FFFF), to: base, at: offset + 4)
+}
+
 func writeUInt16BE(_ value: UInt16, into data: inout Data, at offset: Int) {
-    data[offset] = UInt8(value >> 8)
-    data[offset + 1] = UInt8(value & 0xFF)
+    data.withUnsafeMutableBytes { raw in
+        guard let base = raw.baseAddress else { return }
+        writeUInt16BE(value, to: base, at: offset)
+    }
 }
 
 func writeUInt32BE(_ value: UInt32, into data: inout Data, at offset: Int) {
-    data[offset] = UInt8(value >> 24)
-    data[offset + 1] = UInt8((value >> 16) & 0xFF)
-    data[offset + 2] = UInt8((value >> 8) & 0xFF)
-    data[offset + 3] = UInt8(value & 0xFF)
+    data.withUnsafeMutableBytes { raw in
+        guard let base = raw.baseAddress else { return }
+        writeUInt32BE(value, to: base, at: offset)
+    }
 }
 
 func writeUInt64BE(_ value: UInt64, into data: inout Data, at offset: Int) {
-    writeUInt32BE(UInt32(value >> 32), into: &data, at: offset)
-    writeUInt32BE(UInt32(value & 0xFFFF_FFFF), into: &data, at: offset + 4)
+    data.withUnsafeMutableBytes { raw in
+        guard let base = raw.baseAddress else { return }
+        writeUInt64BE(value, to: base, at: offset)
+    }
 }
 
 func readUInt32BE(_ data: Data, at offset: Int) -> UInt32 {

@@ -18,6 +18,7 @@ protocol DesktopFrameEncoding: AnyObject {
         command: DesktopH264EncodeCommand,
         deliver: @escaping (Data) -> Void
     )
+    func prepare()
     func invalidate()
 }
 
@@ -49,6 +50,8 @@ private final class DesktopH264EncodedFrameBox {
 final class DesktopH264Encoder: DesktopFrameEncoding, @unchecked Sendable {
     private let lock = NSLock()
     private var session: VTCompressionSession?
+    private var generation: UInt64 = 0
+    private var accepting = false
     private var width = 0
     private var height = 0
     private var bitrate = 0
@@ -86,6 +89,11 @@ final class DesktopH264Encoder: DesktopFrameEncoding, @unchecked Sendable {
         var sessionToRetire: VTCompressionSession?
 
         lock.lock()
+        guard accepting else {
+            lock.unlock()
+            return
+        }
+        let encodeGeneration = generation
         if session == nil || frameWidth != width || frameHeight != height {
             sessionToRetire = session
             session = nil
@@ -104,6 +112,16 @@ final class DesktopH264Encoder: DesktopFrameEncoding, @unchecked Sendable {
                 return
             }
             lock.lock()
+            guard accepting, generation == encodeGeneration else {
+                lock.unlock()
+                VTCompressionSessionCompleteFrames(created, untilPresentationTimeStamp: .invalid)
+                VTCompressionSessionInvalidate(created)
+                if let sessionToRetire {
+                    VTCompressionSessionCompleteFrames(sessionToRetire, untilPresentationTimeStamp: .invalid)
+                    VTCompressionSessionInvalidate(sessionToRetire)
+                }
+                return
+            }
             let raced = session
             session = created
             width = frameWidth
@@ -160,6 +178,13 @@ final class DesktopH264Encoder: DesktopFrameEncoding, @unchecked Sendable {
         }
     }
 
+    func prepare() {
+        lock.lock()
+        generation &+= 1
+        accepting = true
+        lock.unlock()
+    }
+
     func completeFrames() {
         lock.lock()
         let current = session
@@ -171,6 +196,8 @@ final class DesktopH264Encoder: DesktopFrameEncoding, @unchecked Sendable {
 
     func invalidate() {
         lock.lock()
+        generation &+= 1
+        accepting = false
         let current = session
         session = nil
         lock.unlock()
@@ -324,42 +351,41 @@ final class DesktopH264Encoder: DesktopFrameEncoding, @unchecked Sendable {
         let blockLength = CMBlockBufferGetDataLength(dataBuffer)
         let payloadBytes = parameterSets.count + blockLength
         let companionLength = 1 + DesktopViewStreamWire.mediaHeaderBytes + payloadBytes
-        var data = Data(count: 4 + companionLength)
-        let copied = data.withUnsafeMutableBytes { raw -> Bool in
-            guard let base = raw.baseAddress else { return false }
-            var length = UInt32(companionLength).bigEndian
-            memcpy(base, &length, 4)
-            base.storeBytes(of: DesktopViewStreamWire.mediaType, toByteOffset: 4, as: UInt8.self)
-            var header = Data(count: DesktopViewStreamWire.mediaHeaderBytes)
-            DesktopViewStreamWire.writeMediaHeader(
-                DesktopViewStreamWire.MediaHeader(
-                    keyframe: keyframe,
-                    frameId: box.command.frameId,
-                    capturedAtMs: UInt64(box.capturedAt.timeIntervalSince1970 * 1000),
-                    width: UInt16(box.width),
-                    height: UInt16(box.height),
-                    payloadBytes: UInt32(payloadBytes)
-                ),
-                payloadBytes: UInt32(payloadBytes),
-                into: &header,
-                at: 0
+        let total = 4 + companionLength
+        guard let raw = malloc(total) else { return nil }
+        var length = UInt32(companionLength).bigEndian
+        memcpy(raw, &length, 4)
+        raw.storeBytes(of: DesktopViewStreamWire.mediaType, toByteOffset: 4, as: UInt8.self)
+        DesktopViewStreamWire.writeMediaHeader(
+            DesktopViewStreamWire.MediaHeader(
+                keyframe: keyframe,
+                frameId: box.command.frameId,
+                capturedAtMs: UInt64(box.capturedAt.timeIntervalSince1970 * 1000),
+                width: UInt16(box.width),
+                height: UInt16(box.height),
+                payloadBytes: UInt32(payloadBytes)
+            ),
+            payloadBytes: UInt32(payloadBytes),
+            to: raw.advanced(by: 5)
+        )
+        if !parameterSets.isEmpty {
+            parameterSets.copyBytes(
+                to: raw.advanced(by: 5 + DesktopViewStreamWire.mediaHeaderBytes).assumingMemoryBound(to: UInt8.self),
+                count: parameterSets.count
             )
-            header.withUnsafeBytes { bytes in
-                guard let src = bytes.baseAddress else { return }
-                base.advanced(by: 5).copyMemory(from: src, byteCount: DesktopViewStreamWire.mediaHeaderBytes)
-            }
-            if !parameterSets.isEmpty {
-                parameterSets.withUnsafeBytes { bytes in
-                    guard let src = bytes.baseAddress else { return }
-                    base.advanced(by: 5 + DesktopViewStreamWire.mediaHeaderBytes)
-                        .copyMemory(from: src, byteCount: parameterSets.count)
-                }
-            }
-            let dest = base.advanced(by: 5 + DesktopViewStreamWire.mediaHeaderBytes + parameterSets.count)
-            let copyStatus = CMBlockBufferCopyDataBytes(dataBuffer, atOffset: 0, dataLength: blockLength, destination: dest)
-            return copyStatus == noErr
         }
-        return copied ? data : nil
+        let dest = raw.advanced(by: 5 + DesktopViewStreamWire.mediaHeaderBytes + parameterSets.count)
+        let copyStatus = CMBlockBufferCopyDataBytes(
+            dataBuffer,
+            atOffset: 0,
+            dataLength: blockLength,
+            destination: dest
+        )
+        if copyStatus != noErr {
+            free(raw)
+            return nil
+        }
+        return Data(bytesNoCopy: raw, count: total, deallocator: .free)
     }
 
     private static func lengthPrefixedParameterSets(from format: CMFormatDescription) -> Data? {

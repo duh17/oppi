@@ -4,6 +4,7 @@ import {
   DESKTOP_VIEW_HARD_BYTE_CAP,
   DESKTOP_VIEW_LADDER,
   DESKTOP_VIEW_MIN_IN_FLIGHT_FRAMES,
+  DESKTOP_VIEW_RAMP_MIN_MS,
   DESKTOP_VIEW_STEP_UP_HOLD_MS,
   DESKTOP_VIEW_WINDOW_GAIN,
   DesktopViewRateController,
@@ -14,10 +15,34 @@ class FakeClock {
   now = (): number => this.nowMs;
 }
 
-function seeded(clock: FakeClock): DesktopViewRateController {
+function seeded(clock: FakeClock, rttMs = 20): DesktopViewRateController {
   const controller = new DesktopViewRateController({ now: clock.now });
-  controller.onRttSample(20);
+  controller.onRttSample(rttMs);
   return controller;
+}
+
+function encodeOrThrow(controller: DesktopViewRateController) {
+  const decision = controller.shouldEncode();
+  if (decision.kind !== "encode")
+    throw new Error(`expected encode, got ${JSON.stringify(decision)}`);
+  return decision;
+}
+
+function floodSlow(
+  controller: DesktopViewRateController,
+  clock: FakeClock,
+  rttMs: number,
+  durationMs: number,
+): void {
+  const start = clock.nowMs;
+  while (clock.nowMs - start < durationMs) {
+    clock.nowMs += 40;
+    const decision = controller.shouldEncode();
+    if (decision.kind !== "encode") continue;
+    controller.onFrameSent(decision.command.frameId, 1_000, clock.nowMs);
+    clock.nowMs += rttMs;
+    controller.onAck(decision.command.frameId);
+  }
 }
 
 describe("DesktopViewRateController", () => {
@@ -56,68 +81,128 @@ describe("DesktopViewRateController", () => {
     expect(controller.shouldEncode().kind).toBe("wait");
   });
 
-  it("steps up only after the step-up hold while the window has room", () => {
+  it("raises one rung per ramp interval even during the fps wait", () => {
     const clock = new FakeClock();
-    const controller = seeded(clock);
+    const controller = seeded(clock, 20);
     const first = controller.shouldEncode();
     expect(first.kind).toBe("encode");
     if (first.kind !== "encode") return;
+    expect(first.command.level).toBe(0);
     controller.onFrameSent(first.command.frameId, 1_000);
-    clock.nowMs += 10;
+    clock.nowMs += 5;
     controller.onAck(first.command.frameId);
-    expect(controller.snapshot().level).toBe(0);
 
-    clock.nowMs = 1_000 + 1000 / DESKTOP_VIEW_LADDER[0]!.fps;
-    const early = controller.shouldEncode();
-    expect(early.kind).toBe("encode");
-    if (early.kind !== "encode") return;
-    expect(early.command.level).toBe(0);
-    controller.onFrameSent(early.command.frameId, 1_000);
-    clock.nowMs += 10;
-    controller.onAck(early.command.frameId);
+    clock.nowMs = 1_000 + DESKTOP_VIEW_RAMP_MIN_MS;
+    const waiting = controller.shouldEncode();
+    expect(waiting.kind).toBe("wait");
+    if (waiting.kind !== "wait") return;
+    expect(waiting.afterMs).toBeLessThanOrEqual(DESKTOP_VIEW_RAMP_MIN_MS);
+    expect(controller.snapshot().level).toBe(1);
 
-    clock.nowMs = 1_000 + DESKTOP_VIEW_STEP_UP_HOLD_MS;
-    const late = controller.shouldEncode();
-    expect(late.kind).toBe("encode");
-    if (late.kind !== "encode") return;
-    expect(late.command.level).toBe(1);
-    expect(late.command.keyframe).toBe(false);
+    for (let level = 2; level <= 7; level += 1) {
+      clock.nowMs = 1_000 + level * DESKTOP_VIEW_RAMP_MIN_MS;
+      const decision = controller.shouldEncode();
+      if (decision.kind === "encode") {
+        controller.onFrameSent(decision.command.frameId, 1_000);
+        clock.nowMs += 5;
+        controller.onAck(decision.command.frameId);
+      }
+      expect(controller.snapshot().level).toBe(level);
+    }
+    expect(clock.nowMs - 1_000).toBeLessThanOrEqual(1_000);
   });
 
-  it("steps down when frame RTT exceeds the ping floor, at most once per RTT", () => {
+  it("does not reset the step-up clock when the window is full", () => {
     const clock = new FakeClock();
-    const controller = seeded(clock);
-    const first = controller.shouldEncode();
-    if (first.kind !== "encode") throw new Error("expected encode");
-    controller.onFrameSent(first.command.frameId, 1_000);
+    const controller = seeded(clock, 20);
+    const first = encodeOrThrow(controller);
+    controller.onFrameSent(first.command.frameId, 8_000);
+    clock.nowMs += 200;
+    const second = encodeOrThrow(controller);
+    controller.onFrameSent(second.command.frameId, 8_000);
+    expect(controller.shouldEncode().kind).toBe("wait");
+    const levelWhileFull = controller.snapshot().level;
+
+    clock.nowMs += 3 * DESKTOP_VIEW_RAMP_MIN_MS;
+    expect(controller.shouldEncode().kind).toBe("wait");
+    expect(controller.snapshot().level).toBe(levelWhileFull);
+
     clock.nowMs += 10;
     controller.onAck(first.command.frameId);
+    const afterOpen = controller.shouldEncode();
+    expect(afterOpen.kind).toBe("encode");
+    if (afterOpen.kind !== "encode") return;
+    expect(afterOpen.command.level).toBeGreaterThan(levelWhileFull);
+  });
 
-    clock.nowMs = 1_000 + DESKTOP_VIEW_STEP_UP_HOLD_MS;
-    const up = controller.shouldEncode();
-    if (up.kind !== "encode") throw new Error("expected encode");
-    expect(up.command.level).toBe(1);
-    controller.onFrameSent(up.command.frameId, 1_000);
+  it("does not down-step from one slow frame when the window min RTT is healthy", () => {
+    const clock = new FakeClock();
+    const controller = seeded(clock, 20);
+    const observeMs = Math.max(1_000, 2 * 20);
+    let nextId = 0;
+    const sendAck = (rtt: number): void => {
+      clock.nowMs += 1000 / 30;
+      const decision = controller.shouldEncode();
+      if (decision.kind !== "encode") return;
+      nextId = decision.command.frameId;
+      controller.onFrameSent(nextId, 1_000, clock.nowMs);
+      clock.nowMs += rtt;
+      controller.onAck(nextId);
+    };
+    sendAck(10);
+    for (let i = 0; i < 12; i += 1) sendAck(10);
+    clock.nowMs += 200;
+    sendAck(250);
+    expect(clock.nowMs - 1_000).toBeGreaterThanOrEqual(observeMs);
+    expect(controller.snapshot().level).toBeGreaterThan(0);
+    const levelAfterStall = controller.snapshot().level;
+    clock.nowMs += 20;
+    sendAck(10);
+    expect(controller.snapshot().level).toBe(levelAfterStall);
+  });
+
+  it("down-steps when the min frame RTT over the observe window stays above the threshold", () => {
+    const clock = new FakeClock();
+    const controller = seeded(clock, 20);
+    const first = encodeOrThrow(controller);
+    controller.onFrameSent(first.command.frameId, 1_000, clock.nowMs);
     clock.nowMs += 10;
-    controller.onAck(up.command.frameId);
+    controller.onAck(first.command.frameId);
+    clock.nowMs += 1_050;
+    floodSlow(controller, clock, 120, 1_600);
+    const afterFirstDown = controller.snapshot().level;
+    expect(afterFirstDown).toBeLessThan(7);
+    clock.nowMs += 5;
+    floodSlow(controller, clock, 120, 40);
+    expect(controller.snapshot().level).toBe(afterFirstDown);
+  });
 
-    clock.nowMs += DESKTOP_VIEW_STEP_UP_HOLD_MS;
-    const higher = controller.shouldEncode();
-    if (higher.kind !== "encode") throw new Error("expected encode");
-    expect(higher.command.level).toBe(2);
-    controller.onFrameSent(higher.command.frameId, 1_000);
+  it("doubles the hold only when the level actually decreases", () => {
+    const clock = new FakeClock();
+    const controller = seeded(clock, 20);
+    expect(controller.snapshot().stepUpHoldMs).toBe(DESKTOP_VIEW_STEP_UP_HOLD_MS);
+    const first = encodeOrThrow(controller);
+    controller.onFrameSent(first.command.frameId, 1_000, clock.nowMs);
+    clock.nowMs += 10;
+    controller.onAck(first.command.frameId);
+    clock.nowMs += 1_050;
+    floodSlow(controller, clock, 120, 1_600);
+    expect(controller.snapshot().level).toBeLessThan(7);
+    expect(controller.snapshot().stepUpHoldMs).toBe(2 * DESKTOP_VIEW_STEP_UP_HOLD_MS);
 
-    clock.nowMs += 250;
-    const extra = controller.shouldEncode();
-    if (extra.kind !== "encode") throw new Error("expected encode");
-    controller.onFrameSent(extra.command.frameId, 1_000);
-
-    clock.nowMs += 100;
-    controller.onAck(higher.command.frameId);
-    expect(controller.snapshot().level).toBe(1);
-    clock.nowMs += 1;
-    controller.onAck(extra.command.frameId);
-    expect(controller.snapshot().level).toBe(1);
+    let drops = 0;
+    while (controller.snapshot().level > 0 && drops < 10) {
+      drops += 1;
+      clock.nowMs += 1_050;
+      floodSlow(controller, clock, 120, 1_600);
+    }
+    expect(controller.snapshot().level).toBe(0);
+    const hold = controller.snapshot().stepUpHoldMs;
+    expect(hold).toBeGreaterThan(DESKTOP_VIEW_STEP_UP_HOLD_MS);
+    clock.nowMs += 1_050;
+    floodSlow(controller, clock, 120, 1_050);
+    expect(controller.snapshot().level).toBe(0);
+    expect(controller.snapshot().stepUpHoldMs).toBe(hold);
   });
 
   it("closes instead of exceeding the hard byte cap", () => {
@@ -130,18 +215,16 @@ describe("DesktopViewRateController", () => {
     expect(controller.shouldEncode()).toEqual({ kind: "close", reason: "hard_cap" });
   });
 
-  it("uses gain × delivered rate × ping RTT for the window", () => {
+  it("sizes the window from commanded bitrate × RTT, not ack rate", () => {
     const clock = new FakeClock();
-    const controller = seeded(clock);
-    const first = controller.shouldEncode();
-    if (first.kind !== "encode") throw new Error("expected encode");
-    controller.onFrameSent(first.command.frameId, 10_000, clock.nowMs);
+    const controller = seeded(clock, 20);
+    const first = encodeOrThrow(controller);
+    controller.onFrameSent(first.command.frameId, 10, clock.nowMs);
     clock.nowMs += 20;
     controller.onAck(first.command.frameId);
     const snap = controller.snapshot();
-    expect(snap.baseRttMs).toBe(20);
-    expect(snap.windowBytes).toBeGreaterThanOrEqual(
-      Math.ceil(DESKTOP_VIEW_WINDOW_GAIN * snap.deliveredBps * (snap.baseRttMs! / 1000)),
-    );
+    const commandedBps = DESKTOP_VIEW_LADDER[0]!.bitrate / 8;
+    const bdp = Math.ceil(DESKTOP_VIEW_WINDOW_GAIN * commandedBps * (20 / 1000));
+    expect(snap.windowBytes).toBe(Math.max(DESKTOP_VIEW_MIN_IN_FLIGHT_FRAMES * 10, bdp));
   });
 });

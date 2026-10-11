@@ -1,6 +1,7 @@
 import CoreVideo
 import Darwin
 import Foundation
+import ScreenCaptureKit
 import Testing
 @testable import Oppi
 
@@ -83,6 +84,108 @@ struct DesktopViewStreamRouteTests {
         let error = try waitForJSON(fd: stream.fd, leftover: &leftover) { $0["type"] as? String == "error" }
         #expect(error["code"] as? Int == DesktopViewStreamWire.errorGrantRevoked)
     }
+
+    @Test func captureStopOtherThanUnavailableEndsTheStream() throws {
+        let harness = try LiveSocketHarness()
+        defer { harness.tearDown() }
+        pickWindow(harness.session, harness.fake, makeSurface(windowID: 403, title: "Notes"))
+        harness.session.grantView()
+        _ = try harness.session.viewGrantGate.claim(deviceId: "phone-1", deviceName: "Chen iPhone").get()
+        let stream = try unixUpgrade(
+            socketPath: harness.socket.socketPath,
+            path: DesktopViewStreamWire.path,
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        defer { Darwin.close(stream.fd) }
+        var leftover = stream.leftover
+        _ = try waitForJSON(fd: stream.fd, leftover: &leftover) { $0["type"] as? String == "hello" }
+        #expect(harness.session.viewGrantStatusText.contains("live to Chen iPhone"))
+        harness.capturer.emitEnded()
+        let error = try waitForJSON(fd: stream.fd, leftover: &leftover) { $0["type"] as? String == "error" }
+        #expect(error["code"] as? Int == DesktopViewStreamWire.errorSurfaceGone)
+        #expect(!harness.session.viewGrantGate.isLiveDelivery)
+        #expect(!harness.session.viewGrantStatusText.contains("live to"))
+    }
+
+    @Test func lateEncodeAfterFailIsNotWrittenToANewAttach() throws {
+        let harness = try LiveSocketHarness()
+        defer { harness.tearDown() }
+        pickWindow(harness.session, harness.fake, makeSurface(windowID: 404, title: "Mail"))
+        harness.session.grantView()
+        _ = try harness.session.viewGrantGate.claim(deviceId: "phone-1", deviceName: "Chen iPhone").get()
+        harness.encoder.holdDeliveries = true
+        let first = try unixUpgrade(
+            socketPath: harness.socket.socketPath,
+            path: DesktopViewStreamWire.path,
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        var leftover = first.leftover
+        _ = try waitForJSON(fd: first.fd, leftover: &leftover) { $0["type"] as? String == "hello" }
+        guard let encode = DesktopViewStreamWire.jsonFrame([
+            "type": "encode",
+            "frameId": 1,
+            "bitrate": 400000,
+            "fps": 10,
+            "scale": 0.5,
+            "keyframe": true,
+        ]) else {
+            throw LiveStreamTestError.invalidResponse
+        }
+        try writeAll(fd: first.fd, data: encode)
+        harness.capturer.emit(try makeRouteNV12())
+        let encodedDeadline = Date().addingTimeInterval(1)
+        while Date() < encodedDeadline, harness.encoder.encodedFrameIds != [1] {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        #expect(harness.encoder.encodedFrameIds == [1])
+        harness.live.stop()
+        _ = try waitForJSON(fd: first.fd, leftover: &leftover) { $0["type"] as? String == "error" }
+
+        let second = try unixUpgrade(
+            socketPath: harness.socket.socketPath,
+            path: DesktopViewStreamWire.path,
+            headers: [DesktopViewGrantHTTP.deviceID: "phone-1"]
+        )
+        defer { Darwin.close(second.fd) }
+        var secondLeftover = second.leftover
+        _ = try waitForJSON(fd: second.fd, leftover: &secondLeftover) { $0["type"] as? String == "hello" }
+        harness.encoder.releaseHeld()
+        var timeout = timeval(tv_sec: 0, tv_usec: 150_000)
+        _ = setsockopt(second.fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        var secondSawMedia = false
+        do {
+            let media = try waitForMedia(fd: second.fd, leftover: &secondLeftover)
+            secondSawMedia = !media.isEmpty
+        } catch {
+            secondSawMedia = false
+        }
+        #expect(!secondSawMedia)
+    }
+
+    @Test func scStreamStopWithNonUnavailableErrorEndsTheProducer() {
+        let flags = StopFlags()
+        let producer = DesktopSCStreamLiveViewProducer(
+            surface: makeSurface(windowID: 405, title: "Notes"),
+            offer: { _, _ in },
+            ended: { flags.ended = true },
+            surfaceUnavailable: { _ in flags.unavailable = true },
+            finished: { _ in flags.finished = true }
+        )
+        let error = NSError(
+            domain: SCStreamErrorDomain,
+            code: SCStreamError.Code.userStopped.rawValue
+        )
+        producer.handleDidStop(error)
+        #expect(flags.ended)
+        #expect(flags.finished)
+        #expect(!flags.unavailable)
+    }
+}
+
+private final class StopFlags: @unchecked Sendable {
+    var ended = false
+    var unavailable = false
+    var finished = false
 }
 
 @MainActor
@@ -143,6 +246,9 @@ final class FakeDesktopFrameEncoder: DesktopFrameEncoding, @unchecked Sendable {
         return commands.map(\.frameId)
     }
 
+    var holdDeliveries = false
+    private var held: [(Data, (Data) -> Void)] = []
+
     func encode(
         buffer: CVPixelBuffer,
         capturedAt: Date,
@@ -151,7 +257,6 @@ final class FakeDesktopFrameEncoder: DesktopFrameEncoding, @unchecked Sendable {
     ) {
         lock.lock()
         commands.append(command)
-        lock.unlock()
         let media = DesktopViewStreamWire.mediaCompanionFrame(
             header: .init(
                 keyframe: command.keyframe,
@@ -163,23 +268,50 @@ final class FakeDesktopFrameEncoder: DesktopFrameEncoding, @unchecked Sendable {
             ),
             avcc: Data(repeating: 0xAA, count: 8)
         )
+        if holdDeliveries {
+            held.append((media, deliver))
+            lock.unlock()
+            return
+        }
+        lock.unlock()
         deliver(media)
     }
 
+    func prepare() {}
+
     func invalidate() {}
+
+    func releaseHeld() {
+        lock.lock()
+        let pending = held
+        held = []
+        lock.unlock()
+        for (media, deliver) in pending {
+            deliver(media)
+        }
+    }
 }
 
 final class FakeLiveViewCapturer: DesktopLiveViewCapturing, @unchecked Sendable {
     private let lock = NSLock()
     private var offer: (@Sendable (CVPixelBuffer, Date) -> Void)?
+    private var ended: (@Sendable () -> Void)?
     private(set) var lastFps: Double?
     private(set) var lastScale: Double?
+    private(set) var startCount = 0
 
-    func startLiveView(offer: @escaping @Sendable (CVPixelBuffer, Date) -> Void, fps: Double, scale: Double) {
+    func startLiveView(
+        offer: @escaping @Sendable (CVPixelBuffer, Date) -> Void,
+        ended: @escaping @Sendable () -> Void,
+        fps: Double,
+        scale: Double
+    ) {
         lock.lock()
         self.offer = offer
+        self.ended = ended
         lastFps = fps
         lastScale = scale
+        startCount += 1
         lock.unlock()
     }
 
@@ -193,6 +325,7 @@ final class FakeLiveViewCapturer: DesktopLiveViewCapturing, @unchecked Sendable 
     func stopLiveView() {
         lock.lock()
         offer = nil
+        ended = nil
         lock.unlock()
     }
 
@@ -201,6 +334,13 @@ final class FakeLiveViewCapturer: DesktopLiveViewCapturing, @unchecked Sendable 
         let offer = self.offer
         lock.unlock()
         offer?(buffer, capturedAt)
+    }
+
+    func emitEnded() {
+        lock.lock()
+        let ended = self.ended
+        lock.unlock()
+        ended?()
     }
 }
 

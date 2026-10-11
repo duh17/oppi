@@ -14,7 +14,8 @@ import {
   DESKTOP_VIEW_WIRE_VERSION,
 } from "./types/protocol.js";
 
-export const DESKTOP_VIEW_MAX_FRAME_BYTES = 16 * 1024 * 1024;
+/** Companion length-prefix max; matches the in-flight hard cap. */
+export const DESKTOP_VIEW_MAX_FRAME_BYTES = 2 * 1024 * 1024;
 
 export const DESKTOP_VIEW_FLAG_KEYFRAME = 1 << 0;
 
@@ -57,6 +58,8 @@ export class CompanionFrameReader {
   private chunks: Buffer[] = [];
   private total = 0;
 
+  constructor(private readonly maxFrameBytes = DESKTOP_VIEW_MAX_FRAME_BYTES) {}
+
   push(chunk: Buffer): CompanionFrame[] {
     if (chunk.length === 0) return [];
     this.chunks.push(chunk);
@@ -64,7 +67,7 @@ export class CompanionFrameReader {
     const frames: CompanionFrame[] = [];
     while (this.total >= 5) {
       const length = this.peekUInt32BE();
-      if (!Number.isSafeInteger(length) || length < 1 || length > DESKTOP_VIEW_MAX_FRAME_BYTES) {
+      if (!Number.isSafeInteger(length) || length < 1 || length > this.maxFrameBytes) {
         throw new Error("Desktop view companion frame length is invalid");
       }
       const frameSize = 4 + length;

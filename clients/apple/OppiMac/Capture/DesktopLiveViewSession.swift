@@ -15,7 +15,12 @@ protocol DesktopLiveViewStreaming: AnyObject {
 }
 
 protocol DesktopLiveViewCapturing: AnyObject {
-    func startLiveView(offer: @escaping @Sendable (CVPixelBuffer, Date) -> Void, fps: Double, scale: Double)
+    func startLiveView(
+        offer: @escaping @Sendable (CVPixelBuffer, Date) -> Void,
+        ended: @escaping @Sendable () -> Void,
+        fps: Double,
+        scale: Double
+    )
     func updateLiveView(fps: Double, scale: Double)
     func stopLiveView()
 }
@@ -51,6 +56,7 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
     private let lock = NSLock()
     private let writeLock = NSLock()
     private var fd: Int32 = -1
+    private var generation: UInt64 = 0
     private var pending: DesktopH264EncodeCommand?
     private var held: (buffer: CVPixelBuffer, capturedAt: Date)?
     private var lastEncodedCapturedAt: Date?
@@ -98,6 +104,8 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
 
         lock.lock()
         self.fd = fd
+        generation &+= 1
+        let attachedGeneration = generation
         stopped = false
         pending = nil
         held = nil
@@ -105,9 +113,12 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
         lastFps = 30
         lastScale = 1
         lock.unlock()
+        encoder.prepare()
         grantGate.setLiveDelivery(true)
         capturer?.startLiveView(offer: { [weak self] buffer, capturedAt in
             self?.offer(buffer, capturedAt: capturedAt)
+        }, ended: { [weak self] in
+            self?.fail(code: DesktopViewStreamWire.errorSurfaceGone, message: "Desktop view surface gone")
         }, fps: 30, scale: 1)
         scheduleExpiry(grant.expiresAt)
 
@@ -124,11 +135,11 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
             "expiresAt": DesktopStillShareHTTP.date(grant.expiresAt),
         ]
         if let frame = DesktopViewStreamWire.jsonFrame(hello) {
-            writeAll(frame)
+            writeAll(frame, generation: attachedGeneration)
         }
 
         readQueue.async { [weak self] in
-            self?.readLoop(expectedDevice: deviceId)
+            self?.readLoop(expectedDevice: deviceId, fd: fd, generation: attachedGeneration)
         }
         return .success(())
     }
@@ -145,40 +156,39 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
         }
         held = (buffer, capturedAt)
         let command = takePendingLocked(allowStale: false)
+        let gen = generation
         lock.unlock()
         if let command {
-            startEncode(buffer: buffer, capturedAt: capturedAt, command: command)
+            startEncode(buffer: buffer, capturedAt: capturedAt, command: command, generation: gen)
         }
     }
 
-    private func readLoop(expectedDevice: String) {
+    private func readLoop(expectedDevice: String, fd attachedFd: Int32, generation attachedGeneration: UInt64) {
         var chunk = [UInt8](repeating: 0, count: 16_384)
         let reader = DesktopViewCompanionReader()
         while true {
-            lock.lock()
-            let current = fd
-            let isStopped = stopped
-            lock.unlock()
-            if isStopped || current < 0 { return }
             if let grant = grantGate.current() {
                 if grant.deviceId != expectedDevice {
                     fail(code: DesktopViewStreamWire.errorGrantRevoked, message: "View grant revoked")
-                    return
                 }
             } else {
                 fail(code: DesktopViewStreamWire.errorGrantExpired, message: "View grant expired")
-                return
             }
             let count = chunk.withUnsafeMutableBytes { raw in
-                Darwin.read(current, raw.baseAddress, raw.count)
+                Darwin.read(attachedFd, raw.baseAddress, raw.count)
             }
-            if count < 0 {
-                if errno == EINTR { continue }
-                fail(code: DesktopViewStreamWire.errorSurfaceGone, message: "Desktop view companion closed")
-                return
-            }
-            if count == 0 {
-                fail(code: DesktopViewStreamWire.errorSurfaceGone, message: "Desktop view companion closed")
+            if count < 0, errno == EINTR { continue }
+
+            lock.lock()
+            let stillMine = generation == attachedGeneration
+            let isStopped = stopped
+            lock.unlock()
+
+            if count <= 0 || isStopped || !stillMine {
+                if stillMine, !isStopped {
+                    fail(code: DesktopViewStreamWire.errorSurfaceGone, message: "Desktop view companion closed")
+                }
+                Darwin.close(attachedFd)
                 return
             }
             let frames: [(type: UInt8, payload: Data)]
@@ -186,15 +196,15 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
                 frames = try reader.push(Data(chunk.prefix(count)))
             } catch {
                 fail(code: DesktopViewStreamWire.errorProtocolFatal, message: "Desktop view framing is invalid")
-                return
+                continue
             }
             for frame in frames {
-                handle(frame: frame)
+                handle(frame: frame, generation: attachedGeneration)
             }
         }
     }
 
-    private func handle(frame: (type: UInt8, payload: Data)) {
+    private func handle(frame: (type: UInt8, payload: Data), generation attachedGeneration: UInt64) {
         guard frame.type == DesktopViewStreamWire.jsonType,
               let json = DesktopViewStreamWire.parseJSON(frame.payload),
               let type = json["type"] as? String
@@ -210,6 +220,10 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
                 keyframe: json["keyframe"] as? Bool ?? false
             )
             lock.lock()
+            guard !stopped, generation == attachedGeneration else {
+                lock.unlock()
+                return
+            }
             let fpsChanged = lastFps != command.fps
             let scaleChanged = lastScale != command.scale
             lastFps = command.fps
@@ -217,12 +231,13 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
             pending = command
             let taken = takePendingLocked(allowStale: command.keyframe)
             let frame = held
+            let gen = generation
             lock.unlock()
             if fpsChanged || scaleChanged {
                 capturer?.updateLiveView(fps: command.fps, scale: command.scale)
             }
             if let taken, let frame {
-                startEncode(buffer: frame.buffer, capturedAt: frame.capturedAt, command: taken)
+                startEncode(buffer: frame.buffer, capturedAt: frame.capturedAt, command: taken, generation: gen)
             } else {
                 armIdleRefresh()
             }
@@ -252,17 +267,27 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
 
     private func idleEncode() {
         lock.lock()
+        if stopped {
+            lock.unlock()
+            return
+        }
         let taken = takePendingLocked(allowStale: true)
         let held = self.held
+        let gen = generation
         lock.unlock()
         if let taken, let held {
-            startEncode(buffer: held.buffer, capturedAt: held.capturedAt, command: taken)
+            startEncode(buffer: held.buffer, capturedAt: held.capturedAt, command: taken, generation: gen)
         }
     }
 
-    private func startEncode(buffer: CVPixelBuffer, capturedAt: Date, command: DesktopH264EncodeCommand) {
+    private func startEncode(
+        buffer: CVPixelBuffer,
+        capturedAt: Date,
+        command: DesktopH264EncodeCommand,
+        generation expected: UInt64
+    ) {
         encoder.encode(buffer: buffer, capturedAt: capturedAt, command: command) { [weak self] data in
-            self?.writeAll(data)
+            self?.writeAll(data, generation: expected)
         }
     }
 
@@ -285,6 +310,7 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
         let current = fd
         let already = stopped
         stopped = true
+        generation &+= 1
         fd = -1
         pending = nil
         held = nil
@@ -307,17 +333,17 @@ final class DesktopLiveViewSession: DesktopLiveViewStreaming, @unchecked Sendabl
                 writeAll(frame, fd: current)
             }
             Darwin.shutdown(current, SHUT_RDWR)
-            Darwin.close(current)
         }
     }
 
-    private func writeAll(_ data: Data, fd override: Int32? = nil) {
+    private func writeAll(_ data: Data, generation expected: UInt64? = nil, fd override: Int32? = nil) {
         writeLock.lock()
         lock.lock()
         let current = override ?? fd
+        let matches = override != nil || (expected != nil && expected == generation)
         lock.unlock()
         var failed = false
-        if current >= 0 {
+        if matches, current >= 0 {
             var offset = 0
             while offset < data.count {
                 let written = data.withUnsafeBytes { raw -> Int in

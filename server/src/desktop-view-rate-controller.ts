@@ -1,9 +1,9 @@
 /**
  * Transport-neutral live-view rate controller.
  *
- * Window: max(minInFlightFrames × lastFrameBytes, gain × deliveredRate × baseRtt).
- * Ping RTT is the only baseRtt source (10 s windowed min). Frame-ack RTT over
- * that floor is the congestion signal. Ladder drops fps before resolution.
+ * Window: max(2 × frameBytes, 1.5 × commandedBitrate/8 × baseRtt).
+ * Ping RTT is the only baseRtt source (10 s windowed min). Down-step uses the
+ * minimum frame RTT over max(1 s, 2 × baseRtt). Ladder drops fps before resolution.
  */
 
 export type DesktopViewQualityRung = {
@@ -32,7 +32,7 @@ export const DESKTOP_VIEW_PING_RTT_WINDOW_MS = 10_000;
 export const DESKTOP_VIEW_STEP_UP_HOLD_MS = 1_000;
 export const DESKTOP_VIEW_STEP_UP_HOLD_MAX_MS = 8_000;
 export const DESKTOP_VIEW_CLEAN_RESET_MS = 5_000;
-export const DESKTOP_VIEW_RATE_WINDOW_MS = 1000;
+export const DESKTOP_VIEW_RAMP_MIN_MS = 50;
 
 export type DesktopViewEncodeCommand = {
   frameId: number;
@@ -58,7 +58,6 @@ export type DesktopViewRateSnapshot = {
   scale: number;
   bitrate: number;
   baseRttMs: number | undefined;
-  deliveredBps: number;
   inFlightBytes: number;
   windowBytes: number;
   stepUpHoldMs: number;
@@ -69,12 +68,12 @@ type InFlightFrame = {
   sentAt: number;
 };
 
-type AckSample = {
+type PingSample = {
   at: number;
-  bytes: number;
+  rtt: number;
 };
 
-type PingSample = {
+type FrameRttSample = {
   at: number;
   rtt: number;
 };
@@ -85,15 +84,17 @@ export class DesktopViewRateController {
   private readonly pingRtts: PingSample[] = [];
   private baseRttMs: number | undefined;
   private readonly inFlight = new Map<number, InFlightFrame>();
-  private readonly acks: AckSample[] = [];
+  private readonly frameRtts: FrameRttSample[] = [];
   private lastFrameBytes = 0;
   private healthySince: number | undefined;
   private sentAny = false;
   private lastScale: number;
   private lastEncodeAt = 0;
+  private lastStepUpAt: number | undefined;
   private stepUpHoldMs = DESKTOP_VIEW_STEP_UP_HOLD_MS;
   private lastStepDownAt: number | undefined;
   private lastCongestedAt: number | undefined;
+  private hasDownStepped = false;
 
   constructor(
     private readonly clock: DesktopViewRateClock,
@@ -124,18 +125,34 @@ export class DesktopViewRateController {
     const pending = this.inFlight.get(frameId);
     if (!pending) return;
     this.inFlight.delete(frameId);
-    this.acks.push({ at: now, bytes: pending.bytes });
     const base = this.baseRttMs;
     if (base === undefined) return;
     const frameRtt = now - pending.sentAt;
+    this.frameRtts.push({ at: now, rtt: frameRtt });
+    const observeMs = Math.max(1_000, 2 * base);
+    while (this.frameRtts.length > 0) {
+      const oldest = this.frameRtts[0];
+      if (!oldest || now - oldest.at <= observeMs) break;
+      this.frameRtts.shift();
+    }
     const threshold = base + Math.max(50, 0.5 * base);
-    if (frameRtt > threshold) {
+    const oldest = this.frameRtts[0];
+    const span = oldest ? now - oldest.at : 0;
+    const minRtt = this.frameRtts.reduce(
+      (min, sample) => Math.min(min, sample.rtt),
+      Number.POSITIVE_INFINITY,
+    );
+    if (this.frameRtts.length >= 2 && span >= observeMs * 0.8 && minRtt > threshold) {
       this.lastCongestedAt = now;
       this.healthySince = undefined;
       if (this.lastStepDownAt === undefined || now - this.lastStepDownAt >= base) {
-        if (this.level > 0) this.level -= 1;
+        if (this.level > 0) {
+          this.level -= 1;
+          this.stepUpHoldMs = Math.min(DESKTOP_VIEW_STEP_UP_HOLD_MAX_MS, this.stepUpHoldMs * 2);
+          this.hasDownStepped = true;
+          this.frameRtts.length = 0;
+        }
         this.lastStepDownAt = now;
-        this.stepUpHoldMs = Math.min(DESKTOP_VIEW_STEP_UP_HOLD_MAX_MS, this.stepUpHoldMs * 2);
       }
       return;
     }
@@ -153,15 +170,16 @@ export class DesktopViewRateController {
     return total;
   }
 
-  windowBytes(now = this.clock.now()): number {
+  windowBytes(): number {
     const estimated = this.estimatedFrameBytes();
     const minWindow = DESKTOP_VIEW_MIN_IN_FLIGHT_FRAMES * estimated;
     const rttSec = (this.baseRttMs ?? 0) / 1000;
-    const bdp = DESKTOP_VIEW_WINDOW_GAIN * this.deliveredBps(now) * rttSec;
+    const commandedBps = this.rung().bitrate / 8;
+    const bdp = DESKTOP_VIEW_WINDOW_GAIN * commandedBps * rttSec;
     return Math.max(minWindow, Math.ceil(bdp));
   }
 
-  shouldEncode(now = this.clock.now()): DesktopViewRateDecision {
+  shouldEncode(now = this.clock.now(), allowEncode = true): DesktopViewRateDecision {
     if (this.baseRttMs === undefined) return { kind: "wait" };
 
     const estimated = this.estimatedFrameBytes();
@@ -170,24 +188,17 @@ export class DesktopViewRateController {
       return { kind: "close", reason: "hard_cap" };
     }
 
-    const window = this.windowBytes(now);
-    if (inFlight >= window) {
-      this.healthySince = undefined;
-      return { kind: "wait" };
-    }
-
-    if (this.healthySince === undefined) this.healthySince = now;
-    if (now - this.healthySince >= this.stepUpHoldMs) {
-      if (this.level < this.ladder.length - 1) {
-        this.level += 1;
-        this.healthySince = now;
-      }
+    const window = this.windowBytes();
+    if (inFlight < window) this.maybeStepUp(now);
+    if (!allowEncode || inFlight >= window) {
+      return { kind: "wait", afterMs: this.wakeMs(now) };
     }
 
     const rung = this.rung();
     const minInterval = 1000 / rung.fps;
     if (this.lastEncodeAt > 0 && now - this.lastEncodeAt < minInterval) {
-      return { kind: "wait", afterMs: minInterval - (now - this.lastEncodeAt) };
+      const fpsWait = minInterval - (now - this.lastEncodeAt);
+      return { kind: "wait", afterMs: Math.min(fpsWait, this.wakeMs(now)) };
     }
     const keyframe = !this.sentAny || rung.scale !== this.lastScale;
     this.lastScale = rung.scale;
@@ -207,7 +218,7 @@ export class DesktopViewRateController {
     };
   }
 
-  snapshot(now = this.clock.now()): DesktopViewRateSnapshot {
+  snapshot(): DesktopViewRateSnapshot {
     const rung = this.rung();
     return {
       level: rung.level,
@@ -215,11 +226,50 @@ export class DesktopViewRateController {
       scale: rung.scale,
       bitrate: rung.bitrate,
       baseRttMs: this.baseRttMs,
-      deliveredBps: this.deliveredBps(now),
       inFlightBytes: this.inFlightBytes(),
-      windowBytes: this.windowBytes(now),
+      windowBytes: this.windowBytes(),
       stepUpHoldMs: this.stepUpHoldMs,
     };
+  }
+
+  private maybeStepUp(now: number): void {
+    if (this.level >= this.ladder.length - 1) return;
+    if (!this.hasDownStepped) {
+      const interval = Math.max(
+        DESKTOP_VIEW_RAMP_MIN_MS,
+        this.baseRttMs ?? DESKTOP_VIEW_RAMP_MIN_MS,
+      );
+      if (this.lastStepUpAt === undefined) {
+        this.lastStepUpAt = now;
+        return;
+      }
+      if (now - this.lastStepUpAt >= interval) {
+        this.level += 1;
+        this.lastStepUpAt = now;
+      }
+      return;
+    }
+    if (this.healthySince === undefined) this.healthySince = now;
+    if (now - this.healthySince >= this.stepUpHoldMs) {
+      this.level += 1;
+      this.healthySince = now;
+    }
+  }
+
+  private wakeMs(now: number): number {
+    if (!this.hasDownStepped) {
+      const interval = Math.max(
+        DESKTOP_VIEW_RAMP_MIN_MS,
+        this.baseRttMs ?? DESKTOP_VIEW_RAMP_MIN_MS,
+      );
+      if (this.lastStepUpAt === undefined) return interval;
+      return Math.max(1, interval - (now - this.lastStepUpAt));
+    }
+    const holdLeft =
+      this.healthySince === undefined
+        ? this.stepUpHoldMs
+        : this.stepUpHoldMs - (now - this.healthySince);
+    return Math.max(1, holdLeft);
   }
 
   private rung(): DesktopViewQualityRung {
@@ -233,22 +283,5 @@ export class DesktopViewRateController {
     if (this.lastFrameBytes > 0) return this.lastFrameBytes;
     const rung = this.rung();
     return Math.max(1, Math.ceil(rung.bitrate / 8 / rung.fps));
-  }
-
-  private deliveredBps(now: number): number {
-    const start = now - DESKTOP_VIEW_RATE_WINDOW_MS;
-    let i = 0;
-    while (i < this.acks.length) {
-      const sample = this.acks[i];
-      if (!sample || sample.at >= start) break;
-      i += 1;
-    }
-    if (i > 0) this.acks.splice(0, i);
-    let bytes = 0;
-    for (const sample of this.acks) bytes += sample.bytes;
-    if (bytes === 0) return 0;
-    const spanMs = Math.max(1, now - (this.acks[0]?.at ?? now));
-    const windowMs = Math.min(DESKTOP_VIEW_RATE_WINDOW_MS, spanMs);
-    return (bytes * 1000) / windowMs;
   }
 }

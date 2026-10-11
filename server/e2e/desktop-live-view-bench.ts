@@ -75,6 +75,11 @@ type RunResult = {
   controlPingP50: number;
   controlPingP95: number;
   revokeToCloseMs: number;
+  l7AfterFirstMs: number;
+  postRamp: Map<number, number>;
+  postRampTotalMs: number;
+  cascadeDown: boolean;
+  verdicts: Array<{ target: string; pass: boolean; detail: string }>;
 };
 
 async function main(): Promise<void> {
@@ -88,6 +93,11 @@ async function main(): Promise<void> {
     results.push(await runPreset(preset));
   }
   printTable(results);
+  const failed = results.flatMap((row) => row.verdicts.filter((item) => !item.pass));
+  if (failed.length > 0) {
+    for (const item of failed) console.error(`FAIL ${item.target}: ${item.detail}`);
+    process.exitCode = 1;
+  }
 }
 
 async function runPreset(preset: Preset): Promise<RunResult> {
@@ -204,10 +214,16 @@ async function runPreset(preset: Preset): Promise<RunResult> {
   if (previousTls === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
   else process.env.NODE_TLS_REJECT_UNAUTHORIZED = previousTls;
 
-  const spanMs = Math.max(1, (lastArrival || Date.now()) - (firstFrameAt || Date.now()));
+  const endAt = lastArrival || Date.now();
+  const spanMs = Math.max(1, endAt - (firstFrameAt || Date.now()));
   const spanSec = spanMs / 1000;
   const gaps = arrivals.filter((at, i) => i > 0 && at - arrivals[i - 1]! > 100).length;
-  return {
+  const firstL7 = levelSamples.find((sample) => sample.level === 7);
+  const l7AfterFirstMs = firstFrameAt && firstL7 ? Math.max(0, firstL7.at - firstFrameAt) : -1;
+  const postRampStart = firstFrameAt ? firstFrameAt + 1_000 : endAt;
+  const postRamp = dwellByLevel(levelSamples, postRampStart, endAt);
+  const postRampTotalMs = [...postRamp.values()].reduce((sum, ms) => sum + ms, 0);
+  const result: RunResult = {
     preset: preset.name,
     ttffMs: firstFrameAt ? firstFrameAt - openedAt : -1,
     fps: round(arrivals.length / spanSec, 2),
@@ -216,11 +232,18 @@ async function runPreset(preset: Preset): Promise<RunResult> {
     ageMax: ages.length ? Math.max(...ages) : -1,
     gapsOver100: gaps,
     bitrateKbps: round((bytes * 8) / spanSec / 1000, 1),
-    ladder: summarizeLadder(levelSamples, lastArrival || Date.now()),
+    ladder: summarizeLadder(levelSamples, endAt),
     controlPingP50: percentile(controlPings, 0.5),
     controlPingP95: percentile(controlPings, 0.95),
     revokeToCloseMs: closedAt ? closedAt - revokeAt : -1,
+    l7AfterFirstMs,
+    postRamp,
+    postRampTotalMs,
+    cascadeDown: hasCascadeDown(levelSamples, 2_000),
+    verdicts: [],
   };
+  result.verdicts = evaluateTargets(result);
+  return result;
 }
 
 function listenCompanion(
@@ -358,9 +381,13 @@ function printTable(results: RunResult[]): void {
     "ctrl_p50",
     "ctrl_p95",
     "revoke_ms",
+    "targets",
   ];
   console.error(header.join("\t"));
   for (const row of results) {
+    const targets = row.verdicts
+      .map((item) => `${item.pass ? "PASS" : "FAIL"}:${item.target}`)
+      .join(",");
     const line = [
       row.preset,
       row.ttffMs,
@@ -374,12 +401,99 @@ function printTable(results: RunResult[]): void {
       row.controlPingP50,
       row.controlPingP95,
       row.revokeToCloseMs,
+      targets,
     ].join("\t");
     console.error(line);
     console.log(
-      `METRIC ${row.preset}_ttff_ms=${row.ttffMs}\nMETRIC ${row.preset}_fps=${row.fps}\nMETRIC ${row.preset}_age_p95_ms=${row.ageP95}\nMETRIC ${row.preset}_revoke_ms=${row.revokeToCloseMs}`,
+      `METRIC ${row.preset}_ttff_ms=${row.ttffMs}\nMETRIC ${row.preset}_fps=${row.fps}\nMETRIC ${row.preset}_age_p95_ms=${row.ageP95}\nMETRIC ${row.preset}_ctrl_p95_ms=${row.controlPingP95}\nMETRIC ${row.preset}_revoke_ms=${row.revokeToCloseMs}`,
     );
   }
+}
+
+function dwellByLevel(
+  samples: Array<{ at: number; level: number }>,
+  startAt: number,
+  endAt: number,
+): Map<number, number> {
+  const dwell = new Map<number, number>();
+  for (let i = 0; i < samples.length; i += 1) {
+    const current = samples[i]!;
+    const nextAt = samples[i + 1]?.at ?? endAt;
+    const from = Math.max(current.at, startAt);
+    const to = Math.min(nextAt, endAt);
+    const ms = Math.max(0, to - from);
+    if (ms === 0) continue;
+    dwell.set(current.level, (dwell.get(current.level) ?? 0) + ms);
+  }
+  return dwell;
+}
+
+function bandShare(dwell: Map<number, number>, total: number, levels: number[]): number {
+  if (total <= 0) return 0;
+  let ms = 0;
+  for (const level of levels) ms += dwell.get(level) ?? 0;
+  return ms / total;
+}
+
+function hasCascadeDown(samples: Array<{ at: number; level: number }>, windowMs: number): boolean {
+  for (let i = 1; i < samples.length; i += 1) {
+    const previous = samples[i - 1]!;
+    const current = samples[i]!;
+    if (current.level >= previous.level) continue;
+    let lowest = current.level;
+    for (let j = i; j < samples.length && samples[j]!.at - current.at <= windowMs; j += 1) {
+      lowest = Math.min(lowest, samples[j]!.level);
+    }
+    if (previous.level - lowest >= 3) return true;
+  }
+  return false;
+}
+
+function evaluateTargets(row: RunResult): Array<{ target: string; pass: boolean; detail: string }> {
+  const verdicts: Array<{ target: string; pass: boolean; detail: string }> = [];
+  const l0 = bandShare(row.postRamp, row.postRampTotalMs, [0]);
+  verdicts.push({
+    target: `${row.preset}:post-ramp-L0<=20%`,
+    pass: row.postRampTotalMs > 0 && l0 <= 0.2,
+    detail: `L0 ${Math.round(l0 * 100)}% of ${row.postRampTotalMs}ms`,
+  });
+  verdicts.push({
+    target: `${row.preset}:no-stall-cascade`,
+    pass: !row.cascadeDown,
+    detail: row.cascadeDown ? "down-stepped 3+ rungs within 2s" : "ok",
+  });
+  if (row.preset === "lan") {
+    verdicts.push({
+      target: "lan:L7<=1s",
+      pass: row.l7AfterFirstMs >= 0 && row.l7AfterFirstMs <= 1_000,
+      detail: `L7 ${row.l7AfterFirstMs}ms after first frame`,
+    });
+  }
+  if (row.preset === "tailscale-wan") {
+    const share = bandShare(row.postRamp, row.postRampTotalMs, [6, 7]);
+    verdicts.push({
+      target: "tailscale-wan:majority-L6-L7",
+      pass: share > 0.5,
+      detail: `L6-L7 ${Math.round(share * 100)}%`,
+    });
+  }
+  if (row.preset === "lte") {
+    const share = bandShare(row.postRamp, row.postRampTotalMs, [5, 6]);
+    verdicts.push({
+      target: "lte:settles-L5-L6",
+      pass: share > 0.5,
+      detail: `L5-L6 ${Math.round(share * 100)}%`,
+    });
+  }
+  if (row.preset === "bad-cell") {
+    const share = bandShare(row.postRamp, row.postRampTotalMs, [2, 3, 4]);
+    verdicts.push({
+      target: "bad-cell:settles-L2-L4",
+      pass: share > 0.5,
+      detail: `L2-L4 ${Math.round(share * 100)}%`,
+    });
+  }
+  return verdicts;
 }
 
 function summarizeLadder(samples: Array<{ at: number; level: number }>, endAt: number): string {

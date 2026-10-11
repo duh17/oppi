@@ -7,6 +7,7 @@ import Testing
 struct DesktopH264EncoderTests {
     @Test func encodesAvccIdrThenPThenForcedIdrAndAppliesBitrate() throws {
         let encoder = DesktopH264Encoder()
+        encoder.prepare()
         defer { encoder.invalidate() }
         let buffer = try makeNV12(width: 128, height: 96, seed: 3)
 
@@ -45,6 +46,32 @@ struct DesktopH264EncoderTests {
         let profile = try #require(encoder.copyProfileLevel())
         #expect(profile.contains("High"))
     }
+
+    @Test func invalidateDropsLateSessionInstallUntilPrepare() throws {
+        let encoder = DesktopH264Encoder()
+        encoder.prepare()
+        encoder.invalidate()
+        let buffer = try makeNV12(width: 128, height: 96, seed: 1)
+        do {
+            _ = try encodeAndWait(
+                encoder,
+                buffer: buffer,
+                command: DesktopH264EncodeCommand(frameId: 1, bitrate: 400_000, fps: 10, scale: 1, keyframe: true),
+                seconds: 0.2
+            )
+            Issue.record("encode after invalidate should not deliver")
+        } catch EncoderTestError.noSample {
+            // expected: invalidate sticks
+        }
+        encoder.prepare()
+        defer { encoder.invalidate() }
+        let restored = try encodeAndWait(
+            encoder,
+            buffer: buffer,
+            command: DesktopH264EncodeCommand(frameId: 2, bitrate: 400_000, fps: 10, scale: 1, keyframe: true)
+        )
+        #expect(try mediaKeyframe(restored) == true)
+    }
 }
 
 private enum EncoderTestError: Error, CustomStringConvertible {
@@ -64,14 +91,15 @@ private enum EncoderTestError: Error, CustomStringConvertible {
 private func encodeAndWait(
     _ encoder: DesktopH264Encoder,
     buffer: CVPixelBuffer,
-    command: DesktopH264EncodeCommand
+    command: DesktopH264EncodeCommand,
+    seconds: TimeInterval = 8
 ) throws -> Data {
     let box = OnceBox<Data>()
     encoder.encode(buffer: buffer, capturedAt: Date(), command: command) { data in
         box.complete(data)
     }
     encoder.completeFrames()
-    guard let data = box.wait(seconds: 8) else {
+    guard let data = box.wait(seconds: seconds) else {
         throw EncoderTestError.noSample(
             create: encoder.lastCreateStatus,
             encode: encoder.lastEncodeStatus
