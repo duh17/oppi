@@ -47,6 +47,15 @@ export class DurableThreads implements DurableSessionsHost {
       ConversationId | undefined;
   }
 
+  storeIdOf(sessionId: string): string | undefined {
+    const session = this.deps.storage.getSession(sessionId);
+    return session ? durableStoreId(session) : undefined;
+  }
+
+  storeIdOfEnv(env?: ExecutionEnv): string {
+    return hostOfEnv(env).storeId;
+  }
+
   isSelf(sessionId: string, caller: ConversationId, env?: ExecutionEnv): boolean {
     const session = this.deps.storage.getSession(sessionId);
     if (!session || session.serverDurable?.conversationId !== caller) return false;

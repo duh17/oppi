@@ -34,6 +34,10 @@ export interface DurableSessionsHost {
   ): Promise<string>;
   /** The durable conversation an Oppi session id is bound to. */
   conversationOf(sessionId: string): ConversationId | undefined;
+  /** The store of a bound session, if it has one. */
+  storeIdOf(sessionId: string): string | undefined;
+  /** The store of the calling conversation. */
+  storeIdOfEnv(env?: ExecutionEnv): string;
   /** True when `sessionId` is this calling conversation. */
   isSelf(sessionId: string, caller: ConversationId, env?: ExecutionEnv): boolean;
   /**
@@ -346,7 +350,7 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
       const found = await target(args.sessionId, api);
       if ("error" in found) return reply(found.error, { sessionId: args.sessionId }, true);
       await bound().activate(args.sessionId);
-      const requestId = `oppi-send:${api.taskId}`;
+      const requestId = `oppi-send:${bound().storeIdOfEnv(api.env)}:${api.conversationId}:${api.taskId}`;
       const submitError = await bound().submit(args.sessionId, {
         content: args.text,
         whenBusy: args.mode,
@@ -392,6 +396,13 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
     async execute(args, api, context) {
       const found = await target(args.sessionId, api);
       if ("error" in found) return reply(found.error, { sessionId: args.sessionId }, true);
+      const sessions = bound();
+      if (sessions.storeIdOf(args.sessionId) !== sessions.storeIdOfEnv(api.env))
+        return reply(
+          `Session ${args.sessionId} is not one of your children; session_abort only stops sessions you spawned.`,
+          { sessionId: args.sessionId },
+          true,
+        );
       if ((await ownerOf(api, found.conversationId, context)) !== api.conversationId)
         return reply(
           `Session ${args.sessionId} is not one of your children; session_abort only stops sessions you spawned.`,

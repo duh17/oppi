@@ -94,8 +94,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   private readonly durableHarness?: Promise<DurableHarness>;
   private storage: Storage;
   private active: Map<string, ActiveSession> = new Map();
-  /** Session ids currently inside `startSession`, before they are active. */
-  private readonly startingIds = new Set<string>();
+  /** Pre-start status of sessions inside `startSession`, before they are active. */
+  private readonly startingIds = new Map<string, Session["status"]>();
   private readonly config: ServerConfig;
   private readonly runtimeManager: WorkspaceRuntime;
   private readonly startupUI = new Map<string, { bridge: SdkUiBridge; state: ExtensionUIState }>();
@@ -333,7 +333,9 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const key = this.sessionKey(sessionId);
     this.ensureMobileRenderersLoaded();
     const startWorkspace = workspace ?? this.resolveStoredWorkspace(sessionId);
-    this.startingIds.add(sessionId);
+    if (!this.startingIds.has(sessionId)) {
+      this.startingIds.set(sessionId, this.storage.getSession(sessionId)?.status ?? "stopped");
+    }
     try {
       return await this.activationCoordinator.startSession(key, sessionId, startWorkspace);
     } finally {
@@ -952,14 +954,11 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         session.workspaceId && !this.storage.getWorkspace(session.workspaceId),
       );
       if (this.isActive(session.id) || (queued.has(session.id) && !workspaceGone)) continue;
-      // `startSession` opens the store before the session is active. Keep a live
-      // session's work; still fence a stopped session being reopened.
-      if (
-        this.startingIds.has(session.id) &&
-        session.status !== "stopped" &&
-        session.status !== "stopping"
-      )
-        continue;
+      // `startSession` opens the store after writing "starting". Keep a live
+      // session's work; still fence a stopped session being reopened so leftover
+      // jobs stay aborted.
+      const prior = this.startingIds.get(session.id);
+      if (prior !== undefined && prior !== "stopped" && prior !== "stopping") continue;
       stopped.push(session);
     }
     const byStore = this.conversationsByStore(stopped);

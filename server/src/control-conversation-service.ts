@@ -102,7 +102,7 @@ export function ensureControlConversationSession(
   const session: Session = {
     id,
     name: "Oppi Control",
-    status: "ready",
+    status: "stopped",
     createdAt: now,
     lastActivity: now,
     ...(options.model ? { model: options.model } : {}),

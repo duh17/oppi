@@ -384,6 +384,45 @@ describe("control conversation lifecycle on the durable harness", () => {
     return { manager, open };
   }
 
+  it("does not start the boot-created control row on the next process", async () => {
+    const { storage } = await setup();
+    const first = await boot(storage);
+    await first.manager.ensureControlConversation();
+    const row = storage.findSessionByLaunchIdempotencyKey(CONTROL_CONVERSATION_LAUNCH_KEY)!;
+    expect(row.status).toBe("stopped");
+    expect(first.manager.isActive(row.id)).toBe(false);
+    expect(row.serverDurable?.conversationId).toBeUndefined();
+
+    await first.manager.close();
+    managers.splice(managers.indexOf(first.manager), 1);
+
+    const second = await boot(storage);
+    queueOrphanedSessionsForRestart(storage);
+    await resumeSessionsAfterRestart({
+      storage,
+      lifecycle: {
+        resumeControlConversation: async (session) => ({
+          session: await second.manager.startSession(session.id),
+        }),
+        resumeControlSession: vi.fn(async (session) => ({ session })),
+        resumeWorkspaceSession: vi.fn(async ({ session }) => ({ session })),
+      },
+      sendPrompt: vi.fn(),
+      sendFollowUp: vi.fn(),
+    });
+    await second.manager.ensureControlConversation();
+
+    expect(second.manager.isActive(row.id)).toBe(false);
+    expect(storage.getSession(row.id)?.status).toBe("stopped");
+    expect(storage.listRestartResume()).toEqual([]);
+
+    const opened = await second.open({ model: "faux/faux-1" });
+    expect(opened.status).toBe(200);
+    expect(opened.body.session.id).toBe(row.id);
+    expect(second.manager.isActive(row.id)).toBe(true);
+    expect(opened.body.session.serverDurable?.conversationId).toBeGreaterThan(0);
+  });
+
   it("creates one conversation under concurrency and finds the same one after a restart", async () => {
     const { storage } = await setup();
     const first = await boot(storage);

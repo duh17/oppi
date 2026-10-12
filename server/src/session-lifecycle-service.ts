@@ -37,6 +37,7 @@ import {
   readSessionJsonlMeta,
 } from "./session-jsonl-meta.js";
 import { resolveInitialChatModel } from "./session-model-selection.js";
+import { requireDurableStoreId } from "./session-runtime-capabilities.js";
 import type { Storage } from "./storage.js";
 import type {
   ChatAttachmentRef,
@@ -762,7 +763,7 @@ export class SessionLifecycleService {
     if (sourceSessionFile === undefined) {
       // Bound before start: the backend attaches to this conversation instead of creating one.
       forkSession.serverDurable = {
-        storeId: latestSource.serverDurable?.storeId ?? latestSource.id,
+        storeId: requireDurableStoreId(latestSource),
         conversationId: forkConversationId,
       };
     } else {

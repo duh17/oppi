@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -138,6 +138,29 @@ describe("durable SessionHost stores", () => {
     await expect(other.openHost(session.id, { cwd: f.dir })).rejects.toMatchObject({
       code: "durable_store_locked",
     });
+  });
+
+  it("fails open when meta.json exists but is invalid", async () => {
+    const f = await fixture();
+    const session = enroll(f.storage, f.workspace.id, "Torn meta");
+    await f.manager.startSession(session.id, f.workspace);
+    const runtime = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
+      .durableHarness;
+    await f.manager.stopSession(session.id);
+    await until(
+      () => runtime.host(session.id) === undefined,
+      () => {
+        const host = runtime.host(session.id);
+        return `idle store close (${host?.holdReasons.join("; ") || "missing host"})`;
+      },
+    );
+    const directory = durableStoreDir(f.dir, session.id);
+    writeFileSync(join(directory, "meta.json"), "{not-json\n");
+    const other = new DurableHarness(f.dir);
+    runtimes.push(other);
+    await expect(other.openHost(session.id, { cwd: f.dir })).rejects.toThrow(
+      /meta\.json is invalid/,
+    );
   });
 
   it("isolates two stores that share conversation id 1", async () => {
@@ -282,4 +305,67 @@ describe("durable SessionHost stores", () => {
       }, "leftover submission aborted");
     },
   );
+
+  it("startSession after stop aborts leftover background work instead of running it", async () => {
+    const f = await fixture();
+    const session = enroll(f.storage, f.workspace.id, "Leftover start");
+    await f.manager.startSession(session.id, f.workspace);
+    const conversationId = f.storage.getSession(session.id)!.serverDurable!
+      .conversationId as ConversationId;
+    const runtime = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
+      .durableHarness;
+    await f.manager.stopSession(session.id);
+    await until(
+      () => runtime.host(session.id) === undefined || runtime.host(session.id)?.isIdle === true,
+      "store idle after stop",
+    );
+    const host = await runtime.openHost(session.id);
+    const release = host.retain("plant-leftover");
+    try {
+      const { harness } = await host.open();
+      const conversation = (await harness.conversation(conversationId, context))!;
+      await conversation.commit(async (tx) => {
+        const inbox = await tx.doc(InboxDoc, conversationId);
+        const input = await tx.createSubmission({
+          conversationId,
+          type: "input",
+          status: "queued",
+          requestId: "leftover-input",
+        });
+        inbox.items.push({ id: input.id, mode: "followUp", content: "Never deliver" });
+      }, context);
+    } finally {
+      release();
+    }
+    await host.close();
+
+    await f.manager.startSession(session.id, f.workspace);
+    expect(f.manager.isActive(session.id)).toBe(true);
+    const started = runtime.host(session.id)!;
+    const { harness } = await started.open();
+    await until(async () => {
+      const live = await harness.inspect(context);
+      return !live.submissions.some((submission) => submission.status === "queued");
+    }, "leftover submission settled");
+    const page = await (await harness.conversation(conversationId, context))!.entries(
+      {},
+      50,
+      undefined,
+      context,
+    );
+    const texts = page.items.flatMap((entry) => {
+      const message = entry.model?.[0];
+      if (message?.role !== "user") return [];
+      if (typeof message.content === "string") return [message.content];
+      if (!Array.isArray(message.content)) return [];
+      return [
+        message.content
+          .flatMap((part) =>
+            part && typeof part === "object" && "text" in part ? [String(part.text)] : [],
+          )
+          .join(""),
+      ];
+    });
+    expect(texts).not.toContain("Never deliver");
+  });
 });

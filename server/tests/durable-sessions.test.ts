@@ -626,6 +626,89 @@ describe("durable-native threads", () => {
     expect((await harness.snapshot(LiveDoc, childConversation, context))?.run).toBeUndefined();
   });
 
+  it("does not abort a colliding conversation id in another store", async () => {
+    const ownerGate = gate();
+    const strangerGate = gate();
+    const state: { ownerChild?: string } = {};
+    const f = await fixture(
+      model(async ({ last, text, signal }) => {
+        if (last.role === "toolResult") return fauxAssistantMessage("DONE");
+        if (text.includes("Owner spawn"))
+          return spawnCall({ task: "OWNER_CHILD work", background: true });
+        if (text.includes("Stranger spawn"))
+          return spawnCall({ task: "STRANGER_CHILD work", background: true });
+        if (text.includes("Stranger abort"))
+          return toolCall("session_abort", { sessionId: state.ownerChild });
+        if (text.includes("OWNER_CHILD")) {
+          await ownerGate.wait(signal);
+          return fauxAssistantMessage("OWNER_DONE");
+        }
+        if (text.includes("STRANGER_CHILD")) {
+          await strangerGate.wait(signal);
+          return fauxAssistantMessage("STRANGER_DONE");
+        }
+        return fauxAssistantMessage("OTHER");
+      }),
+    );
+    const stranger = f.session("Stranger");
+    await f.manager.startSession(f.parent.id, f.workspace);
+    await f.manager.startSession(stranger.id, f.workspace);
+    await f.manager.sendPrompt(f.parent.id, "Owner spawn");
+    await f.manager.sendPrompt(stranger.id, "Stranger spawn");
+    const ownerHarness = await f.harness();
+    const strangerHarness = await f.openStore(stranger.id);
+    const ownerConversation = conversationOf(f.storage, f.parent);
+    const strangerConversation = conversationOf(f.storage, stranger);
+    await until(
+      async () => (await toolResults(ownerHarness, ownerConversation)).length === 1,
+      "owner spawn",
+    );
+    await until(
+      async () => (await toolResults(strangerHarness, strangerConversation)).length === 1,
+      "stranger spawn",
+    );
+    const ownerChild = f.storage
+      .listSessions()
+      .find((session) => session.launch?.parentSessionId === f.parent.id)!;
+    const strangerChild = f.storage
+      .listSessions()
+      .find((session) => session.launch?.parentSessionId === stranger.id)!;
+    state.ownerChild = ownerChild.id;
+    const ownerChildConversation = conversationOf(f.storage, ownerChild);
+    const strangerChildConversation = conversationOf(f.storage, strangerChild);
+    expect(ownerChildConversation).toBe(strangerChildConversation);
+    expect(ownerChild.serverDurable?.storeId).not.toBe(strangerChild.serverDurable?.storeId);
+
+    await until(
+      async () =>
+        (await ownerHarness.snapshot(LiveDoc, ownerChildConversation, context))?.run !== undefined,
+      "owner child running",
+    );
+    await until(
+      async () =>
+        (await strangerHarness.snapshot(LiveDoc, strangerChildConversation, context))?.run !==
+        undefined,
+      "stranger child running",
+    );
+
+    await f.manager.sendPrompt(stranger.id, "Stranger abort");
+    await until(
+      async () => (await toolResults(strangerHarness, strangerConversation)).length === 2,
+      "stranger abort",
+    );
+    expect((await toolResults(strangerHarness, strangerConversation))[1]).toMatchObject({
+      toolName: "session_abort",
+      isError: true,
+      text: expect.stringContaining("not one of your children"),
+    });
+    expect(
+      (await ownerHarness.snapshot(LiveDoc, ownerChildConversation, context))?.run,
+    ).toBeDefined();
+    expect(
+      (await strangerHarness.snapshot(LiveDoc, strangerChildConversation, context))?.run,
+    ).toBeDefined();
+  });
+
   it("records the oppi-send request id when a session messages another, and reserves the prefix", async () => {
     const state: { childSession?: string } = {};
     const f = await fixture(
@@ -657,7 +740,11 @@ describe("durable-native threads", () => {
     await until(async () => (await toolResults(harness, parentConversation)).length === 2, "send");
     const sent = (await toolResults(harness, parentConversation))[1]!;
     expect(sent.toolName).toBe("session_send");
-    expect(sent.details?.requestId).toMatch(/^oppi-send:\d+$/);
+    const parentStore = f.storage.getSession(f.parent.id)!.serverDurable!.storeId!;
+    const sendRequestId = String(sent.details?.requestId);
+    const sendPrefix = `oppi-send:${parentStore}:${parentConversation}:`;
+    expect(sendRequestId.startsWith(sendPrefix)).toBe(true);
+    expect(sendRequestId.slice(sendPrefix.length)).toMatch(/^\d+$/);
     const receipt = await harness.commit(
       (tx) => tx.submissionByRequest(childConversation, sent.details!.requestId as string),
       context,
@@ -677,6 +764,66 @@ describe("durable-native threads", () => {
     await expect(
       f.manager.sendPrompt(child.id, "spoof", { clientTurnId: "oppi-send:1" }),
     ).rejects.toThrow("reserved durable requestId namespace");
+  });
+
+  it("delivers session_send from two stores when task ids collide", async () => {
+    const state: { target?: string } = {};
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        if (last.role === "toolResult") return fauxAssistantMessage("DONE");
+        if (text.includes("Send from alpha"))
+          return toolCall("session_send", {
+            sessionId: state.target,
+            text: "FROM_ALPHA",
+            mode: "followUp",
+          });
+        if (text.includes("Send from beta"))
+          return toolCall("session_send", {
+            sessionId: state.target,
+            text: "FROM_BETA",
+            mode: "followUp",
+          });
+        return fauxAssistantMessage("OK");
+      }),
+    );
+    const beta = f.session("Beta");
+    const target = f.session("Target");
+    state.target = target.id;
+    await f.manager.startSession(f.parent.id, f.workspace);
+    await f.manager.startSession(beta.id, f.workspace);
+    await f.manager.startSession(target.id, f.workspace);
+    const alphaHarness = await f.harness();
+    const betaHarness = await f.openStore(beta.id);
+    const alphaConversation = conversationOf(f.storage, f.parent);
+    const betaConversation = conversationOf(f.storage, beta);
+    expect(alphaConversation).toBe(betaConversation);
+
+    await f.manager.sendPrompt(f.parent.id, "Send from alpha");
+    await until(
+      async () => (await toolResults(alphaHarness, alphaConversation)).length === 1,
+      "alpha send",
+    );
+    await f.manager.sendPrompt(beta.id, "Send from beta");
+    await until(
+      async () => (await toolResults(betaHarness, betaConversation)).length === 1,
+      "beta send",
+    );
+    const alphaSent = (await toolResults(alphaHarness, alphaConversation))[0]!;
+    const betaSent = (await toolResults(betaHarness, betaConversation))[0]!;
+    expect(alphaSent.isError).toBeFalsy();
+    expect(betaSent.isError).toBeFalsy();
+    const alphaStore = f.storage.getSession(f.parent.id)!.serverDurable!.storeId!;
+    const betaStore = f.storage.getSession(beta.id)!.serverDurable!.storeId!;
+    expect(String(alphaSent.details?.requestId)).toContain(alphaStore);
+    expect(String(betaSent.details?.requestId)).toContain(betaStore);
+    expect(alphaSent.details?.requestId).not.toBe(betaSent.details?.requestId);
+
+    const targetHarness = await f.openStore(target.id);
+    const targetConversation = conversationOf(f.storage, target);
+    await until(async () => {
+      const texts = await userTexts(targetHarness, targetConversation);
+      return texts.includes("FROM_ALPHA") && texts.includes("FROM_BETA");
+    }, "both sends delivered");
   });
 
   it("reruns a foreground spawn after a restart against the same child and Session", async () => {

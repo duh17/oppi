@@ -17,7 +17,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
@@ -153,32 +153,39 @@ function summarize(loaded: LoadedDurableExtension): DurableExtensionSummary {
 }
 
 function readStoreMeta(directory: string): DurableStoreMeta | undefined {
+  const path = join(directory, METADATA_FILE);
+  if (!existsSync(path)) return undefined;
+  let value: unknown;
   try {
-    const value: unknown = JSON.parse(readFileSync(join(directory, METADATA_FILE), "utf8"));
-    if (typeof value !== "object" || value === null) return undefined;
-    const record = value as { createdAt?: unknown; cwd?: unknown };
-    if (typeof record.createdAt !== "number" || typeof record.cwd !== "string") return undefined;
-    const meta: DurableStoreMeta = { createdAt: record.createdAt, cwd: record.cwd };
-    const name = (value as { name?: unknown }).name;
-    if (typeof name === "string") meta.name = name;
-    const workspaceId = (value as { workspaceId?: unknown }).workspaceId;
-    if (typeof workspaceId === "string") meta.workspaceId = workspaceId;
-    const agent = (value as { agent?: unknown }).agent;
-    if (
-      typeof agent === "object" &&
-      agent !== null &&
-      typeof (agent as { id?: unknown }).id === "string" &&
-      typeof (agent as { version?: unknown }).version === "number"
-    ) {
-      meta.agent = {
-        id: (agent as { id: string }).id,
-        version: (agent as { version: number }).version,
-      };
-    }
-    return meta;
-  } catch {
-    return undefined;
+    value = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    throw new Error("Durable store meta.json is invalid", { cause: error });
   }
+  if (typeof value !== "object" || value === null) {
+    throw new Error("Durable store meta.json is invalid");
+  }
+  const record = value as { createdAt?: unknown; cwd?: unknown };
+  if (typeof record.createdAt !== "number" || typeof record.cwd !== "string") {
+    throw new Error("Durable store meta.json is invalid");
+  }
+  const meta: DurableStoreMeta = { createdAt: record.createdAt, cwd: record.cwd };
+  const name = (value as { name?: unknown }).name;
+  if (typeof name === "string") meta.name = name;
+  const workspaceId = (value as { workspaceId?: unknown }).workspaceId;
+  if (typeof workspaceId === "string") meta.workspaceId = workspaceId;
+  const agent = (value as { agent?: unknown }).agent;
+  if (
+    typeof agent === "object" &&
+    agent !== null &&
+    typeof (agent as { id?: unknown }).id === "string" &&
+    typeof (agent as { version?: unknown }).version === "number"
+  ) {
+    meta.agent = {
+      id: (agent as { id: string }).id,
+      version: (agent as { version: number }).version,
+    };
+  }
+  return meta;
 }
 
 function writeStoreMeta(directory: string, meta: DurableStoreMeta): void {
@@ -186,7 +193,10 @@ function writeStoreMeta(directory: string, meta: DurableStoreMeta): void {
   if (meta.name !== undefined) body.name = meta.name;
   if (meta.workspaceId !== undefined) body.workspaceId = meta.workspaceId;
   if (meta.agent !== undefined) body.agent = meta.agent;
-  writeFileSync(join(directory, METADATA_FILE), `${JSON.stringify(body, null, "\t")}\n`);
+  const dest = join(directory, METADATA_FILE);
+  const tmp = join(directory, `${METADATA_FILE}.tmp`);
+  writeFileSync(tmp, `${JSON.stringify(body, null, "\t")}\n`);
+  renameSync(tmp, dest);
 }
 
 /**
@@ -353,7 +363,12 @@ export class SessionHost {
       if (index >= 0) this.holds.splice(index, 1);
       if (this.holds.length === 0) {
         void this.retireIdleTickers()
-          .catch(() => undefined)
+          .catch((error) => {
+            log.error("durable_store.idle_ticker_abort_failed", {
+              storeId: this.storeId,
+              error: safeErrorMessage(error),
+            });
+          })
           .then(() => this.maybeClose());
         return;
       }
@@ -458,7 +473,14 @@ export class SessionHost {
       await this.watchTaskGraph(harness);
       return { harness, models: shared.models };
     } catch (error) {
-      await this.releaseLock?.().catch(() => undefined);
+      try {
+        await this.releaseLock?.();
+      } catch (unlockError) {
+        log.error("durable_store.unlock_failed", {
+          storeId: this.storeId,
+          error: safeErrorMessage(unlockError),
+        });
+      }
       this.releaseLock = undefined;
       this.opening = undefined;
       throw error;
@@ -621,7 +643,14 @@ export class SessionHost {
       }
     } finally {
       await Promise.all([...this.mcps.keys()].map((id) => this.closeMcp(id)));
-      await this.releaseLock?.().catch(() => undefined);
+      try {
+        await this.releaseLock?.();
+      } catch (error) {
+        log.error("durable_store.unlock_failed", {
+          storeId: this.storeId,
+          error: safeErrorMessage(error),
+        });
+      }
       this.releaseLock = undefined;
       this.opening = undefined;
       this.harnessStorage = undefined;
