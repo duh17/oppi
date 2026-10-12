@@ -556,27 +556,6 @@ export class SessionSqliteStore {
     this.db.prepare("DELETE FROM session_restart_resume WHERE session_id = ?").run(sessionId);
   }
 
-  markDurableStorePending(storeId: string, recordedAt: number = Date.now()): void {
-    this.db
-      .prepare(
-        `INSERT INTO durable_store_pending (store_id, recorded_at)
-         VALUES (?, ?)
-         ON CONFLICT(store_id) DO UPDATE SET recorded_at = excluded.recorded_at`,
-      )
-      .run(storeId, recordedAt);
-  }
-
-  listDurableStorePending(): string[] {
-    const rows = this.db
-      .prepare("SELECT store_id FROM durable_store_pending ORDER BY recorded_at ASC, store_id ASC")
-      .all() as Array<{ store_id: string }>;
-    return rows.map((row) => row.store_id);
-  }
-
-  clearDurableStorePending(storeId: string): void {
-    this.db.prepare("DELETE FROM durable_store_pending WHERE store_id = ?").run(storeId);
-  }
-
   private ensureSchema(): void {
     const hasSessionTable = this.db
       .prepare(
@@ -708,11 +687,6 @@ export class SessionSqliteStore {
       CREATE TABLE IF NOT EXISTS session_restart_resume (
         session_id TEXT PRIMARY KEY,
         was_busy INTEGER NOT NULL,
-        recorded_at INTEGER NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS durable_store_pending (
-        store_id TEXT PRIMARY KEY,
         recorded_at INTEGER NOT NULL
       );
 

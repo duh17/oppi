@@ -335,7 +335,7 @@ describe("native Durable background jobs", () => {
     const attach = async () => {
       const backend = await DurableBackend.create({
         harness: f.harness,
-        owner,
+        host: owner,
         models: f.models,
         session,
         dataDir: f.dir,
@@ -407,7 +407,7 @@ describe("native Durable background jobs", () => {
       let onQueue = () => {};
       const backend = await DurableBackend.create({
         harness: f.harness,
-        owner,
+        host: owner,
         models: f.models,
         session,
         dataDir: f.dir,

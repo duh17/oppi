@@ -243,7 +243,9 @@ function mockDurableOpen(harness: Harness, models: ModelRuntime) {
       await existing.open();
       return existing;
     }
-    return attachHost(this, current, models, storeId);
+    const host = attachHost(this, current, models, storeId);
+    await this.onHostOpened?.(host);
+    return host;
   });
   return Object.assign(spy, {
     use(next: Harness) {
@@ -258,7 +260,7 @@ async function backend(harness: Harness, models: ModelRuntime, session: Session,
   await host.releaseResume();
   const result = await DurableBackend.create({
     harness,
-    owner: host,
+    host,
     models,
     session,
     dataDir,
@@ -627,7 +629,7 @@ describe("server durable managed runtime", () => {
       });
       const first = await DurableBackend.create({
         harness,
-        owner,
+        host: owner,
         models: f.models,
         session: f.session,
         dataDir: f.dir,
@@ -1825,6 +1827,10 @@ describe("server durable managed runtime", () => {
       const restarted = new SessionManager(storage);
       managers.push(restarted);
       await restarted.resumeDurableSessions();
+      // A stopped session is not in the resume queue, so startup does not open
+      // its store. The leftover job is fenced on the next open.
+      if (stopped)
+        expect(await restarted.getServerDurableTracePage(f.session.id, {})).not.toBeNull();
       root = (await harness.conversation(id, context))!;
       await harness.waitForTask(job.taskId, context);
       await root.waitForIdle(context);
@@ -2104,7 +2110,7 @@ describe("server durable managed runtime", () => {
     const a = crashed.sessions[0]!;
     const active = await DurableBackend.create({
       harness: crashed.harness,
-      owner,
+      host: owner,
       models: f.models,
       session: a,
       dataDir: f.dir,

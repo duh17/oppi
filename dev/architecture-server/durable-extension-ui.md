@@ -25,7 +25,7 @@ The helper creates one `oppi.extension-ui` conversation document entry per stabl
 
 Storage follows pi-durable's `pi.live` rule: a write stores a complete base whenever no notification shows a working message (`setWorkingMessage` with text), so an idle conversation keeps no history and the stored chain spans at most one run. A run's chain includes the once-per-second elapsed-time message, so a long run also stores a base every 500 deltas.
 
-Writers of `oppi.extension-ui` are trusted in-process host code, with the same trust as classic `ctx.ui`. Use `requestUI` for blocking requests, not direct `tx.doc` writes. The host owns `harness.sqlite`; hostile co-tenant extensions are out of scope. The event-field allowlist guards against accidental overrides, not hostile writers.
+Writers of `oppi.extension-ui` are trusted in-process host code, with the same trust as classic `ctx.ui`. Use `requestUI` for blocking requests, not direct `tx.doc` writes. Each session host owns `session.sqlite`; hostile co-tenant extensions are out of scope. The event-field allowlist guards against accidental overrides, not hostile writers.
 
 `DurableUIProjection` watches this document with `watchDoc`; custom documents are not in `viewState`. It emits the same backend events as `SdkUiBridge`. The existing extension UI state owner sanitizes text and native widgets, bounds payloads, throttles notifications, and builds ServerMessages. No relay code tests extension, tool, status, or widget identities.
 

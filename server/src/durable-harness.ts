@@ -18,10 +18,8 @@ import {
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { DurableSandboxTools } from "./durable-sandbox-tools.js";
 import { DurableAsk } from "../extensions/durable/ask/durable.js";
@@ -53,10 +51,9 @@ import type { DurableMcp } from "./durable-mcp.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type { DurableThreads } from "./durable-threads.js";
-import {
-  type DurableStoreMeta,
-  durableStoreMetaFromSession,
-} from "./session-runtime-capabilities.js";
+import { properLockfile } from "./pi-lockfile.js";
+import { requireDurableStoreId } from "./session-runtime-capabilities.js";
+import type { Session } from "./types.js";
 
 /** Persist the execution boundary so a resumed conversation cannot change runtime. */
 export const DurableRuntime = defineDoc<{ kind: "host" | "sandbox"; workspaceId?: string }>({
@@ -74,32 +71,16 @@ const STORE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const METADATA_FILE = "meta.json";
 const STORAGE_FILE = "session.sqlite";
 
-const lockfile = createRequire(
-  fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")),
-)("proper-lockfile") as {
-  lock: (
-    file: string,
-    options?: {
-      realpath?: boolean;
-      stale?: number;
-      update?: number;
-      retries?:
-        | number
-        | {
-            retries: number;
-            factor: number;
-            minTimeout: number;
-            maxTimeout: number;
-            maxRetryTime: number;
-          };
-    },
-  ) => Promise<() => Promise<void>>;
-};
-
 const sessionHostsByEnv = new WeakMap<ExecutionEnv, SessionHost>();
 
 export function sessionHostOfEnv(env: ExecutionEnv | undefined): SessionHost | undefined {
   return env ? sessionHostsByEnv.get(env) : undefined;
+}
+
+export function hostOfEnv(env: ExecutionEnv | undefined): SessionHost {
+  const host = sessionHostOfEnv(env);
+  if (!host) throw new Error("Durable session host is missing");
+  return host;
 }
 
 export function durableSessionsRoot(dataDir: string): string {
@@ -118,8 +99,30 @@ export function assertDurableStoreId(storeId: string): void {
   if (!STORE_ID.test(storeId)) throw new Error(`Invalid durable store id: ${storeId}`);
 }
 
-export type { DurableStoreMeta };
-export { durableStoreMetaFromSession };
+export interface DurableStoreMeta {
+  createdAt: number;
+  cwd: string;
+  name?: string;
+  workspaceId?: string;
+  agent?: { id: string; version: number };
+}
+
+export function durableStoreMetaFromSession(session: Session, cwd: string): DurableStoreMeta {
+  const agent =
+    session.launch?.agentId !== undefined
+      ? {
+          id: session.launch.agentId,
+          version: session.launch.agentVersion ?? 0,
+        }
+      : undefined;
+  return {
+    createdAt: session.createdAt,
+    cwd,
+    ...(session.name ? { name: session.name } : {}),
+    ...(session.workspaceId ? { workspaceId: session.workspaceId } : {}),
+    ...(agent ? { agent } : {}),
+  };
+}
 
 export interface DurableExtensionSummary {
   name: string;
@@ -194,20 +197,15 @@ export class SessionHost {
   private opening?: Promise<{ harness: Harness; models: ModelRuntime }>;
   private closed = false;
   private harnessStorage?: Storage;
-  private openedModels?: ModelRuntime;
   private resumeHeld: boolean;
   private readonly pausedAborts = new Set<Promise<void>>();
   private readonly sandboxEnvs = new Map<ConversationId, ExecutionEnv>();
   private readonly mcps = new Map<string, DurableMcp>();
   private releaseLock?: () => Promise<void>;
-  private readonly attached = new Set<string>();
-  private streamCount = 0;
-  private useCount = 0;
-  private liveTaskCount = 0;
+  private readonly holds: string[] = [];
   private taskGraph?: AttachedReplicatedState<TaskGraph>;
   private stopTaskGraph?: () => void;
-  private closing?: Promise<{ pending: boolean }>;
-  private adopted?: { harness: Harness; models: ModelRuntime };
+  private closing?: Promise<void>;
   private idleCloseTimer: ReturnType<typeof setImmediate> | undefined;
 
   constructor(
@@ -218,38 +216,6 @@ export class SessionHost {
     holdResume: boolean,
   ) {
     this.resumeHeld = holdResume;
-  }
-
-  get retrySettings(): HarnessSettings["retry"] {
-    return this.runtime.retrySettings;
-  }
-
-  get runPolicySettings(): SettingsManager {
-    return this.runtime.runPolicySettings;
-  }
-
-  get sessionsExtension(): ReturnType<typeof createDurableSessions> {
-    return this.runtime.sessionsExtension;
-  }
-
-  get controlExtensions(): readonly Extension[] {
-    return this.runtime.controlExtensions;
-  }
-
-  get baseExtensions(): Extension[] {
-    return this.runtime.baseExtensions;
-  }
-
-  packageExtensionsFor(runtime: DurableExtensionRuntime): Extension[] {
-    return this.runtime.packageExtensionsFor(runtime);
-  }
-
-  installExtension(extension: Extension): void {
-    this.runtime.installExtension(extension);
-  }
-
-  uninstallExtension(extension: Extension): void {
-    this.runtime.uninstallExtension(extension);
   }
 
   /** Close the session's previous MCP before opening its next one, which reuses the extension name. */
@@ -348,10 +314,6 @@ export class SessionHost {
         await harness.abortTask(record.id, BACKGROUND_CONTEXT);
   }
 
-  holdResume(): void {
-    this.resumeHeld = true;
-  }
-
   async resume(): Promise<void> {
     if (!this.resumeHeld && this.opening) (await this.opening).harness.resume();
   }
@@ -377,61 +339,48 @@ export class SessionHost {
   bindOpenedHarness(harness: Harness, storage: Storage, models: ModelRuntime): void {
     if (this.opening) throw new Error("Server durable store is already opening");
     this.harnessStorage = storage;
-    this.adopted = { harness, models };
-    this.openedModels = models;
     this.opening = this.watchTaskGraph(harness).then(() => ({ harness, models }));
   }
 
-  retain(): void {
-    this.useCount += 1;
+  retain(reason: string): () => void {
+    this.holds.push(reason);
     this.cancelIdleClose();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const index = this.holds.indexOf(reason);
+      if (index >= 0) this.holds.splice(index, 1);
+      if (this.holds.length === 0) {
+        void this.retireIdleTickers()
+          .catch(() => undefined)
+          .then(() => this.maybeClose());
+        return;
+      }
+      this.maybeClose();
+    };
   }
 
-  release(): void {
-    if (this.useCount > 0) this.useCount -= 1;
-    this.maybeClose();
-  }
-
-  noteAttached(sessionId: string): void {
-    this.attached.add(sessionId);
-    this.cancelIdleClose();
-  }
-
-  noteDetached(sessionId: string): void {
-    this.attached.delete(sessionId);
-    if (this.attached.size === 0 && this.streamCount === 0 && this.useCount === 0) {
-      void this.retireIdleTickers().then(() => this.maybeClose());
-      return;
+  async use<T>(fn: (harness: Harness, host: SessionHost) => Promise<T>): Promise<T> {
+    const release = this.retain("use");
+    try {
+      return await fn((await this.open()).harness, this);
+    } finally {
+      release();
     }
-    this.maybeClose();
-  }
-
-  noteStreamSubscribe(): void {
-    this.streamCount += 1;
-    this.cancelIdleClose();
-  }
-
-  noteStreamUnsubscribe(): void {
-    if (this.streamCount > 0) this.streamCount -= 1;
-    this.maybeClose();
   }
 
   get isIdle(): boolean {
-    return this.holdReasons.length === 0;
+    return this.holds.length === 0 && Object.keys(this.taskGraph?.value?.tasks ?? {}).length === 0;
   }
 
   /** Why this host stays open. Empty when it can idle-close. */
   get holdReasons(): string[] {
-    const live =
-      this.taskGraph?.value !== undefined
-        ? Object.keys(this.taskGraph.value.tasks).length
-        : this.liveTaskCount;
-    const reasons: string[] = [];
-    if (this.attached.size > 0) reasons.push(`attached:${[...this.attached].join(",")}`);
-    if (this.streamCount > 0) reasons.push(`streams:${this.streamCount}`);
-    if (this.useCount > 0) reasons.push(`uses:${this.useCount}`);
+    const reasons = [...this.holds];
+    const tasks = this.taskGraph?.value?.tasks ?? {};
+    const live = Object.keys(tasks).length;
     if (live > 0) {
-      const kinds = Object.values(this.taskGraph?.value?.tasks ?? {}).map(
+      const kinds = Object.values(tasks).map(
         (task) => `${task.kind}${task.background ? ":bg" : ""}`,
       );
       reasons.push(`tasks:${live}${kinds.length ? `(${kinds.join(",")})` : ""}`);
@@ -464,11 +413,10 @@ export class SessionHost {
   }
 
   private async openInner(): Promise<{ harness: Harness; models: ModelRuntime }> {
-    if (this.adopted) return this.adopted;
     const shared = await this.runtime.ensureShared();
     mkdirSync(this.directory, { recursive: true, mode: 0o700 });
     try {
-      this.releaseLock = await lockfile.lock(this.directory, {
+      this.releaseLock = await properLockfile.lock(this.directory, {
         realpath: true,
         stale: 2_000,
         update: 1_000,
@@ -507,7 +455,6 @@ export class SessionHost {
         },
         BACKGROUND_CONTEXT,
       );
-      this.openedModels = shared.models;
       await this.watchTaskGraph(harness);
       return { harness, models: shared.models };
     } catch (error) {
@@ -522,9 +469,7 @@ export class SessionHost {
     this.stopTaskGraph?.();
     const graph = await harness.taskGraph(BACKGROUND_CONTEXT);
     this.taskGraph = graph;
-    this.liveTaskCount = Object.keys(graph.value?.tasks ?? {}).length;
-    const unsubscribe = graph.subscribe((value) => {
-      this.liveTaskCount = Object.keys(value.tasks).length;
+    const unsubscribe = graph.subscribe(() => {
       this.maybeClose();
     });
     this.stopTaskGraph = () => {
@@ -642,54 +587,29 @@ export class SessionHost {
     }
   }
 
-  /**
-   * Close this store and release the directory lock.
-   * `resumeIds` present means server shutdown: abort conversations not in that set.
-   * Absent means idle close: no abort.
-   */
-  close(resumeIds?: ReadonlySet<ConversationId>): Promise<{ pending: boolean }> {
+  /** Close this store and release the directory lock. */
+  close(): Promise<void> {
     if (this.closing) return this.closing;
-    if (!this.opening && !this.adopted) {
+    if (!this.opening) {
       this.closed = true;
       this.runtime.forgetHost(this);
-      return Promise.resolve({ pending: false });
+      return Promise.resolve();
     }
     this.cancelIdleClose();
-    this.closing = this.closeInner(resumeIds).finally(() => {
+    this.closing = this.closeInner().finally(() => {
       this.closing = undefined;
     });
     return this.closing;
   }
 
-  private async closeInner(resumeIds?: ReadonlySet<ConversationId>): Promise<{ pending: boolean }> {
-    let pending = false;
+  private async closeInner(): Promise<void> {
     try {
       if (this.opening) {
         const { harness } = await this.opening;
         this.stopTaskGraph?.();
         this.stopTaskGraph = undefined;
-        const graphTasks = Object.keys(this.taskGraph?.value?.tasks ?? {}).length;
         this.taskGraph = undefined;
-        if (resumeIds !== undefined && !this.runtime.shuttingDown) {
-          const live = await harness.inspect(BACKGROUND_CONTEXT);
-          const stopped = new Set(
-            [
-              ...live.tasks.map(({ record }) => record.conversationId),
-              ...live.submissions.map((submission) => submission.conversationId),
-            ].filter((id) => !resumeIds.has(id)),
-          );
-          await this.abortConversations(stopped);
-        }
-        if (this.runtime.shuttingDown) {
-          pending = graphTasks > 0 || (resumeIds !== undefined && resumeIds.size > 0);
-        } else {
-          const remaining = await harness.inspect(BACKGROUND_CONTEXT);
-          pending =
-            remaining.tasks.length > 0 ||
-            remaining.submissions.some((submission) => submission.status === "queued");
-        }
         this.closed = true;
-        this.liveTaskCount = 0;
         // Closing interrupts invocations without settling their tasks. Recorded
         // restart work remains durable and is continued by the next Harness.open.
         await harness.close(BACKGROUND_CONTEXT);
@@ -704,17 +624,16 @@ export class SessionHost {
       await this.releaseLock?.().catch(() => undefined);
       this.releaseLock = undefined;
       this.opening = undefined;
-      this.adopted = undefined;
       this.harnessStorage = undefined;
       this.runtime.forgetHost(this);
     }
-    return { pending };
   }
 
   /** Abort leftover tickers so an empty store can close. Jobs and child-owning tasks stay. */
   private async retireIdleTickers(): Promise<void> {
     if (this.runtime.shuttingDown || this.closed || this.closing || !this.opening) return;
     const { harness } = await this.opening;
+    if (this.runtime.shuttingDown || this.closed || this.closing) return;
     const keep = new Set<number>();
     for (const node of Object.values(this.taskGraph?.value?.tasks ?? {})) {
       if (node.conversations.length > 0) keep.add(node.id);
@@ -723,10 +642,12 @@ export class SessionHost {
       Object.values(this.taskGraph?.value?.tasks ?? {}).map((node) => node.conversationId),
     );
     for (const conversationId of conversationIds) {
+      if (this.closed || this.closing) return;
       const jobs = await harness.snapshot(DurableJobs, conversationId, BACKGROUND_CONTEXT);
       for (const job of jobs?.jobs ?? []) if (!job.delivered) keep.add(job.taskId);
     }
     for (const node of Object.values(this.taskGraph?.value?.tasks ?? {})) {
+      if (this.closed || this.closing) return;
       if (!node.background || keep.has(node.id)) continue;
       await harness.abortTask(node.id, BACKGROUND_CONTEXT);
     }
@@ -765,8 +686,8 @@ export class SessionHost {
     )
       return;
     if (this.idleCloseTimer !== undefined) return;
-    // After openHost returns, the caller still has to retain/attach. Closing in this
-    // turn would drop a store that startSession is about to use.
+    // Defer so a task-graph publish cannot close the host reentrantly, and so a
+    // caller that opens then retains in the same turn is not racing this close.
     this.idleCloseTimer = setImmediate(() => {
       this.idleCloseTimer = undefined;
       void this.closeIfIdle();
@@ -799,6 +720,8 @@ export class DurableHarness {
   }>;
   private readonly hosts = new Map<string, SessionHost>();
   private readonly openingHosts = new Map<string, Promise<SessionHost>>();
+  /** Abort leftover work of stopped conversations when a store first opens. */
+  onHostOpened?: (host: SessionHost) => Promise<void>;
   /** The session tools; they reach Oppi through the host bound with `bindThreads`. */
   readonly sessionsExtension = createDurableSessions(() => this.threads);
   /** The control conversation's tools; they reach Oppi through the host bound with `bindControl`. */
@@ -1014,6 +937,13 @@ export class DurableHarness {
     if (this.hosts.get(host.storeId) === host) this.hosts.delete(host.storeId);
   }
 
+  async withSession<T>(
+    session: Pick<Session, "serverDurable">,
+    fn: (harness: Harness, host: SessionHost) => Promise<T>,
+  ): Promise<T> {
+    return (await this.openHost(requireDurableStoreId(session))).use(fn);
+  }
+
   /**
    * Open (or reuse) the store for `storeId`. Creates the directory and meta.json
    * on first use. The directory is locked while the host is open.
@@ -1063,6 +993,7 @@ export class DurableHarness {
     const host = new SessionHost(this, storeId, directory, stored, this.startupHeld);
     this.hosts.set(storeId, host);
     await host.open();
+    await this.onHostOpened?.(host);
     return host;
   }
 
@@ -1077,16 +1008,11 @@ export class DurableHarness {
     assertDurableStoreId(storeId);
     const directory = durableStoreDir(this.dataDir, storeId);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
+    writeStoreMeta(directory, meta);
     const host = new SessionHost(this, storeId, directory, meta, this.startupHeld);
     host.bindOpenedHarness(opened.harness, opened.storage, opened.models);
     this.hosts.set(storeId, host);
     return host;
-  }
-
-  /** Hold every open store's scheduler until `finishStartup()`. Idempotent. */
-  beginStartup(): void {
-    this.startupHeld = true;
-    for (const host of this.hosts.values()) host.holdResume();
   }
 
   async finishStartup(): Promise<void> {
@@ -1094,23 +1020,11 @@ export class DurableHarness {
     await Promise.all([...this.hosts.values()].map((host) => host.releaseResume()));
   }
 
-  /**
-   * Close every open store. `resumeByStore` is the conversations that must keep
-   * their work for the next start. Resolves the store ids that still had live tasks.
-   */
-  async closeAll(
-    resumeByStore: ReadonlyMap<string, ReadonlySet<ConversationId>> = new Map(),
-  ): Promise<string[]> {
+  /** Close every open store. */
+  async closeAll(): Promise<void> {
     this.closed = true;
-    const pending: string[] = [];
     const hosts = [...this.hosts.values()];
-    await Promise.all(
-      hosts.map(async (host) => {
-        const result = await host.close(resumeByStore.get(host.storeId) ?? new Set());
-        if (result.pending) pending.push(host.storeId);
-      }),
-    );
-    return pending;
+    await Promise.all(hosts.map((host) => host.close()));
   }
 }
 

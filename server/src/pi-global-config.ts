@@ -1,7 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import {
   createBashToolDefinition,
@@ -12,6 +10,7 @@ import {
   getExamplesPath,
   getReadmePath,
 } from "@earendil-works/pi-coding-agent";
+import { properLockfile } from "./pi-lockfile.js";
 
 export const PI_GLOBAL_SYSTEM_PROMPT_PATH = "~/.pi/agent/SYSTEM.md";
 export const PI_BUILTIN_TOOL_NAMES = [
@@ -39,11 +38,6 @@ export interface PiDefaultToolsSnapshot {
 
 const BUILTIN_TOOL_NAME_SET = new Set<string>(PI_BUILTIN_TOOL_NAMES);
 const DEFAULT_PROMPT_TOOL_NAMES = ["read", "bash", "edit", "write"] as const;
-const piLockfile = createRequire(
-  fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")),
-)("proper-lockfile") as {
-  lockSync: (file: string, options?: { realpath?: boolean }) => () => void;
-};
 
 export class PiGlobalConfigError extends Error {
   readonly code: "validation" | "malformed";
@@ -234,7 +228,7 @@ function acquirePiSettingsLock(settingsPath: string): () => void {
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      return piLockfile.lockSync(settingsPath, { realpath: false });
+      return properLockfile.lockSync(settingsPath, { realpath: false });
     } catch (error: unknown) {
       const code =
         typeof error === "object" && error !== null && "code" in error

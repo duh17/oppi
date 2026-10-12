@@ -452,18 +452,6 @@ export class Storage {
     this.sessionStore.clearRestartResume(sessionId);
   }
 
-  markDurableStorePending(storeId: string, recordedAt?: number): void {
-    this.sessionStore.markDurableStorePending(storeId, recordedAt);
-  }
-
-  listDurableStorePending(): string[] {
-    return this.sessionStore.listDurableStorePending();
-  }
-
-  clearDurableStorePending(storeId: string): void {
-    this.sessionStore.clearDurableStorePending(storeId);
-  }
-
   deleteSession(sessionId: string): boolean {
     const previousAssetId = iconAssetId(this.sessionStore.getSession(sessionId)?.launch?.agentIcon);
     const deleted = this.sessionStore.deleteSession(sessionId);

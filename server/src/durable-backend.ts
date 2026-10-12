@@ -138,7 +138,7 @@ const RequestContent = defineDocFamily<{ content: string; display?: string }, nu
 
 interface DurableBackendOptions {
   harness: Harness;
-  owner: SessionHost;
+  host: SessionHost;
   models: ModelRuntime;
   session: Session;
   workspace?: Workspace;
@@ -244,7 +244,7 @@ export class DurableBackend implements AgentBackend {
 
   private constructor(
     private readonly harness: Harness,
-    private readonly owner: SessionHost,
+    private readonly host: SessionHost,
     private readonly conversation: Conversation,
     models: ModelRuntime,
     private readonly session: Session,
@@ -257,7 +257,7 @@ export class DurableBackend implements AgentBackend {
     private readonly dataDir: string,
   ) {
     this.registry = new ModelRegistry(models);
-    this.projection = new DurableEventProjection(harness, () => owner.retrySettings ?? {});
+    this.projection = new DurableEventProjection(harness, () => host.runtime.retrySettings ?? {});
   }
 
   static async create(options: DurableBackendOptions): Promise<DurableBackend> {
@@ -273,7 +273,7 @@ export class DurableBackend implements AgentBackend {
       dataDir: options.dataDir,
     });
     const cwd = sandbox ? resolveSandboxGuestCwd(workspace) : hostCwd;
-    const owner = options.owner;
+    const host = options.host;
     const agentDir = getAgentDir();
     // Sandboxes see only the workspace, as SDK sandbox sessions: trusted.
     const projectTrusted = sandbox || (await resolveProjectTrust(hostCwd, agentDir, options));
@@ -289,7 +289,7 @@ export class DurableBackend implements AgentBackend {
     // The control conversation selects an exact extension list; it gets no MCP tools.
     const mcp = isControlConversation(session)
       ? undefined
-      : await owner.replaceMcp(session.id, async () => {
+      : await host.replaceMcp(session.id, async () => {
           const registry = new ModelRegistry(models);
           return DurableMcp.open({
             sessionId: session.id,
@@ -314,8 +314,8 @@ export class DurableBackend implements AgentBackend {
               : {}),
             policy: session.launch?.tools,
             providerToken: (provider) => registry.getApiKeyForProvider(provider),
-            install: (extension) => owner.installExtension(extension),
-            uninstall: (extension) => owner.uninstallExtension(extension),
+            install: (extension) => host.runtime.installExtension(extension),
+            uninstall: (extension) => host.runtime.uninstallExtension(extension),
             metrics: options.metrics,
           });
         });
@@ -338,7 +338,7 @@ export class DurableBackend implements AgentBackend {
           }),
       });
     } catch (error) {
-      await owner.closeMcp(session.id);
+      await host.closeMcp(session.id);
       throw error;
     }
   }
@@ -354,7 +354,7 @@ export class DurableBackend implements AgentBackend {
       loadResources: () => Promise<DurableProjectResources>;
     },
   ): Promise<DurableBackend> {
-    const { harness, models, session, agentDefinition, owner } = options;
+    const { harness, models, session, agentDefinition, host } = options;
     const { hostCwd, cwd, mcp, resources } = target;
     const workspace = options.workspace;
     const sandbox = workspace?.runtime === "sandbox";
@@ -363,7 +363,7 @@ export class DurableBackend implements AgentBackend {
     // Extensions from Pi packages' durable entries allowed in this runtime; never on control.
     const packageExtensions = control
       ? []
-      : owner.packageExtensionsFor(sandbox ? "sandbox" : "host");
+      : host.runtime.packageExtensionsFor(sandbox ? "sandbox" : "host");
     let conversation: Conversation;
     if (id !== undefined) {
       const existing = await harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
@@ -384,8 +384,8 @@ export class DurableBackend implements AgentBackend {
       await conversation.configure(
         control
           ? {
-              extensions: [...owner.controlExtensions],
-              tools: controlConversationTools(owner.controlExtensions),
+              extensions: [...host.runtime.controlExtensions],
+              tools: controlConversationTools(host.runtime.controlExtensions),
             }
           : {
               extensions: {
@@ -393,7 +393,7 @@ export class DurableBackend implements AgentBackend {
                   DurableAsk,
                   DurableWorkingWords,
                   DurableBackgroundJobs,
-                  owner.sessionsExtension,
+                  host.runtime.sessionsExtension,
                   DurableProjectContext,
                   ...packageExtensions,
                   ...(mcp ? [mcp.selection] : []),
@@ -412,7 +412,7 @@ export class DurableBackend implements AgentBackend {
               DurableAsk,
               DurableWorkingWords,
               DurableBackgroundJobs,
-              owner.sessionsExtension,
+              host.runtime.sessionsExtension,
               ...packageExtensions,
             ]
       )
@@ -452,13 +452,13 @@ export class DurableBackend implements AgentBackend {
       const policy = session.launch?.tools;
       const tools = (
         control
-          ? controlConversationTools(owner.controlExtensions)
+          ? controlConversationTools(host.runtime.controlExtensions)
           : [
               ...(CodingTools.tools ?? []),
               ...(DurableAsk.tools ?? []),
               ...(sandbox ? (DurableSandboxTools.tools ?? []) : []),
               ...(DurableBackgroundJobs.tools ?? []),
-              ...(owner.sessionsExtension.tools ?? []),
+              ...(host.runtime.sessionsExtension.tools ?? []),
               ...packageExtensions.flatMap((extension) => extension.tools ?? []),
             ]
       ).filter(
@@ -484,7 +484,7 @@ export class DurableBackend implements AgentBackend {
           },
           agent: {
             extensions: control
-              ? [...owner.controlExtensions]
+              ? [...host.runtime.controlExtensions]
               : sandbox
                 ? [
                     CodingTools,
@@ -492,7 +492,7 @@ export class DurableBackend implements AgentBackend {
                     DurableAsk,
                     DurableWorkingWords,
                     DurableBackgroundJobs,
-                    owner.sessionsExtension,
+                    host.runtime.sessionsExtension,
                     DurableProjectContext,
                     ...packageExtensions,
                     ...(mcp ? [mcp.selection] : []),
@@ -502,7 +502,7 @@ export class DurableBackend implements AgentBackend {
                     DurableAsk,
                     DurableWorkingWords,
                     DurableBackgroundJobs,
-                    owner.sessionsExtension,
+                    host.runtime.sessionsExtension,
                     DurableProjectContext,
                     ...packageExtensions,
                     ...(mcp ? [mcp.selection] : []),
@@ -548,7 +548,7 @@ export class DurableBackend implements AgentBackend {
       const probe = await vm.exec(["/usr/bin/setsid", "/bin/true"]);
       if (!probe.ok) throw new Error("Durable sandbox execution requires guest setsid");
       const env = new GondolinExecutionEnv(vm, workspace.id, cwd);
-      options.owner.bindSandboxEnv(conversation.id, env);
+      options.host.bindSandboxEnv(conversation.id, env);
       // Stdio MCP servers run in this VM; they connect at `attach` below.
       target.onSandboxVm(vm);
     }
@@ -563,7 +563,7 @@ export class DurableBackend implements AgentBackend {
       const events = await watchEvents(harness, conversation.id, BACKGROUND_CONTEXT);
       const backend = new DurableBackend(
         harness,
-        options.owner,
+        options.host,
         conversation,
         models,
         session,
@@ -604,8 +604,8 @@ export class DurableBackend implements AgentBackend {
           notifyType: "warning",
         });
     });
-    if (!this.owner.isResumeHeld) this.harness.resume();
-    for (const event of this.projection.snapshot(this.events.snapshot, this.owner.isResumeHeld))
+    if (!this.host.isResumeHeld) this.harness.resume();
+    for (const event of this.projection.snapshot(this.events.snapshot, this.host.isResumeHeld))
       this.onEvent(event);
     this.events.start(async (events) => {
       if (this.disposed) return;
@@ -706,7 +706,7 @@ export class DurableBackend implements AgentBackend {
     // card write is filled here; a card that already landed is a no-op.
     // A failed scan fails the attach. Swallowing it would leave the miss hidden.
     if (this.disposed) return;
-    await reconcileFailureCards(this.conversation, this.owner.storage);
+    await reconcileFailureCards(this.conversation, this.host.storage);
   }
 
   private get agent(): AgentState {
@@ -740,7 +740,7 @@ export class DurableBackend implements AgentBackend {
     operation: (permit: SessionRuntimeTransactionPermit) => Promise<T>,
   ): Promise<T> {
     this.assertOpen();
-    this.owner.assertSchedulingReady();
+    this.host.assertSchedulingReady();
     return this.transactions.withShared(operation);
   }
   withRuntimeLifecycleTransaction<T>(
@@ -761,7 +761,7 @@ export class DurableBackend implements AgentBackend {
       return this.withModelTurnAdmission("prompt", (token) => this.prompt(message, options, token));
     this.transactions.assertPermit(permit, "shared");
     this.assertOpen();
-    this.owner.assertSchedulingReady();
+    this.host.assertSchedulingReady();
     const clientTurnId = options?.clientTurnId;
     if (
       clientTurnId &&
@@ -779,7 +779,7 @@ export class DurableBackend implements AgentBackend {
     // admission so two copies of one request cannot both append a local user row.
     const admission = this.admissions.then(async () => {
       this.assertOpen();
-      this.owner.assertSchedulingReady();
+      this.host.assertSchedulingReady();
       const existing = await this.conversation.commit(async (tx) => {
         const record = await tx.submissionByRequest(this.conversation.id, requestId);
         const queued =
@@ -869,7 +869,7 @@ export class DurableBackend implements AgentBackend {
     if (!permit) return this.withRuntimeLifecycleTransaction("abort", (token) => this.abort(token));
     this.transactions.assertPermit(permit, "exclusive");
     this.assertOpen();
-    await this.owner.abortConversation(this.conversation.id);
+    await this.host.abortConversation(this.conversation.id);
     this.onEvent({ type: "queue_update", ...this.queuedMessages() });
   }
   // Classic aborts only a user-started shell command, which the server never starts on either
@@ -884,11 +884,11 @@ export class DurableBackend implements AgentBackend {
       });
     if (this.disposed) return { disposal: "graceful" };
     this.transactions.assertPermit(permit, "exclusive");
-    await this.owner.abortConversation(this.conversation.id);
-    await this.owner.abortSessionReporters(this.conversation.id);
+    await this.host.abortConversation(this.conversation.id);
+    await this.host.abortSessionReporters(this.conversation.id);
     await this.detachForRestart();
-    await this.owner.unbindSandboxEnv(this.conversation.id);
-    await this.owner.closeMcp(this.session.id);
+    await this.host.unbindSandboxEnv(this.conversation.id);
+    await this.host.closeMcp(this.session.id);
     return { disposal: "graceful" };
   }
   /** Projection teardown only: the recorded original submission must survive shutdown. */
@@ -904,11 +904,11 @@ export class DurableBackend implements AgentBackend {
     return async (timeoutMs) => {
       // Never report a successful stop until Durable has admitted cancellation.
       // A rejected abort leaves the projection alive and propagates stop_failed.
-      await this.owner.abortConversation(this.conversation.id);
-      await this.owner.abortSessionReporters(this.conversation.id);
+      await this.host.abortConversation(this.conversation.id);
+      await this.host.abortSessionReporters(this.conversation.id);
       await this.detachForRestart();
-      await this.owner.unbindSandboxEnv(this.conversation.id);
-      await this.owner.closeMcp(this.session.id);
+      await this.host.unbindSandboxEnv(this.conversation.id);
+      await this.host.closeMcp(this.session.id);
       this.transactions.poison(new Error("Server durable stop timed out"));
       return { disposal: "forced", cause: "lifecycle_timeout", operation: "stop", timeoutMs };
     };
@@ -1171,7 +1171,7 @@ export class DurableBackend implements AgentBackend {
   }
   async compact(instructions?: string): Promise<CompactionResult> {
     this.assertOpen();
-    this.owner.assertSchedulingReady();
+    this.host.assertSchedulingReady();
     const usageBefore = this.messages()
       .reverse()
       .find((message) => message.role === "assistant")?.usage;
@@ -1358,7 +1358,7 @@ export class DurableBackend implements AgentBackend {
         })),
       },
       outputPath,
-      themeName: this.owner.runPolicySettings.getTheme(),
+      themeName: this.host.runtime.runPolicySettings.getTheme(),
     });
   }
   // The four settings below are the Harness's run policy: global user settings it reads at every
@@ -1366,19 +1366,19 @@ export class DurableBackend implements AgentBackend {
   // conversation from its next boundary or attempt, not to this session alone.
   setAutoCompactionEnabled(enabled: boolean): void {
     this.assertOpen();
-    this.owner.runPolicySettings.setCompactionEnabled(enabled);
+    this.host.runtime.runPolicySettings.setCompactionEnabled(enabled);
   }
   setSteeringMode(mode: "all" | "one-at-a-time"): void {
     this.assertOpen();
-    this.owner.runPolicySettings.setSteeringMode(mode);
+    this.host.runtime.runPolicySettings.setSteeringMode(mode);
   }
   setFollowUpMode(mode: "all" | "one-at-a-time"): void {
     this.assertOpen();
-    this.owner.runPolicySettings.setFollowUpMode(mode);
+    this.host.runtime.runPolicySettings.setFollowUpMode(mode);
   }
   setAutoRetryEnabled(enabled: boolean): void {
     this.assertOpen();
-    this.owner.runPolicySettings.setRetryEnabled(enabled);
+    this.host.runtime.runPolicySettings.setRetryEnabled(enabled);
   }
   /**
    * Cancel a pending retry backoff and nothing else. The failed attempt's error is already
@@ -1399,7 +1399,7 @@ export class DurableBackend implements AgentBackend {
    */
   async abortRetry(): Promise<void> {
     this.assertOpen();
-    this.owner.assertSchedulingReady();
+    this.host.assertSchedulingReady();
     const id = this.conversation.id;
     const marked = await this.conversation.commit(async (tx) => {
       const live = await tx.doc(LiveDoc, id);

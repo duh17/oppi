@@ -106,9 +106,8 @@ async function durableFixture() {
     readDurableSearchTranscript(harness, conversationId as ConversationId),
   );
   const source: DurableSearchSource = {
-    readTipEntryId: (_sessionId, conversationId) =>
-      readDurableTipEntryId(harness, conversationId as ConversationId),
-    readTranscript: (_sessionId, conversationId) => readTranscript(conversationId),
+    readTipEntryId: () => readDurableTipEntryId(harness, id),
+    readTranscript: () => readTranscript(id as number),
   };
   return { id: id as number, turn, source, readTranscript, resume };
 }

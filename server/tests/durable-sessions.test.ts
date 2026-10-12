@@ -919,6 +919,8 @@ describe("durable-native threads", () => {
       .listSessions()
       .find((session) => session.id !== f.parent.id && session.id !== stranger.id)!;
     const childConversation = conversationOf(f.storage, child);
+    const env = new NodeExecutionEnv({ cwd: f.dir });
+    (await f.owner()).bindSandboxEnv(childConversation, env);
     // The row holding the child's key is now one a client made: it points elsewhere, or nowhere.
     for (const serverDurable of [
       { conversationId: conversationOf(f.storage, stranger) },
@@ -926,13 +928,13 @@ describe("durable-native threads", () => {
     ]) {
       f.storage.saveSession({ ...child, serverDurable });
       await expect(
-        (await f.threads()).materialize({ conversationId: childConversation, name: "Again" }),
+        (await f.threads()).materialize({ conversationId: childConversation, name: "Again" }, env),
       ).rejects.toThrow(/not bound to the child conversation/);
     }
     expect(f.storage.listSessions()).toHaveLength(3);
     f.storage.saveSession(child);
     await expect(
-      (await f.threads()).materialize({ conversationId: childConversation, name: "Again" }),
+      (await f.threads()).materialize({ conversationId: childConversation, name: "Again" }, env),
     ).resolves.toBe(child.id);
   });
 

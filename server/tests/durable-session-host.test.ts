@@ -9,6 +9,7 @@ import {
   fauxProvider,
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
+import { InboxDoc, type ConversationId } from "@earendil-works/pi-durable";
 import { DurableHarness, durableStoreDir, durableStoreSqlitePath } from "../src/durable-harness.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
@@ -198,4 +199,87 @@ describe("durable SessionHost stores", () => {
       DURABLE_STORE_MISSING,
     );
   });
+
+  it("reads stored history after the session worktree is gone", async () => {
+    const f = await fixture();
+    const session = enroll(f.storage, f.workspace.id, "History");
+    await f.manager.startSession(session.id, f.workspace);
+    const runtime = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
+      .durableHarness;
+    await f.manager.stopSession(session.id);
+    await until(
+      () => runtime.host(session.id) === undefined,
+      () => {
+        const host = runtime.host(session.id);
+        return `idle store close (${host?.holdReasons.join("; ") || "missing host"})`;
+      },
+    );
+    const stored = f.storage.getSession(session.id)!;
+    stored.worktreeId = "wt_removed";
+    f.storage.saveSession(stored);
+    const page = await f.manager.getServerDurableTracePage(session.id, {});
+    expect(page).not.toBeNull();
+    expect(page?.trace).toEqual([]);
+  });
+
+  it.each(["graceful", "crash"] as const)(
+    "%s restart aborts a stopped session leftover task when the store reopens",
+    async (mode) => {
+      const f = await fixture();
+      const session = enroll(f.storage, f.workspace.id, "Leftover");
+      await f.manager.startSession(session.id, f.workspace);
+      const conversationId = f.storage.getSession(session.id)!.serverDurable!
+        .conversationId as ConversationId;
+      const runtime = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
+        .durableHarness;
+      await f.manager.stopSession(session.id);
+      await until(
+        () => runtime.host(session.id) === undefined || runtime.host(session.id)?.isIdle === true,
+        "store idle after stop",
+      );
+      const host = await runtime.openHost(session.id);
+      const release = host.retain("plant-leftover");
+      try {
+        const { harness } = await host.open();
+        const conversation = (await harness.conversation(conversationId, context))!;
+        await conversation.commit(async (tx) => {
+          const inbox = await tx.doc(InboxDoc, conversationId);
+          const input = await tx.createSubmission({
+            conversationId,
+            type: "input",
+            status: "queued",
+            requestId: "leftover-input",
+          });
+          inbox.items.push({ id: input.id, mode: "followUp", content: "Never deliver" });
+        }, context);
+        expect(
+          (await harness.inspect(context)).submissions.some(
+            (submission) => submission.status === "queued",
+          ),
+        ).toBe(true);
+      } finally {
+        release();
+      }
+
+      if (mode === "graceful") {
+        await f.manager.close();
+      } else {
+        await runtime.closeAll();
+      }
+      managers.splice(managers.indexOf(f.manager), 1);
+
+      const restarted = new SessionManager(new Storage(f.dir));
+      managers.push(restarted);
+      await restarted.resumeDurableSessions();
+      expect(restarted.isActive(session.id)).toBe(false);
+      expect(await restarted.getServerDurableTracePage(session.id, {})).not.toBeNull();
+      const reopened = await (
+        await (restarted as unknown as { durableHarness: Promise<DurableHarness> }).durableHarness
+      ).openHost(session.id);
+      await until(async () => {
+        const live = await (await reopened.open()).harness.inspect(context);
+        return !live.submissions.some((submission) => submission.status === "queued");
+      }, "leftover submission aborted");
+    },
+  );
 });

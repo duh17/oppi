@@ -34,31 +34,6 @@ export function requireDurableStoreId(session: Pick<Session, "serverDurable">): 
   return storeId;
 }
 
-export interface DurableStoreMeta {
-  createdAt: number;
-  cwd: string;
-  name?: string;
-  workspaceId?: string;
-  agent?: { id: string; version: number };
-}
-
-export function durableStoreMetaFromSession(session: Session, cwd: string): DurableStoreMeta {
-  const agent =
-    session.launch?.agentId !== undefined
-      ? {
-          id: session.launch.agentId,
-          version: session.launch.agentVersion ?? 0,
-        }
-      : undefined;
-  return {
-    createdAt: session.createdAt,
-    cwd,
-    ...(session.name ? { name: session.name } : {}),
-    ...(session.workspaceId ? { workspaceId: session.workspaceId } : {}),
-    ...(agent ? { agent } : {}),
-  };
-}
-
 export function runtimeLogTag(session: Pick<Session, "runtime">): SessionRuntimeKind {
   return isPiTuiSession(session) ? "pi-tui" : "oppi";
 }

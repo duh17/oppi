@@ -5,11 +5,10 @@ import { isControlConversation } from "./control-session.js";
 import {
   DURABLE_STORE_MISSING,
   durableStoreId,
-  durableStoreMetaFromSession,
   requireDurableStoreId,
   usesDurableEngine,
 } from "./session-runtime-capabilities.js";
-import type { DurableHarness } from "./durable-harness.js";
+import type { DurableHarness, SessionHost } from "./durable-harness.js";
 import type { AgentBackend } from "./agent-backend.js";
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
 import {
@@ -29,6 +28,7 @@ export interface SessionStartActiveSession extends Omit<
   messageQueue?: SessionMessageQueueStore;
   sdkBackend: AgentBackend;
   workspaceId: string;
+  releaseDurableHold?: () => void;
 }
 
 export interface SessionStartCoordinatorDeps {
@@ -114,17 +114,18 @@ export class SessionStartCoordinator {
         const DurableBackend = useDurable
           ? (await import("./durable-backend.js")).DurableBackend
           : undefined;
-        let durableHost:
-          Awaited<ReturnType<NonNullable<typeof durableHarness>["openHost"]>> | undefined;
+        let durableHost: SessionHost | undefined;
+        let releaseStart: (() => void) | undefined;
         if (DurableBackend && durableHarness) {
           const cwd = await resolveSdkSessionCwdAsync(workspace, session, {
             dataDir: this.deps.storage.getDataDir(),
           });
+          const { durableStoreMetaFromSession } = await import("./durable-harness.js");
           durableHost = await durableHarness.openHost(
             requireDurableStoreId(session),
             durableStoreMetaFromSession(session, cwd),
           );
-          durableHost.retain();
+          releaseStart = durableHost.retain("start");
         }
         let sdkBackend: AgentBackend;
         try {
@@ -132,7 +133,7 @@ export class SessionStartCoordinator {
             DurableBackend && durableHarness && durableHost
               ? await DurableBackend.create({
                   ...(await durableHost.open()),
-                  owner: durableHost,
+                  host: durableHost,
                   session,
                   workspace,
                   agentDefinition,
@@ -178,8 +179,8 @@ export class SessionStartCoordinator {
           };
 
           if (sdkBackend.nativeMessageQueue) delete activeSession.messageQueue;
+          if (durableHost) activeSession.releaseDurableHold = durableHost.retain("attach");
           this.deps.registerActiveSession(key, activeSession);
-          durableHost?.noteAttached(session.id);
           this.deps.runtimeManager.markSessionReady(identity);
 
           session.status = "ready";
@@ -194,7 +195,7 @@ export class SessionStartCoordinator {
             // reads: event projection normally saves on a debounce, which would
             // otherwise expose the earlier ready row during crash recovery.
             this.deps.persistSessionNow(key, session);
-            // submit/abort also enables the Harness-wide scheduler. Explicitly
+            // submit/abort also enables this store's scheduler. Explicitly
             // resume after attaching the projection, never via a new user prompt.
             await durableHost.resume();
           }
@@ -202,7 +203,7 @@ export class SessionStartCoordinator {
 
           return session;
         } finally {
-          durableHost?.release();
+          releaseStart?.();
         }
       } catch (err) {
         if (!abandoned) {

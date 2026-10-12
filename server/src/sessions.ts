@@ -50,11 +50,7 @@ import {
 import type { DurableSearchSource, SearchIndex } from "./search-index.js";
 import { updateSearchIndexForSessionEvent } from "./session-search-indexing.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
-import {
-  SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS,
-  SdkBackend,
-  resolveSdkSessionCwdAsync,
-} from "./sdk-backend.js";
+import { SDK_RUNTIME_LIFECYCLE_TIMEOUT_MS, SdkBackend } from "./sdk-backend.js";
 import type { LiveEntryRendererSet, TraceEvent } from "./trace.js";
 import type { TracePageOptions, TracePageResult } from "./trace-paging.js";
 import type { TraceOutlineResult } from "./trace-outline.js";
@@ -89,7 +85,6 @@ import { isControlConversation } from "./control-session.js";
 import {
   DURABLE_STORE_MISSING,
   durableStoreId,
-  durableStoreMetaFromSession,
   hasServerDurableBinding,
   requireDurableStoreId,
 } from "./session-runtime-capabilities.js";
@@ -99,6 +94,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   private readonly durableHarness?: Promise<DurableHarness>;
   private storage: Storage;
   private active: Map<string, ActiveSession> = new Map();
+  /** Session ids currently inside `startSession`, before they are active. */
+  private readonly startingIds = new Set<string>();
   private readonly config: ServerConfig;
   private readonly runtimeManager: WorkspaceRuntime;
   private readonly startupUI = new Map<string, { bridge: SdkUiBridge; state: ExtensionUIState }>();
@@ -150,17 +147,18 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         import("./durable-threads.js"),
         import("./durable-control-cli.js"),
       ]).then(([{ DurableHarness }, { DurableThreads }, { DurableControlCli }]) => {
-        const owner = new DurableHarness(storage.getDataDir());
-        owner.bindThreads(
+        const runtime = new DurableHarness(storage.getDataDir());
+        runtime.onHostOpened = (host) => this.fenceStopped([host]);
+        runtime.bindThreads(
           new DurableThreads({
-            owner,
+            runtime,
             storage,
             startSession: (sessionId, workspace) => this.startSession(sessionId, workspace),
             isActive: (sessionId) => this.isActive(sessionId),
             onCreated: (session) => this.emit("session_created", session),
           }),
         );
-        owner.bindControl(
+        runtime.bindControl(
           new DurableControlCli({
             dataDir: storage.getDataDir(),
             sessionIdOf: (conversationId) =>
@@ -173,7 +171,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
                 )?.id,
           }),
         );
-        return owner;
+        return runtime;
       });
     }
     const runtimeManager = new WorkspaceRuntime(resolveRuntimeLimits(config));
@@ -335,9 +333,12 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const key = this.sessionKey(sessionId);
     this.ensureMobileRenderersLoaded();
     const startWorkspace = workspace ?? this.resolveStoredWorkspace(sessionId);
-    const session = await this.activationCoordinator.startSession(key, sessionId, startWorkspace);
-
-    return session;
+    this.startingIds.add(sessionId);
+    try {
+      return await this.activationCoordinator.startSession(key, sessionId, startWorkspace);
+    } finally {
+      this.startingIds.delete(sessionId);
+    }
   }
 
   /**
@@ -533,94 +534,54 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return session.serverDurable.conversationId as ConversationId;
   }
 
-  private async noteDurableDetached(session: Session): Promise<void> {
-    if (!this.durableHarness) return;
-    const runtime = await this.durableHarness;
-    const storeId = durableStoreId(session);
-    if (storeId !== undefined) runtime.host(storeId)?.noteDetached(session.id);
-    for (const host of runtime.openHosts()) host.noteDetached(session.id);
-  }
-
-  private async hostForSession(session: Session): Promise<SessionHost> {
-    if (!this.durableHarness) throw new Error("Server durable runtime is unavailable");
-    const storeId = requireDurableStoreId(session);
-    const runtime = await this.durableHarness;
-    const existing = runtime.host(storeId);
-    if (existing?.isOpen) {
-      await existing.open();
-      return existing;
-    }
-    const cwd = await resolveSdkSessionCwdAsync(
-      session.workspaceId ? this.storage.getWorkspace(session.workspaceId) : undefined,
-      session,
-      { dataDir: this.storage.getDataDir() },
-    );
-    return runtime.openHost(storeId, durableStoreMetaFromSession(session, cwd));
-  }
-
-  /** Opened Harness for a bound durable conversation, or null. */
-  private async durableConversation(
+  private async withDurableConversation<T>(
     sessionId: string,
-  ): Promise<{ harness: Harness; conversationId: ConversationId; host: SessionHost } | null> {
+    read: (harness: Harness, conversationId: ConversationId) => Promise<T>,
+  ): Promise<T | null> {
     const session = this.storage.getSession(sessionId);
     const conversationId = this.boundConversationId(sessionId);
     if (!session || conversationId === undefined || !this.durableHarness) return null;
-    const host = await this.hostForSession(session);
-    host.retain();
-    try {
-      const { harness } = await host.open();
-      return { harness, conversationId, host };
-    } catch (error) {
-      host.release();
-      throw error;
-    }
+    return (await this.durableHarness).withSession(session, (harness) =>
+      read(harness, conversationId),
+    );
   }
 
   async getServerDurableInputCardOutput(
     sessionId: string,
     entryId: string,
   ): Promise<{ output: string } | null> {
-    const bound = await this.durableConversation(sessionId);
-    if (!bound) return null;
-    try {
-      const { readDurableInputCardOutput } = await import("./durable-input-cards.js");
-      return readDurableInputCardOutput(bound.harness, bound.conversationId, entryId);
-    } finally {
-      bound.host.release();
-    }
+    return this.withDurableConversation(sessionId, (harness, conversationId) =>
+      import("./durable-input-cards.js").then(({ readDurableInputCardOutput }) =>
+        readDurableInputCardOutput(harness, conversationId, entryId),
+      ),
+    );
   }
 
   async getServerDurableTracePage(
     sessionId: string,
     options: TracePageOptions,
   ): Promise<TracePageResult | null> {
-    const bound = await this.durableConversation(sessionId);
-    if (!bound) return null;
-    try {
-      const { readDurableTracePage } = await import("./durable-history.js");
-      return readDurableTracePage(bound.harness, bound.conversationId, {
-        ...options,
-        entryRenderers: this.getEntryRenderers(sessionId),
-      });
-    } finally {
-      bound.host.release();
-    }
+    return this.withDurableConversation(sessionId, (harness, conversationId) =>
+      import("./durable-history.js").then(({ readDurableTracePage }) =>
+        readDurableTracePage(harness, conversationId, {
+          ...options,
+          entryRenderers: this.getEntryRenderers(sessionId),
+        }),
+      ),
+    );
   }
 
   async getServerDurableTraceOutline(sessionId: string): Promise<TraceOutlineResult | null> {
-    const bound = await this.durableConversation(sessionId);
-    if (!bound) return null;
-    try {
-      const { readDurableTraceOutline } = await import("./durable-history.js");
-      return readDurableTraceOutline(
-        bound.harness,
-        bound.conversationId,
-        this.mobileRenderer,
-        this.getEntryRenderers(sessionId),
-      );
-    } finally {
-      bound.host.release();
-    }
+    return this.withDurableConversation(sessionId, (harness, conversationId) =>
+      import("./durable-history.js").then(({ readDurableTraceOutline }) =>
+        readDurableTraceOutline(
+          harness,
+          conversationId,
+          this.mobileRenderer,
+          this.getEntryRenderers(sessionId),
+        ),
+      ),
+    );
   }
 
   /**
@@ -659,14 +620,15 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     send: (frame: ConversationStreamServerMessage) => void,
   ): Promise<() => void> {
     const conversationId = this.boundConversationId(session.id);
-    if (conversationId === undefined || !this.durableHarness)
+    const runtime = this.durableHarness;
+    if (conversationId === undefined || !runtime)
       throw new Error("The conversation stream requires a durable session");
     if (request.sessionId !== undefined && request.sessionId !== session.id)
       throw new Error(`The conversation stream cannot target session ${request.sessionId}`);
     if (request.conversationId !== undefined && request.conversationId !== conversationId)
       throw new Error(`Conversation ${request.conversationId} is not this session's conversation`);
-    const host = await this.hostForSession(session);
-    host.retain();
+    const host = await (await runtime).openHost(requireDurableStoreId(session));
+    const releaseStream = host.retain("stream");
     try {
       const { harness } = await host.open();
       const { attachConversationStream } = await import("./durable-conversation-stream.js");
@@ -677,48 +639,42 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         ...(request.afterEntryId !== undefined ? { afterEntryId: request.afterEntryId } : {}),
         send,
       });
-      host.noteStreamSubscribe();
       let disposed = false;
       return () => {
         if (disposed) return;
         disposed = true;
         subscription.dispose();
-        host.noteStreamUnsubscribe();
-        host.release();
+        releaseStream();
       };
     } catch (error) {
-      host.release();
+      releaseStream();
       throw error;
     }
   }
 
   /** Read-only Harness access for the search index; undefined when no runtime exists (flag off, nothing bound). */
   durableSearchSource(): DurableSearchSource | undefined {
-    if (!this.durableHarness) return undefined;
+    const runtime = this.durableHarness;
+    if (!runtime) return undefined;
     const withConversation = async <T>(
       sessionId: string,
-      conversationId: number,
       read: (harness: Harness, id: ConversationId) => Promise<T>,
     ): Promise<T> => {
       const session = this.storage.getSession(sessionId);
-      if (!session) throw new Error(DURABLE_STORE_MISSING);
-      const host = await this.hostForSession(session);
-      host.retain();
-      try {
-        const { harness } = await host.open();
-        return await read(harness, conversationId as ConversationId);
-      } finally {
-        host.release();
-      }
+      const conversationId = session?.serverDurable?.conversationId;
+      if (!session || conversationId === undefined) throw new Error(DURABLE_STORE_MISSING);
+      return (await runtime).withSession(session, (harness) =>
+        read(harness, conversationId as ConversationId),
+      );
     };
     return {
-      readTipEntryId: async (sessionId, conversationId) => {
+      readTipEntryId: async (sessionId) => {
         const { readDurableTipEntryId } = await import("./durable-history.js");
-        return withConversation(sessionId, conversationId, readDurableTipEntryId);
+        return withConversation(sessionId, readDurableTipEntryId);
       },
-      readTranscript: async (sessionId, conversationId) => {
+      readTranscript: async (sessionId) => {
         const { readDurableSearchTranscript } = await import("./durable-history.js");
-        return withConversation(sessionId, conversationId, readDurableSearchTranscript);
+        return withConversation(sessionId, readDurableSearchTranscript);
       },
     };
   }
@@ -727,19 +683,11 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     sessionId: string,
     view: "context" | "full",
   ): Promise<TraceEvent[] | null> {
-    const bound = await this.durableConversation(sessionId);
-    if (!bound) return null;
-    try {
-      const { readDurableTrace } = await import("./durable-history.js");
-      return readDurableTrace(
-        bound.harness,
-        bound.conversationId,
-        view,
-        this.getEntryRenderers(sessionId),
-      );
-    } finally {
-      bound.host.release();
-    }
+    return this.withDurableConversation(sessionId, (harness, conversationId) =>
+      import("./durable-history.js").then(({ readDurableTrace }) =>
+        readDurableTrace(harness, conversationId, view, this.getEntryRenderers(sessionId)),
+      ),
+    );
   }
 
   /**
@@ -758,13 +706,9 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     if (!/^[1-9]\d*$/.test(entryId) || !Number.isSafeInteger(Number(entryId))) return undefined;
     const session = this.storage.getSession(sessionId);
     if (!session) throw new Error("Server durable fork requires a bound conversation");
-    const host = await this.hostForSession(session);
-    host.retain();
-    try {
-      return await host.forkConversation(conversationId, Number(entryId) as EntryId);
-    } finally {
-      host.release();
-    }
+    return (await this.durableHarness).withSession(session, (_harness, host) =>
+      host.forkConversation(conversationId, Number(entryId) as EntryId),
+    );
   }
 
   /**
@@ -886,9 +830,9 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     stopConfirmationReason?: string,
   ): Promise<void> {
     this.commandCoordinator.cancelQueuedCompactions(key);
-    const session = this.active.get(key)?.session;
+    const releaseDurableHold = this.active.get(key)?.releaseDurableHold;
     await this.lifecycleCoordinator.handleSessionEnd(key, reason, stopConfirmationReason);
-    if (session) await this.noteDurableDetached(session);
+    releaseDurableHold?.();
   }
 
   // ─── Subscribe / Broadcast ───
@@ -925,14 +869,10 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       if (!this.durableHarness) return;
       const session = this.storage.getSession(sessionId);
       const id = this.boundConversationId(sessionId);
-      if (session && id !== undefined && durableStoreId(session)) {
-        const host = await this.hostForSession(session);
-        host.retain();
-        try {
-          await host.abortConversations(new Set([id]));
-        } finally {
-          host.release();
-        }
+      if (session && id !== undefined && durableStoreId(session) && this.durableHarness) {
+        await (
+          await this.durableHarness
+        ).withSession(session, (_harness, host) => host.abortConversations(new Set([id])));
       }
       return;
     }
@@ -955,16 +895,6 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     const runtime = await this.durableHarness;
     if (runtime) runtime.shuttingDown = true;
     const pending = new Set(this.storage.listRestartResume().map((entry) => entry.sessionId));
-    const resumeByStore = new Map<string, Set<ConversationId>>();
-    for (const sessionId of pending) {
-      const session = this.storage.getSession(sessionId);
-      const storeId = session ? durableStoreId(session) : undefined;
-      const id = this.boundConversationId(sessionId);
-      if (storeId === undefined || id === undefined) continue;
-      const ids = resumeByStore.get(storeId) ?? new Set();
-      ids.add(id);
-      resumeByStore.set(storeId, ids);
-    }
     try {
       await Promise.all(
         [...this.active.entries()].map(async ([key, active]) => {
@@ -975,10 +905,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         }),
       );
     } finally {
-      if (runtime) {
-        const pendingStores = await runtime.closeAll(resumeByStore);
-        for (const storeId of pendingStores) this.storage.markDurableStorePending(storeId);
-      }
+      if (runtime) await runtime.closeAll();
     }
   }
 
@@ -994,13 +921,51 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     log.info("sessions.durable_models_bound");
   }
 
-  /** Create the control-conversation row (and bind it) when durable sessions are available. */
+  /** Create the control-conversation row when durable sessions are available. */
   async ensureControlConversation(): Promise<void> {
     if (this.config.experimental?.serverDurable !== true || !this.durableHarness) return;
     const { ensureControlConversationSession } = await import("./control-conversation-service.js");
-    const { session } = ensureControlConversationSession(this.storage);
-    if (session.serverDurable?.conversationId === undefined) {
-      await this.startSession(session.id);
+    ensureControlConversationSession(this.storage);
+  }
+
+  private conversationsByStore(sessions: readonly Session[]): Map<string, Set<ConversationId>> {
+    const byStore = new Map<string, Set<ConversationId>>();
+    for (const session of sessions) {
+      const storeId = durableStoreId(session);
+      const id = session.serverDurable?.conversationId as ConversationId | undefined;
+      if (storeId === undefined || id === undefined) continue;
+      const ids = byStore.get(storeId) ?? new Set<ConversationId>();
+      ids.add(id);
+      byStore.set(storeId, ids);
+    }
+    return byStore;
+  }
+
+  /** Abort leftover work of conversations that are neither active nor queued to resume. */
+  private async fenceStopped(hosts: readonly SessionHost[]): Promise<void> {
+    if (!hosts.length) return;
+    const queued = new Set(this.storage.listRestartResume().map((entry) => entry.sessionId));
+    const stopped: Session[] = [];
+    for (const session of this.storage.listSessions()) {
+      if (session.serverDurable?.conversationId === undefined || !durableStoreId(session)) continue;
+      const workspaceGone = Boolean(
+        session.workspaceId && !this.storage.getWorkspace(session.workspaceId),
+      );
+      if (this.isActive(session.id) || (queued.has(session.id) && !workspaceGone)) continue;
+      // `startSession` opens the store before the session is active. Keep a live
+      // session's work; still fence a stopped session being reopened.
+      if (
+        this.startingIds.has(session.id) &&
+        session.status !== "stopped" &&
+        session.status !== "stopping"
+      )
+        continue;
+      stopped.push(session);
+    }
+    const byStore = this.conversationsByStore(stopped);
+    for (const host of hosts) {
+      const ids = byStore.get(host.storeId);
+      if (ids?.size) await host.abortConversations(ids, { background: true });
     }
   }
 
@@ -1008,13 +973,12 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   async resumeDurableSessions(): Promise<void> {
     if (!this.durableHarness) return;
     const runtime = await this.durableHarness;
-    runtime.beginStartup();
+    runtime.startupHeld = true;
     const bound = this.storage
       .listSessions()
       .filter((session) => hasServerDurableBinding(session) && durableStoreId(session));
     const queued = new Set(this.storage.listRestartResume().map((entry) => entry.sessionId));
-    const pendingStores = new Set(this.storage.listDurableStorePending());
-    const storeIds = new Set<string>(pendingStores);
+    const storeIds = new Set<string>();
     for (const session of bound) {
       const storeId = durableStoreId(session);
       if (storeId && queued.has(session.id)) storeIds.add(storeId);
@@ -1023,31 +987,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       await runtime.finishStartup();
       return;
     }
-    for (const storeId of storeIds) {
-      const root =
-        this.storage.getSession(storeId) ??
-        bound.find((session) => durableStoreId(session) === storeId);
-      if (root) await this.hostForSession(root);
-      else await runtime.openHost(storeId);
-    }
-    const marked = new Set<string>();
-    const markKey = (storeId: string, conversationId: ConversationId): string =>
-      `${storeId}:${conversationId}`;
-    for (const host of runtime.openHosts()) {
-      const hostMarked = new Set(
-        bound
-          .filter(
-            (session) =>
-              durableStoreId(session) === host.storeId &&
-              !this.isActive(session.id) &&
-              (!queued.has(session.id) ||
-                (session.workspaceId && !this.storage.getWorkspace(session.workspaceId))),
-          )
-          .map((session) => session.serverDurable!.conversationId as ConversationId),
-      );
-      for (const id of hostMarked) marked.add(markKey(host.storeId, id));
-      if (hostMarked.size) await host.abortConversations(hostMarked, { background: true });
-    }
+    for (const storeId of storeIds) await runtime.openHost(storeId);
+    await this.fenceStopped(runtime.openHosts());
     for (const session of bound) {
       const workspace = session.workspaceId
         ? this.storage.getWorkspace(session.workspaceId)
@@ -1059,38 +1000,17 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     }
     for (;;) {
       const pending = new Set(this.storage.listRestartResume().map((entry) => entry.sessionId));
-      const stopped = bound.filter(
-        (session) =>
-          !pending.has(session.id) ||
-          !this.isActive(session.id) ||
-          (session.workspaceId && !this.storage.getWorkspace(session.workspaceId)),
-      );
-      const unmarked = stopped.filter((session) => {
-        const storeId = durableStoreId(session);
-        return (
-          storeId !== undefined &&
-          !marked.has(markKey(storeId, session.serverDurable!.conversationId as ConversationId))
+      const attachedStops = bound.filter((session) => {
+        const workspaceGone = Boolean(
+          session.workspaceId && !this.storage.getWorkspace(session.workspaceId),
         );
+        return this.isActive(session.id) && (!pending.has(session.id) || workspaceGone);
       });
-      const attachedStops = stopped.filter((session) => this.isActive(session.id));
-      if (!unmarked.length && !attachedStops.length) break;
-      const byStore = new Map<string, Set<ConversationId>>();
-      for (const session of unmarked) {
-        const storeId = durableStoreId(session)!;
-        const id = session.serverDurable!.conversationId as ConversationId;
-        const ids = byStore.get(storeId) ?? new Set();
-        ids.add(id);
-        byStore.set(storeId, ids);
-        marked.add(markKey(storeId, id));
-      }
-      for (const [storeId, ids] of byStore) {
-        const host = runtime.host(storeId);
-        if (host) await host.abortConversations(ids, { background: true });
-      }
+      await this.fenceStopped(runtime.openHosts());
+      if (!attachedStops.length) break;
       for (const session of attachedStops) await this.stopSession(session.id);
     }
     for (const session of bound) this.storage.clearRestartResume(session.id);
-    for (const storeId of pendingStores) this.storage.clearDurableStorePending(storeId);
     await runtime.finishStartup();
   }
 
