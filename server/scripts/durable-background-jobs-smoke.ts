@@ -13,6 +13,7 @@ import {
   writeFileSync,
   chmodSync,
   readFileSync,
+  readdirSync,
   watch,
 } from "node:fs";
 import { request } from "node:http";
@@ -313,7 +314,10 @@ try {
     1,
   );
   assert.equal(readFileSync(join(cwd, "smoke-job.log"), "utf8").split("START ").length - 1, 1);
-  const db = new DatabaseSync(join(dataDir, "durable", "harness.sqlite"), { readOnly: true });
+  const sessionsDir = join(dataDir, "durable", "sessions");
+  const storeId = readdirSync(sessionsDir)[0];
+  if (!storeId) throw new Error("durable smoke: no session store");
+  const db = new DatabaseSync(join(sessionsDir, storeId, "session.sqlite"), { readOnly: true });
   try {
     const receipts = db
       .prepare(

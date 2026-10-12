@@ -20,6 +20,45 @@ export function hasServerDurableBinding<T extends Pick<Session, "runtime" | "ser
   return isServerDurableSession(session) && session.serverDurable?.conversationId !== undefined;
 }
 
+/** Plain error when a durable row is opened without a per-tree store. */
+export const DURABLE_STORE_MISSING = "This durable session has no store";
+
+export function durableStoreId(session: Pick<Session, "serverDurable">): string | undefined {
+  const storeId = session.serverDurable?.storeId;
+  return typeof storeId === "string" && storeId.length > 0 ? storeId : undefined;
+}
+
+export function requireDurableStoreId(session: Pick<Session, "serverDurable">): string {
+  const storeId = durableStoreId(session);
+  if (storeId === undefined) throw new Error(DURABLE_STORE_MISSING);
+  return storeId;
+}
+
+export interface DurableStoreMeta {
+  createdAt: number;
+  cwd: string;
+  name?: string;
+  workspaceId?: string;
+  agent?: { id: string; version: number };
+}
+
+export function durableStoreMetaFromSession(session: Session, cwd: string): DurableStoreMeta {
+  const agent =
+    session.launch?.agentId !== undefined
+      ? {
+          id: session.launch.agentId,
+          version: session.launch.agentVersion ?? 0,
+        }
+      : undefined;
+  return {
+    createdAt: session.createdAt,
+    cwd,
+    ...(session.name ? { name: session.name } : {}),
+    ...(session.workspaceId ? { workspaceId: session.workspaceId } : {}),
+    ...(agent ? { agent } : {}),
+  };
+}
+
 export function runtimeLogTag(session: Pick<Session, "runtime">): SessionRuntimeKind {
   return isPiTuiSession(session) ? "pi-tui" : "oppi";
 }

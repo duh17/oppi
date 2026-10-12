@@ -14,7 +14,7 @@ import {
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
 import type { GondolinExecResult, GondolinProcess, GondolinVm } from "../src/gondolin-ops.js";
-import { DurableHarness } from "../src/durable-harness.js";
+import { SessionHost } from "../src/durable-harness.js";
 import { PROJECT_TRUST_OPTIONS } from "../src/project-trust.js";
 import { SdkBackend, resolveSandboxGuestCwd } from "../src/sdk-backend.js";
 import { SessionManager } from "../src/sessions.js";
@@ -88,7 +88,7 @@ async function fixture(
     ...(sandboxConfig ? { runtime: "sandbox" as const, sandboxConfig } : {}),
   });
   const session = storage.createSession("Durable MCP", "faux/faux-1");
-  session.serverDurable = {};
+  session.serverDurable = { storeId: session.id };
   session.workspaceId = workspace.id;
   storage.saveSession(session);
   const manager = new SessionManager(storage);
@@ -285,7 +285,7 @@ describe("server durable MCP (host)", () => {
     });
     const { vm, peers } = recordingVm();
     const ensure = vi.spyOn(SdkBackend, "ensureSandboxWorkspaceVm").mockResolvedValue(vm);
-    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    const opening = vi.spyOn(SessionHost.prototype, "open");
     const f = await fixture(
       [
         fauxAssistantMessage([fauxToolCall("mcp__picked__echo", { text: "hi" })], {

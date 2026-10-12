@@ -7,7 +7,7 @@ import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { fauxProvider } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { GondolinVm } from "../src/gondolin-ops.js";
-import { DurableHarness } from "../src/durable-harness.js";
+import { SessionHost } from "../src/durable-harness.js";
 import { SdkBackend } from "../src/sdk-backend.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
@@ -72,12 +72,12 @@ async function startDurable(runtime: "host" | "sandbox") {
     vi.spyOn(SdkBackend, "ensureSandboxWorkspaceVm").mockResolvedValue(vm);
   }
   const session = storage.createSession("Selection", "faux/faux-1");
-  session.serverDurable = {};
+  session.serverDurable = { storeId: session.id };
   session.workspaceId = workspace.id;
   storage.saveSession(session);
   const manager = new SessionManager(storage);
   managers.push(manager);
-  const opening = vi.spyOn(DurableHarness.prototype, "open");
+  const opening = vi.spyOn(SessionHost.prototype, "open");
   await manager.resumeDurableSessions();
   await manager.startSession(session.id, workspace);
   const { harness } = await opening.mock.results[0]!.value;

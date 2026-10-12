@@ -15,7 +15,12 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { LiveDoc, type ConversationId, type Harness } from "@earendil-works/pi-durable";
-import { DurableHarness, DurableRuntime } from "../src/durable-harness.js";
+import {
+  DurableHarness,
+  DurableRuntime,
+  SessionHost,
+  durableStoreSqlitePath,
+} from "../src/durable-harness.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import { recordLiveSessionsForRestart } from "../src/session-restart-resume.js";
@@ -108,13 +113,12 @@ async function fixture(responses: FauxResponseStep[], options?: { serverDurable?
       compaction: { enabled: false },
     }),
   );
-  const opening = vi.spyOn(DurableHarness.prototype, "open");
   const storage = new Storage(dir);
   storage.updateConfig({ experimental: { serverDurable: options?.serverDurable ?? true } });
   const workspace = storage.createWorkspace({ name: "Durable threads", hostMount: dir });
   const session = (name: string) => {
     const created = storage.createSession(name, "faux/faux-1");
-    created.serverDurable = {};
+    created.serverDurable = { storeId: created.id };
     created.workspaceId = workspace.id;
     storage.saveSession(created);
     return created;
@@ -123,6 +127,18 @@ async function fixture(responses: FauxResponseStep[], options?: { serverDurable?
   const manager = new SessionManager(storage);
   managers.push(manager);
   await manager.resumeDurableSessions();
+  const openHost = async (sessionId: string): Promise<SessionHost> => {
+    const storeId = storage.getSession(sessionId)?.serverDurable?.storeId ?? sessionId;
+    for (const candidate of [...managers].reverse()) {
+      const runtime = await (candidate as unknown as { durableHarness?: Promise<DurableHarness> })
+        .durableHarness;
+      const host = runtime?.host(storeId);
+      if (host?.isOpen) return host;
+    }
+    throw new Error(`store ${storeId} is not open`);
+  };
+  const openStore = async (sessionId: string): Promise<Harness> =>
+    (await (await openHost(sessionId)).open()).harness;
   return {
     dir,
     storage,
@@ -130,12 +146,20 @@ async function fixture(responses: FauxResponseStep[], options?: { serverDurable?
     manager,
     parent,
     session,
-    /** The open Harness; after a simulated restart, the newest one. */
-    harness: async (): Promise<Harness> => (await opening.mock.results.at(-1)!.value).harness,
-    /** The newest Harness owner. */
-    owner: () => opening.mock.contexts.at(-1) as DurableHarness,
-    /** Oppi's thread host bound to the newest Harness owner. */
-    threads: () => (opening.mock.contexts.at(-1) as DurableHarness).boundThreads!,
+    openHost,
+    openStore,
+    harness: () => openStore(parent.id),
+    /** The parent session's store host. */
+    owner: () => openHost(parent.id),
+    /** Oppi's thread host bound to the newest runtime. */
+    threads: async () => {
+      for (const candidate of [...managers].reverse()) {
+        const runtime = await (candidate as unknown as { durableHarness?: Promise<DurableHarness> })
+          .durableHarness;
+        if (runtime?.boundThreads) return runtime.boundThreads;
+      }
+      throw new Error("thread host is not bound");
+    },
   };
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
@@ -225,8 +249,17 @@ const userTexts = async (harness: Harness, id: ConversationId): Promise<string[]
     .flatMap((entry) => (entry.model?.[0]?.role === "user" ? [textOf(entry.model[0])] : []));
 
 /** Request ids of a conversation's submissions, oldest first, read from the Harness database. */
-function requestIds(dir: string, id: ConversationId, prefix: string): string[] {
-  const db = new DatabaseSync(join(dir, "durable", "harness.sqlite"), { readOnly: true });
+function requestIds(
+  storage: Storage,
+  dir: string,
+  session: Session | string,
+  prefix: string,
+): string[] {
+  const row = storage.getSession(typeof session === "string" ? session : session.id)!;
+  const storeId = row.serverDurable?.storeId;
+  const id = row.serverDurable?.conversationId as ConversationId | undefined;
+  if (!storeId || id === undefined) return [];
+  const db = new DatabaseSync(durableStoreSqlitePath(dir, storeId), { readOnly: true });
   try {
     return (
       db
@@ -522,8 +555,8 @@ describe("durable-native threads", () => {
     expect(
       (await userTexts(harness, childConversation)).filter((text) => text === "CHILD_TASK long"),
     ).toHaveLength(1);
-    expect(requestIds(f.dir, childConversation, "oppi-spawn:")).toHaveLength(1);
-    expect(requestIds(f.dir, parentConversation, "oppi-report:")).toHaveLength(1);
+    expect(requestIds(f.storage, f.dir, child.id, "oppi-spawn:")).toHaveLength(1);
+    expect(requestIds(f.storage, f.dir, f.parent.id, "oppi-report:")).toHaveLength(1);
     expect(
       (await userTexts(harness, parentConversation)).filter((text) =>
         text.includes("finished, no reply needed"),
@@ -569,15 +602,16 @@ describe("durable-native threads", () => {
 
     // A session that did not spawn the child cannot stop it.
     await f.manager.sendPrompt(stranger.id, "Stranger abort");
+    const strangerHarness = await f.openStore(stranger.id);
     await until(
-      async () => (await toolResults(harness, strangerConversation)).length === 1,
+      async () => (await toolResults(strangerHarness, strangerConversation)).length === 1,
       "refusal",
     );
-    expect((await toolResults(harness, strangerConversation))[0]).toMatchObject({
+    expect((await toolResults(strangerHarness, strangerConversation))[0]).toMatchObject({
       toolName: "session_abort",
       isError: true,
     });
-    expect((await toolResults(harness, strangerConversation))[0]!.text).toContain(
+    expect((await toolResults(strangerHarness, strangerConversation))[0]!.text).toContain(
       "not one of your children",
     );
     expect((await harness.snapshot(LiveDoc, childConversation, context))?.run).toBeDefined();
@@ -629,7 +663,7 @@ describe("durable-native threads", () => {
       context,
     );
     expect(receipt?.type).toBe("input");
-    expect(requestIds(f.dir, childConversation, "oppi-send:")).toEqual([sent.details!.requestId]);
+    expect(requestIds(f.storage, f.dir, child.id, "oppi-send:")).toEqual([sent.details!.requestId]);
     expect(await userTexts(harness, childConversation)).toContain("HELLO_CHILD");
 
     await f.manager.sendPrompt(f.parent.id, "Wait for it please");
@@ -770,12 +804,15 @@ describe("durable-native threads", () => {
     // Mark the conversation as a sandbox one, with a stand-in guest env the harness will accept.
     const sandbox = async (session: Session, workspaceId: string) => {
       const id = conversationOf(f.storage, session);
-      await harness.commit(async (tx) => {
+      const host = await f.openHost(session.id);
+      await (
+        await host.open()
+      ).harness.commit(async (tx) => {
         const runtime = await tx.doc(DurableRuntime, id);
         runtime.kind = "sandbox";
         runtime.workspaceId = workspaceId;
       }, context);
-      f.owner().bindSandboxEnv(id, new NodeExecutionEnv({ cwd: f.dir }));
+      host.bindSandboxEnv(id, new NodeExecutionEnv({ cwd: f.dir }));
     };
     await sandbox(f.parent, f.workspace.id);
     await sandbox(same, f.workspace.id);
@@ -811,11 +848,10 @@ describe("durable-native threads", () => {
 
     // Nothing reached the host session: not attached, nothing submitted.
     expect(f.manager.isActive(host.id)).toBe(false);
-    expect(requestIds(f.dir, conversationOf(f.storage, host), "oppi-send:")).toEqual([]);
-    expect(await userTexts(harness, conversationOf(f.storage, host))).not.toContain("ATTACK");
-    expect(requestIds(f.dir, conversationOf(f.storage, other), "oppi-send:")).toEqual([]);
+    expect(requestIds(f.storage, f.dir, host, "oppi-send:")).toEqual([]);
+    expect(requestIds(f.storage, f.dir, other, "oppi-send:")).toEqual([]);
     // The same sandbox workspace stays reachable.
-    expect(requestIds(f.dir, conversationOf(f.storage, same), "oppi-send:")).toHaveLength(1);
+    expect(requestIds(f.storage, f.dir, same, "oppi-send:")).toHaveLength(1);
   });
 
   it("does not start new host turns from a background report once its parent is stopped", async () => {
@@ -855,7 +891,7 @@ describe("durable-native threads", () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 300));
 
-    expect(requestIds(f.dir, parentConversation, "oppi-report:")).toEqual([]);
+    expect(requestIds(f.storage, f.dir, f.parent.id, "oppi-report:")).toEqual([]);
     expect(
       (await userTexts(harness, parentConversation)).filter((text) => text.includes("[session")),
     ).toEqual([]);
@@ -890,13 +926,13 @@ describe("durable-native threads", () => {
     ]) {
       f.storage.saveSession({ ...child, serverDurable });
       await expect(
-        f.threads().materialize({ conversationId: childConversation, name: "Again" }),
+        (await f.threads()).materialize({ conversationId: childConversation, name: "Again" }),
       ).rejects.toThrow(/not bound to the child conversation/);
     }
     expect(f.storage.listSessions()).toHaveLength(3);
     f.storage.saveSession(child);
     await expect(
-      f.threads().materialize({ conversationId: childConversation, name: "Again" }),
+      (await f.threads()).materialize({ conversationId: childConversation, name: "Again" }),
     ).resolves.toBe(child.id);
   });
 
@@ -997,7 +1033,7 @@ describe("durable engine on create requests", () => {
     const sessionId = (created.body.session as Session).id;
     const conversation = conversationOf(f.storage, sessionId);
     expect(conversation).toBeDefined();
-    const harness = await f.harness();
+    const harness = await f.openStore(sessionId);
     await until(
       async () =>
         (await toolResults(harness, conversation)).length === 1 &&

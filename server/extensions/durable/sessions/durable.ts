@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import type { Context } from "@earendil-works/chord";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import {
   AssistantEntry,
   configure,
@@ -27,14 +28,34 @@ export interface DurableSessionsHost {
    * The Oppi Session bound to an owned child conversation, created and attached on
    * first use. Idempotent: one Session per conversation id, however often this runs.
    */
-  materialize(child: { conversationId: ConversationId; name: string }): Promise<string>;
+  materialize(
+    child: { conversationId: ConversationId; name: string },
+    env?: ExecutionEnv,
+  ): Promise<string>;
   /** The durable conversation an Oppi session id is bound to. */
   conversationOf(sessionId: string): ConversationId | undefined;
+  /** True when `sessionId` is this calling conversation. */
+  isSelf(sessionId: string, caller: ConversationId, env?: ExecutionEnv): boolean;
   /**
    * Why the calling conversation may not reach this session's conversation, or undefined
    * when it may. A sandbox caller reaches only sandbox sessions of its own workspace.
    */
-  refuseReach(caller: ConversationId, target: ConversationId): Promise<string | undefined>;
+  refuseReach(
+    caller: ConversationId,
+    targetSessionId: string,
+    env?: ExecutionEnv,
+  ): Promise<string | undefined>;
+  /** Submit to a bound session's own store. Undefined on success, otherwise an error message. */
+  submit(
+    sessionId: string,
+    input: {
+      content: string;
+      whenBusy: "steer" | "followUp";
+      requestId: string;
+    },
+  ): Promise<string | undefined>;
+  /** Wait until a bound session's conversation is idle. */
+  waitForIdle(sessionId: string): Promise<string | undefined>;
   /** Attach a stopped Session so a message to it makes progress. */
   activate(sessionId: string): Promise<void>;
   /** Validate the model and thinking level a spawn asks for; rejects with a message for the model. */
@@ -196,9 +217,10 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
     const conversationId = host.conversationOf(sessionId);
     if (conversationId === undefined)
       return { error: `Session ${sessionId} is not a durable session.` };
-    if (conversationId === api.conversationId) return { error: "A session cannot target itself." };
+    if (host.isSelf(sessionId, api.conversationId, api.env))
+      return { error: "A session cannot target itself." };
     // Before anything attaches, prompts or waits on the target.
-    const refusal = await host.refuseReach(api.conversationId, conversationId);
+    const refusal = await host.refuseReach(api.conversationId, sessionId, api.env);
     if (refusal !== undefined) return { error: refusal };
     return { conversationId };
   };
@@ -254,10 +276,13 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
           state.spawns[String(api.taskId)] = { conversationId: child.id };
           return { conversationId: child.id };
         }, context);
-        const sessionId = await sessions.materialize({
-          conversationId: spawned.conversationId,
-          name,
-        });
+        const sessionId = await sessions.materialize(
+          {
+            conversationId: spawned.conversationId,
+            name,
+          },
+          api.env,
+        );
         await api.details({ conversationId: spawned.conversationId, sessionId }, context);
         // The reporter is created after the Session is bound, so the child never runs unattached.
         await api.commit(async (tx) => {
@@ -288,7 +313,7 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
         await configure(tx, created.id, choices);
         return created.id;
       }, context);
-      const sessionId = await sessions.materialize({ conversationId, name });
+      const sessionId = await sessions.materialize({ conversationId, name }, api.env);
       await api.details({ conversationId, sessionId }, context);
       const child = await api.conversation(conversationId, context);
       if (!child) throw new Error(`Session ${sessionId} conversation disappeared`);
@@ -317,22 +342,17 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
     }),
     // The request id is per call, so a rerun delivers the message once.
     replay: "safe",
-    async execute(args, api, context) {
+    async execute(args, api, _context) {
       const found = await target(args.sessionId, api);
       if ("error" in found) return reply(found.error, { sessionId: args.sessionId }, true);
       await bound().activate(args.sessionId);
-      const conversation = await api.conversation(found.conversationId, context);
-      if (!conversation)
-        return reply(
-          `Session ${args.sessionId} has no conversation.`,
-          { sessionId: args.sessionId },
-          true,
-        );
       const requestId = `oppi-send:${api.taskId}`;
-      await conversation.submit(
-        { type: "input", content: args.text, whenBusy: args.mode, requestId },
-        context,
-      );
+      const submitError = await bound().submit(args.sessionId, {
+        content: args.text,
+        whenBusy: args.mode,
+        requestId,
+      });
+      if (submitError !== undefined) return reply(submitError, { sessionId: args.sessionId }, true);
       return reply(`Sent to session ${args.sessionId} (${args.mode}).`, {
         sessionId: args.sessionId,
         conversationId: found.conversationId,
@@ -346,16 +366,17 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
     description: "Wait until every listed session is idle.",
     parameters: Type.Object({ sessionIds: Type.Array(Type.String(), { minItems: 1 }) }),
     replay: "safe",
-    async execute(args, api, context) {
-      const handles = [];
+    async execute(args, api, _context) {
+      const ids = [];
       for (const sessionId of args.sessionIds) {
         const found = await target(sessionId, api);
         if ("error" in found) return reply(found.error, { sessionId }, true);
-        const handle = await api.conversation(found.conversationId, context);
-        if (!handle) return reply(`Session ${sessionId} has no conversation.`, { sessionId }, true);
-        handles.push(handle);
+        ids.push(sessionId);
       }
-      await Promise.all(handles.map((handle) => handle.waitForIdle(context)));
+      const waits = await Promise.all(ids.map((sessionId) => bound().waitForIdle(sessionId)));
+      const waitError = waits.find((error) => error !== undefined);
+      if (waitError !== undefined)
+        return reply(waitError, { sessionIds: args.sessionIds.join(",") }, true);
       return reply(`Idle: ${args.sessionIds.join(", ")}.`, {
         sessionIds: args.sessionIds.join(","),
       });

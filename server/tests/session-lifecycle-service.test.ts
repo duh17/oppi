@@ -1781,13 +1781,18 @@ describe("SessionLifecycleService", () => {
       });
       const result = await service.forkSession({
         workspace: makeWorkspace(),
-        sourceSession: makeSession({ serverDurable: { conversationId: 1 } }),
+        sourceSession: makeSession({ serverDurable: { storeId: "sess-1", conversationId: 1 } }),
         entryId: "7",
       });
-      expect(result.session.serverDurable).toEqual({ conversationId: 42 });
+      expect(result.session.serverDurable).toEqual({
+        storeId: "sess-1",
+        conversationId: 42,
+      });
       expect(result.session.piSessionFile).toBeUndefined();
       expect(saveSession).toHaveBeenCalledWith(
-        expect.objectContaining({ serverDurable: { conversationId: 42 } }),
+        expect.objectContaining({
+          serverDurable: { storeId: "sess-1", conversationId: 42 },
+        }),
       );
       expect(startSession).toHaveBeenCalledTimes(1);
       expect(runCommand).not.toHaveBeenCalled();

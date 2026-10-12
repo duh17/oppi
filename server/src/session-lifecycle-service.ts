@@ -761,7 +761,10 @@ export class SessionLifecycleService {
 
     if (sourceSessionFile === undefined) {
       // Bound before start: the backend attaches to this conversation instead of creating one.
-      forkSession.serverDurable = { conversationId: forkConversationId };
+      forkSession.serverDurable = {
+        storeId: latestSource.serverDurable?.storeId ?? latestSource.id,
+        conversationId: forkConversationId,
+      };
     } else {
       const forkCwd = await resolveSdkSessionCwdAsync(params.workspace, forkSession, {
         dataDir: this.deps.storage.getDataDir(),

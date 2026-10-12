@@ -46,7 +46,7 @@ import { durableUnsupportedFeature, type AgentDefinition } from "./agent-launch-
 import type { AgentBackend } from "./agent-backend.js";
 import { isControlConversation } from "./control-session.js";
 import { controlConversationTools } from "./durable-control-conversation.js";
-import { DurableRuntime, type DurableHarness } from "./durable-harness.js";
+import { DurableRuntime, type SessionHost } from "./durable-harness.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { DurableSandboxTools } from "./durable-sandbox-tools.js";
 import { readDurableInputCards, resolveDurableInputCards } from "./durable-input-cards.js";
@@ -138,7 +138,7 @@ const RequestContent = defineDocFamily<{ content: string; display?: string }, nu
 
 interface DurableBackendOptions {
   harness: Harness;
-  owner: DurableHarness;
+  owner: SessionHost;
   models: ModelRuntime;
   session: Session;
   workspace?: Workspace;
@@ -244,7 +244,7 @@ export class DurableBackend implements AgentBackend {
 
   private constructor(
     private readonly harness: Harness,
-    private readonly owner: DurableHarness,
+    private readonly owner: SessionHost,
     private readonly conversation: Conversation,
     models: ModelRuntime,
     private readonly session: Session,

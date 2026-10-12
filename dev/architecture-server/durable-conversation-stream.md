@@ -4,7 +4,7 @@ Part of [Oppi server architecture](../architecture-server.md). The wire that rep
 
 ## Gate and transport
 
-- `GET /server/info` advertises `capabilities.conversationStream: { version: 1 }` whenever the server has a durable Harness: `experimental.serverDurable` is on, or sessions are still bound to durable conversations after it was turned off.
+- `GET /server/info` advertises `capabilities.conversationStream: { version: 1 }` whenever the server has a durable runtime: `experimental.serverDurable` is on, or sessions are still bound to durable conversations after it was turned off.
 - The stream rides the existing focused session socket (`/workspaces/:workspaceId/sessions/:sessionId/stream`, and `/control-sessions/:sessionId/stream`) and its auth. A new endpoint would have duplicated the session open, startup-dialog relay, auth expiry, and command routing that socket already owns, and commands still travel on it.
 - Nothing changes until the client sends `attach`. A socket that never attaches gets exactly the classic event frames it got before. An attached socket gets both: the event path is untouched until the cutover.
 - `attach` is socket-only. It is not a `ClientMessage` command, so `POST /sessions/:id/command` answers it as an unknown type.

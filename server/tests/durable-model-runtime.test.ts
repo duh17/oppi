@@ -35,7 +35,8 @@ describe("durable model runtime", () => {
     const create = vi.spyOn(ModelRuntime, "create");
     const owner = new DurableHarness(dir);
     owner.bindModelRuntime(runtime);
-    const opened = await owner.open();
+    const host = await owner.openHost("model-runtime", { cwd: dir });
+    const opened = await host.open();
     harnesses.push(opened.harness);
     expect(opened.models).toBe(runtime);
     expect(create).not.toHaveBeenCalled();
@@ -45,7 +46,9 @@ describe("durable model runtime", () => {
     const dir = mkdtempSync(join(tmpdir(), "oppi-durable-models-required-"));
     const owner = new DurableHarness(dir);
     owner.requireDiscoveredModels();
-    await expect(owner.open()).rejects.toThrow(/discovered model runtime was bound/);
+    await expect(owner.openHost("model-runtime", { cwd: dir })).rejects.toThrow(
+      /discovered model runtime was bound/,
+    );
   });
 
   it("forwards the server runtime through SessionManager before open", async () => {

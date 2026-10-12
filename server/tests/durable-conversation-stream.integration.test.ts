@@ -190,7 +190,7 @@ beforeEach(async () => {
   workspace = storage.createWorkspace({ name: "Conversation stream", hostMount: dataDir });
   session = storage.createSession("Conversation stream", "faux/faux-1");
   session.workspaceId = workspace.id;
-  session.serverDurable = {};
+  session.serverDurable = { storeId: session.id };
   storage.saveSession(session);
 
   server = new Server(storage);
@@ -257,7 +257,8 @@ async function expectConverged(client: StreamClient): Promise<void> {
   const sessions = (server as unknown as { sessions: SessionManager }).sessions;
   const durable = await (sessions as unknown as { durableHarness: Promise<DurableHarness> })
     .durableHarness;
-  const { harness } = await durable.open();
+  const storeId = storage.getSession(session.id)?.serverDurable?.storeId ?? session.id;
+  const { harness } = await (await durable.openHost(storeId)).open();
   const conversationId = storage.getSession(session.id)?.serverDurable?.conversationId;
   const reference = await conversationReference(
     harness,

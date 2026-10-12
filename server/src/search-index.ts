@@ -60,8 +60,8 @@ export interface SearchFilters {
  */
 export interface DurableSearchSource {
   /** Newest entry id for the conversation ("" when it has no entries). */
-  readTipEntryId(conversationId: number): Promise<string>;
-  readTranscript(conversationId: number): Promise<SearchTranscriptContent>;
+  readTipEntryId(sessionId: string, conversationId: number): Promise<string>;
+  readTranscript(sessionId: string, conversationId: number): Promise<SearchTranscriptContent>;
 }
 
 export interface SearchIndexSyncResult {
@@ -1572,7 +1572,7 @@ export class SearchIndex {
 
     // Read the tip before the transcript: content may be newer than the stored
     // marker (one harmless extra reindex), never older.
-    const marker = `${conversationId}:${await source.readTipEntryId(conversationId)}`;
+    const marker = `${conversationId}:${await source.readTipEntryId(sessionId, conversationId)}`;
     let live = this.liveDurableSession(sessionId, conversationId);
     if (this.closed || !live) return result;
 
@@ -1596,7 +1596,7 @@ export class SearchIndex {
       }
     }
 
-    const transcript = await source.readTranscript(conversationId);
+    const transcript = await source.readTranscript(sessionId, conversationId);
     live = this.liveDurableSession(sessionId, conversationId);
     if (this.closed || !live) return result;
     this.writeDurableRow(live, marker, extractSessionTitle(live), {

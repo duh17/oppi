@@ -344,8 +344,8 @@ export class AgentLaunchService {
       session.ephemeral = true;
     }
     if (request.engine === "durable") {
-      // Enrolled now; the conversation binds before the first submission.
-      session.serverDurable = {};
+      // Enrolled now; the store is this session's tree. The conversation binds on first attach.
+      session.serverDurable = { storeId: session.id };
     }
     if (defaults.thinkingLevel) {
       session.thinkingLevel = defaults.thinkingLevel;

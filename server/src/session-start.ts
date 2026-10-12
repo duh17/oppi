@@ -1,8 +1,14 @@
 import type { AgentDefinition } from "./agent-launch-service.js";
 import type { SessionBackendEvent } from "./pi-events.js";
-import { SdkBackend } from "./sdk-backend.js";
+import { resolveSdkSessionCwdAsync, SdkBackend } from "./sdk-backend.js";
 import { isControlConversation } from "./control-session.js";
-import { usesDurableEngine } from "./session-runtime-capabilities.js";
+import {
+  DURABLE_STORE_MISSING,
+  durableStoreId,
+  durableStoreMetaFromSession,
+  requireDurableStoreId,
+  usesDurableEngine,
+} from "./session-runtime-capabilities.js";
 import type { DurableHarness } from "./durable-harness.js";
 import type { AgentBackend } from "./agent-backend.js";
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
@@ -96,6 +102,9 @@ export class SessionStartCoordinator {
           throw new Error("Server durable sandbox sessions require a sandbox workspace");
         }
         const useDurable = usesDurableEngine(session);
+        if (useDurable && durableStoreId(session) === undefined) {
+          throw new Error(DURABLE_STORE_MISSING);
+        }
         if (useDurable && !this.deps.durableHarness) {
           throw new Error(
             "Server durable session cannot start: the durable harness is unavailable",
@@ -105,78 +114,96 @@ export class SessionStartCoordinator {
         const DurableBackend = useDurable
           ? (await import("./durable-backend.js")).DurableBackend
           : undefined;
-        const sdkBackend: AgentBackend =
-          DurableBackend && durableHarness
-            ? await DurableBackend.create({
-                ...(await durableHarness.open()),
-                owner: durableHarness,
-                session,
-                workspace,
-                agentDefinition,
-                dataDir: this.deps.storage.getDataDir(),
-                persistBinding: () => this.deps.persistSessionNow(key, session),
-                onEvent: (event) => this.deps.onPiEvent(key, event),
-                onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
-                hasUI: () => this.deps.hasUI?.(key) ?? false,
-                metrics: this.deps.metrics,
-              })
-            : await SdkBackend.create({
-                session,
-                workspace,
-                agentDefinition,
-                onEvent: (event) => this.deps.onPiEvent(key, event),
-                onEnd: (reason) => this.deps.onSessionEnd(key, reason),
-                dataDir: this.deps.storage.getDataDir(),
-                getMobileOutputGuideSettings: () =>
-                  this.deps.storage.getMobileOutputGuideSettings(),
-                metrics: this.deps.metrics,
-                serverConfig: this.deps.config,
-                onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
-                hasUI: () => this.deps.hasUI?.(key) ?? false,
-              });
-        this.deps.metrics?.record("server.session_create_ms", Date.now() - createStart);
-
-        // Shutdown already ran stopAll() and cannot see this runtime. Drop it
-        // without registering or persisting: after an in-process update
-        // restart, a replacement server shares this storage and owns the row.
-        if (this.deps.isClosed?.()) {
-          abandoned = true;
-          await sdkBackend.dispose().catch(() => undefined);
-          assertOpen();
+        let durableHost:
+          Awaited<ReturnType<NonNullable<typeof durableHarness>["openHost"]>> | undefined;
+        if (DurableBackend && durableHarness) {
+          const cwd = await resolveSdkSessionCwdAsync(workspace, session, {
+            dataDir: this.deps.storage.getDataDir(),
+          });
+          durableHost = await durableHarness.openHost(
+            requireDurableStoreId(session),
+            durableStoreMetaFromSession(session, cwd),
+          );
+          durableHost.retain();
         }
+        let sdkBackend: AgentBackend;
+        try {
+          sdkBackend =
+            DurableBackend && durableHarness && durableHost
+              ? await DurableBackend.create({
+                  ...(await durableHost.open()),
+                  owner: durableHost,
+                  session,
+                  workspace,
+                  agentDefinition,
+                  dataDir: this.deps.storage.getDataDir(),
+                  persistBinding: () => this.deps.persistSessionNow(key, session),
+                  onEvent: (event) => this.deps.onPiEvent(key, event),
+                  onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
+                  hasUI: () => this.deps.hasUI?.(key) ?? false,
+                  metrics: this.deps.metrics,
+                })
+              : await SdkBackend.create({
+                  session,
+                  workspace,
+                  agentDefinition,
+                  onEvent: (event) => this.deps.onPiEvent(key, event),
+                  onEnd: (reason) => this.deps.onSessionEnd(key, reason),
+                  dataDir: this.deps.storage.getDataDir(),
+                  getMobileOutputGuideSettings: () =>
+                    this.deps.storage.getMobileOutputGuideSettings(),
+                  metrics: this.deps.metrics,
+                  serverConfig: this.deps.config,
+                  onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
+                  hasUI: () => this.deps.hasUI?.(key) ?? false,
+                });
+          this.deps.metrics?.record("server.session_create_ms", Date.now() - createStart);
 
-        const activeSession: SessionStartActiveSession = {
-          ...createRuntimeSessionStateScaffold<SessionMessageQueueStore>(
-            session,
-            this.deps.eventRingCapacity,
-          ),
-          sdkBackend,
-          workspaceId: identity.workspaceId,
-        };
+          // Shutdown already ran stopAll() and cannot see this runtime. Drop it
+          // without registering or persisting: after an in-process update
+          // restart, a replacement server shares this storage and owns the row.
+          if (this.deps.isClosed?.()) {
+            abandoned = true;
+            await sdkBackend.dispose().catch(() => undefined);
+            assertOpen();
+          }
 
-        if (sdkBackend.nativeMessageQueue) delete activeSession.messageQueue;
-        this.deps.registerActiveSession(key, activeSession);
-        this.deps.runtimeManager.markSessionReady(identity);
+          const activeSession: SessionStartActiveSession = {
+            ...createRuntimeSessionStateScaffold<SessionMessageQueueStore>(
+              session,
+              this.deps.eventRingCapacity,
+            ),
+            sdkBackend,
+            workspaceId: identity.workspaceId,
+          };
 
-        session.status = "ready";
-        session.currentTurnStartedAt = undefined;
-        session.lastActivity = Date.now();
-        this.deps.persistSessionNow(key, session);
-        this.deps.resetIdleTimer(key);
+          if (sdkBackend.nativeMessageQueue) delete activeSession.messageQueue;
+          this.deps.registerActiveSession(key, activeSession);
+          durableHost?.noteAttached(session.id);
+          this.deps.runtimeManager.markSessionReady(identity);
 
-        if (DurableBackend && sdkBackend instanceof DurableBackend && durableHarness) {
-          await sdkBackend.startEvents();
-          // Snapshot replay can restore a live turn. Persist it before serving
-          // reads: event projection normally saves on a debounce, which would
-          // otherwise expose the earlier ready row during crash recovery.
+          session.status = "ready";
+          session.currentTurnStartedAt = undefined;
+          session.lastActivity = Date.now();
           this.deps.persistSessionNow(key, session);
-          // submit/abort also enables the Harness-wide scheduler. Explicitly
-          // resume after attaching the projection, never via a new user prompt.
-          await durableHarness.resume();
-        }
-        void this.deps.bootstrapSessionState(key);
+          this.deps.resetIdleTimer(key);
 
-        return session;
+          if (DurableBackend && sdkBackend instanceof DurableBackend && durableHost) {
+            await sdkBackend.startEvents();
+            // Snapshot replay can restore a live turn. Persist it before serving
+            // reads: event projection normally saves on a debounce, which would
+            // otherwise expose the earlier ready row during crash recovery.
+            this.deps.persistSessionNow(key, session);
+            // submit/abort also enables the Harness-wide scheduler. Explicitly
+            // resume after attaching the projection, never via a new user prompt.
+            await durableHost.resume();
+          }
+          void this.deps.bootstrapSessionState(key);
+
+          return session;
+        } finally {
+          durableHost?.release();
+        }
       } catch (err) {
         if (!abandoned) {
           session.status = previousStatus;

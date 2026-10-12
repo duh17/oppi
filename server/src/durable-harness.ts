@@ -1,4 +1,5 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import type { AttachedReplicatedState } from "@earendil-works/chord";
 import { ModelRuntime, SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
   AgentDoc,
@@ -11,13 +12,16 @@ import {
   type EntryId,
   type Registry,
   type Storage,
+  type TaskGraph,
   type Tx,
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { DurableSandboxTools } from "./durable-sandbox-tools.js";
 import { DurableAsk } from "../extensions/durable/ask/durable.js";
@@ -49,6 +53,10 @@ import type { DurableMcp } from "./durable-mcp.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type { DurableThreads } from "./durable-threads.js";
+import {
+  type DurableStoreMeta,
+  durableStoreMetaFromSession,
+} from "./session-runtime-capabilities.js";
 
 /** Persist the execution boundary so a resumed conversation cannot change runtime. */
 export const DurableRuntime = defineDoc<{ kind: "host" | "sandbox"; workspaceId?: string }>({
@@ -61,6 +69,57 @@ export const DurableRuntime = defineDoc<{ kind: "host" | "sandbox"; workspaceId?
 });
 
 const log = createLogger({ base: { component: "durable_harness" } });
+
+const STORE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const METADATA_FILE = "meta.json";
+const STORAGE_FILE = "session.sqlite";
+
+const lockfile = createRequire(
+  fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")),
+)("proper-lockfile") as {
+  lock: (
+    file: string,
+    options?: {
+      realpath?: boolean;
+      stale?: number;
+      update?: number;
+      retries?:
+        | number
+        | {
+            retries: number;
+            factor: number;
+            minTimeout: number;
+            maxTimeout: number;
+            maxRetryTime: number;
+          };
+    },
+  ) => Promise<() => Promise<void>>;
+};
+
+const sessionHostsByEnv = new WeakMap<ExecutionEnv, SessionHost>();
+
+export function sessionHostOfEnv(env: ExecutionEnv | undefined): SessionHost | undefined {
+  return env ? sessionHostsByEnv.get(env) : undefined;
+}
+
+export function durableSessionsRoot(dataDir: string): string {
+  return join(dataDir, "durable", "sessions");
+}
+
+export function durableStoreDir(dataDir: string, storeId: string): string {
+  return join(durableSessionsRoot(dataDir), storeId);
+}
+
+export function durableStoreSqlitePath(dataDir: string, storeId: string): string {
+  return join(durableStoreDir(dataDir, storeId), STORAGE_FILE);
+}
+
+export function assertDurableStoreId(storeId: string): void {
+  if (!STORE_ID.test(storeId)) throw new Error(`Invalid durable store id: ${storeId}`);
+}
+
+export type { DurableStoreMeta };
+export { durableStoreMetaFromSession };
 
 export interface DurableExtensionSummary {
   name: string;
@@ -90,173 +149,107 @@ function summarize(loaded: LoadedDurableExtension): DurableExtensionSummary {
   };
 }
 
-/** Process-owned, lazy Harness. A disabled server never creates this owner. */
-export class DurableHarness {
+function readStoreMeta(directory: string): DurableStoreMeta | undefined {
+  try {
+    const value: unknown = JSON.parse(readFileSync(join(directory, METADATA_FILE), "utf8"));
+    if (typeof value !== "object" || value === null) return undefined;
+    const record = value as { createdAt?: unknown; cwd?: unknown };
+    if (typeof record.createdAt !== "number" || typeof record.cwd !== "string") return undefined;
+    const meta: DurableStoreMeta = { createdAt: record.createdAt, cwd: record.cwd };
+    const name = (value as { name?: unknown }).name;
+    if (typeof name === "string") meta.name = name;
+    const workspaceId = (value as { workspaceId?: unknown }).workspaceId;
+    if (typeof workspaceId === "string") meta.workspaceId = workspaceId;
+    const agent = (value as { agent?: unknown }).agent;
+    if (
+      typeof agent === "object" &&
+      agent !== null &&
+      typeof (agent as { id?: unknown }).id === "string" &&
+      typeof (agent as { version?: unknown }).version === "number"
+    ) {
+      meta.agent = {
+        id: (agent as { id: string }).id,
+        version: (agent as { version: number }).version,
+      };
+    }
+    return meta;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeStoreMeta(directory: string, meta: DurableStoreMeta): void {
+  const body: Record<string, unknown> = { createdAt: meta.createdAt, cwd: meta.cwd };
+  if (meta.name !== undefined) body.name = meta.name;
+  if (meta.workspaceId !== undefined) body.workspaceId = meta.workspaceId;
+  if (meta.agent !== undefined) body.agent = meta.agent;
+  writeFileSync(join(directory, METADATA_FILE), `${JSON.stringify(body, null, "\t")}\n`);
+}
+
+/**
+ * One open pi-durable store: the directory lock, sqlite, Harness, resume gate,
+ * sandbox envs, MCP connections, and live-task watch of that tree.
+ */
+export class SessionHost {
   private opening?: Promise<{ harness: Harness; models: ModelRuntime }>;
   private closed = false;
-  /** Storage passed to `Harness.open`. Crash recovery reads it; it does not open the file again. */
   private harnessStorage?: Storage;
-  /** Server catalog runtime. Carries global `registerProvider` overlays such as Anthropic OMP. */
-  private boundModels?: ModelRuntime;
-  private discoveredModelsRequired = false;
-  // Created before the local HTTP listener. No conversation may enable the
-  // harness-wide scheduler until startup has resolved every persisted binding.
-  private resumeHeld = true;
+  private openedModels?: ModelRuntime;
+  private resumeHeld: boolean;
   private readonly pausedAborts = new Set<Promise<void>>();
-  private runSettings?: HarnessSettings;
-  /** The manager `runSettings` reads live. Writes reach every conversation and persist to user settings. */
-  private runPolicy?: SettingsManager;
   private readonly sandboxEnvs = new Map<ConversationId, ExecutionEnv>();
-  private registry?: Registry;
-  /** Per Oppi session: its MCP connections and registry extension. */
   private readonly mcps = new Map<string, DurableMcp>();
-  private threads?: DurableThreads;
-  private control?: DurableControlHost;
-  /** Extensions from the durable entries of enabled Pi packages, in load order. */
-  private packageExtensions: readonly LoadedDurableExtension[] = [];
-  /** One load or reload at a time. */
-  private extensionLoad: Promise<unknown> = Promise.resolve();
-  /** The session tools; they reach Oppi through the host bound with `bindThreads`. */
-  readonly sessionsExtension = createDurableSessions(() => this.threads);
-  /** The control conversation's tools; they reach Oppi through the host bound with `bindControl`. */
-  readonly controlExtension = createDurableControl(() => this.control);
-  /** The control conversation's exact selection. Never part of `baseExtensions`. */
-  readonly controlExtensions: readonly Extension[] = controlConversationExtensions(
-    this.controlExtension,
-  );
-  /**
-   * Extensions every process installs, in install order. They are also the Harness default
-   * selection, so a conversation whose stored selection is an `{ add }` edit never picks up
-   * another session's MCP extension from the registry.
-   */
-  readonly baseExtensions: Extension[] = [
-    CodingTools,
-    DurableSandboxTools,
-    DurableAsk,
-    DurableWorkingWords,
-    DurableBackgroundJobs,
-    this.sessionsExtension,
-    DurableProjectContext,
-  ];
+  private releaseLock?: () => Promise<void>;
+  private readonly attached = new Set<string>();
+  private streamCount = 0;
+  private useCount = 0;
+  private liveTaskCount = 0;
+  private taskGraph?: AttachedReplicatedState<TaskGraph>;
+  private stopTaskGraph?: () => void;
+  private closing?: Promise<{ pending: boolean }>;
+  private adopted?: { harness: Harness; models: ModelRuntime };
+  private idleCloseTimer: ReturnType<typeof setImmediate> | undefined;
 
-  bindThreads(threads: DurableThreads): void {
-    this.threads = threads;
-  }
-  bindControl(control: DurableControlHost): void {
-    this.control = control;
-  }
-  get boundThreads(): DurableThreads | undefined {
-    return this.threads;
+  constructor(
+    readonly runtime: DurableHarness,
+    readonly storeId: string,
+    readonly directory: string,
+    readonly meta: DurableStoreMeta,
+    holdResume: boolean,
+  ) {
+    this.resumeHeld = holdResume;
   }
 
   get retrySettings(): HarnessSettings["retry"] {
-    return this.runSettings?.retry;
+    return this.runtime.retrySettings;
   }
 
-  /**
-   * Classic `set_auto_retry`, `set_auto_compaction`, and the queue modes write global user
-   * settings. The Harness reads the same getters at every use, so writing here is the same
-   * scope: it reaches every durable conversation, and no per-session copy exists.
-   */
   get runPolicySettings(): SettingsManager {
-    if (!this.runPolicy) throw new Error("Server durable Harness is not open");
-    return this.runPolicy;
+    return this.runtime.runPolicySettings;
   }
 
-  /**
-   * Extensions loaded from Pi packages that a session of this runtime selects next to the
-   * built-ins. The control conversation selects none of them.
-   */
+  get sessionsExtension(): ReturnType<typeof createDurableSessions> {
+    return this.runtime.sessionsExtension;
+  }
+
+  get controlExtensions(): readonly Extension[] {
+    return this.runtime.controlExtensions;
+  }
+
+  get baseExtensions(): Extension[] {
+    return this.runtime.baseExtensions;
+  }
+
   packageExtensionsFor(runtime: DurableExtensionRuntime): Extension[] {
-    return this.packageExtensions
-      .filter((loaded) => loaded.runtimes.includes(runtime))
-      .map((loaded) => loaded.extension);
-  }
-
-  /**
-   * Re-read the durable entries of enabled Pi packages and install them in the open
-   * registry. Installing an extension under an installed name replaces it in place: running
-   * tool calls finish on their old code, and the next task phase, request, or call uses the
-   * new code. A package that fails to load keeps its previous code installed; a package that
-   * is gone is uninstalled, and conversations that selected it stop getting it.
-   */
-  async reloadExtensions(): Promise<DurableExtensionReport> {
-    await this.open();
-    const registry = this.registry;
-    if (!registry) throw new Error("Server durable Harness is not open");
-    return this.loadPackageExtensions(registry);
-  }
-
-  private loadPackageExtensions(registry: Registry): Promise<DurableExtensionReport> {
-    const run = this.extensionLoad.then(() => this.loadPackageExtensionsOnce(registry));
-    this.extensionLoad = run.catch(() => undefined);
-    return run;
-  }
-
-  private async loadPackageExtensionsOnce(registry: Registry): Promise<DurableExtensionReport> {
-    const previous = this.packageExtensions;
-    const builtIns = [...this.baseExtensions, ...this.controlExtensions];
-    let discovered: Awaited<ReturnType<typeof discoverDurableExtensionPackages>>;
-    try {
-      discovered = await discoverDurableExtensionPackages(getAgentDir());
-    } catch (error) {
-      // Discovery itself failed: change nothing, so a settings typo cannot unload everything.
-      const report: DurableExtensionReport = {
-        loaded: [],
-        kept: previous.map(summarize),
-        removed: [],
-        skipped: [],
-        errors: [
-          { entry: getAgentDir(), message: `Package discovery failed: ${safeErrorMessage(error)}` },
-        ],
-      };
-      this.logExtensionReport(report);
-      return report;
-    }
-    const result = await loadDurableExtensions(discovered.packages, {
-      names: new Set(builtIns.map((extension) => extension.name)),
-      tools: new Set(
-        builtIns.flatMap((extension) => extension.tools ?? []).map((tool) => tool.name),
-      ),
-    });
-    const loadedNames = new Set(result.loaded.map((loaded) => loaded.extension.name));
-    const failedEntries = new Set(result.errors.map((issue) => issue.entry));
-    const kept = previous.filter(
-      (old) => failedEntries.has(old.entry) && !loadedNames.has(old.extension.name),
-    );
-    const next = [...result.loaded, ...kept];
-    const nextNames = new Set(next.map((loaded) => loaded.extension.name));
-    for (const loaded of result.loaded) registry.install(loaded.extension);
-    const removed = previous.filter((old) => !nextNames.has(old.extension.name));
-    for (const old of removed) registry.uninstall(old.extension);
-    this.packageExtensions = next;
-    const report: DurableExtensionReport = {
-      loaded: result.loaded.map(summarize),
-      kept: kept.map(summarize),
-      removed: removed.map((old) => old.extension.name),
-      skipped: result.skipped,
-      errors: [...discovered.errors, ...result.errors],
-    };
-    this.logExtensionReport(report);
-    return report;
-  }
-
-  private logExtensionReport(report: DurableExtensionReport): void {
-    if (report.loaded.length || report.removed.length)
-      log.info("durable_extensions.loaded", {
-        loaded: report.loaded.map((loaded) => loaded.name),
-        removed: report.removed,
-      });
-    for (const issue of report.errors)
-      log.error("durable_extensions.load_failed", { entry: issue.entry, message: issue.message });
+    return this.runtime.packageExtensionsFor(runtime);
   }
 
   installExtension(extension: Extension): void {
-    if (!this.registry) throw new Error("Server durable Harness is not open");
-    this.registry.install(extension);
+    this.runtime.installExtension(extension);
   }
+
   uninstallExtension(extension: Extension): void {
-    this.registry?.uninstall(extension);
+    this.runtime.uninstallExtension(extension);
   }
 
   /** Close the session's previous MCP before opening its next one, which reuses the extension name. */
@@ -270,6 +263,7 @@ export class DurableHarness {
     if (mcp) this.mcps.set(sessionId, mcp);
     return mcp;
   }
+
   async closeMcp(sessionId: string): Promise<void> {
     const mcp = this.mcps.get(sessionId);
     this.mcps.delete(sessionId);
@@ -279,7 +273,9 @@ export class DurableHarness {
   bindSandboxEnv(id: ConversationId, env: ExecutionEnv): void {
     // A stopped projection can reattach while conversation-owned jobs still run.
     if (!this.sandboxEnvs.has(id)) this.sandboxEnvs.set(id, env);
+    sessionHostsByEnv.set(env, this);
   }
+
   async unbindSandboxEnv(id: ConversationId, force = false): Promise<void> {
     if (!force && this.opening) {
       const { harness } = await this.opening;
@@ -307,6 +303,10 @@ export class DurableHarness {
   }
 
   async abortConversation(id: ConversationId): Promise<void> {
+    if (this.runtime.shuttingDown) {
+      await this.abortConversations(new Set([id]));
+      return;
+    }
     if (this.resumeHeld) await this.abortConversations(new Set([id]));
     else {
       const { harness } = await this.open();
@@ -351,9 +351,11 @@ export class DurableHarness {
   holdResume(): void {
     this.resumeHeld = true;
   }
+
   async resume(): Promise<void> {
     if (!this.resumeHeld && this.opening) (await this.opening).harness.resume();
   }
+
   async releaseResume(): Promise<void> {
     // Stops of already attached projections may still be committing their
     // cancellation marks. Join them before opening the scheduling gate.
@@ -362,98 +364,173 @@ export class DurableHarness {
     await this.resume();
   }
 
-  constructor(private readonly dataDir: string) {}
-
   /** Storage `open()` retained. Absent until the Harness storage exists. */
   get storage(): Storage {
-    if (!this.harnessStorage) throw new Error("Server durable Harness is not open");
+    if (!this.harnessStorage) throw new Error("Server durable store is not open");
     return this.harnessStorage;
   }
 
   /**
-   * Retain the storage `Harness.open` is using. `openInner` does this. A test that
-   * injects a harness retains that same storage, or attach cannot reconcile.
+   * Test seam: use this Harness instead of opening session.sqlite. Production
+   * always goes through `open()` / the directory lock.
    */
-  bindStorage(storage: Storage): void {
-    if (this.harnessStorage && this.harnessStorage !== storage) {
-      throw new Error("Server durable storage is already open");
-    }
+  bindOpenedHarness(harness: Harness, storage: Storage, models: ModelRuntime): void {
+    if (this.opening) throw new Error("Server durable store is already opening");
     this.harnessStorage = storage;
+    this.adopted = { harness, models };
+    this.openedModels = models;
+    this.opening = this.watchTaskGraph(harness).then(() => ({ harness, models }));
   }
 
-  /** Production open must not invent a runtime that skipped extension provider discovery. */
-  requireDiscoveredModels(): void {
-    if (this.opening) {
-      throw new Error("Server durable model runtime cannot be required after the Harness opens");
-    }
-    this.discoveredModelsRequired = true;
+  retain(): void {
+    this.useCount += 1;
+    this.cancelIdleClose();
   }
 
-  /** Adopt the server ModelRuntime. Call before open(); later catalog resyncs stay on this object. */
-  bindModelRuntime(models: ModelRuntime): void {
-    if (this.opening) {
-      throw new Error("Server durable model runtime cannot change after the Harness opens");
+  release(): void {
+    if (this.useCount > 0) this.useCount -= 1;
+    this.maybeClose();
+  }
+
+  noteAttached(sessionId: string): void {
+    this.attached.add(sessionId);
+    this.cancelIdleClose();
+  }
+
+  noteDetached(sessionId: string): void {
+    this.attached.delete(sessionId);
+    if (this.attached.size === 0 && this.streamCount === 0 && this.useCount === 0) {
+      void this.retireIdleTickers().then(() => this.maybeClose());
+      return;
     }
-    this.boundModels = models;
+    this.maybeClose();
+  }
+
+  noteStreamSubscribe(): void {
+    this.streamCount += 1;
+    this.cancelIdleClose();
+  }
+
+  noteStreamUnsubscribe(): void {
+    if (this.streamCount > 0) this.streamCount -= 1;
+    this.maybeClose();
+  }
+
+  get isIdle(): boolean {
+    return this.holdReasons.length === 0;
+  }
+
+  /** Why this host stays open. Empty when it can idle-close. */
+  get holdReasons(): string[] {
+    const live =
+      this.taskGraph?.value !== undefined
+        ? Object.keys(this.taskGraph.value.tasks).length
+        : this.liveTaskCount;
+    const reasons: string[] = [];
+    if (this.attached.size > 0) reasons.push(`attached:${[...this.attached].join(",")}`);
+    if (this.streamCount > 0) reasons.push(`streams:${this.streamCount}`);
+    if (this.useCount > 0) reasons.push(`uses:${this.useCount}`);
+    if (live > 0) {
+      const kinds = Object.values(this.taskGraph?.value?.tasks ?? {}).map(
+        (task) => `${task.kind}${task.background ? ":bg" : ""}`,
+      );
+      reasons.push(`tasks:${live}${kinds.length ? `(${kinds.join(",")})` : ""}`);
+    }
+    return reasons;
+  }
+
+  get isOpen(): boolean {
+    return !this.closed && this.opening !== undefined;
   }
 
   open(): Promise<{ harness: Harness; models: ModelRuntime }> {
-    if (this.closed) return Promise.reject(new Error("Server durable Harness is closed"));
+    if (this.closing) {
+      return this.closing.then(() => {
+        if (this.runtime.shuttingDown || this.runtime.isClosed) {
+          return Promise.reject(new Error("Server durable store is closed"));
+        }
+        return this.open();
+      });
+    }
+    if (this.closed) {
+      if (this.runtime.shuttingDown || this.runtime.isClosed) {
+        return Promise.reject(new Error("Server durable store is closed"));
+      }
+      this.closed = false;
+      this.opening = undefined;
+    }
+    if (this.runtime.isClosed) return Promise.reject(new Error("Server durable runtime is closed"));
     return (this.opening ??= this.openInner());
   }
 
   private async openInner(): Promise<{ harness: Harness; models: ModelRuntime }> {
-    const agentDir = getAgentDir();
-    if (this.discoveredModelsRequired && !this.boundModels) {
-      throw new Error(
-        "Server durable Harness opened before the discovered model runtime was bound",
+    if (this.adopted) return this.adopted;
+    const shared = await this.runtime.ensureShared();
+    mkdirSync(this.directory, { recursive: true, mode: 0o700 });
+    try {
+      this.releaseLock = await lockfile.lock(this.directory, {
+        realpath: true,
+        stale: 2_000,
+        update: 1_000,
+        retries: 0,
+      });
+    } catch (error) {
+      throw Object.assign(
+        new Error(`Durable store ${this.storeId} is already open`, { cause: error }),
+        { code: "durable_store_locked" },
       );
     }
-    const models =
-      this.boundModels ??
-      (await ModelRuntime.create({
-        authPath: join(agentDir, "auth.json"),
-        modelsPath: join(agentDir, "models.json"),
-      }));
-    // Run policy is global to the Harness, not the first workspace to open it.
-    const settings = SettingsManager.create(homedir(), agentDir, { projectTrusted: false });
-    this.runPolicy = settings;
-    this.runSettings = harnessSettings(settings, this.baseExtensions);
-    const registry = createRegistry();
-    for (const extension of this.baseExtensions) registry.install(extension);
-    // Installed so the control conversation can select them by name. Installing is not
-    // selecting: only `baseExtensions` is the default selection of other conversations.
-    for (const extension of this.controlExtensions)
-      if (!this.baseExtensions.includes(extension)) registry.install(extension);
-    this.registry = registry;
-    // Before `Harness.open`, so pending tasks of a package extension find their definitions.
-    await this.loadPackageExtensions(registry);
-    const directory = join(this.dataDir, "durable");
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    // Bun-based CLI commands must not load node:sqlite when the experiment is
-    // off. The native SQLite adapter belongs to this lazy execution boundary.
-    const { openNodeSqliteStorage } =
-      await import("@earendil-works/pi-durable/storage/sqlite/node");
-    const storage = await openNodeSqliteStorage(join(directory, "harness.sqlite"));
-    this.bindStorage(storage);
-    const harness = await Harness.open(
-      storage,
-      {
-        models,
-        registry,
-        settings: this.runSettings,
-        env: async ({ conversationId, cwd, read }, context) => {
-          const runtime = await read.snapshot(DurableRuntime, conversationId, context);
-          if (runtime?.kind !== "sandbox") return new NodeExecutionEnv({ cwd: cwd ?? homedir() });
-          const env = this.sandboxEnvs.get(conversationId);
-          if (!env)
-            throw new Error("Durable sandbox workspace is not attached; refusing host execution");
-          return env;
+    try {
+      const { openNodeSqliteStorage } =
+        await import("@earendil-works/pi-durable/storage/sqlite/node");
+      const storage = await openNodeSqliteStorage(join(this.directory, STORAGE_FILE));
+      this.harnessStorage = storage;
+      const harness = await Harness.open(
+        storage,
+        {
+          models: shared.models,
+          registry: shared.registry,
+          settings: shared.settings,
+          env: async ({ conversationId, cwd, read }, context) => {
+            const runtime = await read.snapshot(DurableRuntime, conversationId, context);
+            if (runtime?.kind !== "sandbox") {
+              const env = new NodeExecutionEnv({ cwd: cwd ?? homedir() });
+              sessionHostsByEnv.set(env, this);
+              return env;
+            }
+            const env = this.sandboxEnvs.get(conversationId);
+            if (!env)
+              throw new Error("Durable sandbox workspace is not attached; refusing host execution");
+            sessionHostsByEnv.set(env, this);
+            return env;
+          },
         },
-      },
-      BACKGROUND_CONTEXT,
-    );
-    return { harness, models };
+        BACKGROUND_CONTEXT,
+      );
+      this.openedModels = shared.models;
+      await this.watchTaskGraph(harness);
+      return { harness, models: shared.models };
+    } catch (error) {
+      await this.releaseLock?.().catch(() => undefined);
+      this.releaseLock = undefined;
+      this.opening = undefined;
+      throw error;
+    }
+  }
+
+  private async watchTaskGraph(harness: Harness): Promise<void> {
+    this.stopTaskGraph?.();
+    const graph = await harness.taskGraph(BACKGROUND_CONTEXT);
+    this.taskGraph = graph;
+    this.liveTaskCount = Object.keys(graph.value?.tasks ?? {}).length;
+    const unsubscribe = graph.subscribe((value) => {
+      this.liveTaskCount = Object.keys(value.tasks).length;
+      this.maybeClose();
+    });
+    this.stopTaskGraph = () => {
+      unsubscribe();
+      graph.dispose();
+    };
   }
 
   /**
@@ -565,35 +642,475 @@ export class DurableHarness {
     }
   }
 
-  async close(resumeIds: ReadonlySet<ConversationId> = new Set()): Promise<void> {
-    if (!this.opening) {
+  /**
+   * Close this store and release the directory lock.
+   * `resumeIds` present means server shutdown: abort conversations not in that set.
+   * Absent means idle close: no abort.
+   */
+  close(resumeIds?: ReadonlySet<ConversationId>): Promise<{ pending: boolean }> {
+    if (this.closing) return this.closing;
+    if (!this.opening && !this.adopted) {
       this.closed = true;
-      return;
+      this.runtime.forgetHost(this);
+      return Promise.resolve({ pending: false });
     }
+    this.cancelIdleClose();
+    this.closing = this.closeInner(resumeIds).finally(() => {
+      this.closing = undefined;
+    });
+    return this.closing;
+  }
+
+  private async closeInner(resumeIds?: ReadonlySet<ConversationId>): Promise<{ pending: boolean }> {
+    let pending = false;
     try {
-      await this.closeHarness(resumeIds);
+      if (this.opening) {
+        const { harness } = await this.opening;
+        this.stopTaskGraph?.();
+        this.stopTaskGraph = undefined;
+        const graphTasks = Object.keys(this.taskGraph?.value?.tasks ?? {}).length;
+        this.taskGraph = undefined;
+        if (resumeIds !== undefined && !this.runtime.shuttingDown) {
+          const live = await harness.inspect(BACKGROUND_CONTEXT);
+          const stopped = new Set(
+            [
+              ...live.tasks.map(({ record }) => record.conversationId),
+              ...live.submissions.map((submission) => submission.conversationId),
+            ].filter((id) => !resumeIds.has(id)),
+          );
+          await this.abortConversations(stopped);
+        }
+        if (this.runtime.shuttingDown) {
+          pending = graphTasks > 0 || (resumeIds !== undefined && resumeIds.size > 0);
+        } else {
+          const remaining = await harness.inspect(BACKGROUND_CONTEXT);
+          pending =
+            remaining.tasks.length > 0 ||
+            remaining.submissions.some((submission) => submission.status === "queued");
+        }
+        this.closed = true;
+        this.liveTaskCount = 0;
+        // Closing interrupts invocations without settling their tasks. Recorded
+        // restart work remains durable and is continued by the next Harness.open.
+        await harness.close(BACKGROUND_CONTEXT);
+        await Promise.all(
+          [...this.sandboxEnvs.keys()].map((id) => this.unbindSandboxEnv(id, true)),
+        );
+      } else {
+        this.closed = true;
+      }
     } finally {
-      // MCP stdio servers are host processes: close them even when Harness shutdown fails.
       await Promise.all([...this.mcps.keys()].map((id) => this.closeMcp(id)));
+      await this.releaseLock?.().catch(() => undefined);
+      this.releaseLock = undefined;
+      this.opening = undefined;
+      this.adopted = undefined;
+      this.harnessStorage = undefined;
+      this.runtime.forgetHost(this);
+    }
+    return { pending };
+  }
+
+  /** Abort leftover tickers so an empty store can close. Jobs and child-owning tasks stay. */
+  private async retireIdleTickers(): Promise<void> {
+    if (this.runtime.shuttingDown || this.closed || this.closing || !this.opening) return;
+    const { harness } = await this.opening;
+    const keep = new Set<number>();
+    for (const node of Object.values(this.taskGraph?.value?.tasks ?? {})) {
+      if (node.conversations.length > 0) keep.add(node.id);
+    }
+    const conversationIds = new Set(
+      Object.values(this.taskGraph?.value?.tasks ?? {}).map((node) => node.conversationId),
+    );
+    for (const conversationId of conversationIds) {
+      const jobs = await harness.snapshot(DurableJobs, conversationId, BACKGROUND_CONTEXT);
+      for (const job of jobs?.jobs ?? []) if (!job.delivered) keep.add(job.taskId);
+    }
+    for (const node of Object.values(this.taskGraph?.value?.tasks ?? {})) {
+      if (!node.background || keep.has(node.id)) continue;
+      await harness.abortTask(node.id, BACKGROUND_CONTEXT);
     }
   }
 
-  private async closeHarness(resumeIds: ReadonlySet<ConversationId>): Promise<void> {
-    if (!this.opening) return;
-    const { harness } = await this.opening;
-    const live = await harness.inspect(BACKGROUND_CONTEXT);
-    const stopped = new Set(
-      [
-        ...live.tasks.map(({ record }) => record.conversationId),
-        ...live.submissions.map((submission) => submission.conversationId),
-      ].filter((id) => !resumeIds.has(id)),
+  private async closeIfIdle(): Promise<void> {
+    if (
+      this.runtime.startupHeld ||
+      this.runtime.shuttingDown ||
+      !this.isIdle ||
+      this.closed ||
+      this.closing
+    )
+      return;
+    await this.close().catch((error) => {
+      log.error("durable_store.idle_close_failed", {
+        storeId: this.storeId,
+        error: safeErrorMessage(error),
+      });
+    });
+  }
+
+  private cancelIdleClose(): void {
+    if (this.idleCloseTimer === undefined) return;
+    clearImmediate(this.idleCloseTimer);
+    this.idleCloseTimer = undefined;
+  }
+
+  private maybeClose(): void {
+    if (
+      this.runtime.startupHeld ||
+      this.runtime.shuttingDown ||
+      !this.isIdle ||
+      this.closed ||
+      this.closing
+    )
+      return;
+    if (this.idleCloseTimer !== undefined) return;
+    // After openHost returns, the caller still has to retain/attach. Closing in this
+    // turn would drop a store that startSession is about to use.
+    this.idleCloseTimer = setImmediate(() => {
+      this.idleCloseTimer = undefined;
+      void this.closeIfIdle();
+    });
+  }
+}
+
+/** Process-owned durable runtime. A disabled server never creates this owner. */
+export class DurableHarness {
+  private closed = false;
+  /** Server catalog runtime. Carries global `registerProvider` overlays such as Anthropic OMP. */
+  private boundModels?: ModelRuntime;
+  private discoveredModelsRequired = false;
+  startupHeld = true;
+  shuttingDown = false;
+  private runSettings?: HarnessSettings;
+  /** The manager `runSettings` reads live. Writes reach every conversation and persist to user settings. */
+  private runPolicy?: SettingsManager;
+  private registry?: Registry;
+  private threads?: DurableThreads;
+  private control?: DurableControlHost;
+  /** Extensions from the durable entries of enabled Pi packages, in load order. */
+  private packageExtensions: readonly LoadedDurableExtension[] = [];
+  /** One load or reload at a time. */
+  private extensionLoad: Promise<unknown> = Promise.resolve();
+  private shared?: Promise<{
+    models: ModelRuntime;
+    registry: Registry;
+    settings: HarnessSettings;
+  }>;
+  private readonly hosts = new Map<string, SessionHost>();
+  private readonly openingHosts = new Map<string, Promise<SessionHost>>();
+  /** The session tools; they reach Oppi through the host bound with `bindThreads`. */
+  readonly sessionsExtension = createDurableSessions(() => this.threads);
+  /** The control conversation's tools; they reach Oppi through the host bound with `bindControl`. */
+  readonly controlExtension = createDurableControl(() => this.control);
+  /** The control conversation's exact selection. Never part of `baseExtensions`. */
+  readonly controlExtensions: readonly Extension[] = controlConversationExtensions(
+    this.controlExtension,
+  );
+  /**
+   * Extensions every process installs, in install order. They are also the Harness default
+   * selection, so a conversation whose stored selection is an `{ add }` edit never picks up
+   * another session's MCP extension from the registry.
+   */
+  readonly baseExtensions: Extension[] = [
+    CodingTools,
+    DurableSandboxTools,
+    DurableAsk,
+    DurableWorkingWords,
+    DurableBackgroundJobs,
+    this.sessionsExtension,
+    DurableProjectContext,
+  ];
+
+  constructor(readonly dataDir: string) {}
+
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
+  bindThreads(threads: DurableThreads): void {
+    this.threads = threads;
+  }
+  bindControl(control: DurableControlHost): void {
+    this.control = control;
+  }
+  get boundThreads(): DurableThreads | undefined {
+    return this.threads;
+  }
+
+  get retrySettings(): HarnessSettings["retry"] {
+    return this.runSettings?.retry;
+  }
+
+  /**
+   * Classic `set_auto_retry`, `set_auto_compaction`, and the queue modes write global user
+   * settings. The Harness reads the same getters at every use, so writing here is the same
+   * scope: it reaches every durable conversation, and no per-session copy exists.
+   */
+  get runPolicySettings(): SettingsManager {
+    if (!this.runPolicy) throw new Error("Server durable runtime is not open");
+    return this.runPolicy;
+  }
+
+  /**
+   * Extensions loaded from Pi packages that a session of this runtime selects next to the
+   * built-ins. The control conversation selects none of them.
+   */
+  packageExtensionsFor(runtime: DurableExtensionRuntime): Extension[] {
+    return this.packageExtensions
+      .filter((loaded) => loaded.runtimes.includes(runtime))
+      .map((loaded) => loaded.extension);
+  }
+
+  /**
+   * Re-read the durable entries of enabled Pi packages and install them in the open
+   * registry. Installing an extension under an installed name replaces it in place: running
+   * tool calls finish on their old code, and the next task phase, request, or call uses the
+   * new code. A package that fails to load keeps its previous code installed; a package that
+   * is gone is uninstalled, and conversations that selected it stop getting it.
+   */
+  async reloadExtensions(): Promise<DurableExtensionReport> {
+    const { registry } = await this.ensureShared();
+    return this.loadPackageExtensions(registry);
+  }
+
+  private loadPackageExtensions(registry: Registry): Promise<DurableExtensionReport> {
+    const run = this.extensionLoad.then(() => this.loadPackageExtensionsOnce(registry));
+    this.extensionLoad = run.catch(() => undefined);
+    return run;
+  }
+
+  private async loadPackageExtensionsOnce(registry: Registry): Promise<DurableExtensionReport> {
+    const previous = this.packageExtensions;
+    const builtIns = [...this.baseExtensions, ...this.controlExtensions];
+    let discovered: Awaited<ReturnType<typeof discoverDurableExtensionPackages>>;
+    try {
+      discovered = await discoverDurableExtensionPackages(getAgentDir());
+    } catch (error) {
+      // Discovery itself failed: change nothing, so a settings typo cannot unload everything.
+      const report: DurableExtensionReport = {
+        loaded: [],
+        kept: previous.map(summarize),
+        removed: [],
+        skipped: [],
+        errors: [
+          { entry: getAgentDir(), message: `Package discovery failed: ${safeErrorMessage(error)}` },
+        ],
+      };
+      this.logExtensionReport(report);
+      return report;
+    }
+    const result = await loadDurableExtensions(discovered.packages, {
+      names: new Set(builtIns.map((extension) => extension.name)),
+      tools: new Set(
+        builtIns.flatMap((extension) => extension.tools ?? []).map((tool) => tool.name),
+      ),
+    });
+    const loadedNames = new Set(result.loaded.map((loaded) => loaded.extension.name));
+    const failedEntries = new Set(result.errors.map((issue) => issue.entry));
+    const kept = previous.filter(
+      (old) => failedEntries.has(old.entry) && !loadedNames.has(old.extension.name),
     );
-    await this.abortConversations(stopped);
+    const next = [...result.loaded, ...kept];
+    const nextNames = new Set(next.map((loaded) => loaded.extension.name));
+    for (const loaded of result.loaded) registry.install(loaded.extension);
+    const removed = previous.filter((old) => !nextNames.has(old.extension.name));
+    for (const old of removed) registry.uninstall(old.extension);
+    this.packageExtensions = next;
+    const report: DurableExtensionReport = {
+      loaded: result.loaded.map(summarize),
+      kept: kept.map(summarize),
+      removed: removed.map((old) => old.extension.name),
+      skipped: result.skipped,
+      errors: [...discovered.errors, ...result.errors],
+    };
+    this.logExtensionReport(report);
+    return report;
+  }
+
+  private logExtensionReport(report: DurableExtensionReport): void {
+    if (report.loaded.length || report.removed.length)
+      log.info("durable_extensions.loaded", {
+        loaded: report.loaded.map((loaded) => loaded.name),
+        removed: report.removed,
+      });
+    for (const issue of report.errors)
+      log.error("durable_extensions.load_failed", { entry: issue.entry, message: issue.message });
+  }
+
+  installExtension(extension: Extension): void {
+    if (!this.registry) throw new Error("Server durable runtime is not open");
+    this.registry.install(extension);
+  }
+  uninstallExtension(extension: Extension): void {
+    this.registry?.uninstall(extension);
+  }
+
+  /** Production open must not invent a runtime that skipped extension provider discovery. */
+  requireDiscoveredModels(): void {
+    if (this.shared) {
+      throw new Error("Server durable model runtime cannot be required after the runtime opens");
+    }
+    this.discoveredModelsRequired = true;
+  }
+
+  /** Adopt the server ModelRuntime. Call before open(); later catalog resyncs stay on this object. */
+  bindModelRuntime(models: ModelRuntime): void {
+    if (this.shared) {
+      throw new Error("Server durable model runtime cannot change after the runtime opens");
+    }
+    this.boundModels = models;
+  }
+
+  async ensureShared(): Promise<{
+    models: ModelRuntime;
+    registry: Registry;
+    settings: HarnessSettings;
+  }> {
+    if (this.closed) throw new Error("Server durable runtime is closed");
+    return (this.shared ??= this.ensureSharedInner());
+  }
+
+  private async ensureSharedInner(): Promise<{
+    models: ModelRuntime;
+    registry: Registry;
+    settings: HarnessSettings;
+  }> {
+    const agentDir = getAgentDir();
+    if (this.discoveredModelsRequired && !this.boundModels) {
+      throw new Error(
+        "Server durable Harness opened before the discovered model runtime was bound",
+      );
+    }
+    const models =
+      this.boundModels ??
+      (await ModelRuntime.create({
+        authPath: join(agentDir, "auth.json"),
+        modelsPath: join(agentDir, "models.json"),
+      }));
+    const settings = SettingsManager.create(homedir(), agentDir, { projectTrusted: false });
+    this.runPolicy = settings;
+    this.runSettings = harnessSettings(settings, this.baseExtensions);
+    const registry = createRegistry();
+    for (const extension of this.baseExtensions) registry.install(extension);
+    // Installed so the control conversation can select them by name. Installing is not
+    // selecting: only `baseExtensions` is the default selection of other conversations.
+    for (const extension of this.controlExtensions)
+      if (!this.baseExtensions.includes(extension)) registry.install(extension);
+    this.registry = registry;
+    await this.loadPackageExtensions(registry);
+    return { models, registry, settings: this.runSettings };
+  }
+
+  host(storeId: string): SessionHost | undefined {
+    return this.hosts.get(storeId);
+  }
+
+  openHosts(): readonly SessionHost[] {
+    return [...this.hosts.values()];
+  }
+
+  forgetHost(host: SessionHost): void {
+    if (this.hosts.get(host.storeId) === host) this.hosts.delete(host.storeId);
+  }
+
+  /**
+   * Open (or reuse) the store for `storeId`. Creates the directory and meta.json
+   * on first use. The directory is locked while the host is open.
+   */
+  async openHost(
+    storeId: string,
+    meta?: Partial<DurableStoreMeta> & { cwd?: string },
+  ): Promise<SessionHost> {
+    assertDurableStoreId(storeId);
+    if (this.closed) throw new Error("Server durable runtime is closed");
+    const existing = this.hosts.get(storeId);
+    if (existing?.isOpen) {
+      await existing.open();
+      return existing;
+    }
+    const pending = this.openingHosts.get(storeId);
+    if (pending) return pending;
+    const opening = this.openHostInner(storeId, meta);
+    this.openingHosts.set(storeId, opening);
+    try {
+      return await opening;
+    } finally {
+      if (this.openingHosts.get(storeId) === opening) this.openingHosts.delete(storeId);
+    }
+  }
+
+  private async openHostInner(
+    storeId: string,
+    meta?: Partial<DurableStoreMeta> & { cwd?: string },
+  ): Promise<SessionHost> {
+    await this.ensureShared();
+    const directory = durableStoreDir(this.dataDir, storeId);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    let stored = readStoreMeta(directory);
+    if (!stored) {
+      const cwd = meta?.cwd;
+      if (!cwd) throw new Error(`Durable store ${storeId} has no working directory`);
+      stored = {
+        createdAt: meta.createdAt ?? Date.now(),
+        cwd,
+        ...(meta.name ? { name: meta.name } : {}),
+        ...(meta.workspaceId ? { workspaceId: meta.workspaceId } : {}),
+        ...(meta.agent ? { agent: meta.agent } : {}),
+      };
+      writeStoreMeta(directory, stored);
+    }
+    const host = new SessionHost(this, storeId, directory, stored, this.startupHeld);
+    this.hosts.set(storeId, host);
+    await host.open();
+    return host;
+  }
+
+  /**
+   * Test seam: bind an already-open Harness as this store without the directory lock.
+   */
+  attachOpened(
+    storeId: string,
+    opened: { harness: Harness; storage: Storage; models: ModelRuntime },
+    meta: DurableStoreMeta,
+  ): SessionHost {
+    assertDurableStoreId(storeId);
+    const directory = durableStoreDir(this.dataDir, storeId);
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const host = new SessionHost(this, storeId, directory, meta, this.startupHeld);
+    host.bindOpenedHarness(opened.harness, opened.storage, opened.models);
+    this.hosts.set(storeId, host);
+    return host;
+  }
+
+  /** Hold every open store's scheduler until `finishStartup()`. Idempotent. */
+  beginStartup(): void {
+    this.startupHeld = true;
+    for (const host of this.hosts.values()) host.holdResume();
+  }
+
+  async finishStartup(): Promise<void> {
+    this.startupHeld = false;
+    await Promise.all([...this.hosts.values()].map((host) => host.releaseResume()));
+  }
+
+  /**
+   * Close every open store. `resumeByStore` is the conversations that must keep
+   * their work for the next start. Resolves the store ids that still had live tasks.
+   */
+  async closeAll(
+    resumeByStore: ReadonlyMap<string, ReadonlySet<ConversationId>> = new Map(),
+  ): Promise<string[]> {
     this.closed = true;
-    // Closing interrupts invocations without settling their tasks. Recorded
-    // restart work remains durable and is continued by the next Harness.open.
-    await harness.close(BACKGROUND_CONTEXT);
-    await Promise.all([...this.sandboxEnvs.keys()].map((id) => this.unbindSandboxEnv(id, true)));
+    const pending: string[] = [];
+    const hosts = [...this.hosts.values()];
+    await Promise.all(
+      hosts.map(async (host) => {
+        const result = await host.close(resumeByStore.get(host.storeId) ?? new Set());
+        if (result.pending) pending.push(host.storeId);
+      }),
+    );
+    return pending;
   }
 }
 

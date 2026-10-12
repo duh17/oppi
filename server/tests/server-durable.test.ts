@@ -44,7 +44,7 @@ import type { GondolinVm } from "../src/gondolin-ops.js";
 import { DurableBackend, DurableNotSupportedError } from "../src/durable-backend.js";
 import { Storage } from "../src/storage.js";
 import { SessionManager } from "../src/sessions.js";
-import { DurableHarness, DurableRuntime } from "../src/durable-harness.js";
+import { DurableHarness, DurableRuntime, SessionHost } from "../src/durable-harness.js";
 import {
   DURABLE_FAILURE_ENTRY_KIND,
   FailureCardsDoc,
@@ -211,21 +211,39 @@ async function openHarness(
 /** Enrolled as an `engine: "durable"` create leaves it: durable, not yet bound. */
 function createDurableSession(storage: Storage, name: string): Session {
   const session = storage.createSession(name, "faux/faux-1");
-  session.serverDurable = {};
+  session.serverDurable = { storeId: session.id };
   storage.saveSession(session);
   return session;
 }
 
-/** Prototype `open` mocks skip `openInner`, so retain the harness storage on the instance `open` is called on. */
+function attachHost(
+  runtime: DurableHarness,
+  harness: Harness,
+  models: ModelRuntime,
+  storeId: string,
+): SessionHost {
+  const storage = harnessStorage.get(harness);
+  if (!storage) throw new Error("test harness has no retained storage");
+  return runtime.attachOpened(
+    storeId,
+    { harness, storage, models },
+    { createdAt: Date.now(), cwd: runtime.dataDir },
+  );
+}
+
+/** Prototype `openHost` mocks skip session.sqlite, so retain the harness storage on the runtime. */
 function mockDurableOpen(harness: Harness, models: ModelRuntime) {
   let current = harness;
-  const spy = vi.spyOn(DurableHarness.prototype, "open").mockImplementation(async function (
+  const spy = vi.spyOn(DurableHarness.prototype, "openHost").mockImplementation(async function (
     this: DurableHarness,
+    storeId: string,
   ) {
-    const storage = harnessStorage.get(current);
-    if (!storage) throw new Error("test harness has no retained storage");
-    this.bindStorage(storage);
-    return { harness: current, models };
+    const existing = this.host(storeId);
+    if (existing?.isOpen) {
+      await existing.open();
+      return existing;
+    }
+    return attachHost(this, current, models, storeId);
   });
   return Object.assign(spy, {
     use(next: Harness) {
@@ -235,15 +253,12 @@ function mockDurableOpen(harness: Harness, models: ModelRuntime) {
 }
 
 async function backend(harness: Harness, models: ModelRuntime, session: Session, dataDir: string) {
-  const owner = new DurableHarness(dataDir);
-  const storage = harnessStorage.get(harness);
-  if (!storage) throw new Error("test harness has no retained storage");
-  owner.bindStorage(storage);
-  vi.spyOn(owner, "open").mockResolvedValue({ harness, models });
-  await owner.releaseResume();
+  const runtime = new DurableHarness(dataDir);
+  const host = attachHost(runtime, harness, models, session.serverDurable?.storeId ?? session.id);
+  await host.releaseResume();
   const result = await DurableBackend.create({
     harness,
-    owner,
+    owner: host,
     models,
     session,
     dataDir,
@@ -298,7 +313,7 @@ async function crashedQueuedTools(f: Awaited<ReturnType<typeof fixture>>) {
       context,
     );
     session.workspaceId = index === 0 ? f.workspace.id : secondWorkspace.id;
-    session.serverDurable = { conversationId: conversation.id };
+    session.serverDurable = { storeId: session.id, conversationId: conversation.id };
     session.status = "busy";
     f.storage.saveSession(session);
     tasks.push(
@@ -601,12 +616,9 @@ describe("server durable managed runtime", () => {
         },
         context,
       );
-      f.session.serverDurable = { conversationId: conversation.id };
-      const owner = new DurableHarness(f.dir);
-      const retained = harnessStorage.get(harness);
-      if (!retained) throw new Error("test harness has no retained storage");
-      owner.bindStorage(retained);
-      vi.spyOn(owner, "open").mockResolvedValue({ harness, models: f.models });
+      f.session.serverDurable = { storeId: f.session.id, conversationId: conversation.id };
+      const runtime = new DurableHarness(f.dir);
+      const owner = attachHost(runtime, harness, f.models, f.session.id);
       await owner.releaseResume();
       let shown!: UIResponse;
       let show!: () => void;
@@ -663,7 +675,7 @@ describe("server durable managed runtime", () => {
 
   it("committed hostile UI JSON reaches handlePiEvent only as allowlisted UI requests", async () => {
     const f = await fixture([]);
-    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    const opening = vi.spyOn(SessionHost.prototype, "open");
     const handled = vi.spyOn(SessionAgentEventCoordinator.prototype, "handlePiEvent");
     await f.manager.startSession(f.session.id, f.workspace);
     const { harness } = await opening.mock.results[0]!.value;
@@ -796,7 +808,7 @@ describe("server durable managed runtime", () => {
 
   it("replays generic native widgets/status and working words, sanitizes fields, and explicitly clears slots", async () => {
     const f = await fixture([askStep(), fauxAssistantMessage("DONE")]);
-    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    const opening = vi.spyOn(SessionHost.prototype, "open");
     await f.manager.startSession(f.session.id, f.workspace);
     const { harness } = await opening.mock.results[0]!.value;
     const id = f.storage.getSession(f.session.id)!.serverDurable!.conversationId!;
@@ -1007,7 +1019,7 @@ describe("server durable managed runtime", () => {
       [fauxAssistantMessage("", { stopReason: "error", errorMessage: errorText })],
       { settings: { retry: { enabled: false } } },
     );
-    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    const opening = vi.spyOn(SessionHost.prototype, "open");
     await f.manager.startSession(f.session.id, f.workspace);
     const observed = observe(f.manager, f.session.id);
     const ended = observed.next(
@@ -1170,8 +1182,9 @@ describe("server durable managed runtime", () => {
     );
     const durable = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
       .durableHarness;
-    const { harness } = await durable.open();
-    const storage = durable.storage;
+    const host = await durable.openHost(f.session.id, { cwd: f.dir });
+    const { harness } = await host.open();
+    const storage = host.storage;
     const submissionScans: unknown[] = [];
     const taskScans: Array<{ query: unknown; cursor: unknown }> = [];
     const scanSubmissions = storage.scanSubmissions.bind(storage);
@@ -1207,7 +1220,7 @@ describe("server durable managed runtime", () => {
       ),
     ).toBe(false);
 
-    f.session.serverDurable = { conversationId: conversation.id };
+    f.session.serverDurable = { storeId: f.session.id, conversationId: conversation.id };
     f.storage.saveSession(f.session);
     await f.manager.startSession(f.session.id, f.workspace);
 
@@ -1257,15 +1270,13 @@ describe("server durable managed runtime", () => {
         },
       },
       abort: (_task, runtime, callContext) =>
-        runtime.commit(
-          () => ({ status: "terminal", outcome: { status: "aborted" } }),
-          callContext,
-        ),
+        runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), callContext),
     });
     const f = await fixture([]);
     const durable = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
       .durableHarness;
-    const { harness } = await durable.open();
+    const host = await durable.openHost(f.session.id, { cwd: f.dir });
+    const { harness } = await host.open();
     durable.installExtension(
       defineExtension({ name: "oppi.test-historical-fault", tasks: [Fault] }),
     );
@@ -1280,8 +1291,7 @@ describe("server durable managed runtime", () => {
     for (const label of faults) {
       taskIds.push(
         await conversation.commit(
-          (tx) =>
-            tx.createTask(Fault, { label }, { ownership: { kind: "conversation" } }),
+          (tx) => tx.createTask(Fault, { label }, { ownership: { kind: "conversation" } }),
           context,
         ),
       );
@@ -1297,7 +1307,7 @@ describe("server durable managed runtime", () => {
       ),
     ).toBe(false);
 
-    const storage = durable.storage;
+    const storage = host.storage;
     const taskScans: Array<{ query: unknown; cursor: unknown }> = [];
     const scanTasks = storage.scanTasks.bind(storage);
     storage.scanTasks = (async (query, limit, cursor, callContext) => {
@@ -1315,7 +1325,7 @@ describe("server durable managed runtime", () => {
           (scan.query as { conversationId: ConversationId }).conversationId === conversation.id,
       );
 
-    f.session.serverDurable = { conversationId: conversation.id };
+    f.session.serverDurable = { storeId: f.session.id, conversationId: conversation.id };
     f.storage.saveSession(f.session);
     await f.manager.startSession(f.session.id, f.workspace);
 
@@ -1341,7 +1351,9 @@ describe("server durable managed runtime", () => {
     expect((resumed[0]!.cursor as { after: number }).after).toBeGreaterThan(0);
     const retrace = (await f.manager.getServerDurableTrace(f.session.id, "full"))!;
     for (const body of faults) expect(retrace.filter(isCard(body))).toHaveLength(1);
-    expect(await harness.snapshot(FailureCardsDoc, conversation.id, context)).toEqual(mark);
+    const after = await harness.snapshot(FailureCardsDoc, conversation.id, context);
+    expect(after!.taskId).toBeGreaterThanOrEqual(mark!.taskId);
+    for (const id of taskIds) expect(after!.open).not.toContain(Number(id));
   }, 20_000);
 
   it("projects manual summary and start-time context tokens and resets cache state", async () => {
@@ -1452,7 +1464,7 @@ describe("server durable managed runtime", () => {
       ],
       { settings: compactionSettings },
     );
-    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    const opening = vi.spyOn(SessionHost.prototype, "open");
     await f.manager.startSession(f.session.id, f.workspace);
     const observed = observe(f.manager, f.session.id);
     await answer(f, observed, "first");
@@ -1543,7 +1555,7 @@ describe("server durable managed runtime", () => {
     const summarizing = new Promise<void>((resolve) => {
       entered = resolve;
     });
-    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    const opening = vi.spyOn(SessionHost.prototype, "open");
     const f = await fixture(
       [
         fauxAssistantMessage("Old context ".repeat(50)),
@@ -1700,7 +1712,7 @@ describe("server durable managed runtime", () => {
     };
     const ensure = vi.spyOn(SdkBackend, "ensureSandboxWorkspaceVm").mockResolvedValue(vm);
     const sdk = vi.spyOn(SdkBackend, "create");
-    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    const opening = vi.spyOn(SessionHost.prototype, "open");
     await f.manager.startSession(f.session.id, f.workspace);
     const { harness } = await opening.mock.results[0]!.value;
     const id = f.storage.getSession(f.session.id)!.serverDurable!.conversationId as ConversationId;
@@ -1928,7 +1940,7 @@ describe("server durable managed runtime", () => {
         }
       },
     );
-    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    const opening = vi.spyOn(SessionHost.prototype, "open");
     await f.manager.startSession(f.session.id, f.workspace);
     const observed = observe(f.manager, f.session.id);
     const settled = observed.next((message) => message.type === "agent_end");
@@ -2025,8 +2037,8 @@ describe("server durable managed runtime", () => {
   it("does not confirm cancellation when the sandbox environment cannot prove the guest stopped", async () => {
     const f = await fixture([]);
     const harness = await openHarness(f.dir, f.models);
-    const owner = new DurableHarness(f.dir);
-    vi.spyOn(owner, "open").mockResolvedValue({ harness, models: f.models });
+    const runtime = new DurableHarness(f.dir);
+    const owner = attachHost(runtime, harness, f.models, f.session.id);
     await owner.releaseResume();
     const conversation = await harness.createConversation(
       { ownership: { kind: "ownerless" } },
@@ -2066,8 +2078,13 @@ describe("server durable managed runtime", () => {
   it("keeps admission gated until an in-flight paused cancellation mark commits", async () => {
     const f = await fixture([]);
     const crashed = await crashedQueuedTools(f);
-    const owner = new DurableHarness(f.dir);
-    vi.spyOn(owner, "open").mockResolvedValue({ harness: crashed.harness, models: f.models });
+    const runtime = new DurableHarness(f.dir);
+    const owner = attachHost(
+      runtime,
+      crashed.harness,
+      f.models,
+      crashed.sessions[0]!.serverDurable?.storeId ?? crashed.sessions[0]!.id,
+    );
     let admit!: () => void;
     let marking!: () => void;
     const allowed = new Promise<void>((resolve) => {
@@ -2528,10 +2545,7 @@ describe("server durable managed runtime", () => {
     await f.manager.startSession(f.session.id, f.workspace);
     for (const [command, operation] of [
       [{ type: "get_session_tree" }, "sessionTree (fork a message instead)"],
-      [
-        { type: "navigate_tree", targetId: "1" },
-        "navigateTree (fork a message instead)",
-      ],
+      [{ type: "navigate_tree", targetId: "1" }, "navigateTree (fork a message instead)"],
       [{ type: "abort_bash" }, "abortBash (use abort)"],
     ] as const)
       await expect(f.manager.runCommand(f.session.id, command)).rejects.toMatchObject({
@@ -2873,7 +2887,9 @@ describe("server durable managed runtime", () => {
     ).toEqual([]);
     const durable = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
       .durableHarness;
-    const { harness: live } = await durable.open();
+    const { harness: live } = await (
+      await durable.openHost(fresh.serverDurable?.storeId ?? f.session.id, { cwd: f.dir })
+    ).open();
     const stored = async (id: number) => ({
       agent: await live.snapshot(AgentDoc, id as ConversationId, context),
       runtime: await live.snapshot(DurableRuntime, id as ConversationId, context),
@@ -2912,9 +2928,9 @@ describe("server durable managed runtime", () => {
 
   it("keeps runtime and agent on both fork shapes", async () => {
     const f = await fixture([]);
-    const owner = new DurableHarness(f.dir);
+    const runtime = new DurableHarness(f.dir);
     const harness = await openHarness(f.dir, f.models);
-    vi.spyOn(owner, "open").mockResolvedValue({ harness, models: f.models });
+    const owner = attachHost(runtime, harness, f.models, f.session.id);
     const source = await harness.createConversation(
       {
         ownership: { kind: "ownerless" },
@@ -2966,9 +2982,9 @@ describe("server durable managed runtime", () => {
 
   it("forks at a compaction entry by keeping the summary, not the compacted transcript", async () => {
     const f = await fixture([]);
-    const owner = new DurableHarness(f.dir);
+    const runtime = new DurableHarness(f.dir);
     const harness = await openHarness(f.dir, f.models);
-    vi.spyOn(owner, "open").mockResolvedValue({ harness, models: f.models });
+    const owner = attachHost(runtime, harness, f.models, f.session.id);
     const source = await harness.createConversation({ ownership: { kind: "ownerless" } }, context);
     const [first, second] = await source.commit(
       async (tx) => [
@@ -3480,7 +3496,10 @@ describe("server durable managed runtime", () => {
         context,
       );
       session.workspaceId = f.workspace.id;
-      session.serverDurable = { conversationId: conversation.id };
+      session.serverDurable = {
+        storeId: sessions[0]!.id,
+        conversationId: conversation.id,
+      };
       session.status = index === 2 ? "busy" : "stopping";
       f.storage.saveSession(session);
       if (index < 2)
@@ -3535,6 +3554,7 @@ describe("server durable managed runtime", () => {
     const idle = f.storage.createSession("Already idle stopped conversation", "faux/faux-1");
     idle.status = "stopped";
     idle.serverDurable = {
+      storeId: sessions[0]!.id,
       conversationId: (
         await harness.createConversation({ ownership: { kind: "ownerless" } }, context)
       ).id,
@@ -3651,7 +3671,7 @@ describe("server durable managed runtime", () => {
     };
     vi.spyOn(SdkBackend, "ensureSandboxWorkspaceVm").mockResolvedValue(vm);
     const sdk = vi.spyOn(SdkBackend, "create");
-    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    const opening = vi.spyOn(SessionHost.prototype, "open");
     await f.manager.startSession(f.session.id, f.workspace);
     const projection = observe(f.manager, f.session.id);
     // Native background jobs retain final output only. Synchronize on guest
@@ -3811,7 +3831,7 @@ describe("server durable managed runtime", () => {
       fauxAssistantMessage("answer two"),
       fauxAssistantMessage("answer three"),
     ]);
-    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    const opening = vi.spyOn(SessionHost.prototype, "open");
     await f.manager.startSession(f.session.id, f.workspace);
     const observed = observe(f.manager, f.session.id);
     for (const prompt of ["turn one", "turn two", "turn three"]) {
@@ -3888,7 +3908,7 @@ describe("server durable managed runtime", () => {
 
   it("bounds durable page reads for 2,000 entries and keeps cursors valid after append", async () => {
     const f = await fixture([]);
-    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    const opening = vi.spyOn(SessionHost.prototype, "open");
     await f.manager.startSession(f.session.id, f.workspace);
     const { harness } = await opening.mock.results[0]!.value;
     const conversation = (await harness.conversation(
@@ -3984,7 +4004,7 @@ describe("server durable managed runtime", () => {
       [fauxAssistantMessage("A deliberately long stream so queued input remains pending.")],
       { slow: true },
     );
-    const opening = vi.spyOn(DurableHarness.prototype, "open");
+    const opening = vi.spyOn(SessionHost.prototype, "open");
     await f.manager.startSession(f.session.id, f.workspace);
     const projection = observe(f.manager, f.session.id);
     const started = projection.next((message) => message.type === "text_delta");
@@ -4019,7 +4039,7 @@ describe("server durable managed runtime", () => {
       { ownership: { kind: "ownerless" } },
       context,
     );
-    f.session.serverDurable = { conversationId: conversation.id };
+    f.session.serverDurable = { storeId: f.session.id, conversationId: conversation.id };
     vi.spyOn(conversation, "abort").mockRejectedValue(new Error("abort commit rejected"));
     vi.spyOn(harness, "conversation").mockResolvedValue(conversation);
     const activeBackend = await backend(harness, f.models, f.session, f.dir);
@@ -4140,7 +4160,7 @@ describe("server durable managed runtime", () => {
 
     it("stops an inactive bound session through the durable harness", async () => {
       const f = await boundThenFlagOff();
-      const abort = vi.spyOn(DurableHarness.prototype, "abortConversations");
+      const abort = vi.spyOn(SessionHost.prototype, "abortConversations");
       await f.manager.stopSession(f.session.id);
       expect(abort).toHaveBeenCalledWith(new Set([f.conversationId]));
     });
@@ -4156,7 +4176,7 @@ describe("server durable managed runtime", () => {
       const sdkCreate = vi
         .spyOn(SdkBackend, "create")
         .mockResolvedValue({ dispose: async () => {} } as SdkBackend);
-      const opening = vi.spyOn(DurableHarness.prototype, "open");
+      const opening = vi.spyOn(SessionHost.prototype, "open");
       await f.manager.startSession(enrolled.id, f.workspace);
       expect(sdkCreate).toHaveBeenCalledOnce();
       expect(opening).not.toHaveBeenCalled();

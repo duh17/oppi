@@ -13,7 +13,7 @@ import {
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationId, Harness } from "@earendil-works/pi-durable";
-import { DurableHarness, type DurableExtensionReport } from "../src/durable-harness.js";
+import { DurableHarness, SessionHost, type DurableExtensionReport } from "../src/durable-harness.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import { createRouteHelpers } from "../src/routes/http.js";
@@ -114,12 +114,12 @@ async function fixture(responses: FauxResponseStep[]) {
       compaction: { enabled: false },
     }),
   );
-  const opening = vi.spyOn(DurableHarness.prototype, "open");
+  const opening = vi.spyOn(SessionHost.prototype, "open");
   const storage = new Storage(dir);
   storage.updateConfig({ experimental: { serverDurable: true } });
   const workspace = storage.createWorkspace({ name: "Packages", hostMount: dir });
   const session = storage.createSession("Package user", "faux/faux-1");
-  session.serverDurable = {};
+  session.serverDurable = { storeId: session.id };
   session.workspaceId = workspace.id;
   storage.saveSession(session);
   const manager = new SessionManager(storage);

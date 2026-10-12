@@ -401,6 +401,7 @@ describe("control conversation lifecycle on the durable harness", () => {
     expect(conversationId).toBeGreaterThan(0);
     expect(storage.listSessions().filter(isControlConversation)).toHaveLength(1);
     expect(storage.getSession(sessionId)?.serverDurable).toEqual({
+      storeId: sessionId,
       conversationId,
       role: "control",
     });
@@ -409,7 +410,8 @@ describe("control conversation lifecycle on the durable harness", () => {
     // The stored selection is the exact control list, not the coding default.
     const owner = (first.manager as unknown as { durableHarness: Promise<DurableHarness> })
       .durableHarness;
-    const { harness } = await (await owner).open();
+    const runtime = await owner;
+    const { harness } = await (await runtime.openHost(sessionId)).open();
     const agent = await harness.snapshot(AgentDoc, conversationId as ConversationId, context);
     expect(agent?.extensions).toEqual(["ask", "working-words", "oppi.control"]);
     expect(agent?.extensions).toEqual((await owner).controlExtensions.map((e) => e.name));
@@ -462,7 +464,8 @@ describe("control conversation lifecycle on the durable harness", () => {
     const opened = await booted.open({ model: "faux/faux-1" });
     const owner = await (booted.manager as unknown as { durableHarness: Promise<DurableHarness> })
       .durableHarness;
-    const { harness } = await owner.open();
+    const storeId = opened.body.session.serverDurable?.storeId ?? opened.body.session.id;
+    const { harness } = await (await owner.openHost(storeId)).open();
     const conversation = (await harness.conversation(
       opened.body.session.serverDurable!.conversationId as ConversationId,
       context,

@@ -30,7 +30,7 @@ import { DurableUI } from "../extensions/durable/durable-ui.js";
 import { DurableBackend } from "../src/durable-backend.js";
 import { Storage } from "../src/storage.js";
 import type { SessionBackendEvent } from "../src/pi-events.js";
-import { DurableHarness } from "../src/durable-harness.js";
+import { DurableHarness, type SessionHost } from "../src/durable-harness.js";
 import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
 import { RESULT_GUIDANCE } from "../extensions/durable/background-jobs/delivery.js";
 import { readDurableInputCardOutput } from "../src/durable-input-cards.js";
@@ -100,7 +100,7 @@ async function fixture(responses: FauxResponseStep[], realExec = false, serverOw
         return { ok: true, value: { exitCode: 0, stdout: "FINAL-OUTPUT\n", stderr: "" } };
       },
     );
-  const owner = new DurableHarness(dir);
+  let owner = new DurableHarness(dir);
   if (serverOwner) {
     vi.spyOn(ModelRuntime, "create").mockResolvedValue(models);
     vi.spyOn(SettingsManager, "create").mockReturnValue(
@@ -108,13 +108,35 @@ async function fixture(responses: FauxResponseStep[], realExec = false, serverOw
     );
   }
   let openedStorage: Awaited<ReturnType<typeof openNodeSqliteStorage>> | undefined;
+  let host: SessionHost | undefined;
   const open = async (executionEnv: NodeExecutionEnv | GondolinExecutionEnv = env) => {
+    if (serverOwner) {
+      const reopen = async (): Promise<Harness> => {
+        try {
+          host = await owner.openHost("jobs-host", { cwd: dir });
+        } catch (error) {
+          if (!(error instanceof Error) || !error.message.includes("is closed")) throw error;
+          owner = new DurableHarness(dir);
+          host = await owner.openHost("jobs-host", { cwd: dir });
+        }
+        return (await host.open()).harness;
+      };
+      let reopened = await reopen();
+      try {
+        await reopened.inspect(context);
+      } catch {
+        await host?.close().catch(() => undefined);
+        owner = new DurableHarness(dir);
+        host = undefined;
+        reopened = await reopen();
+      }
+      harnesses.add(reopened);
+      return reopened;
+    }
     const registry = createRegistry();
     registry.install(CodingTools);
     registry.install(DurableBackgroundJobs);
-    openedStorage = await openNodeSqliteStorage(
-      join(dir, serverOwner ? "durable/harness.sqlite" : "jobs.sqlite"),
-    );
+    openedStorage = await openNodeSqliteStorage(join(dir, "jobs.sqlite"));
     const harness = await Harness.open(
       openedStorage,
       { models, registry, env: () => executionEnv, settings: { compaction: { enabled: false } } },
@@ -123,9 +145,14 @@ async function fixture(responses: FauxResponseStep[], realExec = false, serverOw
     harnesses.add(harness);
     return harness;
   };
-  const harness = serverOwner ? (await owner.open()).harness : await open();
+  const harness = serverOwner
+    ? await (async () => {
+        host = await owner.openHost("jobs-host", { cwd: dir });
+        return (await host.open()).harness;
+      })()
+    : await open();
   harnesses.add(harness);
-  const durableStorage = serverOwner ? owner.storage : openedStorage;
+  const durableStorage = serverOwner ? host!.storage : openedStorage;
   if (!durableStorage) throw new Error("background-job fixture has no retained storage");
   const root = await harness.root(context, {
     agent: { model: { provider: "faux", modelId: "faux-1" }, cwd: dir },
@@ -296,10 +323,12 @@ describe("native Durable background jobs", () => {
     ]);
     const storage = new Storage(f.dir);
     const session = storage.createSession("Background display", "faux/faux-1");
-    session.serverDurable = { conversationId: f.root.id };
-    const owner = new DurableHarness(f.dir);
-    owner.bindStorage(f.durableStorage);
-    vi.spyOn(owner, "open").mockResolvedValue({ harness: f.harness, models: f.models });
+    session.serverDurable = { storeId: session.id, conversationId: f.root.id };
+    const owner = new DurableHarness(f.dir).attachOpened(
+      session.id,
+      { harness: f.harness, storage: f.durableStorage, models: f.models },
+      { createdAt: Date.now(), cwd: f.dir },
+    );
     await owner.releaseResume();
     const events: SessionBackendEvent[] = [];
     const shown = deferred<void>();
@@ -368,10 +397,12 @@ describe("native Durable background jobs", () => {
       ]);
       const storage = new Storage(f.dir);
       const session = storage.createSession("Report queue", "faux/faux-1");
-      session.serverDurable = { conversationId: f.root.id };
-      const owner = new DurableHarness(f.dir);
-      owner.bindStorage(f.durableStorage);
-      vi.spyOn(owner, "open").mockResolvedValue({ harness: f.harness, models: f.models });
+      session.serverDurable = { storeId: session.id, conversationId: f.root.id };
+      const owner = new DurableHarness(f.dir).attachOpened(
+        session.id,
+        { harness: f.harness, storage: f.durableStorage, models: f.models },
+        { createdAt: Date.now(), cwd: f.dir },
+      );
       await owner.releaseResume();
       let onQueue = () => {};
       const backend = await DurableBackend.create({
@@ -449,8 +480,11 @@ describe("native Durable background jobs", () => {
     ]);
     await prompt(f.root);
     await f.entered.promise;
-    const owner = new DurableHarness(f.dir);
-    vi.spyOn(owner, "open").mockResolvedValue({ harness: f.harness, models: {} as ModelRuntime });
+    const owner = new DurableHarness(f.dir).attachOpened(
+      "jobs-host",
+      { harness: f.harness, storage: f.durableStorage, models: f.models },
+      { createdAt: Date.now(), cwd: f.dir },
+    );
     await owner.releaseResume();
     await owner.abortConversation(f.root.id);
     expect(f.counts().cancellations).toBe(0);
@@ -493,7 +527,10 @@ describe("native Durable background jobs", () => {
       await prompt(f.root);
       await f.entered.promise;
       if (mode === "harness detach") await f.harness.close(context);
-      else await f.owner.close();
+      else {
+        f.owner.shuttingDown = true;
+        await f.owner.closeAll();
+      }
       harnesses.delete(f.harness);
       let harness = await f.open();
       let root = (await harness.conversation(f.root.id, context))!;
@@ -776,8 +813,11 @@ describe("native Durable background jobs", () => {
     const env = new GondolinExecutionEnv(vm, "workspace", "/workspace/project");
     const harness = await f.open(env);
     const root = (await harness.conversation(f.root.id, context))!;
-    const owner = new DurableHarness(f.dir);
-    vi.spyOn(owner, "open").mockResolvedValue({ harness, models: {} as ModelRuntime });
+    const owner = new DurableHarness(f.dir).attachOpened(
+      "jobs-host",
+      { harness, storage: f.durableStorage, models: f.models },
+      { createdAt: Date.now(), cwd: f.dir },
+    );
     owner.bindSandboxEnv(root.id, env);
     await owner.releaseResume();
     const submission = await root.submit(
@@ -846,8 +886,11 @@ describe("native Durable background jobs", () => {
     const env = new GondolinExecutionEnv(vm, "workspace", "/workspace/project");
     const harness = await f.open(env);
     const root = (await harness.conversation(f.root.id, context))!;
-    const owner = new DurableHarness(f.dir);
-    vi.spyOn(owner, "open").mockResolvedValue({ harness, models: {} as ModelRuntime });
+    const owner = new DurableHarness(f.dir).attachOpened(
+      "jobs-host",
+      { harness, storage: f.durableStorage, models: f.models },
+      { createdAt: Date.now(), cwd: f.dir },
+    );
     owner.bindSandboxEnv(root.id, env);
     await owner.releaseResume();
     await prompt(root);

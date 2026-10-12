@@ -224,8 +224,9 @@ export interface Session {
    * `Session` payloads carry it as is. `SessionSummary` projects enrollment as
    * `engine` and, for the control conversation only, `serverDurable.role`.
    * `role: "control"` marks the one workspace-less control conversation per data directory.
+   * `storeId` is the root session id of the pi-durable store (server-internal; list rows omit it).
    */
-  serverDurable?: { conversationId?: number; role?: "control" };
+  serverDurable?: { storeId?: string; conversationId?: number; role?: "control" };
 
   // Trace metadata (used for trace recovery/replay)
   // Local pi JSONL paths under ~/.pi/agent/sessions are deleted with the Oppi

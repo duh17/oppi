@@ -42,6 +42,10 @@ Example:
 
 Entries labeled **Mac** describe work on `main`; the Mac app is not part of the iOS TestFlight build or its server release.
 
+### Changed
+
+- **Server:** Each durable session tree has its own pi-durable store under `$OPPI_DATA_DIR/durable/sessions/<rootSessionId>/` (`meta.json` and `session.sqlite`, locked while open). A `SessionHost` owns that store; the process-wide `DurableHarness` keeps the model runtime, registry, package extensions, and run policy. Sub-agents and forks stay in the root's store. The control conversation gets its own store at server start. The shared `durable/harness.sqlite` is no longer opened. A durable row without `storeId` fails to open. Old files and rows are left on disk.
+
 ### Added
 
 - **Server:** Durable sessions load extensions from Pi packages, and `oppi extensions reload` swaps in new code without a server restart. A package adds a `durable.ts` (or names one in `package.json` `oppi.durable`) that exports a pi-durable extension through `defineDurableExtension` from `oppi/durable`. Oppi reads the enabled user-scope Pi packages when its durable store opens and on reload; every durable session whose runtime the extension allows (host unless it opts into sandbox) is offered its tools, and the control conversation is not. On reload, an installed extension is replaced in place: running tool calls finish on the old code and the next call uses the new code; a package that fails to load keeps its previous code and is reported; a removed package is uninstalled. New extensions reach a session the next time it attaches. Packages that reuse a built-in name or tool name are refused, and packages that provide Oppi's own durable extensions are skipped. `POST /durable/extensions/reload` (owner) returns the same report.

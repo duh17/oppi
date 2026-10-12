@@ -1,9 +1,17 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { ModelRegistry, SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { AgentDoc, type ConversationId, type Harness } from "@earendil-works/pi-durable";
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { homedir } from "node:os";
 import type { DurableSessionsHost } from "../extensions/durable/sessions/durable.js";
-import { DurableRuntime, type DurableHarness } from "./durable-harness.js";
+import {
+  DurableRuntime,
+  durableStoreMetaFromSession,
+  sessionHostOfEnv,
+  type DurableHarness,
+  type SessionHost,
+} from "./durable-harness.js";
+import { DURABLE_STORE_MISSING, durableStoreId } from "./session-runtime-capabilities.js";
 import { DURABLE_MCP_EXTENSION_PREFIX } from "./durable-mcp.js";
 import { DURABLE_THREAD_KEY_PREFIX } from "./reserved-launch-keys.js";
 import { mintSessionId } from "./id.js";
@@ -36,7 +44,7 @@ export interface DurableThreadsDeps {
  */
 export class DurableThreads implements DurableSessionsHost {
   /** Concurrent materializations of one child (tool rerun, reporter) share one result. */
-  private readonly materializing = new Map<ConversationId, Promise<string>>();
+  private readonly materializing = new Map<string, Promise<string>>();
 
   constructor(private readonly deps: DurableThreadsDeps) {}
 
@@ -45,17 +53,77 @@ export class DurableThreads implements DurableSessionsHost {
       ConversationId | undefined;
   }
 
-  private sessionOf(conversationId: ConversationId): Session | undefined {
-    return this.deps.storage
-      .listSessions()
-      .find((session) => session.serverDurable?.conversationId === conversationId);
+  isSelf(sessionId: string, caller: ConversationId, env?: ExecutionEnv): boolean {
+    const session = this.deps.storage.getSession(sessionId);
+    if (!session || session.serverDurable?.conversationId !== caller) return false;
+    const tagged = sessionHostOfEnv(env);
+    if (!tagged) return true;
+    return durableStoreId(session) === tagged.storeId;
   }
 
-  async refuseReach(caller: ConversationId, target: ConversationId): Promise<string | undefined> {
-    const { harness } = await this.deps.owner.open();
-    const from = await harness.snapshot(DurableRuntime, caller, BACKGROUND_CONTEXT);
+  private sessionOf(storeId: string, conversationId: ConversationId): Session | undefined {
+    return this.deps.storage
+      .listSessions()
+      .find(
+        (session) =>
+          durableStoreId(session) === storeId &&
+          session.serverDurable?.conversationId === conversationId,
+      );
+  }
+
+  private hostOf(env: ExecutionEnv | undefined): SessionHost {
+    const tagged = sessionHostOfEnv(env);
+    if (tagged) return tagged;
+    const open = this.deps.owner.openHosts().filter((host) => host.isOpen);
+    if (open.length === 1) return open[0]!;
+    throw new Error("Durable session host is missing");
+  }
+
+  private async hostHaving(
+    conversationId: ConversationId,
+    env?: ExecutionEnv,
+  ): Promise<SessionHost> {
+    const tagged = sessionHostOfEnv(env);
+    if (tagged) return tagged;
+    const open = this.deps.owner.openHosts().filter((host) => host.isOpen);
+    if (open.length === 1) return open[0]!;
+    for (const host of open) {
+      const found = await (
+        await host.open()
+      ).harness.conversation(conversationId, BACKGROUND_CONTEXT);
+      if (found) return host;
+    }
+    throw new Error("Durable session host is missing");
+  }
+
+  private async hostForSession(session: Session): Promise<SessionHost> {
+    const storeId = durableStoreId(session);
+    if (storeId === undefined) throw new Error(DURABLE_STORE_MISSING);
+    const cwd =
+      this.deps.owner.host(storeId)?.meta.cwd ??
+      (session.workspaceId
+        ? (this.deps.storage.getWorkspace(session.workspaceId)?.hostMount ?? homedir())
+        : homedir());
+    return this.deps.owner.openHost(storeId, durableStoreMetaFromSession(session, cwd));
+  }
+
+  async refuseReach(
+    caller: ConversationId,
+    targetSessionId: string,
+    env?: ExecutionEnv,
+  ): Promise<string | undefined> {
+    const callerHost = this.hostOf(env);
+    const from = await (
+      await callerHost.open()
+    ).harness.snapshot(DurableRuntime, caller, BACKGROUND_CONTEXT);
     if (from?.kind !== "sandbox") return undefined;
-    const to = await harness.snapshot(DurableRuntime, target, BACKGROUND_CONTEXT);
+    const targetSession = this.deps.storage.getSession(targetSessionId);
+    const targetId = targetSession?.serverDurable?.conversationId as ConversationId | undefined;
+    if (targetSession === undefined || targetId === undefined) return undefined;
+    const targetHost = await this.hostForSession(targetSession);
+    const to = await (
+      await targetHost.open()
+    ).harness.snapshot(DurableRuntime, targetId, BACKGROUND_CONTEXT);
     if (to?.kind === "sandbox" && to.workspaceId === from.workspaceId) return undefined;
     return "A sandbox session can only reach sessions in its own sandbox workspace.";
   }
@@ -78,7 +146,7 @@ export class DurableThreads implements DurableSessionsHost {
       throw new Error(`Unknown thinking level: ${options.thinking}`);
     const thinkingLevel = options.thinking as ThinkingLevel | undefined;
     if (options.model === undefined) return { ...(thinkingLevel ? { thinkingLevel } : {}) };
-    const { models } = await this.deps.owner.open();
+    const { models } = await this.deps.owner.ensureShared();
     const settings = SettingsManager.create(homedir(), getAgentDir(), { projectTrusted: false });
     const found = resolveSessionSeedModel(
       new ModelRegistry(models),
@@ -92,31 +160,96 @@ export class DurableThreads implements DurableSessionsHost {
     };
   }
 
-  materialize(child: { conversationId: ConversationId; name: string }): Promise<string> {
-    const pending = this.materializing.get(child.conversationId);
+  async materialize(
+    child: { conversationId: ConversationId; name: string },
+    env?: ExecutionEnv,
+  ): Promise<string> {
+    const storeId = (await this.hostHaving(child.conversationId, env)).storeId;
+    const key = `${storeId}:${child.conversationId}`;
+    const pending = this.materializing.get(key);
     if (pending) return pending;
-    const created = this.materializeOnce(child).finally(() =>
-      this.materializing.delete(child.conversationId),
+    const created = this.materializeOnce(child, storeId).finally(() =>
+      this.materializing.delete(key),
     );
-    this.materializing.set(child.conversationId, created);
+    this.materializing.set(key, created);
     return created;
   }
 
-  private async materializeOnce(child: {
-    conversationId: ConversationId;
-    name: string;
-  }): Promise<string> {
-    const key = `${DURABLE_THREAD_KEY_PREFIX}${child.conversationId}`;
+  async submit(
+    sessionId: string,
+    input: {
+      content: string;
+      whenBusy: "steer" | "followUp";
+      requestId: string;
+    },
+  ): Promise<string | undefined> {
+    const session = this.deps.storage.getSession(sessionId);
+    const conversationId = session?.serverDurable?.conversationId as ConversationId | undefined;
+    if (!session || conversationId === undefined)
+      return `Session ${sessionId} has no conversation.`;
+    const host = await this.hostForSession(session);
+    host.retain();
+    try {
+      const conversation = await (
+        await host.open()
+      ).harness.conversation(conversationId, BACKGROUND_CONTEXT);
+      if (!conversation) return `Session ${sessionId} has no conversation.`;
+      await conversation.submit(
+        {
+          type: "input",
+          content: input.content,
+          whenBusy: input.whenBusy,
+          requestId: input.requestId,
+        },
+        BACKGROUND_CONTEXT,
+      );
+      return undefined;
+    } finally {
+      host.release();
+    }
+  }
+
+  async waitForIdle(sessionId: string): Promise<string | undefined> {
+    const session = this.deps.storage.getSession(sessionId);
+    const conversationId = session?.serverDurable?.conversationId as ConversationId | undefined;
+    if (!session || conversationId === undefined)
+      return `Session ${sessionId} has no conversation.`;
+    const host = await this.hostForSession(session);
+    host.retain();
+    try {
+      const conversation = await (
+        await host.open()
+      ).harness.conversation(conversationId, BACKGROUND_CONTEXT);
+      if (!conversation) return `Session ${sessionId} has no conversation.`;
+      await conversation.waitForIdle(BACKGROUND_CONTEXT);
+      return undefined;
+    } finally {
+      host.release();
+    }
+  }
+
+  private async materializeOnce(
+    child: {
+      conversationId: ConversationId;
+      name: string;
+    },
+    storeId: string,
+  ): Promise<string> {
+    const key = `${DURABLE_THREAD_KEY_PREFIX}${storeId}:${child.conversationId}`;
     let session = this.deps.storage.findSessionByLaunchIdempotencyKey(key);
     // Only a row bound to this very conversation is ours to adopt (a crash between saving it
     // and attaching it). Clients cannot create keys in this namespace, so anything else is
     // corruption: fail the spawn rather than run the child in someone else's Session slot.
-    if (session && session.serverDurable?.conversationId !== child.conversationId)
+    if (
+      session &&
+      (session.serverDurable?.conversationId !== child.conversationId ||
+        durableStoreId(session) !== storeId)
+    )
       throw new Error(
         `Session ${session.id} holds the key of child conversation ${child.conversationId} but is not bound to the child conversation`,
       );
     if (!session) {
-      session = await this.createSession(child.conversationId, child.name, key);
+      session = await this.createSession(storeId, child.conversationId, child.name, key);
       this.deps.onCreated(session);
     }
     // A Session that exists but is not attached (a crash between the two steps, or a Stop)
@@ -126,11 +259,14 @@ export class DurableThreads implements DurableSessionsHost {
   }
 
   private async createSession(
+    storeId: string,
     conversationId: ConversationId,
     name: string,
     key: string,
   ): Promise<Session> {
-    const { harness } = await this.deps.owner.open();
+    const host = this.deps.owner.host(storeId);
+    if (!host) throw new Error(`Durable store ${storeId} is not open`);
+    const { harness } = await host.open();
     const record = await harness.commit(
       (tx) => tx.conversation(conversationId),
       BACKGROUND_CONTEXT,
@@ -138,7 +274,7 @@ export class DurableThreads implements DurableSessionsHost {
     const ownerConversation = record?.owner?.conversationId;
     if (ownerConversation === undefined)
       throw new Error(`Durable conversation ${conversationId} is not owned by a parent`);
-    const parent = this.sessionOf(ownerConversation);
+    const parent = this.sessionOf(storeId, ownerConversation);
     const workspace = parent?.workspaceId
       ? this.deps.storage.getWorkspace(parent.workspaceId)
       : undefined;
@@ -179,7 +315,7 @@ export class DurableThreads implements DurableSessionsHost {
       ...(parent.worktreeId ? { worktreeId: parent.worktreeId } : {}),
       thinkingLevel: agent.thinkingLevel,
       // Bound before anything is submitted, so a restart finds the conversation in `resumeIds`.
-      serverDurable: { conversationId },
+      serverDurable: { storeId, conversationId },
       launch: {
         source: "agent",
         ...(parent.launch?.agentId ? { agentId: parent.launch.agentId } : {}),
@@ -214,30 +350,39 @@ export class DurableThreads implements DurableSessionsHost {
   async threadSessions(
     sessionId: string,
   ): Promise<{ rootSessionId: string; sessionIds: Set<string> } | undefined> {
-    const conversationId = this.conversationOf(sessionId);
-    if (conversationId === undefined) return undefined;
-    const { harness } = await this.deps.owner.open();
-    const { chain, members } = await readThread(harness, conversationId);
-    const byConversation = new Map(
-      this.deps.storage
-        .listSessions()
-        .flatMap((session) =>
-          session.serverDurable?.conversationId === undefined
-            ? []
-            : [[session.serverDurable.conversationId as ConversationId, session.id] as const],
-        ),
-    );
-    // The harness root may have lost its Session (deleted). The thread then roots at the
-    // nearest remaining ancestor: the topmost conversation above `sessionId` that has one.
-    const rootConversation = chain.filter((id) => byConversation.has(id)).at(-1);
-    const rootSessionId = rootConversation && byConversation.get(rootConversation);
-    if (rootSessionId === undefined) return undefined;
-    const sessionIds = new Set<string>();
-    for (const member of members) {
-      const id = byConversation.get(member);
-      if (id !== undefined) sessionIds.add(id);
+    const session = this.deps.storage.getSession(sessionId);
+    const conversationId = session?.serverDurable?.conversationId as ConversationId | undefined;
+    if (!session || conversationId === undefined) return undefined;
+    const host = await this.hostForSession(session);
+    host.retain();
+    try {
+      const { harness } = await host.open();
+      const { chain, members } = await readThread(harness, conversationId);
+      const storeId = host.storeId;
+      const byConversation = new Map(
+        this.deps.storage
+          .listSessions()
+          .flatMap((candidate) =>
+            durableStoreId(candidate) !== storeId ||
+            candidate.serverDurable?.conversationId === undefined
+              ? []
+              : [[candidate.serverDurable.conversationId as ConversationId, candidate.id] as const],
+          ),
+      );
+      // The harness root may have lost its Session (deleted). The thread then roots at the
+      // nearest remaining ancestor: the topmost conversation above `sessionId` that has one.
+      const rootConversation = chain.filter((id) => byConversation.has(id)).at(-1);
+      const rootSessionId = rootConversation && byConversation.get(rootConversation);
+      if (rootSessionId === undefined) return undefined;
+      const sessionIds = new Set<string>();
+      for (const member of members) {
+        const id = byConversation.get(member);
+        if (id !== undefined) sessionIds.add(id);
+      }
+      return { rootSessionId, sessionIds };
+    } finally {
+      host.release();
     }
-    return { rootSessionId, sessionIds };
   }
 }
 
