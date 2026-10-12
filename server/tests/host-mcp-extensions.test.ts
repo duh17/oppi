@@ -481,11 +481,7 @@ export default function (pi) {
   });
 
   it("runs a picked stdio MCP server inside a real Gondolin VM", { timeout: 150_000 }, async () => {
-    if (
-      GondolinManagerModule.sandboxUnsupportedNodeMessage() ||
-      !(await GondolinManagerModule.isQemuAvailable())
-    )
-      return; // Like gondolin-live.test.ts: needs QEMU on this host.
+    if (!(await GondolinManagerModule.isQemuAvailable())) return; // Like gondolin-live.test.ts: needs QEMU on this host.
     const workspace = {
       id: "workspace-1",
       name: "Sandbox MCP Live",

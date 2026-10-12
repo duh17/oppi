@@ -6,11 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT as context, withAbortSignal } from "@earendil-works/chord/context";
 import { createEditTool } from "@earendil-works/pi-durable/tools";
 import { createEnvConformance, createExpectAssertions } from "@earendil-works/pi-durable/testing";
-import {
-  GondolinManager,
-  isQemuAvailable,
-  sandboxUnsupportedNodeMessage,
-} from "../src/gondolin-manager.js";
+import { GondolinManager, isQemuAvailable } from "../src/gondolin-manager.js";
 import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 
@@ -18,11 +14,6 @@ import type { GondolinVm } from "../src/gondolin-ops.js";
 // boot and assertion failures after a successful preflight must still fail.
 let qemuAvailable = false;
 beforeAll(async () => {
-  const nodeError = sandboxUnsupportedNodeMessage();
-  if (nodeError) {
-    console.log(`[durable-security] Skipping: ${nodeError}`);
-    return;
-  }
   qemuAvailable = await isQemuAvailable();
   if (!qemuAvailable) console.log("[durable-security] Skipping: QEMU not installed");
 }, 10_000);

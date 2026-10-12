@@ -6,7 +6,7 @@ Oppi uses [`@earendil-works/gondolin`](https://www.npmjs.com/package/@earendil-w
 
 ## Quick start
 
-Prerequisite: Node.js 23.6 or newer (Gondolin's floor) and QEMU on the server host. The rest of Oppi server runs on Node.js 22.19+.
+Prerequisite: QEMU on the server host. Sandboxes run on the same Node.js 22.19+ as the rest of Oppi server.
 
 ```bash
 brew install qemu                 # macOS
