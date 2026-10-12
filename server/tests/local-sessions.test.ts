@@ -3,14 +3,7 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import {
-  mkdirSync,
-  writeFileSync,
-  rmSync,
-  mkdtempSync,
-  utimesSync,
-  realpathSync,
-} from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, mkdtempSync, utimesSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir, homedir } from "node:os";
 import {
@@ -130,9 +123,9 @@ describe("validateCwdAlignment", () => {
 describe("isControlSessionLocalArtifact", () => {
   it("matches the real data-dir control cwd tree", () => {
     const dataDir = "/Users/chen/.config/oppi";
-    expect(
-      isControlSessionLocalArtifact(`${dataDir}/control-sessions/cwd`, { dataDir }),
-    ).toBe(true);
+    expect(isControlSessionLocalArtifact(`${dataDir}/control-sessions/cwd`, { dataDir })).toBe(
+      true,
+    );
     expect(isControlSessionLocalArtifact(`${dataDir}/other`, { dataDir })).toBe(false);
   });
 
@@ -190,9 +183,7 @@ describe("pi sessions root resolution", () => {
       );
 
       const sessions = await discoverLocalSessions();
-      expect(sessions.some((session) => session.piSessionId === "uuid-override-scan")).toBe(
-        true,
-      );
+      expect(sessions.some((session) => session.piSessionId === "uuid-override-scan")).toBe(true);
     } finally {
       rmSync(override, { recursive: true, force: true });
     }
@@ -309,6 +300,46 @@ describe("discoverLocalSessions", () => {
     const found = sessions.find((s) => s.piSessionId === "uuid-2");
 
     expect(found).toBeUndefined();
+  });
+
+  it("does not catalog Oppi-managed sessions in tui_session_files", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-tui-session-catalog-known-"));
+    const managedPath = join(testDir, "2026-02-20T00-00-00-000Z_uuid-managed.jsonl");
+    const unmanagedPath = join(testDir, "2026-02-20T00-00-00-000Z_uuid-unmanaged.jsonl");
+    writeFileSync(managedPath, makeSessionJsonl({ id: "uuid-managed", name: "Managed" }));
+    writeFileSync(unmanagedPath, makeSessionJsonl({ id: "uuid-unmanaged", name: "Unmanaged" }));
+
+    try {
+      await discoverLocalSessions(undefined, { dataDir });
+      const before = openDatabase(join(dataDir, "session-state.db"));
+      try {
+        const managed = before
+          .prepare("SELECT path FROM tui_session_files WHERE pi_session_id = ?")
+          .get("uuid-managed");
+        expect(managed).toBeDefined();
+      } finally {
+        before.close();
+      }
+
+      const known = collectKnownLocalSessionIdentities([
+        { id: "uuid-managed", piSessionFile: managedPath },
+      ]);
+      const sessions = await discoverLocalSessions(known, { dataDir });
+      expect(sessions.find((s) => s.piSessionId === "uuid-managed")).toBeUndefined();
+      expect(sessions.find((s) => s.piSessionId === "uuid-unmanaged")?.name).toBe("Unmanaged");
+
+      const after = openDatabase(join(dataDir, "session-state.db"));
+      try {
+        const rows = after.prepare("SELECT pi_session_id FROM tui_session_files").all() as Array<{
+          pi_session_id: string;
+        }>;
+        expect(rows.map((row) => row.pi_session_id)).toEqual(["uuid-unmanaged"]);
+      } finally {
+        after.close();
+      }
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   it("collects imported Session.id as the catalog Pi identity", () => {

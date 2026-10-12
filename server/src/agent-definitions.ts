@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { generateId } from "./id.js";
 import { DEFAULT_ICON_CHOICE, migrateIconChoice, validateIconChoice } from "./icon-choice.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
+import { runSessionStateDeadSchemaCleanup } from "./storage/session-state-cleanup-migration.js";
 import { isThinkingLevel } from "./thinking-levels.js";
 import type { AgentDefinition } from "./agent-launch-service.js";
 
@@ -136,12 +137,14 @@ export class AgentDefinitionStore {
     if (!existsSync(dataDir)) {
       mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     }
+    const resolvedDataDir = resolve(dataDir);
     const resolvedDbPath = resolve(dbPath ?? join(dataDir, "session-state.db"));
     this.db = openDatabase(resolvedDbPath);
     chmodSync(resolvedDbPath, 0o600);
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.ensureSchema();
+    runSessionStateDeadSchemaCleanup(this.db, resolvedDataDir);
     this.migrateStoredIconChoices();
   }
 
@@ -396,8 +399,6 @@ export class AgentDefinitionStore {
       CREATE UNIQUE INDEX IF NOT EXISTS agent_definitions_active_name_idx
         ON agent_definitions (name)
         WHERE archived_at IS NULL;
-      CREATE INDEX IF NOT EXISTS agent_definitions_status_updated_idx
-        ON agent_definitions (status, updated_at DESC);
       CREATE TABLE IF NOT EXISTS agent_definition_versions (
         id TEXT NOT NULL,
         version INTEGER NOT NULL,

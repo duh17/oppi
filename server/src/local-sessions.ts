@@ -26,6 +26,7 @@ import {
   readSessionJsonlMeta,
 } from "./session-jsonl-meta.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
+import { runSessionStateDeadSchemaCleanup } from "./storage/session-state-cleanup-migration.js";
 import type { LocalSession, Session } from "./types.js";
 
 /** Default root of pi agent sessions when OPPI_LOCAL_SESSIONS_ROOT is unset. */
@@ -302,6 +303,7 @@ class TuiSessionCatalog {
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.ensureSchema();
+    runSessionStateDeadSchemaCleanup(this.db, dataDir);
   }
 
   close(): void {
@@ -380,6 +382,18 @@ class TuiSessionCatalog {
     })();
   }
 
+  deleteKnown(known: KnownLocalSessions): void {
+    if (!known) return;
+    const deleteStmt = this.db.prepare("DELETE FROM tui_session_files WHERE path = ?");
+    this.db.transaction(() => {
+      for (const row of this.listRows()) {
+        if (isKnownLocalSession(row, known)) {
+          deleteStmt.run(row.path);
+        }
+      }
+    })();
+  }
+
   getLastScannedAt(): number | undefined {
     const row = this.db
       .prepare("SELECT value FROM tui_session_catalog_state WHERE key = 'last_scanned_at'")
@@ -426,9 +440,6 @@ class TuiSessionCatalog {
       CREATE INDEX IF NOT EXISTS tui_session_files_mtime_idx
         ON tui_session_files (last_modified DESC, path ASC);
 
-      CREATE INDEX IF NOT EXISTS tui_session_files_cwd_idx
-        ON tui_session_files (cwd);
-
       CREATE TABLE IF NOT EXISTS tui_session_catalog_state (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -473,6 +484,7 @@ function buildLocalSession(
 async function refreshTuiSessionCatalog(
   catalog: TuiSessionCatalog,
   needsRead: { path: string; size: number; mtimeMs: number }[],
+  knownPiSessions: KnownLocalSessions,
 ): Promise<void> {
   const BATCH_SIZE = 20;
   for (let i = 0; i < needsRead.length; i += BATCH_SIZE) {
@@ -487,6 +499,10 @@ async function refreshTuiSessionCatalog(
 
         const metadata = await extractSessionMetadata(realFile, size);
         const session = buildLocalSession(realFile, mtimeMs, header, metadata);
+        if (isKnownLocalSessionValue(session, knownPiSessions)) {
+          catalog.deletePath(realFile);
+          return;
+        }
         catalog.upsert(session, size, mtimeMs);
       }),
     );
@@ -658,14 +674,21 @@ export async function discoverLocalSessions(
       const needsRead: { path: string; size: number; mtimeMs: number }[] = [];
       for (const s of statResults) {
         if (!s) continue;
+        if (isKnownLocalSession({ path: s.path, pi_session_id: "" }, knownPiSessions)) {
+          continue;
+        }
         const cached = cachedByPath.get(s.path);
+        if (cached && isKnownLocalSession(cached, knownPiSessions)) {
+          continue;
+        }
         if (!cached || cached.mtime_ms !== s.mtimeMs || cached.size_bytes !== s.size) {
           needsRead.push(s);
         }
       }
 
-      await refreshTuiSessionCatalog(catalog, needsRead);
+      await refreshTuiSessionCatalog(catalog, needsRead, knownPiSessions);
       catalog.deleteMissing(livePaths);
+      catalog.deleteKnown(knownPiSessions);
       catalog.setLastScannedAt(Date.now());
 
       return catalog

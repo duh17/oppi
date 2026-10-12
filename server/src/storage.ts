@@ -9,7 +9,7 @@
  *     └── <workspaceId>.json    # Flat owner layout (single-user mode)
  */
 
-import { closeSync, existsSync, openSync, readSync, rmSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createLogger } from "./logger.js";
@@ -17,7 +17,6 @@ import { AgentDefinitionStore } from "./agent-definitions.js";
 import { iconAssetId } from "./icon-choice.js";
 import { AgentScheduleStore } from "./agent-schedules.js";
 import { syncProgramStatus } from "./program-status.js";
-import { openDatabase } from "./sqlite-compat.js";
 import { AuthStore } from "./storage/auth-store.js";
 import {
   DeviceAuthStore,
@@ -124,7 +123,6 @@ export class Storage {
       (assetId) => this.iconAssetStore.has(assetId),
     );
     this.scheduleStore = new AgentScheduleStore(this.configStore.getDataDir());
-    this.cleanupServerReviewCommentState();
     this.workspaceStore = new WorkspaceStore(this.configStore, (assetId) =>
       this.iconAssetStore.has(assetId),
     );
@@ -138,46 +136,6 @@ export class Storage {
       now: Date.now(),
       graceMs: ICON_ASSET_ORPHAN_GRACE_MS,
     });
-  }
-
-  /**
-   * Review comment drafts are client-local state. Remove server-owned storage
-   * created by older builds so the daemon does not retain unused draft data.
-   */
-  private cleanupServerReviewCommentState(): void {
-    const dataDir = this.configStore.getDataDir();
-    const db = openDatabase(join(dataDir, "session-state.db"));
-    try {
-      const rows = db
-        .prepare("SELECT name FROM sqlite_master WHERE name IN (?, ?)")
-        .all("review_comments", "review_comments_next") as Array<{ name?: string }>;
-      const hadTables = rows.length > 0;
-
-      db.exec(`
-        DROP INDEX IF EXISTS review_comments_workspace_created_idx;
-        DROP INDEX IF EXISTS review_comments_workspace_session_idx;
-        DROP INDEX IF EXISTS review_comments_workspace_status_idx;
-        DROP INDEX IF EXISTS review_comments_workspace_path_idx;
-        DROP TABLE IF EXISTS review_comments;
-        DROP TABLE IF EXISTS review_comments_next;
-        DELETE FROM app_state_migrations WHERE key LIKE 'review_comments_json_import_sqlite_backend_v2:%';
-      `);
-
-      const legacyDir = join(dataDir, "review-comments");
-      const hadLegacyDir = existsSync(legacyDir);
-      if (hadLegacyDir) {
-        rmSync(legacyDir, { recursive: true, force: true });
-      }
-
-      if (hadTables || hadLegacyDir) {
-        log.info("storage_migration.review_comments.cleanup", {
-          removedSqliteTables: hadTables,
-          removedLegacyJsonDir: hadLegacyDir,
-        });
-      }
-    } finally {
-      db.close();
-    }
   }
 
   /**

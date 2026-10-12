@@ -6,6 +6,7 @@ import { validateCronExpression, validateScheduleTimeZone } from "./agent-schedu
 import type { ThinkingLevel } from "./agent-launch-service.js";
 import { generateId } from "./id.js";
 import { openDatabase, type SqliteDatabase } from "./sqlite-compat.js";
+import { runSessionStateDeadSchemaCleanup } from "./storage/session-state-cleanup-migration.js";
 import { isThinkingLevel } from "./thinking-levels.js";
 
 export const SCHEDULE_IDEMPOTENCY_CONFLICT_CODE = "SCHEDULE_IDEMPOTENCY_CONFLICT";
@@ -206,19 +207,19 @@ interface RunRow {
 
 export class AgentScheduleStore {
   private readonly db: SqliteDatabase;
-  private readonly runTableHasRemovedApprovalRefsColumn: boolean;
 
   constructor(dataDir: string, dbPath?: string) {
     if (!existsSync(dataDir)) {
       mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     }
+    const resolvedDataDir = resolve(dataDir);
     const resolvedDbPath = resolve(dbPath ?? join(dataDir, "session-state.db"));
     this.db = openDatabase(resolvedDbPath);
     chmodSync(resolvedDbPath, 0o600);
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.ensureSchema();
-    this.runTableHasRemovedApprovalRefsColumn = this.hasRunTableColumn("approval_refs_json");
+    runSessionStateDeadSchemaCleanup(this.db, resolvedDataDir);
   }
 
   close(): void {
@@ -557,44 +558,23 @@ export class AgentScheduleStore {
     const schedule = this.getSchedule(input.scheduleId);
     if (!schedule) throw new Error(`Schedule not found: ${input.scheduleId}`);
     if (schedule.status === "archived") throw new Error(`Schedule archived: ${input.scheduleId}`);
-    if (this.runTableHasRemovedApprovalRefsColumn) {
-      this.db
-        .prepare(
-          `INSERT OR IGNORE INTO agent_schedule_runs (
-             id, schedule_id, kind, slot_key, idempotency_key, status,
-             action_snapshot_json, approval_refs_json, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
-        )
-        .run(
-          generateId(8),
-          schedule.id,
-          input.kind,
-          input.slotKey,
-          input.idempotencyKey,
-          JSON.stringify(schedule.action),
-          JSON.stringify([]),
-          input.now,
-          input.now,
-        );
-    } else {
-      this.db
-        .prepare(
-          `INSERT OR IGNORE INTO agent_schedule_runs (
-             id, schedule_id, kind, slot_key, idempotency_key, status,
-             action_snapshot_json, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
-        )
-        .run(
-          generateId(8),
-          schedule.id,
-          input.kind,
-          input.slotKey,
-          input.idempotencyKey,
-          JSON.stringify(schedule.action),
-          input.now,
-          input.now,
-        );
-    }
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO agent_schedule_runs (
+           id, schedule_id, kind, slot_key, idempotency_key, status,
+           action_snapshot_json, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+      )
+      .run(
+        generateId(8),
+        schedule.id,
+        input.kind,
+        input.slotKey,
+        input.idempotencyKey,
+        JSON.stringify(schedule.action),
+        input.now,
+        input.now,
+      );
 
     const row = this.db
       .prepare("SELECT * FROM agent_schedule_runs WHERE idempotency_key = ?")
@@ -659,19 +639,11 @@ export class AgentScheduleStore {
         UNIQUE(idempotency_key)
       );
 
-      CREATE INDEX IF NOT EXISTS agent_schedules_status_idx ON agent_schedules(status, created_at);
       CREATE INDEX IF NOT EXISTS agent_schedule_runs_claim_idx
         ON agent_schedule_runs(status, lease_expires_at, created_at);
       CREATE INDEX IF NOT EXISTS agent_schedule_runs_schedule_idx
         ON agent_schedule_runs(schedule_id, created_at);
     `);
-  }
-
-  private hasRunTableColumn(columnName: string): boolean {
-    const rows = this.db.prepare("PRAGMA table_info(agent_schedule_runs)").all() as Array<{
-      name?: string;
-    }>;
-    return rows.some((row) => row.name === columnName);
   }
 }
 
