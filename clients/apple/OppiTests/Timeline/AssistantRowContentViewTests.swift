@@ -692,7 +692,8 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func assistantMarkdownHangsUnderAvatarAndUsesTighterTrailingEdge() throws {
+    @Test(arguments: [ChatTimelineChromeStyle.standard, .conversation])
+    func assistantMarkdownHangsUnderAvatar(style: ChatTimelineChromeStyle) throws {
         let text = """
         First line beside the avatar should clear the badge.
 
@@ -703,7 +704,13 @@ struct AssistantTimelineRowContentViewTests {
         | Layout | Hang under avatar |
         | Tables | Wrap to fit two columns |
         """
-        let view = AssistantTimelineRowContentView(configuration: makeTimelineAssistantConfiguration(text: text))
+        let view = AssistantTimelineRowContentView(configuration: AssistantTimelineRowConfiguration(
+            text: text,
+            isStreaming: false,
+            canFork: false,
+            onFork: nil,
+            chromeStyle: style
+        ))
         view.bounds = CGRect(x: 0, y: 0, width: 370, height: 600)
         _ = fittedTimelineSize(for: view, width: 370)
         view.layoutIfNeeded()
@@ -711,10 +718,13 @@ struct AssistantTimelineRowContentViewTests {
         let markdown = try #require(timelineFirstView(ofType: AssistantMarkdownContentView.self, in: view))
         let badge = try #require(timelineFirstView(ofType: SessionGridBadgeView.self, in: view))
 
-        let padding = ChatTimelineChromeStyle.standard.assistantBubble.padding
+        let padding = style.assistantBubble.padding
         #expect(abs(markdown.frame.minX - padding.leading) < 0.5)
         #expect(abs(view.bounds.width - markdown.frame.maxX - padding.trailing) < 0.5)
-        #expect(markdown.frame.minX < badge.frame.maxX)
+        // The avatar shows, sits in the content inset, and is level with line 1.
+        #expect(!badge.isHidden)
+        #expect(abs(badge.frame.minX - markdown.frame.minX) < 0.5)
+        #expect(abs(badge.frame.minY - markdown.frame.minY - AssistantTimelineRowContentView.avatarTopOffset) < 0.5)
 
         // First prose text view should reserve the avatar column via exclusion path.
         let proseViews = timelineAllTextViews(in: markdown).filter { textView in

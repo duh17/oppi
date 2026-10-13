@@ -43,7 +43,7 @@ enum TimelineBubbleStyle {
 enum ChatTimelineChromeStyle: Equatable {
     /// Coding transcript: full-width user card and unboxed assistant prose.
     case standard
-    /// Messaging layout: trailing user bubble, assistant card without the
+    /// Messaging layout: trailing user bubble, assistant card with the hanging
     /// avatar, and work folded into a hugging "Worked · N steps" pill.
     case conversation
 
@@ -77,8 +77,8 @@ enum ChatTimelineChromeStyle: Equatable {
         }
     }
 
-    /// Assistant reply. Standard prose is full width with room for the
-    /// hanging avatar; the conversation card also spans the row. The
+    /// Assistant reply. Both styles span the row and hang the avatar beside
+    /// the first lines; the conversation card adds a fill. The
     /// trailing, tinted user bubble already says who is speaking, and a
     /// trailing gutter here starved tables and code blocks on phones.
     var assistantBubble: TimelineChromeSurface {

@@ -86,20 +86,23 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
     /// exceed 10k points on phone-width layouts.
     private static let maxValidHeight: CGFloat = 1_000_000
 
-    /// Avatar geometry for the standard hanging content layout. Content uses
-    /// the full bubble width (`ChatTimelineChromeStyle.assistantBubble`); the
-    /// avatar only reserves space on the first text lines (via exclusion
-    /// path), then later lines/blocks run under it.
+    /// Avatar geometry for the hanging content layout, shared by both chrome
+    /// styles. Content uses the full bubble width
+    /// (`ChatTimelineChromeStyle.assistantBubble`); the avatar only reserves
+    /// space on the first text lines (via exclusion path), then later
+    /// lines/blocks run under it. It is pinned to the markdown's top-leading
+    /// corner, so it follows each style's card padding and stays level with
+    /// the first text line.
     static let avatarSize: CGFloat = 18
-    static let avatarTopPadding: CGFloat = 10
+    /// Avatar drop below the markdown top, aligning it with line 1.
+    static let avatarTopOffset: CGFloat = 2
     static let avatarContentGap: CGFloat = 8
     static var avatarContentClearance: CGFloat { avatarSize + avatarContentGap }
     /// Exclusion height relative to markdown top so line 1 clears the badge.
     /// That band sits only ~2pt below the 18pt avatar; block-first content needs
     /// extra air so media is not flush under the badge.
     static var avatarHangHeight: CGFloat {
-        let bubbleTopPadding = ChatTimelineChromeStyle.standard.assistantBubble.padding.top
-        return max(avatarSize, (avatarTopPadding - bubbleTopPadding) + avatarSize + 2)
+        max(avatarSize, avatarTopOffset + avatarSize + 2)
     }
     /// Extra top margin when the first markdown segment is a block (audio,
     /// video, image, code, table) so it hangs below the avatar band.
@@ -235,6 +238,8 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         iconBadge.setContentHuggingPriority(.required, for: .horizontal)
 
         markdownView.translatesAutoresizingMaskIntoConstraints = false
+        markdownView.leadingHangClearance = Self.avatarContentClearance
+        markdownView.leadingHangHeight = Self.avatarHangHeight
 
         addSubview(bubbleContainer)
         bubbleContainer.addSubview(iconBadge)
@@ -257,22 +262,18 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
             // after the first line.
             iconBadge.widthAnchor.constraint(equalToConstant: Self.avatarSize),
             iconBadge.heightAnchor.constraint(equalToConstant: Self.avatarSize),
-            iconBadge.leadingAnchor.constraint(
-                equalTo: bubbleContainer.leadingAnchor,
-                constant: ChatTimelineChromeStyle.standard.assistantBubble.padding.leading
-            ),
+            iconBadge.leadingAnchor.constraint(equalTo: markdownView.leadingAnchor),
             iconBadge.topAnchor.constraint(
-                equalTo: bubbleContainer.topAnchor,
-                constant: Self.avatarTopPadding
+                equalTo: markdownView.topAnchor,
+                constant: Self.avatarTopOffset
             ),
         ])
 
         bubbleContainer.bringSubviewToFront(iconBadge)
     }
 
-    /// Standard rows hang the avatar beside the first lines of full-width
-    /// prose. Conversation rows drop the avatar (the title names the Agent)
-    /// and paint the reply as a full-width card.
+    /// Both styles hang the avatar beside the first lines of full-width
+    /// prose; conversation rows also paint the reply as a full-width card.
     private func applyChromeGeometry(_ style: ChatTimelineChromeStyle) {
         guard appliedChromeStyle != style else { return }
         appliedChromeStyle = style
@@ -280,10 +281,6 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         bubbleContainer.shape = card.shape
         bubbleEdges?.inset(by: card.margins)
         markdownEdges?.inset(by: card.padding)
-        let showsAvatar = style == .standard
-        iconBadge.isHidden = !showsAvatar
-        markdownView.leadingHangClearance = showsAvatar ? Self.avatarContentClearance : 0
-        markdownView.leadingHangHeight = showsAvatar ? Self.avatarHangHeight : 0
     }
 
     private func apply(configuration: AssistantTimelineRowConfiguration) {
@@ -292,15 +289,13 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
 
         let palette = ThemeRuntimeState.currentPalette()
         applyChromeGeometry(configuration.chromeStyle)
-        if configuration.chromeStyle == .standard {
-            iconBadge.configure(
-                sessionId: configuration.sessionId,
-                agentId: configuration.agentId,
-                agentIcon: configuration.agentIcon,
-                iconAssetCache: configuration.iconAssetCache,
-                agentVisualScale: ChatAgentIconStyle.compactVisualScale
-            )
-        }
+        iconBadge.configure(
+            sessionId: configuration.sessionId,
+            agentId: configuration.agentId,
+            agentIcon: configuration.agentIcon,
+            iconAssetCache: configuration.iconAssetCache,
+            agentVisualScale: ChatAgentIconStyle.compactVisualScale
+        )
         bubbleContainer.backgroundColor = configuration.chromeStyle.assistantFill(from: palette)
 
         // Unified markdown path for both streaming and done states.
