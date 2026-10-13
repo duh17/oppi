@@ -166,8 +166,9 @@ struct QuickSessionSheet: View {
     @State private var shouldRememberAgentSelection = true
     /// Set when launched from a thread; the new session joins that thread.
     @State private var threadParent: QuickSessionThreadParent?
-    /// Server whose durable engine this launch uses (Durable playground); nil is classic.
-    @State private var durableServerId: String?
+    @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var durableExperimentEnabled = false
+    /// The user switched this one launch from the durable default to Classic.
+    @State private var userChoseClassic = false
     /// When an Agent is selected, model/thinking only apply if the user sets them.
     @State private var agentModelOverride: String?
     @State private var agentThinkingOverride: ThinkingLevel?
@@ -208,18 +209,24 @@ struct QuickSessionSheet: View {
     }
 
     private var allServerWorkspaces: [(serverId: String, workspace: Workspace)] {
-        // A durable launch stays on the server that offered the durable engine.
-        let candidates = durableServerId.map { serverId in
-            rawServerWorkspaces.filter { $0.serverId == serverId }
-        } ?? rawServerWorkspaces
-        guard let constraints = effectiveLaunchConstraints else { return candidates }
-        return candidates.filter { entry in
+        guard let constraints = effectiveLaunchConstraints else { return rawServerWorkspaces }
+        return rawServerWorkspaces.filter { entry in
             entry.serverId == selectedServerId && constraints.allows(entry.workspace)
         }
     }
 
+    /// Durability is per server, so it follows the selected workspace's server.
+    private var engineDecision: DurableSessions.LaunchDecision {
+        DurableSessions.launchDecision(
+            experimentEnabled: durableExperimentEnabled,
+            serverOffersDurable: selectedServerConnection()?.durableSessionsAvailable == true,
+            savedAgentSelected: selectedAgentId != nil,
+            userChoseClassic: userChoseClassic
+        )
+    }
+
     private var engine: SessionEngine {
-        durableServerId == nil ? .classic : .durable
+        engineDecision.engine
     }
 
     private var workspacePickerSections: [QuickSessionWorkspacePickerSection] {
@@ -525,8 +532,8 @@ struct QuickSessionSheet: View {
                 if let threadParent {
                     threadParentPill(threadParent)
                 }
-                if durableServerId != nil {
-                    durableEnginePill
+                if engineDecision.showsPill {
+                    enginePill
                 }
             }
             .padding(.horizontal, 16)
@@ -574,14 +581,14 @@ struct QuickSessionSheet: View {
     @ViewBuilder
     private var quickSessionActionControls: some View {
         if !stacksActionControls {
-            agentPickerPill
+            agentPickerButton
             sessionToolbar
         }
     }
 
     private var accessibilityActionControls: some View {
         VStack(alignment: .leading, spacing: 6) {
-            agentPickerPill
+            agentPickerButton
 
             HStack(spacing: 6) {
                 sessionToolbar
@@ -632,33 +639,6 @@ struct QuickSessionSheet: View {
     }
 
     // MARK: - Agent Picker
-
-    @ViewBuilder
-    private var agentPickerPill: some View {
-        if QuickSessionLaunchSelection.allowsAgents(engine: engine) {
-            agentPickerButton
-        } else {
-            durableAgentNote
-        }
-    }
-
-    /// Replaces the Agent picker on a durable launch, which always runs plain Pi.
-    private var durableAgentNote: some View {
-        // Short enough to sit beside Model and thinking without truncating.
-        Text("No Agents on durable yet")
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.themeComment)
-            .lineLimit(1)
-            .minimumScaleFactor(0.85)
-        .frame(minHeight: 17)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 2)
-        .glassEffect(.regular, in: Capsule())
-        .frame(minHeight: ComposerInputMetrics.controlDiameter)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Runs Pi. Saved Agents can't run durable sessions yet.")
-        .accessibilityIdentifier("quickSession.durableAgentNote")
-    }
 
     private var agentPickerButton: some View {
         Button {
@@ -812,19 +792,50 @@ struct QuickSessionSheet: View {
         .accessibilityIdentifier("quickSession.threadParent")
     }
 
-    /// Marks a Durable playground launch. Display only: the playground decides the engine.
-    private var durableEnginePill: some View {
-        Label("Durable", systemImage: "infinity")
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.themeFg)
-            .labelStyle(.titleAndIcon)
-            .frame(minHeight: 17)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .glassEffect(.regular, in: Capsule())
-            .frame(minHeight: ComposerInputMetrics.controlDiameter)
-            .accessibilityLabel("Durable session")
+    /// Durable Sessions experiment: the engine this launch uses. A toggle between
+    /// Durable and Classic, or a fixed Classic with its reason when the server
+    /// would refuse durable for this launch.
+    @ViewBuilder
+    private var enginePill: some View {
+        let decision = engineDecision
+        if decision.canToggle {
+            Button {
+                userChoseClassic.toggle()
+            } label: {
+                enginePillLabel(decision.engine == .durable ? "Durable" : "Classic")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(decision.engine == .durable ? "Durable session" : "Classic session")
+            .accessibilityHint(decision.engine == .durable ? "Switches this session to Classic" : "Switches this session to Durable")
             .accessibilityIdentifier("quickSession.durableEngine")
+        } else {
+            enginePillLabel("Classic")
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Classic session. Durable is unavailable with \(decision.classicReason ?? "this launch").")
+                .accessibilityIdentifier("quickSession.durableEngine")
+        }
+    }
+
+    private func enginePillLabel(_ title: String) -> some View {
+        let isDurable = title == "Durable"
+        return HStack(spacing: 4) {
+            if isDurable {
+                Image(systemName: "infinity")
+            }
+            Text(title)
+            if let reason = engineDecision.classicReason {
+                Text("\u{00B7} \(reason)")
+                    .lineLimit(1)
+            }
+        }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(isDurable ? .themeFg : .themeComment)
+        .frame(minHeight: 17)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+        .glassEffect(.regular, in: Capsule())
+        .frame(minHeight: ComposerInputMetrics.controlDiameter)
+        .contentShape(Rectangle())
     }
 
     /// Parent id for a launch on `serverId`; a session id only means something on its own server.
@@ -947,7 +958,6 @@ struct QuickSessionSheet: View {
         navigation.pendingQuickSessionLaunchContext = nil
         shouldRememberAgentSelection = launchContext?.agentId == nil
         threadParent = launchContext?.threadParent
-        durableServerId = launchContext?.engine == .durable ? launchContext?.serverId : nil
 
         // Inbox workspace+worktree beats last-used. Agent launch still filters
         // to that server, then last used > explicit default > first available.
@@ -1247,13 +1257,6 @@ struct QuickSessionSheet: View {
     }
 
     private func loadAgentsForSelectedServer(requestedAgentId: String? = nil) async {
-        guard QuickSessionLaunchSelection.allowsAgents(engine: engine) else {
-            agentLoadGeneration &+= 1
-            availableAgents = []
-            selectedAgentId = nil
-            isLoadingAgents = false
-            return
-        }
         guard let targetServerId = selectedServerId ?? coordinator.activeServerId else {
             availableAgents = []
             selectedAgentId = nil
@@ -1330,7 +1333,7 @@ struct QuickSessionSheet: View {
                     selectedId: selectedWorktreeId,
                     worktrees: worktrees
                 ),
-                agentId: QuickSessionLaunchSelection.launchAgentId(selected: selectedAgentId, engine: engine),
+                agentId: selectedAgentId,
                 prompt: transportText,
                 hasAttachments: !pendingAttachments.isEmpty,
                 hasRepoReferences: !pendingRepoPointers.isEmpty

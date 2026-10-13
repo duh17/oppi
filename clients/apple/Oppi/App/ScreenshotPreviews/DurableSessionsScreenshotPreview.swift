@@ -2,10 +2,11 @@
 import SwiftUI
 
 /// Durable Sessions experiment surfaces over an in-memory server that
-/// advertises durable sessions: the Settings toggle, the sidebar's Durable
-/// item under Terminal, and the Durable scope of All Sessions with its quick
-/// session bar, which opens the real Quick Session overlay. Requests go to an
-/// in-process stub; no network or Keychain writes.
+/// advertises durable sessions: the Settings toggle, the sidebar's Oppi Control
+/// entry, and All Sessions with ∞ rows and its quick session bar, which opens
+/// the real Quick Session overlay. `experimentEnabled: false` previews the same
+/// surfaces with the experiment off. Requests go to an in-process stub; no
+/// network or Keychain writes.
 struct DurableSessionsScreenshotPreview: View {
     enum Surface {
         case settings
@@ -17,12 +18,14 @@ struct DurableSessionsScreenshotPreview: View {
     }
 
     let surface: Surface
+    let experimentEnabled: Bool
     @State private var coordinator: ConnectionCoordinator
     @State private var navigation = AppNavigation()
 
-    init(surface: Surface) {
+    init(surface: Surface, experimentEnabled: Bool = true) {
         self.surface = surface
-        Self.applyPreviewDefaults()
+        self.experimentEnabled = experimentEnabled
+        Self.applyPreviewDefaults(experimentEnabled: experimentEnabled)
         _coordinator = State(initialValue: Self.makeCoordinator())
     }
 
@@ -56,16 +59,16 @@ struct DurableSessionsScreenshotPreview: View {
         case .sidebar:
             WorkspaceSidebarView()
         case .list, .quickSession:
-            NavigationStack { SessionInboxView(scope: .durable) }
+            NavigationStack { SessionInboxView() }
         }
     }
 
     /// Volatile argument-domain values: the preview sees the experiments on and
     /// an SSH host configured, and nothing is written to the app's defaults.
-    private static func applyPreviewDefaults() {
+    private static func applyPreviewDefaults(experimentEnabled: Bool) {
         let defaults = UserDefaults.standard
         var arguments = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
-        arguments[AppPreferences.Experiments.durableSessionsKey] = true
+        arguments[AppPreferences.Experiments.durableSessionsKey] = experimentEnabled
         arguments[AppPreferences.Experiments.sshTerminalKey] = true
         let profile = SSHTerminalProfile(host: "mac-studio.local", username: "chen")
         arguments[SSHTerminalProfileStore.storageKey] = try? JSONEncoder().encode(profile)
@@ -115,22 +118,10 @@ struct DurableSessionsScreenshotPreview: View {
             status: .stopped, minutesAgo: 180, engine: .durable
         ),
         session(
-            id: "classic-1", workspaceId: "oppi", name: "Classic session stays in All Sessions",
+            id: "classic-1", workspaceId: "oppi", name: "Classic session has no ∞ marker",
             status: .ready, minutesAgo: 5, engine: .classic
         ),
     ]
-
-    /// Full-history load (`recentDays=0`): adds a month-old stopped durable
-    /// session that the live store's recent window does not hold.
-    fileprivate static let historyJSON: Data = {
-        let monthAgo = Int(Date().addingTimeInterval(-30 * 86_400).timeIntervalSince1970 * 1000)
-        return Data("""
-        {"sessions":[{"id":"durable-old","workspaceId":"kypu","workspaceName":"kypu",
-         "name":"Migrate run splits to the new schema","status":"stopped",
-         "createdAt":\(monthAgo - 600_000),"lastActivity":\(monthAgo),"messageCount":14,
-         "tokens":{"input":40000,"output":8000},"cost":1.2,"engine":"durable"}]}
-        """.utf8)
-    }()
 
     private static func workspace(id: String, name: String, icon: String) -> Workspace {
         Workspace(
@@ -184,7 +175,7 @@ private enum DurablePreviewAPI {
     }
 }
 
-/// Answers the durable history load; every other request is a 404.
+/// Answers every request with a 404, so the preview never reaches a network.
 private final class DurablePreviewURLProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool {
         request.url?.host == "durable-preview.oppi"
@@ -195,23 +186,18 @@ private final class DurablePreviewURLProtocol: URLProtocol {
     }
 
     override func startLoading() {
-        guard let url = request.url else {
+        guard let url = request.url,
+              let response = HTTPURLResponse(
+                  url: url,
+                  statusCode: 404,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["Content-Type": "application/json"]
+              ) else {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
         }
-        let isHistory = url.path == "/sessions/recent"
-        let body = isHistory ? DurableSessionsScreenshotPreview.historyJSON : Data(#"{"error":"Not found"}"#.utf8)
-        guard let response = HTTPURLResponse(
-            url: url,
-            statusCode: isHistory ? 200 : 404,
-            httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
-        ) else {
-            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
-            return
-        }
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocol(self, didLoad: Data(#"{"error":"Not found"}"#.utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
 

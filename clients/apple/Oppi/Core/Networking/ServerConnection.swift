@@ -251,7 +251,7 @@ final class ServerConnection {
     /// Updated from server capabilities and `stream_connected` messages.
     private(set) var serverDictationAvailable = false
     private(set) var controlSessionsAvailable = false
-    /// The server accepts durable-engine creates. Gates the Durable playground.
+    /// The server accepts durable-engine creates. With the experiment on, new sessions default durable.
     private(set) var durableSessionsAvailable = false
     /// The server advertises experimental live H.264 (`capabilities.desktopLiveView`).
     private(set) var desktopLiveViewAvailable = false

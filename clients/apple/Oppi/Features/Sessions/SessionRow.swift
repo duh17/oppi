@@ -17,6 +17,7 @@ struct SessionRow: View {
     @Environment(\.themeID) private var themeID
     @Environment(\.theme) private var theme
     @Environment(\.sessionRowDisplay) private var display
+    @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var durableExperimentEnabled = false
 
     let session: Session
     let pendingAskCount: Int
@@ -100,6 +101,11 @@ struct SessionRow: View {
         session.changeStats?.filesChanged ?? 0
     }
 
+    /// Durable Sessions experiment: marks a durable-engine session, as the chat title does.
+    private var isDurable: Bool {
+        durableExperimentEnabled && session.engine == .durable
+    }
+
     private var isIncognito: Bool {
         session.ephemeral == true
     }
@@ -140,6 +146,14 @@ struct SessionRow: View {
                         .layoutPriority(1)
 
                     LockBadge(state: lockBadge)
+
+                    if isDurable {
+                        Image(systemName: "infinity")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.themeComment)
+                            .accessibilityLabel("Durable session")
+                            .accessibilityIdentifier("session.durableMarker.\(session.id)")
+                    }
 
                     Spacer(minLength: 4)
 

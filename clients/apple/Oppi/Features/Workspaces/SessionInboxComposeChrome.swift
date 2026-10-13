@@ -270,20 +270,17 @@ struct SessionInboxFolderToolbarButton: View {
 /// Which screen owns a Message launcher.
 enum QuickSessionLauncherSurface: Equatable {
     case allSessions
-    case durableSessions
     case thread(SessionThreadNavTarget)
 }
 
 /// Whether a Message launcher's surface still has a destination pushed over it.
 ///
 /// Depth is the route that owns the screen, evaluated every time. A size-class
-/// change rebuilds `[durable, chat]` or `[thread, chat]` in one shot; a path
+/// change rebuilds `[thread, chat]` in one shot; a path
 /// count captured on appear would treat that covered count as the surface.
 ///
 /// All Sessions is the stack root (depth 0) and is replaced in split only when
-/// a detail target is set. Durable in split is the detail root (depth 0). Durable
-/// in the compact stack is the index of `.utility(.durableSessions)` plus one.
-/// A thread is the index of its `SessionThreadNavTarget` in the active path
+/// a detail target is set. A thread is the index of its `SessionThreadNavTarget` in the active path
 /// (`workspaceStackRouteElements`, or the split detail path) plus one.
 ///
 /// A missing owner is covered. Falling back to the live path count would report
@@ -333,13 +330,6 @@ enum QuickSessionLauncherCoverage {
         switch surface {
         case .allSessions:
             return 0
-        case .durableSessions:
-            switch presentation {
-            case .split:
-                return 0
-            case .stack:
-                return indexOfDurableSessions(in: workspaceStack).map { $0 + 1 }
-            }
         case .thread(let target):
             switch presentation {
             case .split:
@@ -347,13 +337,6 @@ enum QuickSessionLauncherCoverage {
             case .stack:
                 return index(of: target, in: workspaceStack).map { $0 + 1 }
             }
-        }
-    }
-
-    private static func indexOfDurableSessions(in stack: [WorkspaceStackRouteElement]) -> Int? {
-        stack.lastIndex { element in
-            if case .utility(.durableSessions) = element { return true }
-            return false
         }
     }
 

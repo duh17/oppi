@@ -137,36 +137,12 @@ enum WorkspaceSidebarPrimaryUtilities {
         accessibilityHint: "Inspect the current remote screen"
     )
 
-    static let durableSessions = WorkspaceSidebarPrimaryUtilityItem(
-        target: .durableSessions,
-        title: "Durable",
-        systemImage: "infinity",
-        accessibilityLabel: "Open Durable Sessions",
-        accessibilityIdentifier: "workspace.durableSessions.open",
-        minimumHitHeight: 44,
-        accessibilityHint: "Lists this server's durable sessions"
-    )
-
-    /// The server's durable control conversation. First in the list: it is the
-    /// agent you talk to before opening a workspace.
-    static let controlConversation = WorkspaceSidebarPrimaryUtilityItem(
-        target: .controlConversation,
-        title: "Oppi Control",
-        systemImage: "bubble.left.and.text.bubble.right",
-        accessibilityLabel: "Open Oppi Control",
-        accessibilityIdentifier: "workspace.controlConversation.open",
-        minimumHitHeight: 44,
-        accessibilityHint: "Opens this server's control conversation"
-    )
-
-    /// `durableSessionsAvailable` is `DurableSessionsPlayground.isAvailable` for the shown server.
     /// The SSH inputs have no defaults: reading saved preferences here made tests depend on
     /// whatever a simulator's app container last persisted.
     static func items(
         for idiom: UIUserInterfaceIdiom,
         sshTerminalEnabled: Bool,
         hasSSHProfile: Bool,
-        durableSessionsAvailable: Bool = false,
         desktopLiveViewAvailable: Bool = false
     ) -> [WorkspaceSidebarPrimaryUtilityItem] {
         var result = items
@@ -176,10 +152,6 @@ enum WorkspaceSidebarPrimaryUtilities {
                 accessibilityLabel: "Open SSH Terminal", accessibilityIdentifier: "workspace.terminal.open",
                 minimumHitHeight: 44, accessibilityHint: "Opens your saved SSH hosts"
             ))
-        }
-        if durableSessionsAvailable {
-            result.insert(controlConversation, at: 0)
-            result.append(durableSessions)
         }
         if idiom == .phone, ReleaseFeatures.desktopStillEnabled || desktopLiveViewAvailable {
             result.append(desktopStill)
@@ -218,64 +190,11 @@ enum SessionInboxSessionRouting {
     }
 }
 
-/// Which sessions the All Sessions surface lists.
-///
-/// `.durable` is the Durable Sessions playground: the same list, search, and
-/// quick session bar over the active server's durable sessions, including
-/// stopped history older than the All Sessions window. It hides the host
-/// switcher (the playground is gated per server) and the host-wide setup
-/// notices, which All Sessions already shows.
-enum SessionInboxScope: Equatable {
-    case all
-    case durable
-
-    var title: String {
-        switch self {
-        case .all: "All Sessions"
-        case .durable: "Durable"
-        }
-    }
-
-    /// Stopped day groups: All Sessions keeps its recent window; Durable keeps every day.
-    var stoppedDayLimit: Int? {
-        switch self {
-        case .all: SessionInboxStoppedDayPolicy.visibleDayCount
-        case .durable: nil
-        }
-    }
-
-    func includes(_ session: Session) -> Bool {
-        switch self {
-        case .all: true
-        case .durable: DurableSessionsPlayground.isListed(session)
-        }
-    }
-
-    /// Context the quick session bar hands Quick Session. Durable pins the
-    /// sheet to the server's durable engine and starts nothing without a server.
-    enum QuickSessionLaunch: Equatable {
-        case standard
-        case context(QuickSessionLaunchContext)
-        case unavailable
-    }
-
-    func quickSessionLaunch(serverId: String?, durableAvailable: Bool) -> QuickSessionLaunch {
-        switch self {
-        case .all:
-            return .standard
-        case .durable:
-            guard durableAvailable, let serverId else { return .unavailable }
-            return .context(QuickSessionLaunchContext(durableOnServer: serverId))
-        }
-    }
-}
-
 /// Sessions-first home surface.
 ///
 /// The workspace sidebar owns project selection. This view keeps the main
 /// content focused on session rows and uses small row context instead of a
-/// workspace header card. `scope` narrows the same surface to the Durable
-/// playground.
+/// workspace header card.
 struct SessionInboxView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
@@ -283,17 +202,10 @@ struct SessionInboxView: View {
     @Environment(\.chatReaderPayloadStore) private var chatReaderPayloadStore
     @Environment(\.composerDraftStore) private var composerDraftStore
     @Environment(\.theme) private var theme
-    @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var durableExperimentEnabled = false
 
-    let scope: SessionInboxScope
     let onOpenSidebar: (() -> Void)?
 
     @State private var searchStore = SessionSearchStore()
-    /// Durable scope: full-history durable sessions; the live store only holds the recent window.
-    @State private var durableHistory: [Session] = []
-    @State private var isLoadingDurableHistory = false
-    /// Durable scope keeps its own search; All Sessions' lives in `AppNavigation`.
-    @State private var scopedSearch = SessionListSearchNavigationPersistence.State()
     @State private var error: String?
     @State private var failedRetryServerId: String?
     @State private var pendingDelete: SessionInboxPendingDelete?
@@ -307,8 +219,7 @@ struct SessionInboxView: View {
     @State private var presentsNowPlayingPlayer = false
     @State private var composeBarColumnWidth: CGFloat = 0
 
-    init(scope: SessionInboxScope = .all, onOpenSidebar: (() -> Void)? = nil) {
-        self.scope = scope
+    init(onOpenSidebar: (() -> Void)? = nil) {
         self.onOpenSidebar = onOpenSidebar
     }
 
@@ -318,22 +229,6 @@ struct SessionInboxView: View {
 
     private var activeConnection: ServerConnection? {
         activeServerId.flatMap { coordinator.connection(for: $0) }
-    }
-
-    private var isDurableAvailable: Bool {
-        DurableSessionsPlayground.isAvailable(
-            experimentEnabled: durableExperimentEnabled,
-            serverOffersDurable: activeConnection?.durableSessionsAvailable == true
-        )
-    }
-
-    private var quickSessionLaunch: SessionInboxScope.QuickSessionLaunch {
-        scope.quickSessionLaunch(serverId: activeServerId, durableAvailable: isDurableAvailable)
-    }
-
-    /// All Sessions reloads per server; Durable also reloads when it becomes available.
-    private var listTaskID: String? {
-        scope == .all || isDurableAvailable ? activeServerId : nil
     }
 
     private var sessionListAudioPlayer: AudioPlayerService? {
@@ -372,14 +267,8 @@ struct SessionInboxView: View {
     }
 
     private var searchNavigation: SessionListSearchNavigationPersistence.State {
-        get { scope == .all ? navigation.inboxSessionSearch : scopedSearch }
-        nonmutating set {
-            if scope == .all {
-                navigation.inboxSessionSearch = newValue
-            } else {
-                scopedSearch = newValue
-            }
-        }
+        get { navigation.inboxSessionSearch }
+        nonmutating set { navigation.inboxSessionSearch = newValue }
     }
 
     private var searchText: String {
@@ -413,23 +302,15 @@ struct SessionInboxView: View {
     }
 
     private var isSearchListCoveredByDestination: Bool {
-        switch scope {
-        case .all:
-            return SessionListSearchNavigationPersistence.isInboxCovered(
-                isSplitPresentation: navigation.workspaceNavigationPresentation == .split,
-                stackDepth: navigation.workspacePath.count,
-                splitDetailReplacesList: navigation.splitDetailTarget != nil
-            )
-        case .durable:
-            // Same route depth as the launcher. A stored path count would treat
-            // a one-shot `[durable, chat]` rebuild as the surface.
-            return isQuickSessionLauncherCovered
-        }
+        SessionListSearchNavigationPersistence.isInboxCovered(
+            isSplitPresentation: navigation.workspaceNavigationPresentation == .split,
+            stackDepth: navigation.workspacePath.count,
+            splitDetailReplacesList: navigation.splitDetailTarget != nil
+        )
     }
 
     private var searchCoverageSignature: String {
-        let signature = "\(navigation.workspacePath.count):\(navigation.workspaceNavigationPresentation):\(navigation.splitDetailTarget != nil)"
-        return scope == .all ? signature : "\(signature):\(navigation.splitDetailPath.count)"
+        "\(navigation.workspacePath.count):\(navigation.workspaceNavigationPresentation):\(navigation.splitDetailTarget != nil)"
     }
 
     /// Do not install Message while a destination is pushed over this list.
@@ -438,7 +319,7 @@ struct SessionInboxView: View {
     private var isQuickSessionLauncherCovered: Bool {
         QuickSessionLauncherCoverage.isCovered(
             presentation: navigation.workspaceNavigationPresentation,
-            surface: scope == .all ? .allSessions : .durableSessions,
+            surface: .allSessions,
             workspaceStack: navigation.workspaceStackRouteElements,
             splitDetailTarget: navigation.splitDetailTarget,
             splitDetailPath: navigation.splitDetailPathElements
@@ -454,9 +335,7 @@ struct SessionInboxView: View {
             extraCandidates: { session in
                 [itemsById[session.id]?.workspace?.name]
             },
-            serverResults: (scope == .all
-                ? searchStore.results
-                : searchStore.results.filter { $0.session.map(scope.includes) == true })
+            serverResults: searchStore.results
                 // A content match would say what a locked session contains;
                 // locked sessions match by name only.
                 .filter { result in
@@ -483,14 +362,11 @@ struct SessionInboxView: View {
         }
 
         // All Sessions lists every loaded session, so every thread root is here.
-        // Durable builds threads over every loaded session, durable or not.
         let sessions = items.map(\.session)
         let entries = SessionListEntries.entries(
             threadsEnabled: navigation.sessionThreadsEnabled,
             listed: sessions,
-            loaded: scope == .all
-                ? sessions
-                : (activeConnection?.sessionStore.listProjectionSessions ?? []) + durableHistory
+            loaded: sessions
         )
         let grouped = SessionInboxGrouping.make(
             items: entries,
@@ -499,8 +375,7 @@ struct SessionInboxView: View {
             session: \.representative,
             attention: { attentionCounts(for: $0.session) },
             sectionKind: { $0.sectionKind(attention: attentionCounts(for:)) },
-            isBlocked: { $0.isBlocked(attention: attentionCounts(for:)) },
-            stoppedDayLimit: scope.stoppedDayLimit
+            isBlocked: { $0.isBlocked(attention: attentionCounts(for:)) }
         )
         return SessionInboxViewData(
             yourTurn: grouped.yourTurn,
@@ -597,10 +472,10 @@ struct SessionInboxView: View {
                 }
             }
         }
-        .accessibilityIdentifier(scope == .all ? "workspace.sessionList" : "durableSessions.list")
+        .accessibilityIdentifier("workspace.sessionList")
         .listStyle(.plain)
         .themedListSurface()
-        .navigationTitle(scope.title)
+        .navigationTitle("All Sessions")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(
             text: searchTextBinding,
@@ -638,24 +513,17 @@ struct SessionInboxView: View {
         .refreshable {
             async let refresh: () = refreshVisibleServer()
             async let providers: () = loadProviderSetupState()
-            async let history: () = loadDurableHistory()
-            _ = await (refresh, providers, history)
+            _ = await (refresh, providers)
         }
-        .task(id: listTaskID) {
+        .task(id: activeServerId) {
             if hasSearchQuery {
                 refreshSearch()
             }
-            switch scope {
-            case .all:
-                providerSetupState = .unknown
-                async let refresh: () = refreshVisibleServer()
-                async let providers: () = loadProviderSetupState()
-                _ = await (refresh, providers)
-                applyE2ELaunchHintsIfNeeded()
-            case .durable:
-                durableHistory = []
-                await loadDurableHistory()
-            }
+            providerSetupState = .unknown
+            async let refresh: () = refreshVisibleServer()
+            async let providers: () = loadProviderSetupState()
+            _ = await (refresh, providers)
+            applyE2ELaunchHintsIfNeeded()
         }
         .onChange(of: navigation.workspacePath.count) { oldCount, newCount in
             guard newCount < oldCount else { return }
@@ -728,8 +596,6 @@ struct SessionInboxView: View {
                     McpServersView(scopeId: McpScopeSnapshot.globalId)
                 case .sshTerminal:
                     SSHTerminalHostListView()
-                case .durableSessions:
-                    Self(scope: .durable)
                 case .controlConversation:
                     ControlConversationDestinationView()
                 case .desktopStill:
@@ -768,29 +634,26 @@ struct SessionInboxView: View {
         }
     }
 
-    /// Host-wide notices belong to All Sessions; the Durable scope does not repeat them.
     private var showsMinimumServerVersionNotice: Bool {
-        scope == .all
-            && selectedServer != nil
+        selectedServer != nil
             && ServerReleaseVersion.isBelowMinimum(activeConnection?.connectedServerVersion)
     }
 
     private var showsProviderSetupPrompt: Bool {
-        scope == .all
-            && ProviderSetupPromptPolicy.shouldShow(for: providerSetupState)
+        ProviderSetupPromptPolicy.shouldShow(for: providerSetupState)
             && selectedServer != nil
             && !showsMinimumServerVersionNotice
     }
 
     private var inboxTitle: some View {
-        Text(scope.title)
+        Text("All Sessions")
             .font(.headline.weight(.semibold))
             .foregroundStyle(.themeFg)
             .lineLimit(1)
             .minimumScaleFactor(0.75)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(scope.title)
-            .accessibilityIdentifier(scope == .all ? "workspace.inbox.title" : "durableSessions.title")
+            .accessibilityLabel("All Sessions")
+            .accessibilityIdentifier("workspace.inbox.title")
     }
 
     @ToolbarContentBuilder
@@ -814,7 +677,7 @@ struct SessionInboxView: View {
                     compactQuickSessionBar(joinsRail: true)
                 }
             }
-            if scope == .all, let selectedServer {
+            if let selectedServer {
                 prioritizedRailToolbarItem(
                     joinsVerticalRail: true,
                     pinnedUnderStatus: true,
@@ -855,7 +718,7 @@ struct SessionInboxView: View {
                 }
             }
 
-            if scope == .all, let selectedServer {
+            if let selectedServer {
                 ToolbarItem(placement: .topBarTrailing) {
                     serverSwitcher(selectedServer)
                 }
@@ -912,7 +775,6 @@ struct SessionInboxView: View {
     }
 
     private func loadProviderSetupState() async {
-        guard scope == .all else { return }
         guard let requestedServerId = activeServerId else {
             providerSetupState = .unavailable
             return
@@ -972,21 +834,6 @@ struct SessionInboxView: View {
         await coordinator.refreshServer(activeServerId, force: true)
     }
 
-    /// Durable scope: every durable session on the server (`recentDays=0`),
-    /// merged with the live store in `sessionItems()`.
-    private func loadDurableHistory() async {
-        guard scope == .durable, isDurableAvailable, let api = activeConnection?.apiClient else { return }
-        isLoadingDurableHistory = true
-        defer { isLoadingDurableHistory = false }
-        do {
-            durableHistory = try await api.listDurableSessions()
-        } catch {
-            // Leaving the screen or switching servers cancels the load.
-            guard !Task.isCancelled else { return }
-            self.error = "Loading durable sessions failed: \(error.localizedDescription)"
-        }
-    }
-
     private func retryVisibleServer() async {
         guard let activeServerId else { return }
         failedRetryServerId = nil
@@ -1029,15 +876,7 @@ struct SessionInboxView: View {
                 systemImage: "server.rack",
                 description: Text("Pair with a server to get started.")
             )
-        } else if scope == .durable, !isDurableAvailable {
-            ContentUnavailableView(
-                "Durable Sessions Unavailable",
-                systemImage: "infinity",
-                description: Text(durableExperimentEnabled
-                    ? "This server does not offer durable sessions. Turn on experimental.serverDurable on the server and restart it."
-                    : "Turn on Settings → Experiments → Durable Sessions.")
-            )
-        } else if selectedServerIsSyncing || isLoadingDurableHistory, let selectedServer {
+        } else if selectedServerIsSyncing, let selectedServer {
             ContentUnavailableView(
                 "Loading Sessions",
                 systemImage: "arrow.triangle.2.circlepath",
@@ -1056,12 +895,6 @@ struct SessionInboxView: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
-        } else if scope == .durable {
-            ContentUnavailableView(
-                "No Durable Sessions",
-                systemImage: "infinity",
-                description: Text("Start a quick session here to run it on \(selectedServer?.name ?? "this server")'s durable engine.")
-            )
         } else {
             ContentUnavailableView(
                 "No Active Sessions",
@@ -1190,18 +1023,7 @@ struct SessionInboxView: View {
         guard let activeServerId,
               let connection = activeConnection else { return [] }
 
-        let sessions: [Session] = switch scope {
-        case .all:
-            connection.sessionStore.listProjectionSessions
-        case .durable:
-            isDurableAvailable
-                ? DurableSessionsPlayground.sessions(
-                    history: durableHistory,
-                    live: connection.sessionStore.listProjectionSessions
-                )
-                : []
-        }
-        return sessions.map { session in
+        return connection.sessionStore.listProjectionSessions.map { session in
             let workspace = session.workspaceId.flatMap { workspaceId in
                 connection.workspaceStore.workspaces.first { $0.id == workspaceId }
             }
@@ -1326,7 +1148,6 @@ struct SessionInboxView: View {
         guard let connection = coordinator.connection(for: pending.serverId),
               let api = connection.apiClient else { return }
         connection.sessionStore.remove(id: pending.session.id)
-        durableHistory.removeAll { $0.id == pending.session.id }
         await TimelineCache.shared.removeTrace(pending.session.id, serverId: pending.serverId)
         do {
             try await api.deleteSession(scope: pending.routeScope, sessionId: pending.session.id)
@@ -1380,18 +1201,9 @@ struct SessionInboxView: View {
                 startQuickSession(dictate: true)
             }
         )
-        .disabled(quickSessionLaunch == .unavailable)
     }
 
     private func startQuickSession(dictate: Bool) {
-        switch quickSessionLaunch {
-        case .standard:
-            break
-        case .context(let context):
-            navigation.pendingQuickSessionLaunchContext = context
-        case .unavailable:
-            return
-        }
         if dictate {
             navigation.pendingQuickSessionStartDictation = true
         }
@@ -1780,12 +1592,6 @@ struct WorkspaceSidebarView: View {
                             hasSSHProfile: SSHTerminalProfileStore.hasConfiguredHost(
                                 catalogData: sshCatalogData, legacyData: sshLegacyProfileData
                             ),
-                            durableSessionsAvailable: DurableSessionsPlayground.isAvailable(
-                                experimentEnabled: durableSessionsEnabled,
-                                serverOffersDurable: selectedServer
-                                    .flatMap { coordinator.connection(for: $0.id) }?
-                                    .durableSessionsAvailable == true
-                            ),
                             desktopLiveViewAvailable: DesktopLiveViewPlayground.isAvailable(
                                 experimentEnabled: desktopLiveViewEnabled,
                                 serverOffers: selectedServer
@@ -1964,12 +1770,50 @@ struct WorkspaceSidebarView: View {
         }
     }
 
+    /// Oppi Control is one tap from the top of the sidebar, beside the title,
+    /// whenever the Durable Sessions experiment is on and the server offers it.
+    private var showsControlEntry: Bool {
+        DurableSessions.isAvailable(
+            experimentEnabled: durableSessionsEnabled,
+            serverOffersDurable: selectedServer
+                .flatMap { coordinator.connection(for: $0.id) }?
+                .durableSessionsAvailable == true
+        ) && WorkspaceUtilityNavTarget.controlConversation.isReleaseEnabled
+    }
+
+    private var controlEntry: some View {
+        let isSelected = navigation.workspaceNavigationPresentation == .split
+            && navigation.splitDetailTarget == .utility(.controlConversation)
+
+        return Button {
+            navigation.openWorkspaceUtility(.controlConversation)
+            onSelect?()
+        } label: {
+            Label("Control", systemImage: "bubble.left.and.text.bubble.right")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(isSelected ? .themeBlue : .themeFg)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: Capsule())
+        .accessibilityLabel("Open Oppi Control")
+        .accessibilityHint("Opens this server's control conversation")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityIdentifier("workspace.controlConversation.open")
+    }
+
     private var sidebarHeader: some View {
         HStack(alignment: .center, spacing: 12) {
             Text("Oppi")
                 .font(.title2.weight(.bold))
                 .foregroundStyle(.themeFg)
                 .lineLimit(1)
+
+            if showsControlEntry {
+                controlEntry
+            }
 
             Spacer(minLength: 8)
 

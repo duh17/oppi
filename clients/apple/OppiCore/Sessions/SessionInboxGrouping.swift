@@ -10,8 +10,7 @@ struct SessionInboxStoppedDayGroup<Item>: Identifiable {
 /// Calendar-day window and labels for the global session inbox stopped groups.
 ///
 /// The root inbox shows stopped sessions from the three most recent calendar
-/// days; a `nil` day limit keeps every day (the Durable playground's full
-/// history). Today's group starts expanded; earlier days start collapsed.
+/// days. Today's group starts expanded; earlier days start collapsed.
 /// Stopped incognito sessions are omitted because they have no resumable history.
 struct SessionInboxStoppedDayPolicy {
     static let visibleDayCount = 3
@@ -29,16 +28,15 @@ struct SessionInboxStoppedDayPolicy {
         _ items: [Item],
         now: Date,
         calendar: Calendar,
-        dayLimit: Int? = visibleDayCount,
         activityDate: (Item) -> Date
     ) -> [SessionInboxStoppedDayGroup<Item>] {
-        let rangeStart = dayLimit.map { visibleRangeStart(now: now, calendar: calendar, dayCount: $0) }
+        let rangeStart = visibleRangeStart(now: now, calendar: calendar)
         var itemsByDay: [Date: [Item]] = [:]
-        itemsByDay.reserveCapacity(dayLimit ?? visibleDayCount)
+        itemsByDay.reserveCapacity(visibleDayCount)
 
         for item in items {
             let date = activityDate(item)
-            if let rangeStart, date < rangeStart { continue }
+            if date < rangeStart { continue }
             let day = calendar.startOfDay(for: date)
             itemsByDay[day, default: []].append(item)
         }
@@ -106,8 +104,7 @@ enum SessionInboxGrouping {
         session: (Item) -> Session,
         attention: (Item) -> SessionListAttentionCounts,
         sectionKind: ((Item) -> SessionListActiveSectionKind?)? = nil,
-        isBlocked: ((Item) -> Bool)? = nil,
-        stoppedDayLimit: Int? = SessionInboxStoppedDayPolicy.visibleDayCount
+        isBlocked: ((Item) -> Bool)? = nil
     ) -> SessionInboxSections<Item> {
         let split = split(
             items: items,
@@ -123,7 +120,6 @@ enum SessionInboxGrouping {
                 split.stopped.filter { SessionInboxStoppedDayPolicy.includesStoppedSession(session($0)) },
                 now: now,
                 calendar: calendar,
-                dayLimit: stoppedDayLimit,
                 activityDate: { session($0).lastActivity }
             )
         )

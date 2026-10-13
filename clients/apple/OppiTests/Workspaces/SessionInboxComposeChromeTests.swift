@@ -307,11 +307,10 @@ struct QuickSessionLauncherCoverageTests {
     /// A missing owner stays covered: the live path count is not the depth.
     @Test func routeElementsCoverTheLauncherUntilTheChatIsRemoved() {
         let stackCases: [(String, [WorkspaceStackRouteElement], QuickSessionLauncherSurface)] = [
-            ("durable + chat", [.utility(.durableSessions), .session(chat)], .durableSessions),
             ("thread + chat", [.sessionThread(thread), .session(chat)], .thread(thread)),
             (
-                "durable + thread + chat",
-                [.utility(.durableSessions), .sessionThread(thread), .session(chat)],
+                "utility + thread + chat",
+                [.utility(.agents), .sessionThread(thread), .session(chat)],
                 .thread(thread)
             ),
         ]
@@ -325,30 +324,6 @@ struct QuickSessionLauncherCoverageTests {
                 covered: false
             )
         }
-        expectCovered(
-            "durable still covered by thread",
-            presentation: .stack,
-            stack: [.utility(.durableSessions), .sessionThread(thread)],
-            surface: .durableSessions,
-            covered: true
-        )
-
-        expectCovered(
-            "split durable + chat",
-            presentation: .split,
-            detail: .utility(.durableSessions),
-            path: [.session(chat)],
-            surface: .durableSessions,
-            covered: true
-        )
-        expectCovered(
-            "split durable",
-            presentation: .split,
-            detail: .utility(.durableSessions),
-            path: [],
-            surface: .durableSessions,
-            covered: false
-        )
         expectCovered(
             "split thread + chat",
             presentation: .split,
@@ -364,37 +339,22 @@ struct QuickSessionLauncherCoverageTests {
             covered: false
         )
         expectCovered(
-            "split durable + thread + chat",
+            "split utility + thread + chat",
             presentation: .split,
-            detail: .utility(.durableSessions),
+            detail: .utility(.agents),
             path: [.sessionThread(thread), .session(chat)],
             surface: .thread(thread),
             covered: true
         )
         expectCovered(
-            "split durable + thread",
+            "split utility + thread",
             presentation: .split,
-            detail: .utility(.durableSessions),
+            detail: .utility(.agents),
             path: [.sessionThread(thread)],
             surface: .thread(thread),
             covered: false
         )
-        expectCovered(
-            "split durable still covered by thread",
-            presentation: .split,
-            detail: .utility(.durableSessions),
-            path: [.sessionThread(thread)],
-            surface: .durableSessions,
-            covered: true
-        )
 
-        expectCovered(
-            "missing durable",
-            presentation: .stack,
-            stack: [.session(chat)],
-            surface: .durableSessions,
-            covered: true
-        )
         expectCovered(
             "missing thread",
             presentation: .stack,

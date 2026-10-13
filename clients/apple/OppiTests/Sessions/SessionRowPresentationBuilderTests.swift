@@ -201,8 +201,6 @@ struct SessionRowPresentationBuilderTests {
         #expect(store.routeScope(for: "ws-row") == .workspace("workspace-1"))
         #expect(store.listProjectionSessions(workspaceId: "workspace-1").map(\.id).contains("ws-row"))
         #expect(!store.listProjectionSessions(workspaceId: "workspace-1").map(\.id).contains("cc-1"))
-        #expect(!DurableSessionsPlayground.isListed(conversation.session))
-        #expect(!DurableSessionsPlayground.isListed(declared.session))
     }
 
     @Test func modelSummaryUsesCatalogDisplayNameWhenPresent() {

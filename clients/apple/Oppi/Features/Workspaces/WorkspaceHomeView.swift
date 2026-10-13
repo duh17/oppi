@@ -223,8 +223,6 @@ enum WorkspaceUtilityNavTarget: Hashable {
     case extensions
     case mcpServers
     case sshTerminal
-    /// Durable Sessions experiment: the active server's durable sessions.
-    case durableSessions
     /// Durable Sessions experiment: the active server's one durable control
     /// conversation, found or created when opened.
     case controlConversation
@@ -241,7 +239,7 @@ enum WorkspaceUtilityNavTarget: Hashable {
             ReleaseFeatures.desktopStillEnabled || AppPreferences.Experiments.desktopLiveViewEnabled
         case .sshTerminal:
             AppPreferences.Experiments.sshTerminalEnabled && SSHTerminalProfileStore().hasConfiguredHost
-        case .durableSessions, .controlConversation:
+        case .controlConversation:
             AppPreferences.Experiments.durableSessionsEnabled
         case .skills, .extensions, .mcpServers, .manageServers, .appSettings:
             true
