@@ -154,6 +154,22 @@ struct ThemePaletteBuiltinTests {
         }
     }
 
+    /// Conversation layout: the user bubble must stand apart from the reply
+    /// card, and inline code, table headers, and diagrams (`bgHighlight`) must
+    /// still show on the card.
+    @Test func builtInConversationCardSeparatesFromUserBubbleAndEmbeddedSurfaces() {
+        for themeID in ThemeID.builtins {
+            let palette = themeID.palette
+            let card = Color(ChatTimelineChromeStyle.conversation.assistantFill(from: palette, themeID: themeID))
+            let text = wcagContrast(palette.fg, card)
+            let user = wcagContrast(palette.userMessageBg, card)
+            let embedded = wcagContrast(palette.bgHighlight, card)
+            #expect(text + 1e-6 >= 4.5, "\(themeID.rawValue) assistant text on card \(text)")
+            #expect(user + 1e-6 >= 1.4, "\(themeID.rawValue) user bubble vs card \(user)")
+            #expect(embedded + 1e-6 >= 1.04, "\(themeID.rawValue) bgHighlight vs card \(embedded)")
+        }
+    }
+
     @Test func increasedContrastUserTextOnStrongerFillMeetsAA() {
         for themeID in ThemeID.builtins {
             let palette = themeID.palette

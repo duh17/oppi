@@ -123,13 +123,35 @@ enum ChatTimelineChromeStyle: Equatable {
         }
     }
 
-    /// Conversation cards keep the theme's assistant fill when it has one;
-    /// built-ins leave it clear, so the card lifts onto `bgHighlight`.
-    func assistantFill(from palette: ThemePalette) -> UIColor {
+    /// Conversation cards keep the theme's assistant fill when it has one.
+    /// Built-ins leave that clear and get `conversationCardFill`; custom
+    /// themes without one lift the card onto `bgHighlight`.
+    func assistantFill(
+        from palette: ThemePalette,
+        themeID: ThemeID = ThemeRuntimeState.currentThemeID()
+    ) -> UIColor {
         let themed = TimelineSpeakerChrome.assistantFill(from: palette)
         switch self {
         case .standard: return themed
-        case .conversation: return themed == .clear ? UIColor(palette.bgHighlight) : themed
+        case .conversation:
+            guard themed == .clear else { return themed }
+            return Self.conversationCardFill(for: themeID) ?? UIColor(palette.bgHighlight)
+        }
+    }
+
+    /// Built-in assistant card, like ChatGPT and Claude: the reply sits on a
+    /// quiet surface one small step off `bg` (white paper in Light, barely
+    /// lifted in the dark themes) and the user bubble (`userMessageBg`) is the
+    /// strongest fill. A `bgHighlight` card read as a second user bubble in
+    /// Light and hid inline code, table headers, and diagrams, which all
+    /// draw on `bgHighlight`.
+    static func conversationCardFill(for themeID: ThemeID) -> UIColor? {
+        switch themeID {
+        case .light: return TimelineSpeakerChrome.rgb(0xFFFFFF)
+        case .dark: return TimelineSpeakerChrome.rgb(0x1F2231)
+        case .oled: return TimelineSpeakerChrome.rgb(0x0B0F17)
+        case .night: return TimelineSpeakerChrome.rgb(0x161513)
+        case .custom: return nil
         }
     }
 
@@ -325,7 +347,7 @@ enum TimelineSpeakerChrome {
         color.resolvedColor(with: traitCollection).cgColor.alpha
     }
 
-    private static func rgb(_ hex: UInt32) -> UIColor {
+    fileprivate static func rgb(_ hex: UInt32) -> UIColor {
         UIColor(
             red: CGFloat((hex >> 16) & 0xFF) / 255,
             green: CGFloat((hex >> 8) & 0xFF) / 255,
