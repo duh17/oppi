@@ -758,7 +758,7 @@ Native UI is display and input only. It must not grant extensions direct client-
 
 ### Authoring API
 
-Extension authors should use the exported TypeScript types and small helpers from `server/src/extension-ui-contract.ts` when they are authored inside this repository. The helper is structural and optional: extensions can still implement `renderNative()` without importing Oppi, but official types and builders reduce drift.
+`renderNative()` returns a plain object in the shape above; extensions import nothing from Oppi. The server validates every surface (`normalizeExtensionUINativeSurface` in `server/src/extension-ui-contract.ts`) and drops one that is malformed or over a limit.
 
 ### Test matrix
 
@@ -804,7 +804,7 @@ The contract is intentionally broader than the first implementation. Implement i
 
 ### Phase 4: authoring and selected component support
 
-- Keep TypeScript types/builders for `renderNative()` exported from the shared contract and migrate in-repo extensions onto them.
+- Keep the surface types in `server/src/types/protocol.ts`; extensions return plain objects that the server validates.
 - Support `renderNative()` for managed runtime component widgets.
 - Keep mirrored component support behind explicit bridge capability flags.
 

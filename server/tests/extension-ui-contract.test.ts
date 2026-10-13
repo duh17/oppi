@@ -11,15 +11,18 @@ import {
   EXTENSION_NATIVE_UI_RENDER_NATIVE_CAPABILITIES,
   EXTENSION_NATIVE_UI_SERVER_CAPABILITIES,
   EXTENSION_UI_FIRE_AND_FORGET_METHODS,
+  EXTENSION_UI_NATIVE_SURFACE_MAX_ACTIVITY_ROWS,
+  EXTENSION_UI_NATIVE_SURFACE_MAX_BLOCKS,
+  EXTENSION_UI_NATIVE_SURFACE_MAX_DEPTH,
+  EXTENSION_UI_NATIVE_SURFACE_MAX_SPANS,
+  EXTENSION_UI_NATIVE_SURFACE_MAX_TERMINAL_LINES,
+  EXTENSION_UI_NATIVE_SURFACE_MAX_TEXT_BYTES,
   EXTENSION_UI_STATUS_TEXT_MAX_CHARS,
   EXTENSION_UI_WORKING_INDICATOR_MAX_FRAMES,
   EXTENSION_UI_WORKING_INDICATOR_MAX_FRAME_CHARS,
   EXTENSION_UI_WORKING_INDICATOR_MAX_INTERVAL_MS,
   EXTENSION_UI_WORKING_INDICATOR_MIN_INTERVAL_MS,
   EXTENSION_UI_WORKING_MESSAGE_MAX_CHARS,
-  extensionUIActivityListBlock,
-  extensionUINativeSurface,
-  extensionUITextBlock,
   isExtensionUIFireAndForgetMethod,
   normalizeExtensionUINativeSurface,
   normalizeExtensionUINotifyType,
@@ -141,7 +144,7 @@ describe("extension UI contract", () => {
     );
   });
 
-  it("exports small authoring helpers for renderNative widget surfaces", () => {
+  it("gives renderNative its context and accepts a plain-object surface unchanged", () => {
     expect(createExtensionUINativeRenderContext()).toEqual({
       target: "oppi-native-v1",
       capabilities: [
@@ -151,28 +154,7 @@ describe("extension UI contract", () => {
       locale: undefined,
     });
 
-    const surface = extensionUINativeSurface({
-      id: "widget:agents",
-      presentation: { style: "surfacePanel", title: "Agents" },
-      blocks: [
-        extensionUITextBlock("Ready", { id: "headline" }),
-        extensionUIActivityListBlock(
-          [
-            {
-              id: "child-1",
-              title: "Review",
-              subtitle: "Running",
-              state: "running",
-              link: "oppi://session/child-1",
-            },
-          ],
-          { id: "agents" },
-        ),
-      ],
-      fallback: { lines: ["Ready"] },
-    });
-
-    expect(surface).toEqual({
+    const surface = {
       version: 1,
       id: "widget:agents",
       source: "widget",
@@ -194,7 +176,7 @@ describe("extension UI contract", () => {
         },
       ],
       fallback: { lines: ["Ready"] },
-    });
+    };
     expect(normalizeExtensionUINativeSurface(surface)).toEqual(surface);
   });
 
@@ -783,90 +765,52 @@ describe("extension UI contract", () => {
   });
 
   it("enforces explicit native surface structural limits", () => {
-    const baseSurface = {
+    const surface = (blocks: unknown[]) => ({
       version: 1,
       id: "widget:limited",
       source: "widget",
       presentation: { style: "surfacePanel" },
+      blocks,
+    });
+    const nested = (depth: number): unknown =>
+      depth <= 1
+        ? { type: "text", spans: [{ text: "nested" }] }
+        : { type: "section", blocks: [nested(depth - 1)] };
+    const many = <T>(count: number, make: (index: number) => T): T[] =>
+      Array.from({ length: count }, (_, index) => make(index));
+    const fitsAndOneOver = (make: (count: number) => unknown[], limit: number) => {
+      expect(normalizeExtensionUINativeSurface(surface(make(limit)))).toBeDefined();
+      expect(normalizeExtensionUINativeSurface(surface(make(limit + 1)))).toBeUndefined();
     };
 
+    fitsAndOneOver(
+      (count) => many(count, () => ({ type: "divider" })),
+      EXTENSION_UI_NATIVE_SURFACE_MAX_BLOCKS,
+    );
+    fitsAndOneOver((count) => [nested(count)], EXTENSION_UI_NATIVE_SURFACE_MAX_DEPTH);
+    fitsAndOneOver(
+      (count) => [{ type: "text", spans: many(count, () => ({ text: "x" })) }],
+      EXTENSION_UI_NATIVE_SURFACE_MAX_SPANS,
+    );
+    // Ids and titles share the text budget, so check well under and just over it.
+    const markdown = (length: number) =>
+      surface([{ type: "markdown", markdown: "x".repeat(length) }]);
     expect(
-      normalizeExtensionUINativeSurface(
-        {
-          ...baseSurface,
-          blocks: [{ type: "divider" }, { type: "divider" }],
-        },
-        { maxBlocks: 1 },
-      ),
-    ).toBeUndefined();
-
+      normalizeExtensionUINativeSurface(markdown(EXTENSION_UI_NATIVE_SURFACE_MAX_TEXT_BYTES / 2)),
+    ).toBeDefined();
     expect(
-      normalizeExtensionUINativeSurface(
-        {
-          ...baseSurface,
-          blocks: [
-            {
-              type: "section",
-              blocks: [{ type: "text", spans: [{ text: "nested" }] }],
-            },
-          ],
-        },
-        { maxDepth: 1 },
-      ),
+      normalizeExtensionUINativeSurface(markdown(EXTENSION_UI_NATIVE_SURFACE_MAX_TEXT_BYTES + 1)),
     ).toBeUndefined();
-
-    expect(
-      normalizeExtensionUINativeSurface(
-        {
-          ...baseSurface,
-          blocks: [{ type: "text", spans: [{ text: "one" }, { text: "two" }] }],
-        },
-        { maxSpans: 1 },
-      ),
-    ).toBeUndefined();
-
-    expect(
-      normalizeExtensionUINativeSurface(
-        {
-          ...baseSurface,
-          blocks: [{ type: "markdown", markdown: "too much text" }],
-        },
-        { maxTextBytes: 4 },
-      ),
-    ).toBeUndefined();
-
-    expect(
-      normalizeExtensionUINativeSurface(
-        {
-          ...baseSurface,
-          blocks: [
-            {
-              type: "terminal",
-              lines: [[{ text: "one" }], [{ text: "two" }]],
-            },
-          ],
-        },
-        { maxTerminalLines: 1 },
-      ),
-    ).toBeUndefined();
-
-    expect(
-      normalizeExtensionUINativeSurface(
-        {
-          ...baseSurface,
-          blocks: [
-            {
-              type: "activityList",
-              rows: [
-                { id: "one", title: "One" },
-                { id: "two", title: "Two" },
-              ],
-            },
-          ],
-        },
-        { maxActivityRows: 1 },
-      ),
-    ).toBeUndefined();
+    fitsAndOneOver(
+      (count) => [{ type: "terminal", lines: many(count, () => [{ text: "x" }]) }],
+      EXTENSION_UI_NATIVE_SURFACE_MAX_TERMINAL_LINES,
+    );
+    fitsAndOneOver(
+      (count) => [
+        { type: "activityList", rows: many(count, (index) => ({ id: `r${index}`, title: "r" })) },
+      ],
+      EXTENSION_UI_NATIVE_SURFACE_MAX_ACTIVITY_ROWS,
+    );
   });
 
   it("accepts row disclosure blocks and raw terminal text inside the same budgets", () => {
@@ -894,8 +838,26 @@ describe("extension UI contract", () => {
       blocks: [{ rows: [{ blocks: [{ type: "terminal", text: raw }] }] }],
     });
     // Raw text counts against the text budget; row blocks against depth.
-    expect(normalizeExtensionUINativeSurface(surface("x".repeat(64)), { maxTextBytes: 32 })).toBeUndefined();
-    expect(normalizeExtensionUINativeSurface(surface(raw), { maxDepth: 2 })).toBeUndefined();
+    expect(
+      normalizeExtensionUINativeSurface(
+        surface("x".repeat(EXTENSION_UI_NATIVE_SURFACE_MAX_TEXT_BYTES + 1)),
+      ),
+    ).toBeUndefined();
+    // A row's blocks sit two levels below the list, so sections inside them reach the depth cap.
+    const rowWithSections = (sections: number) => {
+      let block: unknown = { type: "terminal", text: raw };
+      for (let index = 0; index < sections; index += 1)
+        block = { type: "section", blocks: [block] };
+      return {
+        ...surface(raw),
+        blocks: [
+          { type: "activityList", rows: [{ id: "bash-1", title: "bash-1", blocks: [block] }] },
+        ],
+      };
+    };
+    const sectionsThatFit = EXTENSION_UI_NATIVE_SURFACE_MAX_DEPTH - 3;
+    expect(normalizeExtensionUINativeSurface(rowWithSections(sectionsThatFit))).toBeDefined();
+    expect(normalizeExtensionUINativeSurface(rowWithSections(sectionsThatFit + 1))).toBeUndefined();
     // A terminal block needs lines or text.
     expect(
       normalizeExtensionUINativeSurface({

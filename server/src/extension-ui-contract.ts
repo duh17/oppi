@@ -1,7 +1,5 @@
 import type {
   AskQuestion,
-  ExtensionUIActivityRow,
-  ExtensionUINativeBlock,
   ExtensionUINativeSurface,
   ExtensionUITextSpan,
   ExtensionUINotifyType,
@@ -9,13 +7,6 @@ import type {
   ServerMessage,
 } from "./types.js";
 import { terminalLineToTextSpans, terminalLineVisibleText } from "./ansi.js";
-
-export type {
-  ExtensionUIActivityRow,
-  ExtensionUINativeBlock,
-  ExtensionUINativeSurface,
-  ExtensionUITextSpan,
-} from "./types.js";
 
 export const EXTENSION_UI_FIRE_AND_FORGET_METHODS = new Set([
   "notify",
@@ -85,56 +76,9 @@ export function createExtensionUINativeRenderContext(
   };
 }
 
-export function extensionUINativeSurface(
-  surface: Omit<ExtensionUINativeSurface, "version" | "source">,
-): ExtensionUINativeSurface {
-  return {
-    version: 1,
-    source: "widget",
-    ...surface,
-  };
-}
-
-export function extensionUIText(
-  text: string,
-  options: Omit<ExtensionUITextSpan, "text"> = {},
-): ExtensionUITextSpan {
-  return {
-    text,
-    ...options,
-  };
-}
-
-export function extensionUITextBlock(
-  spans: ExtensionUITextSpan[] | string,
-  options: { id?: string } = {},
-): ExtensionUINativeBlock {
-  return {
-    type: "text",
-    id: options.id,
-    spans: typeof spans === "string" ? [extensionUIText(spans)] : spans,
-  };
-}
-
-export function extensionUIActivityListBlock(
-  rows: ExtensionUIActivityRow[],
-  options: { id?: string } = {},
-): ExtensionUINativeBlock {
-  return {
-    type: "activityList",
-    id: options.id,
-    rows,
-  };
-}
-
+/** Only the env-gated E2E harness raises the byte cap; every other limit is fixed. */
 export interface ExtensionUINativeSurfaceLimitOptions {
   maxBytes?: number;
-  maxBlocks?: number;
-  maxDepth?: number;
-  maxTextBytes?: number;
-  maxSpans?: number;
-  maxTerminalLines?: number;
-  maxActivityRows?: number;
 }
 
 export interface ExtensionUIProtocolRequest {
@@ -207,12 +151,12 @@ interface NativeSurfaceLimitState {
 function nativeSurfaceLimits(options: ExtensionUINativeSurfaceLimitOptions): NativeSurfaceLimits {
   return {
     maxBytes: options.maxBytes ?? EXTENSION_UI_NATIVE_SURFACE_MAX_BYTES,
-    maxBlocks: options.maxBlocks ?? EXTENSION_UI_NATIVE_SURFACE_MAX_BLOCKS,
-    maxDepth: options.maxDepth ?? EXTENSION_UI_NATIVE_SURFACE_MAX_DEPTH,
-    maxTextBytes: options.maxTextBytes ?? EXTENSION_UI_NATIVE_SURFACE_MAX_TEXT_BYTES,
-    maxSpans: options.maxSpans ?? EXTENSION_UI_NATIVE_SURFACE_MAX_SPANS,
-    maxTerminalLines: options.maxTerminalLines ?? EXTENSION_UI_NATIVE_SURFACE_MAX_TERMINAL_LINES,
-    maxActivityRows: options.maxActivityRows ?? EXTENSION_UI_NATIVE_SURFACE_MAX_ACTIVITY_ROWS,
+    maxBlocks: EXTENSION_UI_NATIVE_SURFACE_MAX_BLOCKS,
+    maxDepth: EXTENSION_UI_NATIVE_SURFACE_MAX_DEPTH,
+    maxTextBytes: EXTENSION_UI_NATIVE_SURFACE_MAX_TEXT_BYTES,
+    maxSpans: EXTENSION_UI_NATIVE_SURFACE_MAX_SPANS,
+    maxTerminalLines: EXTENSION_UI_NATIVE_SURFACE_MAX_TERMINAL_LINES,
+    maxActivityRows: EXTENSION_UI_NATIVE_SURFACE_MAX_ACTIVITY_ROWS,
   };
 }
 
