@@ -630,28 +630,11 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     if (request.conversationId !== undefined && request.conversationId !== conversationId)
       throw new Error(`Conversation ${request.conversationId} is not this session's conversation`);
     const host = await (await runtime).openHost(requireDurableStoreId(session));
-    const releaseStream = host.retain("stream");
-    try {
-      const { harness } = await host.open();
-      const { attachConversationStream } = await import("./durable-conversation-stream.js");
-      const subscription = await attachConversationStream({
-        harness,
-        conversationId,
-        renderers: this.mobileRenderers,
-        ...(request.afterEntryId !== undefined ? { afterEntryId: request.afterEntryId } : {}),
-        send,
-      });
-      let disposed = false;
-      return () => {
-        if (disposed) return;
-        disposed = true;
-        subscription.dispose();
-        releaseStream();
-      };
-    } catch (error) {
-      releaseStream();
-      throw error;
-    }
+    return host.transcript(conversationId, {
+      renderers: this.mobileRenderers,
+      ...(request.afterEntryId !== undefined ? { afterEntryId: request.afterEntryId } : {}),
+      send,
+    });
   }
 
   /** Read-only Harness access for the search index; undefined when no runtime exists (flag off, nothing bound). */
@@ -708,8 +691,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     if (!/^[1-9]\d*$/.test(entryId) || !Number.isSafeInteger(Number(entryId))) return undefined;
     const session = this.storage.getSession(sessionId);
     if (!session) throw new Error("Server durable fork requires a bound conversation");
-    return (await this.durableHarness).withSession(session, (_harness, host) =>
-      host.forkConversation(conversationId, Number(entryId) as EntryId),
+    return (await this.durableHarness).withSession(session, async (_harness, host) =>
+      (await host.controller(conversationId)).fork(Number(entryId) as EntryId),
     );
   }
 

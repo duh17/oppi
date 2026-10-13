@@ -52,6 +52,7 @@ Entries labeled **Mac** describe work on `main`; the Mac app is not part of the 
 
 - **Server:** A session's workspace name follows the workspace: session lists read the workspace's current name, an open session picks up a rename on its next save, and sessions of a deleted workspace show no name instead of the old one.
 - **Server:** Durable `session_send` request ids include the caller store and conversation, so two trees cannot drop each other's messages. `session_abort` no longer stops a same-numbered conversation in the caller's store when the target lives in another tree. Starting a stopped durable session again leaves leftover background work aborted. The control conversation row created at server start stays stopped until something opens it, so the next boot does not start it as a live session.
+- **Server:** Durable `session_send` goes through the target session's own input controller, the one its chat uses. A message whose request id the session already admitted (from `session_send` or the chat) is not queued again, the same request id with different text is refused instead of silently kept, and a sent message that ends unanswered (for example a model error) leaves a **Run failed** card in the target's transcript.
 
 ### Added
 

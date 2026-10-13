@@ -1,6 +1,11 @@
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AttachedReplicatedState } from "@earendil-works/chord";
-import { ModelRuntime, SettingsManager, getAgentDir } from "@earendil-works/pi-coding-agent";
+import {
+  ModelRegistry,
+  ModelRuntime,
+  SettingsManager,
+  getAgentDir,
+} from "@earendil-works/pi-coding-agent";
 import {
   AgentDoc,
   Harness,
@@ -8,6 +13,7 @@ import {
   defineDoc,
   type Extension,
   type HarnessSettings,
+  type Conversation,
   type ConversationId,
   type EntryId,
   type Registry,
@@ -48,12 +54,16 @@ import {
   type LoadedDurableExtension,
 } from "./durable-extension-loader.js";
 import type { DurableMcp } from "./durable-mcp.js";
+import { DurableAgentController } from "./durable-agent-controller.js";
+import { attachConversationStream } from "./durable-conversation-stream.js";
+import { DurableModels } from "./durable-models.js";
 import { createLogger } from "./logger.js";
+import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import { safeErrorMessage } from "./log-utils.js";
 import type { DurableThreads } from "./durable-threads.js";
 import { properLockfile } from "./pi-lockfile.js";
 import { requireDurableStoreId } from "./session-runtime-capabilities.js";
-import type { Session } from "./types.js";
+import type { ConversationStreamServerMessage, Session } from "./types.js";
 
 /** Persist the execution boundary so a resumed conversation cannot change runtime. */
 export const DurableRuntime = defineDoc<{ kind: "host" | "sandbox"; workspaceId?: string }>({
@@ -199,9 +209,22 @@ function writeStoreMeta(directory: string, meta: DurableStoreMeta): void {
   renameSync(tmp, dest);
 }
 
+/** The session services `SessionHost` keeps for one opened Harness. */
+interface HostServices {
+  harness: Harness;
+  /** Shared by every conversation's `DurableModels`. */
+  registry: ModelRegistry;
+  conversations: Map<
+    ConversationId,
+    { conversation: Conversation; controller?: DurableAgentController; models?: DurableModels }
+  >;
+}
+
 /**
  * One open pi-durable store: the directory lock, sqlite, Harness, resume gate,
- * sandbox envs, MCP connections, and live-task watch of that tree.
+ * sandbox envs, MCP connections, and live-task watch of that tree, plus the session services of
+ * its conversations: `controller` (input and run control), `models`, and `transcript`. They take
+ * the Harness, the conversation, and this host only; `DurableBackend` delegates to them.
  */
 export class SessionHost {
   private opening?: Promise<{ harness: Harness; models: ModelRuntime }>;
@@ -217,6 +240,8 @@ export class SessionHost {
   private stopTaskGraph?: () => void;
   private closing?: Promise<void>;
   private idleCloseTimer: ReturnType<typeof setImmediate> | undefined;
+  /** Set when the Harness opens, dropped on close. */
+  private services?: HostServices;
 
   constructor(
     readonly runtime: DurableHarness,
@@ -349,7 +374,7 @@ export class SessionHost {
   bindOpenedHarness(harness: Harness, storage: Storage, models: ModelRuntime): void {
     if (this.opening) throw new Error("Server durable store is already opening");
     this.harnessStorage = storage;
-    this.opening = this.watchTaskGraph(harness).then(() => ({ harness, models }));
+    this.opening = this.watchTaskGraph(harness).then(() => this.opened(harness, models));
   }
 
   retain(reason: string): () => void {
@@ -374,6 +399,84 @@ export class SessionHost {
       }
       this.maybeClose();
     };
+  }
+
+  /** The one input and run controller of conversation `id` while this host is open. */
+  async controller(id: ConversationId): Promise<DurableAgentController> {
+    const { harness, entry } = await this.serviceEntry(id);
+    return (entry.controller ??= new DurableAgentController(harness, entry.conversation, this));
+  }
+
+  /** The one model and thinking service of conversation `id` while this host is open. */
+  async models(id: ConversationId): Promise<DurableModels> {
+    const { harness, registry, entry } = await this.serviceEntry(id);
+    return (entry.models ??= new DurableModels(harness, entry.conversation, registry));
+  }
+
+  private async serviceEntry(id: ConversationId): Promise<{
+    harness: Harness;
+    registry: ModelRegistry;
+    entry: NonNullable<ReturnType<HostServices["conversations"]["get"]>>;
+  }> {
+    const { harness } = await this.open();
+    const services = this.services;
+    if (services?.harness !== harness) throw new Error("Server durable store is closed");
+    let entry = services.conversations.get(id);
+    if (!entry) {
+      const conversation = await harness.conversation(id, BACKGROUND_CONTEXT);
+      if (!conversation) throw new Error(`Server durable conversation ${id} is missing`);
+      // A close (or close and reopen) during the lookup dropped these services: cache nothing.
+      if (this.services !== services) throw new Error("Server durable store is closed");
+      entry = services.conversations.get(id) ?? { conversation };
+      services.conversations.set(id, entry);
+    }
+    return { harness, registry: services.registry, entry };
+  }
+
+  private opened(
+    harness: Harness,
+    models: ModelRuntime,
+  ): { harness: Harness; models: ModelRuntime } {
+    this.services = { harness, registry: new ModelRegistry(models), conversations: new Map() };
+    return { harness, models };
+  }
+
+  private dropServices(): void {
+    for (const { controller } of this.services?.conversations.values() ?? []) controller?.close();
+    this.services = undefined;
+  }
+
+  /**
+   * Stream conversation `id` to one socket (see `durable-conversation-stream.ts`). Sends the
+   * first frame before resolving and holds this host open until the returned function runs.
+   */
+  async transcript(
+    id: ConversationId,
+    options: {
+      renderers: MobileRendererRegistry;
+      afterEntryId?: number;
+      send: (frame: ConversationStreamServerMessage) => void;
+    },
+  ): Promise<() => void> {
+    const release = this.retain("stream");
+    try {
+      const { harness } = await this.open();
+      const subscription = await attachConversationStream({
+        harness,
+        conversationId: id,
+        ...options,
+      });
+      let disposed = false;
+      return () => {
+        if (disposed) return;
+        disposed = true;
+        subscription.dispose();
+        release();
+      };
+    } catch (error) {
+      release();
+      throw error;
+    }
   }
 
   async use<T>(fn: (harness: Harness, host: SessionHost) => Promise<T>): Promise<T> {
@@ -471,7 +574,7 @@ export class SessionHost {
         BACKGROUND_CONTEXT,
       );
       await this.watchTaskGraph(harness);
-      return { harness, models: shared.models };
+      return this.opened(harness, shared.models);
     } catch (error) {
       try {
         await this.releaseLock?.();
@@ -632,6 +735,7 @@ export class SessionHost {
         this.stopTaskGraph = undefined;
         this.taskGraph = undefined;
         this.closed = true;
+        this.dropServices();
         // Closing interrupts invocations without settling their tasks. Recorded
         // restart work remains durable and is continued by the next Harness.open.
         await harness.close(BACKGROUND_CONTEXT);

@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AttachedReplicatedState } from "@earendil-works/chord";
 import {
@@ -13,9 +12,6 @@ import {
 import {
   watchEvents,
   AgentDoc,
-  InboxDoc,
-  LiveDoc,
-  defineDocFamily,
   type AgentEventStream,
   type Conversation,
   type ConversationView,
@@ -26,8 +22,6 @@ import {
   type InboxState,
   type UsageState,
   type EntryRecord,
-  type GenerationCheckpoint,
-  type Tx,
   CompactionEntry,
   ResetEntry,
 } from "@earendil-works/pi-durable";
@@ -45,11 +39,12 @@ import {
 import { durableUnsupportedFeature, type AgentDefinition } from "./agent-launch-service.js";
 import type { AgentBackend } from "./agent-backend.js";
 import { isControlConversation } from "./control-session.js";
+import { readRequestDisplay, type DurableAgentController } from "./durable-agent-controller.js";
 import { controlConversationTools } from "./durable-control-conversation.js";
 import { DurableRuntime, type SessionHost } from "./durable-harness.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import { DurableSandboxTools } from "./durable-sandbox-tools.js";
-import { readDurableInputCards, resolveDurableInputCards } from "./durable-input-cards.js";
+import { readDurableInputCards } from "./durable-input-cards.js";
 import { DurableEventProjection } from "./durable-event-projection.js";
 import { exportDurableToHtml } from "./durable-export.js";
 import { readDurableSessionEntries } from "./durable-history.js";
@@ -68,14 +63,8 @@ import {
   SessionRuntimeTransaction,
   type SessionRuntimeTransactionPermit,
 } from "./session-runtime-transaction.js";
-import { isThinkingLevel, THINKING_LEVELS, type ThinkingLevel } from "./thinking-levels.js";
-import type {
-  ChatAttachmentRef,
-  MessageQueueItem,
-  MessageQueueState,
-  Session,
-  Workspace,
-} from "./types.js";
+import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
+import type { MessageQueueState, Session, Workspace } from "./types.js";
 import { DurableAsk } from "../extensions/durable/ask/durable.js";
 import { DurableBackgroundJobs } from "../extensions/durable/background-jobs/durable.js";
 import {
@@ -85,7 +74,6 @@ import {
 import {
   DURABLE_FAILURE_ENTRY_KIND,
   reconcileFailureCards,
-  recordInputFailure,
   recordTaskFailure,
 } from "./durable-failure-cards.js";
 import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
@@ -123,18 +111,6 @@ export class DurableNotSupportedError extends Error {
     this.name = "DurableNotSupportedError";
   }
 }
-
-// Submission records omit content after queued input withdrawal. Keep its
-// fingerprint durable too, so a later replay cannot silently change that input.
-const RequestContent = defineDocFamily<{ content: string; display?: string }, null>({
-  kind: "oppi.request-content",
-  version: 1,
-  family: true,
-  scope: "conversation",
-  history: "latest",
-  fork: "initial",
-  initial: () => ({ content: "" }),
-});
 
 interface DurableBackendOptions {
   harness: Harness;
@@ -223,14 +199,19 @@ async function syncProjectContext(
   }, BACKGROUND_CONTEXT);
 }
 
-/** An AgentBackend over a conversation; the Harness owns execution and queues. */
+/**
+ * The classic-event facade of a conversation for the session socket: classic events, lifecycle
+ * permits, Skill expansion, and the queue version over the host's `AgentController` and `Models`,
+ * which own input, run, and model control. The Harness owns execution and queues.
+ */
 export class DurableBackend implements AgentBackend {
   private readonly transactions = new SessionRuntimeTransaction();
   private readonly projection: DurableEventProjection;
   private ui!: DurableUIProjection;
   private disposed = false;
+  /** Aborted on detach: admission still waiting in the controller's chain is refused. */
+  private readonly lifetime = new AbortController();
   private eventsStarted = false;
-  private admissions: Promise<void> = Promise.resolve();
   private detaching?: Promise<void>;
   private readonly registry: ModelRegistry;
   readonly abortClearsQueuedModelTurns = true;
@@ -647,20 +628,11 @@ export class DurableBackend implements AgentBackend {
           event.record.status === "placed" &&
           event.record.requestId
         ) {
-          const metadata = await this.harness.snapshot(
-            RequestContent,
+          const display = await readRequestDisplay(
+            this.harness,
             this.conversation.id,
             event.record.requestId,
-            BACKGROUND_CONTEXT,
           );
-          const display = metadata?.display
-            ? (JSON.parse(metadata.display) as {
-                message: string;
-                attachments: ChatAttachmentRef[];
-                createdAt: number;
-                kind?: string;
-              })
-            : undefined;
           if (
             display &&
             (display.kind === "steer" || display.kind === "followUp") &&
@@ -761,7 +733,6 @@ export class DurableBackend implements AgentBackend {
       return this.withModelTurnAdmission("prompt", (token) => this.prompt(message, options, token));
     this.transactions.assertPermit(permit, "shared");
     this.assertOpen();
-    this.host.assertSchedulingReady();
     const clientTurnId = options?.clientTurnId;
     if (
       clientTurnId &&
@@ -775,85 +746,27 @@ export class DurableBackend implements AgentBackend {
       ? [{ type: "text" as const, text }, ...options.images]
       : text;
     await this.mcp?.beforePrompt();
-    // Shared lifecycle permits allow concurrent prompts. Serialize only durable
-    // admission so two copies of one request cannot both append a local user row.
-    const admission = this.admissions.then(async () => {
-      this.assertOpen();
-      this.host.assertSchedulingReady();
-      const existing = await this.conversation.commit(async (tx) => {
-        const record = await tx.submissionByRequest(this.conversation.id, requestId);
-        const queued =
-          record && record.entry === undefined
-            ? (await tx.doc(InboxDoc, this.conversation.id)).items.find(
-                (item) => item.id === record.id,
-              )
-            : undefined;
-        const stored =
-          record?.entry !== undefined
-            ? (await tx.entry(record.entry))?.model?.find((item) => item.role === "user")?.content
-            : queued && queued.mode !== "write"
-              ? queued.content
-              : undefined;
-        const fingerprint = await tx.doc(RequestContent, this.conversation.id, requestId, null);
-        if (!record) {
-          fingerprint.content = JSON.stringify(content);
-          fingerprint.display = JSON.stringify({
-            message: options?.queueDisplay?.message ?? message,
-            attachments: options?.queueDisplay?.attachments ?? [],
-            createdAt: Date.now(),
-            kind: options?.streamingBehavior,
-          });
-          return undefined;
-        }
-        if (
-          stored !== undefined
-            ? !isDeepStrictEqual(content, stored)
-            : fingerprint.content !== JSON.stringify(content)
-        )
-          throw new Error(
-            "clientTurnId conflict: the stored durable submission has different content",
-          );
-        return record;
-      }, BACKGROUND_CONTEXT);
-      const submission = await this.conversation.submit(
-        {
-          type: "input",
-          content,
-          requestId,
-          whenBusy: options?.streamingBehavior ?? "reject",
-        },
-        BACKGROUND_CONTEXT,
-      );
-      if (!existing) options?.onPreflightAccepted?.();
-      return { submission, duplicate: existing !== undefined };
-    });
-    this.admissions = admission.then(
-      () => undefined,
-      () => undefined,
-    );
-    const { submission, duplicate } = await admission;
     // Admission, not the whole generation, holds the permit. Abort must not
     // wait behind a stream, and a duplicate can find its settled submission.
-    void submission
-      .wait(BACKGROUND_CONTEXT)
-      .then(async (settled) => {
-        if (this.disposed || settled.status !== "unanswered" || settled.reason === "aborted")
-          return;
-        if (settled.type === "input" && settled.reason !== "withdrawn") {
-          try {
-            await recordInputFailure(this.conversation, settled);
-          } catch (error) {
-            log.warn("durable_failure.input_card_failed", {
-              submissionId: settled.id,
-              error: safeErrorMessage(error),
-            });
-          }
-        }
-        if (!this.disposed)
-          this.onEvent({
-            type: "prompt_error",
-            error: `Server durable input unanswered: ${settled.reason}`,
-          });
+    const { duplicate, settled } = await (
+      await this.controller()
+    ).prompt(content, {
+      requestId,
+      whenBusy: options?.streamingBehavior,
+      display: {
+        message: options?.queueDisplay?.message ?? message,
+        attachments: options?.queueDisplay?.attachments ?? [],
+      },
+      signal: this.lifetime.signal,
+      onAccepted: options?.onPreflightAccepted,
+    });
+    void settled
+      .then((record) => {
+        if (this.disposed || record.status !== "unanswered" || record.reason === "aborted") return;
+        this.onEvent({
+          type: "prompt_error",
+          error: `Server durable input unanswered: ${record.reason}`,
+        });
       })
       .catch((error: unknown) => {
         if (!this.disposed)
@@ -869,7 +782,7 @@ export class DurableBackend implements AgentBackend {
     if (!permit) return this.withRuntimeLifecycleTransaction("abort", (token) => this.abort(token));
     this.transactions.assertPermit(permit, "exclusive");
     this.assertOpen();
-    await this.host.abortConversation(this.conversation.id);
+    await (await this.controller()).abort();
     this.onEvent({ type: "queue_update", ...this.queuedMessages() });
   }
   // Classic aborts only a user-started shell command, which the server never starts on either
@@ -895,6 +808,7 @@ export class DurableBackend implements AgentBackend {
   detachForRestart(): Promise<void> {
     return (this.detaching ??= (async () => {
       this.disposed = true;
+      this.lifetime.abort(new Error("Session backend is disposed"));
       await this.ui.stop();
       await this.events.stop();
       this.view.dispose();
@@ -923,54 +837,12 @@ export class DurableBackend implements AgentBackend {
     return this.queueVersion;
   }
 
-  private async queueItem(
-    item: Exclude<NonNullable<InboxState>["items"][number], { mode: "write" }>,
-  ): Promise<MessageQueueItem> {
-    const receipt = await this.harness.submission(item.id, BACKGROUND_CONTEXT);
-    const record = await receipt?.status(BACKGROUND_CONTEXT);
-    const metadata = record?.requestId
-      ? await this.harness.snapshot(
-          RequestContent,
-          this.conversation.id,
-          record.requestId,
-          BACKGROUND_CONTEXT,
-        )
-      : undefined;
-    const text =
-      typeof item.content === "string"
-        ? item.content
-        : item.content.map((block) => (block.type === "text" ? block.text : "")).join("");
-    const display = metadata?.display
-      ? (JSON.parse(metadata.display) as {
-          message: string;
-          attachments: ChatAttachmentRef[];
-          createdAt: number;
-        })
-      : undefined;
-    return {
-      id: String(item.id),
-      message: display?.message ?? text,
-      ...(display?.attachments?.length ? { attachments: display.attachments } : {}),
-      createdAt: display?.createdAt ?? 0,
-    };
+  private controller(): Promise<DurableAgentController> {
+    return this.host.controller(this.conversation.id);
   }
 
   async nativeMessageQueue(): Promise<MessageQueueState> {
-    await this.admissions;
-    const { internal, items, version } = await this.conversation.commit(async (tx) => {
-      // Cards and inbox membership must share a mutation line: a generated
-      // report admitted after the card read must not flash as user input.
-      const { submissions: internal } = await resolveDurableInputCards(tx, this.conversation.id);
-      const inbox = await tx.doc(InboxDoc, this.conversation.id);
-      const items = JSON.parse(JSON.stringify(inbox.items)) as InboxState["items"];
-      return { internal, items, version: this.inboxVersion(items) };
-    }, BACKGROUND_CONTEXT);
-    const queue: MessageQueueState = { version, steering: [], followUp: [] };
-    for (const item of items) {
-      if (item.mode === "write" || internal.has(item.id)) continue;
-      queue[item.mode === "steer" ? "steering" : "followUp"].push(await this.queueItem(item));
-    }
-    return queue;
+    return (await this.controller()).queue((inbox) => this.inboxVersion(inbox));
   }
 
   queuedMessages(): { steering: readonly string[]; followUp: readonly string[] } {
@@ -1117,61 +989,32 @@ export class DurableBackend implements AgentBackend {
     } while (cursor !== undefined);
     return records.reverse();
   }
-  async setModel(modelId: string): Promise<Awaited<ReturnType<AgentBackend["setModel"]>>> {
+  private models(): ReturnType<SessionHost["models"]> {
     this.assertOpen();
-    const model = resolveSessionSeedModel(this.registry, modelId);
-    if (!model) return { success: false, error: `Model unavailable: ${modelId}` };
-    await this.conversation.configure(
-      { model: { provider: model.provider, modelId: model.id } },
-      BACKGROUND_CONTEXT,
-    );
-    return {
-      success: true,
-      provider: model.provider,
-      id: model.id,
-      name: model.name,
-      thinkingLevel: this.agent.thinkingLevel,
-    };
+    return this.host.models(this.conversation.id);
+  }
+  async setModel(modelId: string): Promise<Awaited<ReturnType<AgentBackend["setModel"]>>> {
+    const selected = await (await this.models()).select(modelId);
+    return selected
+      ? { success: true, ...selected }
+      : { success: false, error: `Model unavailable: ${modelId}` };
   }
   async cycleModel(
     direction: "forward" | "backward" = "forward",
   ): Promise<Awaited<ReturnType<AgentBackend["cycleModel"]>>> {
-    const models = this.registry.getAvailable();
-    if (!models.length) return undefined;
-    const index = models.findIndex(
-      (model) =>
-        model.provider === this.agent.model?.provider && model.id === this.agent.model?.modelId,
-    );
-    const next =
-      models[(index + (direction === "forward" ? 1 : -1) + models.length) % models.length];
-    if (!next) return undefined;
-    await this.setModel(`${next.provider}/${next.id}`);
-    return {
-      model: { provider: next.provider, id: next.id },
-      thinkingLevel:
-        this.agent.thinkingLevel !== undefined && isThinkingLevel(this.agent.thinkingLevel)
-          ? this.agent.thinkingLevel
-          : "off",
-    };
+    return (await this.models()).cycleModel(direction);
   }
   async setThinkingLevel(level: ThinkingLevel): Promise<void> {
-    this.assertOpen();
-    await this.conversation.configure({ thinkingLevel: level }, BACKGROUND_CONTEXT);
+    await (await this.models()).selectThinking(level);
   }
   async cycleThinkingLevel(): Promise<ThinkingLevel> {
-    const levels = THINKING_LEVELS;
-    const next =
-      levels[(levels.indexOf(this.agent.thinkingLevel as ThinkingLevel) + 1) % levels.length] ??
-      "off";
-    await this.setThinkingLevel(next);
-    return next;
+    return (await this.models()).cycleThinking();
   }
   setSessionName(name: string): void {
     this.session.name = name;
   }
   async compact(instructions?: string): Promise<CompactionResult> {
     this.assertOpen();
-    this.host.assertSchedulingReady();
     const usageBefore = this.messages()
       .reverse()
       .find((message) => message.role === "assistant")?.usage;
@@ -1181,26 +1024,7 @@ export class DurableBackend implements AgentBackend {
         (usageBefore?.output ?? 0) +
         (usageBefore?.cacheRead ?? 0) +
         (usageBefore?.cacheWrite ?? 0);
-    const id = await this.conversation.compact(instructions, BACKGROUND_CONTEXT);
-    const task = await this.harness.waitForTask(id, BACKGROUND_CONTEXT);
-    const outcome = task.state.outcome;
-    if (outcome.status !== "completed" || outcome.result.submissionId === undefined)
-      throw new Error("Server durable compaction did not produce a summary");
-    const submission = await this.harness.submission(
-      outcome.result.submissionId,
-      BACKGROUND_CONTEXT,
-    );
-    const placed = await submission?.wait(BACKGROUND_CONTEXT);
-    if (placed?.status !== "done") throw new Error("Server durable compaction was not placed");
-    const entry = this.view.value.entries.find((entry) => entry.id === placed.entry);
-    const message = entry?.model?.[0];
-    if (!message || message.role !== "user")
-      throw new Error("Server durable compaction summary is unavailable");
-    const summary =
-      typeof message.content === "string"
-        ? message.content
-        : message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
-    return { summary, firstKeptEntryId: String(entry?.head), tokensBefore };
+    return { ...(await (await this.controller()).compact(instructions)), tokensBefore };
   }
   toolDefinition(): undefined {
     return undefined;
@@ -1238,40 +1062,8 @@ export class DurableBackend implements AgentBackend {
   ): Promise<MessageQueueState> {
     this.transactions.assertPermit(permit, "exclusive");
     this.assertOpen();
-    const withdrawn: MessageQueueState = {
-      version: this.inboxVersion(),
-      steering: [],
-      followUp: [],
-    };
-    // Snapshot identities only. Each commit checks current inbox membership and
-    // current internal-card receipts; placement in between is a successful no-op.
-    const ids = (this.currentInbox()?.items ?? [])
-      .filter(
-        (item) => item.mode !== "write" && (itemId === undefined || String(item.id) === itemId),
-      )
-      .map((item) => item.id);
-    for (const id of ids) {
-      const item = await this.conversation.commit(async (tx) => {
-        const inbox = await tx.doc(InboxDoc, this.conversation.id);
-        const { submissions } = await resolveDurableInputCards(tx, this.conversation.id);
-        const index = inbox.items.findIndex(
-          (item) => item.id === id && item.mode !== "write" && !submissions.has(item.id),
-        );
-        const item = inbox.items[index];
-        if (!item || item.mode === "write") return undefined;
-        // Mirrors pi-durable inbox.js withdrawQueuedInputs/removeInboxItem.
-        // Membership on this mutation line means queued in this conversation;
-        // placement and settlement remove it atomically. Never re-admit inputs.
-        const snapshot = JSON.parse(JSON.stringify(item)) as typeof item;
-        tx.settleSubmission(item.id, { status: "unanswered", reason: "aborted" });
-        inbox.items.splice(index, 1);
-        return snapshot;
-      }, BACKGROUND_CONTEXT);
-      if (item)
-        withdrawn[item.mode === "steer" ? "steering" : "followUp"].push(await this.queueItem(item));
-    }
-    withdrawn.version = this.inboxVersion();
-    return withdrawn;
+    const withdrawn = await (await this.controller()).cancelQueued(itemId);
+    return { version: this.inboxVersion(), ...withdrawn };
   }
 
   respondToExtensionUIRequest(response: ExtensionUIResponsePayload): Promise<boolean> {
@@ -1380,43 +1172,9 @@ export class DurableBackend implements AgentBackend {
     this.assertOpen();
     this.host.runtime.runPolicySettings.setRetryEnabled(enabled);
   }
-  /**
-   * Cancel a pending retry backoff and nothing else. The failed attempt's error is already
-   * in the transcript; aborting only the generation task ends the run as aborted and leaves
-   * queued inputs in the inbox, as classic does. Outside a backoff this does nothing, as classic.
-   * Queued inputs also stay unstarted afterwards: pi-durable places the inbox only at a boundary or
-   * on the next submission, after an aborted run as after a failed one.
-   *
-   * The generation's retry phase clears `pi.live.generation.retry` and moves the same task on to
-   * `prepare` in one commit, then runs the next attempt under the same task id. A read followed by
-   * `harness.abortTask` therefore lets a backoff that ends in between abort the new attempt, which
-   * classic (it only aborts the sleep) never does. The check and the mark must be one commit, and
-   * `abortTask` cannot do that: it marks whatever state the task has when its own commit runs.
-   * pi-durable's public `Tx` reads the task and `pi.live` but has no way to write the mark, so this
-   * calls `setTask`, the call `abortTask` itself makes, on the commit's own transaction. The
-   * scheduler's commit listener signals the run invocation and starts the abort handler for the
-   * mark from any commit. `waitForTask` then returns once the abort handler has ended the run.
-   */
   async abortRetry(): Promise<void> {
     this.assertOpen();
-    this.host.assertSchedulingReady();
-    const id = this.conversation.id;
-    const marked = await this.conversation.commit(async (tx) => {
-      const live = await tx.doc(LiveDoc, id);
-      if (live.generation?.retry === undefined || live.run === undefined) return undefined;
-      const task = await tx.task(live.run.taskId);
-      if (task === undefined || task.abortRequested) return undefined;
-      const state = task.state;
-      if (state.status !== "running" && state.status !== "pending") return undefined;
-      if ((state.checkpoint as GenerationCheckpoint).phase !== "retry") return undefined;
-      const { setTask } = tx as Tx & { setTask?: (record: typeof task) => void };
-      if (typeof setTask !== "function") {
-        throw new Error("pi-durable no longer lets a commit mark a task abort-requested");
-      }
-      setTask.call(tx, { ...task, abortRequested: true });
-      return task.id;
-    }, BACKGROUND_CONTEXT);
-    if (marked !== undefined) await this.harness.waitForTask(marked, BACKGROUND_CONTEXT);
+    await (await this.controller()).abortRetry();
   }
   getEntryRenderers(): undefined {
     return undefined;

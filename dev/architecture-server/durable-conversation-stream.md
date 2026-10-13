@@ -57,7 +57,7 @@ Paths are arrays of keys and indexes, always inline (no Chord wire interning). `
 
 ## Delivery
 
-`server/src/durable-conversation-stream.ts` keeps one `ConversationRoom` per attached conversation, shared by its sockets and closed with the last one.
+`server/src/durable-conversation-stream.ts` keeps one `ConversationRoom` per attached conversation, shared by its sockets and closed with the last one. Sockets reach it through `SessionHost.transcript(conversationId, { renderers, afterEntryId?, send })`, which holds the store open (`stream`) until the returned function ends the subscription.
 
 - The room loads `conversation.viewState()` plus `harness.snapshot` for listed documents outside the Pi view, after subscribing to `harness.subscribeCommits`. Commits that land during the load are replayed over it; replay is idempotent.
 - Each commit publication updates the room synchronously, so the room never holds part of a commit. Each socket remembers what it sent and flushes at most every 100 ms (Durable's progress interval), leading edge after a quiet period. One `update` is therefore a whole number of commits: the new assistant entry and the cleared `pi.live.generation` always share a frame.

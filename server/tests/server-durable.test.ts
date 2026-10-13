@@ -2223,6 +2223,7 @@ describe("server durable managed runtime", () => {
         }
         return submit(...args);
       });
+      vi.spyOn(harness, "conversation").mockResolvedValue(conversation);
       const png = Buffer.from(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jE0YAAAAASUVORK5CYII=",
         "base64",
@@ -3193,6 +3194,7 @@ describe("server durable managed runtime", () => {
     const native = (
       b as unknown as { conversation: Awaited<ReturnType<typeof harness.conversation>> }
     ).conversation!;
+    vi.spyOn(harness, "conversation").mockResolvedValue(native);
     const commit = native.commit.bind(native);
     const one = await commit(async (tx) => {
       await tx.doc(DurableInputCards, native.id);
@@ -3254,6 +3256,55 @@ describe("server durable managed runtime", () => {
     await b.dispose();
   });
 
+  it("versions a queue read below a placement that commits during its display reads", async () => {
+    const f = await fixture([]);
+    const harness = await openHarness(f.dir, f.models);
+    const b = await backend(harness, f.models, f.session, f.dir);
+    const native = (
+      b as unknown as { conversation: Awaited<ReturnType<typeof harness.conversation>> }
+    ).conversation!;
+    const queued = await native.commit(async (tx) => {
+      const submission = await tx.createSubmission({
+        conversationId: native.id,
+        type: "input",
+        status: "queued",
+      });
+      (await tx.doc(InboxDoc, native.id)).items.push({
+        id: submission.id,
+        mode: "followUp",
+        content: "queued then placed",
+      });
+      return submission.id;
+    }, context);
+    // The run places the item while the first read resolves its display, and a newer queue
+    // read (as the placement's own update does) versions the emptied inbox.
+    const submission = harness.submission.bind(harness);
+    let newer: Awaited<ReturnType<typeof b.nativeMessageQueue>> | undefined;
+    vi.spyOn(harness, "submission").mockImplementation(async (id, ctx) => {
+      if (!newer) {
+        await native.commit(async (tx) => {
+          const entry = await tx.appendEntry(native.id, {
+            kind: "pi.user",
+            model: [{ role: "user", content: "queued then placed", timestamp: 1 }],
+          });
+          tx.placeSubmission(queued, entry.id);
+          const inbox = await tx.doc(InboxDoc, native.id);
+          inbox.items.splice(
+            inbox.items.findIndex((item) => item.id === queued),
+            1,
+          );
+        }, context);
+        newer = await b.nativeMessageQueue();
+      }
+      return submission(id, ctx);
+    });
+    const stale = await b.nativeMessageQueue();
+    expect(stale.followUp.map((item) => item.id)).toEqual([String(queued)]);
+    expect(newer?.followUp).toEqual([]);
+    expect(stale.version).toBeLessThan(newer!.version);
+    await b.dispose();
+  });
+
   it("preserves generated input cards during Remove and take, and omits placement that wins the withdrawal race", async () => {
     const f = await fixture([]);
     const harness = await openHarness(f.dir, f.models);
@@ -3262,6 +3313,9 @@ describe("server durable managed runtime", () => {
       f.session.serverDurable!.conversationId! as ConversationId,
       context,
     ))!;
+    vi.spyOn(harness, "conversation").mockResolvedValue(
+      (b as unknown as { conversation: typeof conversation }).conversation,
+    );
     const ids = await conversation.commit(async (tx) => {
       const one = await tx.createSubmission({
         conversationId: conversation.id,

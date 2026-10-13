@@ -142,18 +142,15 @@ export class DurableThreads implements DurableSessionsHost {
     const conversationId = session?.serverDurable?.conversationId as ConversationId | undefined;
     if (!session || conversationId === undefined)
       return `Session ${sessionId} has no conversation.`;
-    return this.deps.runtime.withSession(session, async (harness) => {
-      const conversation = await harness.conversation(conversationId, BACKGROUND_CONTEXT);
-      if (!conversation) return `Session ${sessionId} has no conversation.`;
-      await conversation.submit(
-        {
-          type: "input",
-          content: input.content,
-          whenBusy: input.whenBusy,
-          requestId: input.requestId,
-        },
-        BACKGROUND_CONTEXT,
-      );
+    // The session's own controller: the same request-id dedupe and failure card as its socket.
+    return this.deps.runtime.withSession(session, async (harness, host) => {
+      if (!(await harness.conversation(conversationId, BACKGROUND_CONTEXT)))
+        return `Session ${sessionId} has no conversation.`;
+      const controller = await host.controller(conversationId);
+      const options = { requestId: input.requestId };
+      await (input.whenBusy === "steer"
+        ? controller.steer(input.content, options)
+        : controller.followUp(input.content, options));
       return undefined;
     });
   }
@@ -163,10 +160,10 @@ export class DurableThreads implements DurableSessionsHost {
     const conversationId = session?.serverDurable?.conversationId as ConversationId | undefined;
     if (!session || conversationId === undefined)
       return `Session ${sessionId} has no conversation.`;
-    return this.deps.runtime.withSession(session, async (harness) => {
-      const conversation = await harness.conversation(conversationId, BACKGROUND_CONTEXT);
-      if (!conversation) return `Session ${sessionId} has no conversation.`;
-      await conversation.waitForIdle(BACKGROUND_CONTEXT);
+    return this.deps.runtime.withSession(session, async (harness, host) => {
+      if (!(await harness.conversation(conversationId, BACKGROUND_CONTEXT)))
+        return `Session ${sessionId} has no conversation.`;
+      await (await host.controller(conversationId)).waitForPrompt();
       return undefined;
     });
   }

@@ -14,7 +14,7 @@ import {
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { LiveDoc, type ConversationId, type Harness } from "@earendil-works/pi-durable";
+import { InboxDoc, LiveDoc, type ConversationId, type Harness } from "@earendil-works/pi-durable";
 import {
   DurableHarness,
   DurableRuntime,
@@ -764,6 +764,61 @@ describe("durable-native threads", () => {
     await expect(
       f.manager.sendPrompt(child.id, "spoof", { clientTurnId: "oppi-send:1" }),
     ).rejects.toThrow("reserved durable requestId namespace");
+  });
+
+  it("admits one request id once across the session socket and session_send", async () => {
+    const busy = gate();
+    let held!: () => void;
+    const holding = new Promise<void>((resolve) => (held = resolve));
+    const f = await fixture(
+      model(async ({ text, signal }) => {
+        if (text === "HOLD") {
+          held();
+          await busy.wait(signal);
+        }
+        return fauxAssistantMessage(`ANSWER ${text}`);
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const threads = await f.threads();
+    const harness = await f.harness();
+    const id = conversationOf(f.storage, f.parent);
+    const events = observe(f.manager, f.parent.id);
+
+    // The socket and session_send race one request id: one admission, one user row.
+    const answered = events.next((message) => message.type === "agent_end");
+    await Promise.all([
+      f.manager.sendPrompt(f.parent.id, "SAME", { clientTurnId: "shared-turn" }),
+      threads.submit(f.parent.id, {
+        content: "SAME",
+        whenBusy: "followUp",
+        requestId: "shared-turn",
+      }),
+    ]);
+    await answered;
+    expect(await userTexts(harness, id)).toEqual(["SAME"]);
+    expect(requestIds(f.storage, f.dir, f.parent, "shared-turn")).toEqual(["shared-turn"]);
+
+    // A repeated session_send to a busy session queues once; changed content is a conflict.
+    await f.manager.sendPrompt(f.parent.id, "HOLD");
+    await holding;
+    const send = { content: "QUEUED", whenBusy: "followUp" as const, requestId: "repeat-send" };
+    expect(await threads.submit(f.parent.id, send)).toBeUndefined();
+    expect(await threads.submit(f.parent.id, send)).toBeUndefined();
+    await expect(threads.submit(f.parent.id, { ...send, content: "CHANGED" })).rejects.toThrow(
+      "clientTurnId conflict",
+    );
+    expect(
+      (await harness.snapshot(InboxDoc, id, context))?.items.map((item) => item.content),
+    ).toEqual(["QUEUED"]);
+
+    busy.open();
+    await until(
+      async () => (await userTexts(harness, id)).join(",") === "SAME,HOLD,QUEUED",
+      "the queued send to run once",
+    );
+    await threads.waitForIdle(f.parent.id);
+    expect(await userTexts(harness, id)).toEqual(["SAME", "HOLD", "QUEUED"]);
   });
 
   it("delivers session_send from two stores when task ids collide", async () => {
