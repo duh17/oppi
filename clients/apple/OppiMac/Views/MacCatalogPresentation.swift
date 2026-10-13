@@ -473,6 +473,7 @@ struct MacControlSessionLaunchDraft: Equatable {
         case .agents: "Agent"
         case .schedules: "Schedule"
         case .skills: "Skill"
+        case .themes: "Theme"
         case .workspaces: "Workspace"
         }
     }

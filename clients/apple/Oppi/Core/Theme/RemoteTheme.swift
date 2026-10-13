@@ -6,6 +6,8 @@ struct RemoteThemeSummary: Codable, Sendable, Identifiable {
     let name: String
     let filename: String
     let colorScheme: String
+    /// Absolute host path of the served file; absent from servers before theme control sessions.
+    var path: String? = nil
 
     var id: String { filename }
 }

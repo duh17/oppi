@@ -12,7 +12,7 @@ An Oppi theme is one JSON file of color tokens. The iOS chat, settings, and code
 
 Filename: letters, numbers, underscore, hyphen, ending in `.json`. No server restart after you add or edit a file. The HTTP API is read-only (`GET /themes`, `GET /themes/:name`); create, update, or delete themes by changing files.
 
-Apply a theme: **Settings → Appearance**, then pick it in the theme picker after you import it from **Custom Themes…**.
+Apply a theme: **Settings → Appearance**, then pick it in the theme picker after you import it from **Custom Themes**.
 
 ## Minimal example
 
@@ -192,4 +192,4 @@ Pi TUI themes in `~/.pi/agent/themes/` use 51 tokens plus variables. Oppi maps t
 
 ## Ask your agent
 
-Settings → Appearance → **Create a Theme with Your Agent** copies a prompt that names these paths and this doc. Paste it into a chat.
+In **Settings → Appearance → Custom Themes**, describe a theme in the composer at the bottom. Oppi starts a session that reads this doc and writes the JSON file to your server's themes folder. To change an existing theme, swipe it (or touch and hold) and choose **Edit with Oppi**; a bundled or Pi TUI theme gets an override with the same filename in the themes folder. Pull to refresh the list, then tap the theme to import it.

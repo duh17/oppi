@@ -7,6 +7,8 @@ import {
 import { SessionLifecycleError, SessionLifecycleService } from "../session-lifecycle-service.js";
 import {
   type ChatAttachmentRef,
+  type ControlSessionDomain,
+  type ControlSessionIntent,
   type ServerMessage,
   type Session,
   type SessionPromptCacheStatus,
@@ -31,8 +33,17 @@ import {
   recordCallerInteraction,
 } from "../session-interactions.js";
 
-const CONTROL_SESSION_DOMAINS = new Set(["agents", "schedules", "skills", "workspaces"] as const);
-const CONTROL_SESSION_INTENTS = new Set(["create", "revise"] as const);
+const CONTROL_SESSION_DOMAINS: ReadonlySet<string> = new Set<ControlSessionDomain>([
+  "agents",
+  "schedules",
+  "skills",
+  "themes",
+  "workspaces",
+]);
+const CONTROL_SESSION_INTENTS: ReadonlySet<string> = new Set<ControlSessionIntent>([
+  "create",
+  "revise",
+]);
 
 const log = createLogger({ base: { component: "route_sessions" } });
 
@@ -365,11 +376,9 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }>(req);
     if (
       typeof body.domain !== "string" ||
-      !CONTROL_SESSION_DOMAINS.has(
-        body.domain as "agents" | "schedules" | "skills" | "workspaces",
-      ) ||
+      !CONTROL_SESSION_DOMAINS.has(body.domain) ||
       typeof body.intent !== "string" ||
-      !CONTROL_SESSION_INTENTS.has(body.intent as "create" | "revise") ||
+      !CONTROL_SESSION_INTENTS.has(body.intent) ||
       (body.targetId !== undefined &&
         (typeof body.targetId !== "string" || !body.targetId.trim())) ||
       (body.targetName !== undefined &&
@@ -397,8 +406,8 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     try {
       const result = await lifecycle.createControlSession({
         control: {
-          domain: body.domain as "agents" | "schedules" | "skills" | "workspaces",
-          intent: body.intent as "create" | "revise",
+          domain: body.domain as ControlSessionDomain,
+          intent: body.intent as ControlSessionIntent,
           ...(targetId ? { targetId } : {}),
           ...(targetName ? { targetName } : {}),
         },

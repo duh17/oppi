@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createRouteHelpers } from "../src/routes/http.js";
@@ -26,6 +29,45 @@ describe("themes module", () => {
 
     expect(handled).toBe(true);
     expect(res.statusCode).toBe(404);
+  });
+
+  it("lists a user theme once with its absolute file path", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-theme-routes-"));
+    try {
+      const userThemes = join(dataDir, "themes");
+      mkdirSync(userThemes);
+      writeFileSync(
+        join(userThemes, "tokyo-night.json"),
+        JSON.stringify({ name: "My Tokyo", colorScheme: "dark", colors: {} }),
+      );
+      const ctx = { storage: { getDataDir: () => dataDir } } as unknown as RouteContext;
+      const dispatch = createThemeRoutes(ctx, createRouteHelpers());
+      const res = makeResponse();
+
+      await dispatch({
+        method: "GET",
+        path: "/themes",
+        url: new URL("http://localhost/themes"),
+        req: {} as never,
+        res: res as never,
+      });
+
+      const { themes } = JSON.parse(res.body) as {
+        themes: { filename: string; name: string; source: string; path: string }[];
+      };
+      const overridden = themes.filter((theme) => theme.filename === "tokyo-night");
+      expect(overridden).toEqual([
+        {
+          name: "My Tokyo",
+          filename: "tokyo-night",
+          colorScheme: "dark",
+          source: "user",
+          path: join(userThemes, "tokyo-night.json"),
+        },
+      ]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 
   it("does not handle theme writes", async () => {

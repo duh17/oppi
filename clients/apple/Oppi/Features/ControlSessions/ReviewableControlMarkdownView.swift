@@ -406,6 +406,7 @@ struct ReviewableControlMarkdownView: View {
         case .agents: "Agent"
         case .schedules: "Schedule"
         case .skills: "Skill"
+        case .themes: "Theme"
         case .workspaces: "Workspace"
         }
     }

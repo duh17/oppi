@@ -471,15 +471,22 @@ describe("POST /control-sessions", () => {
     }
   });
 
-  it("accepts Skill revision control sessions", async () => {
+  it.each([
+    {
+      domain: "skills",
+      targetId: "skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      targetName: "review",
+    },
+    { domain: "themes", targetId: "tokyo-night", targetName: "Tokyo Night" },
+  ])("accepts $domain revision control sessions", async ({ domain, targetId, targetName }) => {
     const mock = createMockContext();
 
     await dispatchCreate(mock, {
-      domain: "skills",
+      domain,
       intent: "revise",
-      targetId: "skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      targetName: "review",
-      prompt: "Inspect the selected skill file and wait for review comments.",
+      targetId,
+      targetName,
+      prompt: "Inspect the selected file and wait for review comments.",
     });
 
     expect(mock.errors).toEqual([]);
@@ -488,20 +495,19 @@ describe("POST /control-sessions", () => {
       data: {
         session: {
           workspaceId: undefined,
-          control: {
-            domain: "skills",
-            intent: "revise",
-            targetId: "skill_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          },
+          control: { domain, intent: "revise", targetId },
         },
       },
     });
   });
 
-  it("rejects unknown control domains and intents", async () => {
+  it.each([
+    { domain: "palettes", intent: "create" },
+    { domain: "themes", intent: "delete" },
+  ])("rejects unknown control domains and intents", async (body) => {
     const mock = createMockContext();
 
-    await dispatchCreate(mock, { domain: "themes", intent: "delete" });
+    await dispatchCreate(mock, body);
 
     expect(mock.responses).toEqual([]);
     expect(mock.errors).toEqual([{ status: 400, message: "Invalid control session metadata" }]);

@@ -1,9 +1,7 @@
 import SwiftUI
-import UIKit
 
 struct SettingsAppearancePage: View {
     @Environment(ThemeStore.self) private var themeStore
-    @State private var copiedThemePrompt = false
 
     var body: some View {
         List {
@@ -48,30 +46,17 @@ struct SettingsAppearancePage: View {
             }
 
             Section {
-                NavigationLink("Custom Themes…") {
+                NavigationLink("Custom Themes") {
                     ThemeImportView()
                 }
                 .accessibilityIdentifier("settings.appearance.customThemes")
-
-                Button("Create a Theme with Your Agent") {
-                    UIPasteboard.general.string = Self.themeCreationPrompt
-                    copiedThemePrompt = true
-                }
-                .accessibilityIdentifier("settings.appearance.createTheme")
-            } header: {
-                Text("Custom Themes")
             } footer: {
                 Text(
-                    "Themes are JSON files on your server (`themes` in the Oppi data directory, usually ~/.config/oppi/themes). Pi TUI themes in ~/.pi/agent/themes are converted automatically. You can ask your agent to create one."
+                    "Import themes from your server, or describe a new one and Oppi writes it. Themes are JSON files in the Oppi data directory (usually ~/.config/oppi/themes); Pi TUI themes in ~/.pi/agent/themes are converted automatically."
                 )
             }
         }
         .settingsPage("Appearance")
-        .alert("Prompt Copied", isPresented: $copiedThemePrompt) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Paste it into a chat to have your agent write a theme file.")
-        }
     }
 
     @ViewBuilder
@@ -98,23 +83,4 @@ struct SettingsAppearancePage: View {
             }
         }
     }
-
-    /// Clipboard prompt for Settings → Appearance → Create a Theme with Your Agent.
-    static let themeCreationPrompt = """
-    Create an Oppi iOS theme JSON file.
-
-    Where to write it
-    - Server themes: `$OPPI_DATA_DIR/themes/` if set, otherwise `~/.config/oppi/themes/`
-    - Filename: letters, numbers, underscore, hyphen; ends with .json
-    - Pi TUI themes in `~/.pi/agent/themes/` are converted automatically; prefer Oppi JSON unless you are making a TUI theme
-
-    Format and tokens
-    - Read docs/themes.md in the Oppi repo (public user docs). It lists every token and what it paints.
-    - Required: name, colorScheme ("dark" or "light"), and the color tokens in that doc
-    - User card: userMessageBg (fill) and userMessageText (text); assistant replies stay full width
-    - Optional: assistantMessageBg (assistant row fill; omit or empty for no fill), userMessageAccent (3 pt leading strip on user cards; omit or empty for no strip)
-    - Contrast: text on fills ≥ 4.5:1; userMessageAccent, when set, at least 3:1 against bg
-
-    After writing the file, tell me the theme name so I can import it in Settings → Appearance → Custom Themes.
-    """
 }

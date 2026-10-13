@@ -173,7 +173,7 @@ enum GuidedControlSessionComposerReviewComments {
     }
 }
 
-/// Quick Session-style intake for server-scoped Agent, Schedule, and Skill control sessions.
+/// Quick Session-style intake for server-scoped Agent, Schedule, Skill, Theme, and Workspace control sessions.
 ///
 /// The selected workspace is prompt context only. Control sessions intentionally
 /// remain workspace-less so Pi can inspect and mutate server-owned
@@ -460,6 +460,7 @@ struct GuidedControlSessionComposer: View {
         case .agents: "Agent"
         case .schedules: "Schedule"
         case .skills: "Skill"
+        case .themes: "Theme"
         case .workspaces: "Workspace"
         }
     }
@@ -683,6 +684,7 @@ struct GuidedControlSessionSheet: View {
         case .agents: "person.crop.circle.badge.questionmark"
         case .schedules: "calendar.badge.clock"
         case .skills: "hammer"
+        case .themes: "paintpalette"
         case .workspaces: "folder.badge.gearshape"
         }
     }
@@ -692,6 +694,7 @@ struct GuidedControlSessionSheet: View {
         case .agents: "Agent"
         case .schedules: "Schedule"
         case .skills: "Skill"
+        case .themes: "Theme"
         case .workspaces: "Workspace"
         }
         let subject = targetName ?? fallbackSubject

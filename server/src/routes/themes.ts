@@ -28,6 +28,8 @@ export function createThemeRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
     filename: string;
     colorScheme: string;
     source: ThemeSource;
+    /** Absolute host path of the listed file (owner-only route). */
+    path: string;
   };
 
   /** Scan a directory for Oppi-format theme JSON files. */
@@ -44,6 +46,7 @@ export function createThemeRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
           filename: f.replace(/\.json$/, ""),
           colorScheme: (parsed.colorScheme as string) ?? "dark",
           source,
+          path: join(dir, f),
         });
       } catch {
         // Skip malformed theme files
@@ -69,6 +72,7 @@ export function createThemeRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
           filename: f.replace(/\.json$/, ""),
           colorScheme: converted.colorScheme,
           source: "pi",
+          path: join(dir, f),
         });
       } catch {
         // Skip malformed pi themes
