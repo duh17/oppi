@@ -121,11 +121,10 @@ addValid(
   }),
 );
 addValid(
-  "incognito-error",
+  "error",
   base({
     event: "error",
     kind: undefined,
-    incognito: true,
     title: "Session Error",
     body: "Open Oppi to review the session error.",
   }),

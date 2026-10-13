@@ -115,15 +115,15 @@ describe("SessionPushNotifier", () => {
     ]);
   });
 
-  it("marks incognito sessions so the phone can redact them under App Lock", () => {
+  it("uses a fixed body when a session ends without a reason", () => {
     const push = makePush(["phone"]);
-    const notifier = makeNotifier(push, makeStorage(makeSession({ ephemeral: true })));
+    const notifier = makeNotifier(push, makeStorage(makeSession()));
 
     notifier.handleSessionEvent(event("s1", { type: "session_ended", reason: "" }));
 
     expect(push.send).toHaveBeenCalledWith(
       target("phone"),
-      expect.objectContaining({ incognito: true, body: "The session ended." }),
+      expect.objectContaining({ body: "The session ended." }),
     );
   });
 

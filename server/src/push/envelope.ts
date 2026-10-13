@@ -42,7 +42,6 @@ export interface PushPlaintext {
   kind?: ProgramStatusKind;
   sessionId: string;
   workspaceId?: string;
-  incognito?: true;
   title: string;
   subtitle?: string;
   body: string;

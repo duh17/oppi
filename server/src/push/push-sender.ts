@@ -8,8 +8,8 @@ import { createHash, createHmac, type KeyObject } from "node:crypto";
 import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
 import type { ServerMetricCollector } from "../server-metric-collector.js";
-import type { ProgramStatusKind, PushEvent, PushRegistration, ServerConfig } from "../types.js";
-import { sealPushEnvelope } from "./envelope.js";
+import type { PushRegistration, ServerConfig } from "../types.js";
+import { type PushPlaintext, sealPushEnvelope } from "./envelope.js";
 import { RelayClient, type RelaySendResult } from "./relay-client.js";
 
 const log = createLogger({ base: { component: "push" } });
@@ -18,16 +18,7 @@ const log = createLogger({ base: { component: "push" } });
 const PUSH_TTL_SECONDS = 3600;
 
 /** What one push says, before its timestamp. */
-export interface PushNotification {
-  event: PushEvent;
-  kind?: ProgramStatusKind;
-  sessionId: string;
-  workspaceId?: string;
-  incognito?: boolean;
-  title: string;
-  subtitle?: string;
-  body: string;
-}
+export type PushNotification = Omit<PushPlaintext, "v" | "ts">;
 
 export interface PushSenderStorage {
   getConfig(): Pick<ServerConfig, "push">;
@@ -106,6 +97,7 @@ export class PushSender {
     try {
       const envelope = sealPushEnvelope({
         recipientPublicKey: Buffer.from(registration.publicKey, "base64url"),
+        // Copied field by field so only the plaintext fields reach the phone.
         plaintext: {
           v: 1,
           ts: this.now(),
@@ -113,7 +105,6 @@ export class PushSender {
           ...(notification.kind ? { kind: notification.kind } : {}),
           sessionId: notification.sessionId,
           ...(notification.workspaceId ? { workspaceId: notification.workspaceId } : {}),
-          ...(notification.incognito ? { incognito: true as const } : {}),
           title: notification.title,
           ...(notification.subtitle ? { subtitle: notification.subtitle } : {}),
           body: notification.body,

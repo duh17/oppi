@@ -60,7 +60,6 @@ struct PushPlaintext: Decodable, Equatable, Sendable {
     let kind: Kind?
     let sessionId: String
     let workspaceId: String?
-    let incognito: Bool?
     let title: String
     let subtitle: String?
     let body: String

@@ -103,7 +103,6 @@ export class SessionPushNotifier {
       ...content,
       sessionId,
       ...(session?.workspaceId ? { workspaceId: session.workspaceId } : {}),
-      ...(session?.ephemeral ? { incognito: true } : {}),
       ...(session?.name ? { subtitle: session.name } : {}),
     };
 

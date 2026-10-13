@@ -96,7 +96,6 @@ bytes `[0, 577)`. The signature covers the version, `kid`, `enc`, and `ct`.
   "kind": "permission",
   "sessionId": "s_123",
   "workspaceId": "w_456",
-  "incognito": true,
   "title": "Needs Approval",
   "subtitle": "Fix the flaky test",
   "body": "Waiting for your approval."
@@ -111,7 +110,6 @@ bytes `[0, 577)`. The signature covers the version, `kid`, `enc`, and `ct`.
 | `kind` | `blocked` only: `permission`, `question`, or `auth` |
 | `sessionId` | Session the push is about |
 | `workspaceId` | Present when the session has a workspace |
-| `incognito` | Present and `true` for incognito (ephemeral) sessions |
 | `title`, `body` | Display text |
 | `subtitle` | Session name; the server shortens it until the JSON fits 510 bytes, and drops it when nothing else fits |
 
@@ -157,9 +155,9 @@ subsystem `dev.chenda.Oppi`, category `Push`. It never logs plaintext or key mat
 ### 2.6 Redaction
 
 When App Lock is on, or a scoped lock (server, workspace, or session) covers the push's
-session, or the session is incognito while App Lock is on, the extension shows a
-redacted alert built only from `event` and `kind`: the event title and the fixed event
-body below, no subtitle, and nothing else from the plaintext.
+session, the extension shows a redacted alert built only from `event` and `kind`: the
+event title and the fixed event body below, no subtitle, and nothing else from the
+plaintext.
 
 | Event | Title | Body |
 | --- | --- | --- |
