@@ -39,6 +39,8 @@ final class ServerConnection {
     private(set) var credentials: ServerCredentials?
     /// `GET /server/info` version from the last successful bootstrap or capability refresh.
     private(set) var connectedServerVersion: String?
+    /// Pending pairing approvals for this server (`GET /auth/pairing-approvals` + app events).
+    var pendingPairingApprovals: [PendingPairingApproval] = []
 
     // Networking
     private(set) var apiClient: APIClient?

@@ -1,4 +1,7 @@
 import Foundation
+import OSLog
+
+private let pairingApprovalLogger = Logger(subsystem: AppIdentifiers.subsystem, category: "PairingApprovals")
 
 // MARK: - Global App Event Routing
 
@@ -11,7 +14,7 @@ extension ServerConnection {
     func handleAppEvent(_ event: AppEventMessage) {
         switch event {
         case .connected:
-            break
+            Task { await refreshPairingApprovals() }
 
         case .sessionCreated(_, let workspaceId, _, let summary),
              .sessionImported(_, let workspaceId, _, let summary),
@@ -77,9 +80,62 @@ extension ServerConnection {
             invalidateWorkspaceCaches(workspaceId: workspaceId, worktreeId: worktreeId)
             refreshWorkspaceSidebarGitSummary(workspaceId: workspaceId, worktreeId: worktreeId)
 
+        case .pairingApprovalRequested(_, let approval):
+            upsertPendingPairingApproval(approval)
+
+        case .pairingApprovalSettled(_, let approvalId, _):
+            removePendingPairingApproval(id: approvalId)
+
         case .ignored:
             break
         }
+    }
+
+    func upsertPendingPairingApproval(_ approval: PendingPairingApproval) {
+        if let index = pendingPairingApprovals.firstIndex(where: { $0.id == approval.id }) {
+            pendingPairingApprovals[index] = approval
+        } else {
+            pendingPairingApprovals.append(approval)
+        }
+        pendingPairingApprovals.sort { $0.requestedAt < $1.requestedAt }
+        NotificationCenter.default.post(name: .pairingApprovalsDidChange, object: nil)
+    }
+
+    func removePendingPairingApproval(id: String) {
+        let before = pendingPairingApprovals.count
+        pendingPairingApprovals.removeAll { $0.id == id }
+        if pendingPairingApprovals.count != before {
+            NotificationCenter.default.post(name: .pairingApprovalsDidChange, object: nil)
+        }
+    }
+
+    func refreshPairingApprovals() async {
+        guard let apiClient else { return }
+        do {
+            pendingPairingApprovals = try await apiClient.listPairingApprovals()
+                .sorted { $0.requestedAt < $1.requestedAt }
+            NotificationCenter.default.post(name: .pairingApprovalsDidChange, object: nil)
+        } catch {
+            pairingApprovalLogger.error("Failed to refresh pairing approvals: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    func approvePairingApproval(_ approval: PendingPairingApproval) async throws {
+        guard let apiClient else { throw APIError.invalidResponse }
+        let key = try DeviceKeyProvider.shared.loadOrCreate()
+        let signature = try PairingApprovalSigning.signatureBase64URL(
+            key: key,
+            approvalId: approval.id,
+            keyThumbprint: approval.keyThumbprint
+        )
+        try await apiClient.approvePairingApproval(id: approval.id, signature: signature)
+        removePendingPairingApproval(id: approval.id)
+    }
+
+    func denyPairingApproval(id: String) async throws {
+        guard let apiClient else { throw APIError.invalidResponse }
+        try await apiClient.denyPairingApproval(id: id)
+        removePendingPairingApproval(id: id)
     }
 
     func respondToExtensionUI(

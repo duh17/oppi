@@ -515,6 +515,7 @@ extension ServerConnection {
 
         // 3. Refresh global lists as needed (single-flight + freshness-gated).
         await refreshWorkspaceAndSessionLists(force: false)
+        await refreshPairingApprovals()
 
         // 4. Refresh active session metadata (not timeline — ChatSessionManager owns that)
         guard let sessionId = focusedSessionId else { return }

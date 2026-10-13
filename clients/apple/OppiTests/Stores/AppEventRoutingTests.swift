@@ -248,6 +248,25 @@ struct AppEventRoutingTests {
         #expect(connection.extensionSurfaceBySession["s1"]?.widgets["goal"]?.lines == ["Keep going"])
         #expect(connection.messageQueueStore.queue(for: "s1").steering.first?.id == "q1")
     }
+
+    @Test func pairingApprovalEventsUpsertAndRemovePendingApprovals() {
+        let connection = ServerConnection()
+        let approval = PendingPairingApproval(
+            id: "pa_1",
+            deviceName: "iPad",
+            method: "invite",
+            source: "100.64.0.7",
+            requestedAt: 1,
+            expiresAt: 2,
+            keyThumbprint: "thumb"
+        )
+        connection.handleAppEvent(.pairingApprovalRequested(emittedAt: 1, approval: approval))
+        #expect(connection.pendingPairingApprovals.map(\.id) == ["pa_1"])
+        connection.handleAppEvent(
+            .pairingApprovalSettled(emittedAt: 2, approvalId: "pa_1", outcome: .approved)
+        )
+        #expect(connection.pendingPairingApprovals.isEmpty)
+    }
 }
 
 enum AppEventSessionCleanupCase: CaseIterable {

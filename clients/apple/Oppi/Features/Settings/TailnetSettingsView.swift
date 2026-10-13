@@ -17,6 +17,8 @@ struct TailnetSettingsView: View {
 
     @State private var pairingPeerID: String?
     @State private var pairingMessage: String?
+    @State private var pairingWaitExpiresAt: Int64?
+    @State private var pairingTask: Task<Void, Never>?
     /// Latest Oppi probe per peer id; a missing entry means none has started.
     @State private var probes: [String: TailnetPeerProbe] = [:]
     @State private var probeRefresh = 0
@@ -233,15 +235,29 @@ struct TailnetSettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 peerTitle(peer)
                 if pairingPeerID == peer.id {
-                    HStack {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Pairing…")
-                            .foregroundStyle(.themeComment)
+                    if let expiresAt = pairingWaitExpiresAt {
+                        WaitingForPairingApprovalView(
+                            expiresAt: expiresAt,
+                            onCancel: {
+                                pairingTask?.cancel()
+                                pairingTask = nil
+                                pairingPeerID = nil
+                                pairingWaitExpiresAt = nil
+                                pairingMessage = "Pairing cancelled."
+                            }
+                        )
+                    } else {
+                        HStack {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Pairing…")
+                                .foregroundStyle(.themeComment)
+                        }
                     }
                 } else {
                     Button("Pair with Oppi") {
-                        Task { await pair(with: peer) }
+                        pairingTask?.cancel()
+                        pairingTask = Task { await pair(with: peer) }
                     }
                     .disabled(pairingPeerID != nil || tailnet.state != .running)
                     .accessibilityIdentifier("tailnet.pair.\(peer.id)")
@@ -349,9 +365,11 @@ struct TailnetSettingsView: View {
     @MainActor
     private func pair(with peer: TailnetPeer) async {
         pairingMessage = nil
+        pairingWaitExpiresAt = nil
         pairingPeerID = peer.id
         defer {
             pairingPeerID = nil
+            pairingWaitExpiresAt = nil
             // A paired peer is recognised from the store; a failed attempt
             // may have changed what the machine answers.
             probes[peer.id] = nil
@@ -373,10 +391,14 @@ struct TailnetSettingsView: View {
             let enrolled = try await InviteBootstrapService.enroll(
                 inviteURL: invite.inviteURL,
                 serverStore: serverStore,
-                coordinator: coordinator
-            ) { reason in
-                await BiometricService.shared.authenticate(reason: reason)
-            }
+                coordinator: coordinator,
+                onWaitingForApproval: { expiresAt in
+                    pairingWaitExpiresAt = expiresAt
+                },
+                confirmTrust: { reason in
+                    await BiometricService.shared.authenticate(reason: reason)
+                }
+            )
             pairingMessage = "Paired with \(enrolled.name)."
             if enrolled.selected {
                 onPaired?()

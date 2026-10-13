@@ -625,7 +625,8 @@ final class MacWorkspaceSnapshotStore {
         case .extensionUISettled(_, let sessionId, _, _):
             MacAttentionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
 
-        case .extensionUINotification, .workspaceGitChanged, .ignored:
+        case .extensionUINotification, .workspaceGitChanged,
+             .pairingApprovalRequested, .pairingApprovalSettled, .ignored:
             break
         }
         return false

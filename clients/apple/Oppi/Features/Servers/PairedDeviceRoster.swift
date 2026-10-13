@@ -8,9 +8,12 @@ enum PairedDeviceRoster {
         let canRevoke: Bool
         let lastUsedAt: Int64?
         let createdAt: Int64
+        let pairingMethod: String?
+        let pairingSource: String?
+        let caption: String
     }
 
-    static func rows(from devices: [AuthDevice], currentDeviceId: String?) -> [Row] {
+    static func rows(from devices: [AuthDevice], currentDeviceId: String?, now: Date = Date()) -> [Row] {
         let currentId = normalizedDeviceId(currentDeviceId)
         return devices
             .filter { $0.revokedAt == nil }
@@ -23,10 +26,50 @@ enum PairedDeviceRoster {
                     isThisDevice: isThisDevice,
                     canRevoke: !isThisDevice,
                     lastUsedAt: device.lastUsedAt,
-                    createdAt: device.createdAt
+                    createdAt: device.createdAt,
+                    pairingMethod: nonempty(device.pairingMethod),
+                    pairingSource: nonempty(device.pairingSource),
+                    caption: caption(
+                        isThisDevice: isThisDevice,
+                        pairingMethod: nonempty(device.pairingMethod),
+                        pairingSource: nonempty(device.pairingSource),
+                        createdAt: device.createdAt,
+                        now: now
+                    )
                 )
             }
             .sorted(by: Self.isSortedBefore)
+    }
+
+    static func caption(
+        isThisDevice: Bool,
+        pairingMethod: String?,
+        pairingSource: String?,
+        createdAt: Int64,
+        now _: Date = Date()
+    ) -> String {
+        var parts: [String] = []
+        if isThisDevice {
+            parts.append("This device")
+        }
+        if let pairingMethod {
+            parts.append(PairingApprovalPromptFormatting.method(pairingMethod))
+        }
+        if let pairingSource {
+            parts.append(pairingSource)
+        }
+        parts.append(enrolledPhrase(createdAt: createdAt))
+        return parts.joined(separator: " · ")
+    }
+
+    private static func enrolledPhrase(createdAt: Int64) -> String {
+        let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1_000)
+        return "Enrolled \(date.formatted(date: .abbreviated, time: .omitted))"
+    }
+
+    private static func nonempty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func normalizedDeviceId(_ value: String?) -> String? {

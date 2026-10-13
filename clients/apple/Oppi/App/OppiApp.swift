@@ -411,6 +411,7 @@ struct OppiApp: App {
     @State private var mainThreadLagWatchdog = MainThreadLagWatchdog()
 
     @State private var inviteBootstrapInFlight = false
+    @State private var invitePairingWaitExpiresAt: Int64?
     @State private var appStartupComplete = false
     @State private var intentSessionOpenTrigger = IntentSessionOpenTrigger.shared
     @State private var pendingSessionDeepLinkId: String?
@@ -600,6 +601,14 @@ struct OppiApp: App {
                 guard let payload = notification.object as? FileLinkPayload else { return }
                 Task { @MainActor in
                     _ = await handleIncomingFileLink(payload)
+                }
+            }
+            .modifier(PairingApprovalPromptHost(coordinator: coordinator))
+            .overlay {
+                if let expiresAt = invitePairingWaitExpiresAt {
+                    WaitingForPairingApprovalView(expiresAt: expiresAt)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(.themeBg)
                 }
             }
             .confirmationDialog(
@@ -1520,7 +1529,10 @@ struct OppiApp: App {
             return
         }
         inviteBootstrapInFlight = true
-        defer { inviteBootstrapInFlight = false }
+        defer {
+            inviteBootstrapInFlight = false
+            invitePairingWaitExpiresAt = nil
+        }
 #if DEBUG
         let isE2EInviteLaunch = ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil
             || ProcessInfo.processInfo.environment["OPPI_E2E_LAUNCH_INVITE"] != nil
@@ -1546,18 +1558,26 @@ struct OppiApp: App {
             } else {
                 bootstrap = try await InviteBootstrapService.validateAndBootstrap(
                     credentials: credentials,
-                    existingCredentials: existingCredentials
-                ) { reason in
-                    return await BiometricService.shared.authenticate(reason: reason)
-                }
+                    existingCredentials: existingCredentials,
+                    confirmTrust: { reason in
+                        return await BiometricService.shared.authenticate(reason: reason)
+                    },
+                    onWaitingForApproval: { expiresAt in
+                        invitePairingWaitExpiresAt = expiresAt
+                    }
+                )
             }
 #else
             let bootstrap = try await InviteBootstrapService.validateAndBootstrap(
                 credentials: credentials,
-                existingCredentials: existingCredentials
-            ) { reason in
-                return await BiometricService.shared.authenticate(reason: reason)
-            }
+                existingCredentials: existingCredentials,
+                confirmTrust: { reason in
+                    return await BiometricService.shared.authenticate(reason: reason)
+                },
+                onWaitingForApproval: { expiresAt in
+                    invitePairingWaitExpiresAt = expiresAt
+                }
+            )
 #endif
 
             // Add to ServerStore via coordinator (creates connection state for split streams)
@@ -1927,6 +1947,16 @@ struct OppiApp: App {
                         parkingAllowed: true
                     )
                 }
+            }
+        }
+        notificationService.onPairingNotification = { payload in
+            AppLockService.shared.performWhenUnlocked {
+                PairingApprovalController.shared.handleNotification(
+                    serverId: payload.serverId,
+                    approvalId: payload.approvalId,
+                    action: payload.action,
+                    coordinator: coordinator
+                )
             }
         }
     }

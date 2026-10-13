@@ -77,6 +77,7 @@ struct OnboardingView: View {
     @State private var showManualEntry = false
     @State private var showTailscale = false
     @State private var connectionTest: ConnectionTestState = .idle
+    @State private var pairingTask: Task<Void, Never>?
 
     /// VisionKit scanner requires camera + on-device ML support.
     private var canScan: Bool {
@@ -150,6 +151,16 @@ struct OnboardingView: View {
                 case .testing:
                     ProgressView("Pairing…")
 
+                case .waitingForApproval(let expiresAt):
+                    WaitingForPairingApprovalView(
+                        expiresAt: expiresAt,
+                        onCancel: {
+                            pairingTask?.cancel()
+                            pairingTask = nil
+                            connectionTest = .failed("Pairing cancelled.")
+                        }
+                    )
+
                 case .success:
                     Label("Connected", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.themeGreen)
@@ -215,13 +226,13 @@ struct OnboardingView: View {
         .sheet(isPresented: $showScanner) {
             QRScannerView { credentials in
                 showScanner = false
-                Task { await testConnection(credentials) }
+                startPairing(credentials)
             }
         }
         .sheet(isPresented: $showManualEntry) {
             ManualEntryView { credentials in
                 showManualEntry = false
-                Task { await testConnection(credentials) }
+                startPairing(credentials)
             }
         }
         .sheet(isPresented: $showTailscale) {
@@ -258,16 +269,25 @@ struct OnboardingView: View {
         }
     }
 
+    private func startPairing(_ credentials: ServerCredentials) {
+        pairingTask?.cancel()
+        pairingTask = Task { await testConnection(credentials) }
+    }
+
     private func testConnection(_ credentials: ServerCredentials) async {
         connectionTest = .testing
 
         do {
             let bootstrap = try await InviteBootstrapService.validateAndBootstrap(
                 credentials: credentials,
-                existingCredentials: nil
-            ) { reason in
-                await BiometricService.shared.authenticate(reason: reason)
-            }
+                existingCredentials: nil,
+                confirmTrust: { reason in
+                    await BiometricService.shared.authenticate(reason: reason)
+                },
+                onWaitingForApproval: { expiresAt in
+                    connectionTest = .waitingForApproval(expiresAt: expiresAt)
+                }
+            )
 
             let effectiveCreds = bootstrap.effectiveCredentials
 
@@ -301,6 +321,9 @@ struct OnboardingView: View {
             // waits for the workspace refresh, not this session snapshot.
             try? await Task.sleep(for: .milliseconds(600))
             leaveOnboardingAfterPair()
+        } catch is CancellationError {
+            connection.sessionStore.markSyncFailed()
+            connectionTest = .failed("Pairing cancelled.")
         } catch {
             connection.sessionStore.markSyncFailed()
             connectionTest = .failed(error.localizedDescription)
@@ -311,6 +334,7 @@ struct OnboardingView: View {
 private enum ConnectionTestState {
     case idle
     case testing
+    case waitingForApproval(expiresAt: Int64)
     case success
     case failed(String)
 }
@@ -394,9 +418,39 @@ protocol InviteBootstrapAPI: Sendable {
         deviceName: String?,
         devicePublicKey: DevicePublicKey
     ) async throws -> PairDeviceResponse
+    func startPairDevice(
+        pairingToken: String,
+        deviceName: String?,
+        devicePublicKey: DevicePublicKey
+    ) async throws -> PairDeviceStart
+    func pollPairingApprovalStatus(
+        approvalId: String,
+        pendingToken: String
+    ) async throws -> PairingApprovalPoll
     func health() async throws -> Bool
     func me() async throws -> User
     func listSessionsFromWorkspaces(recentDays: Int) async throws -> [Session]
+}
+
+extension InviteBootstrapAPI {
+    func startPairDevice(
+        pairingToken: String,
+        deviceName: String?,
+        devicePublicKey: DevicePublicKey
+    ) async throws -> PairDeviceStart {
+        .enrolled(try await pairDevice(
+            pairingToken: pairingToken,
+            deviceName: deviceName,
+            devicePublicKey: devicePublicKey
+        ))
+    }
+
+    func pollPairingApprovalStatus(
+        approvalId: String,
+        pendingToken: String
+    ) async throws -> PairingApprovalPoll {
+        throw APIError.invalidResponse
+    }
 }
 
 extension APIClient: InviteBootstrapAPI {}
@@ -417,7 +471,8 @@ enum InviteBootstrapService {
         deviceName: String? = PairingDeviceName.current(),
         deviceKeyProvider: @MainActor () throws -> any DeviceKey = {
             try DeviceKeyProvider.shared.loadOrCreate()
-        }
+        },
+        onWaitingForApproval: (@MainActor (Int64) -> Void)? = nil
     ) async throws -> InviteBootstrapResult {
         guard credentials.resolvedScheme == .https, let baseURL = credentials.baseURL else {
             throw InviteBootstrapError.message("HTTPS is required. Ask the server owner for an HTTPS/Tailscale invite.")
@@ -445,14 +500,37 @@ enum InviteBootstrapService {
         if let pairingToken = credentials.pairingToken, !pairingToken.isEmpty {
             let bootstrapAPI = apiFactory(baseURL, credentials.token, credentials.normalizedTLSCertFingerprint)
             let pairResult: PairDeviceResponse
+            var didRequireApproval = false
             do {
-                pairResult = try await bootstrapAPI.pairDevice(
+                let start = try await bootstrapAPI.startPairDevice(
                     pairingToken: pairingToken,
                     deviceName: PairingDeviceName.resolved(deviceName),
                     devicePublicKey: try deviceKeyProvider().publicKey
                 )
+                if case .approvalRequired(let required) = start {
+                    didRequireApproval = true
+                    onWaitingForApproval?(required.expiresAt)
+                }
+                pairResult = try await PairingEnrollment.complete(
+                    start: start,
+                    poll: { approvalId, pendingToken in
+                        try await bootstrapAPI.pollPairingApprovalStatus(
+                            approvalId: approvalId,
+                            pendingToken: pendingToken
+                        )
+                    },
+                    onWaiting: { expiresAt in
+                        onWaitingForApproval?(expiresAt)
+                    }
+                )
             } catch {
-                throw InviteBootstrapError.message(pairingMutationFailureMessage(for: error, host: displayTarget(credentials)))
+                throw InviteBootstrapError.message(
+                    pairingMutationFailureMessage(
+                        for: error,
+                        host: displayTarget(credentials),
+                        didRequireApproval: didRequireApproval
+                    )
+                )
             }
             let effective: ServerCredentials
             let bootstrapToken: String
@@ -478,7 +556,16 @@ enum InviteBootstrapService {
         return try await api.listSessionsFromWorkspaces(recentDays: 3)
     }
 
-    private static func pairingMutationFailureMessage(for error: Error, host: String) -> String {
+    private static func pairingMutationFailureMessage(
+        for error: Error,
+        host: String,
+        didRequireApproval: Bool = false
+    ) -> String {
+        if didRequireApproval {
+            return PairingEnrollment.Failure.classify(error).errorDescription
+                ?? PairingEnrollment.Failure.disconnected.errorDescription
+                ?? "Lost contact while waiting for approval. Request a fresh invite and try again."
+        }
         if APIClientAvailabilityFailure(error: error) != nil {
             return "Pairing may have completed, but its response was lost. Open Oppi to check, or request a fresh invite before trying again."
         }
@@ -486,6 +573,9 @@ enum InviteBootstrapService {
     }
 
     static func pairingFailureMessage(for error: Error, host: String) -> String {
+        if let failure = error as? PairingEnrollment.Failure {
+            return failure.errorDescription ?? "Pairing failed. Request a fresh invite and try again."
+        }
         if let apiError = error as? APIError {
             switch apiError {
             case .invalidResponse:
@@ -527,6 +617,7 @@ enum InviteBootstrapService {
         inviteURL: String,
         serverStore: ServerStore,
         coordinator: ConnectionCoordinator,
+        onWaitingForApproval: (@MainActor (Int64) -> Void)? = nil,
         confirmTrust: @MainActor (String) async -> Bool
     ) async throws -> (name: String, selected: Bool) {
         guard let credentials = ServerCredentials.decodeInviteURLString(inviteURL) else {
@@ -540,7 +631,8 @@ enum InviteBootstrapService {
         let bootstrap = try await validateAndBootstrap(
             credentials: credentials,
             existingCredentials: existing,
-            confirmTrust: confirmTrust
+            confirmTrust: confirmTrust,
+            onWaitingForApproval: onWaitingForApproval
         )
         guard let pairedServer = PairedServer(
             from: bootstrap.effectiveCredentials,
@@ -599,10 +691,19 @@ enum E2EAppAuthBootstrap {
         let pairingAPI = apiFactory(baseURL, "", credentials.normalizedTLSCertFingerprint)
         let pairResult: PairDeviceResponse
         do {
-            pairResult = try await pairingAPI.pairDevice(
+            let start = try await pairingAPI.startPairDevice(
                 pairingToken: pairingToken,
                 deviceName: PairingDeviceName.current(),
                 devicePublicKey: try deviceKeyProvider().publicKey
+            )
+            pairResult = try await PairingEnrollment.complete(
+                start: start,
+                poll: { approvalId, pendingToken in
+                    try await pairingAPI.pollPairingApprovalStatus(
+                        approvalId: approvalId,
+                        pendingToken: pendingToken
+                    )
+                }
             )
         } catch {
             throw InviteBootstrapError.message(

@@ -471,9 +471,37 @@ extension ServerSettingsModel {
         model.mobileOutputGuide = MobileOutputGuideConfiguration(enabled: true, revision: 3)
         let now = Int64(Date().timeIntervalSince1970 * 1_000)
         model.pairedDevices = [
-            AuthDevice(id: currentDeviceId, name: "Chen's iPhone", scope: "device", createdAt: now - 9 * 86_400_000, lastUsedAt: now, revokedAt: nil, keyEnrolled: true),
-            AuthDevice(id: "dev-ipad", name: "Chen's iPad", scope: "device", createdAt: now - 30 * 86_400_000, lastUsedAt: now - 3 * 3_600_000, revokedAt: nil, keyEnrolled: true),
-            AuthDevice(id: "dev-script", name: "oppi CLI", scope: "device", createdAt: now - 60 * 86_400_000, lastUsedAt: nil, revokedAt: nil, keyEnrolled: false),
+            AuthDevice(
+                id: currentDeviceId,
+                name: "Chen's iPhone",
+                scope: "device",
+                createdAt: now - 9 * 86_400_000,
+                lastUsedAt: now,
+                revokedAt: nil,
+                keyEnrolled: true,
+                pairingMethod: "invite",
+                pairingSource: "100.64.0.7"
+            ),
+            AuthDevice(
+                id: "dev-ipad",
+                name: "Chen's iPad",
+                scope: "device",
+                createdAt: now - 30 * 86_400_000,
+                lastUsedAt: now - 3 * 3_600_000,
+                revokedAt: nil,
+                keyEnrolled: true,
+                pairingMethod: "tailscale",
+                pairingSource: "chen@github"
+            ),
+            AuthDevice(
+                id: "dev-script",
+                name: "oppi CLI",
+                scope: "device",
+                createdAt: now - 60 * 86_400_000,
+                lastUsedAt: nil,
+                revokedAt: nil,
+                keyEnrolled: false
+            ),
         ]
         return model
     }

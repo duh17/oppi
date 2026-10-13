@@ -97,7 +97,7 @@ struct ServerPairedDevicesPage: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.title)
                     .foregroundStyle(.themeFg)
-                Text(caption(row))
+                Text(row.caption)
                     .font(.caption)
                     .foregroundStyle(.themeComment)
             }
@@ -122,16 +122,4 @@ struct ServerPairedDevicesPage: View {
         }
     }
 
-    private func caption(_ row: PairedDeviceRoster.Row) -> String {
-        if row.isThisDevice {
-            return "This device"
-        }
-        guard let lastUsedAt = row.lastUsedAt else {
-            return "Never used"
-        }
-        let date = Date(timeIntervalSince1970: TimeInterval(lastUsedAt) / 1_000)
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return "Last used \(formatter.localizedString(for: date, relativeTo: Date()))"
-    }
 }

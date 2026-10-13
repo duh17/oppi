@@ -61,16 +61,16 @@ struct PairedDeviceRosterTests {
             currentDeviceId: "dev_me"
         )
 
-        #expect(rows == [
-            PairedDeviceRoster.Row(
-                id: "dev_me",
-                title: "Device",
-                isThisDevice: true,
-                canRevoke: false,
-                lastUsedAt: nil,
-                createdAt: 1
-            ),
-        ])
+        #expect(rows.count == 1)
+        #expect(rows[0].id == "dev_me")
+        #expect(rows[0].title == "Device")
+        #expect(rows[0].isThisDevice)
+        #expect(!rows[0].canRevoke)
+        #expect(rows[0].lastUsedAt == nil)
+        #expect(rows[0].createdAt == 1)
+        #expect(rows[0].pairingMethod == nil)
+        #expect(rows[0].pairingSource == nil)
+        #expect(rows[0].caption.hasPrefix("This device · Enrolled"))
     }
 
     @Test func sortsThisDeviceFirstThenMostRecentlyUsed() {
@@ -84,6 +84,57 @@ struct PairedDeviceRosterTests {
         )
 
         #expect(rows.map(\.id) == ["dev_me", "dev_b", "dev_a"])
+    }
+
+    @Test func metadataRowShowsMethodSourceAndEnrolledTime() {
+        let createdAt: Int64 = 1_760_000_000_000
+        let rows = PairedDeviceRoster.rows(
+            from: [
+                AuthDevice(
+                    id: "dev_ipad",
+                    name: "iPad",
+                    scope: "device",
+                    createdAt: createdAt,
+                    lastUsedAt: 2,
+                    revokedAt: nil,
+                    keyEnrolled: true,
+                    pairingMethod: "invite",
+                    pairingSource: "100.64.0.7",
+                    approvedByDeviceId: "dev_me"
+                ),
+            ],
+            currentDeviceId: "dev_me"
+        )
+
+        #expect(rows[0].pairingMethod == "invite")
+        #expect(rows[0].pairingSource == "100.64.0.7")
+        #expect(rows[0].caption.contains("Invite"))
+        #expect(rows[0].caption.contains("100.64.0.7"))
+        #expect(rows[0].caption.contains("Enrolled"))
+        #expect(!rows[0].caption.hasPrefix("This device"))
+    }
+
+    @Test func legacyRowShowsOnlyEnrolledDate() {
+        let rows = PairedDeviceRoster.rows(
+            from: [
+                AuthDevice(
+                    id: "dev_cli",
+                    name: "oppi CLI",
+                    scope: "device",
+                    createdAt: 1_760_000_000_000,
+                    lastUsedAt: nil,
+                    revokedAt: nil,
+                    keyEnrolled: false
+                ),
+            ],
+            currentDeviceId: "dev_me"
+        )
+
+        #expect(rows[0].pairingMethod == nil)
+        #expect(rows[0].pairingSource == nil)
+        #expect(rows[0].caption.hasPrefix("Enrolled"))
+        #expect(!rows[0].caption.contains("Invite"))
+        #expect(!rows[0].caption.contains("This device"))
     }
 
     @Test func loadedStateKeepsLastRowsWhenRefreshFails() {

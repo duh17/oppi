@@ -47,6 +47,15 @@ enum PushEnvelopeRejection: String, Error, Equatable, Sendable {
 struct PushPlaintext: Decodable, Equatable, Sendable {
     enum Event: String, Decodable, Sendable {
         case blocked, done, error, ended
+        case pairingApproval = "pairing_approval"
+        case deviceEnrolled = "device_enrolled"
+
+        var isSessionEvent: Bool {
+            switch self {
+            case .blocked, .done, .error, .ended: true
+            case .pairingApproval, .deviceEnrolled: false
+            }
+        }
     }
 
     enum Kind: String, Decodable, Sendable {
@@ -58,11 +67,109 @@ struct PushPlaintext: Decodable, Equatable, Sendable {
     let ts: Int64
     let event: Event
     let kind: Kind?
-    let sessionId: String
+    /// Required for session events; omitted for pairing events.
+    let sessionId: String?
     let workspaceId: String?
     let title: String
     let subtitle: String?
     let body: String
+    let approvalId: String?
+    let deviceId: String?
+
+    init(
+        v: Int,
+        ts: Int64,
+        event: Event,
+        kind: Kind? = nil,
+        sessionId: String? = nil,
+        workspaceId: String? = nil,
+        title: String,
+        subtitle: String? = nil,
+        body: String,
+        approvalId: String? = nil,
+        deviceId: String? = nil
+    ) {
+        self.v = v
+        self.ts = ts
+        self.event = event
+        self.kind = kind
+        self.sessionId = sessionId
+        self.workspaceId = workspaceId
+        self.title = title
+        self.subtitle = subtitle
+        self.body = body
+        self.approvalId = approvalId
+        self.deviceId = deviceId
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        v = try c.decode(Int.self, forKey: .v)
+        ts = try c.decode(Int64.self, forKey: .ts)
+        event = try c.decode(Event.self, forKey: .event)
+        kind = try c.decodeIfPresent(Kind.self, forKey: .kind)
+        workspaceId = try c.decodeIfPresent(String.self, forKey: .workspaceId)
+        title = try c.decode(String.self, forKey: .title)
+        subtitle = try c.decodeIfPresent(String.self, forKey: .subtitle)
+        body = try c.decode(String.self, forKey: .body)
+
+        if event.isSessionEvent {
+            let sessionId = try c.decode(String.self, forKey: .sessionId)
+            let trimmed = sessionId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .sessionId,
+                    in: c,
+                    debugDescription: "Session push events require sessionId"
+                )
+            }
+            self.sessionId = trimmed
+            approvalId = try c.decodeIfPresent(String.self, forKey: .approvalId)
+            deviceId = try c.decodeIfPresent(String.self, forKey: .deviceId)
+        } else {
+            sessionId = try Self.decodeOptionalNonEmpty(c, key: .sessionId)
+            switch event {
+            case .pairingApproval:
+                approvalId = try Self.decodeRequiredNonEmpty(c, key: .approvalId)
+                deviceId = try Self.decodeOptionalNonEmpty(c, key: .deviceId)
+            case .deviceEnrolled:
+                deviceId = try Self.decodeRequiredNonEmpty(c, key: .deviceId)
+                approvalId = try Self.decodeOptionalNonEmpty(c, key: .approvalId)
+            case .blocked, .done, .error, .ended:
+                approvalId = nil
+                deviceId = nil
+            }
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case v, ts, event, kind, sessionId, workspaceId, title, subtitle, body, approvalId, deviceId
+    }
+
+    private static func decodeRequiredNonEmpty(
+        _ c: KeyedDecodingContainer<CodingKeys>,
+        key: CodingKeys
+    ) throws -> String {
+        let value = try c.decode(String.self, forKey: key)
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw DecodingError.dataCorruptedError(
+                forKey: key,
+                in: c,
+                debugDescription: "\(key.stringValue) is required"
+            )
+        }
+        return trimmed
+    }
+
+    private static func decodeOptionalNonEmpty(
+        _ c: KeyedDecodingContainer<CodingKeys>,
+        key: CodingKeys
+    ) throws -> String? {
+        guard let value = try c.decodeIfPresent(String.self, forKey: key) else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }
 
 /// What the extension needs to open envelopes for one paired server's push key.

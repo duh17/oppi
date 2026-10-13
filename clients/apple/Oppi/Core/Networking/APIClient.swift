@@ -452,20 +452,116 @@ actor APIClient: ClientLogUploading {
 
     /// Exchange a one-time pairing token for a device-key credential.
     /// The server registers `devicePublicKey` and returns a short-lived access
-    /// token, not a long-lived bearer.
+    /// token, not a long-lived bearer. A 202 means another device must approve.
     func pairDevice(
         pairingToken: String,
         deviceName: String? = nil,
         devicePublicKey: DevicePublicKey
     ) async throws -> PairDeviceResponse {
+        switch try await startPairDevice(
+            pairingToken: pairingToken,
+            deviceName: deviceName,
+            devicePublicKey: devicePublicKey
+        ) {
+        case .enrolled(let response):
+            return response
+        case .approvalRequired:
+            throw APIError.server(status: 202, message: "approval_required")
+        }
+    }
+
+    func startPairDevice(
+        pairingToken: String,
+        deviceName: String? = nil,
+        devicePublicKey: DevicePublicKey
+    ) async throws -> PairDeviceStart {
         let body = PairDeviceRequest(
             pairingToken: pairingToken,
             deviceName: deviceName,
             devicePublicKey: devicePublicKey
         )
         let (data, response) = try await requestNoAuth("POST", path: "/pair", body: body)
-        try checkStatus(response, data: data)
-        return try JSONDecoder().decode(PairDeviceResponse.self, from: data)
+        return try decodePairDeviceStart(data: data, response: response)
+    }
+
+    func pollPairingApprovalStatus(
+        approvalId: String,
+        pendingToken: String
+    ) async throws -> PairingApprovalPoll {
+        struct Body: Encodable {
+            let approvalId: String
+            let pendingToken: String
+        }
+        let (data, response) = try await requestNoAuth(
+            "POST",
+            path: "/pair/approval-status",
+            body: Body(approvalId: approvalId, pendingToken: pendingToken)
+        )
+        return try decodePairingApprovalPoll(data: data, response: response)
+    }
+
+    func listPairingApprovals() async throws -> [PendingPairingApproval] {
+        let data = try await get("/auth/pairing-approvals")
+        return try JSONDecoder().decode(PairingApprovalListResponse.self, from: data).approvals
+    }
+
+    func approvePairingApproval(id: String, signature: String) async throws {
+        struct Body: Encodable {
+            let signature: String
+        }
+        let encodedId = try percentEncodePathSegment(id)
+        _ = try await post(
+            "/auth/pairing-approvals/\(encodedId)/approve",
+            body: Body(signature: signature)
+        )
+    }
+
+    func denyPairingApproval(id: String) async throws {
+        let encodedId = try percentEncodePathSegment(id)
+        _ = try await post(
+            "/auth/pairing-approvals/\(encodedId)/deny",
+            body: EmptyJSONObject()
+        )
+    }
+
+    private func decodePairDeviceStart(data: Data, response: URLResponse) throws -> PairDeviceStart {
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+        switch http.statusCode {
+        case 200:
+            return .enrolled(try JSONDecoder().decode(PairDeviceResponse.self, from: data))
+        case 202:
+            let required = try JSONDecoder().decode(PairingApprovalRequired.self, from: data)
+            guard required.status == "approval_required",
+                  !required.approvalId.isEmpty,
+                  !required.pendingToken.isEmpty else {
+                throw APIError.invalidResponse
+            }
+            return .approvalRequired(required)
+        default:
+            try checkStatus(response, data: data)
+            throw APIError.invalidResponse
+        }
+    }
+
+    private func decodePairingApprovalPoll(data: Data, response: URLResponse) throws -> PairingApprovalPoll {
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+        switch http.statusCode {
+        case 200:
+            return .enrolled(try JSONDecoder().decode(PairDeviceResponse.self, from: data))
+        case 202:
+            let pending = try JSONDecoder().decode(PairingApprovalPendingStatus.self, from: data)
+            guard pending.status == "pending" else {
+                throw APIError.invalidResponse
+            }
+            return .pending(expiresAt: pending.expiresAt)
+        default:
+            try checkStatus(response, data: data)
+            throw APIError.invalidResponse
+        }
     }
 
     /// Mint a same-Tailscale-user pairing invite. Auth is the TCP whois check

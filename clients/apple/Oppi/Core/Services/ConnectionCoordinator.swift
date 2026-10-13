@@ -1197,6 +1197,7 @@ final class ConnectionCoordinator {
             #endif
             guard connection.apiClient != nil else { continue }
             await connection.refreshWorkspaceAndSessionLists(force: true)
+            await connection.refreshPairingApprovals()
         }
     }
 

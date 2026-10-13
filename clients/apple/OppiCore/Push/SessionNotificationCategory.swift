@@ -5,4 +5,6 @@ enum SessionNotificationCategory {
     static let sessionDone = "SESSION_DONE"
     static let sessionError = "SESSION_ERROR"
     static let sessionBlocked = "SESSION_BLOCKED"
+    static let pairingApproval = "PAIRING_APPROVAL"
+    static let deviceEnrolled = "DEVICE_ENROLLED"
 }

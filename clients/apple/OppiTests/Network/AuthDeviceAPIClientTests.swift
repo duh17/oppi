@@ -67,6 +67,7 @@ struct AuthDeviceAPIClientTests {
         #expect(devices[0].name == "Phone")
         #expect(devices[0].lastUsedAt == 2)
         #expect(devices[0].keyEnrolled == true)
+        #expect(devices[0].pairingMethod == nil)
         #expect(devices[1].revokedAt == 9)
     }
 

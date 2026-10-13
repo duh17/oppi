@@ -26,6 +26,9 @@ enum AppEventMessage: Sendable, Equatable {
 
     case workspaceGitChanged(workspaceId: String, worktreeId: String?, emittedAt: Int64, sessionId: String?, reason: String?)
 
+    case pairingApprovalRequested(emittedAt: Int64, approval: PendingPairingApproval)
+    case pairingApprovalSettled(emittedAt: Int64, approvalId: String, outcome: PairingApprovalSettlement)
+
     /// Unknown or explicitly focused-stream-only frame types are decoded but ignored.
     case ignored(type: String)
 }
@@ -36,6 +39,7 @@ extension AppEventMessage: Decodable {
         case sessionId, workspaceId, worktreeId, emittedAt, summary
         case reason, source, message, code, fatal, id
         case seq, currentSeq
+        case approval, approvalId, outcome
     }
 
     private static let focusedStreamOnlyTypes: Set<String> = [
@@ -163,6 +167,19 @@ extension AppEventMessage: Decodable {
                 emittedAt: try c.decode(Int64.self, forKey: .emittedAt),
                 sessionId: try c.decodeIfPresent(String.self, forKey: .sessionId),
                 reason: try c.decodeIfPresent(String.self, forKey: .reason)
+            )
+
+        case "pairing_approval_requested":
+            self = .pairingApprovalRequested(
+                emittedAt: try c.decode(Int64.self, forKey: .emittedAt),
+                approval: try c.decode(PendingPairingApproval.self, forKey: .approval)
+            )
+
+        case "pairing_approval_settled":
+            self = .pairingApprovalSettled(
+                emittedAt: try c.decode(Int64.self, forKey: .emittedAt),
+                approvalId: try c.decode(String.self, forKey: .approvalId),
+                outcome: try c.decode(PairingApprovalSettlement.self, forKey: .outcome)
             )
 
         default:
