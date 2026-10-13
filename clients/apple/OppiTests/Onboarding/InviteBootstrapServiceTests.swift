@@ -177,39 +177,34 @@ struct InviteBootstrapServiceTests {
         #expect(await pairingAPI.lastPairedDeviceName() == "Chen iPhone")
     }
 
-    @Test func cancelAfterAddServerReadyLeavesNoStoredServer() async throws {
-        let fingerprint = "sha256:pairing-cancel-\(UUID().uuidString)"
-        let credentials = ServerCredentials(
-            host: "pairing-cancel.example.test",
-            port: 7749,
-            token: "sk_test",
-            name: "Cancel Pair",
-            scheme: .https,
-            serverFingerprint: fingerprint
-        )
-        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
-        let store = ServerStore()
-        let coordinator = ConnectionCoordinator(serverStore: store)
-        coordinator.networkPathType = { "wifi" }
-        coordinator._initialLANEndpointForTesting = { _ in nil }
-        coordinator._serverInfoBootstrapForTesting = { _, _ in pairingTestServerInfo() }
+    /// The server enrolls the device at the approval poll's 200, so the wait (and its
+    /// Cancel) must end there, before the authenticated bootstrap and the save.
+    @Test func approvalWaitEndsWhenTheServerEnrolls() async throws {
+        let log = InviteBootstrapCallLog()
+        let pairingAPI = RecordingInviteBootstrapAPI(log: log, accessToken: "at_paired", approvalRequired: true)
+        let authenticatedAPI = RecordingInviteBootstrapAPI(log: log)
+        var apis = [pairingAPI, authenticatedAPI]
+        var events: [String] = []
 
-        let kept = await coordinator.addServerReadyIfCurrent(
-            server,
-            switchTo: true,
-            isCurrent: { true }
+        _ = try await InviteBootstrapService.validateAndBootstrap(
+            credentials: credentials(),
+            existingCredentials: nil,
+            confirmTrust: { _ in true },
+            apiFactory: { _, token, _ in
+                events.append("client:\(token)")
+                return apis.removeFirst()
+            },
+            deviceKeyProvider: { InMemoryP256DeviceKey() },
+            onWaitingForApproval: { expiresAt in
+                events.append("waiting:\(expiresAt.map(String.init) ?? "ended")")
+            }
         )
-        #expect(kept != nil && kept != .failed)
-        #expect(store.server(for: server.id) != nil)
-        await coordinator.removeServer(id: server.id)
 
-        let stale = await coordinator.addServerReadyIfCurrent(
-            server,
-            switchTo: true,
-            isCurrent: { false }
-        )
-        #expect(stale == nil)
-        #expect(store.server(for: server.id) == nil)
+        #expect(await log.snapshot().contains("poll:pa_test"))
+        // The wait ends before the credential's authenticated client exists.
+        #expect(events.first == "client:")
+        #expect(events.contains("waiting:4102444800000"))
+        #expect(Array(events.suffix(2)) == ["waiting:ended", "client:at_paired"])
     }
 
     @Test func decodesCredentialsFromInviteURL() throws {
@@ -316,16 +311,32 @@ private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
     private let log: InviteBootstrapCallLog
     private let accessToken: String
     private let incompleteResponse: Bool
+    private let approvalRequired: Bool
     private var pairedDeviceName: String?
 
     init(
         log: InviteBootstrapCallLog,
         accessToken: String = "at_current",
-        incompleteResponse: Bool = false
+        incompleteResponse: Bool = false,
+        approvalRequired: Bool = false
     ) {
         self.log = log
         self.accessToken = accessToken
         self.incompleteResponse = incompleteResponse
+        self.approvalRequired = approvalRequired
+    }
+
+    private func enrolledResponse() -> PairDeviceResponse {
+        PairDeviceResponse(
+            deviceId: "dev_https",
+            accessToken: accessToken,
+            expiresAt: 4_102_444_800_000,
+            refreshChallenge: DeviceAuthChallenge(
+                nonce: "next",
+                audience: DeviceAuthSession.refreshAudience,
+                expiresAt: 4_102_444_800_000
+            )
+        )
     }
 
     func lastPairedDeviceName() -> String? { pairedDeviceName }
@@ -342,23 +353,24 @@ private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
         if incompleteResponse {
             return .enrolled(PairDeviceResponse(deviceId: "", accessToken: "", expiresAt: 0, refreshChallenge: nil))
         }
-        return .enrolled(PairDeviceResponse(
-            deviceId: "dev_https",
-            accessToken: accessToken,
-            expiresAt: 4_102_444_800_000,
-            refreshChallenge: DeviceAuthChallenge(
-                nonce: "next",
-                audience: DeviceAuthSession.refreshAudience,
+        if approvalRequired {
+            return .approvalRequired(PairingApprovalRequired(
+                status: "approval_required",
+                approvalId: "pa_test",
+                pendingToken: "pw_test",
                 expiresAt: 4_102_444_800_000
-            )
-        ))
+            ))
+        }
+        return .enrolled(enrolledResponse())
     }
 
     func pollPairingApprovalStatus(
         approvalId: String,
         pendingToken: String
     ) async throws -> PairingApprovalPoll {
-        throw APIError.invalidResponse
+        guard approvalRequired else { throw APIError.invalidResponse }
+        await log.append("poll:\(approvalId)")
+        return .enrolled(enrolledResponse())
     }
 
     func health() async throws -> Bool {

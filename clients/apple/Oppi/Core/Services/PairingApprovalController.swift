@@ -22,6 +22,9 @@ final class PairingApprovalController {
         let approvalId: String
     }
 
+    /// Server lifetime of a pending approval (`PAIRING_APPROVAL_TTL_MS`).
+    nonisolated static let denyLifetime: Duration = .seconds(120)
+
     private(set) var presented: Presented?
     private var snoozedIds: Set<String> = []
     private var preferred: (serverId: String, approvalId: String)?
@@ -121,7 +124,12 @@ final class PairingApprovalController {
         coordinator: ConnectionCoordinator
     ) async {
         queueDeny(serverId: serverId, approvalId: approvalId)
-        while hasQueuedDeny(serverId: serverId, approvalId: approvalId), !Task.isCancelled {
+        // The server forgets a pending approval after its 2-minute lifetime, so a
+        // deny that has not landed by then has nothing left to deny.
+        let deadline = ContinuousClock.now + Self.denyLifetime
+        while hasQueuedDeny(serverId: serverId, approvalId: approvalId),
+              !Task.isCancelled,
+              ContinuousClock.now < deadline {
             await performQueuedDenies(coordinator: coordinator)
             if hasQueuedDeny(serverId: serverId, approvalId: approvalId) {
                 try? await Task.sleep(for: .milliseconds(100))

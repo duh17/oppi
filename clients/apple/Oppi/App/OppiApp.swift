@@ -1646,11 +1646,10 @@ struct OppiApp: App {
             ) else {
                 throw InviteBootstrapError.message("Missing server fingerprint in invite credentials")
             }
-            guard let pairingOutcome = await coordinator.addServerReadyIfCurrent(
-                pairedServer,
-                switchTo: true,
-                isCurrent: { invitePairingGate.shouldRun(generation) && !Task.isCancelled }
-            ) else { return }
+            // Committed: the server enrolled this device and the wait (with its
+            // Cancel) has ended. A newer invite only takes over the UI below.
+            let pairingOutcome = await coordinator.addServerReady(pairedServer, switchTo: true)
+            guard invitePairingGate.shouldRun(generation), !Task.isCancelled else { return }
             guard pairingOutcome != .failed else {
                 throw InviteBootstrapError.message("Connection blocked by server transport policy")
             }

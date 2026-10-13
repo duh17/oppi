@@ -292,7 +292,11 @@ struct OnboardingView: View {
                 },
                 onWaitingForApproval: { expiresAt in
                     guard generation == pairingGeneration else { return }
-                    connectionTest = .waitingForApproval(expiresAt: expiresAt)
+                    if let expiresAt {
+                        connectionTest = .waitingForApproval(expiresAt: expiresAt)
+                    } else {
+                        connectionTest = .testing
+                    }
                 }
             )
             guard generation == pairingGeneration, !Task.isCancelled else { return }
@@ -308,11 +312,11 @@ struct OnboardingView: View {
                 return
             }
 
-            guard let pairingOutcome = await coordinator.addServerReadyIfCurrent(
-                pairedServer,
-                switchTo: true,
-                isCurrent: { generation == pairingGeneration && !Task.isCancelled }
-            ) else { return }
+            // The server enrolled this device at the 200, and the wait (with its
+            // Cancel) has ended, so the pairing is committed: save it. A newer
+            // attempt only takes over the UI below.
+            let pairingOutcome = await coordinator.addServerReady(pairedServer, switchTo: true)
+            guard generation == pairingGeneration, !Task.isCancelled else { return }
             guard pairingOutcome != .failed else {
                 connectionTest = .failed("Connection blocked by server transport policy")
                 return
@@ -462,7 +466,9 @@ enum InviteBootstrapService {
         deviceKeyProvider: @MainActor () throws -> any DeviceKey = {
             try DeviceKeyProvider.shared.loadOrCreate()
         },
-        onWaitingForApproval: (@MainActor (Int64) -> Void)? = nil
+        /// The approval wait's expiry while another device must approve, then `nil`
+        /// once the server enrolled this device: the wait and its Cancel end there.
+        onWaitingForApproval: (@MainActor (Int64?) -> Void)? = nil
     ) async throws -> InviteBootstrapResult {
         guard credentials.resolvedScheme == .https, let baseURL = credentials.baseURL else {
             throw InviteBootstrapError.message("HTTPS is required. Ask the server owner for an HTTPS/Tailscale invite.")
@@ -514,6 +520,7 @@ enum InviteBootstrapService {
                     }
                 )
                 if Task.isCancelled { throw PairingEnrollment.Failure.cancelled }
+                if didRequireApproval { onWaitingForApproval?(nil) }
             } catch {
                 throw InviteBootstrapError.message(
                     pairingMutationFailureMessage(
@@ -608,8 +615,7 @@ enum InviteBootstrapService {
         inviteURL: String,
         serverStore: ServerStore,
         coordinator: ConnectionCoordinator,
-        onWaitingForApproval: (@MainActor (Int64) -> Void)? = nil,
-        isCurrent: @MainActor () -> Bool = { !Task.isCancelled },
+        onWaitingForApproval: (@MainActor (Int64?) -> Void)? = nil,
         confirmTrust: @MainActor (String) async -> Bool
     ) async throws -> (name: String, selected: Bool) {
         guard let credentials = ServerCredentials.decodeInviteURLString(inviteURL) else {
@@ -633,13 +639,8 @@ enum InviteBootstrapService {
         ) else {
             throw InviteBootstrapError.message("Missing server fingerprint")
         }
-        guard let outcome = await coordinator.addServerReadyIfCurrent(
-            pairedServer,
-            switchTo: true,
-            isCurrent: isCurrent
-        ) else {
-            throw PairingEnrollment.Failure.cancelled
-        }
+        // Committed: the server enrolled this device and the wait has ended.
+        let outcome = await coordinator.addServerReady(pairedServer, switchTo: true)
         guard outcome != .failed else {
             throw InviteBootstrapError.message("Connection blocked by server transport policy")
         }

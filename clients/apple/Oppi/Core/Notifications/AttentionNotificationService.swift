@@ -22,13 +22,28 @@ private struct NotificationCompletion: @unchecked Sendable {
 }
 
 /// Signals that iOS reclaimed the pairing-deny background budget.
+/// One notification Deny: its background task and the notification completion handler.
+/// `finish()` runs the handler exactly once and ends the task, on whichever comes first:
+/// the deny settled, the background budget expired, or the approval's server lifetime
+/// elapsed.
 private final class PairingDenyBudget: @unchecked Sendable {
     private let lock = NSLock()
     private var expired = false
     private var task = UIBackgroundTaskIdentifier.invalid
+    private var completion: NotificationCompletion?
+
+    init(completion: NotificationCompletion) {
+        self.completion = completion
+    }
 
     func setTask(_ task: UIBackgroundTaskIdentifier) {
         lock.lock()
+        if completion == nil {
+            // Already finished (budget expired before the task id arrived).
+            lock.unlock()
+            if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
+            return
+        }
         self.task = task
         lock.unlock()
     }
@@ -36,12 +51,8 @@ private final class PairingDenyBudget: @unchecked Sendable {
     func markExpired() {
         lock.lock()
         expired = true
-        let task = self.task
-        self.task = .invalid
         lock.unlock()
-        if task != .invalid {
-            UIApplication.shared.endBackgroundTask(task)
-        }
+        finish()
     }
 
     var isExpired: Bool {
@@ -50,11 +61,14 @@ private final class PairingDenyBudget: @unchecked Sendable {
         return expired
     }
 
-    func endTaskIfNeeded() {
+    func finish() {
         lock.lock()
+        let completion = self.completion
+        self.completion = nil
         let task = self.task
         self.task = .invalid
         lock.unlock()
+        completion?.call()
         if task != .invalid {
             UIApplication.shared.endBackgroundTask(task)
         }
@@ -437,7 +451,7 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         _ payload: PairingNotificationPayload,
         completion: NotificationCompletion
     ) async {
-        let budget = PairingDenyBudget()
+        let budget = PairingDenyBudget(completion: completion)
         let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "oppi.pairing.deny") {
             // Pending approvals live for 2 minutes on the server, then expire
             // (fail closed). If this background budget runs out before the deny
@@ -450,31 +464,26 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         }
         budget.setTask(backgroundTask)
 
-        let denyWork = Task { @MainActor in
-            while self.onPairingDeny == nil {
-                if budget.isExpired || Task.isCancelled { return }
-                try? await Task.sleep(for: .milliseconds(20))
-            }
-            guard let handler = self.onPairingDeny, !budget.isExpired, !Task.isCancelled else {
+        // A foreground app's background task never expires: the approval's server
+        // lifetime bounds the callback instead. Nothing can be denied after it.
+        let lifetime = Task { @MainActor in
+            try? await Task.sleep(for: PairingApprovalController.denyLifetime)
+            budget.finish()
+        }
+        defer { lifetime.cancel() }
+
+        let deadline = ContinuousClock.now + PairingApprovalController.denyLifetime
+        while onPairingDeny == nil {
+            if budget.isExpired || ContinuousClock.now >= deadline {
+                budget.finish()
                 return
             }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        if let handler = onPairingDeny, !budget.isExpired {
             await handler(payload)
         }
-
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { await denyWork.value }
-            group.addTask {
-                while !budget.isExpired && !Task.isCancelled {
-                    try? await Task.sleep(for: .milliseconds(20))
-                }
-            }
-            await group.next()
-            denyWork.cancel()
-            group.cancelAll()
-        }
-
-        completion.call()
-        budget.endTaskIfNeeded()
+        budget.finish()
     }
 
     private func deliverPendingNavigationTapsIfPossible() {
