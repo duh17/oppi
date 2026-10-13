@@ -1,4 +1,5 @@
-import { chmodSync, mkdirSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { chmodSync, linkSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import { createLogger } from "../logger.js";
@@ -69,14 +70,15 @@ export function runSessionStateDeadSchemaCleanup(db: SqliteDatabase, dataDir: st
     return;
   }
 
-  const backupPath = writePreMigrationBackup(db, dataDir, key);
-  db.transaction(() => {
-    if (hasCompletedMigration(db, key)) {
-      return;
-    }
-    applyCleanup(db);
-    recordMigration(db, key);
-  })();
+  const { backupPath } = migrateWithBackup(db, dataDir, key, () =>
+    db.transaction(() => {
+      if (hasCompletedMigration(db, key)) {
+        return;
+      }
+      applyCleanup(db);
+      recordMigration(db, key);
+    })(),
+  );
 
   log.info("session_state_cleanup.completed", {
     key: SESSION_STATE_DEAD_SCHEMA_CLEANUP_MIGRATION_KEY,
@@ -164,16 +166,47 @@ function applyCleanup(db: SqliteDatabase): void {
 }
 
 /**
- * Copies the whole file to `$dataDir/backups/` before a destructive migration. Throws when the
- * copy fails, so the caller aborts before changing anything.
+ * Runs a destructive migration after copying the whole file to `$dataDir/backups/`. A failed
+ * copy throws before `migrate` runs; a failed `migrate` (which must roll back) deletes the copy.
+ * Only a migration that commits leaves a backup. Each attempt writes its own file (time plus a
+ * random suffix) and deletes only that file.
  */
-export function writePreMigrationBackup(db: SqliteDatabase, dataDir: string, key: string): string {
+export function migrateWithBackup<T>(
+  db: SqliteDatabase,
+  dataDir: string,
+  key: string,
+  migrate: () => T,
+): { backupPath: string; result: T } {
+  const backupPath = writePreMigrationBackup(db, dataDir, key);
+  try {
+    return { backupPath, result: migrate() };
+  } catch (error) {
+    // The migration rolled back, so the file still matches the backup. Keeping it would only
+    // add another full-size copy on every retry.
+    rmSync(backupPath, { force: true });
+    throw error;
+  }
+}
+
+function writePreMigrationBackup(db: SqliteDatabase, dataDir: string, key: string): string {
   const backupDir = join(dataDir, "backups");
-  const backupPath = join(backupDir, `session-state-pre-${key}-${Date.now()}.db`);
+  const backupPath = join(
+    backupDir,
+    `session-state-pre-${key}-${Date.now()}-${randomBytes(4).toString("hex")}.db`,
+  );
+  let staging: string | undefined;
   try {
     mkdirSync(backupDir, { recursive: true, mode: 0o700 });
-    db.exec(`VACUUM INTO ${sqlLiteral(backupPath)}`);
-    chmodSync(backupPath, 0o600);
+    // VACUUM INTO writes into a directory only this attempt owns, so a partial copy never sits
+    // under a backup name and removing it cannot touch anyone else's file.
+    staging = mkdtempSync(join(backupDir, ".partial-"));
+    const staged = join(staging, "session-state.db");
+    db.exec(`VACUUM INTO ${sqlLiteral(staged)}`);
+    chmodSync(staged, 0o600);
+    // link() never replaces a file. One already at backupPath is another start's backup,
+    // possibly the only rollback copy of a rebuild it is about to commit, so this attempt fails
+    // and leaves it alone.
+    linkSync(staged, backupPath);
   } catch (error) {
     throw new Error(
       `session-state backup before ${key} failed; refusing to migrate (${backupPath}): ${
@@ -181,6 +214,8 @@ export function writePreMigrationBackup(db: SqliteDatabase, dataDir: string, key
       }`,
       { cause: error },
     );
+  } finally {
+    if (staging) rmSync(staging, { recursive: true, force: true });
   }
   return backupPath;
 }

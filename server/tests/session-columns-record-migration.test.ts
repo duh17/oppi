@@ -1,7 +1,16 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { basename, join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { openDatabase } from "../src/sqlite-compat.js";
 import { SESSION_COLUMNS_RECORD_MIGRATION_KEY } from "../src/storage/session-columns-record-migration.js";
@@ -105,10 +114,17 @@ const CLASSIC_SESSION: Session = {
 
 const LEGACY_SESSIONS = [CONTROL_SESSION, DURABLE_SESSION, CLASSIC_SESSION];
 
+// Lets a test force the backup filename another process already took.
+vi.mock("node:crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:crypto")>();
+  return { ...actual, randomBytes: vi.fn(actual.randomBytes) };
+});
+
 describe("session_state_sessions columns-only migration", () => {
   const dirs: string[] = [];
 
   afterEach(() => {
+    vi.restoreAllMocks();
     for (const dir of dirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -229,6 +245,8 @@ describe("session_state_sessions columns-only migration", () => {
     }
 
     expect(() => new SessionSqliteStore(dataDir)).toThrow(/injected migration failure/);
+    // The file is unchanged, so the backup taken for this attempt is gone too.
+    expect(listBackups(dataDir)).toEqual([]);
 
     const failed = readShape(dbPath);
     expect(failed.columns).toEqual(expect.arrayContaining(DROPPED_COLUMNS));
@@ -303,6 +321,30 @@ describe("session_state_sessions columns-only migration", () => {
     expect(unchanged.columns).toEqual(expect.arrayContaining(DROPPED_COLUMNS));
     expect(unchanged.completedAt).toBeUndefined();
     expect(unchanged.legacySessions).toEqual(new Map(LEGACY_SESSIONS.map((s) => [s.id, s])));
+  });
+
+  it("leaves another process's backup in place when its backup path is already taken", () => {
+    const dataDir = legacyDataDir();
+    // Two starts in the same millisecond with the same suffix pick the same path; the first
+    // already wrote its backup there and may go on to commit the irreversible rebuild.
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    vi.mocked(randomBytes).mockImplementation(() => Buffer.alloc(4));
+    const taken = join(
+      dataDir,
+      "backups",
+      `session-state-pre-${SESSION_COLUMNS_RECORD_MIGRATION_KEY}-1700000000000-00000000.db`,
+    );
+    mkdirSync(join(dataDir, "backups"), { mode: 0o700 });
+    writeFileSync(taken, "the other process's backup");
+
+    expect(() => new SessionSqliteStore(dataDir)).toThrow(/refusing to migrate/);
+
+    expect(readFileSync(taken, "utf8")).toBe("the other process's backup");
+    // Nor does this attempt leave its own copy behind.
+    expect(readdirSync(join(dataDir, "backups"))).toEqual([basename(taken)]);
+    const unchanged = readShape(join(dataDir, "session-state.db"));
+    expect(unchanged.columns).toEqual(expect.arrayContaining(DROPPED_COLUMNS));
+    expect(unchanged.completedAt).toBeUndefined();
   });
 });
 

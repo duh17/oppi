@@ -4,9 +4,9 @@ import type { SqliteDatabase } from "../sqlite-compat.js";
 import {
   ensureMigrationsTable,
   hasCompletedMigration,
+  migrateWithBackup,
   recordMigration,
   tableColumns,
-  writePreMigrationBackup,
 } from "./session-state-cleanup-migration.js";
 
 const log = createLogger({ base: { component: "session_columns_record_migration" } });
@@ -59,8 +59,8 @@ export function createSessionStateSessionsTable(db: SqliteDatabase, table: strin
  * Irreversible: drops `session_json` (after copying `$.control` into `control_json`),
  * `server_durable_json` (split into `durable_*`), `workspace_name`, and the per-stat columns
  * (packed into `summary_json`). A `VACUUM INTO` backup is written first; a failed backup aborts
- * before any change. A failure inside the transaction rolls back to the old table. The file is
- * vacuumed once after the commit. Returns whether the rebuild ran.
+ * before any change. A failure inside the transaction rolls back to the old table and deletes
+ * that backup. The file is vacuumed once after the commit. Returns whether the rebuild ran.
  *
  * The source is the table a release kept complete (it added any missing column on every open).
  * oppi-server 0.51.0 predates `program_status_json`; its rows copy NULL there, and startup
@@ -81,34 +81,35 @@ export function runSessionColumnsRecordMigration(db: SqliteDatabase, dataDir: st
     return false;
   }
 
-  const backupPath = writePreMigrationBackup(db, dataDir, key);
-  const counts = db.transaction(() => {
-    refuseUnreadableSources(db);
-    createSessionStateSessionsTable(db, "session_state_sessions_next");
-    db.exec(copySessionsSql(sourceColumns.has("program_status_json")));
-    const copied = count(db, "SELECT COUNT(*) AS count FROM session_state_sessions_next");
-    const source = count(db, "SELECT COUNT(*) AS count FROM session_state_sessions");
-    if (copied !== source) {
-      throw new Error(`session row copy mismatch: ${copied} of ${source}`);
-    }
-    // Indexes on the old table go with it; the store recreates the current set.
-    db.exec("DROP TABLE session_state_sessions");
-    db.exec("ALTER TABLE session_state_sessions_next RENAME TO session_state_sessions");
-    recordMigration(db, key);
-    return {
-      sessions: copied,
-      control: count(
-        db,
-        "SELECT COUNT(*) AS count FROM session_state_sessions WHERE control_json IS NOT NULL",
-      ),
-      durable: count(
-        db,
-        `SELECT COUNT(*) AS count FROM session_state_sessions
-         WHERE durable_store_id IS NOT NULL OR durable_conversation_id IS NOT NULL
-            OR durable_role IS NOT NULL`,
-      ),
-    };
-  })();
+  const { backupPath, result: counts } = migrateWithBackup(db, dataDir, key, () =>
+    db.transaction(() => {
+      refuseUnreadableSources(db);
+      createSessionStateSessionsTable(db, "session_state_sessions_next");
+      db.exec(copySessionsSql(sourceColumns.has("program_status_json")));
+      const copied = count(db, "SELECT COUNT(*) AS count FROM session_state_sessions_next");
+      const source = count(db, "SELECT COUNT(*) AS count FROM session_state_sessions");
+      if (copied !== source) {
+        throw new Error(`session row copy mismatch: ${copied} of ${source}`);
+      }
+      // Indexes on the old table go with it; the store recreates the current set.
+      db.exec("DROP TABLE session_state_sessions");
+      db.exec("ALTER TABLE session_state_sessions_next RENAME TO session_state_sessions");
+      recordMigration(db, key);
+      return {
+        sessions: copied,
+        control: count(
+          db,
+          "SELECT COUNT(*) AS count FROM session_state_sessions WHERE control_json IS NOT NULL",
+        ),
+        durable: count(
+          db,
+          `SELECT COUNT(*) AS count FROM session_state_sessions
+           WHERE durable_store_id IS NOT NULL OR durable_conversation_id IS NOT NULL
+              OR durable_role IS NOT NULL`,
+        ),
+      };
+    })(),
+  );
 
   log.info("session_columns_record.completed", { key, backupPath, ...counts });
 
