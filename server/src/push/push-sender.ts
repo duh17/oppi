@@ -157,6 +157,12 @@ export class PushSender {
     if (!relays) return;
     void new RelayClient(relays, { fetch: this.options.fetch })
       .deletePermission(registration.sendToken)
-      .catch(() => false);
+      .catch(() => false)
+      .then((released) => {
+        // The relay's DELETE is idempotent, so false is a real failure: the send token stays
+        // usable at the relay until the app revokes it.
+        if (!released)
+          log.warn("push.permission_release_failed", { device: registration.deviceId });
+      });
   }
 }
