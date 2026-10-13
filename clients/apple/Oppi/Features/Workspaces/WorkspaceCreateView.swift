@@ -229,7 +229,7 @@ struct WorkspaceCreateView: View {
 
                 if !sandboxMode {
                     Button { selectBlank() } label: {
-                        Label("Use Server Home Folder", systemImage: "house")
+                        Label("Let Oppi Create a Folder", systemImage: "folder.badge.plus")
                     }
                     .foregroundStyle(.themeComment)
                 }
