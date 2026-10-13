@@ -1296,6 +1296,10 @@ struct QuickSessionSheet: View {
         let generation = agentLoadGeneration
         isLoadingAgents = true
         agentResolution = pendingAgentResolution(requestedAgentId: requestedAgentId)
+        // `selectAgent` resolves a pending load. A choice made while the list is
+        // in flight, including Pi, must survive the load's completion.
+        let startedPending = agentResolution == .pending
+        var userChoseDuringLoad: Bool { startedPending && agentResolution == .resolved }
 
         guard let connection = coordinator.connection(for: targetServerId),
               let api = connection.apiClient else {
@@ -1318,7 +1322,16 @@ struct QuickSessionSheet: View {
                 return
             }
             availableAgents = agents
-            if let requestedAgentId {
+            if userChoseDuringLoad {
+                // Keep the user's pick; only drop it if this server no longer has it.
+                if let picked = selectedAgentId, !agents.contains(where: { $0.id == picked }) {
+                    selectedAgentId = nil
+                    error = "This Agent is no longer available on the selected server."
+                }
+                requireExplicitCompatibleWorkspaceIfNeeded()
+                isLoadingAgents = false
+                return
+            } else if let requestedAgentId {
                 if agents.contains(where: { $0.id == requestedAgentId }) {
                     selectedAgentId = requestedAgentId
                 } else {
@@ -1342,6 +1355,11 @@ struct QuickSessionSheet: View {
             }
             logger.warning("Failed to load agents for quick session: \(error.localizedDescription, privacy: .public)")
             availableAgents = []
+            if userChoseDuringLoad, selectedAgentId == nil {
+                // The user already chose Pi; a failed list cannot block that launch.
+                isLoadingAgents = false
+                return
+            }
             selectedAgentId = nil
             holdLaunchAfterAgentLoadFailure(requestedAgentId: requestedAgentId, detail: error.localizedDescription)
             isLoadingAgents = false
