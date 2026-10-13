@@ -63,6 +63,8 @@ const MAC_OPPI_TREE_ALLOWED_PATHS = new Set([
   "Oppi/Core/Theme/AppTheme.swift",
   "Oppi/Core/Theme/RemoteTheme.swift",
   "Oppi/Core/Theme/ThemeCatalog.swift",
+  // ThemeCatalog resolves its built-in palettes through ThemeContrast.
+  "Oppi/Core/Theme/ThemeContrast.swift",
   "Oppi/Core/Theme/ThemeStore.swift",
 ]);
 const APPLE_SHARED_CORE_FORBIDDEN_IMPORTS = new Set([
