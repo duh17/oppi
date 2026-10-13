@@ -55,6 +55,11 @@ export type RefreshResult =
 
 export type Challenge = { nonce: string; audience: string; expiresAt: number };
 
+export type PairingTokenConsumption =
+  | { status: "consumed"; origin: PairingTokenOrigin }
+  | { status: "refused"; origin: PairingTokenOrigin }
+  | { status: "invalid" };
+
 export type EnrollResult = {
   deviceId: string;
   accessToken: string;
@@ -104,8 +109,25 @@ export function parseDevicePublicKey(value: unknown): DevicePublicKey | null {
   return publicKey;
 }
 
+export const MAX_DEVICE_NAME_CODE_POINTS = 64;
+
+/**
+ * One line of display text: control characters (newlines included) and bidi overrides become
+ * spaces, runs of whitespace collapse, and the result keeps at most `maxCodePoints`. A name or
+ * source shown on a lock screen must not fake a second line or reorder what follows it.
+ */
+export function sanitizeDisplayText(value: string, maxCodePoints: number): string {
+  const oneLine = value
+    .replace(/[\p{Cc}\u202A-\u202E\u2066-\u2069\u2028\u2029]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return Array.from(oneLine).slice(0, maxCodePoints).join("").trim();
+}
+
 export function normalizeDeviceName(value: unknown): string {
-  return typeof value === "string" && value.trim() ? value.trim() : "Device";
+  const name =
+    typeof value === "string" ? sanitizeDisplayText(value, MAX_DEVICE_NAME_CODE_POINTS) : "";
+  return name || "Device";
 }
 
 function derLength(length: number): Buffer {
@@ -191,12 +213,16 @@ export class DeviceAuthStore {
 
   /**
    * Validate and consume the outstanding `pt_` invite in one locked write (reloaded from disk,
-   * so a CLI-minted invite counts). Returns how the invite was minted, or null when the
-   * candidate is wrong or expired. An invite from before origins were recorded reports the
+   * so a CLI-minted invite counts). `admit` sees how the invite was minted and the active
+   * device count inside that lock; when it refuses, the invite is left in place. A wrong or
+   * expired candidate is `invalid`. An invite from before origins were recorded reports the
    * longest TTL, so it is treated as a long-lived invite.
    */
-  consumePairingToken(candidate: string): PairingTokenOrigin | null {
-    let origin: PairingTokenOrigin | null = null;
+  consumePairingToken(
+    candidate: string,
+    admit: (origin: PairingTokenOrigin, activeDeviceCount: number) => boolean = () => true,
+  ): PairingTokenConsumption {
+    let result: PairingTokenConsumption = { status: "invalid" };
     this.configStore.mutate((config) => {
       if (!config.pairingToken || !secureTokenEquals(candidate, config.pairingToken)) return {};
       if (
@@ -205,14 +231,26 @@ export class DeviceAuthStore {
       ) {
         return {};
       }
-      origin = config.pairingTokenOrigin ?? { method: "invite", ttlMs: MAX_PAIRING_TOKEN_TTL_MS };
+      const origin = config.pairingTokenOrigin ?? {
+        method: "invite",
+        ttlMs: MAX_PAIRING_TOKEN_TTL_MS,
+      };
+      const activeDeviceCount = (config.authDevices ?? []).filter(
+        (device) => device.revokedAt === undefined,
+      ).length;
+      // Decided under the same lock as the consume: a refused invite stays usable.
+      if (!admit(origin, activeDeviceCount)) {
+        result = { status: "refused", origin };
+        return {};
+      }
+      result = { status: "consumed", origin };
       return {
         pairingToken: undefined,
         pairingTokenExpiresAt: undefined,
         pairingTokenOrigin: undefined,
       };
     });
-    return origin;
+    return result;
   }
 
   /**
@@ -225,8 +263,9 @@ export class DeviceAuthStore {
   ): EnrollResult | null {
     const publicKey = parseDevicePublicKey(deviceInput.publicKey);
     if (!publicKey) return null;
-    const origin = this.consumePairingToken(candidate);
-    if (!origin) return null;
+    const consumed = this.consumePairingToken(candidate);
+    if (consumed.status !== "consumed") return null;
+    const origin = consumed.origin;
     return this.enrollDevice({
       publicKey,
       name: normalizeDeviceName(deviceInput.name),

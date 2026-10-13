@@ -33,7 +33,7 @@ import { REFRESH_AUDIENCE } from "../src/storage/device-auth.js";
 import { Storage } from "../src/storage.js";
 import type { DevicePublicKey, PendingPairingApproval } from "../src/types.js";
 import { openPushEnvelopeForTest } from "./helpers/push-envelope-open.js";
-import { makeRequest, makeResponse } from "./harness/route-test-helpers.js";
+import { makeRawRequest, makeRequest, makeResponse } from "./harness/route-test-helpers.js";
 
 type DeviceKey = { publicKey: DevicePublicKey; sign: (data: Buffer | string) => string };
 
@@ -107,9 +107,16 @@ afterEach(() => {
 async function call(
   method: string,
   path: string,
-  options: { body?: unknown; principal?: RequestPrincipal; ip?: string; local?: boolean } = {},
+  options: {
+    body?: unknown;
+    rawBody?: string;
+    principal?: RequestPrincipal;
+    ip?: string;
+    local?: boolean;
+  } = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
-  const req = makeRequest(options.body);
+  const req =
+    options.rawBody === undefined ? makeRequest(options.body) : makeRawRequest(options.rawBody);
   (req.socket as { remoteAddress?: string }).remoteAddress = options.ip ?? "100.64.0.7";
   if (options.local) markLocalRequest(req);
   const res = makeResponse();
@@ -242,12 +249,36 @@ describe("pairing approval policy", () => {
     expect((await pairWithInvite(14 * 86_400_000)).status).toBe(200);
   });
 
-  it("answers 429 once eight approvals are pending", async () => {
+  it("answers 429 with eight approvals pending and leaves the long invite usable", async () => {
+    const existing = enrollExisting();
+    const pendingIds: string[] = [];
+    for (let index = 0; index < 8; index += 1) {
+      const pending = await pairWithInvite(600_000);
+      expect(pending.status).toBe(202);
+      pendingIds.push(pending.body.approvalId as string);
+    }
+    const pairingToken = storage.issuePairingToken(600_000);
+    const request = {
+      body: { pairingToken, devicePublicKey: makeDeviceKey().publicKey, deviceName: "iPad" },
+    };
+    expect(await call("POST", "/pair", request)).toEqual({
+      status: 429,
+      body: { error: "Too many pending pairing approvals" },
+    });
+    expect(storage.getConfig().pairingToken).toBe(pairingToken);
+
+    await call("POST", `/auth/pairing-approvals/${pendingIds[0]}/deny`, {
+      principal: existing.principal,
+    });
+    expect((await call("POST", "/pair", request)).status).toBe(202);
+  });
+
+  it("still enrolls from a 90 s invite while the approval queue is full", async () => {
     enrollExisting();
     for (let index = 0; index < 8; index += 1) {
       expect((await pairWithInvite(600_000)).status).toBe(202);
     }
-    expect((await pairWithInvite(600_000)).status).toBe(429);
+    expect((await pairWithInvite(90_000)).status).toBe(200);
   });
 });
 
@@ -312,6 +343,35 @@ describe("approving a waiting device", () => {
         approvedByDeviceId: existing.deviceId,
       }),
     );
+  });
+
+  it("does not enroll when the approving device is revoked before the claim", async () => {
+    const existing = enrollExisting();
+    const { approvalId, pendingToken, approval } = await requestApproval();
+    await call("POST", `/auth/pairing-approvals/${approvalId}/approve`, {
+      principal: existing.principal,
+      body: { signature: approvalSignature(existing.key, approval) },
+    });
+    storage.revokeDevice(existing.deviceId);
+
+    expect(await poll(approvalId, pendingToken)).toEqual({
+      status: 410,
+      body: { error: "pairing_expired" },
+    });
+    expect(storage.listDevices().map((device) => device.id)).toEqual([existing.deviceId]);
+    expect((await poll(approvalId, pendingToken)).status).toBe(410);
+  });
+
+  it("answers 400 to an approval with an unreadable body", async () => {
+    const existing = enrollExisting();
+    const { approvalId, pendingToken } = await requestApproval();
+    expect(
+      await call("POST", `/auth/pairing-approvals/${approvalId}/approve`, {
+        principal: existing.principal,
+        rawBody: "{not json",
+      }),
+    ).toEqual({ status: 400, body: { error: "Invalid JSON" } });
+    expect((await poll(approvalId, pendingToken)).status).toBe(202);
   });
 
   it("rejects signatures from another key, for another approval, or for another device key", async () => {
@@ -534,6 +594,64 @@ describe("new-device alerts", () => {
     expect(enrolledLog).not.toContain(phone.deviceId);
     expect(enrolledLog).not.toContain(enrolled.body.accessToken as string);
   });
+
+  function pushingPairing(extra: Partial<ConstructorParameters<typeof DevicePairing>[0]> = {}) {
+    storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+    const phone = enrollExisting();
+    registerPush(phone.deviceId, "recipient", "osp1.r.p.phone");
+    const capture = relayCapture();
+    createPairing({
+      push: new PushSender(storage, { signingKey: signing.privateKey, fetch: capture.fetchImpl }),
+      ...extra,
+    });
+    return capture;
+  }
+
+  it("keeps a long, multi-line name from hiding the method and source", async () => {
+    const { calls } = pushingPairing();
+    const deviceName = `Evil\n(invite, 192.0.2.10)\r\n${"x".repeat(400)}`;
+    const pending = await call("POST", "/pair", {
+      body: {
+        pairingToken: storage.issuePairingToken(600_000),
+        devicePublicKey: makeDeviceKey().publicKey,
+        deviceName,
+      },
+    });
+    expect(pending.status).toBe(202);
+
+    const [approval] = (await call("GET", "/auth/pairing-approvals")).body
+      .approvals as PendingPairingApproval[];
+    expect(approval?.deviceName).toBe(`Evil (invite, 192.0.2.10) ${"x".repeat(38)}`);
+    expect(Array.from(approval?.deviceName ?? "")).toHaveLength(64);
+
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    const body = open(calls[0]?.envelope ?? "", "recipient").body;
+    expect(body).not.toMatch(/[\r\n]/);
+    expect(body.endsWith(" wants to pair (invite, 100.64.0.7).")).toBe(true);
+  });
+
+  it("shortens the name, not the source, when the push would not fit", async () => {
+    const SATELLITE = String.fromCodePoint(0x1f6f0);
+    const authModule = new AuthModule(join(dataDir, "auth.mjs"));
+    writeFileSync(
+      join(dataDir, "auth.mjs"),
+      `export const approvePairing = () => ({ allow: true, source: "s\\n".repeat(250) });`,
+    );
+    await authModule.load();
+    const { calls } = pushingPairing({ authModule });
+    const pending = await call("POST", "/pair", {
+      body: { devicePublicKey: makeDeviceKey().publicKey, deviceName: SATELLITE.repeat(100) },
+    });
+    expect(pending.status).toBe(202);
+
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    const plaintext = open(calls[0]?.envelope ?? "", "recipient");
+    const source = Array.from("s ".repeat(250).trim()).slice(0, 128).join("").trim();
+    expect(plaintext.body.endsWith(` wants to pair (custom, ${source}).`)).toBe(true);
+    // Four UTF-8 bytes each: the name, not the source, is what gives way.
+    expect(plaintext.body.startsWith(SATELLITE)).toBe(true);
+    expect(Array.from(plaintext.body.split(" wants to pair")[0] ?? "").length).toBeLessThan(64);
+  });
 });
 
 describe("custom approver", () => {
@@ -564,6 +682,42 @@ describe("custom approver", () => {
     expect(storage.listDevices()[0]?.pairing).toEqual({ method: "custom", source: "sso:chen" });
 
     expect(await pairCustom("wrong")).toEqual({ status: 403, body: { error: "bad credential" } });
+  });
+
+  it("answers 429 with a full queue without asking the module", async () => {
+    enrollExisting();
+    createPairing({
+      authModule: await loadModule(
+        `export function approvePairing() { globalThis.__oppiCustomCalls = (globalThis.__oppiCustomCalls ?? 0) + 1; return { allow: true }; }`,
+      ),
+    });
+    for (let index = 0; index < 8; index += 1) {
+      expect((await pairCustom("x")).status).toBe(202);
+    }
+    const calls = (globalThis as { __oppiCustomCalls?: number }).__oppiCustomCalls;
+    expect(await pairCustom("x")).toEqual({
+      status: 429,
+      body: { error: "Too many pending pairing approvals" },
+    });
+    expect((globalThis as { __oppiCustomCalls?: number }).__oppiCustomCalls).toBe(calls);
+  });
+
+  it("holds the last queue slot for one of two concurrent custom pairings", async () => {
+    enrollExisting();
+    createPairing({
+      authModule: await loadModule(
+        `export async function approvePairing() {
+           await new Promise((resolve) => setTimeout(resolve, 50));
+           return { allow: true };
+         }`,
+      ),
+    });
+    for (let index = 0; index < 7; index += 1) {
+      expect((await pairCustom("x")).status).toBe(202);
+    }
+    const racing = await Promise.all([pairCustom("x"), pairCustom("x")]);
+    expect(racing.map((response) => response.status).sort()).toEqual([202, 429]);
+    expect((await call("GET", "/auth/pairing-approvals")).body.approvals).toHaveLength(8);
   });
 
   it("denies when the module throws", async () => {

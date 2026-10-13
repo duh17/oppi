@@ -87,6 +87,9 @@ function normalizePairingTokenOrigin(value: unknown): PairingTokenOrigin | undef
  * `tailscalePairing` turns Tailscale pairing off, and a malformed `module` stays configured
  * so the server's module loader refuses it and network requests answer 503.
  */
+/** Not a path, so the module loader refuses it and the network answers 503. */
+const INVALID_AUTH_MODULE_SENTINEL = "<invalid auth config>";
+
 function normalizeAuthConfig(
   value: unknown,
   errors: string[],
@@ -94,7 +97,8 @@ function normalizeAuthConfig(
 ): ServerConfig["auth"] {
   if (!isRecord(value)) {
     errors.push("config.auth: expected object");
-    return undefined;
+    // Unreadable intent: no Tailscale pairing, and a module path the loader refuses (503).
+    return { tailscalePairing: false, module: INVALID_AUTH_MODULE_SENTINEL };
   }
   const auth: NonNullable<ServerConfig["auth"]> = {};
   for (const key of Object.keys(value)) {

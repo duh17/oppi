@@ -23,6 +23,7 @@ import {
   type AccessTokenValidation,
   type Challenge,
   type EnrollResult,
+  type PairingTokenConsumption,
   type RefreshResult,
 } from "./storage/device-auth.js";
 import {
@@ -288,8 +289,11 @@ export class Storage {
     return this.deviceAuthStore.enrollViaPairing(candidate, deviceInput);
   }
 
-  consumePairingToken(candidate: string): PairingTokenOrigin | null {
-    return this.deviceAuthStore.consumePairingToken(candidate);
+  consumePairingToken(
+    candidate: string,
+    admit?: (origin: PairingTokenOrigin, activeDeviceCount: number) => boolean,
+  ): PairingTokenConsumption {
+    return this.deviceAuthStore.consumePairingToken(candidate, admit);
   }
 
   enrollDevice(input: {

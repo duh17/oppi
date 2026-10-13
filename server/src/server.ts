@@ -1678,7 +1678,13 @@ export class Server {
       });
       return;
     }
-    void this.gateNetworkUpgrade(req, socket, head, url);
+    // Node drops the HTTP socket's error listener before `upgrade`, and `ws` adds its own only
+    // once it takes the socket. A client reset while the gate awaits must not crash the server.
+    socket.on("error", () => socket.destroy());
+    this.gateNetworkUpgrade(req, socket, head, url).catch((error: unknown) => {
+      log.warn("ws.upgrade_failed", { path: url.pathname, error: safeErrorMessage(error) });
+      if (!socket.destroyed) socket.destroy();
+    });
   }
 
   private async gateNetworkUpgrade(

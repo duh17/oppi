@@ -166,10 +166,10 @@ describe("identity module", () => {
   });
 
   it("rejects pairing requests that omit a device public key without consuming the invite", async () => {
-    const approveInvite = vi.fn();
+    const pairWithInvite = vi.fn();
     const ctx = {
       storage: {},
-      pairing: { customApproverAvailable: false, approveInvite },
+      pairing: { customApproverAvailable: false, pairWithInvite },
     } as unknown as RouteContext;
 
     const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
@@ -184,7 +184,7 @@ describe("identity module", () => {
     });
 
     expect(handled).toBe(true);
-    expect(approveInvite).not.toHaveBeenCalled();
+    expect(pairWithInvite).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.body)).toEqual({ error: "devicePublicKey required" });
   });

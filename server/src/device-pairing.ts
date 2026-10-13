@@ -19,14 +19,16 @@ import type { AuthModule, CustomPairingRequest } from "./auth-module.js";
 import { generateId } from "./id.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
+import { fitPushBody } from "./push/envelope.js";
 import type { PushNotification, PushSender } from "./push/push-sender.js";
 import type { EnrollResult } from "./storage/device-auth.js";
-import { verifyDeviceSignature } from "./storage/device-auth.js";
+import { sanitizeDisplayText, verifyDeviceSignature } from "./storage/device-auth.js";
 import type { Storage } from "./storage.js";
 import type {
   DevicePublicKey,
   PairingApprovalOutcome,
   PairingMethod,
+  PairingTokenOrigin,
   PendingPairingApproval,
 } from "./types.js";
 
@@ -38,6 +40,8 @@ export const PAIRING_APPROVAL_TTL_MS = 120_000;
 /** An approved device must collect its credential within this window. */
 export const PAIRING_APPROVAL_CLAIM_MS = 60_000;
 export const MAX_PENDING_PAIRING_APPROVALS = 8;
+/** A custom approver's `source` is shown and logged; keep it one short line. */
+export const MAX_CUSTOM_SOURCE_CODE_POINTS = 128;
 /** How long a settled approval still answers the waiting device with its outcome. */
 const SETTLED_RETENTION_MS = 60_000;
 
@@ -129,52 +133,101 @@ function describePairing(method: PairingMethod, source: string | undefined): str
 
 export class DevicePairing {
   private readonly approvals = new Map<string, ApprovalEntry>();
+  /** Queue slots held by custom pairings while their module decides. */
+  private reservedSlots = 0;
   private readonly now: () => number;
 
   constructor(private readonly deps: DevicePairingDeps) {
     this.now = deps.now ?? Date.now;
   }
 
-  /** Built-in `invite` approver: consume the `pt_` invite. Null when it is wrong or expired. */
-  approveInvite(pairingToken: string, clientIp: string | undefined): PairingGrant | null {
-    const origin = this.deps.storage.consumePairingToken(pairingToken);
-    if (!origin) return null;
-    const source = origin.method === "tailscale" ? (origin.source ?? clientIp) : clientIp;
-    return { method: origin.method, ttlMs: origin.ttlMs, ...(source ? { source } : {}) };
+  /**
+   * Built-in `invite` approver plus the policy. The approval decision and the queue check run
+   * inside the config lock that consumes the invite, so a full queue answers `busy` and leaves
+   * the invite usable. Nothing awaits between that check and the insert.
+   */
+  pairWithInvite(
+    pairingToken: string,
+    candidate: PairingCandidate,
+    clientIp: string | undefined,
+  ): AdmitOutcome | { kind: "invalid" } {
+    this.sweep(this.now());
+    const grantFor = (origin: PairingTokenOrigin): PairingGrant => {
+      const source = origin.method === "tailscale" ? (origin.source ?? clientIp) : clientIp;
+      return { method: origin.method, ttlMs: origin.ttlMs, ...(source ? { source } : {}) };
+    };
+    const consumed = this.deps.storage.consumePairingToken(
+      pairingToken,
+      (origin, activeDeviceCount) =>
+        !pairingNeedsApproval(grantFor(origin), activeDeviceCount) || this.hasQueueRoom(),
+    );
+    if (consumed.status === "invalid") return { kind: "invalid" };
+    if (consumed.status === "refused") return this.busy(consumed.origin.method);
+    return this.admit(candidate, grantFor(consumed.origin), { slotHeld: true });
   }
 
   get customApproverAvailable(): boolean {
     return this.deps.authModule?.pairingApproverAvailable === true;
   }
 
-  /** `custom` approver: the owner's `auth.module`. */
-  async approveCustom(
+  /**
+   * `custom` approver (the owner's `auth.module`) plus the policy. A custom pairing needs
+   * approval whenever another device is active, so with a full queue the module is never asked
+   * and its credential is not spent. The slot is held across the module's await.
+   */
+  async pairWithCustom(
+    candidate: PairingCandidate,
     request: Omit<CustomPairingRequest, "method">,
-  ): Promise<{ ok: true; grant: PairingGrant } | { ok: false; reason?: string }> {
+  ): Promise<AdmitOutcome | { kind: "denied"; reason?: string }> {
     const authModule = this.deps.authModule;
-    if (!authModule) return { ok: false };
-    const decision = await authModule.approvePairing({ method: "custom", ...request });
-    if (!decision.allow)
-      return { ok: false, ...(decision.reason ? { reason: decision.reason } : {}) };
-    const source = decision.source ?? request.clientIp;
-    return { ok: true, grant: { method: "custom", ...(source ? { source } : {}) } };
+    if (!authModule) return { kind: "denied" };
+    this.sweep(this.now());
+    const slotHeld = this.activeDeviceIds().size > 0;
+    if (slotHeld && !this.hasQueueRoom()) return this.busy("custom");
+    if (slotHeld) this.reservedSlots += 1;
+    try {
+      const decision = await authModule.approvePairing({ method: "custom", ...request });
+      if (!decision.allow) {
+        return { kind: "denied", ...(decision.reason ? { reason: decision.reason } : {}) };
+      }
+      const source =
+        (decision.source && sanitizeDisplayText(decision.source, MAX_CUSTOM_SOURCE_CODE_POINTS)) ||
+        request.clientIp;
+      return this.admit(
+        candidate,
+        { method: "custom", ...(source ? { source } : {}) },
+        { slotHeld },
+      );
+    } finally {
+      if (slotHeld) this.reservedSlots -= 1;
+    }
   }
 
-  /** Run the approval policy on an approved pairing: enroll now, or wait for an approval. */
-  admit(candidate: PairingCandidate, grant: PairingGrant): AdmitOutcome {
+  private hasQueueRoom(): boolean {
+    const pending = [...this.approvals.values()].filter((e) => e.state === "pending").length;
+    return pending + this.reservedSlots < MAX_PENDING_PAIRING_APPROVALS;
+  }
+
+  private busy(method: PairingMethod): { kind: "busy" } {
+    log.warn("auth.pairing_approval_rejected", { reason: "too_many_pending", method });
+    return { kind: "busy" };
+  }
+
+  /**
+   * Enroll now, or queue for approval. `slotHeld` means the caller already checked the queue
+   * (an invite, inside its consume lock) or reserved a slot (custom, across its await).
+   */
+  private admit(
+    candidate: PairingCandidate,
+    grant: PairingGrant,
+    options: { slotHeld: boolean },
+  ): AdmitOutcome {
     const now = this.now();
     this.sweep(now);
     if (!pairingNeedsApproval(grant, this.activeDeviceIds().size)) {
       return { kind: "enrolled", result: this.enroll(candidate, grant) };
     }
-    const pendingCount = [...this.approvals.values()].filter((e) => e.state === "pending").length;
-    if (pendingCount >= MAX_PENDING_PAIRING_APPROVALS) {
-      log.warn("auth.pairing_approval_rejected", {
-        reason: "too_many_pending",
-        method: grant.method,
-      });
-      return { kind: "busy" };
-    }
+    if (!options.slotHeld && !this.hasQueueRoom()) return this.busy(grant.method);
 
     const approval: PendingPairingApproval = {
       id: `pa_${generateId(22)}`,
@@ -205,12 +258,19 @@ export class DevicePairing {
       source: approval.source,
     });
     this.deps.events?.emitPairingApprovalRequested({ ...approval });
+    const requestSubject = {
+      event: "pairing_approval" as const,
+      approvalId: approval.id,
+      title: "Approve New Device?",
+    };
     this.pushToDevices(
       {
-        event: "pairing_approval",
-        approvalId: approval.id,
-        title: "Approve New Device?",
-        body: `${approval.deviceName} wants to pair (${describePairing(approval.method, approval.source)}).`,
+        ...requestSubject,
+        body: fitPushBody(
+          requestSubject,
+          approval.deviceName,
+          ` wants to pair (${describePairing(approval.method, approval.source)}).`,
+        ),
       },
       () => true,
     );
@@ -242,6 +302,13 @@ export class DevicePairing {
       case "expired":
         return { kind: "expired" };
       case "approved": {
+        // The approval is only as good as its approver: revoked since approving, it lapses.
+        const approver = entry.approvedByDeviceId;
+        if (!approver || !this.activeDeviceIds().has(approver)) {
+          entry.state = "expired";
+          log.warn("auth.pairing_approval_approver_revoked", { approval: approvalId });
+          return { kind: "expired" };
+        }
         this.approvals.delete(approvalId);
         const result = this.enroll(entry.candidate, entry.grant, entry.approvedByDeviceId);
         return { kind: "enrolled", result };
@@ -365,12 +432,19 @@ export class DevicePairing {
       source: grant.source,
       ...(approvedByDeviceId ? { approvedBy: approvedByDeviceId } : {}),
     });
+    const enrolledSubject = {
+      event: "device_enrolled" as const,
+      deviceId: result.deviceId,
+      title: "New Device Paired",
+    };
     this.pushToDevices(
       {
-        event: "device_enrolled",
-        deviceId: result.deviceId,
-        title: "New Device Paired",
-        body: `${candidate.name} paired (${describePairing(grant.method, grant.source)}).`,
+        ...enrolledSubject,
+        body: fitPushBody(
+          enrolledSubject,
+          candidate.name,
+          ` paired (${describePairing(grant.method, grant.source)}).`,
+        ),
       },
       (deviceId) => deviceId !== result.deviceId,
     );

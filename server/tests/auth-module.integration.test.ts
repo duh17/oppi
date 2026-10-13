@@ -1,4 +1,7 @@
+import { once } from "node:events";
 import { request as httpRequest } from "node:http";
+import { connect } from "node:net";
+import { setTimeout as delay } from "node:timers/promises";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -127,6 +130,36 @@ describe("auth.module", () => {
     expect(await localApiRequest<{ user: string }>(storage, "/me")).toMatchObject({
       user: "owner",
     });
+  }, 30_000);
+
+  it("survives a client that resets the connection while an async gate decides an upgrade", async () => {
+    await startWithModule({
+      source: `export async function gate(req) {
+        if (req.transport === "ws") await new Promise((resolve) => setTimeout(resolve, 300));
+        return { allow: true };
+      }`,
+    });
+    const crashes: unknown[] = [];
+    const onCrash = (error: unknown) => crashes.push(error);
+    process.prependListener("uncaughtException", onCrash);
+    process.prependListener("unhandledRejection", onCrash);
+    try {
+      const client = connect(server!.port, "127.0.0.1");
+      await once(client, "connect");
+      client.write(
+        "GET /app/events/stream HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\n" +
+          "Upgrade: websocket\r\nSec-WebSocket-Version: 13\r\n" +
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+      );
+      await delay(100);
+      client.resetAndDestroy();
+      await delay(500);
+      expect(crashes).toEqual([]);
+      expect((await networkGet("/health")).status).toBe(200);
+    } finally {
+      process.removeListener("uncaughtException", onCrash);
+      process.removeListener("unhandledRejection", onCrash);
+    }
   }, 30_000);
 
   it("refuses with 403 when the gate throws", async () => {

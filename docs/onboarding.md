@@ -107,7 +107,7 @@ When at least one device is already paired, these pairings wait for approval on 
 - a same-user Tailscale pairing (**Connect through Tailscale**), whatever its lifetime;
 - a pairing approved by a custom `auth.module`.
 
-A default 90-second invite needs no approval, and the first device on an empty server never does. The invite is used up as soon as the new device presents it.
+A default 90-second invite needs no approval, and the first device on an empty server never does. The invite is used up as soon as the new device presents it, unless 8 requests are already waiting: then the server answers `429` and the invite stays valid. The request is cancelled if the device that approved it is revoked before the new device finishes.
 
 The new device shows that it is waiting for approval, with a countdown. Every paired device with notifications on gets **Approve New Device?** with the device name, how it is pairing (`invite`, `tailscale`, or `custom`), and where from (client IP or Tailscale login). Paired devices also see the request in the app. Approving asks for Face ID, Touch ID, or the passcode, then signs the approval with that device's key. The host (the Unix socket and `oppi` CLI) cannot approve, so an agent running on the host cannot let a device in on its own.
 
@@ -130,7 +130,7 @@ oppi server restart
 
 ## Paired devices
 
-Each paired device has a name. Oppi sends the device name in the `deviceName` field of `POST /pair` (trimmed, at most 64 characters). iOS 16 and later report only the generic model name ("iPhone") unless the app holds Apple's restricted device-name entitlement, so Oppi appends a short per-device suffix, for example `iPhone (A3F9)`. The server stores a missing or blank name as `Device`.
+Each paired device has a name. Oppi sends the device name in the `deviceName` field of `POST /pair` (trimmed, at most 64 characters). iOS 16 and later report only the generic model name ("iPhone") unless the app holds Apple's restricted device-name entitlement, so Oppi appends a short per-device suffix, for example `iPhone (A3F9)`. The server keeps the name on one line (control characters become spaces), cuts it to 64 characters, and stores a missing or blank name as `Device`.
 
 List and revoke devices from the host with `oppi devices` and `oppi devices revoke <id>`, or from a paired device with the same endpoints:
 

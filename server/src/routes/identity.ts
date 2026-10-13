@@ -7,7 +7,7 @@ import { ensureIdentityMaterial, identityConfigForDataDir } from "../security.js
 import { createLogger } from "../logger.js";
 import { normalizeIp, trustConfigFromServerConfig } from "../proxy-config.js";
 import { isLocalRequest, requestClientIp, resolveRequestProvenance } from "../request-trust.js";
-import { deviceKeyThumbprint, type PairingGrant } from "../device-pairing.js";
+import { deviceKeyThumbprint } from "../device-pairing.js";
 import { normalizeDeviceName, parseDevicePublicKey } from "../storage/device-auth.js";
 import { inviteHostForTlsMode, proveSameTailscaleUser } from "../tailscale-whois.js";
 import { SourceRateLimiter } from "../source-rate-limit.js";
@@ -154,40 +154,33 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
     const name = normalizeDeviceName(body.deviceName);
     const clientIp = requestClientIp(req, currentTrustConfig());
-    let grant: PairingGrant;
-    if (pairingToken) {
-      const inviteGrant = ctx.pairing.approveInvite(pairingToken, clientIp);
-      if (!inviteGrant) {
+    const candidate = { publicKey, name };
+    const outcome = pairingToken
+      ? ctx.pairing.pairWithInvite(pairingToken, candidate, clientIp)
+      : await ctx.pairing.pairWithCustom(candidate, {
+          deviceName: name,
+          devicePublicKey: publicKey,
+          keyThumbprint: deviceKeyThumbprint(publicKey),
+          credential: body.credential,
+          ...(clientIp ? { clientIp } : {}),
+          headers: req.headers,
+        });
+    switch (outcome.kind) {
+      case "invalid":
         recordPairingFailure(source, now);
         helpers.error(res, 401, "Invalid or expired pairing token");
         return;
-      }
-      grant = inviteGrant;
-    } else {
-      const decision = await ctx.pairing.approveCustom({
-        deviceName: name,
-        devicePublicKey: publicKey,
-        keyThumbprint: deviceKeyThumbprint(publicKey),
-        credential: body.credential,
-        ...(clientIp ? { clientIp } : {}),
-        headers: req.headers,
-      });
-      if (!decision.ok) {
+      case "denied":
         recordPairingFailure(source, now);
         log.warn("auth.custom_pairing_denied", { source });
-        helpers.error(res, 403, decision.reason ?? "pairing_denied");
+        helpers.error(res, 403, outcome.reason ?? "pairing_denied");
         return;
-      }
-      grant = decision.grant;
-    }
-
-    clearPairingFailures(source);
-    const outcome = ctx.pairing.admit({ publicKey, name }, grant);
-    switch (outcome.kind) {
       case "enrolled":
+        clearPairingFailures(source);
         helpers.json(res, outcome.result);
         return;
       case "approval_required":
+        clearPairingFailures(source);
         helpers.json(
           res,
           {
@@ -268,10 +261,12 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       helpers.json(res, { ok: true });
       return;
     }
-    const body = await helpers.parseBody<{ signature?: unknown }>(req, {
-      maxBytes: AUTH_BOOTSTRAP_MAX_BYTES,
-    });
-    switch (ctx.pairing.approve(approvalId, principal.deviceId, body.signature)) {
+    const parsed = await parseBootstrapBody<{ signature?: unknown }>(req);
+    if (!parsed.ok) {
+      helpers.error(res, parsed.status, parsed.error);
+      return;
+    }
+    switch (ctx.pairing.approve(approvalId, principal.deviceId, parsed.body.signature)) {
       case "approved":
         helpers.json(res, { ok: true });
         return;

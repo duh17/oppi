@@ -3,6 +3,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { AuthModule } from "../src/auth-module.js";
 import { Storage } from "../src/storage.js";
 import { ConfigStore } from "../src/storage/config-store.js";
 
@@ -289,6 +290,21 @@ describe("Storage config validation", () => {
       "pairingTokenOrigin",
     );
   });
+
+  it.each([null, "module.mjs", [], 1])(
+    "fails closed when auth is %j instead of an object",
+    async (auth) => {
+      const result = Storage.validateConfig({ ...Storage.getDefaultConfig(dir), auth }, dir, false);
+      expect(result.errors).toEqual(["config.auth: expected object"]);
+      expect(result.config?.auth?.tailscalePairing).toBe(false);
+      // The configured module cannot load, so every network request answers 503.
+      const authModule = new AuthModule(result.config?.auth?.module);
+      await authModule.load();
+      expect(
+        await authModule.gate({ transport: "http", method: "GET", path: "/health", headers: {} }),
+      ).toEqual({ allow: false, status: 503, error: "auth_module_unavailable" });
+    },
+  );
 
   it("fails safe on malformed auth config instead of dropping it", () => {
     const result = Storage.validateConfig(

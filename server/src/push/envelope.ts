@@ -97,6 +97,35 @@ export function encodePushPlaintextJSON(plaintext: PushPlaintext): Buffer {
   return bytes;
 }
 
+/**
+ * A body of `head + tail` where `head` gives way first: the longest prefix of `head` (then of
+ * `tail`) whose plaintext fits the 510 bytes at any `ts`, so the server never has to cut the
+ * fixed facts at the end of a body (for pairing pushes: method and source).
+ */
+export function fitPushBody(
+  /** Every plaintext field except `v`, `ts`, and `body`. */
+  plaintext: Record<string, unknown>,
+  head: string,
+  tail: string,
+): string {
+  const fits = (body: string): boolean =>
+    Buffer.byteLength(
+      JSON.stringify({ v: 1, ts: Number.MAX_SAFE_INTEGER, ...plaintext, body }),
+      "utf8",
+    ) <= PUSH_MAX_PLAINTEXT_JSON_BYTES;
+  const headPoints = Array.from(head);
+  for (let keep = headPoints.length; keep >= 0; keep -= 1) {
+    const body = `${headPoints.slice(0, keep).join("")}${tail}`;
+    if (fits(body)) return body;
+  }
+  const tailPoints = Array.from(tail);
+  for (let keep = tailPoints.length - 1; keep > 0; keep -= 1) {
+    const body = tailPoints.slice(0, keep).join("");
+    if (fits(body)) return body;
+  }
+  return "";
+}
+
 /** `uint16 length || JSON || zero padding` to 512 bytes (spec §2.3). */
 export function padPushPlaintext(json: Uint8Array): Buffer {
   if (json.length > PUSH_MAX_PLAINTEXT_JSON_BYTES) {
