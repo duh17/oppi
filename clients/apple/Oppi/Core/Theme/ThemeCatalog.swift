@@ -11,76 +11,78 @@ import AppKit
 ///
 /// 13 base colors (used by `Color.theme*` static accessors) plus 38 semantic
 /// tokens for UI surfaces, syntax highlighting, markdown, diffs, and thinking.
+///
+/// Fields are `var` so `ThemeContrast` can adjust a built-in seed in place.
 struct ThemePalette: Sendable, ProviderIconTintPalette {
     // ── Base (13) ──
-    let bg: Color
-    let bgDark: Color
-    let bgHighlight: Color
-    let fg: Color
-    let fgDim: Color
-    let comment: Color
-    let blue: Color
-    let cyan: Color
-    let green: Color
-    let orange: Color
-    let purple: Color
-    let red: Color
-    let yellow: Color
+    var bg: Color
+    var bgDark: Color
+    var bgHighlight: Color
+    var fg: Color
+    var fgDim: Color
+    var comment: Color
+    var blue: Color
+    var cyan: Color
+    var green: Color
+    var orange: Color
+    var purple: Color
+    var red: Color
+    var yellow: Color
 
     // ── Thinking text (1) ──
-    let thinkingText: Color
+    var thinkingText: Color
 
     // ── User / assistant message (4) ──
-    let userMessageBg: Color
-    let userMessageText: Color
+    var userMessageBg: Color
+    var userMessageText: Color
     /// Assistant row fill. Built-ins use `Color.clear` (no wash).
-    let assistantMessageBg: Color
+    var assistantMessageBg: Color
     /// Optional leading strip on the user card. Built-ins use `nil` (no
     /// strip); a custom theme opts in with `userMessageAccent`.
-    let userMessageAccent: Color?
+    var userMessageAccent: Color?
 
     // ── Tool state (5) ──
-    let toolPendingBg: Color
-    let toolSuccessBg: Color
-    let toolErrorBg: Color
-    let toolTitle: Color
-    let toolOutput: Color
+    var toolPendingBg: Color
+    var toolSuccessBg: Color
+    var toolErrorBg: Color
+    var toolTitle: Color
+    var toolOutput: Color
 
     // ── Markdown (10) ──
-    let mdHeading: Color
-    let mdLink: Color
-    let mdLinkUrl: Color
-    let mdCode: Color
-    let mdCodeBlock: Color
-    let mdCodeBlockBorder: Color
-    let mdQuote: Color
-    let mdQuoteBorder: Color
-    let mdHr: Color
-    let mdListBullet: Color
+    var mdHeading: Color
+    var mdLink: Color
+    var mdLinkUrl: Color
+    var mdCode: Color
+    var mdCodeBlock: Color
+    var mdCodeBlockBorder: Color
+    var mdQuote: Color
+    var mdQuoteBorder: Color
+    var mdHr: Color
+    var mdListBullet: Color
 
     // ── Diffs (3) ──
-    let toolDiffAdded: Color
-    let toolDiffRemoved: Color
-    let toolDiffContext: Color
+    var toolDiffAdded: Color
+    var toolDiffRemoved: Color
+    var toolDiffContext: Color
 
     // ── Syntax (9) ──
-    let syntaxComment: Color
-    let syntaxKeyword: Color
-    let syntaxFunction: Color
-    let syntaxVariable: Color
-    let syntaxString: Color
-    let syntaxNumber: Color
-    let syntaxType: Color
-    let syntaxOperator: Color
-    let syntaxPunctuation: Color
+    var syntaxComment: Color
+    var syntaxKeyword: Color
+    var syntaxFunction: Color
+    var syntaxVariable: Color
+    var syntaxString: Color
+    var syntaxNumber: Color
+    var syntaxType: Color
+    var syntaxOperator: Color
+    var syntaxPunctuation: Color
 
     // ── Thinking levels (6) ──
-    let thinkingOff: Color
-    let thinkingMinimal: Color
-    let thinkingLow: Color
-    let thinkingMedium: Color
-    let thinkingHigh: Color
-    let thinkingXhigh: Color
+    var thinkingOff: Color
+    var thinkingMinimal: Color
+    var thinkingLow: Color
+    var thinkingMedium: Color
+    var thinkingHigh: Color
+    var thinkingXhigh: Color
 }
 
 // MARK: - Theme IDs
@@ -208,6 +210,18 @@ enum ThemeID: Hashable, Codable, Sendable {
         }
     }
 
+    /// Contrast-solved chat surfaces. Built-ins only; custom themes keep
+    /// their JSON colors as written.
+    var chatSurfaces: ThemeChatSurfaces? {
+        switch self {
+        case .dark: ThemePalettes.darkTheme.surfaces
+        case .oled: ThemePalettes.oledTheme.surfaces
+        case .light: ThemePalettes.lightTheme.surfaces
+        case .night: ThemePalettes.nightTheme.surfaces
+        case .custom: nil
+        }
+    }
+
     var palette: ThemePalette {
         switch self {
         case .dark:
@@ -226,6 +240,9 @@ enum ThemeID: Hashable, Codable, Sendable {
 
 // MARK: - Built-in Palettes
 
+/// Built-in palettes are seeds: `ThemeContrast.resolve` keeps each color's
+/// hue and chroma and moves its lightness until every contrast rule holds,
+/// and derives the chat surfaces (assistant card, user bubbles) from them.
 // swiftlint:disable function_body_length
 enum ThemePalettes {
     // Helper to build Color from hex literal
@@ -241,7 +258,7 @@ enum ThemePalettes {
     ///
     /// Uses layered navy-charcoal surfaces instead of pure black so chat, code,
     /// tool output, and dividers keep their shape without feeling washed out.
-    static let dark = ThemePalette(
+    static let darkTheme = ThemeContrast.resolve(isDark: true, seed: ThemePalette(
         // Base 13
         bg: c(0x1A1D29),
         bgDark: c(0x151823),
@@ -300,14 +317,14 @@ enum ThemePalettes {
         thinkingMedium: c(0x67B4DD),
         thinkingHigh: c(0xA08FD4),
         thinkingXhigh: c(0xB596DE)
-    )
+    ))
 
     /// OLED — true black variant of Dark for dark rooms and battery maximalism.
     ///
     /// Keeps the same cool, modern family as Dark, but tightens the surfaces all
     /// the way down to black. Secondary text is intentionally brighter than the
     /// first pass so bash/tool output stays readable.
-    static let oled = ThemePalette(
+    static let oledTheme = ThemeContrast.resolve(isDark: true, seed: ThemePalette(
         // Base 13 — pure dark, softer accents
         bg: c(0x000000),
         bgDark: c(0x080C15),
@@ -366,7 +383,7 @@ enum ThemePalettes {
         thinkingMedium: c(0x5CA8C0),
         thinkingHigh: c(0x8880B8),
         thinkingXhigh: c(0xA890C5)
-    )
+    ))
 
     /// Night — warm dark-room theme with low-saturation accents.
     ///
@@ -376,7 +393,7 @@ enum ThemePalettes {
     /// - ~10:1 contrast ratio (vs 21:1 max) — easier on dark-adapted eyes
     /// - All accents warm-shifted: amber hero, blues → steel, cyans → sage teal
     /// - Low saturation across the board — nothing screams at dilated pupils
-    static let night = ThemePalette(
+    static let nightTheme = ThemeContrast.resolve(isDark: true, seed: ThemePalette(
         // Base 13
         bg: c(0x0E0D0B),  // warm near-black (OLED friendly, avoids smear)
         bgDark: c(0x080807),  // deepest shadow (code blocks)
@@ -435,14 +452,14 @@ enum ThemePalettes {
         thinkingMedium: c(0x7A8A98),
         thinkingHigh: c(0x8A80A0),
         thinkingXhigh: c(0xA87890)
-    )
+    ))
 
     /// Light — Latte Things-inspired light theme with softer accent chroma.
     ///
     /// Uses the warm paper/granite surfaces from the bundled Latte Things theme,
     /// but tones the mauve family down so the overall UI leans more blue/teal
     /// than purple.
-    static let light = ThemePalette(
+    static let lightTheme = ThemeContrast.resolve(isDark: false, seed: ThemePalette(
         // Warm paper base — grey-warm, not yellow
         bg: c(0xF5F3EF),
         bgDark: c(0xEBE9E4),
@@ -501,8 +518,12 @@ enum ThemePalettes {
         thinkingMedium: c(0x2966A8),
         thinkingHigh: c(0x6A5C90),
         thinkingXhigh: c(0xB06090)
-    )
+    ))
 
+    static var dark: ThemePalette { darkTheme.palette }
+    static var oled: ThemePalette { oledTheme.palette }
+    static var night: ThemePalette { nightTheme.palette }
+    static var light: ThemePalette { lightTheme.palette }
 }
 // swiftlint:enable function_body_length
 

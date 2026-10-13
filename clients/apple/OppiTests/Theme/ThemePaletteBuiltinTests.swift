@@ -154,19 +154,24 @@ struct ThemePaletteBuiltinTests {
         }
     }
 
-    /// Conversation layout: the user bubble must stand apart from the reply
-    /// card, and inline code, table headers, and diagrams (`bgHighlight`) must
-    /// still show on the card.
-    @Test func builtInConversationCardSeparatesFromUserBubbleAndEmbeddedSurfaces() {
+    /// Auto contrast: the user bubble stands apart from both the background
+    /// and the reply card, the card lifts off the background, and inline code
+    /// and table headers (`bgHighlight`) still show on the card.
+    @Test func builtInChatSurfacesMeetAutoContrastLevels() {
         for themeID in ThemeID.builtins {
             let palette = themeID.palette
             let card = Color(ChatTimelineChromeStyle.conversation.assistantFill(from: palette, themeID: themeID))
-            let text = wcagContrast(palette.fg, card)
-            let user = wcagContrast(palette.userMessageBg, card)
-            let embedded = wcagContrast(palette.bgHighlight, card)
-            #expect(text + 1e-6 >= 4.5, "\(themeID.rawValue) assistant text on card \(text)")
-            #expect(user + 1e-6 >= 1.4, "\(themeID.rawValue) user bubble vs card \(user)")
-            #expect(embedded + 1e-6 >= 1.04, "\(themeID.rawValue) bgHighlight vs card \(embedded)")
+            let checks: [(String, CGFloat, Double)] = [
+                ("assistant text on card", wcagContrast(palette.fg, card), ThemeContrast.Level.text),
+                ("card vs bg", wcagContrast(card, palette.bg), ThemeContrast.Level.cardLift),
+                ("user bubble vs card", wcagContrast(palette.userMessageBg, card), ThemeContrast.Level.bubble),
+                ("user bubble vs bg", wcagContrast(palette.userMessageBg, palette.bg), ThemeContrast.Level.bubble),
+                ("bgHighlight vs card", wcagContrast(palette.bgHighlight, card), ThemeContrast.Level.embedded),
+                ("inline code on bgHighlight", wcagContrast(palette.mdCode, palette.bgHighlight), ThemeContrast.Level.text),
+            ]
+            for (name, ratio, level) in checks {
+                #expect(Double(ratio) + 1e-3 >= level, "\(themeID.rawValue) \(name) \(ratio) < \(level)")
+            }
         }
     }
 

@@ -94,6 +94,8 @@ Your prompts are a card filled with `userMessageBg` and written in `userMessageT
 - If you set `userMessageAccent`, keep it at least **3:1** against `bg`.
 - Assistant rows recede. Leave `assistantMessageBg` unset or empty unless you want a wash, and keep that wash close to `bg`.
 
+Built-in themes check contrast automatically, like Pi's system theme ([Earendil](https://earendil.com/posts/system-theme/)): each color keeps its hue and chroma, and Oppi picks its lightness so text clears 4.5:1 on every surface it appears on, your prompt bubble clears 1.6:1 against both the background and the reply card, and inline code backgrounds still show on the card. Custom themes are used exactly as written, so check the rules above yourself.
+
 iOS **Increase Contrast** uses a stronger built-in user fill plus a 1.5 pt border in `userMessageAccent`, or `userMessageText` when the theme has no accent. **Differentiate Without Color** adds a "You" caption on user rows. Custom themes get the border and caption; they do not get the built-in stronger fills.
 
 ## Token list

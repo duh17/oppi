@@ -704,6 +704,7 @@ targets:
       - path: Oppi/Core/Theme/AppTheme.swift
       - path: Oppi/Core/Theme/RemoteTheme.swift
       - path: Oppi/Core/Theme/ThemeCatalog.swift
+      - path: Oppi/Core/Theme/ThemeContrast.swift
       - path: Oppi/Core/Theme/ThemeStore.swift
     dependencies:
       - sdk: ScreenCaptureKit.framework

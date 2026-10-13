@@ -124,7 +124,7 @@ enum ChatTimelineChromeStyle: Equatable {
     }
 
     /// Conversation cards keep the theme's assistant fill when it has one.
-    /// Built-ins leave that clear and get `conversationCardFill`; custom
+    /// Built-ins leave that clear and get their contrast-solved card; custom
     /// themes without one lift the card onto `bgHighlight`.
     func assistantFill(
         from palette: ThemePalette,
@@ -135,23 +135,12 @@ enum ChatTimelineChromeStyle: Equatable {
         case .standard: return themed
         case .conversation:
             guard themed == .clear else { return themed }
-            return Self.conversationCardFill(for: themeID) ?? UIColor(palette.bgHighlight)
-        }
-    }
-
-    /// Built-in assistant card, like ChatGPT and Claude: the reply sits on a
-    /// quiet surface one small step off `bg` (white paper in Light, barely
-    /// lifted in the dark themes) and the user bubble (`userMessageBg`) is the
-    /// strongest fill. A `bgHighlight` card read as a second user bubble in
-    /// Light and hid inline code, table headers, and diagrams, which all
-    /// draw on `bgHighlight`.
-    static func conversationCardFill(for themeID: ThemeID) -> UIColor? {
-        switch themeID {
-        case .light: return TimelineSpeakerChrome.rgb(0xFFFFFF)
-        case .dark: return TimelineSpeakerChrome.rgb(0x1F2231)
-        case .oled: return TimelineSpeakerChrome.rgb(0x0B0F17)
-        case .night: return TimelineSpeakerChrome.rgb(0x161513)
-        case .custom: return nil
+            // Like ChatGPT and Claude, the reply sits on a quiet sheet one
+            // small step off `bg` and the user bubble is the strongest fill
+            // (`ThemeContrast`). A `bgHighlight` card read as a second user
+            // bubble in Light and hid inline code and table headers.
+            let card = themeID.chatSurfaces?.assistantCard ?? palette.bgHighlight
+            return UIColor(card)
         }
     }
 
@@ -328,16 +317,11 @@ enum TimelineSpeakerChrome {
         return resolvedAlpha(of: color) < 0.02 ? .clear : color
     }
 
-    /// Stronger user fills when Increase Contrast is on. Built-ins only;
-    /// custom themes keep their `userMessageBg` and gain the border.
+    /// Stronger user fills when Increase Contrast is on, solved by
+    /// `ThemeContrast`. Built-ins only; custom themes keep their
+    /// `userMessageBg` and gain the border.
     static func increasedContrastFill(for themeID: ThemeID) -> UIColor? {
-        switch themeID {
-        case .dark: return rgb(0x4A5680)
-        case .oled: return rgb(0x2A3850)
-        case .night: return rgb(0x44382A)
-        case .light: return rgb(0xB2AEA5)
-        case .custom: return nil
-        }
+        themeID.chatSurfaces.map { UIColor($0.strongUserBubble) }
     }
 
     static func resolvedAlpha(
@@ -345,14 +329,5 @@ enum TimelineSpeakerChrome {
         traitCollection: UITraitCollection = UITraitCollection(userInterfaceStyle: .dark)
     ) -> CGFloat {
         color.resolvedColor(with: traitCollection).cgColor.alpha
-    }
-
-    fileprivate static func rgb(_ hex: UInt32) -> UIColor {
-        UIColor(
-            red: CGFloat((hex >> 16) & 0xFF) / 255,
-            green: CGFloat((hex >> 8) & 0xFF) / 255,
-            blue: CGFloat(hex & 0xFF) / 255,
-            alpha: 1
-        )
     }
 }
