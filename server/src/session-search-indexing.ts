@@ -26,7 +26,6 @@ export function updateSearchIndexForSessionEvent(
   }
 
   if (event.type === "agent_end") {
-    searchIndex.markForReindex(sessionId);
-    searchIndex.flushForSession(sessionId);
+    searchIndex.reindexSession(sessionId);
   }
 }

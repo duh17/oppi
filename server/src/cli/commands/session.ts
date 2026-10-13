@@ -429,10 +429,7 @@ export async function cmdSession(
         ? (result.results as Array<{
             sessionId?: string;
             snippet?: string;
-            text?: string;
             title?: string;
-            rank?: number;
-            score?: number;
             session?: Partial<Session>;
           }>)
         : [];
@@ -441,11 +438,7 @@ export async function cmdSession(
           `Search results (${results.length})`,
           results.map((searchResult) => ({
             id: searchResult.sessionId ?? "?",
-            status: searchResult.score !== undefined ? String(searchResult.score) : "",
-            title: clipListCell(
-              searchResult.snippet ?? searchResult.text ?? searchResult.title ?? "(match)",
-              88,
-            ),
+            title: clipListCell(searchResult.snippet ?? searchResult.title ?? "(match)", 88),
             meta: [searchResult.session?.name ?? ""],
           })),
           { empty: "No matching sessions." },
@@ -791,18 +784,8 @@ function compactSearchResult(result: Record<string, unknown>): Record<string, un
         session_id: typeof row.sessionId === "string" ? row.sessionId : null,
         workspace_id: typeof row.workspaceId === "string" ? row.workspaceId : null,
         title: typeof row.title === "string" ? row.title : null,
-        snippet:
-          typeof row.snippet === "string"
-            ? row.snippet
-            : typeof row.text === "string"
-              ? row.text
-              : null,
-        rank:
-          typeof row.rank === "number"
-            ? row.rank
-            : typeof row.score === "number"
-              ? row.score
-              : null,
+        snippet: typeof row.snippet === "string" ? row.snippet : null,
+        rank: typeof row.rank === "number" ? row.rank : null,
         updated_at_ms: typeof row.updatedAtMs === "number" ? row.updatedAtMs : null,
       };
     }),

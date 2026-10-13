@@ -515,15 +515,6 @@ function sanitizeFtsQuery(raw: string): string {
   return tokens.join(" ");
 }
 
-function parseReindexDebounceMs(): number {
-  const fallbackMs = 500;
-  const raw = process.env.OPPI_SEARCH_REINDEX_DEBOUNCE_MS;
-  if (!raw) return fallbackMs;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isInteger(parsed) || parsed <= 0) return fallbackMs;
-  return parsed;
-}
-
 function finiteTimestampOrNull(value: number | undefined): number | null {
   if (value === undefined || !Number.isFinite(value)) return null;
   return Math.floor(value);
@@ -535,9 +526,6 @@ function finiteTimestampOrNull(value: number | undefined): number | null {
 
 export class SearchIndex {
   private db: SqliteDatabase;
-  private pendingReindex = new Set<string>();
-  private reindexTimer: ReturnType<typeof setTimeout> | null = null;
-  private static readonly REINDEX_DEBOUNCE_MS = parseReindexDebounceMs();
 
   // Prepared statements (lazy init after ensureSchema)
   private stmtUpsert!: SqliteStatement;
@@ -1641,46 +1629,18 @@ export class SearchIndex {
   }
 
   // -------------------------------------------------------------------------
-  // Debounced re-index (live sessions)
+  // Live re-index
   // -------------------------------------------------------------------------
 
-  /** Mark a session for re-indexing. Debounced to avoid thrashing. */
-  markForReindex(sessionId: string): void {
+  /** Re-index a live session after a turn ends. Never throws; a closed index ignores it. */
+  reindexSession(sessionId: string): void {
     if (this.closed) return;
-    this.pendingReindex.add(sessionId);
-    if (this.reindexTimer) return;
-    this.reindexTimer = setTimeout(() => this.flushPending(), SearchIndex.REINDEX_DEBOUNCE_MS);
-  }
-
-  /** Force-flush a specific session's pending re-index (called on agent_end). */
-  flushForSession(sessionId: string): void {
-    if (!this.pendingReindex.has(sessionId)) return;
-    this.pendingReindex.delete(sessionId);
     void this.indexSession(sessionId).catch((err: unknown) => {
       log.error("search_index.file_index.failed", {
         sessionId,
         error: err instanceof Error ? err.message : String(err),
       });
     });
-  }
-
-  private flushPending(): void {
-    this.reindexTimer = null;
-    const batch = [...this.pendingReindex];
-    this.pendingReindex.clear();
-
-    for (const id of batch) {
-      void this.indexSession(id).catch((err: unknown) => {
-        log.error("search_index.file_index.failed", {
-          sessionId: id,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-    }
-
-    if (batch.length > 0) {
-      log.info("search_index.reindexed_batch", { count: batch.length });
-    }
   }
 
   // -------------------------------------------------------------------------
@@ -2568,13 +2528,7 @@ export class SearchIndex {
   // -------------------------------------------------------------------------
 
   close(): void {
-    if (this.reindexTimer) {
-      clearTimeout(this.reindexTimer);
-      this.reindexTimer = null;
-    }
-    const pending = new Set([...this.pendingReindex, ...this.fileIndexJobs.keys()]);
-    this.pendingReindex.clear();
-    for (const sessionId of pending) {
+    for (const sessionId of [...this.fileIndexJobs.keys()]) {
       try {
         this.indexFileSessionSync(sessionId);
       } catch (err: unknown) {

@@ -1345,11 +1345,9 @@ describe("SessionManager event translation", () => {
 
   it("does not reindex search on live message_end", () => {
     const { manager } = makeManagerHarness({ status: "busy" });
-    const markForReindex = vi.fn();
-    const flushForSession = vi.fn();
-    const indexSession = vi.fn();
+    const reindexSession = vi.fn();
     const deleteSession = vi.fn();
-    manager.searchIndex = { markForReindex, flushForSession, indexSession, deleteSession };
+    manager.searchIndex = { reindexSession, deleteSession };
 
     feedEvent(manager, "s1", {
       type: "message_end",
@@ -1359,31 +1357,25 @@ describe("SessionManager event translation", () => {
       },
     });
 
-    expect(markForReindex).not.toHaveBeenCalled();
-    expect(flushForSession).not.toHaveBeenCalled();
+    expect(reindexSession).not.toHaveBeenCalled();
   });
 
-  it("marks and flushes search reindex on agent_end", () => {
+  it("reindexes search on agent_end", () => {
     const { manager } = makeManagerHarness({ status: "busy" });
-    const markForReindex = vi.fn();
-    const flushForSession = vi.fn();
-    const indexSession = vi.fn();
+    const reindexSession = vi.fn();
     const deleteSession = vi.fn();
-    manager.searchIndex = { markForReindex, flushForSession, indexSession, deleteSession };
+    manager.searchIndex = { reindexSession, deleteSession };
 
     feedEvent(manager, "s1", { type: "agent_end" });
 
-    expect(markForReindex).toHaveBeenCalledWith("s1");
-    expect(flushForSession).toHaveBeenCalledWith("s1");
+    expect(reindexSession).toHaveBeenCalledWith("s1");
   });
 
   it("removes ephemeral sessions from search index instead of reindexing", () => {
     const { manager } = makeManagerHarness({ status: "busy", ephemeral: true });
-    const markForReindex = vi.fn();
-    const flushForSession = vi.fn();
-    const indexSession = vi.fn();
+    const reindexSession = vi.fn();
     const deleteSession = vi.fn();
-    manager.searchIndex = { markForReindex, flushForSession, indexSession, deleteSession };
+    manager.searchIndex = { reindexSession, deleteSession };
 
     feedEvent(manager, "s1", {
       type: "message_end",
@@ -1391,8 +1383,7 @@ describe("SessionManager event translation", () => {
     });
 
     expect(deleteSession).toHaveBeenCalledWith("s1");
-    expect(markForReindex).not.toHaveBeenCalled();
-    expect(flushForSession).not.toHaveBeenCalled();
+    expect(reindexSession).not.toHaveBeenCalled();
   });
 
   it("updates lastActivity on events", () => {
