@@ -412,7 +412,7 @@ struct AppLockRedactionTests {
         #expect(manager.currentState.primaryLastActivity == String(localized: "Working"))
     }
 
-    @Test func turningAppLockOnRemovesOppisOwnAskAndDoneBannersButNotRemotePushes() {
+    @Test func turningAppLockOnRemovesEverySessionNotificationIncludingRemotePushes() {
         func request(_ identifier: String, category: String, sessionId: String) -> UNNotificationRequest {
             let content = UNMutableNotificationContent()
             content.categoryIdentifier = category
@@ -426,10 +426,13 @@ struct AppLockRedactionTests {
             request("6F1C2A9E-REMOTE", category: AttentionNotificationPolicy.sessionDoneCategoryId, sessionId: "s2"),
             request("err-s2", category: AttentionNotificationPolicy.sessionErrorCategoryId, sessionId: "s2"),
             request("ask-s2", category: AttentionNotificationPolicy.askCategoryId, sessionId: "s2"),
+            request("7A0D-REMOTE", category: AttentionNotificationPolicy.sessionBlockedCategoryId, sessionId: "s3"),
+            request("other-app-category", category: "SOMETHING_ELSE", sessionId: "s4"),
         ]
 
         #expect(
-            AttentionNotificationService.lockSensitiveIdentifiers(in: requests) == ["ask-s1", "done-s1", "ask-s2"]
+            AttentionNotificationService.lockSensitiveIdentifiers(in: requests)
+                == ["ask-s1", "done-s1", "6F1C2A9E-REMOTE", "err-s2", "ask-s2", "7A0D-REMOTE"]
         )
     }
 

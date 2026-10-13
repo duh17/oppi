@@ -184,9 +184,9 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         )
     }
 
-    /// App Lock or a new lock turned on: remove delivered and pending local
-    /// notifications that may show text from before (ask questions, session names
-    /// in `done` banners).
+    /// App Lock or a new lock turned on: remove delivered and pending notifications
+    /// that may show text from before (ask questions, session names in local `done`
+    /// banners and in decrypted pushes).
     func removeLockSensitiveNotifications() {
         guard !_skipSchedulingForTesting else { return }
         let center = UNUserNotificationCenter.current()
@@ -198,21 +198,11 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         }
     }
 
-    /// Oppi's own ask and `done` banners. Remote pushes share the `done` category but not
-    /// the local request identifier, and stay: a lock never covered them.
+    /// Every Oppi session notification: local ask and `done` banners, and decrypted pushes,
+    /// whose subtitle is the session name unless a lock was already on when they arrived.
     nonisolated static func lockSensitiveIdentifiers(in requests: [UNNotificationRequest]) -> [String] {
         requests
-            .filter { request in
-                switch request.content.categoryIdentifier {
-                case askCategoryId:
-                    return true
-                case sessionDoneCategoryId:
-                    guard let sessionId = request.content.userInfo["sessionId"] as? String else { return false }
-                    return request.identifier == AttentionNotificationPolicy.sessionDoneRequestIdentifier(sessionId: sessionId)
-                default:
-                    return false
-                }
-            }
+            .filter { AttentionNotificationPolicy.sessionCategoryIds.contains($0.content.categoryIdentifier) }
             .map(\.identifier)
     }
 
