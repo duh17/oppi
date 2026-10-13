@@ -75,8 +75,8 @@ enum AppPreferences {
         static let durableSessionsKey = "\(AppIdentifiers.subsystem).experiments.durableSessions"
         static let desktopLiveViewKey = "\(AppIdentifiers.subsystem).experiments.desktopLiveView"
 
-        /// Durable Sessions: new sessions start durable and the Oppi Control entry
-        /// shows, on servers that advertise durable sessions.
+        /// Durable Sessions: new sessions start durable on servers that advertise
+        /// durable sessions.
         static var durableSessionsEnabled: Bool {
             UserDefaults.standard.bool(forKey: durableSessionsKey)
         }

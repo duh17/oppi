@@ -118,8 +118,6 @@ Turn on **Settings → Experiments → Durable Sessions** (off by default, saved
 
 Durable sessions appear in All Sessions like any other session, with a small **∞** after the title. Durable chats open in a conversation layout: your messages are trailing bubbles, replies are cards, and each turn's tool calls and thinking fold into a **Worked 9s · 2 steps** pill (tap it to show that turn's work). The title shows the model and thinking level under the session name, next to a small **Durable** label. The composer is the normal chat input bar.
 
-The sidebar header shows an **Oppi Control** button next to the **Oppi** title while the experiment is on and the server offers durable sessions. It opens the server's one durable control conversation, which runs `oppi` commands for you and asks with a confirm card before every change. Opening it creates the conversation the first time and resumes it if it was stopped; it always opens the same conversation, with its history.
-
 From the CLI, `oppi session create --workspace <id> --prompt <text> --engine durable` starts a durable session; it fails while the server flag is off. Adding `--agent` fails too: saved Agents can't start durable sessions yet.
 
 ## Live Remote Screen experiment

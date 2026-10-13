@@ -1649,14 +1649,6 @@ actor APIClient: ClientLogUploading {
         return try JSONDecoder().decode(CreateSessionResponse.self, from: data)
     }
 
-    /// Find-or-create the server's one durable control conversation. The server
-    /// also resumes it when it was stopped, so the returned row is attached.
-    func openControlConversation() async throws -> Session {
-        let data = try await post("/control-conversation", body: EmptyBody())
-        struct Response: Decodable { let session: Session }
-        return try JSONDecoder().decode(Response.self, from: data).session
-    }
-
     /// Response from session creation. Includes `prompted` when a prompt was provided.
     struct CreateSessionResponse: Decodable, Sendable {
         let session: Session

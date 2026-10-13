@@ -596,8 +596,6 @@ struct SessionInboxView: View {
                     McpServersView(scopeId: McpScopeSnapshot.globalId)
                 case .sshTerminal:
                     SSHTerminalHostListView()
-                case .controlConversation:
-                    ControlConversationDestinationView()
                 case .desktopStill:
                     if AppPreferences.Experiments.desktopLiveViewEnabled,
                        activeConnection?.desktopLiveViewAvailable == true {
@@ -1550,7 +1548,6 @@ struct WorkspaceSessionInboxStackRootView: View {
 
 struct WorkspaceSidebarView: View {
     @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var sshTerminalEnabled = false
-    @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var durableSessionsEnabled = false
     @AppStorage(AppPreferences.Experiments.desktopLiveViewKey) private var desktopLiveViewEnabled = false
     @AppStorage(SSHTerminalProfileStore.catalogKey) private var sshCatalogData = Data()
     @AppStorage(SSHTerminalProfileStore.storageKey) private var sshLegacyProfileData = Data()
@@ -1770,50 +1767,12 @@ struct WorkspaceSidebarView: View {
         }
     }
 
-    /// Oppi Control is one tap from the top of the sidebar, beside the title,
-    /// whenever the Durable Sessions experiment is on and the server offers it.
-    private var showsControlEntry: Bool {
-        DurableSessions.isAvailable(
-            experimentEnabled: durableSessionsEnabled,
-            serverOffersDurable: selectedServer
-                .flatMap { coordinator.connection(for: $0.id) }?
-                .durableSessionsAvailable == true
-        ) && WorkspaceUtilityNavTarget.controlConversation.isReleaseEnabled
-    }
-
-    private var controlEntry: some View {
-        let isSelected = navigation.workspaceNavigationPresentation == .split
-            && navigation.splitDetailTarget == .utility(.controlConversation)
-
-        return Button {
-            navigation.openWorkspaceUtility(.controlConversation)
-            onSelect?()
-        } label: {
-            Label("Control", systemImage: "bubble.left.and.text.bubble.right")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(isSelected ? .themeBlue : .themeFg)
-                .padding(.horizontal, 12)
-                .frame(minHeight: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: Capsule())
-        .accessibilityLabel("Open Oppi Control")
-        .accessibilityHint("Opens this server's control conversation")
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityIdentifier("workspace.controlConversation.open")
-    }
-
     private var sidebarHeader: some View {
         HStack(alignment: .center, spacing: 12) {
             Text("Oppi")
                 .font(.title2.weight(.bold))
                 .foregroundStyle(.themeFg)
                 .lineLimit(1)
-
-            if showsControlEntry {
-                controlEntry
-            }
 
             Spacer(minLength: 8)
 

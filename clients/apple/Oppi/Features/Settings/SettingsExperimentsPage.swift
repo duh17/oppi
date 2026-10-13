@@ -45,7 +45,7 @@ struct SettingsExperimentsPage: View {
                 Toggle("Durable Sessions", isOn: $durableSessionsEnabled)
                     .accessibilityIdentifier("settings.experiments.durableSessions")
             } footer: {
-                Text("On servers that offer durable sessions, new sessions start durable and Oppi Control shows in the sidebar. Switch a session to Classic in the composer before you start it. Experiments are early builds with rough edges.")
+                Text("On servers that offer durable sessions, new sessions start durable. Switch a session to Classic in the composer before you start it. Experiments are early builds with rough edges.")
             }
 
             Section {

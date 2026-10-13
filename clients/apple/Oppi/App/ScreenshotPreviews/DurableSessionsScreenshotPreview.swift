@@ -2,8 +2,7 @@
 import SwiftUI
 
 /// Durable Sessions experiment surfaces over an in-memory server that
-/// advertises durable sessions: the Settings toggle, the sidebar's Oppi Control
-/// entry, and All Sessions with ∞ rows and its quick session bar, which opens
+/// advertises durable sessions: the Settings toggle, the sidebar, and All Sessions with ∞ rows and its quick session bar, which opens
 /// the real Quick Session overlay. `experimentEnabled: false` previews the same
 /// surfaces with the experiment off. Requests go to an in-process stub; no
 /// network or Keychain writes.

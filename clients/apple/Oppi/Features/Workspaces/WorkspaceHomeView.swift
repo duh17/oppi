@@ -223,9 +223,6 @@ enum WorkspaceUtilityNavTarget: Hashable {
     case extensions
     case mcpServers
     case sshTerminal
-    /// Durable Sessions experiment: the active server's one durable control
-    /// conversation, found or created when opened.
-    case controlConversation
     /// iPhone-only remote screen. Hidden until the still viewer is released or Live Remote Screen is on.
     case desktopStill
     case manageServers
@@ -239,8 +236,6 @@ enum WorkspaceUtilityNavTarget: Hashable {
             ReleaseFeatures.desktopStillEnabled || AppPreferences.Experiments.desktopLiveViewEnabled
         case .sshTerminal:
             AppPreferences.Experiments.sshTerminalEnabled && SSHTerminalProfileStore().hasConfiguredHost
-        case .controlConversation:
-            AppPreferences.Experiments.durableSessionsEnabled
         case .skills, .extensions, .mcpServers, .manageServers, .appSettings:
             true
         }
