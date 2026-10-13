@@ -300,6 +300,30 @@ describe("control conversation find-or-create service", () => {
     expect(f.rows.size).toBe(1);
   });
 
+  it("retires a control row from before per-session stores and creates a fresh one", async () => {
+    const f = serviceFixture();
+    // Written by a server older than per-session stores: a conversation id in the shared
+    // harness, no store id, so it can never start.
+    const legacy = controlRow({
+      id: "legacy",
+      serverDurable: { role: "control", conversationId: 25765 },
+      launch: { idempotencyKey: CONTROL_CONVERSATION_LAUNCH_KEY, status: "accepted" },
+    });
+    f.rows.set(legacy.id, legacy);
+
+    const first = await f.service.open();
+    expect(first.created).toBe(true);
+    expect(first.session.id).not.toBe("legacy");
+    expect(first.session.serverDurable?.storeId).toBe(first.session.id);
+    expect(f.rows.has("legacy")).toBe(false);
+    expect(f.rows.size).toBe(1);
+
+    const second = await f.service.open();
+    expect(second.created).toBe(false);
+    expect(second.session.id).toBe(first.session.id);
+    expect(f.rows.size).toBe(1);
+  });
+
   it("will not adopt another session's row under the reserved key", async () => {
     const f = serviceFixture();
     f.rows.set(
@@ -421,6 +445,46 @@ describe("control conversation lifecycle on the durable harness", () => {
     expect(opened.body.session.id).toBe(row.id);
     expect(second.manager.isActive(row.id)).toBe(true);
     expect(opened.body.session.serverDurable?.conversationId).toBeGreaterThan(0);
+  });
+
+  it("replaces a control row from before per-session stores at boot and starts the new one", async () => {
+    const { storage } = await setup();
+    const legacy = storage.createSession("Oppi Control");
+    legacy.serverDurable = { role: "control", conversationId: 25765 };
+    legacy.launch = { idempotencyKey: CONTROL_CONVERSATION_LAUNCH_KEY, status: "accepted" };
+    storage.saveSession(legacy);
+    storage.queueRestartResume([{ sessionId: legacy.id, wasBusy: false }], Date.now());
+
+    const booted = await boot(storage);
+    await booted.manager.ensureControlConversation();
+    const row = storage.findSessionByLaunchIdempotencyKey(CONTROL_CONVERSATION_LAUNCH_KEY)!;
+    expect(row.id).not.toBe(legacy.id);
+    expect(row.serverDurable).toEqual({ storeId: row.id, role: "control" });
+    expect(storage.getSession(legacy.id)).toBeUndefined();
+
+    // The stale queue entry no longer fails the restart pass.
+    const resume = vi.fn(async (session: Session) => ({ session }));
+    const results = await resumeSessionsAfterRestart({
+      storage,
+      lifecycle: {
+        resumeControlConversation: resume,
+        resumeControlSession: vi.fn(),
+        resumeWorkspaceSession: vi.fn(),
+      },
+      sendPrompt: vi.fn(),
+      sendFollowUp: vi.fn(),
+    });
+    expect(results).toEqual([
+      { sessionId: legacy.id, outcome: "skipped", reason: "session deleted" },
+    ]);
+    expect(resume).not.toHaveBeenCalled();
+
+    const opened = await booted.open({ model: "faux/faux-1" });
+    expect(opened.status).toBe(200);
+    expect(opened.body.session.id).toBe(row.id);
+    expect(opened.body.session.serverDurable?.conversationId).toBeGreaterThan(0);
+    expect(booted.manager.isActive(row.id)).toBe(true);
+    expect(storage.listSessions().filter(isControlConversation)).toHaveLength(1);
   });
 
   it("creates one conversation under concurrency and finds the same one after a restart", async () => {
