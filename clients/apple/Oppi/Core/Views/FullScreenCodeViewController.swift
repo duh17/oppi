@@ -1605,35 +1605,18 @@ final class FullScreenCodeViewController: UIViewController {
                 readerPreferences: readerPreferences(for: content)
             )
         case .notebook(let plan):
-            // The cell does not scroll. This wrapper is the reader, the same
-            // shape as the LaTeX body: bounce so a short cell still gets
-            // safe-area insets, default inset adjustment, no tail policy.
-            let scrollView = UIScrollView()
-            scrollView.alwaysBounceVertical = true
-            scrollView.showsVerticalScrollIndicator = true
-            scrollView.backgroundColor = UIColor(palette.bg)
-            scrollView.accessibilityIdentifier = "fullscreen-notebook.scroll"
             let language = plan.sources.first?.language
-            let cell = NotebookCellView(mode: .reader(.init(
-                router: reviewCommentSelectionContext?.dispatcher,
-                code: makeSourceContext(surface: .fullScreenCode, languageHint: language),
-                output: makeSourceContext(surface: .fullScreenSource),
-                markdown: makeSourceContext(surface: .fullScreenMarkdown)
-            )))
-            cell.apply(plan)
-            cell.translatesAutoresizingMaskIntoConstraints = false
-            scrollView.addSubview(cell)
-            // Readable margins; the width tracks the screen so code wraps
-            // instead of scrolling sideways.
-            let inset: CGFloat = 16
-            NSLayoutConstraint.activate([
-                cell.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: inset),
-                cell.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -inset),
-                cell.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 12),
-                cell.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -32),
-                cell.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -2 * inset),
-            ])
-            return scrollView
+            return NotebookReaderBody(
+                plan: plan,
+                selection: .init(
+                    router: reviewCommentSelectionContext?.dispatcher,
+                    code: makeSourceContext(surface: .fullScreenCode, languageHint: language),
+                    output: makeSourceContext(surface: .fullScreenSource),
+                    markdown: makeSourceContext(surface: .fullScreenMarkdown)
+                ),
+                palette: palette,
+                readerPreferences: readerPreferences(for: content)
+            )
         }
     }
 
@@ -1979,7 +1962,8 @@ final class FullScreenCodeViewController: UIViewController {
         case .document(let family):
             return family.readerFamily
         case .notebook:
-            return nil
+            // A code cell and its printed output read like code.
+            return .code
         case .liveSource(let snapshot, _):
             return readerFamily(for: bodyContent(for: snapshot))
         }

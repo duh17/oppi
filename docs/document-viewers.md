@@ -178,6 +178,7 @@ Full-screen document viewers show a **Viewing Options** button near the bottom-r
 | --- | --- |
 | Markdown and thinking text | Text Size slider, Spacing, Reset View |
 | Code and Graphviz source | Text Size slider, Wrap Text, Reset View |
+| Code mode scripts and other notebook-style tool calls | Code options: Text Size slider, Wrap Text, Reset View. Wrap Text applies to the script and printed output. |
 | Plain source text | Text Size slider, Wrap Text, Reset View |
 | Diffs | Text Size slider, Reset View |
 | Terminal output | Text Size slider, Wrap Text, Reset View |

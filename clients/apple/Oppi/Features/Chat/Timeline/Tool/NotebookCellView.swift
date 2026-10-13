@@ -13,7 +13,8 @@ import UIKit
 /// Inline, the cell is a preview: text is not selectable, so a double-tap
 /// reaches the row and opens the reader, and long sections are trimmed so the
 /// calls and output stay visible. The reader shows everything, selectable,
-/// with review comments.
+/// with review comments, and follows the code family's Viewing Options: text
+/// scale for every label, and Wrap Text for the code and printed output.
 ///
 /// This view does not scroll. The timeline owns vertical pans. The reader
 /// wraps the cell in its own scroll view.
@@ -59,6 +60,8 @@ final class NotebookCellView: UIView, UITextViewDelegate {
     private var appliedPlan: NotebookCellPlan?
     private var appliedTheme: ThemeID?
     private var appliedPressure = StreamingRenderPolicy.ResourcePressure.nominal
+    /// Reader only. Inline cells keep the timeline's tool type and wrap.
+    private var readerPreferences = FullScreenReaderContentFamily.code.defaultPreferences
     private var highlightTask: Task<Void, Never>?
     private var highlightGeneration = 0
     private var nextHighlightToken = 0
@@ -93,6 +96,16 @@ final class NotebookCellView: UIView, UITextViewDelegate {
     private var readerSelection: ReaderSelection? {
         if case .reader(let selection) = mode { return selection }
         return nil
+    }
+
+    /// Reader only: repaints with the new text scale and wrapping.
+    func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
+        guard isReader, preferences != readerPreferences else { return }
+        readerPreferences = preferences
+        guard let plan = appliedPlan else { return }
+        fittedHeightByWidth.removeAll()
+        paint(plan, theme: appliedTheme ?? ThemeRuntimeState.currentThemeID(), sourceChanged: true)
+        invalidateIntrinsicContentSize()
     }
 
     /// Returns whether the painted plan changed and the row should remeasure.
@@ -297,14 +310,14 @@ final class NotebookCellView: UIView, UITextViewDelegate {
             ) {
                 deferredHighlights.append(deferred)
             }
-            cardStack.addArrangedSubview(view)
+            cardStack.addArrangedSubview(lineLayout(view))
             if shown.hiddenLines > 0 {
                 cardStack.addArrangedSubview(moreLabel(lines: shown.hiddenLines, palette: palette))
             }
         }
         if !plan.metadata.isEmpty {
             let meta = UILabel()
-            meta.font = ToolFont.small
+            meta.font = scaled(ToolFont.small)
             meta.textColor = UIColor(palette.fgDim)
             meta.numberOfLines = isReader ? 0 : 2
             meta.text = plan.metadata.joined(separator: "\n")
@@ -325,7 +338,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         palette: ThemePalette,
         theme: ThemeID
     ) -> NotebookDeferredHighlight? {
-        let font = ToolFont.regular
+        let font = codeFont
         view.font = font
         view.textColor = UIColor(palette.fg)
         view.tag = 0
@@ -351,7 +364,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         view.attributedText = nil
         view.text = code
         guard tier == .deferred else { return nil }
-        let signature = Self.highlightSignature(code: code, language: language, theme: theme)
+        let signature = Self.highlightSignature(code: code, language: language, theme: theme, font: font)
         if let cached = ToolRowRenderCache.get(signature: signature) {
             view.attributedText = cached
             return nil
@@ -405,7 +418,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
             let inputBytes = snippets.reduce(0) { $0 + $1.code.utf8.count }
             await MainActor.run { [weak self] in
                 guard let self, self.highlightGeneration == generation else { return }
-                let font = ToolFont.regular
+                let font = self.codeFont
                 for result in painted {
                     let withFont = NSMutableAttributedString(attributedString: result.colored)
                     withFont.addAttribute(
@@ -456,16 +469,21 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         return found
     }
 
-    nonisolated private static func highlightSignature(
+    /// The cached highlight carries its font, so the reader's text scale is
+    /// part of the key.
+    private static func highlightSignature(
         code: String,
         language: SyntaxLanguage,
-        theme: ThemeID
+        theme: ThemeID,
+        font: UIFont
     ) -> Int {
         var hasher = Hasher()
         hasher.combine("notebook")
         hasher.combine(code)
         hasher.combine(language)
         hasher.combine(theme)
+        hasher.combine(font.fontName)
+        hasher.combine(font.pointSize)
         return hasher.finalize()
     }
 
@@ -523,10 +541,10 @@ final class NotebookCellView: UIView, UITextViewDelegate {
             hiddenLines = shown.hiddenLines
             let view = textView()
             view.accessibilityIdentifier = "tool.notebook.output"
-            view.font = ToolFont.regular
+            view.font = codeFont
             view.textColor = UIColor(palette.toolOutput)
             view.text = shown.text
-            body = view
+            body = lineLayout(view)
         case .rich(let markdown):
             // The reader keeps the formatted document. Inline, a long JSON
             // result was parsed and laid out in full, then the 620 pt cap
@@ -543,7 +561,8 @@ final class NotebookCellView: UIView, UITextViewDelegate {
                 themeID: theme,
                 textSelectionEnabled: isReader,
                 reviewCommentSelectionRouter: readerSelection?.router,
-                reviewCommentSourceContext: readerSelection?.markdown
+                reviewCommentSourceContext: readerSelection?.markdown,
+                readerPreferences: isReader ? readerPreferences : nil
             ))
             body = view
         }
@@ -566,7 +585,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         row.spacing = 6
         row.accessibilityIdentifier = "tool.notebook.call"
 
-        let lineHeight = ToolFont.regular.lineHeight
+        let lineHeight = codeFont.lineHeight
         let icon = UIImageView(image: UIImage(systemName: statusSymbol(call.status))?.applyingSymbolConfiguration(
             UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
         ))
@@ -583,12 +602,12 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         // Name and arguments share one label so they wrap together in the
         // reader and truncate together inline.
         let text = NSMutableAttributedString(string: call.name, attributes: [
-            .font: ToolFont.title,
+            .font: scaled(ToolFont.title),
             .foregroundColor: UIColor(palette.fg),
         ])
         if let arguments = call.arguments {
             text.append(NSAttributedString(string: "  " + arguments, attributes: [
-                .font: ToolFont.regular,
+                .font: codeFont,
                 .foregroundColor: UIColor(palette.fgDim),
             ]))
         }
@@ -604,7 +623,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         column.spacing = 2
         if let error = call.error {
             let errorLabel = UILabel()
-            errorLabel.font = ToolFont.small
+            errorLabel.font = scaled(ToolFont.small)
             errorLabel.textColor = UIColor(palette.red)
             errorLabel.numberOfLines = isReader ? 0 : 2
             errorLabel.text = error
@@ -614,7 +633,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         row.addArrangedSubview(column)
         if let duration = call.duration {
             let time = UILabel()
-            time.font = ToolFont.small
+            time.font = scaled(ToolFont.small)
             time.textColor = UIColor(palette.comment)
             time.text = duration
             time.setContentHuggingPriority(.required, for: .horizontal)
@@ -628,6 +647,20 @@ final class NotebookCellView: UIView, UITextViewDelegate {
     }
 
     // MARK: - Pieces
+
+    /// Code and printed output. The reader scales it with Viewing Options.
+    private var codeFont: UIFont { scaled(ToolFont.regular) }
+
+    private func scaled(_ font: UIFont) -> UIFont {
+        isReader ? FullScreenCodeTypography.scaledFont(font, scale: readerPreferences.textScale) : font
+    }
+
+    /// Unwrapped reader text scrolls sideways in its own block, so the calls
+    /// and formatted output beside it stay at the readable width.
+    private func lineLayout(_ view: UITextView) -> UIView {
+        guard isReader, !readerPreferences.wrapsText else { return view }
+        return NotebookUnwrappedTextScroller(view)
+    }
 
     private func textView() -> UITextView {
         // A plain selectable text view still begins its pan when scrolling is
@@ -646,7 +679,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         view.textContainer.lineFragmentPadding = 0
         view.textContainer.lineBreakMode = .byCharWrapping
         view.textContainer.widthTracksTextView = true
-        view.font = ToolFont.regular
+        view.font = codeFont
         // Match the cell cap (749 beats nothing at 750). Required resistance
         // fought the row's required viewport height on every expansion measure.
         view.setContentCompressionResistancePriority(.defaultHigh, for: .vertical)
@@ -664,7 +697,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
     private func sectionCaption(_ text: String, color: Color) -> UILabel {
         let label = UILabel()
         label.attributedText = NSAttributedString(string: text, attributes: [
-            .font: ToolFont.smallBold,
+            .font: scaled(ToolFont.smallBold),
             .foregroundColor: UIColor(color),
             .kern: 1.2,
         ])
@@ -678,7 +711,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
 
     private func caption(_ text: String, color: Color) -> UILabel {
         let label = UILabel()
-        label.font = ToolFont.small
+        label.font = scaled(ToolFont.small)
         label.textColor = UIColor(color)
         label.numberOfLines = 0
         label.text = text
@@ -748,6 +781,90 @@ final class NotebookCellView: UIView, UITextViewDelegate {
             sourceContext: context
         )
     }
+}
+
+/// Full-screen notebook reader. The cell does not scroll; this wrapper does,
+/// the same shape as the LaTeX body: bounce so a short cell still gets
+/// safe-area insets, default inset adjustment, no tail policy.
+@MainActor
+final class NotebookReaderBody: UIScrollView, FullScreenReaderConfigurable {
+    private let cell: NotebookCellView
+
+    init(
+        plan: NotebookCellPlan,
+        selection: NotebookCellView.ReaderSelection,
+        palette: ThemePalette,
+        readerPreferences: FullScreenReaderPreferences
+    ) {
+        cell = NotebookCellView(mode: .reader(selection))
+        super.init(frame: .zero)
+        alwaysBounceVertical = true
+        showsVerticalScrollIndicator = true
+        backgroundColor = UIColor(palette.bg)
+        accessibilityIdentifier = "fullscreen-notebook.scroll"
+        cell.applyReaderPreferences(readerPreferences)
+        cell.apply(plan)
+        cell.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(cell)
+        // Readable margins. The width tracks the screen; unwrapped code and
+        // output scroll sideways inside the cell.
+        let inset: CGFloat = 16
+        NSLayoutConstraint.activate([
+            cell.leadingAnchor.constraint(equalTo: contentLayoutGuide.leadingAnchor, constant: inset),
+            cell.trailingAnchor.constraint(equalTo: contentLayoutGuide.trailingAnchor, constant: -inset),
+            cell.topAnchor.constraint(equalTo: contentLayoutGuide.topAnchor, constant: 12),
+            cell.bottomAnchor.constraint(equalTo: contentLayoutGuide.bottomAnchor, constant: -32),
+            cell.widthAnchor.constraint(equalTo: frameLayoutGuide.widthAnchor, constant: -2 * inset),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func applyReaderPreferences(_ preferences: FullScreenReaderPreferences) {
+        cell.applyReaderPreferences(preferences)
+    }
+}
+
+/// One unwrapped reader block. The text view is at least its natural line
+/// width, so it never wraps, and at least the block width, so a short block
+/// still fills it. Only this block scrolls sideways; vertical pans fall
+/// through to the reader.
+private final class NotebookUnwrappedTextScroller: UIScrollView {
+    init(_ textView: UITextView) {
+        super.init(frame: .zero)
+        showsVerticalScrollIndicator = false
+        showsHorizontalScrollIndicator = true
+        alwaysBounceVertical = false
+        alwaysBounceHorizontal = false
+        accessibilityIdentifier = "tool.notebook.unwrapped"
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(textView)
+
+        let text = textView.attributedText ?? NSAttributedString()
+        let natural = text.boundingRect(
+            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin],
+            context: nil
+        )
+        // Slack keeps a rounding difference from wrapping the widest line.
+        let lineWidth = ceil(natural.width) + 2
+        let fill = textView.widthAnchor.constraint(equalTo: frameLayoutGuide.widthAnchor)
+        fill.priority = .defaultLow
+        NSLayoutConstraint.activate([
+            textView.leadingAnchor.constraint(equalTo: contentLayoutGuide.leadingAnchor),
+            textView.trailingAnchor.constraint(equalTo: contentLayoutGuide.trailingAnchor),
+            textView.topAnchor.constraint(equalTo: contentLayoutGuide.topAnchor),
+            textView.bottomAnchor.constraint(equalTo: contentLayoutGuide.bottomAnchor),
+            textView.widthAnchor.constraint(greaterThanOrEqualTo: frameLayoutGuide.widthAnchor),
+            textView.widthAnchor.constraint(greaterThanOrEqualToConstant: lineWidth),
+            fill,
+            frameLayoutGuide.heightAnchor.constraint(equalTo: contentLayoutGuide.heightAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
 }
 
 /// Leading slice of a long text for the inline preview.

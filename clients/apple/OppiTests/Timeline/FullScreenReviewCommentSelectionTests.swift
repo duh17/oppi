@@ -2100,6 +2100,51 @@ struct FullScreenReviewCommentSelectionTests {
         #expect(scaledPointSize > initialPointSize)
     }
 
+    @Test func notebookReaderFollowsCodeViewingOptionsInPlace() throws {
+        FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code)
+        defer { FullScreenReaderPreferencesStore.shared.resetPreferences(for: .code) }
+        let longLine = String(repeating: "value=1 ", count: 40)
+        let plan = NotebookCellPlan(
+            sources: [.init(label: nil, language: "javascript", code: "console.log(report)")],
+            inputIsCode: true,
+            metadata: [],
+            calls: [],
+            omittedCalls: 0,
+            callsIncomplete: false,
+            output: .stdout(longLine),
+            availabilityNote: nil,
+            running: false,
+            failed: false
+        )
+        let controller = makeController(content: .notebook(plan))
+        let body = try #require(controller.installedBodyViewForTesting as? NotebookReaderBody)
+        #expect(controller.floatingViewingOptionsButtonFrameForTesting != nil)
+
+        func output() throws -> UITextView {
+            controller.view.layoutIfNeeded()
+            return try #require(timelineAllTextViews(in: body).first {
+                $0.accessibilityIdentifier == "tool.notebook.output"
+            })
+        }
+
+        // Code defaults to unwrapped: the output keeps one line and scrolls sideways.
+        let unwrapped = try output()
+        let scroller = try #require(unwrapped.superview as? UIScrollView)
+        #expect(scroller.contentSize.width > scroller.bounds.width + 100)
+        let lineHeight = try #require(unwrapped.font?.lineHeight)
+        #expect(unwrapped.bounds.height < lineHeight * 2)
+
+        controller.setReaderWrappingForTesting(true)
+        let wrapped = try output()
+        #expect(controller.installedBodyViewForTesting === body)
+        #expect(!(wrapped.superview is UIScrollView))
+        #expect(wrapped.bounds.height > lineHeight * 3)
+
+        let pointSize = try #require(wrapped.font?.pointSize)
+        controller.setReaderTextScaleForTesting(1.25)
+        #expect(try #require(output().font?.pointSize) > pointSize)
+    }
+
     @Test func fullscreenThemeNotificationPreservesCodeViewportAndSelection() throws {
         let originalThemeID = ThemeRuntimeState.currentThemeID()
         defer { ThemeRuntimeState.setThemeID(originalThemeID) }
