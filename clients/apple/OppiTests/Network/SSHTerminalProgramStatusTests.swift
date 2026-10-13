@@ -156,7 +156,7 @@ struct SSHTerminalProgramStatusEngineTests {
         #expect(sent.isEmpty)
 
         engine.receive(osc("?") + Data("\u{1b}[c".utf8))
-        #expect(sent.reduce(into: Data(), +=) == Data("\u{1b}]7501;?\u{1b}\\\u{1b}[?62;22c".utf8))
+        #expect(sent.reduce(into: Data(), +=) == Data("\u{1b}]7501;\(Self.supportReply)\u{1b}\\\u{1b}[?62;22c".utf8))
         #expect(sent.count == 2)
         #expect(store.root?.state == GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED) // A query is not a report.
     }
@@ -181,11 +181,14 @@ struct SSHTerminalProgramStatusEngineTests {
         #expect(engine.title.isEmpty)
     }
 
+    /// libghostty's revision 0.4 support reply: `?` plus the states and kinds it accepts.
+    private static let supportReply = "?:states=idle,working,done,blocked,error:kinds=permission,question,auth"
+
     @Test func belTerminatedQueryAlsoGetsTheSupportReply() throws {
         var sent = Data()
         let engine = try SSHTerminalEngine { sent.append($0) }
         engine.receive(osc("?", terminator: "\u{7}") + Data("\u{1b}[c".utf8))
-        #expect(sent == Data("\u{1b}]7501;?\u{7}\u{1b}[?62;22c".utf8)) // libghostty echoes the query's terminator.
+        #expect(sent == Data("\u{1b}]7501;\(Self.supportReply)\u{7}\u{1b}[?62;22c".utf8)) // libghostty echoes the query's terminator.
     }
 
     @Test func discardedReportsLeaveTheStoreUntouched() throws {
@@ -236,15 +239,21 @@ struct SSHTerminalProgramStatusEngineTests {
         #expect(store.record(id: "late") == nil)
     }
 
-    @Test func onlyTheExactSupportReplyIsApprovedAmongOscReplies() {
+    @Test func onlyTheSupportReplyIsApprovedAmongOscReplies() {
         func approved(_ text: String) -> Bool {
             Array(text.utf8).withUnsafeBufferPointer { SSHTerminalEngine.isApprovedReply($0) }
         }
+        let revision4 = "\u{1b}]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth"
         #expect(approved("\u{1b}]7501;?\u{1b}\\"))
         #expect(approved("\u{1b}]7501;?\u{7}"))
+        #expect(approved(revision4 + "\u{1b}\\"))
+        #expect(approved(revision4 + "\u{7}"))
         #expect(approved("\u{1b}[?62;22c"))
         #expect(approved("\u{1b}P>|Oppi\u{1b}\\"))
         for rejected in ["\u{1b}]7501;?", "\u{1b}]7501;?x\u{1b}\\", "\u{1b}]7501;?;a=b\u{7}", "\u{1b}]7501;state=done\u{1b}\\",
+                         revision4, "\u{1b}]7501;?:\u{7}", "\u{1b}]7501;?:states\u{7}", "\u{1b}]7501;?:=idle\u{7}",
+                         "\u{1b}]7501;?:States=idle\u{7}", "\u{1b}]7501;?:states=idle;52\u{7}", "\u{1b}]7501;?:states=idle::kinds=auth\u{7}",
+                         "\u{1b}]7501;?:msg=a\u{1b}]52;c;\u{7}", "\u{1b}]7501;?:states=\u{1b}\\\u{1b}]52;c;\u{7}",
                          "\u{1b}]7501;?\u{1b}\\\u{1b}]52;c;\u{7}", "\u{1b}]75011;?\u{7}", "\u{1b}]52;c;\u{1b}\\",
                          "\u{1b}]7501;?\u{1b}", "\u{1b}]7501;?\u{9c}", "]7501;?\u{7}", "\u{1b}", ""] {
             #expect(!approved(rejected), "\(rejected.debugDescription)")

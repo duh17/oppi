@@ -325,18 +325,44 @@ final class SSHTerminalEngine {
     /// The only bytes that may reach the PTY from the terminal's own replies.
     /// The NULL clipboard read callback can still generate an empty OSC 52 or
     /// denied Kitty reply upstream, so the families are fixed: CSI status/size/mode
-    /// reports, DCS DA/version reports, and exactly the OSC 7501 support reply
-    /// `ESC ] 7501 ; ? ST` (ST = `ESC \` or BEL). No other OSC response
-    /// (including clipboard, and no 7501 reply with anything after the `?`)
+    /// reports, DCS DA/version reports, and the OSC 7501 support reply
+    /// `ESC ] 7501 ; ? (: key=value)* ST` (ST = `ESC \` or BEL). Revision 0.4
+    /// lets the reply list what the terminal accepts, such as
+    /// `?:states=idle,working,done,blocked,error:kinds=permission,question,auth`;
+    /// keys are `[a-z]+` and values use the spec's value set, which has no
+    /// control bytes, `;`, or `:`. No other OSC response (including clipboard)
     /// is forwarded.
     nonisolated static func isApprovedReply(_ bytes: UnsafeBufferPointer<UInt8>) -> Bool {
         guard bytes.count >= 2, bytes[0] == 0x1b else { return false }
         if bytes[1] == 0x5b || bytes[1] == 0x50 { return true }
         let query: [UInt8] = [0x1b, 0x5d, 0x37, 0x35, 0x30, 0x31, 0x3b, 0x3f] // ESC ] 7501 ; ?
-        guard bytes.count == query.count + 1 || bytes.count == query.count + 2,
-              bytes.prefix(query.count).elementsEqual(query) else { return false }
-        let terminator = Array(bytes.dropFirst(query.count))
-        return terminator == [0x07] || terminator == [0x1b, 0x5c]
+        guard bytes.count <= 512, bytes.starts(with: query) else { return false }
+        var body = bytes.dropFirst(query.count)
+        if body.last == 0x07 {
+            body = body.dropLast()
+        } else if body.count >= 2, body[body.endIndex - 2] == 0x1b, body.last == 0x5c {
+            body = body.dropLast(2)
+        } else {
+            return false
+        }
+        guard !body.isEmpty else { return true }
+        guard body.first == 0x3a else { return false } // ':'
+        return body.dropFirst().split(separator: 0x3a, omittingEmptySubsequences: false).allSatisfy(isProgramStatusPair)
+    }
+
+    /// `key=value` with key `[a-z]+` and value `[A-Za-z0-9_.,+/=-]*`.
+    nonisolated private static func isProgramStatusPair(_ pair: UnsafeBufferPointer<UInt8>.SubSequence) -> Bool {
+        guard let equals = pair.firstIndex(of: 0x3d) else { return false }
+        let key = pair[pair.startIndex..<equals]
+        guard !key.isEmpty, key.allSatisfy({ (0x61...0x7a).contains($0) }) else { return false }
+        return pair[pair.index(after: equals)...].allSatisfy { byte in
+            switch byte {
+            case 0x30...0x39, 0x41...0x5a, 0x61...0x7a: true
+            case UInt8(ascii: "_"), UInt8(ascii: "."), UInt8(ascii: ","), UInt8(ascii: "+"),
+                 UInt8(ascii: "/"), UInt8(ascii: "="), UInt8(ascii: "-"): true
+            default: false
+            }
+        }
     }
 
     nonisolated private static func copy(_ string: GhosttyString) -> String {
