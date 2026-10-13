@@ -63,7 +63,8 @@ enum SSHTerminalKeymap {
         let actions: [ActionSpec]
     }
 
-    /// Program name as the foreground probe or Herdr reports it.
+    /// `shell`, an `SSHTerminalAgentDetection.agentApps` entry, or the agent
+    /// Herdr reports in its focused pane.
     static func profile(for program: String) -> Profile? {
         switch program {
         case "shell":
@@ -465,7 +466,7 @@ enum SSHTerminalKeymap {
 }
 
 /// Resolves the key strip for the program in front, reading its keybinding
-/// file once each time that program takes the foreground.
+/// file once each time that program changes.
 @MainActor @Observable
 final class SSHTerminalKeymapLoader {
     private(set) var actions: [SSHTerminalKeyAction] = []

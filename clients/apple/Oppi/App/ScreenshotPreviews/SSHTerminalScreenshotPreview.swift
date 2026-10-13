@@ -51,6 +51,9 @@ struct SSHTerminalScreenshotPreview: View {
         guard !channel.connected else { return }
         // Echo what the composer and key strip send, escaped, so a driven run
         // (OPPI_UI_VALIDATE_TAPS) shows the bytes that reached the "PTY".
+        // The default preview is a Herdr client whose focused pane runs pi.
+        // Status variants run a login shell, so only the root record can
+        // pick the input mode.
         channel.opened(PreviewConnection(status: status) { [weak channel] bytes in
             let shown = String(decoding: bytes, as: UTF8.self).unicodeScalars.map { scalar -> String in
                 switch scalar.value {
@@ -62,7 +65,7 @@ struct SSHTerminalScreenshotPreview: View {
                 }
             }.joined()
             channel?.event(.data(Data("\r\nsent: \(shown)".utf8)))
-        }, command: "herdr")
+        }, command: status == .none ? "herdr" : nil)
         let esc = "\u{1b}["
         let screen = status == .none ? herdrScreen(esc) : statusScreen(esc)
         var bytes = Data(screen.utf8)
@@ -125,7 +128,7 @@ struct SSHTerminalScreenshotPreview: View {
 
     private func playSequence(on channel: SSHTerminalChannel) async {
         guard !channel.connected else { return }
-        channel.opened(PreviewConnection(status: .working) { _ in }, command: "herdr")
+        channel.opened(PreviewConnection(status: .working) { _ in })
         let steps: [(Double, SSHTerminalScreenshotStatus)] = [
             (0.6, .working), (2.0, .blocked), (2.0, .working), (2.4, .done), (2.6, .working), (1.6, .error), (4.0, .idle),
         ]
@@ -155,15 +158,6 @@ private actor PreviewConnection: SSHTerminalConnection {
     func cancel() async {}
 
     func run(_ command: String, input: Data) async throws -> SSHExecResult {
-        if input == Data(SSHTerminalForeground.probeScript.utf8) {
-            // Status variants report through OSC 7501, so the probe stays a shell
-            // and cannot hide that the root record decided the input mode.
-            // The default preview is a Herdr client whose focused pane runs pi.
-            let ps = status == .none
-                ? "t 101 100 ttys002 Ss -fish\nt 102 101 ttys002 S+ herdr\na 200 100 ?? S sh\na 100 99 ?? S sshd-session: preview\n"
-                : "t 101 100 ttys002 Ss -fish\na 200 100 ?? S sh\na 100 99 ?? S sshd-session: preview\n"
-            return SSHExecResult(output: Data(ps.utf8), errorOutput: Data(), exitStatus: 0)
-        }
         if command == "sh -s" { // a keybinding file read: none here, so defaults
             return SSHExecResult(output: Data(), errorOutput: Data("No such file".utf8), exitStatus: 1)
         }

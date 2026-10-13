@@ -249,50 +249,41 @@ struct SSHTerminalProgramStatusPresentationTests {
         #expect(SSHTerminalDisplayText.sanitized(tower, limit: 4) == "a\u{0301}\u{0301}b")
     }
 
-    @Test func inputModePrefersTheRootRecordThenTheProbeThenHerdr() throws {
+    @Test func inputModePrefersTheRootRecordThenHerdr() throws {
         let agent = record(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, app: "pi")
         let shell = record(GHOSTTY_PROGRAM_STATUS_STATE_IDLE, app: "fish")
         let other = record(GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED, kind: GHOSTTY_PROGRAM_STATUS_KIND_PERMISSION, app: "terraform")
         let prefixed = record(GHOSTTY_PROGRAM_STATUS_STATE_WORKING, app: "claude-code")
         let focused = try herdr(focused: true)
         let unfocused = try herdr(focused: false)
+        typealias Detection = SSHTerminalAgentDetection
 
-        #expect(SSHTerminalAgentDetector.mode(
-            root: agent, app: "pi", foreground: .shell, herdr: unfocused
-        ) == .chat)
-        #expect(SSHTerminalAgentDetector.mode(
-            root: prefixed, app: "claude-code", foreground: nil, herdr: nil
-        ) == .chat)
-        #expect(SSHTerminalAgentDetector.mode(
-            root: shell, app: "fish", foreground: .agent("pi"), herdr: nil
-        ) == .chat)
-        #expect(SSHTerminalAgentDetector.mode(
-            root: other, app: "terraform", foreground: .shell, herdr: nil
+        #expect(Detection.mode(root: agent, app: "pi", herdrAttached: true, herdr: unfocused) == .chat)
+        #expect(Detection.mode(root: prefixed, app: "claude-code", herdrAttached: false, herdr: nil) == .chat)
+        #expect(Detection.mode(root: shell, app: "fish", herdrAttached: false, herdr: nil) == nil)
+        #expect(Detection.mode(root: other, app: "terraform", herdrAttached: false, herdr: nil) == nil)
+        #expect(Detection.mode(root: other, app: "terraform", herdrAttached: true, herdr: focused) == .chat)
+        #expect(Detection.mode(root: nil, app: "", herdrAttached: true, herdr: unfocused) == .terminal)
+        #expect(Detection.mode(root: nil, app: "", herdrAttached: true, herdr: nil) == .terminal)
+        // Herdr running on the host does not mean this terminal shows it.
+        #expect(Detection.mode(root: nil, app: "", herdrAttached: false, herdr: focused) == nil)
+        #expect(Detection.mode(
+            override: .terminal, root: agent, app: "pi", herdrAttached: true, herdr: focused
         ) == .terminal)
-        #expect(SSHTerminalAgentDetector.mode(
-            root: nil, app: "", foreground: .herdr, herdr: focused
-        ) == .chat)
-        #expect(SSHTerminalAgentDetector.mode(
-            root: nil, app: "", foreground: .herdr, herdr: unfocused
-        ) == .terminal)
-        #expect(SSHTerminalAgentDetector.mode(
-            root: nil, app: "", foreground: nil, herdr: focused
-        ) == nil)
-        #expect(SSHTerminalAgentDetector.mode(
-            override: .terminal, root: agent, app: "pi", foreground: .agent("pi"), herdr: focused
-        ) == .terminal)
-        #expect(SSHTerminalAgentDetector.rootSelectsChat(root: nil, app: "pi") == false)
+
+        // The key strip follows the same order; `claude-code` uses Claude's.
+        #expect(Detection.keymapProgram(root: prefixed, app: "claude-code", herdrAttached: true, herdr: focused) == "claude")
+        #expect(Detection.keymapProgram(root: nil, app: "", herdrAttached: true, herdr: focused) == "pi")
+        #expect(Detection.keymapProgram(root: other, app: "terraform", herdrAttached: false, herdr: focused) == "shell")
     }
 
-    /// Pi runs as `node`, so the probe reads a shell while Pi is in front: a
-    /// live report keeps the chat bar. Once the shell shows its next prompt,
+    /// A live report keeps the chat bar. Once the shell shows its next prompt,
     /// the done report that outlives it no longer does.
     @Test func aReportFromBeforeTheShellPromptNoLongerPicksTheChatBar() throws {
         let engine = try SSHTerminalEngine { _ in }
-        let detector = SSHTerminalAgentDetector()
         func mode() -> SSHTerminalInputMode? {
-            SSHTerminalAgentDetector.mode(
-                root: engine.programStatus.liveRoot, app: engine.programStatus.app(of: ""), foreground: .shell, herdr: nil
+            SSHTerminalAgentDetection.mode(
+                root: engine.programStatus.liveRoot, app: engine.programStatus.app(of: ""), herdrAttached: false, herdr: nil
             )
         }
         engine.receive(Data("\u{1b}]7501;state=done:app=pi\u{1b}\\".utf8))
@@ -300,8 +291,7 @@ struct SSHTerminalProgramStatusPresentationTests {
 
         engine.receive(Data("\u{1b}]133;A\u{7}".utf8))
         #expect(engine.programStatus.root?.state == GHOSTTY_PROGRAM_STATUS_STATE_DONE, "the outcome still shows")
-        #expect(mode() == .terminal, "the shell is back in front")
-        #expect(detector.mode(programStatus: engine.programStatus, herdr: nil) == nil)
+        #expect(mode() == nil, "the shell is back in front")
 
         engine.receive(Data("\u{1b}]7501;state=working:app=pi\u{1b}\\".utf8))
         #expect(mode() == .chat, "Pi started again")

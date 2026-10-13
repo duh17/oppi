@@ -683,44 +683,13 @@ struct SSHTerminalTests {
         #expect(HerdrRemote.focusCommand(.workspace("w1; rm -rf ~")) == nil)
     }
 
-    @Test func foregroundProbeReadsOnlyThisConnectionsPTY() throws {
-        // macOS `ps` output: sshd 500 owns both the probe (a) and the PTY on
-        // ttys002. pi on ttys003 belongs to another terminal and must not count.
-        func probe(_ foreground: String) -> String {
-            """
-            t   600   500 ttys002  Ss   -/opt/homebrew/bin/fish
-            \(foreground)
-            t   700   650 ttys003  S+   pi
-            a   900   890 ??       S    sh
-            a   890   500 ??       Ss   fish
-            a   500   499 ??       S    sshd-session: chenda@ttys002
-            """
+    @Test func onlyARunOnConnectHerdrCommandAttachesHerdr() {
+        for command in ["herdr", "herdr session attach main", "/opt/homebrew/bin/herdr", "  herdr\tattach"] {
+            #expect(SSHTerminalAgentDetection.isHerdrCommand(command), "\(command)")
         }
-        #expect(SSHTerminalForeground(probeOutput: probe("t   610   600 ttys002  S+   vim")) == .shell)
-        #expect(SSHTerminalForeground(probeOutput: probe("t   610   600 ttys002  S+   /usr/local/bin/claude")) == .agent("claude"))
-        #expect(SSHTerminalForeground(probeOutput: probe("t   610   600 ttys002  S    claude")) == .shell) // backgrounded
-        #expect(SSHTerminalForeground(probeOutput: probe("t   610   600 ttys002  S+   herdr")) == .herdr)
-        // Linux procps: "?" for no tty, pts names, plain sshd.
-        let linux = """
-        t  4100  4000 pts/0    Ss   bash
-        t  4200  4100 pts/0    Sl+  codex
-        a  4300  4000 ?        S    sh
-        a  4000  3990 ?        S    sshd
-        """
-        #expect(SSHTerminalForeground(probeOutput: linux) == .agent("codex"))
-        #expect(SSHTerminalForeground(probeOutput: "a 900 1 ?? S sh") == nil) // no sshd ancestor
-    }
-
-    @Test func herdrClientInputFollowsTheFocusedPane() throws {
-        func snapshot(focusedAgent: Bool) throws -> HerdrSnapshot {
-            let json = #"{"result":{"snapshot":{"agents":[{"agent":"pi","agent_status":"working","focused":"# + String(focusedAgent) + #","pane_id":"w1:p1","tab_id":"w1:t1","workspace_id":"w1"}],"tabs":[],"workspaces":[]}}}"#
-            return try HerdrRemote.snapshot(from: .init(output: Data(json.utf8), errorOutput: Data(), exitStatus: 0))
+        for command in [nil, "", "tmux new -A -s main", "herdrx", "echo herdr"] as [String?] {
+            #expect(!SSHTerminalAgentDetection.isHerdrCommand(command), "\(command ?? "login shell")")
         }
-        #expect(SSHTerminalAgentDetector.mode(for: .herdr, herdr: try snapshot(focusedAgent: true)) == .chat)
-        #expect(SSHTerminalAgentDetector.mode(for: .herdr, herdr: try snapshot(focusedAgent: false)) == .terminal)
-        #expect(SSHTerminalAgentDetector.mode(for: .herdr, herdr: nil) == .terminal)
-        #expect(SSHTerminalAgentDetector.mode(for: .agent("pi"), herdr: nil) == .chat)
-        #expect(SSHTerminalAgentDetector.mode(for: nil, herdr: nil) == nil)
     }
 
     @Test func keymapSpecsInEachSyntaxEncodeAsTerminalKeys() async throws {

@@ -21,7 +21,6 @@ struct SSHTerminalView: View {
     @State private var rawKeyboard = false
     @State private var herdr = HerdrMonitor()
     @State private var showsHerdr = false
-    @State private var detector = SSHTerminalAgentDetector()
     @State private var keymap = SSHTerminalKeymapLoader()
     /// The user's choice; dropped when the detected mode changes.
     @State private var modeOverride: SSHTerminalInputMode?
@@ -36,20 +35,20 @@ struct SSHTerminalView: View {
     /// Which notice floats over the grid, and what the person folded away.
     @State private var attention = SSHTerminalAttention()
 
+    private var herdrAttached: Bool { SSHTerminalAgentDetection.isHerdrCommand(channel.command) }
     private var detectedMode: SSHTerminalInputMode? {
-        detector.mode(programStatus: channel.programStatus, herdr: herdr.snapshot)
+        SSHTerminalAgentDetection.mode(
+            root: channel.programStatus.liveRoot, app: channel.programStatus.app(of: ""),
+            herdrAttached: herdrAttached, herdr: herdr.snapshot
+        )
     }
-    /// A shell gets direct typing until a probe finds an agent.
+    /// Direct typing until a program reports itself as an agent.
     private var inputMode: SSHTerminalInputMode { modeOverride ?? detectedMode ?? .terminal }
-    /// Whose key bindings the strips offer: the foreground program, or the
-    /// agent in Herdr's focused pane.
-    private var keymapProgram: String? {
-        switch detector.foreground {
-        case nil: nil
-        case .shell: "shell"
-        case .agent(let name): name
-        case .herdr: herdr.snapshot?.focusedAgent?.agent ?? "shell"
-        }
+    private var keymapProgram: String {
+        SSHTerminalAgentDetection.keymapProgram(
+            root: channel.programStatus.liveRoot, app: channel.programStatus.app(of: ""),
+            herdrAttached: herdrAttached, herdr: herdr.snapshot
+        )
     }
 
     private var herdrAttentionCount: Int { herdr.snapshot?.needsAttention ?? 0 }
@@ -156,9 +155,9 @@ struct SSHTerminalView: View {
                             .accessibilityIdentifier("sshTerminal.backToLive")
                     }
                 }
-            // An agent gets the chat bar; a shell gets direct typing. The chat
-            // bar's keyboard button and Type in Terminal both stay in direct
-            // typing until Use Chat Bar or a foreground change.
+            // An agent gets the chat bar; anything else gets direct typing. The
+            // chat bar's keyboard button and Type in Terminal both stay in
+            // direct typing until Use Chat Bar or the detected mode changes.
             if inputMode == .chat && !rawKeyboard {
                 SSHTerminalComposer(channel: channel, focusRequest: composerFocusRequest,
                                     profile: keymap.profile, userFile: keymap.userFile) {
@@ -221,7 +220,6 @@ struct SSHTerminalView: View {
                 .presentationDetents([.medium, .large])
         }
         .onChange(of: showsHerdr) { _, open in herdr.watching = open }
-        .onChange(of: detector.foreground) { _, foreground in herdr.attached = foreground == .herdr }
         .onChange(of: detectedMode) { _, mode in
             modeOverride = nil
             // Starting an agent from the raw keyboard moves typing to the chat bar.
@@ -240,13 +238,10 @@ struct SSHTerminalView: View {
         // One poller per connected generation; it ends with the connection.
         .task(id: channel.connected) {
             guard channel.connected else { return }
+            herdr.attached = herdrAttached
             await herdr.run(on: channel)
         }
-        .task(id: channel.connected) {
-            guard channel.connected else { return }
-            await detector.run(on: channel)
-        }
-        .task(id: [channel.connected ? "connected" : "closed", keymapProgram ?? ""]) {
+        .task(id: [channel.connected ? "connected" : "closed", keymapProgram]) {
             await keymap.load(program: channel.connected ? keymapProgram : nil, on: channel)
         }
         // The terminal paints with the app theme, not the system appearance.
@@ -363,7 +358,7 @@ struct SSHTerminalView: View {
     }
 
     /// Use Chat Bar, from the menu or the terminal keyboard. Clears a typing
-    /// override when the foreground program already wants the chat bar.
+    /// override when the reporting program already wants the chat bar.
     private func showChatBar() {
         modeOverride = detectedMode == .chat ? nil : .chat
         focusComposerAfterRaw = true
