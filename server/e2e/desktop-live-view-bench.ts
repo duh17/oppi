@@ -166,7 +166,7 @@ async function runPreset(preset: Preset): Promise<RunResult> {
     );
   });
 
-  const server = new Server(storage, undefined, { desktopCompanionRuntimeRoot: companionRoot });
+  const server = new Server(storage, { desktopCompanionRuntimeRoot: companionRoot });
   await server.start();
   const targetPort = server.port;
   const openedAt = Date.now();

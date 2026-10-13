@@ -238,7 +238,7 @@ storage.updateConfig({
 storage.ensurePaired();
 
 const companion = await listenCompanion(companionRoot);
-const server = new Server(storage, undefined, { desktopCompanionRuntimeRoot: companionRoot });
+const server = new Server(storage, { desktopCompanionRuntimeRoot: companionRoot });
 await server.start();
 storage.updateConfig({ port: server.port });
 

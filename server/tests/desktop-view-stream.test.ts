@@ -673,7 +673,7 @@ describe("GET /desktop/view/stream HTTPS auth shell", () => {
     });
     const previous = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-    const server = new Server(storage, undefined, { desktopCompanionRuntimeRoot: runtimeRoot });
+    const server = new Server(storage, { desktopCompanionRuntimeRoot: runtimeRoot });
     await server.start();
     const baseUrl = `https://127.0.0.1:${server.port}`;
     try {
@@ -851,7 +851,7 @@ async function startPairedLiveView(): Promise<{
   });
   const previous = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
   process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-  const server = new Server(storage, undefined, { desktopCompanionRuntimeRoot: runtimeRoot });
+  const server = new Server(storage, { desktopCompanionRuntimeRoot: runtimeRoot });
   await server.start();
   const ownerToken = storage.getToken();
   if (!ownerToken) throw new Error("missing owner token");
