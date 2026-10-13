@@ -87,6 +87,15 @@ function failureBody(reason: string, detail: JsonValue | undefined): string {
 
 type FailureCard = { title: string; body: string; status?: string; at: number };
 
+/** What the input's failure card says; undefined for a quiet end (Stop, withdrawal). */
+export function inputFailureText(
+  settled: Extract<SubmissionRecord, { type: "input"; status: "unanswered" }>,
+): string | undefined {
+  return isRecordedInputFailure(settled.reason)
+    ? failureBody(settled.reason, settled.detail)
+    : undefined;
+}
+
 async function appendFailureCard(
   tx: Tx,
   conversationId: ConversationId,

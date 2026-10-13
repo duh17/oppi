@@ -1050,6 +1050,15 @@ describe("server durable managed runtime", () => {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     expect(cards).toHaveLength(1);
+    // The phone sees one live error, with the card's text, not a generic second one.
+    const liveErrors = (): ServerMessage[] =>
+      observed.messages.filter((message) => message.type === "error");
+    while (Date.now() < deadline && liveErrors().length === 0)
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(liveErrors()).toEqual([
+      expect.objectContaining({ type: "error", error: expect.stringContaining(errorText) }),
+    ]);
     const full = (await f.manager.getServerDurableTrace(f.session.id, "full"))!;
     const userIndex = full.findIndex(
       (event) => event.type === "user" && event.text === "fail this turn",
@@ -1550,6 +1559,48 @@ describe("server durable managed runtime", () => {
       errorMessage: expect.stringContaining("invalid summary request"),
     });
     expect(f.manager.getActiveSession(f.session.id)?.changeStats?.compactionCount).toBeUndefined();
+    observed.unsubscribe();
+  });
+
+  it("shows a failed blocking compaction once: on its row, without a second error", async () => {
+    const f = await fixture(
+      [
+        fauxAssistantMessage("Old context ".repeat(200)),
+        fauxAssistantMessage("", { stopReason: "error", errorMessage: "invalid summary request" }),
+      ],
+      {
+        settings: {
+          // Anything past the first answer is over the blocking threshold.
+          compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 127_900 },
+          retry: { enabled: false },
+        },
+      },
+    );
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    await answer(f, observed, "first");
+    const end = observed.next((message) => message.type === "compaction_end");
+    await f.manager.sendPrompt(f.session.id, "needs room");
+    expect(await end).toMatchObject({
+      errorMessage: expect.stringContaining("invalid summary request"),
+    });
+    const trace = async (): Promise<TraceEvent[]> =>
+      (await f.manager.getServerDurableTrace(f.session.id, "full"))!.filter(
+        (event) => event.presentation?.title === "Run failed",
+      );
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline && (await trace()).length === 0)
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    // The card keeps the failure in history; live, the compaction row already said it.
+    expect(await trace()).toEqual([
+      expect.objectContaining({
+        presentation: expect.objectContaining({
+          body: expect.stringMatching(/^Compaction failed: .*invalid summary request/),
+        }),
+      }),
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(observed.messages.filter((message) => message.type === "error")).toEqual([]);
     observed.unsubscribe();
   });
 

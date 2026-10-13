@@ -73,7 +73,9 @@ import {
 } from "./durable-request-ids.js";
 import {
   DURABLE_FAILURE_ENTRY_KIND,
+  inputFailureText,
   reconcileFailureCards,
+  recordInputFailure,
   recordTaskFailure,
 } from "./durable-failure-cards.js";
 import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
@@ -179,6 +181,16 @@ function forkMessageText(content: string | ReadonlyArray<object>): string {
   return text || media || "";
 }
 
+/** The error text of an assistant message that ended with `stopReason: "error"`. */
+function asErrorText(message: unknown): string | undefined {
+  const record = message as { stopReason?: unknown; errorMessage?: unknown } | undefined;
+  return record?.stopReason === "error" &&
+    typeof record.errorMessage === "string" &&
+    record.errorMessage
+    ? record.errorMessage
+    : undefined;
+}
+
 async function syncProjectContext(
   conversation: Conversation,
   resources: DurableProjectResources,
@@ -222,6 +234,8 @@ export class DurableBackend implements AgentBackend {
   readonly retainsIdleQueueUntilAdmission = true;
   private queueVersion = 0;
   private queueFingerprint = "";
+  /** Error texts the current run already showed live; cleared when it ends. */
+  private readonly shownRunErrors = new Set<string>();
 
   private constructor(
     private readonly harness: Harness,
@@ -590,8 +604,22 @@ export class DurableBackend implements AgentBackend {
       this.onEvent(event);
     this.events.start(async (events) => {
       if (this.disposed) return;
+      // A new run starts with nothing shown, also after an idle task's failure. A batch
+      // that also ends a run keeps that run's texts until its settlement is handled below.
+      if (
+        events.some((event) => event.type === "run_start") &&
+        !events.some((event) => event.type === "run_end")
+      )
+        this.shownRunErrors.clear();
       for (const pi of await this.projection.batch(events)) {
         if (this.disposed) return;
+        // The protocol already shows an assistant error as the live error row.
+        const ended = pi.type === "message_end" ? asErrorText(pi.message) : undefined;
+        if (ended) this.shownRunErrors.add(ended);
+        // A failed blocking compaction fails its run with pi-durable's
+        // `Compaction failed: <error>`; the compaction row already shows it.
+        if (pi.type === "compaction_end" && pi.errorMessage)
+          this.shownRunErrors.add(`Compaction failed: ${pi.errorMessage}`);
         this.onEvent(pi);
       }
       for (const event of events) {
@@ -653,25 +681,49 @@ export class DurableBackend implements AgentBackend {
         }
         if (event.type === "inbox_update")
           this.onEvent({ type: "queue_update", ...this.queuedMessages() });
-        if (event.type === "task_failed" && event.kind !== "pi.compaction") {
-          // A generation fault also settles its inputs, which record the card.
-          if (event.kind !== "pi.generation") {
-            try {
-              await recordTaskFailure(this.conversation, {
-                id: event.taskId,
-                kind: event.kind,
-                message: event.message,
-              });
-            } catch (error) {
-              log.warn("durable_failure.task_card_failed", {
-                taskId: event.taskId,
-                error: safeErrorMessage(error),
-              });
-            }
+        // Inputs from any source (a background job's follow-up, a reporter) get their card
+        // here; the request id makes the controller's own write for its prompts a no-op.
+        // The live error is the card's text, written or not, once per run.
+        if (
+          event.type === "submission" &&
+          event.record.type === "input" &&
+          event.record.status === "unanswered"
+        ) {
+          this.showRunError(inputFailureText(event.record));
+          try {
+            await recordInputFailure(this.conversation, event.record);
+          } catch (error) {
+            log.warn("durable_failure.input_card_failed", {
+              submissionId: event.record.id,
+              error: safeErrorMessage(error),
+            });
           }
-          this.onEvent({ type: "prompt_error", error: event.message });
+        }
+        // A generation fault also settles its inputs, which record the card; a compaction
+        // failure shows on its compaction row.
+        if (
+          event.type === "task_failed" &&
+          event.kind !== "pi.compaction" &&
+          event.kind !== "pi.generation"
+        ) {
+          this.showRunError(event.message.trim() || event.kind);
+          try {
+            await recordTaskFailure(this.conversation, {
+              id: event.taskId,
+              kind: event.kind,
+              message: event.message,
+            });
+          } catch (error) {
+            log.warn("durable_failure.task_card_failed", {
+              taskId: event.taskId,
+              error: safeErrorMessage(error),
+            });
+          }
         }
       }
+      // A run's settlement commits with its end, so its errors are in this batch or earlier.
+      // A later run starts with nothing shown.
+      if (events.some((event) => event.type === "run_end")) this.shownRunErrors.clear();
     });
     // After the listener is attached. A commit, not Conversation.submit, so a
     // held startup scheduler stays held. A crash between settlement and the
@@ -679,6 +731,17 @@ export class DurableBackend implements AgentBackend {
     // A failed scan fails the attach. Swallowing it would leave the miss hidden.
     if (this.disposed) return;
     await reconcileFailureCards(this.conversation, this.host.storage);
+  }
+
+  /**
+   * One live error per failed run: the failure's own text (what its card says), unless this
+   * run already showed that text (an assistant error row, a failed compaction row, or another
+   * input of the same run).
+   */
+  private showRunError(error: string | undefined): void {
+    if (!error || this.shownRunErrors.has(error)) return;
+    this.shownRunErrors.add(error);
+    this.onEvent({ type: "prompt_error", error });
   }
 
   private get agent(): AgentState {
@@ -760,21 +823,14 @@ export class DurableBackend implements AgentBackend {
       signal: this.lifetime.signal,
       onAccepted: options?.onPreflightAccepted,
     });
-    void settled
-      .then((record) => {
-        if (this.disposed || record.status !== "unanswered" || record.reason === "aborted") return;
+    // An unanswered input's error is its failure card (see startEvents), not a second row here.
+    void settled.catch((error: unknown) => {
+      if (!this.disposed)
         this.onEvent({
           type: "prompt_error",
-          error: `Server durable input unanswered: ${record.reason}`,
+          error: error instanceof Error ? error.message : String(error),
         });
-      })
-      .catch((error: unknown) => {
-        if (!this.disposed)
-          this.onEvent({
-            type: "prompt_error",
-            error: error instanceof Error ? error.message : String(error),
-          });
-      });
+    });
     if (duplicate) return { duplicate: true };
   }
 
