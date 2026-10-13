@@ -432,25 +432,32 @@ enum AppPreferences {
 
     // MARK: - Chat Display
 
-    /// Device-local Compact turns preference. It never changes session or
-    /// Agent data sent over the wire.
+    /// Device-local chat style. It applies to every session, classic and
+    /// durable, at every width, and never changes session or Agent data sent
+    /// over the wire.
     enum ChatDisplay {
-        /// How compact chats look (`ChatTimelineChromeStyle.for`). Transcript
-        /// keeps the full-width transcript with a work strip in
-        /// `WorkStripStyle`; Conversation uses the messaging layout with a
+        /// How chats look. Full shows every tool call and thinking block;
+        /// Compact folds each turn's work into a strip drawn in
+        /// `WorkStripStyle`; Chat uses the messaging layout
+        /// (`ChatTimelineChromeStyle.conversation`) with a
         /// "Worked \u{00B7} N steps" pill, which ignores `WorkStripStyle`.
-        enum Layout: String, CaseIterable, Identifiable {
-            case transcript
-            case conversation
+        enum Style: String, CaseIterable, Identifiable {
+            case full
+            case compact
+            case chat
 
             var id: String { rawValue }
 
             var label: String {
                 switch self {
-                case .transcript: return "Transcript"
-                case .conversation: return "Conversation"
+                case .full: return "Full"
+                case .compact: return "Compact"
+                case .chat: return "Chat"
                 }
             }
+
+            /// Compact and Chat fold each turn's tool calls and thinking.
+            var foldsWork: Bool { self != .full }
         }
 
         enum WorkStripStyle: String, CaseIterable, Identifiable {
@@ -467,13 +474,12 @@ enum AppPreferences {
             }
         }
 
-        static let compactTurnsKey = "\(AppIdentifiers.subsystem).chatDisplay.compactTurns"
+        static let styleKey = "\(AppIdentifiers.subsystem).chatDisplay.style"
         static let workStripStyleKey = "\(AppIdentifiers.subsystem).chatDisplay.workStripStyle"
-        static let layoutKey = "\(AppIdentifiers.subsystem).chatDisplay.layout"
-        static let didChangeNotification = Notification.Name("oppi.chatDisplay.compactTurnsDidChange")
+        static let didChangeNotification = Notification.Name("oppi.chatDisplay.didChange")
 
-        static var isCompactTurnsEnabled: Bool {
-            UserDefaults.standard.object(forKey: compactTurnsKey) as? Bool ?? false
+        static var style: Style {
+            UserDefaults.standard.string(forKey: styleKey).flatMap(Style.init(rawValue:)) ?? .full
         }
 
         static var workStripStyle: WorkStripStyle {
@@ -484,19 +490,9 @@ enum AppPreferences {
             return style
         }
 
-        static var layout: Layout {
-            UserDefaults.standard.string(forKey: layoutKey).flatMap(Layout.init(rawValue:)) ?? .transcript
-        }
-
-        static func setLayout(_ layout: Layout) {
-            guard layout != self.layout else { return }
-            UserDefaults.standard.set(layout.rawValue, forKey: layoutKey)
-            NotificationCenter.default.post(name: didChangeNotification, object: nil)
-        }
-
-        static func setCompactTurnsEnabled(_ enabled: Bool) {
-            guard enabled != isCompactTurnsEnabled else { return }
-            UserDefaults.standard.set(enabled, forKey: compactTurnsKey)
+        static func setStyle(_ style: Style) {
+            guard style != self.style else { return }
+            UserDefaults.standard.set(style.rawValue, forKey: styleKey)
             NotificationCenter.default.post(name: didChangeNotification, object: nil)
         }
 

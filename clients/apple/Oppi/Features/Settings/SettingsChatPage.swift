@@ -1,11 +1,9 @@
 import SwiftUI
 
 struct SettingsChatPage: View {
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var spinnerStyle = AppPreferences.Appearance.spinnerStyle
-    @State private var compactTurnsEnabled = AppPreferences.ChatDisplay.isCompactTurnsEnabled
+    @State private var chatStyle = AppPreferences.ChatDisplay.style
     @State private var workStripStyle = AppPreferences.ChatDisplay.workStripStyle
-    @State private var compactTurnsLayout = AppPreferences.ChatDisplay.layout
 
     var body: some View {
         List {
@@ -27,49 +25,41 @@ struct SettingsChatPage: View {
                 }
             }
 
-            // Same rule as ChatView.compactTurnsEnabled: compact turns apply
-            // in a compact-width window, so the toggle shows there. Change
-            // both together.
-            if horizontalSizeClass == .compact {
-                Section {
-                    Toggle("Compact Turns", isOn: $compactTurnsEnabled)
-                        .onChange(of: compactTurnsEnabled) { _, newValue in
-                            AppPreferences.ChatDisplay.setCompactTurnsEnabled(newValue)
-                        }
-                        .accessibilityIdentifier("settings.compactTurns")
+            Section {
+                Picker("Style", selection: $chatStyle) {
+                    ForEach(AppPreferences.ChatDisplay.Style.allCases) { style in
+                        Text(style.label).tag(style)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: chatStyle) { _, newValue in
+                    AppPreferences.ChatDisplay.setStyle(newValue)
+                }
+                .accessibilityIdentifier("settings.chatStyle")
 
-                    if compactTurnsEnabled {
-                        Picker("Layout", selection: $compactTurnsLayout) {
-                            ForEach(AppPreferences.ChatDisplay.Layout.allCases) { layout in
-                                Text(layout.label).tag(layout)
-                            }
-                        }
-                        .onChange(of: compactTurnsLayout) { _, newValue in
-                            AppPreferences.ChatDisplay.setLayout(newValue)
-                        }
-                        .accessibilityIdentifier("settings.compactTurnsLayout")
-
-                        switch compactTurnsLayout {
-                        case .transcript:
-                            Picker("Work Strip", selection: $workStripStyle) {
-                                ForEach(AppPreferences.ChatDisplay.WorkStripStyle.allCases) { style in
-                                    Text(style.label).tag(style)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .onChange(of: workStripStyle) { _, newValue in
-                                AppPreferences.ChatDisplay.setWorkStripStyle(newValue)
-                            }
-                            .accessibilityIdentifier("settings.workStripStyle")
-
-                            WorkStripPreviewCard(style: workStripStyle)
-                        case .conversation:
-                            ConversationWorkPillPreviewCard()
+                switch chatStyle {
+                case .full:
+                    EmptyView()
+                case .compact:
+                    Picker("Work Strip", selection: $workStripStyle) {
+                        ForEach(AppPreferences.ChatDisplay.WorkStripStyle.allCases) { style in
+                            Text(style.label).tag(style)
                         }
                     }
-                } footer: {
-                    Text("Collapse successful and failed tool work between messages. Thinking still folds, while messages, asks, system events, cache misses, and audio stay visible. Conversation shows your messages as bubbles and replies as cards, with the work in a pill. Durable sessions always use Conversation.")
+                    .pickerStyle(.segmented)
+                    .onChange(of: workStripStyle) { _, newValue in
+                        AppPreferences.ChatDisplay.setWorkStripStyle(newValue)
+                    }
+                    .accessibilityIdentifier("settings.workStripStyle")
+
+                    WorkStripPreviewCard(style: workStripStyle)
+                case .chat:
+                    ConversationWorkPillPreviewCard()
                 }
+            } header: {
+                Text("Style")
+            } footer: {
+                Text(chatStyle.footer)
             }
 
             Section {
@@ -82,9 +72,21 @@ struct SettingsChatPage: View {
         }
         .settingsPage("Chat")
         .onReceive(NotificationCenter.default.publisher(for: AppPreferences.ChatDisplay.didChangeNotification)) { _ in
-            compactTurnsEnabled = AppPreferences.ChatDisplay.isCompactTurnsEnabled
+            chatStyle = AppPreferences.ChatDisplay.style
             workStripStyle = AppPreferences.ChatDisplay.workStripStyle
-            compactTurnsLayout = AppPreferences.ChatDisplay.layout
+        }
+    }
+}
+
+private extension AppPreferences.ChatDisplay.Style {
+    var footer: String {
+        switch self {
+        case .full:
+            "Every tool call and thinking block stays in the transcript."
+        case .compact:
+            "Each turn's tool calls and thinking fold into one strip you tap to expand. Messages, asks, system events, cache misses, and audio stay visible."
+        case .chat:
+            "Your messages are bubbles and replies are cards. Each turn's tool calls and thinking fold into a pill you tap to expand."
         }
     }
 }

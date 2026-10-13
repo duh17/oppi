@@ -34,7 +34,7 @@ enum TimelineBubbleStyle {
 }
 
 /// Row chrome for one chat timeline. Every row in a timeline uses the same
-/// style; ChatView picks it from the session and the Compact Turns layout
+/// style; ChatView picks it from the Chat style setting
 /// (`ChatTimelineChromeStyle.for`).
 ///
 /// This is the one owner of chrome that differs between the styles: rows
@@ -47,17 +47,9 @@ enum ChatTimelineChromeStyle: Equatable {
     /// avatar, and work folded into a hugging "Worked · N steps" pill.
     case conversation
 
-    /// Durable sessions open in the conversation layout while this device
-    /// has the Durable Sessions experiment on, whatever Compact Turns says.
-    /// Other sessions follow the Compact Turns layout; `compactTurnsLayout`
-    /// is nil when Compact Turns is off or does not apply to this window.
-    static func `for`(
-        engine: SessionEngine?,
-        durableExperimentEnabled: Bool,
-        compactTurnsLayout: AppPreferences.ChatDisplay.Layout?
-    ) -> Self {
-        if durableExperimentEnabled && engine == .durable { return .conversation }
-        return compactTurnsLayout == .conversation ? .conversation : .standard
+    /// Chat uses the messaging layout; Full and Compact keep the transcript.
+    static func `for`(_ style: AppPreferences.ChatDisplay.Style) -> Self {
+        style == .chat ? .conversation : .standard
     }
 
     /// User message: a full-width card, or a trailing bubble no wider than

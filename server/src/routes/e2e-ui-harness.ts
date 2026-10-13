@@ -50,13 +50,12 @@ export function createE2EUIHarnessRoutes(
       return true;
     }
 
-    const quietModeResetMatch = path.match(/^\/e2e\/ui\/reset-quiet-mode$/);
-    if (quietModeResetMatch) {
+    if (path === "/e2e/ui/reset-chat-style") {
       if (method !== "POST") {
         helpers.error(res, 405, "Method not allowed");
         return true;
       }
-      await handleQuietModeReset(helpers, req, res);
+      await handleChatStyleReset(helpers, req, res);
       return true;
     }
 
@@ -161,7 +160,25 @@ export function createE2EUIHarnessRoutes(
   };
 }
 
-async function handleQuietModeReset(
+/** The persisted Settings → Chat → Style key; deleting it restores the Full default. */
+const CHAT_STYLE_DEFAULTS_KEY = "dev.chenda.Oppi.chatDisplay.style";
+
+function isMissingDefaultsKey(error: unknown): boolean {
+  const output =
+    error instanceof Error && "stderr" in error
+      ? String(error.stderr)
+      : error instanceof Error
+        ? error.message
+        : String(error);
+  const normalized = output.toLowerCase();
+  return (
+    normalized.includes("does not exist") ||
+    normalized.includes("not found") ||
+    normalized.includes("found nothing")
+  );
+}
+
+async function handleChatStyleReset(
   helpers: RouteHelpers,
   req: IncomingMessage,
   res: ServerResponse,
@@ -171,51 +188,34 @@ async function handleQuietModeReset(
   });
   const simulatorUDID = stringField(body.simulatorUDID)?.trim();
   if (!simulatorUDID || !/^[0-9A-Fa-f-]{36}$/.test(simulatorUDID)) {
-    helpers.error(res, 400, "Compact turns reset requires a simulator UDID");
+    helpers.error(res, 400, "Chat style reset requires a simulator UDID");
     return;
   }
-  const enabled = booleanField(body.enabled) === true;
-  const defaultsArgs = enabled
-    ? ([
-        "write",
-        "dev.chenda.Oppi",
-        "dev.chenda.Oppi.chatDisplay.compactTurns",
-        "-bool",
-        "true",
-      ] as const)
-    : (["delete", "dev.chenda.Oppi", "dev.chenda.Oppi.chatDisplay.compactTurns"] as const);
-  const plistCommand = enabled
-    ? "Set :dev.chenda.Oppi.chatDisplay.compactTurns true"
-    : "Delete :dev.chenda.Oppi.chatDisplay.compactTurns";
 
-  let simctlError: unknown;
+  let alreadyReset = false;
   try {
-    execFileSync("xcrun", ["simctl", "spawn", simulatorUDID, "defaults", ...defaultsArgs], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 10_000,
-    });
+    execFileSync(
+      "xcrun",
+      [
+        "simctl",
+        "spawn",
+        simulatorUDID,
+        "defaults",
+        "delete",
+        "dev.chenda.Oppi",
+        CHAT_STYLE_DEFAULTS_KEY,
+      ],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000 },
+    );
   } catch (error) {
-    simctlError = error;
-    const output =
-      error instanceof Error && "stderr" in error
-        ? String(error.stderr)
-        : error instanceof Error
-          ? error.message
-          : String(error);
-    const normalizedOutput = output.toLowerCase();
-    if (
-      enabled ||
-      (!normalizedOutput.includes("does not exist") &&
-        !normalizedOutput.includes("not found") &&
-        !normalizedOutput.includes("found nothing"))
-    ) {
-      helpers.error(res, 500, "Compact turns simctl reset failed");
+    if (!isMissingDefaultsKey(error)) {
+      helpers.error(res, 500, "Chat style simctl reset failed");
       return;
     }
+    alreadyReset = true;
   }
 
-  // iOS XCTest cannot spawn simctl. The host harness writes the exact
+  // iOS XCTest cannot spawn simctl. The host harness deletes the exact
   // persisted key; some Xcode runtimes also need the app-container plist.
   try {
     const containerPath = execFileSync(
@@ -225,33 +225,18 @@ async function handleQuietModeReset(
     ).trim();
     execFileSync(
       "/usr/libexec/PlistBuddy",
-      ["-c", plistCommand, join(containerPath, "Library", "Preferences", "dev.chenda.Oppi.plist")],
+      [
+        "-c",
+        `Delete :${CHAT_STYLE_DEFAULTS_KEY}`,
+        join(containerPath, "Library", "Preferences", "dev.chenda.Oppi.plist"),
+      ],
       { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000 },
     );
   } catch {
-    if (enabled) {
-      try {
-        const containerPath = execFileSync(
-          "xcrun",
-          ["simctl", "get_app_container", simulatorUDID, "dev.chenda.Oppi", "data"],
-          { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000 },
-        ).trim();
-        execFileSync(
-          "/usr/libexec/PlistBuddy",
-          [
-            "-c",
-            "Add :dev.chenda.Oppi.chatDisplay.compactTurns bool true",
-            join(containerPath, "Library", "Preferences", "dev.chenda.Oppi.plist"),
-          ],
-          { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000 },
-        );
-      } catch {
-        // The app assertion remains the final guard.
-      }
-    }
+    // Already absent from the container plist; the app assertion stays the final guard.
   }
 
-  helpers.json(res, { ok: true, alreadyReset: simctlError !== undefined, enabled });
+  helpers.json(res, { ok: true, alreadyReset });
 }
 
 async function handleWorkspaceFileFixture(

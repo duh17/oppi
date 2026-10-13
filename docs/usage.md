@@ -80,7 +80,7 @@ Selecting text shows a microphone first in the edit menu, followed by **Comment*
 
 **Settings → Chat → Busy Animation** chooses the busy-row animation: **Orbiting**, **Searching**, and **Solving** Metal orbs, plus **Pi** and **GoL**. New installs default to Orbiting; saved Pi or GoL choices stay.
 
-**Settings → Chat → Compact Turns** (iPhone and other compact-width windows; off by default) folds each turn's tool calls and thinking into one row you tap to expand. **Layout** picks how compact chats look. **Transcript** keeps the full-width transcript with a work strip that shows **Icons** or **Words**. **Conversation** uses the messaging layout: your messages are trailing bubbles, replies are cards, the work row is a **Worked 9s · 2 steps** pill, and the title shows the model and thinking level. Durable sessions use the conversation layout whatever this setting says while the Durable Sessions experiment is on.
+**Settings → Chat → Style** picks how every chat looks, classic and durable, on any screen width. **Full** (the default) shows every tool call and thinking block. **Compact** folds each turn's tool calls and thinking into one strip you tap to expand, showing **Icons** or **Words**. **Chat** uses a messaging layout: your messages are trailing bubbles, replies are cards, each turn's work is a **Worked 9s · 2 steps** pill, and the title shows the model and thinking level.
 
 ## Appearance
 
@@ -116,7 +116,7 @@ Durable sessions run on the server's durable engine instead of the classic Pi se
 
 Turn on **Settings → Experiments → Durable Sessions** (off by default, saved on this device). When the server you start a session on offers durable sessions, every new session from Quick Session starts durable. The composer shows an **∞ Durable** pill beside the workspace; tap it to switch that one session to **Classic** (tap again to switch back). A saved Agent can't start durable sessions yet, so picking an Agent shows **Classic · Saved Agents** and the pill can't be switched. Incognito sessions are always Classic. With the experiment off, or on a server that doesn't offer durable sessions, every session is Classic and the composer shows no pill.
 
-Durable sessions appear in All Sessions like any other session, with a small **∞** after the title. Durable chats open in a conversation layout: your messages are trailing bubbles, replies are cards, and each turn's tool calls and thinking fold into a **Worked 9s · 2 steps** pill (tap it to show that turn's work). The title shows the model and thinking level under the session name, next to a small **Durable** label. The composer is the normal chat input bar.
+Durable sessions appear in All Sessions like any other session, with a small **∞** after the title. Durable chats follow **Settings → Chat → Style** like any other chat; the title shows a small **Durable** label. The composer is the normal chat input bar.
 
 From the CLI, `oppi session create --workspace <id> --prompt <text> --engine durable` starts a durable session; it fails while the server flag is off. Adding `--agent` fails too: saved Agents can't start durable sessions yet.
 

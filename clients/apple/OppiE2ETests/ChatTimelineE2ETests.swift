@@ -9,34 +9,34 @@ import XCTest
 @MainActor
 final class ChatTimelineE2ETests: E2ETestCase {
 
-    nonisolated private var usesCompactTurnsFixture: Bool {
+    nonisolated private var usesChatStyleFixture: Bool {
         name.contains("testQuietModeFinishedTurnAndControlsStaySynchronized")
     }
 
     override func setUpWithError() throws {
-        let shouldPrepareCompactTurns = usesCompactTurnsFixture
-        if shouldPrepareCompactTurns {
+        let shouldResetChatStyle = usesChatStyleFixture
+        if shouldResetChatStyle {
             terminateSharedApp()
         }
 
         do {
             try super.setUpWithError()
         } catch {
-            if shouldPrepareCompactTurns {
+            if shouldResetChatStyle {
                 terminateSharedApp()
-                setCompactTurnsPreference(enabled: false)
+                resetChatStylePreference()
             }
             throw error
         }
     }
 
     override func tearDownWithError() throws {
-        if usesCompactTurnsFixture {
+        if usesChatStyleFixture {
             // XCTest still calls teardown after an assertion aborts. Stop the
             // process before resetting its persisted defaults, then invalidate
             // the shared handle so the next E2E must launch and read the reset.
             terminateSharedApp()
-            setCompactTurnsPreference(enabled: false)
+            resetChatStylePreference()
         }
         try super.tearDownWithError()
     }
@@ -63,14 +63,14 @@ final class ChatTimelineE2ETests: E2ETestCase {
         navigateBackToWorkspace()
         openAppSettingsFromSessionList()
         tap(app.buttons["settings.row.chat"], named: "Settings Chat row", timeout: 5)
-        let settingsCompactTurns = app.switches["settings.compactTurns"]
-        XCTAssertTrue(settingsCompactTurns.waitForExistence(timeout: 10), "Settings Compact Turns toggle did not appear")
-        if !isSwitchOn(settingsCompactTurns) {
-            tap(settingsCompactTurns, named: "Settings Compact turns toggle")
+        let compactStyle = app.segmentedControls["settings.chatStyle"].buttons["Compact"]
+        XCTAssertTrue(compactStyle.waitForExistence(timeout: 10), "Settings Chat Style picker did not appear")
+        if !compactStyle.isSelected {
+            tap(compactStyle, named: "Settings Compact chat style")
         }
         XCTAssertTrue(
-            waitForSwitch(settingsCompactTurns, toBeOn: true, timeout: 5),
-            "Settings Compact turns did not turn On for this fold fixture"
+            waitForSelected(compactStyle, timeout: 5),
+            "Settings Chat Style did not switch to Compact for this fold fixture"
         )
         closeAppSettingsToSessionList()
         openSessionDeepLink(id: sessionId)
@@ -120,7 +120,7 @@ final class ChatTimelineE2ETests: E2ETestCase {
             args: ["command": "printf bash-quiet"],
             output: bashOutput
         )
-        XCTAssertTrue(waitForWorkLine(workLine, label: "run 1 tool", timeout: 10), "Live work line did not count the command")
+        XCTAssertTrue(waitForWorkLine(workLine, label: "run 1 command", timeout: 10), "Live work line did not count the command")
         XCTAssertFalse(timelineContains(bashOutput), "Live bash output should stay behind the work line")
 
         try sendE2EHarnessMessage(sessionId: sessionId, [
@@ -128,7 +128,7 @@ final class ChatTimelineE2ETests: E2ETestCase {
             "delta": thinkingNext,
             "contentIndex": 2,
         ])
-        XCTAssertTrue(waitForWorkLine(workLine, label: "run 1 tool", timeout: 10), "Thinking changed the visible work summary")
+        XCTAssertTrue(waitForWorkLine(workLine, label: "run 1 command", timeout: 10), "Thinking changed the visible work summary")
         XCTAssertFalse(timelineContains(thinkingNext), "Live follow-up thinking should stay behind the work line")
 
         try sendFinishedTool(
@@ -138,7 +138,7 @@ final class ChatTimelineE2ETests: E2ETestCase {
             args: ["path": "README.md"],
             output: readOutput
         )
-        XCTAssertTrue(waitForWorkLine(workLine, label: "read 1 file  run 1 tool", timeout: 10), "Live work line did not separate read and command work")
+        XCTAssertTrue(waitForWorkLine(workLine, label: "read 1 file  run 1 command", timeout: 10), "Live work line did not separate read and command work")
         XCTAssertFalse(timelineContains(readOutput), "Live read output should stay behind the work line")
 
         try sendFinishedTool(
@@ -148,7 +148,7 @@ final class ChatTimelineE2ETests: E2ETestCase {
             args: ["pattern": "quiet-mode"],
             output: grepOutput
         )
-        XCTAssertTrue(waitForWorkLine(workLine, label: "read 1 file  run 2 tools", timeout: 10), "Live work line did not count the other tool bucket")
+        XCTAssertTrue(waitForWorkLine(workLine, label: "read 1 file  run 1 command  run 1 tool", timeout: 10), "Live work line did not count the other tool bucket")
         XCTAssertFalse(timelineContains(grepOutput), "Live grep output should stay behind the work line")
 
         try sendE2EHarnessMessage(sessionId: sessionId, [
@@ -177,8 +177,8 @@ final class ChatTimelineE2ETests: E2ETestCase {
         XCTAssertTrue(waitForElementToExist(workLine, timeout: 10), "Quiet work line did not replace finished work")
         let finishedWorkLabel = workLine.label
         XCTAssertTrue(
-            finishedWorkLabel == "read 1 file  run 2 tools"
-                || finishedWorkLabel.hasPrefix("read 1 file  run 2 tools · "),
+            finishedWorkLabel == "read 1 file  run 1 command  run 1 tool"
+                || finishedWorkLabel.hasPrefix("read 1 file  run 1 command  run 1 tool · "),
             "Quiet work line lost finished-turn buckets: \(finishedWorkLabel)"
         )
         XCTAssertEqual(workLine.value as? String, "Collapsed")
@@ -270,22 +270,13 @@ final class ChatTimelineE2ETests: E2ETestCase {
         XCTAssertTrue(app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 10), "Session list did not return from Settings")
     }
 
-    private func isSwitchOn(_ toggle: XCUIElement) -> Bool {
-        if toggle.isSelected { return true }
-        if let number = toggle.value as? NSNumber {
-            return number.boolValue
-        }
-        let value = String(describing: toggle.value).lowercased()
-        return value == "1" || value == "true" || value == "on" || value.contains(" on")
-    }
-
-    private func waitForSwitch(_ element: XCUIElement, toBeOn expected: Bool, timeout: TimeInterval) -> Bool {
+    private func waitForSelected(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
-            if isSwitchOn(element) == expected { return true }
+            if element.isSelected { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         } while Date() < deadline
-        return isSwitchOn(element) == expected
+        return element.isSelected
     }
 
     private func waitForElementToHaveValue(_ element: XCUIElement, _ value: String, timeout: TimeInterval) -> Bool {
@@ -379,24 +370,24 @@ final class ChatTimelineE2ETests: E2ETestCase {
         )
     }
 
-    nonisolated private func setCompactTurnsPreference(enabled: Bool) {
+    nonisolated private func resetChatStylePreference() {
         let environment = ProcessInfo.processInfo.environment
         guard let simulatorUDID = environment["SIMULATOR_UDID"] ?? environment["TARGET_DEVICE_IDENTIFIER"],
               !simulatorUDID.isEmpty else {
-            XCTFail("No simulator identifier available for Compact turns preference reset")
+            XCTFail("No simulator identifier available for the chat style reset")
             return
         }
 
-        // iOS XCTest cannot spawn simctl. The host E2E harness writes the
+        // iOS XCTest cannot spawn simctl. The host E2E harness deletes the
         // persisted key before this process launches the app.
         do {
             _ = try e2eLabAPIJSON(
                 method: "POST",
-                path: "/e2e/ui/reset-quiet-mode",
-                body: ["simulatorUDID": simulatorUDID, "enabled": enabled]
+                path: "/e2e/ui/reset-chat-style",
+                body: ["simulatorUDID": simulatorUDID]
             )
         } catch {
-            XCTFail("Could not set Compact turns preference: \(error.localizedDescription)")
+            XCTFail("Could not reset the chat style: \(error.localizedDescription)")
         }
     }
 }

@@ -443,26 +443,20 @@ struct ChatView: View {
         session?.status == .stopped
     }
 
-    /// Compact turns are a narrow-width density mode. Settings shows the
-    /// toggle under the same rule (`SettingsChatPage`); change both together.
-    private var compactTurnsEnabled: Bool {
+    /// Settings \u{2192} Chat \u{2192} Style, for every session and width.
+    private var chatDisplayStyle: AppPreferences.ChatDisplay.Style {
         _ = chatDisplayRefresh
-        return horizontalSizeClass == .compact
-            && AppPreferences.ChatDisplay.isCompactTurnsEnabled
+        return AppPreferences.ChatDisplay.style
     }
 
     private var timelineChromeStyle: ChatTimelineChromeStyle {
-        .for(
-            engine: session?.engine,
-            durableExperimentEnabled: durableSessionsExperimentEnabled,
-            compactTurnsLayout: compactTurnsEnabled ? AppPreferences.ChatDisplay.layout : nil
-        )
+        .for(chatDisplayStyle)
     }
 
-    /// The conversation layout always folds work into "Worked \u{00B7} N steps"
-    /// pills; tapping a pill expands that turn.
+    /// Compact folds work into a strip and Chat into "Worked \u{00B7} N steps"
+    /// pills; tapping either expands that turn.
     private var foldsTimelineWork: Bool {
-        timelineChromeStyle == .conversation || compactTurnsEnabled
+        chatDisplayStyle.foldsWork
     }
 
     private var workStripStyle: AppPreferences.ChatDisplay.WorkStripStyle {

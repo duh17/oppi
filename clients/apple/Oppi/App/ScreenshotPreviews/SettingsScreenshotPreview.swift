@@ -7,7 +7,7 @@ import SwiftUI
 /// navigation. `SCREENSHOT_SSH_HOSTS=1` turns the SSH Terminal experiment on;
 /// `server*` pages use a fixture `ServerSettingsModel`, with an update on offer
 /// when `SCREENSHOT_SERVER_UPDATE=1`. `settings-chat-conversation` opens the
-/// Chat page with Compact Turns on in the Conversation layout.
+/// Chat page with the Chat style selected.
 /// Preview-only defaults in the argument domain: the preview reads them like
 /// real preferences, and nothing is written to the app's persistent defaults,
 /// which a simulator keeps across launches and test runs.
@@ -58,8 +58,7 @@ struct SettingsScreenshotPreview: View {
         }
         if ScreenshotPreviewConfig.screen == "settings-chat-conversation" {
             ScreenshotVolatileDefaults.apply([
-                AppPreferences.ChatDisplay.compactTurnsKey: true,
-                AppPreferences.ChatDisplay.layoutKey: AppPreferences.ChatDisplay.Layout.conversation.rawValue,
+                AppPreferences.ChatDisplay.styleKey: AppPreferences.ChatDisplay.Style.chat.rawValue,
             ])
         }
         let coordinator = ConnectionCoordinator(serverStore: ServerStore())

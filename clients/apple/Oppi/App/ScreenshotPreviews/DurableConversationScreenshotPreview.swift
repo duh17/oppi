@@ -2,7 +2,7 @@
 import SwiftUI
 import UIKit
 
-/// Conversation chrome for durable sessions (`SCREENSHOT_SCREEN=durable-conversation`):
+/// The Chat style on a durable session (`SCREENSHOT_SCREEN=durable-conversation`):
 /// the real timeline in `.conversation` style with work folded into
 /// "Worked · N steps" pills, the chat title with its model subtitle, and the
 /// real `ChatInputBar` with the session toolbar. No server; the reducer is

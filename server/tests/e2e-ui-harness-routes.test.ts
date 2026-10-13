@@ -30,9 +30,9 @@ describe("E2E UI harness routes", () => {
 
     const handled = await dispatch({
       method: "POST",
-      path: "/e2e/ui/reset-quiet-mode",
-      url: new URL("http://localhost/e2e/ui/reset-quiet-mode"),
-      req: makeRequest({ simulatorUDID: "00000000-0000-0000-0000-000000000000", enabled: true }),
+      path: "/e2e/ui/reset-chat-style",
+      url: new URL("http://localhost/e2e/ui/reset-chat-style"),
+      req: makeRequest({ simulatorUDID: "00000000-0000-0000-0000-000000000000" }),
       res: res as never,
     });
 
