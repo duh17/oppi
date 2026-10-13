@@ -9,6 +9,7 @@ import {
 import {
   AgentDoc,
   Harness,
+  SessionFailed,
   createRegistry,
   defineDoc,
   type Extension,
@@ -55,7 +56,10 @@ import {
 } from "./durable-extension-loader.js";
 import type { DurableMcp } from "./durable-mcp.js";
 import { DurableAgentController } from "./durable-agent-controller.js";
-import { attachConversationStream } from "./durable-conversation-stream.js";
+import {
+  attachConversationStream,
+  type ConversationStreamSubscription,
+} from "./durable-conversation-stream.js";
 import { DurableModels } from "./durable-models.js";
 import { createLogger } from "./logger.js";
 import type { MobileRendererRegistry } from "./mobile-renderer.js";
@@ -78,6 +82,12 @@ export const DurableRuntime = defineDoc<{ kind: "host" | "sandbox"; workspaceId?
 const log = createLogger({ base: { component: "durable_harness" } });
 
 const STORE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+/**
+ * Waits before each reopen of a store whose Harness failed. pi-durable fails the Harness on any
+ * storage error and does not retry; commits are atomic, so a reopen recovers what was committed.
+ * A store that cannot reopen after these is given up, so a broken disk does not loop forever.
+ */
+const RECOVERY_DELAYS_MS = [0, 1_000, 5_000];
 const METADATA_FILE = "meta.json";
 const STORAGE_FILE = "session.sqlite";
 
@@ -209,6 +219,16 @@ function writeStoreMeta(directory: string, meta: DurableStoreMeta): void {
   renameSync(tmp, dest);
 }
 
+/** One socket's transcript stream; re-attached to the reopened Harness when the store recovers. */
+interface TranscriptStream {
+  readonly id: ConversationId;
+  readonly options: {
+    renderers: MobileRendererRegistry;
+    send: (frame: ConversationStreamServerMessage) => void;
+  };
+  subscription: ConversationStreamSubscription;
+}
+
 /** The session services `SessionHost` keeps for one opened Harness. */
 interface HostServices {
   harness: Harness;
@@ -242,6 +262,17 @@ export class SessionHost {
   private idleCloseTimer: ReturnType<typeof setImmediate> | undefined;
   /** Set when the Harness opens, dropped on close. */
   private services?: HostServices;
+  /** Set while a failed Harness is torn down and the store reopened. */
+  private recovering?: Promise<unknown>;
+  /** The last reopen error once recovery gave up; this host never opens again. */
+  private abandoned?: unknown;
+  /**
+   * A Harness that began closing while it was this host's, so a storage error failed it.
+   * Known when the close begins, before `closed` settles: the call that hit the error gets the
+   * raw error, not `SessionFailed`, and recovery starts only after tasks are joined.
+   */
+  private failingHarness?: Harness;
+  private readonly transcripts = new Set<TranscriptStream>();
 
   constructor(
     readonly runtime: DurableHarness,
@@ -461,16 +492,22 @@ export class SessionHost {
     const release = this.retain("stream");
     try {
       const { harness } = await this.open();
-      const subscription = await attachConversationStream({
-        harness,
-        conversationId: id,
-        ...options,
-      });
+      const stream: TranscriptStream = {
+        id,
+        options: { renderers: options.renderers, send: options.send },
+        subscription: await attachConversationStream({
+          harness,
+          conversationId: id,
+          ...options,
+        }),
+      };
+      this.transcripts.add(stream);
       let disposed = false;
       return () => {
         if (disposed) return;
         disposed = true;
-        subscription.dispose();
+        this.transcripts.delete(stream);
+        stream.subscription.dispose();
         release();
       };
     } catch (error) {
@@ -506,11 +543,31 @@ export class SessionHost {
     return reasons;
   }
 
+  /**
+   * Whether `error` came from this store failing (again): the Harness rejected with
+   * `SessionFailed`, or a recovery is under way. A session re-attach that failed this way waits
+   * for that recovery's outcome instead of ending.
+   */
+  failedWithStore(error: unknown): boolean {
+    return (
+      error instanceof SessionFailed ||
+      this.recovering !== undefined ||
+      (this.failingHarness !== undefined && this.failingHarness === this.services?.harness)
+    );
+  }
+
   get isOpen(): boolean {
-    return !this.closed && this.opening !== undefined;
+    return !this.closed && (this.opening !== undefined || this.recovering !== undefined);
   }
 
   open(): Promise<{ harness: Harness; models: ModelRuntime }> {
+    if (this.recovering) return this.recovering.then(() => this.open());
+    if (this.abandoned !== undefined)
+      return Promise.reject(
+        new Error(
+          `Durable store ${this.storeId} failed and could not reopen: ${safeErrorMessage(this.abandoned)}`,
+        ),
+      );
     if (this.closing) {
       return this.closing.then(() => {
         if (this.runtime.shuttingDown || this.runtime.isClosed) {
@@ -574,17 +631,10 @@ export class SessionHost {
         BACKGROUND_CONTEXT,
       );
       await this.watchTaskGraph(harness);
+      this.watchFailure(harness);
       return this.opened(harness, shared.models);
     } catch (error) {
-      try {
-        await this.releaseLock?.();
-      } catch (unlockError) {
-        log.error("durable_store.unlock_failed", {
-          storeId: this.storeId,
-          error: safeErrorMessage(unlockError),
-        });
-      }
-      this.releaseLock = undefined;
+      await this.unlock();
       this.opening = undefined;
       throw error;
     }
@@ -601,6 +651,163 @@ export class SessionHost {
       unsubscribe();
       graph.dispose();
     };
+  }
+
+  /**
+   * pi-durable closes a Harness by itself after any storage error: every later call fails with
+   * `SessionFailed`. Reopen the store instead of handing that dead Harness out until a restart,
+   * then tell the runtime so it re-attaches the sessions of this tree.
+   */
+  private watchFailure(harness: Harness): void {
+    // This host drops its services before it closes a Harness, so a close that begins while
+    // the Harness is still current is a failure.
+    harness.subscribeClose(() => {
+      if (this.services?.harness === harness) this.failingHarness = harness;
+    });
+    void harness.closed.then(async (end) => {
+      if (end.reason !== "failed") return;
+      // A Harness a recovery attempt opened and then dropped is that recovery's business.
+      while (this.recovering) await this.recovering;
+      if (this.services?.harness !== harness) return;
+      if (this.closed || this.closing || this.runtime.shuttingDown) return;
+      const recovering = this.recover(end.error).catch(async (error: unknown) => {
+        // Recovery itself must never leave `recovering` set: give up, and say so.
+        await this.seal(error);
+        return { kind: "abandoned" as const, error };
+      });
+      this.recovering = recovering;
+      const outcome = await recovering;
+      if (this.recovering === recovering) this.recovering = undefined;
+      // Shutdown detaches the sessions for restart; there is nothing to re-attach or end.
+      if (outcome.kind === "stopped") return;
+      // After `recovering` clears: the listener re-attaches sessions, which open this host.
+      await this.runtime
+        .onHostRecovered?.(this, outcome.kind === "abandoned" ? outcome.error : undefined)
+        .catch((error: unknown) => {
+          log.error("durable_store.recovery_listener_failed", {
+            storeId: this.storeId,
+            error: safeErrorMessage(error),
+          });
+        });
+    });
+  }
+
+  private async recover(
+    error: unknown,
+  ): Promise<{ kind: "recovered" } | { kind: "stopped" } | { kind: "abandoned"; error: unknown }> {
+    log.error("durable_store.session_failed", {
+      storeId: this.storeId,
+      error: safeErrorMessage(error),
+    });
+    // The Harness already closed itself and its storage. Drop what was bound to it.
+    this.cancelIdleClose();
+    await this.dropOpened();
+    // Each session's backend opens its MCP servers again when it re-attaches.
+    await Promise.allSettled([...this.mcps.keys()].map((id) => this.closeMcp(id)));
+    let failure = error;
+    for (const delay of RECOVERY_DELAYS_MS) {
+      if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+      if (this.runtime.shuttingDown) {
+        await this.seal();
+        return { kind: "stopped" };
+      }
+      try {
+        const { harness } = await (this.opening ??= this.openInner());
+        for (const stream of [...this.transcripts]) await this.reattachTranscript(harness, stream);
+        // Shutdown began while this opened: `close()` closes it; nothing re-attaches.
+        if (this.runtime.shuttingDown) return { kind: "stopped" };
+        await this.resume();
+        log.info("durable_store.recovered", { storeId: this.storeId });
+        return { kind: "recovered" };
+      } catch (reopenError) {
+        failure = reopenError;
+        // A failed open must not be reused by the next attempt.
+        await this.dropOpened();
+        log.warn("durable_store.reopen_failed", {
+          storeId: this.storeId,
+          error: safeErrorMessage(reopenError),
+        });
+      }
+    }
+    log.error("durable_store.recovery_abandoned", {
+      storeId: this.storeId,
+      error: safeErrorMessage(failure),
+    });
+    await this.seal(failure);
+    return { kind: "abandoned", error: failure };
+  }
+
+  /**
+   * Forget the opened Harness: services first, so its failure watcher sees it is no longer
+   * this host's, then close it (a failed one closed itself) and release the lock.
+   */
+  private async dropOpened(): Promise<void> {
+    const opening = this.opening;
+    this.stopTaskGraph?.();
+    this.stopTaskGraph = undefined;
+    this.taskGraph = undefined;
+    this.dropServices();
+    this.opening = undefined;
+    this.harnessStorage = undefined;
+    await opening
+      ?.then(({ harness }) => harness.close(BACKGROUND_CONTEXT))
+      .catch((error: unknown) => {
+        log.warn("durable_store.close_failed", {
+          storeId: this.storeId,
+          error: safeErrorMessage(error),
+        });
+      });
+    await this.unlock();
+  }
+
+  /**
+   * Dead for good: nothing reopens this host. Releases its sandbox work and streams; a waiter
+   * on `open()` must not take the lock behind a host the runtime forgot. With `failure`, its
+   * `open()` rejects with it; a later `openHost` builds a fresh host, which is the next attempt.
+   */
+  private async seal(failure?: unknown): Promise<void> {
+    if (failure !== undefined) this.abandoned = failure;
+    this.closed = true;
+    await this.dropOpened();
+    await Promise.allSettled(
+      [...this.sandboxEnvs.keys()].map((id) => this.unbindSandboxEnv(id, true)),
+    );
+    for (const stream of this.transcripts) stream.subscription.dispose();
+    this.transcripts.clear();
+    this.runtime.forgetHost(this);
+  }
+
+  /** Resume the socket where it was: the subscription's cursor is the last entry it sent. */
+  private async reattachTranscript(harness: Harness, stream: TranscriptStream): Promise<void> {
+    try {
+      const subscription = await attachConversationStream({
+        harness,
+        conversationId: stream.id,
+        ...stream.options,
+        ...(stream.subscription.cursor ? { afterEntryId: stream.subscription.cursor } : {}),
+      });
+      // The socket left while this attached: end the new subscription too.
+      if (!this.transcripts.has(stream)) subscription.dispose();
+      else stream.subscription = subscription;
+    } catch (error) {
+      log.error("durable_store.transcript_reattach_failed", {
+        storeId: this.storeId,
+        conversationId: stream.id,
+        error: safeErrorMessage(error),
+      });
+    }
+  }
+
+  private async unlock(): Promise<void> {
+    try {
+      await this.releaseLock?.();
+    } catch (error) {
+      log.error("durable_store.unlock_failed", {
+        storeId: this.storeId,
+        error: safeErrorMessage(error),
+      });
+    }
+    this.releaseLock = undefined;
   }
 
   /**
@@ -714,6 +921,7 @@ export class SessionHost {
 
   /** Close this store and release the directory lock. */
   close(): Promise<void> {
+    if (this.recovering) return this.recovering.then(() => this.close());
     if (this.closing) return this.closing;
     if (!this.opening) {
       this.closed = true;
@@ -747,15 +955,7 @@ export class SessionHost {
       }
     } finally {
       await Promise.all([...this.mcps.keys()].map((id) => this.closeMcp(id)));
-      try {
-        await this.releaseLock?.();
-      } catch (error) {
-        log.error("durable_store.unlock_failed", {
-          storeId: this.storeId,
-          error: safeErrorMessage(error),
-        });
-      }
-      this.releaseLock = undefined;
+      await this.unlock();
       this.opening = undefined;
       this.harnessStorage = undefined;
       this.runtime.forgetHost(this);
@@ -855,6 +1055,11 @@ export class DurableHarness {
   private readonly openingHosts = new Map<string, Promise<SessionHost>>();
   /** Abort leftover work of stopped conversations when a store first opens. */
   onHostOpened?: (host: SessionHost) => Promise<void>;
+  /**
+   * A store's Harness failed and the host reopened it (`failure` undefined), or gave up
+   * (`failure` is the last error). Re-attach or end the sessions of that tree.
+   */
+  onHostRecovered?: (host: SessionHost, failure: unknown) => Promise<void>;
   /** The session tools; they reach Oppi through the host bound with `bindThreads`. */
   readonly sessionsExtension = createDurableSessions(() => this.threads);
   /** The control conversation's tools; they reach Oppi through the host bound with `bindControl`. */

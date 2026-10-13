@@ -38,6 +38,7 @@ import type { SessionCatchUpResponse } from "./session-broadcast.js";
 import { type SessionStartActiveSession } from "./session-start.js";
 import { type SessionStateActiveSession } from "./session-state.js";
 import { createLogger } from "./logger.js";
+import { safeErrorMessage } from "./log-utils.js";
 import {
   buildPendingExtensionUIRequestMessages,
   cancelPendingAskRequest,
@@ -128,6 +129,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
   private readonly queueCoordinator: SessionCoordinatorBundle["queueCoordinator"];
   private readonly agentEventCoordinator: SessionCoordinatorBundle["agentEventCoordinator"];
   private readonly stopFlowCoordinator: SessionCoordinatorBundle["stopFlowCoordinator"];
+  private readonly startCoordinator: SessionCoordinatorBundle["startCoordinator"];
 
   constructor(storage: Storage, metrics?: ServerMetricCollector, stopTimers?: SessionStopTimers) {
     super();
@@ -149,6 +151,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       ]).then(([{ DurableHarness }, { DurableThreads }, { DurableControlCli }]) => {
         const runtime = new DurableHarness(storage.getDataDir());
         runtime.onHostOpened = (host) => this.fenceStopped([host]);
+        runtime.onHostRecovered = (host, failure) => this.recoverDurableSessions(host, failure);
         runtime.bindThreads(
           new DurableThreads({
             runtime,
@@ -239,6 +242,7 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     this.queueCoordinator = bundle.queueCoordinator;
     this.agentEventCoordinator = bundle.agentEventCoordinator;
     this.stopFlowCoordinator = bundle.stopFlowCoordinator;
+    this.startCoordinator = bundle.startCoordinator;
     this.ensureMobileRenderersLoaded();
   }
 
@@ -924,6 +928,48 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       byStore.set(storeId, ids);
     }
     return byStore;
+  }
+
+  /**
+   * A storage error closed a store's Harness. Recovered: move each running session of that
+   * tree onto the reopened Harness and say so once. Given up: end those sessions with the error,
+   * since nothing can run or commit there.
+   */
+  private async recoverDurableSessions(host: SessionHost, failure: unknown): Promise<void> {
+    for (const [key, active] of [...this.active]) {
+      if (durableStoreId(active.session) !== host.storeId) continue;
+      let error: string;
+      if (failure === undefined) {
+        try {
+          await this.startCoordinator.reattachDurable(key, active, host);
+          this.handlePiEvent(key, {
+            type: "notice",
+            id: `durable-store-recovered:${Date.now()}`,
+            message: "Session store recovered after a storage error",
+          });
+          continue;
+        } catch (reattachError) {
+          log.error("sessions.durable_reattach_failed", {
+            sessionId: active.session.id,
+            error: safeErrorMessage(reattachError),
+          });
+          // The store failed again while this re-attached: its next recovery re-attaches
+          // the session or ends it.
+          if (host.failedWithStore(reattachError)) continue;
+          // Only this session: the store reopened, and the others re-attach on their own.
+          error = `This session could not re-attach after a storage error: ${safeErrorMessage(reattachError)}`;
+        }
+      } else {
+        error = `This session's store failed and could not reopen: ${safeErrorMessage(failure)}`;
+      }
+      this.handlePiEvent(key, { type: "prompt_error", error });
+      // The backend's own dispose would need the store; release its sandbox work directly.
+      await active.sdkBackend.detachForRestart?.().catch(() => undefined);
+      const conversationId = active.session.serverDurable?.conversationId;
+      if (conversationId !== undefined)
+        await host.unbindSandboxEnv(conversationId as ConversationId, true).catch(() => undefined);
+      await this.handleSessionEnd(key, "store_failed");
+    }
   }
 
   /** Abort leftover work of conversations that are neither active nor queued to resume. */

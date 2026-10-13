@@ -303,6 +303,11 @@ export class ConversationStreamSubscription {
     private readonly send: SendFrame,
   ) {}
 
+  /** The newest entry id sent; a new subscription started after it resumes this socket. */
+  get cursor(): number {
+    return this.sentTip;
+  }
+
   /**
    * First frame. A cursor that is a known active entry at or after the head resumes
    * with an `update` of the entries after it and every document whole; anything else

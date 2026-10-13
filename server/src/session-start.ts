@@ -9,6 +9,9 @@ import {
   usesDurableEngine,
 } from "./session-runtime-capabilities.js";
 import type { DurableHarness, SessionHost } from "./durable-harness.js";
+import type { DurableBackend as DurableBackendType } from "./durable-backend.js";
+import { createLogger } from "./logger.js";
+import { safeErrorMessage } from "./log-utils.js";
 import type { AgentBackend } from "./agent-backend.js";
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
 import {
@@ -20,6 +23,8 @@ import type { SessionMessageQueueStore } from "./session-queue.js";
 import type { Storage } from "./storage.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import type { WorkspaceRuntime, WorkspaceSessionIdentity } from "./workspace-runtime.js";
+
+const log = createLogger({ base: { component: "session_start" } });
 
 export interface SessionStartActiveSession extends Omit<
   RuntimeSessionStateScaffold<SessionMessageQueueStore>,
@@ -131,19 +136,7 @@ export class SessionStartCoordinator {
         try {
           sdkBackend =
             DurableBackend && durableHarness && durableHost
-              ? await DurableBackend.create({
-                  ...(await durableHost.open()),
-                  host: durableHost,
-                  session,
-                  workspace,
-                  agentDefinition,
-                  dataDir: this.deps.storage.getDataDir(),
-                  persistBinding: () => this.deps.persistSessionNow(key, session),
-                  onEvent: (event) => this.deps.onPiEvent(key, event),
-                  onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
-                  hasUI: () => this.deps.hasUI?.(key) ?? false,
-                  metrics: this.deps.metrics,
-                })
+              ? await this.createDurableBackend(key, durableHost, session, workspace)
               : await SdkBackend.create({
                   session,
                   workspace,
@@ -214,6 +207,63 @@ export class SessionStartCoordinator {
         }
         this.deps.runtimeManager.releaseSession(identity);
         throw err;
+      }
+    });
+  }
+
+  private async createDurableBackend(
+    key: string,
+    host: SessionHost,
+    session: Session,
+    workspace: Workspace | undefined,
+  ): Promise<DurableBackendType> {
+    const { DurableBackend } = await import("./durable-backend.js");
+    return DurableBackend.create({
+      ...(await host.open()),
+      host,
+      session,
+      workspace,
+      agentDefinition: this.resolveAgentDefinition(session),
+      dataDir: this.deps.storage.getDataDir(),
+      persistBinding: () => this.deps.persistSessionNow(key, session),
+      onEvent: (event) => this.deps.onPiEvent(key, event),
+      onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
+      hasUI: () => this.deps.hasUI?.(key) ?? false,
+      metrics: this.deps.metrics,
+    });
+  }
+
+  /**
+   * Swap a running durable session onto its store's reopened Harness after a storage error
+   * closed the old one. Same as a start's attach, minus status changes: the session stays
+   * active, and the new projection replays the conversation's live state to the socket.
+   */
+  async reattachDurable(
+    key: string,
+    active: SessionStartActiveSession,
+    host: SessionHost,
+  ): Promise<void> {
+    const session = active.session;
+    const workspace = session.workspaceId
+      ? this.deps.storage.getWorkspace(session.workspaceId)
+      : undefined;
+    await this.deps.runtimeManager.withWorkspaceLock(active.workspaceId, async () => {
+      // The old projection watched the failed Harness; its teardown may only find it closed.
+      await active.sdkBackend.detachForRestart?.().catch((error: unknown) => {
+        log.warn("session_start.durable_detach_failed", {
+          sessionId: session.id,
+          error: safeErrorMessage(error),
+        });
+      });
+      const release = host.retain("reattach");
+      try {
+        const backend = await this.createDurableBackend(key, host, session, workspace);
+        active.sdkBackend = backend;
+        await backend.startEvents();
+        this.deps.persistSessionNow(key, session);
+        await host.resume();
+      } finally {
+        release();
       }
     });
   }

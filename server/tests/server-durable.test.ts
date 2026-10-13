@@ -1128,6 +1128,160 @@ describe("server durable managed runtime", () => {
     expect(restartedPage!.trace.filter(isFailureCard)).toHaveLength(1);
   }, 20_000);
 
+  it("keeps the session when the reopened store fails again while it re-attaches", async () => {
+    const opening = vi.spyOn(SessionHost.prototype, "open");
+    const f = await fixture([fauxAssistantMessage("FIRST"), fauxAssistantMessage("SECOND")]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    await answer(f, observed, "one");
+    const host = opening.mock.contexts[0] as SessionHost;
+    const storage = host.storage;
+    storage.commit = async () => {
+      throw new Error("disk I/O error");
+    };
+    const proto = SessionHost.prototype as unknown as {
+      openInner: () => Promise<unknown>;
+    };
+    const real = proto.openInner;
+    let reopens = 0;
+    // The first reopened store fails its first write too, while sessions re-attach to it.
+    vi.spyOn(proto, "openInner").mockImplementation(async function (this: SessionHost) {
+      const opened = await real.call(this);
+      if (++reopens === 1) {
+        const next = this.storage;
+        const nextCommit = next.commit.bind(next);
+        let once = true;
+        next.commit = async (writes, ctx) => {
+          if (once) {
+            once = false;
+            throw new Error("second disk I/O error");
+          }
+          return nextCommit(writes, ctx);
+        };
+      }
+      return opened;
+    });
+    const recovered = observed.next(
+      (message) => message.type === "notice" && message.message.includes("recovered"),
+    );
+    await expect(f.manager.sendPrompt(f.session.id, "lost")).rejects.toThrow();
+    await recovered;
+    expect(reopens).toBe(2);
+    expect(observed.messages.some((message) => message.type === "session_ended")).toBe(false);
+    await answer(f, observed, "two");
+    expect(
+      observed.messages.some(
+        (message) => message.type === "message_end" && JSON.stringify(message).includes("SECOND"),
+      ),
+    ).toBe(true);
+    observed.unsubscribe();
+  }, 20_000);
+
+  it("reopens the store after a storage error and keeps the session and its stream working", async () => {
+    const opening = vi.spyOn(SessionHost.prototype, "open");
+    const f = await fixture([fauxAssistantMessage("FIRST"), fauxAssistantMessage("SECOND")]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    const frames: string[] = [];
+    const stop = await f.manager.attachConversationStream(
+      f.storage.getSession(f.session.id)!,
+      {} as never,
+      (frame) => frames.push(JSON.stringify(frame)),
+    );
+    await answer(f, observed, "one");
+    // Frames are throttled; the socket has the first answer before the failure.
+    const sent = Date.now() + 8_000;
+    while (Date.now() < sent && !frames.some((frame) => frame.includes("FIRST")))
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+    // One storage write fails: pi-durable closes the Harness, as a disk I/O error would.
+    const host = opening.mock.contexts[0] as SessionHost;
+    const storage = host.storage;
+    const commit = storage.commit.bind(storage);
+    let failures = 0;
+    storage.commit = async (writes, ctx) => {
+      if (failures++ === 0) throw new Error("disk I/O error");
+      return commit(writes, ctx);
+    };
+    const recovered = observed.next(
+      (message) => message.type === "notice" && message.message.includes("recovered"),
+    );
+    const beforeFailure = frames.length;
+    const lost = await f.manager.sendPrompt(f.session.id, "lost to the failure").then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    // The call that hit the storage error gets the raw error; the host already knows the
+    // store failed, before pi-durable finishes closing and recovery starts.
+    expect(lost).toBeInstanceOf(Error);
+    expect(host.failedWithStore(lost)).toBe(true);
+    await recovered;
+    expect(f.manager.getActiveSession(f.session.id)?.status).toBe("ready");
+
+    // The same session answers on the reopened store, and the open stream follows it.
+    await answer(f, observed, "two");
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline && !frames.some((frame) => frame.includes("SECOND")))
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    // Resumed after the last entry it had sent: updates only, never a second snapshot.
+    const after = frames.slice(beforeFailure).map((frame) => JSON.parse(frame) as { type: string });
+    expect(after.length).toBeGreaterThan(0);
+    expect(after.every((frame) => frame.type === "update")).toBe(true);
+    expect(frames.slice(beforeFailure).some((frame) => frame.includes("SECOND"))).toBe(true);
+    expect(frames.slice(beforeFailure).some((frame) => frame.includes('"one"'))).toBe(false);
+    expect(
+      observed.messages.some(
+        (message) => message.type === "message_end" && JSON.stringify(message).includes("SECOND"),
+      ),
+    ).toBe(true);
+    stop();
+    observed.unsubscribe();
+  }, 20_000);
+
+  it("ends the session with the error when a failed store cannot reopen", async () => {
+    const opening = vi.spyOn(SessionHost.prototype, "open");
+    const f = await fixture([fauxAssistantMessage("FIRST")]);
+    await f.manager.startSession(f.session.id, f.workspace);
+    const observed = observe(f.manager, f.session.id);
+    await answer(f, observed, "one");
+    const host = opening.mock.contexts[0] as SessionHost;
+    host.storage.commit = async () => {
+      throw new Error("disk I/O error");
+    };
+    // Every reopen attempt fails until the test says the store would open again.
+    let malformed = true;
+    const proto = SessionHost.prototype as unknown as { openInner: () => Promise<unknown> };
+    const realOpenInner = proto.openInner;
+    const openInner = vi.spyOn(proto, "openInner");
+    openInner.mockImplementation(function (this: unknown) {
+      return malformed
+        ? Promise.reject(new Error("database disk image is malformed"))
+        : realOpenInner.call(this);
+    });
+    const ended = observed.next((message) => message.type === "session_ended");
+    await expect(f.manager.sendPrompt(f.session.id, "lost")).rejects.toThrow();
+    // A caller that waits on the recovering host (a Stop, a stream attach) is refused after
+    // the give-up instead of reopening a host the runtime no longer tracks.
+    const waiter = host.open();
+    expect(await ended).toMatchObject({ reason: "store_failed" });
+    await expect(waiter).rejects.toThrow(/could not reopen/);
+    expect(observed.messages).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        error: expect.stringContaining("database disk image is malformed"),
+      }),
+    );
+    expect(f.manager.isActive(f.session.id)).toBe(false);
+    expect(openInner).toHaveBeenCalledTimes(3);
+    // The lock is free: the next open builds one fresh host for the store.
+    malformed = false;
+    expect(host.runtime.host(host.storeId)).toBeUndefined();
+    const fresh = await host.runtime.openHost(host.storeId);
+    expect(fresh).not.toBe(host);
+    await fresh.close();
+    observed.unsubscribe();
+  }, 20_000);
+
   it("writes the failure card before a prompt sent immediately after the failure", async () => {
     const models = createModels();
     const faux = fauxProvider();
