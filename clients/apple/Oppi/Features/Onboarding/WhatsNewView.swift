@@ -127,7 +127,7 @@ struct WhatsNewView: View {
             icon: "testtube.2",
             iconColor: .themeComment,
             title: String(localized: "Opt-in experiments"),
-            description: String(localized: "Session Threads and SSH Terminal are under Settings → Experiments. Durable Sessions there is a temporary playground: it needs the server's durable setting, lacks some features, and may change or go away.")
+            description: String(localized: "Session Threads and SSH Terminal are under Settings → Experiments. With Durable Sessions on, new sessions start durable on servers that offer it, and Oppi Control is in the sidebar header.")
         ),
     ]
 

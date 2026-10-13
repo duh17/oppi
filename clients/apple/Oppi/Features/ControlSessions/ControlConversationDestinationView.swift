@@ -4,8 +4,14 @@ import SwiftUI
 /// create its one durable control conversation (`POST /control-conversation`,
 /// which also resumes a stopped one), then shows that row's chat on the control
 /// route. Opening again finds the same conversation.
+///
+/// The route outlives the sidebar entry that opened it (lock-cover Switch Server,
+/// unpairing the active server), so it re-checks the Durable Sessions gate for the
+/// active server each time it opens and leaves the route when the gate is closed.
 struct ControlConversationDestinationView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(AppNavigation.self) private var navigation
+    @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var durableExperimentEnabled = false
 
     @State private var phase: Phase = .opening
 
@@ -38,11 +44,23 @@ struct ControlConversationDestinationView: View {
         .task(id: coordinator.activeServerId) {
             await open()
         }
+        .onChange(of: durableExperimentEnabled) { _, enabled in
+            if !enabled { navigation.showAllWorkspaceSessions() }
+        }
+    }
+
+    /// Durable must be on for this device and offered by the active server.
+    private func isAvailable(on connection: ServerConnection) -> Bool {
+        DurableSessions.isAvailable(
+            experimentEnabled: durableExperimentEnabled,
+            serverOffersDurable: connection.durableSessionsAvailable
+        )
     }
 
     private func open() async {
         guard let serverId = coordinator.activeServerId else {
-            phase = .failed(String(localized: "No server selected."))
+            // The active server was unpaired; there is nothing left to open.
+            navigation.showAllWorkspaceSessions()
             return
         }
         phase = .opening
@@ -50,6 +68,13 @@ struct ControlConversationDestinationView: View {
               let connection = coordinator.connection(for: serverId),
               let api = connection.apiClient else {
             phase = .failed(String(localized: "Could not connect to this server."))
+            return
+        }
+        // Capabilities are known once the connection is ready. A server that does not
+        // offer durable sessions has no control conversation to open.
+        guard coordinator.activeServerId == serverId else { return }
+        guard isAvailable(on: connection) else {
+            navigation.showAllWorkspaceSessions()
             return
         }
         do {

@@ -169,6 +169,9 @@ struct QuickSessionSheet: View {
     @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var durableExperimentEnabled = false
     /// The user switched this one launch from the durable default to Classic.
     @State private var userChoseClassic = false
+    /// Whether the launch context's or remembered Agent has been applied. A launch is
+    /// blocked while it is not, so a saved Agent's launch never goes out as a plain session.
+    @State private var agentResolution: DurableSessions.AgentResolution = .resolved
     /// When an Agent is selected, model/thinking only apply if the user sets them.
     @State private var agentModelOverride: String?
     @State private var agentThinkingOverride: ThinkingLevel?
@@ -221,7 +224,8 @@ struct QuickSessionSheet: View {
             experimentEnabled: durableExperimentEnabled,
             serverOffersDurable: selectedServerConnection()?.durableSessionsAvailable == true,
             savedAgentSelected: selectedAgentId != nil,
-            userChoseClassic: userChoseClassic
+            userChoseClassic: userChoseClassic,
+            agentResolution: agentResolution
         )
     }
 
@@ -429,7 +433,7 @@ struct QuickSessionSheet: View {
                     for: displayedModelId,
                     in: selectedChatState.cachedModels
                 ),
-                allowsEmptySubmit: selectedAgentId == nil
+                allowsEmptySubmit: selectedAgentId == nil && !engineDecision.blocksLaunch
             )
         }
         .task {
@@ -546,7 +550,7 @@ struct QuickSessionSheet: View {
                 isBusy: false,
                 busyStreamingBehavior: $busyStreamingBehavior,
                 isSending: isCreating,
-                allowsEmptySubmit: selectedAgentId == nil,
+                allowsEmptySubmit: selectedAgentId == nil && !engineDecision.blocksLaunch,
                 sendProgressText: nil,
                 isStopping: false,
                 voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
@@ -667,6 +671,8 @@ struct QuickSessionSheet: View {
 
     private func selectAgent(_ agentId: String?) {
         selectedAgentId = agentId
+        // An explicit choice, including "no Agent", ends any hold on the launch.
+        agentResolution = .resolved
         agentModelOverride = nil
         agentThinkingOverride = nil
         shouldRememberAgentSelection = true
@@ -738,6 +744,8 @@ struct QuickSessionSheet: View {
         let workspaceChanged = selectedWorkspace?.id != workspace.id || selectedServerId != serverId
         if selectedServerId != serverId {
             selectedAgentId = nil
+            // The replacement Agent loads from the new server; hold the launch until it does.
+            agentResolution = pendingAgentResolution(requestedAgentId: nil)
             agentModelOverride = nil
             agentThinkingOverride = nil
             shouldRememberAgentSelection = true
@@ -998,6 +1006,7 @@ struct QuickSessionSheet: View {
         if let pendingPayload = QuickSessionTrigger.shared.consumePendingPayload() {
             applyInitialPayload(pendingPayload)
         }
+        agentResolution = pendingAgentResolution(requestedAgentId: launchContext?.agentId)
         isInitialized = true
         await drainPendingDictationCleanupQueue()
         if Task.isCancelled { return }
@@ -1256,22 +1265,44 @@ struct QuickSessionSheet: View {
         }
     }
 
+    /// `.pending` when an Agent is still to be applied (the launch context's, else the remembered one).
+    private func pendingAgentResolution(requestedAgentId: String?) -> DurableSessions.AgentResolution {
+        requestedAgentId != nil || AppPreferences.QuickSession.lastAgentId != nil ? .pending : .resolved
+    }
+
+    /// The Agent list did not load. If an Agent was wanted, keep the launch blocked until
+    /// the user clears it rather than let it go out as a plain session.
+    private func holdLaunchAfterAgentLoadFailure(requestedAgentId: String?, detail: String?) {
+        guard pendingAgentResolution(requestedAgentId: requestedAgentId) == .pending else {
+            agentResolution = .resolved
+            return
+        }
+        agentResolution = .failed
+        let reason = detail.map { ": \($0)" } ?? "."
+        error = requestedAgentId != nil
+            ? "Could not load this Agent\(reason)"
+            : "Could not load your saved Agent\(reason) Choose Pi to start without it."
+    }
+
     private func loadAgentsForSelectedServer(requestedAgentId: String? = nil) async {
         guard let targetServerId = selectedServerId ?? coordinator.activeServerId else {
             availableAgents = []
             selectedAgentId = nil
+            holdLaunchAfterAgentLoadFailure(requestedAgentId: requestedAgentId, detail: nil)
             return
         }
         if selectedServerId == nil { selectedServerId = targetServerId }
         agentLoadGeneration &+= 1
         let generation = agentLoadGeneration
         isLoadingAgents = true
+        agentResolution = pendingAgentResolution(requestedAgentId: requestedAgentId)
 
         guard let connection = coordinator.connection(for: targetServerId),
               let api = connection.apiClient else {
             if generation == agentLoadGeneration, selectedServerId == targetServerId {
                 availableAgents = []
                 selectedAgentId = nil
+                holdLaunchAfterAgentLoadFailure(requestedAgentId: requestedAgentId, detail: nil)
                 isLoadingAgents = false
             }
             return
@@ -1302,6 +1333,7 @@ struct QuickSessionSheet: View {
             }
             agentModelOverride = nil
             agentThinkingOverride = nil
+            agentResolution = .resolved
             requireExplicitCompatibleWorkspaceIfNeeded()
             isLoadingAgents = false
         } catch {
@@ -1311,15 +1343,20 @@ struct QuickSessionSheet: View {
             logger.warning("Failed to load agents for quick session: \(error.localizedDescription, privacy: .public)")
             availableAgents = []
             selectedAgentId = nil
-            if requestedAgentId != nil {
-                self.error = "Could not load this Agent: \(error.localizedDescription)"
-            }
+            holdLaunchAfterAgentLoadFailure(requestedAgentId: requestedAgentId, detail: error.localizedDescription)
             isLoadingAgents = false
         }
     }
 
     private func handleSend() {
         guard !isCreating else { return }
+        // A saved Agent may still be resolving; sending now would launch it as a plain session.
+        if engineDecision.blocksLaunch {
+            error = agentResolution == .failed
+                ? "The saved Agent did not load. Choose Pi to start without it."
+                : "Loading your Agent. Try again in a moment."
+            return
+        }
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let transportText = PendingFileReference.appendReferenceBlock(

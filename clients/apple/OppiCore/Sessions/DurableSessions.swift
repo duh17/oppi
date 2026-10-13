@@ -17,9 +17,12 @@ enum DurableSessions {
         let showsPill: Bool
         /// Why this launch cannot be durable although durable is available.
         let classicReason: String?
+        /// The launch must not be sent yet: it may belong to a saved Agent that has not
+        /// been resolved, and a plain durable session would lose that Agent's definition.
+        let blocksLaunch: Bool
 
         /// The pill switches this launch between Durable and Classic.
-        var canToggle: Bool { showsPill && classicReason == nil }
+        var canToggle: Bool { showsPill && classicReason == nil && !blocksLaunch }
     }
 
     /// The server refuses a saved Agent launch with the durable engine
@@ -27,18 +30,45 @@ enum DurableSessions {
     /// Incognito sessions are not decided here: they never come from the composer.
     static let savedAgentClassicReason = "Saved Agents"
 
+    /// Whether the saved Agent a launch should use (a launch context's, or the remembered
+    /// one) has been applied. Until it is, the composer cannot tell a plain launch from an
+    /// Agent launch.
+    enum AgentResolution: Equatable, Sendable {
+        case resolved
+        /// The Agent list is loading, or reloading after a server change.
+        case pending
+        /// The Agent list failed to load. Stays blocked until the user clears the Agent.
+        case failed
+
+        var blockReason: String? {
+            switch self {
+            case .resolved: nil
+            case .pending: "Loading Agent"
+            case .failed: "Agent not loaded"
+            }
+        }
+    }
+
     static func launchDecision(
         experimentEnabled: Bool,
         serverOffersDurable: Bool,
         savedAgentSelected: Bool,
-        userChoseClassic: Bool
+        userChoseClassic: Bool,
+        agentResolution: AgentResolution = .resolved
     ) -> LaunchDecision {
         guard isAvailable(experimentEnabled: experimentEnabled, serverOffersDurable: serverOffersDurable) else {
-            return LaunchDecision(engine: .classic, showsPill: false, classicReason: nil)
+            return LaunchDecision(engine: .classic, showsPill: false, classicReason: nil, blocksLaunch: false)
+        }
+        if let reason = agentResolution.blockReason {
+            return LaunchDecision(engine: .classic, showsPill: true, classicReason: reason, blocksLaunch: true)
         }
         if savedAgentSelected {
-            return LaunchDecision(engine: .classic, showsPill: true, classicReason: savedAgentClassicReason)
+            return LaunchDecision(
+                engine: .classic, showsPill: true, classicReason: savedAgentClassicReason, blocksLaunch: false
+            )
         }
-        return LaunchDecision(engine: userChoseClassic ? .classic : .durable, showsPill: true, classicReason: nil)
+        return LaunchDecision(
+            engine: userChoseClassic ? .classic : .durable, showsPill: true, classicReason: nil, blocksLaunch: false
+        )
     }
 }

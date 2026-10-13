@@ -8,13 +8,15 @@ struct DurableSessionsTests {
         experiment: Bool,
         offered: Bool,
         savedAgent: Bool = false,
-        chose classic: Bool = false
+        chose classic: Bool = false,
+        agent resolution: DurableSessions.AgentResolution = .resolved
     ) -> DurableSessions.LaunchDecision {
         DurableSessions.launchDecision(
             experimentEnabled: experiment,
             serverOffersDurable: offered,
             savedAgentSelected: savedAgent,
-            userChoseClassic: classic
+            userChoseClassic: classic,
+            agentResolution: resolution
         )
     }
 
@@ -49,6 +51,23 @@ struct DurableSessionsTests {
             #expect(!agent.canToggle)
             #expect(agent.classicReason == DurableSessions.savedAgentClassicReason)
         }
+    }
+
+    @Test func aLaunchWhoseSavedAgentIsNotResolvedIsBlockedAndNeverDurable() {
+        for resolution in [DurableSessions.AgentResolution.pending, .failed] {
+            for chose in [false, true] {
+                let held = decide(experiment: true, offered: true, chose: chose, agent: resolution)
+                #expect(held.blocksLaunch, "\(resolution), chose classic \(chose)")
+                #expect(held.engine == .classic)
+                #expect(!held.canToggle)
+                #expect(held.classicReason == resolution.blockReason)
+            }
+        }
+        #expect(!decide(experiment: true, offered: true, agent: .resolved).blocksLaunch)
+        #expect(!decide(experiment: true, offered: true, savedAgent: true).blocksLaunch)
+        // Without durable there is nothing to protect, so the hold does not apply.
+        #expect(!decide(experiment: false, offered: true, agent: .pending).blocksLaunch)
+        #expect(!decide(experiment: true, offered: false, agent: .failed).blocksLaunch)
     }
 
     @Test func aClassicChoiceOrAgentChangesNothingWhenDurableIsUnavailable() {
