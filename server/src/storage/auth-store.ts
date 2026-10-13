@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 import { generateId } from "../id.js";
-import type { PushRegistration } from "../types.js";
+import type { PairingTokenOrigin, PushRegistration } from "../types.js";
 import type { ConfigStore } from "./config-store.js";
 
 /** Longest pairing invite life. Bounds how long a leaked single-use link can pair a device. */
@@ -42,6 +42,7 @@ export class AuthStore {
       token,
       pairingToken: undefined,
       pairingTokenExpiresAt: undefined,
+      pairingTokenOrigin: undefined,
       authDevices: (config.authDevices ?? []).map((device) => ({ ...device, revokedAt })),
       authAccessTokens: [],
       pushRegistrations: [],
@@ -49,15 +50,28 @@ export class AuthStore {
     return token;
   }
 
-  issuePairingToken(ttlMs: number = 90_000): string {
+  /**
+   * Replace the outstanding invite. `origin` records how it was minted (a `/pair/tailscale`
+   * proof or an owner invite) so pairing can decide whether an existing device must approve.
+   */
+  issuePairingToken(
+    ttlMs: number = 90_000,
+    origin: Omit<PairingTokenOrigin, "ttlMs"> = { method: "invite" },
+  ): string {
     // Reject before writing: an invalid ttl must not replace the outstanding invite.
     if (!Number.isFinite(ttlMs) || ttlMs > MAX_PAIRING_TOKEN_TTL_MS) {
       throw new Error("Pairing token ttl must be finite and at most 30d");
     }
     const pairingToken = AuthStore.generatePairingToken();
+    const effectiveTtlMs = Math.max(1_000, ttlMs);
     this.configStore.updateConfig({
       pairingToken,
-      pairingTokenExpiresAt: Date.now() + Math.max(1_000, ttlMs),
+      pairingTokenExpiresAt: Date.now() + effectiveTtlMs,
+      pairingTokenOrigin: {
+        method: origin.method,
+        ttlMs: effectiveTtlMs,
+        ...(origin.source ? { source: origin.source } : {}),
+      },
     });
     return pairingToken;
   }
@@ -67,6 +81,7 @@ export class AuthStore {
     this.configStore.updateConfig({
       pairingToken: undefined,
       pairingTokenExpiresAt: undefined,
+      pairingTokenOrigin: undefined,
     });
   }
 

@@ -142,6 +142,23 @@ addValid(
   "blocked-auth",
   base({ kind: "auth", title: "Sign-in Needed", body: "Waiting for you to sign in." }),
 );
+// Pairing events carry no sessionId.
+addValid("pairing-approval", {
+  v: 1,
+  ts: NOW - 5_000,
+  event: "pairing_approval",
+  approvalId: "pa_vector",
+  title: "Approve New Device?",
+  body: "iPad wants to pair (invite, 100.64.0.7).",
+});
+addValid("device-enrolled", {
+  v: 1,
+  ts: NOW - 5_000,
+  event: "device_enrolled",
+  deviceId: "dev_vector",
+  title: "New Device Paired",
+  body: "iPad paired (tailscale, chen@example.com).",
+});
 
 const invalid: Array<{ name: string; envelope: string; reason: string }> = [];
 function addInvalid(name: string, envelope: Buffer, reason: string): void {

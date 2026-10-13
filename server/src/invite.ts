@@ -1,7 +1,13 @@
 /** Invite generation — reusable by CLI (QR rendering, --json) and future Mac app. */
 
 import { sign } from "node:crypto";
-import type { InviteData, InvitePayloadV3, ServerConfig, SignedInviteEnvelopeV3 } from "./types.js";
+import type {
+  InviteData,
+  InvitePayloadV3,
+  PairingTokenOrigin,
+  ServerConfig,
+  SignedInviteEnvelopeV3,
+} from "./types.js";
 import { parsePublicUrl } from "./proxy-config.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
 import {
@@ -31,6 +37,8 @@ export interface GenerateInviteOptions {
   requestedName?: string;
   /** Pairing token TTL in ms. Defaults to 90 000 (90 seconds). */
   pairingTokenTtlMs?: number;
+  /** How the invite was minted. Defaults to an owner invite. */
+  pairingOrigin?: Omit<PairingTokenOrigin, "ttlMs">;
   /** Advertise hostOverride even when publicUrl is configured. */
   ignorePublicUrl?: boolean;
   /**
@@ -44,7 +52,7 @@ export interface InviteStorage {
   getConfig(): ServerConfig;
   getDataDir(): string;
   ensurePaired(): string;
-  issuePairingToken(ttlMs?: number): string;
+  issuePairingToken(ttlMs?: number, origin?: Omit<PairingTokenOrigin, "ttlMs">): string;
 }
 
 /**
@@ -80,6 +88,7 @@ export function generateInvite(
       scheme: "https",
       name: opts.requestedName?.trim() || shortHostLabel(publicUrl.host),
       pairingTokenTtlMs: opts.pairingTokenTtlMs,
+      pairingOrigin: opts.pairingOrigin,
     });
   }
 
@@ -136,6 +145,7 @@ export function generateInvite(
       scheme: "https",
       name,
       pairingTokenTtlMs: opts.pairingTokenTtlMs,
+      pairingOrigin: opts.pairingOrigin,
     });
   }
 
@@ -156,6 +166,7 @@ export function generateInvite(
     name,
     tlsCertFingerprint,
     pairingTokenTtlMs: opts.pairingTokenTtlMs,
+    pairingOrigin: opts.pairingOrigin,
   });
 }
 
@@ -168,9 +179,13 @@ function signInvite(
     name: string;
     tlsCertFingerprint?: string;
     pairingTokenTtlMs?: number;
+    pairingOrigin?: Omit<PairingTokenOrigin, "ttlMs">;
   },
 ): GeneratedInvite {
-  const pairingToken = storage.issuePairingToken(invite.pairingTokenTtlMs ?? 90_000);
+  const pairingToken = storage.issuePairingToken(
+    invite.pairingTokenTtlMs ?? 90_000,
+    invite.pairingOrigin,
+  );
   // Read back the stored deadline so output matches what pairing enforces.
   const expiresAtMs = storage.getConfig().pairingTokenExpiresAt;
   if (expiresAtMs === undefined) {

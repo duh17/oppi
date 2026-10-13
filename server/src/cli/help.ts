@@ -175,6 +175,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "The QR and link carry the same signed invite.",
       "Invites are single-use. Issuing a new invite replaces any outstanding one.",
       "Use a long --ttl only for asynchronous hand-offs such as App Review notes.",
+      "When another device is already paired, an invite with a --ttl over 90s needs approval on that device within 2 minutes of being used; every new device also alerts the paired devices.",
       "When publicUrl is set, the invite advertises that HTTPS origin and omits the origin TLS leaf pin.",
       "--host must not conflict with publicUrl.",
       "Use --show-token only for manual recovery; it exposes the owner token in the terminal.",
@@ -344,6 +345,14 @@ const HELP_TOPICS: HelpTopic[] = [
         name: "providerQuotas.openaiUseCodexPlan",
         summary:
           "boolean; show legacy Codex plan-wide usage on the OpenAI row (same account; restart)",
+      },
+      {
+        name: "auth.tailscalePairing",
+        summary: "boolean; allow same-user Tailscale pairing (default true; restart)",
+      },
+      {
+        name: "auth.module",
+        summary: "string; absolute path to an owner auth module (restart; fails closed)",
       },
       { name: "asr.backend", summary: "string; http" },
       { name: "asr.provider", summary: "string; http or xai" },

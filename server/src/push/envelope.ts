@@ -8,7 +8,7 @@
  */
 
 import { createHash, sign as signEd25519, type KeyObject } from "node:crypto";
-import type { ProgramStatusKind, PushEvent } from "../types.js";
+import type { ProgramStatusKind, SessionPushEvent } from "../types.js";
 import { HPKE_TAG_BYTES, HPKE_X25519_KEY_BYTES, hpkeSeal } from "./hpke.js";
 
 export const PUSH_ENVELOPE_VERSION = 0x01;
@@ -35,17 +35,24 @@ declare const sealedPushEnvelope: unique symbol;
 export type SealedPushEnvelope = string & { readonly [sealedPushEnvelope]: true };
 
 /** Decrypted push content (spec §2.4). */
-export interface PushPlaintext {
+export type PushPlaintext = {
   v: 1;
   ts: number;
-  event: PushEvent;
-  kind?: ProgramStatusKind;
-  sessionId: string;
-  workspaceId?: string;
   title: string;
   subtitle?: string;
   body: string;
-}
+} & PushSubject;
+
+/** What a push is about. Pairing events carry no `sessionId`. */
+export type PushSubject =
+  | {
+      event: SessionPushEvent;
+      kind?: ProgramStatusKind;
+      sessionId: string;
+      workspaceId?: string;
+    }
+  | { event: "pairing_approval"; approvalId: string }
+  | { event: "device_enrolled"; deviceId: string };
 
 /** `kid`: the first 16 bytes of SHA-256 of the raw X25519 public key, base64url. */
 export function pushKeyId(publicKey: Uint8Array): string {
@@ -79,7 +86,7 @@ export function encodePushPlaintextJSON(plaintext: PushPlaintext): Buffer {
       };
     } else if (candidate.subtitle !== undefined) {
       const { subtitle: _dropped, ...rest } = candidate;
-      candidate = rest;
+      candidate = rest as PushPlaintext;
     } else if (bodyPoints > 1) {
       candidate = { ...candidate, body: truncateCodePoints(candidate.body, bodyPoints - 1) };
     } else {

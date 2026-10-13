@@ -6,7 +6,9 @@ import { generateInvite } from "../invite.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "../security.js";
 import { createLogger } from "../logger.js";
 import { normalizeIp, trustConfigFromServerConfig } from "../proxy-config.js";
-import { isLocalRequest, resolveRequestProvenance } from "../request-trust.js";
+import { isLocalRequest, requestClientIp, resolveRequestProvenance } from "../request-trust.js";
+import { deviceKeyThumbprint, type PairingGrant } from "../device-pairing.js";
+import { normalizeDeviceName, parseDevicePublicKey } from "../storage/device-auth.js";
 import { inviteHostForTlsMode, proveSameTailscaleUser } from "../tailscale-whois.js";
 import { SourceRateLimiter } from "../source-rate-limit.js";
 import { EXTENSION_NATIVE_UI_SERVER_CAPABILITIES } from "../extension-ui-contract.js";
@@ -41,9 +43,13 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
   const pairingBlockedUntilBySource = new Map<string, number>();
   const challengeLimiter = new SourceRateLimiter(CHALLENGE_WINDOW_MS, CHALLENGE_MAX_PER_WINDOW);
   let tailscaleProofInFlight = 0;
-  function pairingSourceKey(req: IncomingMessage): string {
+  function currentTrustConfig(): ReturnType<typeof trustConfigFromServerConfig> {
     const config = typeof ctx.storage.getConfig === "function" ? ctx.storage.getConfig() : {};
-    return resolveRequestProvenance(req, trustConfigFromServerConfig(config)).clientIdentity;
+    return trustConfigFromServerConfig(config);
+  }
+
+  function pairingSourceKey(req: IncomingMessage): string {
+    return resolveRequestProvenance(req, currentTrustConfig()).clientIdentity;
   }
 
   function prunePairingLimiters(now: number): void {
@@ -117,6 +123,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       pairingToken?: string;
       devicePublicKey?: unknown;
       deviceName?: string;
+      credential?: unknown;
     }>(req);
     if (!parsed.ok) {
       helpers.error(res, parsed.status, parsed.error);
@@ -124,7 +131,8 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
     const body = parsed.body;
     const pairingToken = typeof body.pairingToken === "string" ? body.pairingToken.trim() : "";
-    if (!pairingToken) {
+    // Without an invite, only a loaded auth.module approver can admit the device.
+    if (!pairingToken && !ctx.pairing.customApproverAvailable) {
       helpers.error(res, 400, "pairingToken required");
       return;
     }
@@ -136,18 +144,147 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       return;
     }
 
-    const pairing = ctx.storage.enrollViaPairing(pairingToken, {
-      publicKey: body.devicePublicKey,
-      name: body.deviceName,
-    });
-    if (!pairing) {
+    // Checked before any approver runs, so a malformed key never burns the invite.
+    const publicKey = parseDevicePublicKey(body.devicePublicKey);
+    if (!publicKey) {
       recordPairingFailure(source, now);
-      helpers.error(res, 401, "Invalid or expired pairing token");
+      if (pairingToken) helpers.error(res, 401, "Invalid or expired pairing token");
+      else helpers.error(res, 400, "Invalid devicePublicKey");
       return;
+    }
+    const name = normalizeDeviceName(body.deviceName);
+    const clientIp = requestClientIp(req, currentTrustConfig());
+    let grant: PairingGrant;
+    if (pairingToken) {
+      const inviteGrant = ctx.pairing.approveInvite(pairingToken, clientIp);
+      if (!inviteGrant) {
+        recordPairingFailure(source, now);
+        helpers.error(res, 401, "Invalid or expired pairing token");
+        return;
+      }
+      grant = inviteGrant;
+    } else {
+      const decision = await ctx.pairing.approveCustom({
+        deviceName: name,
+        devicePublicKey: publicKey,
+        keyThumbprint: deviceKeyThumbprint(publicKey),
+        credential: body.credential,
+        ...(clientIp ? { clientIp } : {}),
+        headers: req.headers,
+      });
+      if (!decision.ok) {
+        recordPairingFailure(source, now);
+        log.warn("auth.custom_pairing_denied", { source });
+        helpers.error(res, 403, decision.reason ?? "pairing_denied");
+        return;
+      }
+      grant = decision.grant;
     }
 
     clearPairingFailures(source);
-    helpers.json(res, pairing);
+    const outcome = ctx.pairing.admit({ publicKey, name }, grant);
+    switch (outcome.kind) {
+      case "enrolled":
+        helpers.json(res, outcome.result);
+        return;
+      case "approval_required":
+        helpers.json(
+          res,
+          {
+            status: "approval_required",
+            approvalId: outcome.approvalId,
+            pendingToken: outcome.pendingToken,
+            expiresAt: outcome.expiresAt,
+          },
+          202,
+        );
+        return;
+      case "busy":
+        helpers.error(res, 429, "Too many pending pairing approvals");
+        return;
+    }
+  }
+
+  /** The device waiting for approval polls here; the first poll after approval enrolls it. */
+  async function handlePairApprovalStatus(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const source = pairingSourceKey(req);
+    const now = Date.now();
+    prunePairingLimiters(now);
+    if (isPairingRateLimited(source, now)) {
+      helpers.error(res, 429, "Too many invalid pairing attempts. Try again later.");
+      return;
+    }
+    const parsed = await parseBootstrapBody<{ approvalId?: unknown; pendingToken?: unknown }>(req);
+    if (!parsed.ok) {
+      helpers.error(res, parsed.status, parsed.error);
+      return;
+    }
+    const { approvalId, pendingToken } = parsed.body;
+    if (typeof approvalId !== "string" || !approvalId || typeof pendingToken !== "string") {
+      helpers.error(res, 400, "approvalId and pendingToken required");
+      return;
+    }
+    const status = ctx.pairing.status(approvalId, pendingToken);
+    switch (status.kind) {
+      case "pending":
+        helpers.json(res, { status: "pending", expiresAt: status.expiresAt }, 202);
+        return;
+      case "enrolled":
+        helpers.json(res, status.result);
+        return;
+      case "denied":
+        helpers.error(res, 403, "pairing_denied");
+        return;
+      case "expired":
+        helpers.error(res, 410, "pairing_expired");
+        return;
+      case "unknown":
+        recordPairingFailure(source, now);
+        helpers.error(res, 404, "unknown_approval");
+        return;
+    }
+  }
+
+  /** Approve or deny a waiting device. Device credentials only: the owner socket never approves. */
+  async function handleSettlePairingApproval(
+    req: IncomingMessage,
+    res: ServerResponse,
+    principal: RequestPrincipal | undefined,
+    approvalId: string,
+    action: "approve" | "deny",
+  ): Promise<void> {
+    if (!isDeviceAccessPrincipal(principal)) {
+      helpers.error(res, 403, "Pairing approval requires a paired device credential");
+      return;
+    }
+    if (action === "deny") {
+      if (!ctx.pairing.deny(approvalId, principal.deviceId)) {
+        helpers.error(res, 404, "unknown_approval");
+        return;
+      }
+      helpers.json(res, { ok: true });
+      return;
+    }
+    const body = await helpers.parseBody<{ signature?: unknown }>(req, {
+      maxBytes: AUTH_BOOTSTRAP_MAX_BYTES,
+    });
+    switch (ctx.pairing.approve(approvalId, principal.deviceId, body.signature)) {
+      case "approved":
+        helpers.json(res, { ok: true });
+        return;
+      case "bad_signature":
+        helpers.error(res, 401, "bad_signature");
+        return;
+      case "inactive_device":
+        helpers.error(res, 403, "Unknown or revoked device");
+        return;
+      case "not_found":
+        helpers.error(res, 404, "unknown_approval");
+        return;
+    }
   }
 
   async function handleTailscalePairInvite(
@@ -160,7 +297,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
 
     const config = ctx.storage.getConfig();
-    if (config.publicUrl) {
+    if (config.publicUrl || config.auth?.tailscalePairing === false) {
       helpers.error(res, 404, "Not found");
       return;
     }
@@ -239,6 +376,7 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
           {
             hostOverride: inviteHost,
             pairingTokenTtlMs: 90_000,
+            pairingOrigin: { method: "tailscale", source: proof.login },
             ignorePublicUrl: true,
             skipRenewal: true,
           },
@@ -494,10 +632,9 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       helpers.error(res, 400, "deviceId required");
       return;
     }
-    if (
-      challengeLimiter.tooMany(`ip:${source}`, now) ||
-      challengeLimiter.tooMany(`device:${deviceId}`, now)
-    ) {
+    // Per source only: a per-device key would let anyone who knows a device id fill it and
+    // block that device's own refresh.
+    if (challengeLimiter.tooMany(`ip:${source}`, now)) {
       helpers.error(res, 429, "Too many challenge requests");
       return;
     }
@@ -561,6 +698,15 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
       lastUsedAt: device.lastUsedAt,
       revokedAt: device.revokedAt,
       keyEnrolled: device.publicKey !== undefined,
+      ...(device.pairing
+        ? {
+            pairingMethod: device.pairing.method,
+            ...(device.pairing.source ? { pairingSource: device.pairing.source } : {}),
+            ...(device.pairing.approvedByDeviceId
+              ? { approvedByDeviceId: device.pairing.approvedByDeviceId }
+              : {}),
+          }
+        : {}),
     }));
     helpers.json(res, { devices });
   }
@@ -604,6 +750,25 @@ export function createIdentityRoutes(ctx: RouteContext, helpers: RouteHelpers): 
     }
     if (path === "/pair" && method === "POST") {
       await handlePair(req, res);
+      return true;
+    }
+    if (path === "/pair/approval-status" && method === "POST") {
+      await handlePairApprovalStatus(req, res);
+      return true;
+    }
+    if (path === "/auth/pairing-approvals" && method === "GET") {
+      helpers.json(res, { approvals: ctx.pairing.list() });
+      return true;
+    }
+    const approvalMatch = path.match(/^\/auth\/pairing-approvals\/([^/]+)\/(approve|deny)$/);
+    if (approvalMatch && method === "POST") {
+      await handleSettlePairingApproval(
+        req,
+        res,
+        principal,
+        decodeURIComponent(approvalMatch[1]),
+        approvalMatch[2] as "approve" | "deny",
+      );
       return true;
     }
     if (path === "/auth/challenge" && method === "POST") {

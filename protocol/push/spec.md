@@ -106,12 +106,36 @@ bytes `[0, 577)`. The signature covers the version, `kid`, `enc`, and `ct`.
 | --- | --- |
 | `v` | `1` |
 | `ts` | Server time in Unix milliseconds when sealed. |
-| `event` | `blocked`, `done`, `error`, or `ended` |
+| `event` | `blocked`, `done`, `error`, `ended`, `pairing_approval`, or `device_enrolled` |
 | `kind` | `blocked` only: `permission`, `question`, or `auth` |
-| `sessionId` | Session the push is about |
+| `sessionId` | Session the push is about; omitted for `pairing_approval` and `device_enrolled` |
 | `workspaceId` | Present when the session has a workspace |
+| `approvalId` | `pairing_approval` only: the pending approval (`pa_...`) |
+| `deviceId` | `device_enrolled` only: the newly paired device |
 | `title`, `body` | Display text |
 | `subtitle` | Session name; the server shortens it until the JSON fits 510 bytes, and drops it when nothing else fits |
+
+Pairing pushes carry no session:
+
+```json
+{
+  "v": 1,
+  "ts": 1760000000000,
+  "event": "pairing_approval",
+  "approvalId": "pa_123",
+  "title": "Approve New Device?",
+  "body": "iPad wants to pair (invite, 100.64.0.7)."
+}
+```
+
+`pairing_approval` goes to every active paired device with a push registration when a new
+device waits for approval: title `Approve New Device?`, body
+`<name> wants to pair (<method>, <source>).` `device_enrolled` goes to every other active
+paired device with a push registration after any device enrolls: title `New Device Paired`,
+body `<name> paired (<method>, <source>).`, and `ts` is the enrollment time. `method` is
+`invite`, `tailscale`, or `custom`; `source` is the client IP, the Tailscale login, or the
+custom approver's source, and the parenthesis holds only the method when there is none.
+Apps that predate these events show the fixed fallback for them.
 
 Receivers ignore unknown fields. There is no sequence number: the server keeps no per-push
 state, and replay protection uses the envelope's `enc` (§2.5 step 7).
@@ -167,6 +191,11 @@ plaintext.
 | `done` | Session Done | The run finished. |
 | `error` | Session Error | Open Oppi to review the session error. |
 | `ended` | Session Ended | The session ended. |
+| `pairing_approval` | Approve New Device? | A new device is waiting for your approval. |
+| `device_enrolled` | New Device Paired | A new device was paired with your server. |
+
+The pairing rows apply under App Lock or a server-scope lock; they have no workspace or
+session, so narrower scoped locks do not cover them.
 
 ## 3. Relay API v1
 
@@ -332,13 +361,17 @@ any field from a push that failed a check. Without Apple's
   write and asks the relay to delete the permission.
 - Events: `blocked` and `done` on program-status transitions, at most once a minute per
   session and kind, skipping devices that hold a live stream; `done` only for top-level
-  sessions; `error` and `ended` on lifecycle events.
+  sessions; `error` and `ended` on lifecycle events; `pairing_approval` when a pairing waits
+  for approval and `device_enrolled` after each enrollment (never to the new device). See
+  [onboarding](../../docs/onboarding.md) for when pairing needs approval.
 - Sends go to the primary; network errors, timeouts, and `5xx` move to the standby. A `410`
   from the primary removes the device's registration; a `410` from the standby does not,
   because a standby may not share the primary's permissions.
 - `collapseId` = base64url of the first 16 bytes of
-  `HMAC-SHA256(key = SHA-256(sendToken), "oppi-push-collapse-v1\n" + sessionId)`: stable
-  per device and session, unlinkable across devices.
+  `HMAC-SHA256(key = SHA-256(sendToken), "oppi-push-collapse-v1\n" + key)`, where `key` is the
+  `sessionId` for session events, `pairing:<approvalId>` for `pairing_approval`, and
+  `device:<deviceId>` for `device_enrolled`: stable per device and subject, unlinkable across
+  devices.
 - Fail closed: the relay client accepts only a sealed-envelope type that only the sealing
   function constructs. No code path builds an APNs payload or a relay body from plaintext.
 

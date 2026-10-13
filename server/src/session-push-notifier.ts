@@ -4,7 +4,7 @@ import type { PushNotification, PushSender } from "./push/push-sender.js";
 import type { ProgramStatusSync } from "./program-status.js";
 import type { SessionBroadcastEvent } from "./session-broadcast.js";
 import type { Storage } from "./storage.js";
-import type { Session } from "./types.js";
+import type { ProgramStatusKind, Session, SessionPushEvent } from "./types.js";
 
 const log = createLogger({ base: { component: "session_push_notifier" } });
 const GENERIC_SESSION_ERROR_REASON = "Open Oppi to review the session error.";
@@ -18,7 +18,12 @@ const BLOCKED_PRESENTATION = {
   auth: { title: "Sign-in Needed", body: "Waiting for you to sign in." },
 } as const;
 
-type PushEventContent = Pick<PushNotification, "event" | "kind" | "title" | "body">;
+type PushEventContent = {
+  event: SessionPushEvent;
+  kind?: ProgramStatusKind;
+  title: string;
+  body: string;
+};
 
 export interface SessionPushNotifierOptions {
   /** True while this paired device holds a live app-event or focused session stream. */

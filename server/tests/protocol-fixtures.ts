@@ -813,8 +813,7 @@ const SERVER_MESSAGE_ORDER = [
   "dictation_final",
   "dictation_error",
 ] as const satisfies readonly (
-  | keyof typeof TYPED_CANONICAL_SERVER_MESSAGES
-  | keyof typeof SERVER_MESSAGE_COMPATIBILITY_EXAMPLES
+  keyof typeof TYPED_CANONICAL_SERVER_MESSAGES | keyof typeof SERVER_MESSAGE_COMPATIBILITY_EXAMPLES
 )[];
 
 type ServerMessageFixtureKey =
@@ -1003,6 +1002,25 @@ const APP_EVENT_CANONICAL_EXAMPLES = {
     emittedAt: appEventEmittedAt,
     reason: "mutation_tool",
   },
+  pairing_approval_requested: {
+    type: "pairing_approval_requested",
+    emittedAt: appEventEmittedAt,
+    approval: {
+      id: "pa_fixture",
+      deviceName: "iPad",
+      method: "invite",
+      source: "100.64.0.7",
+      requestedAt: appEventEmittedAt,
+      expiresAt: appEventEmittedAt + 120_000,
+      keyThumbprint: "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+    },
+  },
+  pairing_approval_settled: {
+    type: "pairing_approval_settled",
+    emittedAt: appEventEmittedAt,
+    approvalId: "pa_fixture",
+    outcome: "approved",
+  },
 } satisfies Record<string, AppEventMessage>;
 
 type TypedCanonicalAppEventMessageType =
@@ -1025,7 +1043,12 @@ const APP_EVENT_COMPATIBILITY_EXAMPLES = {
     ...appEventSessionBase,
     summary: {
       ...appEventSummary,
-      programStatus: { state: "paused", kind: "mystery", message: "Later", since: 1_791_650_009_000 },
+      programStatus: {
+        state: "paused",
+        kind: "mystery",
+        message: "Later",
+        since: 1_791_650_009_000,
+      },
     },
   },
   session_summary_icon_malformed: {
@@ -1070,9 +1093,10 @@ const APP_EVENT_MESSAGE_ORDER = [
   "extension_ui_settled",
   "extension_ui_notification",
   "workspace_git_changed",
+  "pairing_approval_requested",
+  "pairing_approval_settled",
 ] as const satisfies readonly (
-  | keyof typeof APP_EVENT_CANONICAL_EXAMPLES
-  | keyof typeof APP_EVENT_COMPATIBILITY_EXAMPLES
+  keyof typeof APP_EVENT_CANONICAL_EXAMPLES | keyof typeof APP_EVENT_COMPATIBILITY_EXAMPLES
 )[];
 
 type AppEventMessageFixtureKey =

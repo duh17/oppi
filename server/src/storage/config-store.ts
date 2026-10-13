@@ -15,7 +15,7 @@ import {
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { createLogger } from "../logger.js";
 import {
   CLOUDFLARE_TLS_MODE_MIGRATION,
@@ -23,7 +23,14 @@ import {
   parseTrustedPeers,
 } from "../proxy-config.js";
 import { parseRelayOrigins } from "../push/relay-origin.js";
-import type { DevicePublicKey, PushConfig, PushRegistration, ServerConfig } from "../types.js";
+import type {
+  DevicePairingInfo,
+  DevicePublicKey,
+  PairingTokenOrigin,
+  PushConfig,
+  PushRegistration,
+  ServerConfig,
+} from "../types.js";
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".config", "oppi");
 const CONFIG_VERSION = 2;
@@ -47,6 +54,74 @@ function normalizeDevicePublicKey(value: unknown): DevicePublicKey | undefined {
   if (typeof value.x !== "string" || value.x.trim().length === 0) return undefined;
   if (typeof value.y !== "string" || value.y.trim().length === 0) return undefined;
   return { kty: "EC", crv: "P-256", x: value.x, y: value.y };
+}
+
+const PAIRING_METHODS = new Set<string>(["invite", "tailscale", "custom"]);
+
+function optionalNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function normalizeDevicePairingInfo(value: unknown): DevicePairingInfo | undefined {
+  if (!isRecord(value) || typeof value.method !== "string") return undefined;
+  if (!PAIRING_METHODS.has(value.method)) return undefined;
+  const source = optionalNonEmptyString(value.source);
+  const approvedByDeviceId = optionalNonEmptyString(value.approvedByDeviceId);
+  return {
+    method: value.method as DevicePairingInfo["method"],
+    ...(source ? { source } : {}),
+    ...(approvedByDeviceId ? { approvedByDeviceId } : {}),
+  };
+}
+
+function normalizePairingTokenOrigin(value: unknown): PairingTokenOrigin | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.method !== "invite" && value.method !== "tailscale") return undefined;
+  if (typeof value.ttlMs !== "number" || !Number.isFinite(value.ttlMs)) return undefined;
+  const source = optionalNonEmptyString(value.source);
+  return { method: value.method, ttlMs: value.ttlMs, ...(source ? { source } : {}) };
+}
+
+/**
+ * Invalid values fail safe instead of falling back to the default: a malformed
+ * `tailscalePairing` turns Tailscale pairing off, and a malformed `module` stays configured
+ * so the server's module loader refuses it and network requests answer 503.
+ */
+function normalizeAuthConfig(
+  value: unknown,
+  errors: string[],
+  warnings: string[],
+): ServerConfig["auth"] {
+  if (!isRecord(value)) {
+    errors.push("config.auth: expected object");
+    return undefined;
+  }
+  const auth: NonNullable<ServerConfig["auth"]> = {};
+  for (const key of Object.keys(value)) {
+    if (key !== "tailscalePairing" && key !== "module") {
+      errors.push(`config.auth.${key}: unknown key`);
+    }
+  }
+  if ("tailscalePairing" in value) {
+    if (typeof value.tailscalePairing === "boolean") {
+      auth.tailscalePairing = value.tailscalePairing;
+    } else {
+      errors.push("config.auth.tailscalePairing: expected boolean");
+      auth.tailscalePairing = false;
+    }
+  }
+  if ("module" in value) {
+    if (typeof value.module === "string") {
+      auth.module = value.module;
+      if (!isAbsolute(value.module)) {
+        warnings.push("config.auth.module: must be an absolute path; the server will refuse it");
+      }
+    } else {
+      errors.push("config.auth.module: expected absolute path string");
+      auth.module = JSON.stringify(value.module) ?? "invalid";
+    }
+  }
+  return Object.keys(auth).length > 0 ? auth : undefined;
 }
 
 function normalizePushRegistration(value: unknown): PushRegistration | undefined {
@@ -163,6 +238,8 @@ function normalizeConfig(
     "token",
     "pairingToken",
     "pairingTokenExpiresAt",
+    "pairingTokenOrigin",
+    "auth",
     "authDevices",
     "authAccessTokens",
     "push",
@@ -561,6 +638,17 @@ function normalizeConfig(
     config.pairingTokenExpiresAt = obj.pairingTokenExpiresAt;
   }
 
+  // The origin belongs to the outstanding invite; without one it is stale.
+  if (config.pairingToken && "pairingTokenOrigin" in obj) {
+    const origin = normalizePairingTokenOrigin(obj.pairingTokenOrigin);
+    if (origin) config.pairingTokenOrigin = origin;
+  }
+
+  if ("auth" in obj) {
+    const auth = normalizeAuthConfig(obj.auth, errors, warnings);
+    if (auth) config.auth = auth;
+  }
+
   if ("authDevices" in obj && Array.isArray(obj.authDevices)) {
     config.authDevices = (obj.authDevices as unknown[]).flatMap((value) => {
       if (!isRecord(value)) return [];
@@ -581,6 +669,7 @@ function normalizeConfig(
           : undefined;
       const publicKey = normalizeDevicePublicKey(value.publicKey);
       if (!publicKey) return [];
+      const pairing = normalizeDevicePairingInfo(value.pairing);
       return [
         {
           id: value.id,
@@ -590,6 +679,7 @@ function normalizeConfig(
           createdAt,
           ...(lastUsedAt !== undefined ? { lastUsedAt } : {}),
           ...(revokedAt !== undefined ? { revokedAt } : {}),
+          ...(pairing ? { pairing } : {}),
         },
       ];
     });

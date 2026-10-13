@@ -37,15 +37,40 @@ export interface DevicePublicKey {
   y: string;
 }
 
+/** How a device got its pairing approved: a `pt_` invite, a same-user Tailscale invite, or `auth.module`. */
+export type PairingMethod = "invite" | "tailscale" | "custom";
+
+/** Enrollment facts kept with the device record. Absent on devices paired before they existed. */
+export interface DevicePairingInfo {
+  method: PairingMethod;
+  /** Client IP, or the Tailscale login for `tailscale`, or the custom approver's `source`. */
+  source?: string;
+  /** Set when an existing device approved this pairing. */
+  approvedByDeviceId?: string;
+}
+
 /** Per-device identity stored server-side. Only the public key, never a private key. */
 export interface DeviceRecord {
   id: string;
   name: string;
   publicKey: DevicePublicKey;
   scope: DeviceScope;
+  /** Enrollment time. */
   createdAt: number;
   lastUsedAt?: number;
   revokedAt?: number;
+  pairing?: DevicePairingInfo;
+}
+
+/**
+ * Where the outstanding `pt_` invite came from. Stored next to `pairingToken` and cleared with it:
+ * the approval policy needs the issued TTL and whether `/pair/tailscale` minted it.
+ */
+export interface PairingTokenOrigin {
+  method: "invite" | "tailscale";
+  ttlMs: number;
+  /** Tailscale login for `tailscale`. */
+  source?: string;
 }
 
 /** Short-lived access token stored hashed at rest. The server is the only verifier. */
@@ -124,6 +149,18 @@ export interface ServerConfig {
   // One-time pairing token bootstrap state
   pairingToken?: string;
   pairingTokenExpiresAt?: number;
+  pairingTokenOrigin?: PairingTokenOrigin;
+
+  /** Pairing and network auth policy. Requires a server restart. */
+  auth?: {
+    /** `false` turns off `POST /pair/tailscale` (same-user Tailscale pairing). Default true. */
+    tailscalePairing?: boolean;
+    /**
+     * Absolute path to an owner ES module exporting `approvePairing` and/or `gate`.
+     * A module that fails to load makes every network request answer 503.
+     */
+    module?: string;
+  };
   // Device-key auth state (issued during pairing)
   authDevices?: DeviceRecord[];
   authAccessTokens?: AccessTokenRecord[];

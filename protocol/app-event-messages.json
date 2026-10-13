@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical AppEventMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 23
+    "messageCount": 25
   },
   "messages": {
     "app_events_connected": {
@@ -539,6 +539,25 @@
       "sessionId": "sess-1",
       "emittedAt": 1791650100000,
       "reason": "mutation_tool"
+    },
+    "pairing_approval_requested": {
+      "type": "pairing_approval_requested",
+      "emittedAt": 1791650100000,
+      "approval": {
+        "id": "pa_fixture",
+        "deviceName": "iPad",
+        "method": "invite",
+        "source": "100.64.0.7",
+        "requestedAt": 1791650100000,
+        "expiresAt": 1791650220000,
+        "keyThumbprint": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs"
+      }
+    },
+    "pairing_approval_settled": {
+      "type": "pairing_approval_settled",
+      "emittedAt": 1791650100000,
+      "approvalId": "pa_fixture",
+      "outcome": "approved"
     }
   }
 }

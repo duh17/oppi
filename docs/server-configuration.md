@@ -179,6 +179,8 @@ Pi's host MCP commands (`pi mcp list`, `login`, `logout`), which the MCP Servers
 | `extensions.voice.defaultVoiceId`       | Default voice id                                                    |
 | `images.autoResize`                     | Client image preprocessing preference                               |
 | `providerQuotas.openaiUseCodexPlan`     | Opt in to legacy Codex plan-wide usage on the OpenAI row; same account required (default `false`; restart; see [provider quotas](provider-quotas.md)) |
+| `auth.tailscalePairing`                 | Same-user Tailscale pairing (`POST /pair/tailscale`); `false` turns it off (default `true`; restart; see [onboarding](onboarding.md#turn-off-tailscale-pairing)) |
+| `auth.module`                           | Absolute path to an owner auth module (restart; see [Auth module](#auth-module)) |
 | `autoTitle.enabled` / `autoTitle.model` | Automatic session titles                                            |
 
 After config changes that need a restart:
@@ -214,6 +216,32 @@ Each list runs one live probe in its own folder (`GET /mcp/scopes/{scopeId}/serv
 Select a server to see its tools and errors, enable or disable it, change exposure, sign in or out, or remove it. Use **+** to add a URL or command server to the list you are viewing. Use `${NAME}` references for headers, environment variables, and client secrets; literal values and URL query values are redacted when read back. Command arguments are shown as stored: keep secrets in `${NAME}` environment references, not arguments. Adding an existing name in the same scope is rejected; remove it first to add a replacement. Configuration changes apply to new sessions or `/reload`.
 
 For OAuth, open the sign-in page in Safari. After approval, Safari might fail to load the loopback callback. Copy the full `http://127.0.0.1:<port>/callback?...` URL from Safari and paste it into Oppi. Oppi sends it only to this flow's waiting host listener. **Close**, returning from the server detail, and opening another sidebar item and coming back keep the flow available through **Continue Sign-In** and **Cancel Sign-In** on any MCP Servers list: the host reports its active sign-in with every scope's list. While a sign-in is active the list shows the last live probe (Refresh does not probe, so it cannot disturb the credential file the sign-in is writing) and add, remove, enable, exposure, and sign-out changes are refused until the sign-in ends. **Cancel Sign-In** stops it. A browser on the host can also complete the callback directly. OAuth credentials stay in Pi's host-side credential store.
+
+## Auth module
+
+`auth.module` names an ES module, by absolute path, that adds owner policy to network access. It exports at least one of these functions; each may be async:
+
+```js
+// Admit or refuse every network request (HTTP, including /health and pairing, and every
+// WebSocket upgrade) before the device token is checked. The owner Unix socket skips it.
+export function gate(req) {
+  // req: { transport: "http" | "ws", method, path, headers, clientIp? }
+  return req.headers["cf-access-jwt-assertion"] ? { allow: true } : { allow: false, status: 403, reason: "Forbidden" };
+}
+
+// Approve a pairing that has no invite: POST /pair with { devicePublicKey, deviceName, credential }.
+export async function approvePairing(req) {
+  // req: { method: "custom", deviceName, devicePublicKey, keyThumbprint, credential, clientIp?, headers }
+  return req.credential === process.env.MY_PAIRING_SECRET
+    ? { allow: true, source: "my-sso" }
+    : { allow: false, reason: "bad credential" };
+}
+```
+
+- A refused gate answers `status` (default `403`) with `{"error": reason}` (default `Forbidden`). A gate that throws answers `403`.
+- An `approvePairing` that throws or does not return `{ allow: true }` denies with `403`. An allowed custom pairing still alerts the other devices and, once another device is paired, waits for approval on one of them ([onboarding](onboarding.md#approving-a-new-device)).
+- The module loads once at startup; restart to change it. If it cannot load (missing file, import error, a relative path, no `gate` or `approvePairing`, or an export that is not a function), the server keeps running but every network request answers `503 {"error":"auth_module_unavailable"}` and the error log shows `auth.module_load_failed`. It never falls back to running without the module. The owner Unix socket and `oppi` CLI keep working, so you can fix the path.
+- Device keys, access tokens, refresh, revocation, and owner Unix-socket auth are not pluggable.
 
 ## Updating the server
 

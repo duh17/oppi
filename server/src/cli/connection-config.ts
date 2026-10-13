@@ -7,7 +7,7 @@ import {
   DEFAULT_DATA_DIR,
   type ConfigValidationResult,
 } from "../storage/config-store.js";
-import type { ServerConfig } from "../types.js";
+import type { PairingTokenOrigin, ServerConfig } from "../types.js";
 import type { LocalApiConnection } from "./local-api-client.js";
 
 export interface CliConnectionConfig extends LocalApiConnection {
@@ -21,7 +21,7 @@ export interface CliConfigStorage extends CliConnectionConfig {
   mutateConfig(mutator: (latest: ServerConfig) => Partial<ServerConfig>): ServerConfig;
   ensurePaired(): string;
   rotateToken(): string;
-  issuePairingToken(ttlMs?: number): string;
+  issuePairingToken(ttlMs?: number, origin?: Omit<PairingTokenOrigin, "ttlMs">): string;
 }
 
 /**
@@ -127,8 +127,8 @@ export class FileCliConfigStorage implements CliConfigCommandStorage {
     return this.authStore.rotateToken();
   }
 
-  issuePairingToken(ttlMs?: number): string {
-    return this.authStore.issuePairingToken(ttlMs);
+  issuePairingToken(ttlMs?: number, origin?: Omit<PairingTokenOrigin, "ttlMs">): string {
+    return this.authStore.issuePairingToken(ttlMs, origin);
   }
 
   getDefaultConfig(): ServerConfig {

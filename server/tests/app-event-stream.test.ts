@@ -122,6 +122,8 @@ describe("AppEventMessage protocol", () => {
       "extension_ui_settled",
       "extension_ui_notification",
       "workspace_git_changed",
+      "pairing_approval_requested",
+      "pairing_approval_settled",
     ]);
 
     for (const type of APP_EVENT_ALLOWED_TYPES) {

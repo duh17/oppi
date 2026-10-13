@@ -6,9 +6,15 @@ import {
   verify as cryptoVerify,
   type JsonWebKey,
 } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
 import { generateId } from "../id.js";
-import type { AccessTokenRecord, DevicePublicKey, DeviceRecord } from "../types.js";
+import type {
+  AccessTokenRecord,
+  DevicePairingInfo,
+  DevicePublicKey,
+  DeviceRecord,
+  PairingTokenOrigin,
+} from "../types.js";
+import { MAX_PAIRING_TOKEN_TTL_MS } from "./auth-store.js";
 import type { ConfigStore } from "./config-store.js";
 
 export const REFRESH_AUDIENCE = "oppi:refresh:v1";
@@ -24,8 +30,6 @@ export const MAX_ACTIVE_ACCESS_TOKENS_PER_DEVICE = 8;
 export const MAX_REFRESHES_PER_MINUTE_PER_DEVICE = 12;
 
 type ChallengeNonceState = { deviceId: string; expiresAt: number; used: boolean };
-
-type PairingTokenValidation = { ok: true } | { ok: false; status: 400 | 401; error: string };
 
 export type AccessTokenValidation =
   | { ok: true; deviceId: string; scope: DeviceRecord["scope"]; expiresAt: number }
@@ -86,6 +90,22 @@ function importDevicePublicKey(publicKey: DevicePublicKey): ReturnType<typeof cr
     key: publicKey as JsonWebKey,
     format: "jwk",
   });
+}
+
+/** The canonical P-256 key a pairing request offers, or null when it is not a usable key. */
+export function parseDevicePublicKey(value: unknown): DevicePublicKey | null {
+  if (!isDevicePublicKey(value)) return null;
+  const publicKey: DevicePublicKey = { kty: "EC", crv: "P-256", x: value.x, y: value.y };
+  try {
+    importDevicePublicKey(publicKey);
+  } catch {
+    return null;
+  }
+  return publicKey;
+}
+
+export function normalizeDeviceName(value: unknown): string {
+  return typeof value === "string" && value.trim() ? value.trim() : "Device";
 }
 
 function derLength(length: number): Buffer {
@@ -169,66 +189,66 @@ export class DeviceAuthStore {
     return randomBytes(32).toString("base64url");
   }
 
-  private reloadPairingFromDisk(): void {
-    try {
-      const path = this.configStore.getConfigPath();
-      if (!existsSync(path)) return;
-      const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-      const config = this.configStore.getConfig();
-      if (typeof raw.pairingToken === "string") {
-        config.pairingToken = raw.pairingToken;
-        config.pairingTokenExpiresAt =
-          typeof raw.pairingTokenExpiresAt === "number" ? raw.pairingTokenExpiresAt : undefined;
-      } else {
-        config.pairingToken = undefined;
-        config.pairingTokenExpiresAt = undefined;
+  /**
+   * Validate and consume the outstanding `pt_` invite in one locked write (reloaded from disk,
+   * so a CLI-minted invite counts). Returns how the invite was minted, or null when the
+   * candidate is wrong or expired. An invite from before origins were recorded reports the
+   * longest TTL, so it is treated as a long-lived invite.
+   */
+  consumePairingToken(candidate: string): PairingTokenOrigin | null {
+    let origin: PairingTokenOrigin | null = null;
+    this.configStore.mutate((config) => {
+      if (!config.pairingToken || !secureTokenEquals(candidate, config.pairingToken)) return {};
+      if (
+        typeof config.pairingTokenExpiresAt === "number" &&
+        Date.now() > config.pairingTokenExpiresAt
+      ) {
+        return {};
       }
-    } catch {
-      // Another process may be writing config; the in-memory state is safer.
-    }
+      origin = config.pairingTokenOrigin ?? { method: "invite", ttlMs: MAX_PAIRING_TOKEN_TTL_MS };
+      return {
+        pairingToken: undefined,
+        pairingTokenExpiresAt: undefined,
+        pairingTokenOrigin: undefined,
+      };
+    });
+    return origin;
   }
 
-  private validatePairingToken(
-    candidate: string,
-    config: {
-      pairingToken?: string;
-      pairingTokenExpiresAt?: number;
-    } = this.configStore.getConfig(),
-  ): PairingTokenValidation {
-    if (!config.pairingToken || !secureTokenEquals(candidate, config.pairingToken)) {
-      return { ok: false, status: 401, error: "Invalid or expired pairing token" };
-    }
-    if (
-      typeof config.pairingTokenExpiresAt === "number" &&
-      Date.now() > config.pairingTokenExpiresAt
-    ) {
-      return { ok: false, status: 401, error: "Invalid or expired pairing token" };
-    }
-    return { ok: true };
-  }
-
+  /**
+   * Consume an invite and enroll without the approval policy. Storage-level primitive for
+   * fixtures and the E2E harness; network pairing goes through `DevicePairing`.
+   */
   enrollViaPairing(
     candidate: string,
     deviceInput: { publicKey: unknown; name?: unknown },
   ): EnrollResult | null {
-    if (!isDevicePublicKey(deviceInput.publicKey)) return null;
-    try {
-      importDevicePublicKey(deviceInput.publicKey);
-    } catch {
-      return null;
-    }
+    const publicKey = parseDevicePublicKey(deviceInput.publicKey);
+    if (!publicKey) return null;
+    const origin = this.consumePairingToken(candidate);
+    if (!origin) return null;
+    return this.enrollDevice({
+      publicKey,
+      name: normalizeDeviceName(deviceInput.name),
+      pairing: { method: origin.method, ...(origin.source ? { source: origin.source } : {}) },
+    });
+  }
 
+  /** Store a new device and issue its first access token and refresh challenge. */
+  enrollDevice(input: {
+    publicKey: DevicePublicKey;
+    name: string;
+    pairing: DevicePairingInfo;
+  }): EnrollResult {
     const now = Date.now();
     const device: DeviceRecord = {
       id: DeviceAuthStore.generateDeviceId(),
-      name:
-        typeof deviceInput.name === "string" && deviceInput.name.trim()
-          ? deviceInput.name.trim()
-          : "Device",
-      publicKey: deviceInput.publicKey,
+      name: input.name,
+      publicKey: input.publicKey,
       scope: "device",
       createdAt: now,
       lastUsedAt: now,
+      pairing: input.pairing,
     };
     const accessToken = DeviceAuthStore.generateAccessToken();
     const access: AccessTokenRecord = {
@@ -240,22 +260,13 @@ export class DeviceAuthStore {
       expiresAt: now + ACCESS_TOKEN_TTL_MS,
       lastUsedAt: now,
     };
-    let accepted = false;
-    this.configStore.mutate((config) => {
-      this.reloadPairingFromDisk();
-      if (!this.validatePairingToken(candidate, config).ok) return {};
-      accepted = true;
-      return {
-        pairingToken: undefined,
-        pairingTokenExpiresAt: undefined,
-        authDevices: [...(config.authDevices ?? []), device],
-        authAccessTokens: this.unexpiredAccessTokens(
-          [...(config.authAccessTokens ?? []), access],
-          now,
-        ),
-      };
-    });
-    if (!accepted) return null;
+    this.configStore.mutate((config) => ({
+      authDevices: [...(config.authDevices ?? []), device],
+      authAccessTokens: this.unexpiredAccessTokens(
+        [...(config.authAccessTokens ?? []), access],
+        now,
+      ),
+    }));
     const refreshChallenge = this.issueChallenge(device.id);
     if (!refreshChallenge) throw new Error("failed to issue refresh challenge");
     return {
@@ -273,18 +284,20 @@ export class DeviceAuthStore {
     if (!device || device.revokedAt !== undefined || !device.publicKey) return null;
 
     const now = Date.now();
-    const liveForDevice: Array<{ nonce: string; expiresAt: number }> = [];
+    // Map order is issue order, so the first live nonces are the device's oldest.
+    const liveForDevice: string[] = [];
     for (const [nonce, state] of this.challenges) {
       if (state.used || now - CLOCK_SKEW_MS > state.expiresAt) {
         this.challenges.delete(nonce);
         continue;
       }
-      if (state.deviceId === deviceId) {
-        liveForDevice.push({ nonce, expiresAt: state.expiresAt });
-      }
+      if (state.deviceId === deviceId) liveForDevice.push(nonce);
     }
-    if (liveForDevice.length >= MAX_CHALLENGES_PER_DEVICE) {
-      return null;
+    // Anyone who knows a device id can ask for its challenges. Evicting the oldest instead of
+    // refusing keeps the real device's newest challenge usable during such a flood.
+    const excess = liveForDevice.length - MAX_CHALLENGES_PER_DEVICE + 1;
+    for (const nonce of liveForDevice.slice(0, Math.max(0, excess))) {
+      this.challenges.delete(nonce);
     }
 
     const nonce = DeviceAuthStore.generateNonce();

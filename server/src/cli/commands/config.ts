@@ -70,6 +70,14 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
     type: "boolean",
     desc: "Show legacy Codex plan-wide usage on the official OpenAI row (same account/workspace; default false; restart)",
   },
+  "auth.tailscalePairing": {
+    type: "boolean",
+    desc: "Allow same-user Tailscale pairing (POST /pair/tailscale; default true; restart)",
+  },
+  "auth.module": {
+    type: "string",
+    desc: "Absolute path to an owner auth module exporting approvePairing and/or gate (restart; a load failure makes network requests answer 503)",
+  },
   push: { type: "json", desc: "Push config JSON object" },
   "push.mode": {
     type: "string",

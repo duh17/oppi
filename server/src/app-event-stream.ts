@@ -9,9 +9,12 @@ import { buildSessionSummary, sessionSummaryFingerprint } from "./session-summar
 import { startServerPing } from "./stream.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import type { Storage } from "./storage.js";
+import type { PairingApprovalEvents } from "./device-pairing.js";
 import type {
   AppEventMessage,
   AppEventSessionLifecycleType,
+  PairingApprovalOutcome,
+  PendingPairingApproval,
   ServerMessage,
   Session,
   SessionSummary,
@@ -39,6 +42,8 @@ export const APP_EVENT_ALLOWED_TYPES = [
   "extension_ui_settled",
   "extension_ui_notification",
   "workspace_git_changed",
+  "pairing_approval_requested",
+  "pairing_approval_settled",
 ] as const satisfies readonly AppEventMessage["type"][];
 
 export const APP_EVENT_CONNECTION_TYPES = [
@@ -162,7 +167,7 @@ function notificationCoalescingKey(
   }
 }
 
-export class AppEventStreamMux implements AppEventEmitter {
+export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents {
   private connectionSeq = 0;
   private subscribers = new Set<(message: AppEventMessage) => void>();
   private lastSummaryFingerprintBySession = new Map<string, string>();
@@ -309,6 +314,14 @@ export class AppEventStreamMux implements AppEventEmitter {
       return;
     }
     this.emitSessionSummary(session);
+  }
+
+  emitPairingApprovalRequested(approval: PendingPairingApproval): void {
+    this.emit({ type: "pairing_approval_requested", emittedAt: this.now(), approval });
+  }
+
+  emitPairingApprovalSettled(approvalId: string, outcome: PairingApprovalOutcome): void {
+    this.emit({ type: "pairing_approval_settled", emittedAt: this.now(), approvalId, outcome });
   }
 
   emitStopConfirmed(session: Session, source = "user", reason?: string): void {

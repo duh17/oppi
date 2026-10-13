@@ -63,6 +63,19 @@ export function isSecureNetworkRequest(
 }
 
 /**
+ * The caller's IP for display and the auth module: the single overwritten
+ * `X-Forwarded-For` from a trusted proxy, otherwise the socket peer.
+ */
+export function requestClientIp(
+  req: IncomingMessage,
+  config: RequestTrustConfig,
+): string | undefined {
+  const provenance = resolveRequestProvenance(req, config);
+  if (provenance.clientIdentity.startsWith("xff:")) return provenance.clientIdentity.slice(4);
+  return provenance.socketPeer ?? undefined;
+}
+
+/**
  * Parse an HTTP request-target against a constant local base.
  * Host is not part of path routing; Origin comparison validates it separately.
  */

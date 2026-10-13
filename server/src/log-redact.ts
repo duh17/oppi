@@ -14,6 +14,7 @@ const SENSITIVE_KEY =
   /(?:^|[_-])(authorization|auth|cookie|token|secret|password|passwd|api[_-]?key|access[_-]?key|private[_-]?key|refresh[_-]?token|client[_-]?secret)(?:$|[_-])/i;
 
 const SENSITIVE_EXACT_NORMALIZED_KEYS = new Set([
+  "approvedby",
   "authdevicetokens",
   "device",
   "deviceid",

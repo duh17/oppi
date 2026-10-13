@@ -145,9 +145,8 @@ describe("identity module", () => {
 
   it("validates POST /pair body", async () => {
     const ctx = {
-      storage: {
-        enrollViaPairing: vi.fn(() => null),
-      },
+      storage: {},
+      pairing: { customApproverAvailable: false },
     } as unknown as RouteContext;
 
     const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
@@ -166,50 +165,11 @@ describe("identity module", () => {
     expect(JSON.parse(res.body)).toEqual({ error: "pairingToken required" });
   });
 
-  it("enrolls an HTTPS device key", async () => {
-    const enrollViaPairing = vi.fn(() => ({
-      deviceId: "dev_bound",
-      accessToken: "at_bound",
-      expiresAt: 123,
-      refreshChallenge: { nonce: "n", audience: "oppi:refresh:v1", expiresAt: 456 },
-    }));
+  it("rejects pairing requests that omit a device public key without consuming the invite", async () => {
+    const approveInvite = vi.fn();
     const ctx = {
-      storage: { enrollViaPairing },
-    } as unknown as RouteContext;
-
-    const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
-    const res = makeResponse();
-
-    const handled = await dispatch({
-      method: "POST",
-      path: "/pair",
-      url: new URL("https://paired.example/pair"),
-      req: makeRequest({
-        pairingToken: "pt_dual",
-        devicePublicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" },
-      }) as never,
-      res: res as never,
-    });
-
-    expect(handled).toBe(true);
-    expect(enrollViaPairing).toHaveBeenCalledWith("pt_dual", {
-      publicKey: { kty: "EC", crv: "P-256", x: "x", y: "y" },
-      name: undefined,
-    });
-    expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({
-      deviceId: "dev_bound",
-      accessToken: "at_bound",
-      expiresAt: 123,
-      refreshChallenge: { nonce: "n", audience: "oppi:refresh:v1", expiresAt: 456 },
-    });
-  });
-
-  it("rejects pairing requests that omit a device public key without issuing dt_", async () => {
-    const consumePairingToken = vi.fn(() => ({ deviceToken: "dt_old_client" }));
-    const enrollViaPairing = vi.fn();
-    const ctx = {
-      storage: { consumePairingToken, enrollViaPairing },
+      storage: {},
+      pairing: { customApproverAvailable: false, approveInvite },
     } as unknown as RouteContext;
 
     const dispatch = createIdentityRoutes(ctx, createRouteHelpers());
@@ -224,8 +184,7 @@ describe("identity module", () => {
     });
 
     expect(handled).toBe(true);
-    expect(enrollViaPairing).not.toHaveBeenCalled();
-    expect(consumePairingToken).not.toHaveBeenCalled();
+    expect(approveInvite).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.body)).toEqual({ error: "devicePublicKey required" });
   });

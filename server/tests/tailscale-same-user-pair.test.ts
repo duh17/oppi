@@ -247,7 +247,67 @@ describe("POST /pair/tailscale", () => {
         expect(body.scheme).toBe("https");
         expect(body.host).toBe("mac.tail1234.ts.net");
         expect(storage.getConfig().pairingToken).toBe(body.pairingToken);
+        expect(storage.getConfig().pairingTokenOrigin).toEqual({
+          method: "tailscale",
+          ttlMs: 90_000,
+          source: "chen@example.com",
+        });
         expect(certLogContents(certLog)).toBe(certBefore);
+      });
+
+      it("holds a Tailscale pairing for approval once another device is paired", async () => {
+        const storage = await startServer("tailscale");
+        const existingKey = generateKeyPairSync("ec", { namedCurve: "P-256" }).publicKey.export({
+          format: "jwk",
+        }) as { x: string; y: string };
+        storage.enrollViaPairing(storage.issuePairingToken(), {
+          publicKey: { kty: "EC", crv: "P-256", x: existingKey.x, y: existingKey.y },
+          name: "iPhone",
+        });
+        const minted = await httpsJSON(`https://127.0.0.1:${server!.port}/pair/tailscale`, {
+          method: "POST",
+          body: {},
+        });
+        const { pairingToken } = JSON.parse(minted.body) as { pairingToken: string };
+        const newKey = generateKeyPairSync("ec", { namedCurve: "P-256" }).publicKey.export({
+          format: "jwk",
+        }) as { x: string; y: string };
+        const paired = await httpsJSON(`https://127.0.0.1:${server!.port}/pair`, {
+          method: "POST",
+          body: {
+            pairingToken,
+            devicePublicKey: { kty: "EC", crv: "P-256", x: newKey.x, y: newKey.y },
+            deviceName: "Mac",
+          },
+        });
+        expect(paired.status).toBe(202);
+        expect(JSON.parse(paired.body)).toMatchObject({ status: "approval_required" });
+        expect(storage.listDevices()).toHaveLength(1);
+      });
+
+      it("returns 404 when auth.tailscalePairing is false", async () => {
+        dataDir = mkdtempSync(join(tmpdir(), "oppi-tailscale-pair-"));
+        fakeBinDir = join(dataDir, "bin");
+        mkdirSync(fakeBinDir, { recursive: true });
+        writeFakeTailscale(fakeBinDir);
+        process.env.PATH = `${fakeBinDir}:${previousPath ?? ""}`;
+        writeTailscaleLeaf(dataDir, "mac.tail1234.ts.net");
+        const storage = new Storage(dataDir);
+        storage.ensurePaired();
+        storage.updateConfig({
+          host: "127.0.0.1",
+          port: 0,
+          tls: { mode: "tailscale" },
+          auth: { tailscalePairing: false },
+        });
+        server = new Server(storage);
+        await server.start();
+        const res = await httpsJSON(`https://127.0.0.1:${server.port}/pair/tailscale`, {
+          method: "POST",
+          body: {},
+        });
+        expect(res.status).toBe(404);
+        expect(storage.getConfig().pairingToken).toBeUndefined();
       });
 
       it("runs the identity proof through OPPI_TAILSCALE_BIN when tailscale is not on PATH", async () => {

@@ -250,7 +250,7 @@ describe("generateInvite", () => {
     });
     expect(new Date(invite.expiresAt).getTime()).toBe(storage.getConfig().pairingTokenExpiresAt);
     expect((storage as Storage).ensurePaired).toHaveBeenCalledOnce();
-    expect((storage as Storage).issuePairingToken).toHaveBeenCalledWith(12_345);
+    expect((storage as Storage).issuePairingToken).toHaveBeenCalledWith(12_345, undefined);
     expect(mockReadCertificateFingerprint).toHaveBeenCalledWith("/tmp/server.crt");
     expect(mockIdentityConfigForDataDir).toHaveBeenCalledWith("/tmp/oppi-test");
 
@@ -301,7 +301,7 @@ describe("generateInvite", () => {
     expect(invite.scheme).toBe("https");
     expect(invite.name).toBe("Tailnet Mac");
     expect(invite.tlsCertFingerprint).toBeUndefined();
-    expect((storage as Storage).issuePairingToken).toHaveBeenCalledWith(90_000);
+    expect((storage as Storage).issuePairingToken).toHaveBeenCalledWith(90_000, undefined);
     expect(mockReadCertificateFingerprint).not.toHaveBeenCalled();
 
     const { signedPayload } = decodeInvite(invite.inviteURL);
@@ -409,7 +409,7 @@ describe("generateInvite", () => {
       expect(invite.port).toBe(7749);
       expect(invite.scheme).toBe("https");
       expect(invite.tlsCertFingerprint).toBeUndefined();
-      expect((storage as Storage).issuePairingToken).toHaveBeenCalledWith(90_000);
+      expect((storage as Storage).issuePairingToken).toHaveBeenCalledWith(90_000, undefined);
     },
   );
 
@@ -447,7 +447,7 @@ describe("generateInvite", () => {
       }),
       "mac-studio.tail1234.ts.net",
     );
-    expect((storage as Storage).issuePairingToken).toHaveBeenCalledWith(90_000);
+    expect((storage as Storage).issuePairingToken).toHaveBeenCalledWith(90_000, undefined);
   });
 
   it("skipRenewal throws when existing tailscale material is missing or invalid", () => {

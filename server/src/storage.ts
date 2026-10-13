@@ -45,6 +45,9 @@ import { WorkspaceStore } from "./storage/workspace-store.js";
 import type { MobileOutputGuideSettingsSnapshot } from "./mobile-output-guide-settings.js";
 import type {
   CreateWorkspaceRequest,
+  DevicePairingInfo,
+  DevicePublicKey,
+  PairingTokenOrigin,
   PushRegistration,
   ServerConfig,
   Session,
@@ -268,8 +271,8 @@ export class Storage {
     return this.authStore.rotateToken();
   }
 
-  issuePairingToken(ttlMs?: number): string {
-    return this.authStore.issuePairingToken(ttlMs);
+  issuePairingToken(ttlMs?: number, origin?: Omit<PairingTokenOrigin, "ttlMs">): string {
+    return this.authStore.issuePairingToken(ttlMs, origin);
   }
 
   clearPairingToken(): void {
@@ -283,6 +286,18 @@ export class Storage {
     deviceInput: { publicKey: unknown; name?: unknown },
   ): EnrollResult | null {
     return this.deviceAuthStore.enrollViaPairing(candidate, deviceInput);
+  }
+
+  consumePairingToken(candidate: string): PairingTokenOrigin | null {
+    return this.deviceAuthStore.consumePairingToken(candidate);
+  }
+
+  enrollDevice(input: {
+    publicKey: DevicePublicKey;
+    name: string;
+    pairing: DevicePairingInfo;
+  }): EnrollResult {
+    return this.deviceAuthStore.enrollDevice(input);
   }
 
   issueChallenge(deviceId: string): Challenge | null {

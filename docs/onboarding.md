@@ -95,8 +95,38 @@ oppi config set port <public-port>
 
 - Each invite is single-use.
 - Invites expire after 90 seconds by default. `oppi pair --ttl <duration>` sets another lifetime, from 1 second to 30 days (for example `--ttl 10m`).
+- Once another device is paired, an invite with a lifetime over 90 seconds needs approval on a paired device (see below).
 - Invites contain signed server identity and HTTPS authorization.
 - Deep-link details are in [Deep links](deeplinks.md).
+
+## Approving a new device
+
+When at least one device is already paired, these pairings wait for approval on a paired device:
+
+- an invite issued with a lifetime over 90 seconds (`oppi pair --ttl 10m`, App Review hand-offs);
+- a same-user Tailscale pairing (**Connect through Tailscale**), whatever its lifetime;
+- a pairing approved by a custom `auth.module`.
+
+A default 90-second invite needs no approval, and the first device on an empty server never does. The invite is used up as soon as the new device presents it.
+
+The new device shows that it is waiting for approval, with a countdown. Every paired device with notifications on gets **Approve New Device?** with the device name, how it is pairing (`invite`, `tailscale`, or `custom`), and where from (client IP or Tailscale login). Paired devices also see the request in the app. Approving asks for Face ID, Touch ID, or the passcode, then signs the approval with that device's key. The host (the Unix socket and `oppi` CLI) cannot approve, so an agent running on the host cannot let a device in on its own.
+
+The request lasts 2 minutes. Deny, or no answer, fails closed: the new device reports it and needs a fresh invite. After approval the new device must finish within 60 seconds. Pending requests live in server memory; a restart drops them.
+
+## New device alerts
+
+Every new device, approved or not, sends **New Device Paired** to the other paired devices with notifications on: its name, pairing method, source, and time. The server logs `auth.device_enrolled` with the same facts. If you did not pair it, revoke it (see [Paired devices](#paired-devices)) If you suspect the host itself, `oppi token rotate` revokes every paired device at once.
+
+## Turn off Tailscale pairing
+
+Same-user Tailscale pairing lets any machine signed in to your Tailscale account request an invite. To turn it off:
+
+```bash
+oppi config set auth.tailscalePairing false
+oppi server restart
+```
+
+`POST /pair/tailscale` then answers `404`, and the app reports Tailscale pairing as unavailable for that server. QR and invite-link pairing keep working.
 
 ## Paired devices
 
@@ -104,7 +134,7 @@ Each paired device has a name. Oppi sends the device name in the `deviceName` fi
 
 List and revoke devices from the host with `oppi devices` and `oppi devices revoke <id>`, or from a paired device with the same endpoints:
 
-- `GET /auth/devices` returns `{"devices":[{"id","name","scope","createdAt","lastUsedAt","revokedAt","keyEnrolled"}]}`. Revoked devices stay in the list with `revokedAt` set. Times are Unix milliseconds.
+- `GET /auth/devices` returns `{"devices":[{"id","name","scope","createdAt","lastUsedAt","revokedAt","keyEnrolled","pairingMethod","pairingSource","approvedByDeviceId"}]}`. `createdAt` is when the device paired. `pairingMethod` (`invite`, `tailscale`, or `custom`), `pairingSource` (client IP or Tailscale login), and `approvedByDeviceId` are present only for devices paired by this release or later. Revoked devices stay in the list with `revokedAt` set. Times are Unix milliseconds.
 - `DELETE /auth/devices/:id` revokes a device, invalidates its access tokens, and closes its open sockets. It returns `{"ok":true}`, or `404` for an unknown or already-revoked id.
 
 Any paired device can list and revoke any other; there is no per-device permission. `GET /auth/devices` does not mark the caller, so a client compares the list with the device id in its own stored credential to find itself.

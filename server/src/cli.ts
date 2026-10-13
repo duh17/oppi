@@ -21,6 +21,7 @@ import {
 } from "./cli/status.js";
 import { Storage } from "./storage.js";
 import { MAX_PAIRING_TOKEN_TTL_MS } from "./storage/auth-store.js";
+import { SHORT_INVITE_MAX_TTL_MS } from "./device-pairing.js";
 import { Server } from "./server.js";
 import {
   applyHostEnv,
@@ -451,6 +452,14 @@ function showPairingQR(
   console.log("  Or share this link:");
   console.log(`  ${c.cyan(invite.inviteURL)}`);
   console.log(c.dim(`  Single use. Expires ${new Date(invite.expiresAt).toLocaleString()}.`));
+  const hasPairedDevice = (storage.getConfig().authDevices ?? []).some(
+    (device) => device.revokedAt === undefined,
+  );
+  if (hasPairedDevice && (pairingTokenTtlMs ?? 90_000) > SHORT_INVITE_MAX_TTL_MS) {
+    console.log(
+      c.yellow("  A paired device must approve the new device within 2 minutes of it scanning."),
+    );
+  }
   console.log("");
 
   if (showToken) {

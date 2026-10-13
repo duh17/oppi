@@ -9,7 +9,7 @@ import { createLogger } from "../logger.js";
 import { safeErrorMessage } from "../log-utils.js";
 import type { ServerMetricCollector } from "../server-metric-collector.js";
 import type { PushRegistration, ServerConfig } from "../types.js";
-import { type PushPlaintext, sealPushEnvelope } from "./envelope.js";
+import { type PushPlaintext, type PushSubject, sealPushEnvelope } from "./envelope.js";
 import { RelayClient, type RelaySendResult } from "./relay-client.js";
 
 const log = createLogger({ base: { component: "push" } });
@@ -18,7 +18,11 @@ const log = createLogger({ base: { component: "push" } });
 const PUSH_TTL_SECONDS = 3600;
 
 /** What one push says, before its timestamp. */
-export type PushNotification = Omit<PushPlaintext, "v" | "ts">;
+export type PushNotification = {
+  title: string;
+  subtitle?: string;
+  body: string;
+} & PushSubject;
 
 export interface PushSenderStorage {
   getConfig(): Pick<ServerConfig, "push">;
@@ -61,13 +65,50 @@ export async function releasePushPermissions(
 }
 
 /** Stable per device and session, unlinkable across devices (spec §5). */
-export function pushCollapseId(sendToken: string, sessionId: string): string {
+export function pushCollapseId(sendToken: string, collapseKey: string): string {
   const key = createHash("sha256").update(sendToken, "utf8").digest();
   return createHmac("sha256", key)
-    .update(`oppi-push-collapse-v1\n${sessionId}`, "utf8")
+    .update(`oppi-push-collapse-v1\n${collapseKey}`, "utf8")
     .digest()
     .subarray(0, 16)
     .toString("base64url");
+}
+
+/** Session pushes collapse per session; pairing pushes per approval or enrolled device. */
+function pushCollapseKey(notification: PushNotification): string {
+  switch (notification.event) {
+    case "pairing_approval":
+      return `pairing:${notification.approvalId}`;
+    case "device_enrolled":
+      return `device:${notification.deviceId}`;
+    default:
+      return notification.sessionId;
+  }
+}
+
+/** Copied field by field so only the plaintext fields reach the phone. */
+function pushPlaintext(notification: PushNotification, ts: number): PushPlaintext {
+  const text = {
+    title: notification.title,
+    ...(notification.subtitle ? { subtitle: notification.subtitle } : {}),
+    body: notification.body,
+  };
+  switch (notification.event) {
+    case "pairing_approval":
+      return { v: 1, ts, event: notification.event, approvalId: notification.approvalId, ...text };
+    case "device_enrolled":
+      return { v: 1, ts, event: notification.event, deviceId: notification.deviceId, ...text };
+    default:
+      return {
+        v: 1,
+        ts,
+        event: notification.event,
+        ...(notification.kind ? { kind: notification.kind } : {}),
+        sessionId: notification.sessionId,
+        ...(notification.workspaceId ? { workspaceId: notification.workspaceId } : {}),
+        ...text,
+      };
+  }
 }
 
 export class PushSender {
@@ -116,25 +157,14 @@ export class PushSender {
     try {
       const envelope = sealPushEnvelope({
         recipientPublicKey: Buffer.from(registration.publicKey, "base64url"),
-        // Copied field by field so only the plaintext fields reach the phone.
-        plaintext: {
-          v: 1,
-          ts: this.now(),
-          event: notification.event,
-          ...(notification.kind ? { kind: notification.kind } : {}),
-          sessionId: notification.sessionId,
-          ...(notification.workspaceId ? { workspaceId: notification.workspaceId } : {}),
-          title: notification.title,
-          ...(notification.subtitle ? { subtitle: notification.subtitle } : {}),
-          body: notification.body,
-        },
+        plaintext: pushPlaintext(notification, this.now()),
         signingKey: this.options.signingKey,
       });
       result = await new RelayClient(relays, { fetch: this.options.fetch }).push(
         registration.sendToken,
         {
           envelope,
-          collapseId: pushCollapseId(registration.sendToken, notification.sessionId),
+          collapseId: pushCollapseId(registration.sendToken, pushCollapseKey(notification)),
           ttl: PUSH_TTL_SECONDS,
         },
       );

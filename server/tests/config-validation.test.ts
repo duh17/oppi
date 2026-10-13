@@ -266,6 +266,44 @@ describe("Storage config validation", () => {
     expect(persisted.authDevices[0]).not.toHaveProperty("legacyTokenHash");
   });
 
+  it("keeps pairing metadata and the invite origin across a reload", () => {
+    const storage = new Storage(dir);
+    const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const token = storage.issuePairingToken(90_000, {
+      method: "tailscale",
+      source: "chen@example.com",
+    });
+    storage.enrollViaPairing(token, { publicKey: publicKey.export({ format: "jwk" }) });
+    const next = storage.issuePairingToken(600_000);
+
+    const reopened = new Storage(dir);
+    expect(reopened.listDevices()[0]?.pairing).toEqual({
+      method: "tailscale",
+      source: "chen@example.com",
+    });
+    expect(reopened.getConfig().pairingToken).toBe(next);
+    expect(reopened.getConfig().pairingTokenOrigin).toEqual({ method: "invite", ttlMs: 600_000 });
+
+    reopened.clearPairingToken();
+    expect(JSON.parse(readFileSync(reopened.getConfigPath(), "utf8"))).not.toHaveProperty(
+      "pairingTokenOrigin",
+    );
+  });
+
+  it("fails safe on malformed auth config instead of dropping it", () => {
+    const result = Storage.validateConfig(
+      { ...Storage.getDefaultConfig(dir), auth: { tailscalePairing: "no", module: 42 } },
+      dir,
+      false,
+    );
+    expect(result.errors).toEqual([
+      "config.auth.tailscalePairing: expected boolean",
+      "config.auth.module: expected absolute path string",
+    ]);
+    // Tailscale pairing turns off, and the module stays configured so the server refuses it.
+    expect(result.config?.auth).toEqual({ tailscalePairing: false, module: "42" });
+  });
+
   // ── ASR config regression ──
   // The config normalizer silently dropped config.asr because it was missing
   // from the whitelist + had no parsing code. This caused /dictation to 404

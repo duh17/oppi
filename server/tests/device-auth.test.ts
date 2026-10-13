@@ -111,7 +111,7 @@ describe("device-auth refresh", () => {
     expect(secondRefresh.ok).toBe(true);
   });
 
-  it("does not evict live unused challenges once the per-device cap is reached", () => {
+  it("evicts the oldest live challenge once the per-device cap is reached", () => {
     const key = makeDeviceKey();
     const enrolled = enroll(key);
     const issued = [enrolled.refreshChallenge];
@@ -120,16 +120,19 @@ describe("device-auth refresh", () => {
       if (!challenge) throw new Error("no challenge");
       issued.push(challenge);
     }
-    expect(storage.issueChallenge(enrolled.deviceId)).toBeNull();
-    const oldest = issued[0];
-    if (!oldest) throw new Error("missing challenge");
-    expect(
+    const newest = storage.issueChallenge(enrolled.deviceId);
+    if (!newest) throw new Error("a full device must still get a challenge");
+    const [oldest, secondOldest] = issued;
+    if (!oldest || !secondOldest) throw new Error("missing challenge");
+    const refreshWith = (nonce: string) =>
       storage.refresh({
         deviceId: enrolled.deviceId,
-        nonce: oldest.nonce,
-        signature: signChallenge(key, oldest.nonce),
-      }).ok,
-    ).toBe(true);
+        nonce,
+        signature: signChallenge(key, nonce),
+      });
+    expect(refreshWith(oldest.nonce)).toEqual({ ok: false, code: "unknown_nonce" });
+    expect(refreshWith(newest.nonce).ok).toBe(true);
+    expect(refreshWith(secondOldest.nonce).ok).toBe(true);
   });
 
   it("rejects a replayed nonce", () => {

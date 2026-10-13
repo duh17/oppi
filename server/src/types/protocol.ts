@@ -3,6 +3,7 @@ import type {
   NestedToolCallRecord as PiNestedToolCallRecord,
   NestedToolCalls as PiNestedToolCalls,
 } from "@earendil-works/pi-ai";
+import type { PairingMethod } from "./config.js";
 import type { GitStatus } from "./git.js";
 import type { Session, SessionSummary } from "./session.js";
 import type { StyledSegment } from "./shared.js";
@@ -337,6 +338,25 @@ export interface ExtensionUIWorkingIndicator {
   intervalMs?: number;
 }
 
+// ─── Pairing approval ───
+
+/**
+ * A new device waiting for an existing device to approve it (`GET /auth/pairing-approvals`).
+ * The approver signs `oppi:pair-approve:v1.<id>.<keyThumbprint>` with its device key.
+ */
+export interface PendingPairingApproval {
+  id: string;
+  deviceName: string;
+  method: PairingMethod;
+  source?: string;
+  requestedAt: number;
+  expiresAt: number;
+  /** RFC 7638 SHA-256 JWK thumbprint of the new device's P-256 key, base64url. */
+  keyThumbprint: string;
+}
+
+export type PairingApprovalOutcome = "approved" | "denied" | "expired";
+
 // ─── Global App Event Stream Messages ───
 
 export type AppEventSessionLifecycleType =
@@ -430,6 +450,15 @@ export type AppEventMessage =
       worktreeId?: string;
       sessionId?: string;
       reason?: string;
+    })
+  | (AppEventBase & {
+      type: "pairing_approval_requested";
+      approval: PendingPairingApproval;
+    })
+  | (AppEventBase & {
+      type: "pairing_approval_settled";
+      approvalId: string;
+      outcome: PairingApprovalOutcome;
     });
 
 export type AssistantMessageContentPart =

@@ -18,6 +18,7 @@ import type { ServerUpdateService } from "../server-update.js";
 import type { McpService } from "../mcp-service.js";
 import type { ServerMetricCollector } from "../server-metric-collector.js";
 import type { PushSender } from "../push/push-sender.js";
+import type { DevicePairing } from "../device-pairing.js";
 
 /** Services needed by route handlers — injected by Server. */
 export interface RouteContext {
@@ -58,6 +59,8 @@ export interface RouteContext {
     serverPublicKey: string;
     serverFingerprint: string;
   };
+  /** Pairing approvers, approval policy, pending approvals, and enrollment alerts. */
+  pairing: DevicePairing;
   /** Close every network device socket when the owner token rotates. */
   onOwnerTokenRotated?: () => void;
   /** Stop the sandbox VM for a deleted workspace. Composed in server.ts. */

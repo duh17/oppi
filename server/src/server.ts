@@ -5,7 +5,7 @@
  * Handles: auth, session CRUD, WebSocket streaming, and extension UI request relay.
  */
 
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, STATUS_CODES, type IncomingMessage, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { type Socket } from "node:net";
 import { type Duplex } from "node:stream";
@@ -110,7 +110,10 @@ import {
   isSecureNetworkRequest,
   markLocalRequest,
   parseHttpRequestTarget,
+  requestClientIp,
 } from "./request-trust.js";
+import { AuthModule } from "./auth-module.js";
+import { DevicePairing } from "./device-pairing.js";
 import {
   getPackageInfo,
   removeRetiredRuntimeStatusFile,
@@ -437,6 +440,9 @@ export class Server {
   private skillsInitialized = false;
   private reportedMissingWorkspaceSkills = new Set<string>();
   private push: PushSender;
+  /** Owner `auth.module`; consulted on every network request before device-token auth. */
+  private readonly authModule: AuthModule;
+  private pairing!: DevicePairing;
   private httpServer?: ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>;
   private readonly localApiServer: ReturnType<typeof createServer>;
   private readonly localApiSocket: string;
@@ -564,6 +570,8 @@ export class Server {
       signingKey: createPrivateKey(identity.privateKeyPem),
       metrics: this.opsMetrics,
     });
+    // Refuses network requests until start() loads a configured module.
+    this.authModule = new AuthModule(config.auth?.module);
     this.sessionPushNotifier = new SessionPushNotifier(this.push, this.storage, {
       isDevicePresent: (deviceId) => this.isDevicePresent(deviceId),
     });
@@ -635,6 +643,12 @@ export class Server {
       trackConnection: (ws: WebSocket) => this.trackConnection(ws),
       untrackConnection: (ws: WebSocket) => this.untrackConnection(ws),
       metrics: this.opsMetrics,
+    });
+    this.pairing = new DevicePairing({
+      storage: this.storage,
+      push: this.push,
+      events: this.appEventStreamMux,
+      authModule: this.authModule,
     });
     this.boundSessionStreamMux = new BoundSessionStreamMux(streamContext);
     this.dictationStreamMux = new DictationStreamMux(streamContext);
@@ -915,6 +929,7 @@ export class Server {
         serverPublicKey: this.identityPublicKey,
         serverFingerprint: this.identityFingerprint,
       },
+      pairing: this.pairing,
       onOwnerTokenRotated: () => this.closeAllDeviceConnections(),
       stopWorkspaceVm: (workspaceId) => SdkBackend.stopWorkspaceVm(workspaceId),
       desktopCompanionStillClient: this.desktopCompanionStillClient,
@@ -1004,6 +1019,8 @@ export class Server {
     this.localApiServer.on("upgrade", (req, socket, head) => {
       this.handleLocalUpgrade(req, socket, head);
     });
+    // Before the network listener exists, so no network request is served without it.
+    await this.authModule.load();
 
     try {
       try {
@@ -1084,6 +1101,7 @@ export class Server {
 
   async stop(): Promise<void> {
     this.stopUploadGcLoop();
+    this.pairing.dispose();
     await this.scheduleRunner.stop();
     this.opsMetrics.stop();
     this.resourceSampler.stop();
@@ -1523,6 +1541,22 @@ export class Server {
       }
     });
 
+    // The owner module's gate sees every network request, health and pairing included,
+    // before any credential is read. The owner Unix socket skips it.
+    if (!isLocalRequest(req)) {
+      const gate = await this.authModule.gate({
+        transport: "http",
+        method,
+        path,
+        headers: req.headers,
+        clientIp: this.clientIp(req),
+      });
+      if (!gate.allow) {
+        this.error(res, gate.status, gate.error);
+        return;
+      }
+    }
+
     if (path === "/health") {
       this.json(res, { ok: true, protocol: 2 });
       return;
@@ -1538,6 +1572,7 @@ export class Server {
     }
     const isDeviceAuthBootstrap =
       (path === "/pair" && method === "POST") ||
+      (path === "/pair/approval-status" && method === "POST") ||
       isTailscalePairInvite ||
       (path === "/auth/challenge" && method === "POST") ||
       (path === "/auth/refresh" && method === "POST");
@@ -1643,6 +1678,31 @@ export class Server {
       });
       return;
     }
+    void this.gateNetworkUpgrade(req, socket, head, url);
+  }
+
+  private async gateNetworkUpgrade(
+    req: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    url: URL,
+  ): Promise<void> {
+    const gate = await this.authModule.gate({
+      transport: "ws",
+      method: req.method || "GET",
+      path: url.pathname,
+      headers: req.headers,
+      clientIp: this.clientIp(req),
+    });
+    if (socket.destroyed) return;
+    if (!gate.allow) {
+      writeUpgradeErrorResponse(
+        socket,
+        `HTTP/1.1 ${gate.status} ${STATUS_CODES[gate.status] ?? "Error"}`,
+        { Connection: "close", "Content-Length": "0" },
+      );
+      return;
+    }
     if (url.pathname === "/mirror/v1/bridge") {
       writeUpgradeErrorResponse(socket, "HTTP/1.1 404 Not Found", {
         Connection: "close",
@@ -1651,6 +1711,10 @@ export class Server {
       return;
     }
     this.authenticateAndUpgrade(req, socket, head, url, this.wss, this.transportScheme);
+  }
+
+  private clientIp(req: IncomingMessage): string | undefined {
+    return requestClientIp(req, trustConfigFromServerConfig(this.storage.getConfig()));
   }
 
   private authenticateAndUpgrade(
