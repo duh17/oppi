@@ -11,9 +11,12 @@ import {
   fauxToolCall,
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
+import { Type } from "typebox";
 import {
   Harness,
   createRegistry,
+  defineExtension,
+  defineTool,
   InboxDoc,
   type SubmissionId,
   type Conversation,
@@ -776,6 +779,65 @@ describe("native Durable background jobs", () => {
     expect((await f.root.context(context)).messages.filter((m) => m.role === "user")).toHaveLength(
       1,
     );
+  });
+
+  it("gives programs a finished command's output and exit code, as pi-durable's bash does", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "oppi-durable-bash-structured-"));
+    const models = await ModelRuntime.create({
+      authPath: join(dir, "auth.json"),
+      modelsPath: null,
+      modelsStorePath: join(dir, "models-cache.json"),
+      refreshOnCreate: false,
+    });
+    const faux = fauxProvider();
+    faux.setResponses([tool("probe", {}), answer()]);
+    models.registerNativeProvider(faux.provider);
+    await models.setRuntimeApiKey("faux", "test-only-faux-credential");
+    await models.refresh({ allowNetwork: false });
+    const nested: unknown[] = [];
+    // A program calling bash, as a code mode script does through a nested call.
+    const probe = defineTool({
+      name: "probe",
+      description: "Run commands through bash.",
+      parameters: Type.Object({}),
+      async execute(_args, api, ctx) {
+        nested.push(await api.executeTool("bash", { command: "echo ok" }, ctx));
+        nested.push(await api.executeTool("bash", { command: "echo broke; exit 3" }, ctx));
+        return { output: [{ type: "text", text: "probed" }] };
+      },
+    });
+    const registry = createRegistry();
+    registry.install(CodingTools);
+    registry.install(DurableBackgroundJobs);
+    registry.install(defineExtension({ name: "probe", tools: [probe] }));
+    const harness = await Harness.open(
+      await openNodeSqliteStorage(join(dir, "jobs.sqlite")),
+      {
+        models,
+        registry,
+        env: () => new NodeExecutionEnv({ cwd: dir }),
+        settings: { compaction: { enabled: false } },
+      },
+      context,
+    );
+    harnesses.add(harness);
+    const root = await harness.root(context, {
+      agent: { model: { provider: "faux", modelId: "faux-1" }, cwd: dir },
+    });
+    await prompt(root, "Probe");
+    expect(nested).toEqual([
+      expect.objectContaining({
+        isError: false,
+        structuredOutput: { output: "ok\n", truncated: false, exitCode: 0 },
+      }),
+      expect.objectContaining({
+        isError: true,
+        structuredOutput: { output: "broke\n", truncated: false, exitCode: 3 },
+        diagnostics: expect.arrayContaining([
+          expect.objectContaining({ code: "exit_code", message: "Command exited with code 3" }),
+        ]),
+      }),
+    ]);
   });
 
   it("server Stop joins foreground guest cancellation and rejects an unconfirmed kill", async () => {

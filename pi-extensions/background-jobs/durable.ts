@@ -615,6 +615,30 @@ const backgroundJob = defineTool({
     );
   },
 });
+/**
+ * What a program that calls `bash` (a code mode script, `api.executeTool`) receives. A finished
+ * command matches pi-durable's own `bash`, so scripts check `exitCode`; a command that moved to
+ * the background gives its job instead, whose result arrives later as a follow-up.
+ */
+const bashStructuredOutput = Type.Union([
+  Type.Object({
+    output: Type.String({
+      description:
+        "Combined stdout and stderr, at most the last 64000 characters",
+    }),
+    truncated: Type.Boolean({
+      description: "Whether earlier output was dropped",
+    }),
+    exitCode: Type.Number(),
+  }),
+  Type.Object({ jobId: Type.String(), backgrounded: Type.Literal(true) }),
+]);
+function backgrounded(job: Job): ToolExecutionResult {
+  return {
+    ...notice(job),
+    structuredOutput: { jobId: job.id, backgrounded: true },
+  };
+}
 const bash = defineTool({
   name: "bash",
   description: `Execute a bash command. ${BACKGROUND_POLICY.afterWait} ${BACKGROUND_POLICY.immediate} ${BACKGROUND_POLICY.stayForeground} ${POLL_RULE}`,
@@ -627,6 +651,7 @@ const bash = defineTool({
       }),
     ),
   }),
+  structuredOutputSchema: bashStructuredOutput,
   replay: "safe",
   executionMode: "parallel",
   async execute(args, api, context) {
@@ -651,7 +676,7 @@ const bash = defineTool({
       context,
       disposition.mode === "foreground-only" ? "only" : "fallback",
     );
-    if (job.decision === "background") return notice(job);
+    if (job.decision === "background") return backgrounded(job);
     await waitForJob(
       api,
       api.conversationId,
@@ -671,7 +696,7 @@ const bash = defineTool({
       await publish(tx, api.conversationId);
       return { ...current };
     }, context);
-    if (selected.decision === "background") return notice(selected);
+    if (selected.decision === "background") return backgrounded(selected);
     // The runner's report phase waits for this tool task before it settles, so
     // its JobOutput is still current here.
     const output = await jobOutput(api, selected.taskId, context);
@@ -686,21 +711,44 @@ const bash = defineTool({
             exitCode: selected.exitCode,
             timeoutSeconds: selected.timeout,
           });
+    // As pi-durable's `bash`: a command that exited is an error result only for a nonzero
+    // code, with an `exit_code` diagnostic, and programs get its output and code either way.
+    const exitCode =
+      selected.status === "completed" || selected.status === "failed"
+        ? selected.exitCode
+        : null;
+    const diagnostics =
+      selected.status === "interrupted"
+        ? [
+            {
+              severity: "error" as const,
+              code: "interrupted",
+              message: formatted.text,
+            },
+          ]
+        : exitCode !== null && exitCode !== 0
+          ? [
+              {
+                severity: "error" as const,
+                code: "exit_code",
+                message: `Command exited with code ${exitCode}`,
+              },
+            ]
+          : [];
     return {
       output: [{ type: "text" as const, text: formatted.text }],
       isError: formatted.isError,
       details: { jobId: selected.id, backgrounded: false },
-      ...(selected.status === "interrupted"
-        ? {
-            diagnostics: [
-              {
-                severity: "error" as const,
-                code: "interrupted",
-                message: formatted.text,
-              },
-            ],
-          }
-        : {}),
+      ...(exitCode === null
+        ? {}
+        : {
+            structuredOutput: {
+              output: output.output,
+              truncated: output.truncated,
+              exitCode,
+            },
+          }),
+      ...(diagnostics.length ? { diagnostics } : {}),
     };
   },
 });
