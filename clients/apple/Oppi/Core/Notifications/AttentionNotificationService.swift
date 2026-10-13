@@ -11,6 +11,16 @@ enum PairingNotificationAction: Equatable, Sendable {
     case deny
 }
 
+private struct NotificationCompletion: @unchecked Sendable {
+    private let handler: () -> Void
+    init(_ handler: @escaping () -> Void) {
+        self.handler = handler
+    }
+    func call() {
+        handler()
+    }
+}
+
 /// Manages local notifications for attention requests received while the app is running.
 ///
 /// Fires ask alerts when:
@@ -57,6 +67,14 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
     }
 
     var onPairingNotification: ((PairingNotificationPayload) -> Void)? {
+        didSet {
+            deliverPendingPairingNotificationsIfPossible()
+        }
+    }
+
+    /// Deny from a notification action. Must not wait for App Lock; the system
+    /// action already required device authentication.
+    var onPairingDeny: ((PairingNotificationPayload) async -> Void)? {
         didSet {
             deliverPendingPairingNotificationsIfPossible()
         }
@@ -245,13 +263,40 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
     /// Every Oppi session notification: local ask and `done` banners, and decrypted pushes,
     /// whose subtitle is the session name unless a lock was already on when they arrived.
     nonisolated static func lockSensitiveIdentifiers(in requests: [UNNotificationRequest]) -> [String] {
-        let categories = Set(AttentionNotificationPolicy.sessionCategoryIds + [
-            pairingApprovalCategoryId,
-            deviceEnrolledCategoryId,
-        ])
-        return requests
-            .filter { categories.contains($0.content.categoryIdentifier) }
+        requests
+            .filter { AttentionNotificationPolicy.sessionCategoryIds.contains($0.content.categoryIdentifier) }
             .map(\.identifier)
+    }
+
+    /// Pairing banners name a device, not a session. App Lock and a server-scope
+    /// lock redact them; workspace and session locks do not.
+    nonisolated static func pairingNotificationIdentifiers(
+        in requests: [UNNotificationRequest],
+        serverId: String? = nil
+    ) -> [String] {
+        let categories = Set([pairingApprovalCategoryId, deviceEnrolledCategoryId])
+        return requests
+            .filter { request in
+                guard categories.contains(request.content.categoryIdentifier) else { return false }
+                guard let serverId else { return true }
+                return (request.content.userInfo["serverId"] as? String) == serverId
+            }
+            .map(\.identifier)
+    }
+
+    func removePairingNotifications(serverId: String? = nil) {
+        guard !_skipSchedulingForTesting else { return }
+        let center = UNUserNotificationCenter.current()
+        Task { @MainActor in
+            let delivered = await center.deliveredNotifications().map(\.request)
+            let pending = await center.pendingNotificationRequests()
+            center.removeDeliveredNotifications(
+                withIdentifiers: Self.pairingNotificationIdentifiers(in: delivered, serverId: serverId)
+            )
+            center.removePendingNotificationRequests(
+                withIdentifiers: Self.pairingNotificationIdentifiers(in: pending, serverId: serverId)
+            )
+        }
     }
 
     /// Cancel ask notification when the ask is answered or superseded.
@@ -333,11 +378,42 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
 
     func handlePairingNotification(_ payload: PairingNotificationPayload) {
         guard !payload.serverId.isEmpty else { return }
+        if payload.action == .deny {
+            if let onPairingDeny {
+                Task { await onPairingDeny(payload) }
+            } else {
+                pendingPairingNotifications.append(payload)
+            }
+            return
+        }
         guard let onPairingNotification else {
             pendingPairingNotifications.append(payload)
             return
         }
         onPairingNotification(payload)
+    }
+
+    private func completePairingDeny(
+        _ payload: PairingNotificationPayload,
+        completion: NotificationCompletion
+    ) async {
+        var backgroundTask = UIBackgroundTaskIdentifier.invalid
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "oppi.pairing.deny") {
+            UIApplication.shared.endBackgroundTask(backgroundTask)
+            backgroundTask = .invalid
+        }
+        defer {
+            completion.call()
+            if backgroundTask != .invalid {
+                UIApplication.shared.endBackgroundTask(backgroundTask)
+                backgroundTask = .invalid
+            }
+        }
+        if let onPairingDeny {
+            await onPairingDeny(payload)
+        } else {
+            pendingPairingNotifications.append(payload)
+        }
     }
 
     private func deliverPendingNavigationTapsIfPossible() {
@@ -350,12 +426,24 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
     }
 
     private func deliverPendingPairingNotificationsIfPossible() {
-        guard let onPairingNotification, !pendingPairingNotifications.isEmpty else { return }
+        guard !pendingPairingNotifications.isEmpty else { return }
         let pending = pendingPairingNotifications
         pendingPairingNotifications.removeAll()
+        var leftover: [PairingNotificationPayload] = []
         for payload in pending {
-            onPairingNotification(payload)
+            if payload.action == .deny {
+                if let onPairingDeny {
+                    Task { await onPairingDeny(payload) }
+                } else {
+                    leftover.append(payload)
+                }
+            } else if let onPairingNotification {
+                onPairingNotification(payload)
+            } else {
+                leftover.append(payload)
+            }
         }
+        pendingPairingNotifications = leftover + pendingPairingNotifications
     }
 
     nonisolated static func pairingNotificationPayload(
@@ -397,10 +485,20 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             actionIdentifier: response.actionIdentifier,
             userInfo: content.userInfo
         ) {
+            if pairing.action == .deny {
+                let completion = NotificationCompletion(completionHandler)
+                Task { @MainActor in
+                    await self.completePairingDeny(pairing, completion: completion)
+                }
+                return
+            }
             Task { @MainActor in
                 handlePairingNotification(pairing)
             }
-        } else if let sessionId = Self.navigationSessionId(
+            completionHandler()
+            return
+        }
+        if let sessionId = Self.navigationSessionId(
             categoryIdentifier: content.categoryIdentifier,
             userInfo: content.userInfo
         ) {

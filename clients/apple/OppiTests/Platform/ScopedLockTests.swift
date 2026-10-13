@@ -232,7 +232,7 @@ struct ScopedLockServiceTests {
         harness.locks.forgetWorkspace(serverId: "srv", workspaceId: "w1", sessionIds: ["in-w1"])
         harness.locks.forgetSession(serverId: "srv", sessionId: "s2")
 
-        let reloaded = ScopedLockService(defaults: harness.defaults, appLock: harness.appLock, didLock: {})
+        let reloaded = ScopedLockService(defaults: harness.defaults, appLock: harness.appLock, didLock: { _ in })
         #expect(reloaded.flags == [.session(serverId: "srv", sessionId: "s3")])
     }
 
@@ -425,7 +425,7 @@ struct ScopedLockSurfaceTests {
 
         harness.locks.forgetWorkspace(serverId: "srv", workspaceId: "w1")
 
-        let reloaded = ScopedLockService(defaults: harness.defaults, appLock: harness.appLock, didLock: {})
+        let reloaded = ScopedLockService(defaults: harness.defaults, appLock: harness.appLock, didLock: { _ in })
         #expect(reloaded.flags == [.session(serverId: "srv", sessionId: "elsewhere")])
         reloaded.forgetWorkspace(serverId: "srv", workspaceId: "w2")
         #expect(reloaded.flags.isEmpty, "the recorded workspace survives a reload")
@@ -571,7 +571,7 @@ private struct ScopedHarness {
             authenticator: { _ in await authenticator.authenticate() },
             didTurnOn: {}
         )
-        locks = ScopedLockService(defaults: defaults, appLock: appLock, didLock: {})
+        locks = ScopedLockService(defaults: defaults, appLock: appLock, didLock: { _ in })
     }
 }
 

@@ -41,6 +41,7 @@ final class ServerConnection {
     private(set) var connectedServerVersion: String?
     /// Pending pairing approvals for this server (`GET /auth/pairing-approvals` + app events).
     var pendingPairingApprovals: [PendingPairingApproval] = []
+    var pairingApprovalsMutationGeneration: UInt64 = 0
 
     // Networking
     private(set) var apiClient: APIClient?
@@ -389,6 +390,8 @@ final class ServerConnection {
 
     /// Test seam: replace compact sidebar Git summary HTTP fetches.
     var _getWorkspaceGitSummaryForTesting: ((String) async throws -> WorkspaceGitSummary)?
+    /// Test seam: replace `GET /auth/pairing-approvals`.
+    var _listPairingApprovalsForTesting: (() async throws -> [PendingPairingApproval])?
 
     /// Test seam: replace session dialog hydration HTTP fetches.
     var _getSessionDialogsForTesting: ((String) async throws -> APIClient.SessionDialogsResponse)?

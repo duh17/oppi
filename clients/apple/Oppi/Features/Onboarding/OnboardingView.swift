@@ -78,6 +78,7 @@ struct OnboardingView: View {
     @State private var showTailscale = false
     @State private var connectionTest: ConnectionTestState = .idle
     @State private var pairingTask: Task<Void, Never>?
+    @State private var pairingGeneration: UInt64 = 0
 
     /// VisionKit scanner requires camera + on-device ML support.
     private var canScan: Bool {
@@ -154,11 +155,7 @@ struct OnboardingView: View {
                 case .waitingForApproval(let expiresAt):
                     WaitingForPairingApprovalView(
                         expiresAt: expiresAt,
-                        onCancel: {
-                            pairingTask?.cancel()
-                            pairingTask = nil
-                            connectionTest = .failed("Pairing cancelled.")
-                        }
+                        onCancel: cancelPairing
                     )
 
                 case .success:
@@ -271,10 +268,19 @@ struct OnboardingView: View {
 
     private func startPairing(_ credentials: ServerCredentials) {
         pairingTask?.cancel()
-        pairingTask = Task { await testConnection(credentials) }
+        pairingGeneration &+= 1
+        let generation = pairingGeneration
+        pairingTask = Task { await testConnection(credentials, generation: generation) }
     }
 
-    private func testConnection(_ credentials: ServerCredentials) async {
+    private func cancelPairing() {
+        pairingGeneration &+= 1
+        pairingTask?.cancel()
+        pairingTask = nil
+        connectionTest = .failed("Pairing cancelled.")
+    }
+
+    private func testConnection(_ credentials: ServerCredentials, generation: UInt64) async {
         connectionTest = .testing
 
         do {
@@ -285,9 +291,11 @@ struct OnboardingView: View {
                     await BiometricService.shared.authenticate(reason: reason)
                 },
                 onWaitingForApproval: { expiresAt in
+                    guard generation == pairingGeneration else { return }
                     connectionTest = .waitingForApproval(expiresAt: expiresAt)
                 }
             )
+            guard generation == pairingGeneration, !Task.isCancelled else { return }
 
             let effectiveCreds = bootstrap.effectiveCredentials
 
@@ -295,11 +303,13 @@ struct OnboardingView: View {
                 from: effectiveCreds,
                 sortOrder: serverStore.servers.count
             ) else {
+                guard generation == pairingGeneration else { return }
                 connectionTest = .failed("Missing server fingerprint")
                 return
             }
 
             let pairingOutcome = await coordinator.addServerReady(pairedServer, switchTo: true)
+            guard generation == pairingGeneration, !Task.isCancelled else { return }
             guard pairingOutcome != .failed else {
                 connectionTest = .failed("Connection blocked by server transport policy")
                 return
@@ -320,11 +330,14 @@ struct OnboardingView: View {
             // Short delay then transition. Guided workspace creation still
             // waits for the workspace refresh, not this session snapshot.
             try? await Task.sleep(for: .milliseconds(600))
+            guard generation == pairingGeneration else { return }
             leaveOnboardingAfterPair()
         } catch is CancellationError {
+            guard generation == pairingGeneration else { return }
             connection.sessionStore.markSyncFailed()
             connectionTest = .failed("Pairing cancelled.")
         } catch {
+            guard generation == pairingGeneration else { return }
             connection.sessionStore.markSyncFailed()
             connectionTest = .failed(error.localizedDescription)
         }
@@ -413,11 +426,6 @@ enum InviteBootstrapError: LocalizedError, Equatable {
 }
 
 protocol InviteBootstrapAPI: Sendable {
-    func pairDevice(
-        pairingToken: String,
-        deviceName: String?,
-        devicePublicKey: DevicePublicKey
-    ) async throws -> PairDeviceResponse
     func startPairDevice(
         pairingToken: String,
         deviceName: String?,
@@ -430,27 +438,6 @@ protocol InviteBootstrapAPI: Sendable {
     func health() async throws -> Bool
     func me() async throws -> User
     func listSessionsFromWorkspaces(recentDays: Int) async throws -> [Session]
-}
-
-extension InviteBootstrapAPI {
-    func startPairDevice(
-        pairingToken: String,
-        deviceName: String?,
-        devicePublicKey: DevicePublicKey
-    ) async throws -> PairDeviceStart {
-        .enrolled(try await pairDevice(
-            pairingToken: pairingToken,
-            deviceName: deviceName,
-            devicePublicKey: devicePublicKey
-        ))
-    }
-
-    func pollPairingApprovalStatus(
-        approvalId: String,
-        pendingToken: String
-    ) async throws -> PairingApprovalPoll {
-        throw APIError.invalidResponse
-    }
 }
 
 extension APIClient: InviteBootstrapAPI {}
@@ -523,6 +510,7 @@ enum InviteBootstrapService {
                         onWaitingForApproval?(expiresAt)
                     }
                 )
+                if Task.isCancelled { throw PairingEnrollment.Failure.cancelled }
             } catch {
                 throw InviteBootstrapError.message(
                     pairingMutationFailureMessage(
@@ -634,6 +622,7 @@ enum InviteBootstrapService {
             confirmTrust: confirmTrust,
             onWaitingForApproval: onWaitingForApproval
         )
+        if Task.isCancelled { throw PairingEnrollment.Failure.cancelled }
         guard let pairedServer = PairedServer(
             from: bootstrap.effectiveCredentials,
             sortOrder: serverStore.servers.count
@@ -705,6 +694,7 @@ enum E2EAppAuthBootstrap {
                     )
                 }
             )
+            if Task.isCancelled { throw PairingEnrollment.Failure.cancelled }
         } catch {
             throw InviteBootstrapError.message(
                 InviteBootstrapService.pairingFailureMessage(for: error, host: credentials.host)

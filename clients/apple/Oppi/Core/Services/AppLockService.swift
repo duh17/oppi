@@ -212,6 +212,7 @@ final class AppLockService {
     static func clearContentShownBeforeAppLock() {
         if ReleaseFeatures.localAttentionNotificationsEnabled {
             AttentionNotificationService.shared.removeLockSensitiveNotifications()
+            AttentionNotificationService.shared.removePairingNotifications()
         }
         if ReleaseFeatures.liveActivitiesEnabled {
             LiveActivityManager.shared.endAllForAppLock()

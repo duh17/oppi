@@ -135,23 +135,30 @@ private actor E2EAppAuthRecordingAPI: InviteBootstrapAPI {
         self.incompleteResponse = incompleteResponse
     }
 
-    func pairDevice(
+    func startPairDevice(
         pairingToken: String,
         deviceName _: String?,
         devicePublicKey: DevicePublicKey
-    ) async throws -> PairDeviceResponse {
+    ) async throws -> PairDeviceStart {
         await log.append("pair:\(pairingToken)")
         #expect(devicePublicKey.kty == "EC")
         #expect(devicePublicKey.crv == "P-256")
         if incompleteResponse {
-            return PairDeviceResponse(deviceId: "", accessToken: "", expiresAt: 0, refreshChallenge: nil)
+            return .enrolled(PairDeviceResponse(deviceId: "", accessToken: "", expiresAt: 0, refreshChallenge: nil))
         }
-        return PairDeviceResponse(
+        return .enrolled(PairDeviceResponse(
             deviceId: "dev_e2e",
             accessToken: accessToken,
             expiresAt: 4_102_444_800_000,
             refreshChallenge: nil
-        )
+        ))
+    }
+
+    func pollPairingApprovalStatus(
+        approvalId: String,
+        pendingToken: String
+    ) async throws -> PairingApprovalPoll {
+        throw APIError.invalidResponse
     }
 
     func health() async throws -> Bool {

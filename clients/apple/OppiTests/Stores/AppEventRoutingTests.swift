@@ -267,6 +267,43 @@ struct AppEventRoutingTests {
         )
         #expect(connection.pendingPairingApprovals.isEmpty)
     }
+
+    @Test func stalePairingApprovalListDoesNotOverwriteLaterAppEvents() async {
+        let connection = ServerConnection()
+        let approval = PendingPairingApproval(
+            id: "pa_1",
+            deviceName: "iPad",
+            method: "invite",
+            source: "100.64.0.7",
+            requestedAt: 1,
+            expiresAt: 9_999_999_999_999,
+            keyThumbprint: "thumb"
+        )
+        final class Gate: @unchecked Sendable {
+            var resume: CheckedContinuation<Void, Never>?
+            func wait() async {
+                await withCheckedContinuation { resume = $0 }
+            }
+            func open() {
+                resume?.resume()
+                resume = nil
+            }
+        }
+        let gate = Gate()
+        connection._listPairingApprovalsForTesting = {
+            await gate.wait()
+            return []
+        }
+        let refresh = Task { await connection.refreshPairingApprovals() }
+        for _ in 0..<50 where gate.resume == nil {
+            await Task.yield()
+        }
+        connection.handleAppEvent(.pairingApprovalRequested(emittedAt: 1, approval: approval))
+        #expect(connection.pendingPairingApprovals.map(\.id) == ["pa_1"])
+        gate.open()
+        await refresh.value
+        #expect(connection.pendingPairingApprovals.map(\.id) == ["pa_1"])
+    }
 }
 
 enum AppEventSessionCleanupCase: CaseIterable {

@@ -125,7 +125,14 @@ struct PairingApprovalPromptHost: ViewModifier {
                     PairingApprovalPrompt(
                         presented: presented,
                         onApprove: {
-                            Task { await controller.approve(coordinator: coordinator) }
+                            Task {
+                                await controller.approve(
+                                    coordinator: coordinator,
+                                    authenticate: { reason in
+                                        await DeviceOwnerAuthentication.authenticate(reason: reason) == .success
+                                    }
+                                )
+                            }
                         },
                         onDeny: {
                             Task { await controller.deny(coordinator: coordinator) }

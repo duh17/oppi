@@ -100,6 +100,7 @@ enum PairingEnrollment {
                 }
                 switch result {
                 case .enrolled(let response):
+                    if Task.isCancelled { throw Failure.cancelled }
                     return response
                 case .pending(let expiresAt):
                     onWaiting?(expiresAt)

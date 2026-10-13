@@ -19,6 +19,7 @@ struct TailnetSettingsView: View {
     @State private var pairingMessage: String?
     @State private var pairingWaitExpiresAt: Int64?
     @State private var pairingTask: Task<Void, Never>?
+    @State private var pairingGeneration: UInt64 = 0
     /// Latest Oppi probe per peer id; a missing entry means none has started.
     @State private var probes: [String: TailnetPeerProbe] = [:]
     @State private var probeRefresh = 0
@@ -238,13 +239,7 @@ struct TailnetSettingsView: View {
                     if let expiresAt = pairingWaitExpiresAt {
                         WaitingForPairingApprovalView(
                             expiresAt: expiresAt,
-                            onCancel: {
-                                pairingTask?.cancel()
-                                pairingTask = nil
-                                pairingPeerID = nil
-                                pairingWaitExpiresAt = nil
-                                pairingMessage = "Pairing cancelled."
-                            }
+                            onCancel: { cancelPairing() }
                         )
                     } else {
                         HStack {
@@ -257,7 +252,9 @@ struct TailnetSettingsView: View {
                 } else {
                     Button("Pair with Oppi") {
                         pairingTask?.cancel()
-                        pairingTask = Task { await pair(with: peer) }
+                        pairingGeneration &+= 1
+                        let generation = pairingGeneration
+                        pairingTask = Task { await pair(with: peer, generation: generation) }
                     }
                     .disabled(pairingPeerID != nil || tailnet.state != .running)
                     .accessibilityIdentifier("tailnet.pair.\(peer.id)")
@@ -362,18 +359,29 @@ struct TailnetSettingsView: View {
         }
     }
 
+    private func cancelPairing() {
+        pairingGeneration &+= 1
+        pairingTask?.cancel()
+        pairingTask = nil
+        pairingPeerID = nil
+        pairingWaitExpiresAt = nil
+        pairingMessage = "Pairing cancelled."
+    }
+
     @MainActor
-    private func pair(with peer: TailnetPeer) async {
+    private func pair(with peer: TailnetPeer, generation: UInt64) async {
         pairingMessage = nil
         pairingWaitExpiresAt = nil
         pairingPeerID = peer.id
         defer {
-            pairingPeerID = nil
-            pairingWaitExpiresAt = nil
-            // A paired peer is recognised from the store; a failed attempt
-            // may have changed what the machine answers.
-            probes[peer.id] = nil
-            probeRefresh += 1
+            if generation == pairingGeneration {
+                pairingPeerID = nil
+                pairingWaitExpiresAt = nil
+                // A paired peer is recognised from the store; a failed attempt
+                // may have changed what the machine answers.
+                probes[peer.id] = nil
+                probeRefresh += 1
+            }
         }
         do {
             tailnet.startIfEnabled()
@@ -393,21 +401,26 @@ struct TailnetSettingsView: View {
                 serverStore: serverStore,
                 coordinator: coordinator,
                 onWaitingForApproval: { expiresAt in
+                    guard generation == pairingGeneration else { return }
                     pairingWaitExpiresAt = expiresAt
                 },
                 confirmTrust: { reason in
                     await BiometricService.shared.authenticate(reason: reason)
                 }
             )
+            guard generation == pairingGeneration, !Task.isCancelled else { return }
             pairingMessage = "Paired with \(enrolled.name)."
             if enrolled.selected {
                 onPaired?()
             }
         } catch let failure as TailnetSameUserPairing.Failure {
+            guard generation == pairingGeneration else { return }
             pairingMessage = failure.errorDescription
         } catch let error as InviteBootstrapError {
+            guard generation == pairingGeneration else { return }
             pairingMessage = error.errorDescription
         } catch {
+            guard generation == pairingGeneration else { return }
             pairingMessage = InviteBootstrapService.pairingFailureMessage(
                 for: error,
                 host: peer.displayName

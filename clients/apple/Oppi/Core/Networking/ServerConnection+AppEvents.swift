@@ -92,6 +92,7 @@ extension ServerConnection {
     }
 
     func upsertPendingPairingApproval(_ approval: PendingPairingApproval) {
+        pairingApprovalsMutationGeneration &+= 1
         if let index = pendingPairingApprovals.firstIndex(where: { $0.id == approval.id }) {
             pendingPairingApprovals[index] = approval
         } else {
@@ -104,16 +105,24 @@ extension ServerConnection {
     func removePendingPairingApproval(id: String) {
         let before = pendingPairingApprovals.count
         pendingPairingApprovals.removeAll { $0.id == id }
-        if pendingPairingApprovals.count != before {
-            NotificationCenter.default.post(name: .pairingApprovalsDidChange, object: nil)
-        }
+        guard pendingPairingApprovals.count != before else { return }
+        pairingApprovalsMutationGeneration &+= 1
+        NotificationCenter.default.post(name: .pairingApprovalsDidChange, object: nil)
     }
 
     func refreshPairingApprovals() async {
-        guard let apiClient else { return }
+        let generation = pairingApprovalsMutationGeneration
         do {
-            pendingPairingApprovals = try await apiClient.listPairingApprovals()
-                .sorted { $0.requestedAt < $1.requestedAt }
+            let list: [PendingPairingApproval]
+            if let testFetch = _listPairingApprovalsForTesting {
+                list = try await testFetch()
+            } else if let apiClient {
+                list = try await apiClient.listPairingApprovals()
+            } else {
+                return
+            }
+            guard pairingApprovalsMutationGeneration == generation else { return }
+            pendingPairingApprovals = list.sorted { $0.requestedAt < $1.requestedAt }
             NotificationCenter.default.post(name: .pairingApprovalsDidChange, object: nil)
         } catch {
             pairingApprovalLogger.error("Failed to refresh pairing approvals: \(error.localizedDescription, privacy: .public)")

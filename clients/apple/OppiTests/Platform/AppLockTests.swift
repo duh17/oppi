@@ -436,6 +436,30 @@ struct AppLockRedactionTests {
         )
     }
 
+    @Test func sessionLockDoesNotClearPairingNotifications() {
+        func request(_ identifier: String, category: String, serverId: String) -> UNNotificationRequest {
+            let content = UNMutableNotificationContent()
+            content.categoryIdentifier = category
+            content.userInfo = ["serverId": serverId]
+            return UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+        }
+        let requests = [
+            request("pair-a", category: SessionNotificationCategory.pairingApproval, serverId: "sha256:a"),
+            request("enroll-a", category: SessionNotificationCategory.deviceEnrolled, serverId: "sha256:a"),
+            request("pair-b", category: SessionNotificationCategory.pairingApproval, serverId: "sha256:b"),
+            request("ask-s1", category: AttentionNotificationPolicy.askCategoryId, serverId: "sha256:a"),
+        ]
+        #expect(AttentionNotificationService.lockSensitiveIdentifiers(in: requests) == ["ask-s1"])
+        #expect(
+            AttentionNotificationService.pairingNotificationIdentifiers(in: requests)
+                == ["pair-a", "enroll-a", "pair-b"]
+        )
+        #expect(
+            AttentionNotificationService.pairingNotificationIdentifiers(in: requests, serverId: "sha256:a")
+                == ["pair-a", "enroll-a"]
+        )
+    }
+
     @Test func askNotificationHidesQuestionTextWhileAppLockIsOn() {
         let ask = AskRequest(
             id: "ask-1",

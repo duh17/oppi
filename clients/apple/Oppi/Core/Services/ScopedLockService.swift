@@ -193,7 +193,7 @@ final class ScopedLockService {
     @ObservationIgnored var sessionLookup: @MainActor (_ serverId: String, _ sessionId: String) -> Session? = { _, _ in nil }
     /// Called after a lock turns on so Oppi's own notifications and the Live
     /// Activity stop showing text from the newly locked scope.
-    @ObservationIgnored private let didLock: @MainActor () -> Void
+    @ObservationIgnored private let didLock: @MainActor (ScopedLockScope) -> Void
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let appLock: AppLockService
@@ -201,7 +201,7 @@ final class ScopedLockService {
     init(
         defaults: UserDefaults = .standard,
         appLock: AppLockService = .shared,
-        didLock: @escaping @MainActor () -> Void = { ScopedLockService.clearContentShownBeforeLock() }
+        didLock: @escaping @MainActor (ScopedLockScope) -> Void = { ScopedLockService.clearContentShownBeforeLock($0) }
     ) {
         self.defaults = defaults
         self.appLock = appLock
@@ -343,7 +343,7 @@ final class ScopedLockService {
             unlocks[scope] = appLock.scopedUnlockGeneration
         }
         save()
-        didLock()
+        didLock(scope)
     }
 
     /// Turning a lock off always asks for device authentication.
@@ -435,9 +435,12 @@ final class ScopedLockService {
     /// A new lock: delivered ask and `done` notifications may show its question
     /// text or session name, and the Live Activity its session name; all follow
     /// the lock now.
-    static func clearContentShownBeforeLock() {
+    static func clearContentShownBeforeLock(_ scope: ScopedLockScope) {
         if ReleaseFeatures.localAttentionNotificationsEnabled {
             AttentionNotificationService.shared.removeLockSensitiveNotifications()
+            if case .server(let serverId) = scope {
+                AttentionNotificationService.shared.removePairingNotifications(serverId: serverId)
+            }
         }
         if ReleaseFeatures.liveActivitiesEnabled {
             LiveActivityManager.shared.recoverIfNeeded()

@@ -199,6 +199,44 @@ struct PairingEnrollmentTests {
         }
     }
 
+    @Test func cancelAfterEnrolledPollDoesNotReturnCredentials() async throws {
+        var pollResume: CheckedContinuation<Void, Never>?
+        let task = Task { @MainActor in
+            try await PairingEnrollment.complete(
+                start: .approvalRequired(
+                    PairingApprovalRequired(
+                        status: "approval_required",
+                        approvalId: "pa_1",
+                        pendingToken: "pw_1",
+                        expiresAt: 100
+                    )
+                ),
+                poll: { _, _ in
+                    await withCheckedContinuation { continuation in
+                        pollResume = continuation
+                    }
+                    return .enrolled(self.enrolled)
+                },
+                pollInterval: .zero,
+                sleep: { _ in }
+            )
+        }
+        for _ in 0..<50 where pollResume == nil {
+            await Task.yield()
+        }
+        let resume = try #require(pollResume)
+        task.cancel()
+        resume.resume()
+        do {
+            let response = try await task.value
+            Issue.record("Cancelled enrollment returned \(response.deviceId)")
+        } catch let failure as PairingEnrollment.Failure {
+            #expect(failure == .cancelled)
+        } catch {
+            Issue.record("Unexpected error \(error)")
+        }
+    }
+
     @Test func cancelFailsClosed() async {
         await #expect(throws: PairingEnrollment.Failure.cancelled) {
             try await PairingEnrollment.complete(
@@ -402,5 +440,84 @@ struct PairingNotificationRoutingTests {
             userInfo: ["serverId": "sha256:s", "approvalId": "pa_1"]
         )
         #expect(open?.action == .open)
+    }
+}
+
+@Suite("Pairing approval controller")
+@MainActor
+struct PairingApprovalControllerTests {
+    private func sample(_ id: String, requestedAt: Int64 = 1) -> PendingPairingApproval {
+        PendingPairingApproval(
+            id: id,
+            deviceName: "iPad",
+            method: "invite",
+            source: "100.64.0.7",
+            requestedAt: requestedAt,
+            expiresAt: 9_999_999_999_999,
+            keyThumbprint: "thumb"
+        )
+    }
+
+    @Test func denyStaysQueuedUntilPostSucceedsAndIsRetried() async {
+        let controller = PairingApprovalController()
+        controller.queueDeny(serverId: "sha256:s", approvalId: "pa_1")
+        #expect(controller.hasQueuedDeny(serverId: "sha256:s", approvalId: "pa_1"))
+
+        var attempts = 0
+        await controller.performQueuedDenies(postDeny: { _, _ in
+            attempts += 1
+            throw URLError(.networkConnectionLost)
+        })
+        #expect(attempts == 1)
+        #expect(controller.hasQueuedDeny(serverId: "sha256:s", approvalId: "pa_1"))
+
+        await controller.performQueuedDenies(postDeny: { serverId, approvalId in
+            attempts += 1
+            #expect(serverId == "sha256:s")
+            #expect(approvalId == "pa_1")
+        })
+        #expect(attempts == 2)
+        #expect(!controller.hasQueuedDeny(serverId: "sha256:s", approvalId: "pa_1"))
+    }
+
+    @Test func deny404ClearsTheQueue() async {
+        let controller = PairingApprovalController()
+        controller.queueDeny(serverId: "sha256:s", approvalId: "pa_1")
+        await controller.performQueuedDenies(postDeny: { _, _ in
+            throw APIError.server(status: 404, message: "unknown_approval")
+        })
+        #expect(!controller.hasQueuedDeny(serverId: "sha256:s", approvalId: "pa_1"))
+    }
+
+    @Test func stalePreferredNotificationPresentsNothing() {
+        let controller = PairingApprovalController()
+        controller.prefer(serverId: "sha256:s", approvalId: "pa_gone")
+        controller.apply(pending: [(
+            serverId: "sha256:s",
+            serverName: "Mac",
+            approval: sample("pa_other", requestedAt: 2)
+        )])
+        #expect(controller.presented == nil)
+    }
+
+    @Test func denyRemovesPromptAndBlocksApprove() {
+        let controller = PairingApprovalController()
+        controller.apply(pending: [(
+            serverId: "sha256:s",
+            serverName: "Mac",
+            approval: sample("pa_1")
+        )])
+        #expect(controller.presented?.approval.id == "pa_1")
+
+        controller.queueDeny(serverId: "sha256:s", approvalId: "pa_1")
+        #expect(controller.presented == nil)
+        #expect(controller.hasQueuedDeny(serverId: "sha256:s", approvalId: "pa_1"))
+
+        controller.apply(pending: [(
+            serverId: "sha256:s",
+            serverName: "Mac",
+            approval: sample("pa_1")
+        )])
+        #expect(controller.presented == nil)
     }
 }
