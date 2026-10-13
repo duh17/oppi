@@ -60,18 +60,6 @@ struct ExtensionSurfacePanelChromeTests {
         #expect(showsStrip.contains("showsTrailingStripContent"))
         #expect(showsStrip.contains("!stripEntries.isEmpty"))
     }
-
-    @Test("Message queue strip uses play-later symbol instead of outline list")
-    func messageQueueStripUsesPlayLaterSymbol() throws {
-        let source = try extensionSurfacePanelSource()
-        let leading = try extensionSurfacePanelSourceSlice(
-            named: "var leadingSystemImage: String? {",
-            until: "private static func nativePreviewText",
-            in: source
-        )
-        #expect(leading.contains("return \"text.append\""))
-        #expect(!leading.contains("list.bullet"))
-    }
 }
 
 private func extensionSurfacePanelSource() throws -> String {

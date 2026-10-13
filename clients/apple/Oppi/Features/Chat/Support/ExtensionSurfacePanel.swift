@@ -591,7 +591,9 @@ private enum ExtensionSurfaceStripEntry: Equatable, Identifiable {
             case .progress(_, let label, let value, let indeterminate):
                 if let label = label?.trimmedNonEmpty { return label }
                 if indeterminate == true { return "In progress" }
-                if let value, value.isFinite { return "\(Int(round(min(max(value, 0), 1) * 100)))%" }
+                if let fraction = ExtensionNativeBlockPresentation.normalizedProgress(value) {
+                    return "\(Int((fraction * 100).rounded()))%"
+                }
             case .section(_, let title, let subtitle, _):
                 if let subtitle = subtitle?.trimmedNonEmpty { return subtitle }
                 if let title = title?.trimmedNonEmpty { return title }
@@ -612,13 +614,12 @@ private enum ExtensionSurfaceStripEntry: Equatable, Identifiable {
             if case .activityList(_, let rows) = block { return rows }
             return []
         }
-        let states = Set(rows.compactMap(\.state))
-        if states.contains("error") { return .danger }
-        if states.contains("warning") { return .warning }
-        if states.contains("running") { return .running }
-        if states.contains("queued") { return .queued }
-        if states.contains("success") { return .success }
-        return .accent
+        let tones = Set(rows.map { ExtensionNativeBlockPresentation.activityTone($0.state) })
+        // The strip shows the most urgent row state; inactive and unknown rows leave it accent.
+        let priority: [(ExtensionNativeBlockPresentation.ActivityTone, ExtensionSurfaceStripTone)] = [
+            (.error, .danger), (.warning, .warning), (.running, .running), (.queued, .queued), (.success, .success),
+        ]
+        return priority.first { tones.contains($0.0) }?.1 ?? .accent
     }
 
 }
