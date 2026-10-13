@@ -208,7 +208,6 @@ describe("AgentLaunchService", () => {
       expect(result.session).toMatchObject({
         id: "sess-1",
         workspaceId: "ws-1",
-        workspaceName: "Project",
         worktreeId: "feature",
         thinkingLevel: "high",
         ephemeral: true,

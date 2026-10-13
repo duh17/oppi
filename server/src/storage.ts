@@ -103,6 +103,8 @@ export class Storage {
   private readonly agentDefinitionStore: AgentDefinitionStore;
   private readonly scheduleStore: AgentScheduleStore;
   private readonly workspaceStore: WorkspaceStore;
+  /** Workspace id → name, built on first use and dropped on every workspace write. */
+  private workspaceNames: Map<string, string> | undefined;
 
   /**
    * `migrateWorkspaceFolders` is for the one process that serves this data directory: it gives
@@ -175,7 +177,6 @@ export class Storage {
       }
 
       session.workspaceId = workspace.id;
-      session.workspaceName = workspace.name;
       this.sessionStore.saveSession(session);
       migrated += 1;
     }
@@ -328,6 +329,31 @@ export class Storage {
     return this.sessionStore.createSession(name, model, options);
   }
 
+  /**
+   * `Session.workspaceName` is not stored with the session: every session this class hands out
+   * or saves gets the current name of its workspace, and none when the workspace is gone.
+   * Set in place, like `programStatus` in `saveSession`, so held objects stay current.
+   */
+  private withWorkspaceName<T extends Session | undefined>(session: T): T {
+    if (!session) return session;
+    const name = session.workspaceId ? this.workspaceNameOf(session.workspaceId) : undefined;
+    if (name === undefined) delete session.workspaceName;
+    else session.workspaceName = name;
+    return session;
+  }
+
+  private withWorkspaceNames(sessions: Session[]): Session[] {
+    for (const session of sessions) this.withWorkspaceName(session);
+    return sessions;
+  }
+
+  private workspaceNameOf(workspaceId: string): string | undefined {
+    this.workspaceNames ??= new Map(
+      this.workspaceStore.listWorkspaces().map((workspace) => [workspace.id, workspace.name]),
+    );
+    return this.workspaceNames.get(workspaceId);
+  }
+
   saveSession(session: Session): void {
     // Normalizes stopped and error rows. These lifecycle states have no live run to ask, so
     // program status follows from lifecycle and the stored outcome alone. Deriving it here
@@ -342,14 +368,31 @@ export class Storage {
       syncProgramStatus({ session });
     }
     this.sessionStore.saveSession(session);
+    this.withWorkspaceName(session);
   }
 
   getSession(sessionId: string): Session | undefined {
-    return this.sessionStore.getSession(sessionId);
+    return this.withWorkspaceName(this.sessionStore.getSession(sessionId));
   }
 
   findSessionByLaunchIdempotencyKey(idempotencyKey: string): Session | undefined {
-    return this.sessionStore.findSessionByLaunchIdempotencyKey(idempotencyKey);
+    return this.withWorkspaceName(
+      this.sessionStore.findSessionByLaunchIdempotencyKey(idempotencyKey),
+    );
+  }
+
+  /** Session bound to a durable store's conversation; an indexed lookup. */
+  findSessionByDurableConversation(storeId: string, conversationId: number): Session | undefined {
+    return this.withWorkspaceName(
+      this.sessionStore.findSessionByDurableConversation(storeId, conversationId),
+    );
+  }
+
+  /** Session ids bound to conversations of one durable store; an indexed lookup. */
+  listDurableStoreConversations(
+    storeId: string,
+  ): Array<{ sessionId: string; conversationId: number }> {
+    return this.sessionStore.listDurableStoreConversations(storeId);
   }
 
   claimSessionLaunchRecovery(
@@ -358,15 +401,19 @@ export class Storage {
     nowMs: number,
     leaseTtlMs: number,
   ): Session | undefined {
-    return this.sessionStore.claimSessionLaunchRecovery(session, leaseOwner, nowMs, leaseTtlMs);
+    return this.withWorkspaceName(
+      this.sessionStore.claimSessionLaunchRecovery(session, leaseOwner, nowMs, leaseTtlMs),
+    );
   }
 
   listSessions(): Session[] {
-    return this.sessionStore.listSessions();
+    return this.withWorkspaceNames(this.sessionStore.listSessions());
   }
 
   listAllWorkspaceSessionSnapshots(workspaceId: string, worktreeId?: string): Session[] {
-    return this.sessionStore.listAllWorkspaceSessionSnapshots(workspaceId, worktreeId);
+    return this.withWorkspaceNames(
+      this.sessionStore.listAllWorkspaceSessionSnapshots(workspaceId, worktreeId),
+    );
   }
 
   listRecentWorkspaceSessionSnapshots(
@@ -375,11 +422,13 @@ export class Storage {
     nowMs?: number,
     worktreeId?: string,
   ): Session[] {
-    return this.sessionStore.listRecentWorkspaceSessionSnapshots(
-      workspaceId,
-      recentDays,
-      nowMs,
-      worktreeId,
+    return this.withWorkspaceNames(
+      this.sessionStore.listRecentWorkspaceSessionSnapshots(
+        workspaceId,
+        recentDays,
+        nowMs,
+        worktreeId,
+      ),
     );
   }
 
@@ -389,11 +438,13 @@ export class Storage {
     untilMs: number,
     worktreeId?: string,
   ): Session[] {
-    return this.sessionStore.listWorkspaceTimeRangeSessionSnapshots(
-      workspaceId,
-      sinceMs,
-      untilMs,
-      worktreeId,
+    return this.withWorkspaceNames(
+      this.sessionStore.listWorkspaceTimeRangeSessionSnapshots(
+        workspaceId,
+        sinceMs,
+        untilMs,
+        worktreeId,
+      ),
     );
   }
 
@@ -403,11 +454,13 @@ export class Storage {
     untilMs: number,
     worktreeId?: string,
   ): Session[] {
-    return this.sessionStore.listStoppedWorkspaceTimeRangeSessionSnapshots(
-      workspaceId,
-      sinceMs,
-      untilMs,
-      worktreeId,
+    return this.withWorkspaceNames(
+      this.sessionStore.listStoppedWorkspaceTimeRangeSessionSnapshots(
+        workspaceId,
+        sinceMs,
+        untilMs,
+        worktreeId,
+      ),
     );
   }
 
@@ -461,10 +514,12 @@ export class Storage {
   // ─── Workspaces ───
 
   createWorkspace(req: CreateWorkspaceRequest): Workspace {
+    this.workspaceNames = undefined;
     return this.workspaceStore.createWorkspace(req);
   }
 
   saveWorkspace(workspace: Workspace): void {
+    this.workspaceNames = undefined;
     this.workspaceStore.saveWorkspace(workspace);
   }
 
@@ -478,6 +533,7 @@ export class Storage {
 
   updateWorkspace(workspaceId: string, updates: UpdateWorkspaceRequest): Workspace | undefined {
     const previousAssetId = iconAssetId(this.workspaceStore.getWorkspace(workspaceId)?.icon);
+    this.workspaceNames = undefined;
     const workspace = this.workspaceStore.updateWorkspace(workspaceId, updates);
     if (workspace && previousAssetId) {
       this.cleanupUnreferencedIconAssets(new Set([previousAssetId]));
@@ -487,6 +543,7 @@ export class Storage {
 
   deleteWorkspace(workspaceId: string): boolean {
     const previousAssetId = iconAssetId(this.workspaceStore.getWorkspace(workspaceId)?.icon);
+    this.workspaceNames = undefined;
     const deleted = this.workspaceStore.deleteWorkspace(workspaceId);
     if (deleted && previousAssetId) this.cleanupUnreferencedIconAssets(new Set([previousAssetId]));
     return deleted;

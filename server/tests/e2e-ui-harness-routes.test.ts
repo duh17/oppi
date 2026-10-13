@@ -196,7 +196,6 @@ describe("E2E UI harness routes", () => {
         expect.arrayContaining([
           expect.objectContaining({
             workspaceId: "workspace-dense",
-            workspaceName: "Dense Workspace",
             name: "Yesterday 1",
             status: "stopped",
             createdAt: lastActivityMs - 1_000,

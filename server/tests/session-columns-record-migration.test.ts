@@ -1,0 +1,459 @@
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { openDatabase } from "../src/sqlite-compat.js";
+import { SESSION_COLUMNS_RECORD_MIGRATION_KEY } from "../src/storage/session-columns-record-migration.js";
+import { SESSION_STATE_DEAD_SCHEMA_CLEANUP_MIGRATION_KEY } from "../src/storage/session-state-cleanup-migration.js";
+import { SessionSqliteStore } from "../src/storage/session-sqlite-store.js";
+import type { Session } from "../src/types.js";
+
+const DROPPED_COLUMNS = [
+  "session_json",
+  "server_durable_json",
+  "workspace_name",
+  "model",
+  "thinking_level",
+  "message_count",
+  "tokens_input",
+  "tokens_output",
+  "tokens_cache_read",
+  "tokens_cache_write",
+  "cost",
+  "first_message",
+  "last_message",
+  "context_tokens",
+  "context_window",
+  "last_agent_reply_at",
+  "change_stats_json",
+];
+
+const CONTROL_SESSION: Session = {
+  id: "sess-control",
+  name: "Revise Sensei",
+  status: "stopped",
+  createdAt: 1_000,
+  lastActivity: 5_000,
+  model: "anthropic/claude",
+  messageCount: 3,
+  tokens: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40 },
+  cost: 0.5,
+  contextTokens: 100,
+  runtime: "oppi",
+  serverDurable: { storeId: "store-control", conversationId: 9, role: "control" },
+  control: { domain: "agents", intent: "revise", targetId: "agent-1", targetName: "Sensei" },
+};
+
+const DURABLE_SESSION: Session = {
+  id: "sess-durable",
+  workspaceId: "ws-1",
+  workspaceName: "Old name",
+  worktreeId: "wt-1",
+  name: "Durable",
+  status: "stopped",
+  createdAt: 1_000,
+  lastActivity: 4_000,
+  lastAgentReplyAt: 3_900,
+  programStatus: { state: "done", since: 3_900 },
+  model: "openai/gpt-5",
+  thinkingLevel: "high",
+  messageCount: 12,
+  tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
+  cost: 0.25,
+  changeStats: {
+    mutatingToolCalls: 2,
+    filesChanged: 1,
+    changedFiles: ["src/a.ts"],
+    addedLines: 5,
+    removedLines: 1,
+    _fileLineCounts: { "src/a.ts": 42 },
+    _sessionCreatedFiles: ["src/a.ts"],
+  },
+  contextTokens: 900,
+  contextWindow: 200_000,
+  firstMessage: "first",
+  lastMessage: "last",
+  warnings: ["Spawn failed once"],
+  runtime: "oppi",
+  piSessionFiles: ["/tmp/a.jsonl"],
+  piSessionFile: "/tmp/a.jsonl",
+  serverDurable: { storeId: "store-1", conversationId: 3 },
+  launch: {
+    source: "agent",
+    agentId: "agent-1",
+    agentIcon: { kind: "symbol", name: "sparkles" },
+    idempotencyKey: "idem-durable",
+    status: "accepted",
+    requestedAt: 1_000,
+  },
+};
+
+const CLASSIC_SESSION: Session = {
+  id: "sess-classic",
+  workspaceId: "ws-1",
+  workspaceName: "Old name",
+  status: "stopped",
+  createdAt: 1_000,
+  lastActivity: 3_000,
+  messageCount: 0,
+  tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  cost: 0,
+  runtime: "pi-tui",
+  mirror: { status: "disconnected" } as Session["mirror"],
+};
+
+const LEGACY_SESSIONS = [CONTROL_SESSION, DURABLE_SESSION, CLASSIC_SESSION];
+
+describe("session_state_sessions columns-only migration", () => {
+  const dirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function legacyDataDir(): string {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-columns-record-"));
+    dirs.push(dataDir);
+    seedLegacySessions(join(dataDir, "session-state.db"));
+    return dataDir;
+  }
+
+  it("keeps every session, its control metadata, binding, and stats; a second open is a no-op", () => {
+    const dataDir = legacyDataDir();
+
+    let store = new SessionSqliteStore(dataDir);
+    try {
+      for (const legacy of LEGACY_SESSIONS) {
+        expect(store.getSession(legacy.id)).toEqual(expectedAfterMigration(legacy));
+      }
+      expect(store.listSessions().map((session) => session.id)).toEqual([
+        "sess-control",
+        "sess-durable",
+        "sess-classic",
+      ]);
+      expect(store.listAllWorkspaceSessionSnapshots("ws-1").map((session) => session.id)).toEqual([
+        "sess-durable",
+        "sess-classic",
+      ]);
+      expect(store.findSessionByDurableConversation("store-1", 3)?.id).toBe("sess-durable");
+      expect(store.findSessionByDurableConversation("store-control", 9)?.control).toEqual(
+        CONTROL_SESSION.control,
+      );
+      expect(store.findSessionByLaunchIdempotencyKey("idem-durable")?.id).toBe("sess-durable");
+    } finally {
+      store.close();
+    }
+
+    const migrated = readShape(join(dataDir, "session-state.db"));
+    for (const column of DROPPED_COLUMNS) {
+      expect(migrated.columns).not.toContain(column);
+    }
+    expect(migrated.columns).toEqual(
+      expect.arrayContaining([
+        "control_json",
+        "summary_json",
+        "durable_store_id",
+        "durable_conversation_id",
+        "durable_role",
+      ]),
+    );
+    expect(migrated.indexes).toContain("session_state_sessions_durable_idx");
+    // Change-stat bookkeeping survives in the cache so later writes keep computing deltas.
+    expect(JSON.parse(migrated.summaries.get("sess-durable") ?? "{}").changeStats).toEqual(
+      DURABLE_SESSION.changeStats,
+    );
+    expect(migrated.completedAt).toBeTypeOf("number");
+    expect(listBackups(dataDir)).toHaveLength(1);
+
+    store = new SessionSqliteStore(dataDir);
+    try {
+      for (const legacy of LEGACY_SESSIONS) {
+        expect(store.getSession(legacy.id)).toEqual(expectedAfterMigration(legacy));
+      }
+    } finally {
+      store.close();
+    }
+    const reopened = readShape(join(dataDir, "session-state.db"));
+    expect(reopened.completedAt).toBe(migrated.completedAt);
+    expect(reopened.columns).toEqual(migrated.columns);
+    expect(listBackups(dataDir)).toHaveLength(1);
+  });
+
+  it("rolls back to the old table when the migration fails inside its transaction", () => {
+    const dataDir = legacyDataDir();
+    const dbPath = join(dataDir, "session-state.db");
+    const db = openDatabase(dbPath);
+    try {
+      // Fires on the ledger write, the last statement of the transaction: after the copy,
+      // the DROP, and the RENAME.
+      db.exec(`
+        CREATE TRIGGER fail_columns_record BEFORE INSERT ON app_state_migrations
+        WHEN NEW.key = '${SESSION_COLUMNS_RECORD_MIGRATION_KEY}'
+        BEGIN SELECT RAISE(ABORT, 'injected migration failure'); END;
+      `);
+    } finally {
+      db.close();
+    }
+
+    expect(() => new SessionSqliteStore(dataDir)).toThrow(/injected migration failure/);
+
+    const failed = readShape(dbPath);
+    expect(failed.columns).toEqual(expect.arrayContaining(DROPPED_COLUMNS));
+    expect(failed.tables).not.toContain("session_state_sessions_next");
+    expect(failed.completedAt).toBeUndefined();
+    expect(failed.legacySessions).toEqual(new Map(LEGACY_SESSIONS.map((s) => [s.id, s])));
+
+    const repair = openDatabase(dbPath);
+    try {
+      repair.exec("DROP TRIGGER fail_columns_record");
+    } finally {
+      repair.close();
+    }
+    const store = new SessionSqliteStore(dataDir);
+    try {
+      expect(store.getSession("sess-control")?.control).toEqual(CONTROL_SESSION.control);
+    } finally {
+      store.close();
+    }
+  });
+
+  it.each([
+    { name: "malformed durable binding", column: "server_durable_json", value: '{"storeId":' },
+    {
+      name: "non-integer conversation id",
+      column: "server_durable_json",
+      value: '{"storeId":"store-1","conversationId":"3"}',
+    },
+    { name: "malformed session JSON", column: "session_json", value: "{not-json" },
+  ])("rolls back instead of dropping a $name", ({ column, value }) => {
+    const dataDir = legacyDataDir();
+    const dbPath = join(dataDir, "session-state.db");
+    const db = openDatabase(dbPath);
+    try {
+      db.prepare(`UPDATE session_state_sessions SET ${column} = ? WHERE id = 'sess-durable'`).run(
+        value,
+      );
+    } finally {
+      db.close();
+    }
+
+    expect(() => new SessionSqliteStore(dataDir)).toThrow(/sess-durable/);
+
+    const unchanged = readShape(dbPath);
+    expect(unchanged.columns).toEqual(expect.arrayContaining(DROPPED_COLUMNS));
+    expect(unchanged.completedAt).toBeUndefined();
+    const raw = openDatabase(dbPath);
+    try {
+      expect(
+        raw
+          .prepare(
+            `SELECT ${column} AS value FROM session_state_sessions WHERE id = 'sess-durable'`,
+          )
+          .get(),
+      ).toEqual({ value });
+      expect(raw.prepare("SELECT COUNT(*) AS count FROM session_state_sessions").get()).toEqual({
+        count: LEGACY_SESSIONS.length,
+      });
+    } finally {
+      raw.close();
+    }
+  });
+
+  it("refuses to migrate when the backup cannot be written", () => {
+    const dataDir = legacyDataDir();
+    // A file where the backup directory belongs makes the backup fail.
+    writeFileSync(join(dataDir, "backups"), "not a directory");
+
+    expect(() => new SessionSqliteStore(dataDir)).toThrow(/refusing to migrate/);
+
+    const unchanged = readShape(join(dataDir, "session-state.db"));
+    expect(unchanged.columns).toEqual(expect.arrayContaining(DROPPED_COLUMNS));
+    expect(unchanged.completedAt).toBeUndefined();
+    expect(unchanged.legacySessions).toEqual(new Map(LEGACY_SESSIONS.map((s) => [s.id, s])));
+  });
+});
+
+/** What a full read returned before, minus the stored workspace name and change-stat bookkeeping. */
+function expectedAfterMigration(legacy: Session): Session {
+  const { workspaceName: _, ...session } = legacy;
+  if (!session.changeStats) return session;
+  const { _fileLineCounts: __, _sessionCreatedFiles: ___, ...changeStats } = session.changeStats;
+  return { ...session, changeStats };
+}
+
+/** The table as the previous server wrote it, after the dead-schema cleanup. */
+function seedLegacySessions(dbPath: string): void {
+  const db = openDatabase(dbPath);
+  try {
+    db.exec(`
+      CREATE TABLE session_state_sessions (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT,
+        workspace_name TEXT,
+        worktree_id TEXT,
+        name TEXT,
+        status TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_activity INTEGER NOT NULL,
+        last_agent_reply_at INTEGER,
+        current_turn_started_at INTEGER,
+        model TEXT,
+        message_count INTEGER NOT NULL,
+        tokens_input INTEGER NOT NULL,
+        tokens_output INTEGER NOT NULL,
+        tokens_cache_read INTEGER NOT NULL,
+        tokens_cache_write INTEGER NOT NULL,
+        cost REAL NOT NULL,
+        change_stats_json TEXT,
+        context_tokens INTEGER,
+        context_window INTEGER,
+        first_message TEXT,
+        last_message TEXT,
+        warnings_json TEXT,
+        thinking_level TEXT,
+        runtime TEXT,
+        mirror_json TEXT,
+        pi_session_file TEXT,
+        pi_session_files_json TEXT,
+        ephemeral INTEGER NOT NULL DEFAULT 0,
+        launch_status TEXT,
+        launch_lease_owner TEXT,
+        launch_lease_until_ms INTEGER,
+        launch_idempotency_key TEXT,
+        launch_metadata_json TEXT,
+        server_durable_json TEXT,
+        program_status_json TEXT,
+        session_json TEXT NOT NULL
+      );
+      CREATE INDEX session_state_sessions_workspace_activity_idx
+        ON session_state_sessions (workspace_id, last_activity DESC, id ASC);
+      CREATE UNIQUE INDEX session_state_sessions_launch_idempotency_idx
+        ON session_state_sessions (launch_idempotency_key)
+        WHERE launch_idempotency_key IS NOT NULL;
+      CREATE TABLE app_state_migrations (key TEXT PRIMARY KEY, completed_at INTEGER NOT NULL);
+    `);
+    db.prepare("INSERT INTO app_state_migrations (key, completed_at) VALUES (?, 1)").run(
+      SESSION_STATE_DEAD_SCHEMA_CLEANUP_MIGRATION_KEY,
+    );
+    const insert = db.prepare(`
+      INSERT INTO session_state_sessions (
+        id, workspace_id, workspace_name, worktree_id, name, status, created_at, last_activity,
+        last_agent_reply_at, current_turn_started_at, model, message_count, tokens_input,
+        tokens_output, tokens_cache_read, tokens_cache_write, cost, change_stats_json,
+        context_tokens, context_window, first_message, last_message, warnings_json,
+        thinking_level, runtime, mirror_json, pi_session_file, pi_session_files_json, ephemeral,
+        launch_status, launch_lease_owner, launch_lease_until_ms, launch_idempotency_key,
+        launch_metadata_json, server_durable_json, program_status_json, session_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const json = (value: unknown): string | null =>
+      value === undefined ? null : JSON.stringify(value);
+    for (const s of LEGACY_SESSIONS) {
+      insert.run(
+        s.id,
+        s.workspaceId ?? null,
+        s.workspaceName ?? null,
+        s.worktreeId ?? null,
+        s.name ?? null,
+        s.status,
+        s.createdAt,
+        s.lastActivity,
+        s.lastAgentReplyAt ?? null,
+        s.currentTurnStartedAt ?? null,
+        s.model ?? null,
+        s.messageCount,
+        s.tokens.input,
+        s.tokens.output,
+        s.tokens.cacheRead,
+        s.tokens.cacheWrite,
+        s.cost,
+        json(s.changeStats),
+        s.contextTokens ?? null,
+        s.contextWindow ?? null,
+        s.firstMessage ?? null,
+        s.lastMessage ?? null,
+        json(s.warnings),
+        s.thinkingLevel ?? null,
+        s.runtime ?? null,
+        json(s.mirror),
+        s.piSessionFile ?? null,
+        json(s.piSessionFiles),
+        s.ephemeral ? 1 : 0,
+        s.launch?.status ?? null,
+        s.launch?.lease?.owner ?? null,
+        s.launch?.lease?.expiresAt ?? null,
+        s.launch?.idempotencyKey ?? null,
+        json(s.launch),
+        json(s.serverDurable),
+        json(s.programStatus),
+        JSON.stringify(s),
+      );
+    }
+  } finally {
+    db.close();
+  }
+}
+
+function readShape(dbPath: string): {
+  tables: string[];
+  columns: string[];
+  indexes: string[];
+  completedAt: number | undefined;
+  summaries: Map<string, string>;
+  legacySessions: Map<string, Session>;
+} {
+  const db = openDatabase(dbPath);
+  try {
+    const names = (type: string): string[] =>
+      (
+        db.prepare("SELECT name FROM sqlite_master WHERE type = ?").all(type) as Array<{
+          name: string;
+        }>
+      ).map((row) => row.name);
+    const columns = (
+      db.prepare("PRAGMA table_info(session_state_sessions)").all() as Array<{ name: string }>
+    ).map((row) => row.name);
+    const completed = db
+      .prepare("SELECT completed_at FROM app_state_migrations WHERE key = ?")
+      .get(SESSION_COLUMNS_RECORD_MIGRATION_KEY) as { completed_at: number } | undefined;
+    const summaries = new Map<string, string>();
+    const legacySessions = new Map<string, Session>();
+    if (columns.includes("summary_json")) {
+      for (const row of db
+        .prepare("SELECT id, summary_json FROM session_state_sessions")
+        .all() as Array<{ id: string; summary_json: string }>) {
+        summaries.set(row.id, row.summary_json);
+      }
+    }
+    if (columns.includes("session_json")) {
+      for (const row of db
+        .prepare(
+          "SELECT id, session_json FROM session_state_sessions WHERE json_valid(session_json)",
+        )
+        .all() as Array<{ id: string; session_json: string }>) {
+        legacySessions.set(row.id, JSON.parse(row.session_json) as Session);
+      }
+    }
+    return {
+      tables: names("table"),
+      columns,
+      indexes: names("index"),
+      completedAt: completed?.completed_at,
+      summaries,
+      legacySessions,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+function listBackups(dataDir: string): string[] {
+  const backupDir = join(dataDir, "backups");
+  if (!existsSync(backupDir)) return [];
+  return readdirSync(backupDir).filter((name) =>
+    name.startsWith(`session-state-pre-${SESSION_COLUMNS_RECORD_MIGRATION_KEY}-`),
+  );
+}

@@ -415,7 +415,6 @@ describe("PiTuiMirrorRuntime queue bridge", () => {
       runtime: "host",
     });
     expect(runtime.getActiveSession(sessionId)?.workspaceId).toBe(created?.id);
-    expect(runtime.getActiveSession(sessionId)?.workspaceName).toBe(created?.name);
   });
 
   describe("a terminal in the home folder or above it", () => {

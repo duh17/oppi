@@ -306,7 +306,6 @@ describe("SessionLifecycleService", () => {
       expect(saveSession.mock.calls.at(-1)?.[0]).toMatchObject({
         id: "created-1",
         workspaceId: "ws-1",
-        workspaceName: "Project",
         thinkingLevel: "high",
         ephemeral: true,
         launch: { status: "accepted", promptDispatch: "not_sent" },
@@ -1710,7 +1709,6 @@ describe("SessionLifecycleService", () => {
           expect.objectContaining({
             id: "pi-session-1",
             workspaceId: "ws-1",
-            workspaceName: "Project",
             firstMessage: "Hello import",
             piSessionFile: jsonlPath,
             piSessionFiles: [jsonlPath],
@@ -1840,7 +1838,6 @@ describe("SessionLifecycleService", () => {
         expect.objectContaining({
           id: "fork-1",
           workspaceId: "ws-1",
-          workspaceName: "Project",
           piSessionFile: "/tmp/forked-fork-1.jsonl",
           piSessionFiles: ["/tmp/forked-fork-1.jsonl"],
           thinkingLevel: "high",

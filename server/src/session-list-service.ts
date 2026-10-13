@@ -123,24 +123,23 @@ export class SessionListService {
   }): RecentWorkspaceSessionSummariesResult {
     const serverNow = params.nowMs ?? Date.now();
     const hasExplicitTimeRange = params.sinceMs !== undefined || params.untilMs !== undefined;
-    const workspaceSessions = this.deps.storage
-      .listWorkspaces()
-      .flatMap((workspace) =>
-        (hasExplicitTimeRange
-          ? this.deps.storage.listWorkspaceTimeRangeSessionSnapshots(
+    const workspaces = this.deps.storage.listWorkspaces();
+    const workspaceSessions = workspaces.flatMap((workspace) =>
+      (hasExplicitTimeRange
+        ? this.deps.storage.listWorkspaceTimeRangeSessionSnapshots(
+            workspace.id,
+            params.sinceMs ?? Number.MIN_SAFE_INTEGER,
+            exclusiveSessionRangeUntil(params.untilMs),
+          )
+        : params.recentDays > 0
+          ? this.deps.storage.listRecentWorkspaceSessionSnapshots(
               workspace.id,
-              params.sinceMs ?? Number.MIN_SAFE_INTEGER,
-              exclusiveSessionRangeUntil(params.untilMs),
+              params.recentDays,
+              serverNow,
             )
-          : params.recentDays > 0
-            ? this.deps.storage.listRecentWorkspaceSessionSnapshots(
-                workspace.id,
-                params.recentDays,
-                serverNow,
-              )
-            : this.deps.storage.listAllWorkspaceSessionSnapshots(workspace.id)
-        ).filter(isOpenableManagedListSession),
-      );
+          : this.deps.storage.listAllWorkspaceSessionSnapshots(workspace.id)
+      ).filter(isOpenableManagedListSession),
+    );
     const cutoffMs =
       !hasExplicitTimeRange && params.recentDays > 0
         ? serverNow - params.recentDays * 86_400_000
@@ -158,6 +157,7 @@ export class SessionListService {
     const mergedSessions = mergeActiveSessionsAcrossWorkspaces(
       this.deps.sessionRuntimes,
       projectedSessions,
+      new Map(workspaces.map((workspace) => [workspace.id, workspace.name])),
       cutoffMs === undefined ? {} : { cutoffMs },
     ).filter((session) => sessionMatchesInclusiveTimeRange(session, params));
 
@@ -191,7 +191,7 @@ export class SessionListService {
 
     if (params.statuses.has("active")) {
       response.active = this.listWorkspaceActiveSessionRows(
-        params.workspace.id,
+        params.workspace,
         attention,
         params.worktreeId,
         params.filterActiveByTimeRange ? params.timeRange : undefined,
@@ -247,15 +247,15 @@ export class SessionListService {
   }
 
   private listWorkspaceActiveSessionRows(
-    workspaceId: string,
+    workspace: Workspace,
     attention: PendingAttentionCounts,
     worktreeId?: string,
     timeRange?: { sinceMs: number; untilMs: number },
   ): ManagedSessionListRow[] {
     const sessions = mergeActiveWorkspaceSessions(
       this.deps.sessionRuntimes,
-      this.deps.storage.listAllWorkspaceSessionSnapshots(workspaceId, worktreeId),
-      workspaceId,
+      this.deps.storage.listAllWorkspaceSessionSnapshots(workspace.id, worktreeId),
+      workspace,
       { worktreeId },
     )
       .filter(isOpenableManagedListSession)
@@ -457,6 +457,7 @@ function collectPendingAttentionCounts(provider: PendingUIRequestProvider): Pend
 function mergeActiveSessionsAcrossWorkspaces(
   sessionRuntimes: Pick<SessionRuntimes, "getActiveSession" | "getActiveSessionIds">,
   projectedSessions: Session[],
+  workspaceNames: ReadonlyMap<string, string>,
   filters: {
     cutoffMs?: number;
     untilMs?: number;
@@ -472,15 +473,30 @@ function mergeActiveSessionsAcrossWorkspaces(
     if (!sessionMatchesWorkspaceListFilters(active, filters)) {
       continue;
     }
-    byId.set(active.id, active);
+    byId.set(active.id, withCurrentWorkspaceName(active, workspaceNames));
   }
   return Array.from(byId.values()).sort(compareWorkspaceListSessions);
+}
+
+/**
+ * A live session keeps the workspace name from its last save, so a rename since then would
+ * not show. Set the current one in place, as `Storage` does on read, so the row and the live
+ * object agree.
+ */
+function withCurrentWorkspaceName(
+  active: Session,
+  workspaceNames: ReadonlyMap<string, string>,
+): Session {
+  const name = active.workspaceId ? workspaceNames.get(active.workspaceId) : undefined;
+  if (name === undefined) delete active.workspaceName;
+  else active.workspaceName = name;
+  return active;
 }
 
 function mergeActiveWorkspaceSessions(
   sessionRuntimes: Pick<SessionRuntimes, "getActiveSession" | "getActiveSessionIds">,
   projectedSessions: Session[],
-  workspaceId: string,
+  workspace: Workspace,
   filters: {
     cutoffMs?: number;
     untilMs?: number;
@@ -488,15 +504,16 @@ function mergeActiveWorkspaceSessions(
   },
 ): Session[] {
   const byId = new Map(projectedSessions.map((session) => [session.id, session]));
+  const workspaceNames = new Map([[workspace.id, workspace.name]]);
   for (const activeSessionId of sessionRuntimes.getActiveSessionIds()) {
     const active = sessionRuntimes.getActiveSession(activeSessionId);
-    if (!active || active.workspaceId !== workspaceId) {
+    if (!active || active.workspaceId !== workspace.id) {
       continue;
     }
     if (!sessionMatchesWorkspaceListFilters(active, filters)) {
       continue;
     }
-    byId.set(active.id, active);
+    byId.set(active.id, withCurrentWorkspaceName(active, workspaceNames));
   }
   return Array.from(byId.values()).sort(compareWorkspaceListSessions);
 }

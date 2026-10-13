@@ -335,7 +335,6 @@ export class AgentLaunchService {
       : this.deps.storage.createSession(sessionName, modelSelection.model);
 
     session.workspaceId = request.target.workspace.id;
-    session.workspaceName = request.target.workspace.name;
 
     if (request.target.worktreeId) {
       session.worktreeId = request.target.worktreeId;

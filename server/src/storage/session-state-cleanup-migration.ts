@@ -57,24 +57,25 @@ const TOMBSTONE_PREFIX = "sessions_json_import_sqlite_backend_v2:%";
  * Second open is a no-op. A failed backup aborts before any DROP.
  */
 export function runSessionStateDeadSchemaCleanup(db: SqliteDatabase, dataDir: string): void {
+  const key = SESSION_STATE_DEAD_SCHEMA_CLEANUP_MIGRATION_KEY;
   ensureMigrationsTable(db);
-  if (hasCompleted(db)) {
+  if (hasCompletedMigration(db, key)) {
     return;
   }
 
   const work = inspectCleanupWork(db);
   if (!hasCleanupWork(work)) {
-    recordCompletion(db);
+    recordMigration(db, key);
     return;
   }
 
-  const backupPath = writePreMigrationBackup(db, dataDir);
+  const backupPath = writePreMigrationBackup(db, dataDir, key);
   db.transaction(() => {
-    if (hasCompleted(db)) {
+    if (hasCompletedMigration(db, key)) {
       return;
     }
     applyCleanup(db);
-    recordCompletion(db);
+    recordMigration(db, key);
   })();
 
   log.info("session_state_cleanup.completed", {
@@ -88,7 +89,8 @@ export function runSessionStateDeadSchemaCleanup(db: SqliteDatabase, dataDir: st
   });
 }
 
-function ensureMigrationsTable(db: SqliteDatabase): void {
+/** The one migration ledger in session-state.db. */
+export function ensureMigrationsTable(db: SqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS app_state_migrations (
       key TEXT PRIMARY KEY,
@@ -97,16 +99,15 @@ function ensureMigrationsTable(db: SqliteDatabase): void {
   `);
 }
 
-function hasCompleted(db: SqliteDatabase): boolean {
-  const row = db
-    .prepare("SELECT 1 AS present FROM app_state_migrations WHERE key = ?")
-    .get(SESSION_STATE_DEAD_SCHEMA_CLEANUP_MIGRATION_KEY) as { present?: number } | undefined;
+export function hasCompletedMigration(db: SqliteDatabase, key: string): boolean {
+  const row = db.prepare("SELECT 1 AS present FROM app_state_migrations WHERE key = ?").get(key) as
+    { present?: number } | undefined;
   return row !== undefined;
 }
 
-function recordCompletion(db: SqliteDatabase): void {
+export function recordMigration(db: SqliteDatabase, key: string): void {
   db.prepare("INSERT OR IGNORE INTO app_state_migrations (key, completed_at) VALUES (?, ?)").run(
-    SESSION_STATE_DEAD_SCHEMA_CLEANUP_MIGRATION_KEY,
+    key,
     Date.now(),
   );
 }
@@ -162,19 +163,20 @@ function applyCleanup(db: SqliteDatabase): void {
   db.prepare("DELETE FROM app_state_migrations WHERE key LIKE ?").run(TOMBSTONE_PREFIX);
 }
 
-function writePreMigrationBackup(db: SqliteDatabase, dataDir: string): string {
+/**
+ * Copies the whole file to `$dataDir/backups/` before a destructive migration. Throws when the
+ * copy fails, so the caller aborts before changing anything.
+ */
+export function writePreMigrationBackup(db: SqliteDatabase, dataDir: string, key: string): string {
   const backupDir = join(dataDir, "backups");
-  mkdirSync(backupDir, { recursive: true, mode: 0o700 });
-  const backupPath = join(
-    backupDir,
-    `session-state-pre-${SESSION_STATE_DEAD_SCHEMA_CLEANUP_MIGRATION_KEY}-${Date.now()}.db`,
-  );
+  const backupPath = join(backupDir, `session-state-pre-${key}-${Date.now()}.db`);
   try {
+    mkdirSync(backupDir, { recursive: true, mode: 0o700 });
     db.exec(`VACUUM INTO ${sqlLiteral(backupPath)}`);
     chmodSync(backupPath, 0o600);
   } catch (error) {
     throw new Error(
-      `session-state cleanup backup failed; refusing to migrate (${backupPath}): ${
+      `session-state backup before ${key} failed; refusing to migrate (${backupPath}): ${
         error instanceof Error ? error.message : String(error)
       }`,
       { cause: error },
@@ -190,7 +192,7 @@ function sqliteObjectExists(db: SqliteDatabase, type: "table" | "index", name: s
   return row !== undefined;
 }
 
-function tableColumns(db: SqliteDatabase, table: string): Set<string> {
+export function tableColumns(db: SqliteDatabase, table: string): Set<string> {
   if (!sqliteObjectExists(db, "table", table)) {
     return new Set();
   }

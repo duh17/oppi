@@ -102,10 +102,6 @@ describe("Pi-native session identity cutover", () => {
           db.prepare("PRAGMA table_info(session_state_sessions)").all() as Array<{ name: string }>
         ).map((row) => row.name);
         expect(columns).not.toContain("pi_session_id");
-        const row = db
-          .prepare("SELECT session_json FROM session_state_sessions WHERE id = ?")
-          .get(session.id) as { session_json: string };
-        expect(JSON.parse(row.session_json)).not.toHaveProperty("piSessionId");
       } finally {
         db.close();
       }

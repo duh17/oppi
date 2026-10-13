@@ -308,7 +308,6 @@ export class SessionLifecycleService {
         }
       : this.deps.storage.createSession(sessionName, requestedModel);
     session.workspaceId = undefined;
-    session.workspaceName = undefined;
     session.worktreeId = undefined;
     session.runtime = "oppi";
     session.control = { ...params.control };
@@ -622,7 +621,6 @@ export class SessionLifecycleService {
     });
     if (existingSession) {
       existingSession.workspaceId = params.workspace.id;
-      existingSession.workspaceName = params.workspace.name;
       if (params.worktreeId) {
         existingSession.worktreeId = params.worktreeId;
       }
@@ -662,7 +660,6 @@ export class SessionLifecycleService {
     });
 
     session.workspaceId = params.workspace.id;
-    session.workspaceName = params.workspace.name;
     if (params.worktreeId) {
       session.worktreeId = params.worktreeId;
     }
@@ -752,7 +749,6 @@ export class SessionLifecycleService {
     // Pi records file-level ancestry for forks in the JSONL header (`parentSession`).
     // Timeline forks stay independent root sessions in the workspace list.
     forkSession.workspaceId = params.workspace.id;
-    forkSession.workspaceName = params.workspace.name;
     if (latestSource.worktreeId) {
       forkSession.worktreeId = latestSource.worktreeId;
     }

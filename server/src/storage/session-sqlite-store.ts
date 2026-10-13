@@ -1,6 +1,5 @@
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { isDeepStrictEqual } from "node:util";
 
 import { mintSessionId } from "../id.js";
 import { ICON_ASSET_ID_PATTERN, migrateIconChoice, validateIconChoice } from "../icon-choice.js";
@@ -13,6 +12,10 @@ import type {
   SessionInteractionKind,
 } from "../types.js";
 import { openDatabase, type SqliteDatabase, type SqliteStatement } from "../sqlite-compat.js";
+import {
+  createSessionStateSessionsTable,
+  runSessionColumnsRecordMigration,
+} from "./session-columns-record-migration.js";
 import type {
   WorkspaceSessionSummarySnapshot,
   WorkspaceStoppedTimeBucketSnapshot,
@@ -25,55 +28,52 @@ import {
 } from "./session-repair.js";
 
 const log = createLogger({ base: { component: "session_sqlite_store" } });
-const SCHEMA_VERSION = "8";
+const SCHEMA_VERSION = "9";
 
-interface SessionJsonRow {
-  session_json: string;
-}
-
-interface SessionIconMigrationRow extends SessionJsonRow {
-  id: string;
-  launch_metadata_json: string | null;
-}
-
-interface SessionProjectionRow {
+interface SessionRow {
   id: string;
   workspace_id: string | null;
-  workspace_name: string | null;
   worktree_id: string | null;
   name: string | null;
   status: Session["status"];
   created_at: number;
   last_activity: number;
-  last_agent_reply_at: number | null;
   current_turn_started_at: number | null;
-  model: string | null;
-  message_count: number;
-  tokens_input: number;
-  tokens_output: number;
-  tokens_cache_read: number;
-  tokens_cache_write: number;
-  cost: number;
-  change_stats_json: string | null;
-  context_tokens: number | null;
-  context_window: number | null;
-  first_message: string | null;
-  last_message: string | null;
   warnings_json: string | null;
-  thinking_level: string | null;
   runtime: Session["runtime"] | null;
   mirror_json: string | null;
   pi_session_file: string | null;
   pi_session_files_json: string | null;
   ephemeral: number;
-  launch_idempotency_key: string | null;
-  launch_status: string | null;
-  launch_lease_owner: string | null;
-  launch_lease_until_ms: number | null;
   launch_metadata_json: string | null;
-  server_durable_json: string | null;
+  durable_store_id: string | null;
+  durable_conversation_id: number | null;
+  durable_role: string | null;
+  control_json: string | null;
   program_status_json: string | null;
+  summary_json: string;
 }
+
+/**
+ * Conversation stats cached in `summary_json`. None of these is filtered or sorted in SQL; a
+ * durable session can refresh them from its store.
+ */
+type SessionSummaryCache = Partial<
+  Pick<
+    Session,
+    | "model"
+    | "thinkingLevel"
+    | "messageCount"
+    | "tokens"
+    | "cost"
+    | "firstMessage"
+    | "lastMessage"
+    | "contextTokens"
+    | "contextWindow"
+    | "lastAgentReplyAt"
+    | "changeStats"
+  >
+>;
 
 interface WorkspaceSummaryRow {
   workspace_id: string;
@@ -101,85 +101,30 @@ export interface RestartResumeEntry {
   wasBusy: boolean;
 }
 
-const SESSION_PROJECTION_COLUMNS = `
+/** Everything `buildSession` decodes. The launch CAS columns are read only by their queries. */
+const SESSION_COLUMNS = `
   id,
   workspace_id,
-  workspace_name,
   worktree_id,
   name,
   status,
   created_at,
   last_activity,
-  last_agent_reply_at,
   current_turn_started_at,
-  model,
-  message_count,
-  tokens_input,
-  tokens_output,
-  tokens_cache_read,
-  tokens_cache_write,
-  cost,
-  change_stats_json,
-  context_tokens,
-  context_window,
-  first_message,
-  last_message,
   warnings_json,
-  thinking_level,
   runtime,
   mirror_json,
   pi_session_file,
   pi_session_files_json,
   ephemeral,
-  launch_idempotency_key,
-  launch_status,
-  launch_lease_owner,
-  launch_lease_until_ms,
   launch_metadata_json,
-  server_durable_json,
-  program_status_json
+  durable_store_id,
+  durable_conversation_id,
+  durable_role,
+  control_json,
+  program_status_json,
+  summary_json
 `;
-
-const SESSION_COLUMN_DEFINITIONS = [
-  ["workspace_id", "TEXT"],
-  ["workspace_name", "TEXT"],
-  ["worktree_id", "TEXT"],
-  ["name", "TEXT"],
-  ["status", "TEXT NOT NULL DEFAULT 'stopped'"],
-  ["created_at", "INTEGER NOT NULL DEFAULT 0"],
-  ["last_activity", "INTEGER NOT NULL DEFAULT 0"],
-  ["last_agent_reply_at", "INTEGER"],
-  ["current_turn_started_at", "INTEGER"],
-  ["model", "TEXT"],
-  ["message_count", "INTEGER NOT NULL DEFAULT 0"],
-  ["tokens_input", "INTEGER NOT NULL DEFAULT 0"],
-  ["tokens_output", "INTEGER NOT NULL DEFAULT 0"],
-  ["tokens_cache_read", "INTEGER NOT NULL DEFAULT 0"],
-  ["tokens_cache_write", "INTEGER NOT NULL DEFAULT 0"],
-  ["cost", "REAL NOT NULL DEFAULT 0"],
-  ["change_stats_json", "TEXT"],
-  ["context_tokens", "INTEGER"],
-  ["context_window", "INTEGER"],
-  ["first_message", "TEXT"],
-  ["last_message", "TEXT"],
-  ["warnings_json", "TEXT"],
-  ["thinking_level", "TEXT"],
-  ["runtime", "TEXT"],
-  ["mirror_json", "TEXT"],
-  ["pi_session_file", "TEXT"],
-  ["pi_session_files_json", "TEXT"],
-  ["ephemeral", "INTEGER NOT NULL DEFAULT 0"],
-  ["launch_status", "TEXT"],
-  ["launch_lease_owner", "TEXT"],
-  ["launch_lease_until_ms", "INTEGER"],
-  ["launch_idempotency_key", "TEXT"],
-  ["launch_metadata_json", "TEXT"],
-  // Durable-engine enrollment, so list projections can report `engine` without session_json.
-  ["server_durable_json", "TEXT"],
-  // OSC 7501 program status, so list projections report it without session_json.
-  ["program_status_json", "TEXT"],
-  ["session_json", "TEXT NOT NULL DEFAULT ''"],
-] as const;
 
 export class SessionSqliteStore {
   private readonly dataDir: string;
@@ -187,8 +132,10 @@ export class SessionSqliteStore {
   private cache: Map<string, Session> | null = null;
 
   private stmtUpsert!: SqliteStatement;
+  private stmtClaimLaunch!: SqliteStatement;
   private stmtGet!: SqliteStatement;
   private stmtList!: SqliteStatement;
+  private stmtFindDurable!: SqliteStatement;
   private stmtDelete!: SqliteStatement;
   private stmtInsertInteraction!: SqliteStatement;
   private stmtDeleteInteractions!: SqliteStatement;
@@ -242,49 +189,8 @@ export class SessionSqliteStore {
   }
 
   upsertSession(session: Session): void {
-    const restored = this.restoreInternalFields(session);
-    const normalized = normalizeDeclaredSession(restored);
-    const json = JSON.stringify(normalized);
-
-    this.stmtUpsert.run(
-      normalized.id,
-      normalized.workspaceId ?? null,
-      normalized.workspaceName ?? null,
-      normalized.worktreeId ?? null,
-      normalized.name ?? null,
-      normalized.status,
-      normalized.createdAt,
-      normalized.lastActivity,
-      normalized.lastAgentReplyAt ?? null,
-      normalized.currentTurnStartedAt ?? null,
-      normalized.model ?? null,
-      normalized.messageCount,
-      normalized.tokens.input,
-      normalized.tokens.output,
-      normalized.tokens.cacheRead,
-      normalized.tokens.cacheWrite,
-      normalized.cost,
-      normalized.changeStats ? JSON.stringify(normalized.changeStats) : null,
-      normalized.contextTokens ?? null,
-      normalized.contextWindow ?? null,
-      normalized.firstMessage ?? null,
-      normalized.lastMessage ?? null,
-      normalized.warnings ? JSON.stringify(normalized.warnings) : null,
-      normalized.thinkingLevel ?? null,
-      normalized.runtime ?? null,
-      normalized.mirror ? JSON.stringify(normalized.mirror) : null,
-      normalized.piSessionFile ?? null,
-      normalized.piSessionFiles ? JSON.stringify(normalized.piSessionFiles) : null,
-      normalized.ephemeral ? 1 : 0,
-      normalized.launch?.status ?? null,
-      normalized.launch?.lease?.owner ?? null,
-      normalized.launch?.lease?.expiresAt ?? null,
-      normalized.launch?.idempotencyKey ?? null,
-      normalized.launch ? JSON.stringify(normalized.launch) : null,
-      normalized.serverDurable ? JSON.stringify(normalized.serverDurable) : null,
-      normalized.programStatus ? JSON.stringify(normalized.programStatus) : null,
-      json,
-    );
+    const normalized = normalizeDeclaredSession(this.restoreInternalFields(session));
+    this.stmtUpsert.run(normalized.id, ...sessionRowValues(normalized));
     this.cache?.set(normalized.id, stripInternalFields(normalized));
   }
 
@@ -305,32 +211,49 @@ export class SessionSqliteStore {
   }
 
   /**
-   * Scan both durable launch copies independently. This intentionally does not
-   * depend on full Session decoding: a stale or malformed session_json row must
-   * not hide a valid tagged Genmoji reference in launch_metadata_json, and a
-   * stale launch projection must not hide the session copy either.
+   * Session for a durable conversation, by the `(durable_store_id, durable_conversation_id)`
+   * index. Conversation ids are per store, so both are required.
+   */
+  findSessionByDurableConversation(storeId: string, conversationId: number): Session | undefined {
+    const row = this.stmtFindDurable.get(storeId, conversationId) as { id: string } | undefined;
+    return row ? this.getSession(row.id) : undefined;
+  }
+
+  /**
+   * Every session bound to a conversation of one durable store, by the same index. Ordered like
+   * `findSessionByDurableConversation`: the first row for a conversation is the one it returns.
+   */
+  listDurableStoreConversations(
+    storeId: string,
+  ): Array<{ sessionId: string; conversationId: number }> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, durable_conversation_id
+         FROM session_state_sessions
+         WHERE durable_store_id = ? AND durable_conversation_id IS NOT NULL
+         ORDER BY created_at ASC, id ASC`,
+      )
+      .all(storeId) as Array<{ id: string; durable_conversation_id: number }>;
+    return rows.map((row) => ({ sessionId: row.id, conversationId: row.durable_conversation_id }));
+  }
+
+  /**
+   * Scans launch metadata without full Session decoding, so a row that fails to decode cannot
+   * hide a valid tagged Genmoji reference.
    */
   listReferencedIconAssetIds(): Set<string> {
     const rows = this.db
-      .prepare("SELECT session_json, launch_metadata_json FROM session_state_sessions")
-      .all() as Array<{
-      session_json: string;
-      launch_metadata_json: string | null;
-    }>;
+      .prepare(
+        "SELECT launch_metadata_json FROM session_state_sessions WHERE launch_metadata_json IS NOT NULL",
+      )
+      .all() as Array<{ launch_metadata_json: string }>;
     const assetIds = new Set<string>();
 
     for (const row of rows) {
       try {
-        collectStoredIconAssetIds(JSON.parse(row.session_json) as unknown, assetIds);
+        collectStoredIconAssetIds(JSON.parse(row.launch_metadata_json) as unknown, assetIds);
       } catch {
-        // The independent launch projection may still carry the reference.
-      }
-      if (row.launch_metadata_json) {
-        try {
-          collectStoredIconAssetIds(JSON.parse(row.launch_metadata_json) as unknown, assetIds);
-        } catch {
-          // The session copy may still carry the reference.
-        }
+        // Malformed launch metadata names no asset.
       }
     }
     return assetIds;
@@ -339,13 +262,13 @@ export class SessionSqliteStore {
   listSessionsWithoutWorkspace(): Session[] {
     const rows = this.db
       .prepare(
-        `SELECT session_json
+        `SELECT ${SESSION_COLUMNS}
          FROM session_state_sessions
          WHERE workspace_id IS NULL
          ORDER BY last_activity DESC, id ASC`,
       )
-      .all() as SessionJsonRow[];
-    return this.parseJsonRows(rows).map(stripInternalFields);
+      .all() as SessionRow[];
+    return this.decodeRows(rows).map(stripInternalFields);
   }
 
   listAllWorkspaceSessionSnapshots(workspaceId: string, worktreeId?: string): Session[] {
@@ -564,101 +487,13 @@ export class SessionSqliteStore {
       .get();
 
     if (!hasSessionTable) {
-      this.createCurrentSchema();
-      runSessionStateDeadSchemaCleanup(this.db, this.dataDir);
-      return;
+      createSessionStateSessionsTable(this.db, "session_state_sessions");
     }
-
-    this.ensureSessionColumns();
-    this.reconcileServerDurableProjection();
-    this.ensureSessionIndexesAndSchemaVersion();
+    // Ordered: the dead-schema cleanup drops columns of the old table shape before the rebuild.
     runSessionStateDeadSchemaCleanup(this.db, this.dataDir);
-    this.backfillMissingSessionJson();
-    this.migrateStoredIconChoices();
-  }
-
-  private createCurrentSchema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS session_state_sessions (
-        id TEXT PRIMARY KEY,
-        workspace_id TEXT,
-        workspace_name TEXT,
-        worktree_id TEXT,
-        name TEXT,
-        status TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        last_activity INTEGER NOT NULL,
-        last_agent_reply_at INTEGER,
-        current_turn_started_at INTEGER,
-        model TEXT,
-        message_count INTEGER NOT NULL,
-        tokens_input INTEGER NOT NULL,
-        tokens_output INTEGER NOT NULL,
-        tokens_cache_read INTEGER NOT NULL,
-        tokens_cache_write INTEGER NOT NULL,
-        cost REAL NOT NULL,
-        change_stats_json TEXT,
-        context_tokens INTEGER,
-        context_window INTEGER,
-        first_message TEXT,
-        last_message TEXT,
-        warnings_json TEXT,
-        thinking_level TEXT,
-        runtime TEXT,
-        mirror_json TEXT,
-        pi_session_file TEXT,
-        pi_session_files_json TEXT,
-        ephemeral INTEGER NOT NULL DEFAULT 0,
-        launch_status TEXT,
-        launch_lease_owner TEXT,
-        launch_lease_until_ms INTEGER,
-        launch_idempotency_key TEXT,
-        launch_metadata_json TEXT,
-        server_durable_json TEXT,
-        program_status_json TEXT,
-        session_json TEXT NOT NULL
-      );
-    `);
+    runSessionColumnsRecordMigration(this.db, this.dataDir);
     this.ensureSessionIndexesAndSchemaVersion();
-  }
-
-  private ensureSessionColumns(): void {
-    const rows = this.db.prepare("PRAGMA table_info(session_state_sessions)").all() as Array<{
-      name: string;
-    }>;
-    const columns = new Set(rows.map((row) => row.name));
-    if (!columns.has("id")) {
-      throw new Error("session_state_sessions is missing id; refusing destructive migration");
-    }
-
-    for (const [name, definition] of SESSION_COLUMN_DEFINITIONS) {
-      if (!columns.has(name)) {
-        this.db.exec(`ALTER TABLE session_state_sessions ADD COLUMN ${name} ${definition}`);
-      }
-    }
-  }
-
-  /**
-   * List projections read the durable engine from server_durable_json; session_json
-   * is the source of truth. They diverge when a crash lands between adding the column
-   * and filling it, or when an older server rewrites session_json without knowing the
-   * column. Reconcile on every open rather than once behind a migration marker: a
-   * marker cannot see a later downgrade-and-return. Current writers keep both equal,
-   * so the UPDATE matches nothing on a healthy database.
-   */
-  private reconcileServerDurableProjection(): void {
-    this.db.exec(`
-      UPDATE session_state_sessions
-      SET server_durable_json = CASE
-        WHEN json_type(session_json, '$.serverDurable') = 'object'
-          THEN json_extract(session_json, '$.serverDurable')
-      END
-      WHERE json_valid(session_json)
-        AND server_durable_json IS NOT CASE
-          WHEN json_type(session_json, '$.serverDurable') = 'object'
-            THEN json_extract(session_json, '$.serverDurable')
-        END
-    `);
+    this.migrateStoredIconChoices();
   }
 
   private ensureSessionIndexesAndSchemaVersion(): void {
@@ -669,6 +504,10 @@ export class SessionSqliteStore {
       CREATE UNIQUE INDEX IF NOT EXISTS session_state_sessions_launch_idempotency_idx
         ON session_state_sessions (launch_idempotency_key)
         WHERE launch_idempotency_key IS NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS session_state_sessions_durable_idx
+        ON session_state_sessions (durable_store_id, durable_conversation_id)
+        WHERE durable_store_id IS NOT NULL;
 
       CREATE TABLE IF NOT EXISTS session_interactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -695,65 +534,29 @@ export class SessionSqliteStore {
         value TEXT NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS app_state_migrations (
-        key TEXT PRIMARY KEY,
-        completed_at INTEGER NOT NULL
-      );
-
       INSERT OR REPLACE INTO session_state_schema (key, value)
       VALUES ('version', '${SCHEMA_VERSION}');
     `);
   }
 
-  private backfillMissingSessionJson(): void {
-    const rows = this.db
-      .prepare(
-        `SELECT ${SESSION_PROJECTION_COLUMNS}
-         FROM session_state_sessions
-         WHERE session_json IS NULL OR session_json = ''`,
-      )
-      .all() as SessionProjectionRow[];
-
-    if (rows.length === 0) {
-      return;
-    }
-
-    const update = this.db.prepare(
-      "UPDATE session_state_sessions SET session_json = ? WHERE id = ?",
-    );
-    this.db.transaction(() => {
-      for (const row of rows) {
-        const session = normalizeDeclaredSession(buildProjectedSession(row));
-        update.run(JSON.stringify(session), row.id);
-      }
-    })();
-  }
-
+  /** Normalizes historical icon values inside stored launch metadata. */
   private migrateStoredIconChoices(): void {
     const rows = this.db
-      .prepare("SELECT id, session_json, launch_metadata_json FROM session_state_sessions")
-      .all() as SessionIconMigrationRow[];
+      .prepare(
+        "SELECT id, launch_metadata_json FROM session_state_sessions WHERE launch_metadata_json IS NOT NULL",
+      )
+      .all() as Array<{ id: string; launch_metadata_json: string }>;
     const update = this.db.prepare(
-      `UPDATE session_state_sessions
-       SET session_json = ?, launch_metadata_json = ?
-       WHERE id = ?`,
+      "UPDATE session_state_sessions SET launch_metadata_json = ? WHERE id = ?",
     );
 
     this.db.transaction(() => {
       for (const row of rows) {
-        const sessionCopy = parseStoredSessionCopy(row.session_json);
-        const launchCopy = parseStoredLaunchCopy(row.launch_metadata_json);
-        if (!sessionCopy || !launchCopy) continue;
-        // The two columns are independent durable copies. Compare their raw
-        // launch values before migration so distinct malformed/future values
-        // that both normalize to Default can never overwrite one another.
-        if (!isDeepStrictEqual(sessionCopy.rawLaunch, launchCopy.rawLaunch)) continue;
-
-        const migratedSession = { ...sessionCopy.session, launch: sessionCopy.launch };
-        const sessionJson = JSON.stringify(migratedSession);
-        const launchJson = JSON.stringify(launchCopy.launch);
-        if (sessionJson !== row.session_json || launchJson !== row.launch_metadata_json) {
-          update.run(sessionJson, launchJson, row.id);
+        const launch = parseStoredLaunch(row.launch_metadata_json);
+        if (!launch) continue;
+        const launchJson = JSON.stringify(launch);
+        if (launchJson !== row.launch_metadata_json) {
+          update.run(launchJson, row.id);
         }
       }
     })();
@@ -761,90 +564,35 @@ export class SessionSqliteStore {
 
   private prepareStatements(): void {
     this.stmtUpsert = this.db.prepare(`
-      INSERT INTO session_state_sessions (
-        id,
-        workspace_id,
-        workspace_name,
-        worktree_id,
-        name,
-        status,
-        created_at,
-        last_activity,
-        last_agent_reply_at,
-        current_turn_started_at,
-        model,
-        message_count,
-        tokens_input,
-        tokens_output,
-        tokens_cache_read,
-        tokens_cache_write,
-        cost,
-        change_stats_json,
-        context_tokens,
-        context_window,
-        first_message,
-        last_message,
-        warnings_json,
-        thinking_level,
-        runtime,
-        mirror_json,
-        pi_session_file,
-        pi_session_files_json,
-        ephemeral,
-        launch_status,
-        launch_lease_owner,
-        launch_lease_until_ms,
-        launch_idempotency_key,
-        launch_metadata_json,
-        server_durable_json,
-        program_status_json,
-        session_json
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO session_state_sessions (id, ${SESSION_WRITE_COLUMNS.join(", ")})
+      VALUES (?, ${SESSION_WRITE_COLUMNS.map(() => "?").join(", ")})
       ON CONFLICT(id) DO UPDATE SET
-        workspace_id = excluded.workspace_id,
-        workspace_name = excluded.workspace_name,
-        worktree_id = excluded.worktree_id,
-        name = excluded.name,
-        status = excluded.status,
-        created_at = excluded.created_at,
-        last_activity = excluded.last_activity,
-        last_agent_reply_at = excluded.last_agent_reply_at,
-        current_turn_started_at = excluded.current_turn_started_at,
-        model = excluded.model,
-        message_count = excluded.message_count,
-        tokens_input = excluded.tokens_input,
-        tokens_output = excluded.tokens_output,
-        tokens_cache_read = excluded.tokens_cache_read,
-        tokens_cache_write = excluded.tokens_cache_write,
-        cost = excluded.cost,
-        change_stats_json = excluded.change_stats_json,
-        context_tokens = excluded.context_tokens,
-        context_window = excluded.context_window,
-        first_message = excluded.first_message,
-        last_message = excluded.last_message,
-        warnings_json = excluded.warnings_json,
-        thinking_level = excluded.thinking_level,
-        runtime = excluded.runtime,
-        mirror_json = excluded.mirror_json,
-        pi_session_file = excluded.pi_session_file,
-        pi_session_files_json = excluded.pi_session_files_json,
-        ephemeral = excluded.ephemeral,
-        launch_status = excluded.launch_status,
-        launch_lease_owner = excluded.launch_lease_owner,
-        launch_lease_until_ms = excluded.launch_lease_until_ms,
-        launch_idempotency_key = excluded.launch_idempotency_key,
-        launch_metadata_json = excluded.launch_metadata_json,
-        server_durable_json = excluded.server_durable_json,
-        program_status_json = excluded.program_status_json,
-        session_json = excluded.session_json
+        ${SESSION_WRITE_COLUMNS.map((column) => `${column} = excluded.${column}`).join(",\n        ")}
+    `);
+    this.stmtClaimLaunch = this.db.prepare(`
+      UPDATE session_state_sessions
+      SET ${SESSION_WRITE_COLUMNS.map((column) => `${column} = ?`).join(", ")}
+      WHERE id = ?
+        AND launch_idempotency_key = ?
+        AND launch_status = ?
+        AND ((? IS NULL AND launch_lease_owner IS NULL) OR launch_lease_owner = ?)
+        AND ((? IS NULL AND launch_lease_until_ms IS NULL) OR launch_lease_until_ms = ?)
     `);
 
-    this.stmtGet = this.db.prepare("SELECT session_json FROM session_state_sessions WHERE id = ?");
+    this.stmtGet = this.db.prepare(
+      `SELECT ${SESSION_COLUMNS} FROM session_state_sessions WHERE id = ?`,
+    );
     this.stmtList = this.db.prepare(`
-      SELECT session_json
+      SELECT ${SESSION_COLUMNS}
       FROM session_state_sessions
       ORDER BY last_activity DESC, id ASC
+    `);
+    this.stmtFindDurable = this.db.prepare(`
+      SELECT id
+      FROM session_state_sessions
+      WHERE durable_store_id = ? AND durable_conversation_id = ?
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
     `);
     this.stmtDelete = this.db.prepare("DELETE FROM session_state_sessions WHERE id = ?");
     this.stmtInsertInteraction = this.db.prepare(
@@ -859,9 +607,11 @@ export class SessionSqliteStore {
     const key = idempotencyKey.trim();
     if (!key) return undefined;
     const row = this.db
-      .prepare("SELECT session_json FROM session_state_sessions WHERE launch_idempotency_key = ?")
-      .get(key) as SessionJsonRow | undefined;
-    const session = row ? this.parseSession(row.session_json) : undefined;
+      .prepare(
+        `SELECT ${SESSION_COLUMNS} FROM session_state_sessions WHERE launch_idempotency_key = ?`,
+      )
+      .get(key) as SessionRow | undefined;
+    const session = row ? this.decodeRow(row) : undefined;
     return session ? stripInternalFields(session) : undefined;
   }
 
@@ -874,6 +624,9 @@ export class SessionSqliteStore {
     const launch = session.launch;
     if (!launch?.idempotencyKey) return undefined;
 
+    // Everything that reads (internal stats, trace repair) happens before the write, so the
+    // claim itself is one autocommit compare-and-swap: another connection that took the lease
+    // first makes it match no row instead of failing a stale transaction.
     const recovered = normalizeDeclaredSession(
       this.restoreInternalFields({
         ...session,
@@ -888,39 +641,19 @@ export class SessionSqliteStore {
         },
       }),
     );
-    const json = JSON.stringify(recovered);
     const expectedLeaseOwner = launch.lease?.owner ?? null;
     const expectedLeaseExpiresAt = launch.lease?.expiresAt ?? null;
 
-    const result = this.db
-      .prepare(
-        `UPDATE session_state_sessions
-         SET launch_status = ?,
-             launch_lease_owner = ?,
-             launch_lease_until_ms = ?,
-             launch_metadata_json = ?,
-             session_json = ?
-         WHERE id = ?
-           AND launch_idempotency_key = ?
-           AND launch_status = ?
-           AND ((? IS NULL AND launch_lease_owner IS NULL) OR launch_lease_owner = ?)
-           AND ((? IS NULL AND launch_lease_until_ms IS NULL) OR launch_lease_until_ms = ?)`,
-      )
-      .run(
-        recovered.launch?.status ?? null,
-        recovered.launch?.lease?.owner ?? null,
-        recovered.launch?.lease?.expiresAt ?? null,
-        recovered.launch ? JSON.stringify(recovered.launch) : null,
-        json,
-        session.id,
-        launch.idempotencyKey,
-        launch.status,
-        expectedLeaseOwner,
-        expectedLeaseOwner,
-        expectedLeaseExpiresAt,
-        expectedLeaseExpiresAt,
-      ) as { changes?: number };
-
+    const result = this.stmtClaimLaunch.run(
+      ...sessionRowValues(recovered),
+      session.id,
+      launch.idempotencyKey,
+      launch.status,
+      expectedLeaseOwner,
+      expectedLeaseOwner,
+      expectedLeaseExpiresAt,
+      expectedLeaseExpiresAt,
+    ) as { changes?: number };
     if (result.changes !== 1) return undefined;
 
     const stripped = stripInternalFields(recovered);
@@ -934,16 +667,16 @@ export class SessionSqliteStore {
     }
 
     this.cache = new Map();
-    for (const session of this.parseJsonRows(this.stmtList.all() as SessionJsonRow[])) {
+    for (const session of this.decodeRows(this.stmtList.all() as SessionRow[])) {
       this.cache.set(session.id, stripInternalFields(session));
     }
     return this.cache;
   }
 
-  private parseJsonRows(rows: SessionJsonRow[]): Session[] {
+  private decodeRows(rows: SessionRow[]): Session[] {
     const sessions: Session[] = [];
     for (const row of rows) {
-      const session = this.parseSession(row.session_json);
+      const session = this.decodeRow(row);
       if (session) {
         sessions.push(session);
       }
@@ -951,16 +684,13 @@ export class SessionSqliteStore {
     return sessions;
   }
 
-  private parseProjectedRows(rows: SessionProjectionRow[]): Session[] {
-    return rows.map((row) => buildProjectedSession(row));
-  }
-
-  private parseSession(rawJson: string, sessionIdForLog?: string): Session | undefined {
+  /** Full read: the row plus the read-time repairs every `Session` gets. */
+  private decodeRow(row: SessionRow): Session | undefined {
     try {
-      return normalizeDeclaredSession(JSON.parse(rawJson) as Session);
+      return normalizeDeclaredSession(buildSession(row));
     } catch (error) {
       log.error("session_sqlite_store.row_parse.failed", {
-        sessionId: sessionIdForLog,
+        sessionId: row.id,
         error: safeErrorMessage(error),
       });
       return undefined;
@@ -968,8 +698,8 @@ export class SessionSqliteStore {
   }
 
   private getSessionFromDb(sessionId: string): Session | undefined {
-    const row = this.stmtGet.get(sessionId) as SessionJsonRow | undefined;
-    return row ? this.parseSession(row.session_json, sessionId) : undefined;
+    const row = this.stmtGet.get(sessionId) as SessionRow | undefined;
+    return row ? this.decodeRow(row) : undefined;
   }
 
   private restoreInternalFields(session: Session): Session {
@@ -1032,14 +762,14 @@ export class SessionSqliteStore {
     const whereSql = whereParts.join(" AND ");
     const rows = this.db
       .prepare(
-        `SELECT ${SESSION_PROJECTION_COLUMNS}
+        `SELECT ${SESSION_COLUMNS}
          FROM session_state_sessions
          WHERE ${whereSql}
          ORDER BY last_activity DESC, id ASC`,
       )
-      .all(...params) as SessionProjectionRow[];
+      .all(...params) as SessionRow[];
 
-    return this.parseProjectedRows(rows);
+    return rows.map(buildSession);
   }
 }
 
@@ -1056,35 +786,33 @@ function normalizeStoredSessionRuntimeKind(value: unknown): Session["runtime"] |
   return undefined;
 }
 
-function buildProjectedSession(row: SessionProjectionRow): Session {
-  const session: Session = {
-    id: row.id,
-    status: row.status,
-    createdAt: row.created_at,
-    lastActivity: row.last_activity,
-    messageCount: row.message_count,
-    tokens: {
-      input: row.tokens_input,
-      output: row.tokens_output,
-      cacheRead: row.tokens_cache_read,
-      cacheWrite: row.tokens_cache_write,
+/** The one row decoder. Workspace lists use it as is; full reads add the repairs. */
+function buildSession(row: SessionRow): Session {
+  // Neither writer stores null members, so the cached fields copy over as they are.
+  const {
+    messageCount = 0,
+    tokens,
+    cost = 0,
+    ...cached
+  } = parseJsonValue<SessionSummaryCache>(row.summary_json, row.id, "summary") ?? {};
+  const session: Session = Object.assign(
+    {
+      id: row.id,
+      status: row.status,
+      createdAt: row.created_at,
+      lastActivity: row.last_activity,
+      messageCount,
+      tokens: normalizeSessionTokens(tokens),
+      cost,
     },
-    cost: row.cost,
-  };
+    cached,
+  );
 
   if (row.workspace_id !== null) session.workspaceId = row.workspace_id;
-  if (row.workspace_name !== null) session.workspaceName = row.workspace_name;
   if (row.worktree_id !== null) session.worktreeId = row.worktree_id;
   if (row.name !== null) session.name = row.name;
-  if (row.last_agent_reply_at !== null) session.lastAgentReplyAt = row.last_agent_reply_at;
   if (row.current_turn_started_at !== null)
     session.currentTurnStartedAt = row.current_turn_started_at;
-  if (row.model !== null) session.model = row.model;
-  if (row.context_tokens !== null) session.contextTokens = row.context_tokens;
-  if (row.context_window !== null) session.contextWindow = row.context_window;
-  if (row.first_message !== null) session.firstMessage = row.first_message;
-  if (row.last_message !== null) session.lastMessage = row.last_message;
-  if (row.thinking_level !== null) session.thinkingLevel = row.thinking_level;
   session.runtime = normalizeStoredSessionRuntimeKind(row.runtime) ?? "oppi";
   const mirror = parseJsonValue<Session["mirror"]>(row.mirror_json, row.id, "mirror");
   if (mirror) session.mirror = mirror;
@@ -1094,12 +822,18 @@ function buildProjectedSession(row: SessionProjectionRow): Session {
   const launch = parseJsonValue<Session["launch"]>(row.launch_metadata_json, row.id, "launch");
   if (launch) session.launch = launch;
 
-  const serverDurable = parseJsonValue<Session["serverDurable"]>(
-    row.server_durable_json,
-    row.id,
-    "serverDurable",
-  );
-  if (serverDurable) session.serverDurable = serverDurable;
+  if (row.durable_store_id !== null || row.durable_conversation_id !== null || row.durable_role) {
+    session.serverDurable = {
+      ...(row.durable_store_id !== null ? { storeId: row.durable_store_id } : {}),
+      ...(row.durable_conversation_id !== null
+        ? { conversationId: row.durable_conversation_id }
+        : {}),
+      ...(row.durable_role === "control" ? { role: "control" as const } : {}),
+    };
+  }
+
+  const control = parseJsonValue<Session["control"]>(row.control_json, row.id, "control");
+  if (control) session.control = control;
 
   const programStatus = parseJsonValue<Session["programStatus"]>(
     row.program_status_json,
@@ -1107,13 +841,6 @@ function buildProjectedSession(row: SessionProjectionRow): Session {
     "programStatus",
   );
   if (programStatus) session.programStatus = programStatus;
-
-  const changeStats = parseJsonValue<Session["changeStats"]>(
-    row.change_stats_json,
-    row.id,
-    "changeStats",
-  );
-  if (changeStats) session.changeStats = changeStats;
 
   const warnings = parseJsonValue<string[]>(row.warnings_json, row.id, "warnings");
   if (warnings && warnings.length > 0) session.warnings = warnings;
@@ -1126,6 +853,80 @@ function buildProjectedSession(row: SessionProjectionRow): Session {
   if (piSessionFiles && piSessionFiles.length > 0) session.piSessionFiles = piSessionFiles;
 
   return session;
+}
+
+/** Columns every write sets, after `id`; `sessionRowValues` returns values in this order. */
+const SESSION_WRITE_COLUMNS = [
+  "workspace_id",
+  "worktree_id",
+  "name",
+  "status",
+  "created_at",
+  "last_activity",
+  "current_turn_started_at",
+  "warnings_json",
+  "runtime",
+  "mirror_json",
+  "pi_session_file",
+  "pi_session_files_json",
+  "ephemeral",
+  "launch_status",
+  "launch_lease_owner",
+  "launch_lease_until_ms",
+  "launch_idempotency_key",
+  "launch_metadata_json",
+  "durable_store_id",
+  "durable_conversation_id",
+  "durable_role",
+  "control_json",
+  "program_status_json",
+  "summary_json",
+] as const;
+
+function sessionRowValues(session: Session): unknown[] {
+  return [
+    session.workspaceId ?? null,
+    session.worktreeId ?? null,
+    session.name ?? null,
+    session.status,
+    session.createdAt,
+    session.lastActivity,
+    session.currentTurnStartedAt ?? null,
+    session.warnings ? JSON.stringify(session.warnings) : null,
+    session.runtime ?? null,
+    session.mirror ? JSON.stringify(session.mirror) : null,
+    session.piSessionFile ?? null,
+    session.piSessionFiles ? JSON.stringify(session.piSessionFiles) : null,
+    session.ephemeral ? 1 : 0,
+    session.launch?.status ?? null,
+    session.launch?.lease?.owner ?? null,
+    session.launch?.lease?.expiresAt ?? null,
+    session.launch?.idempotencyKey ?? null,
+    session.launch ? JSON.stringify(session.launch) : null,
+    session.serverDurable?.storeId ?? null,
+    session.serverDurable?.conversationId ?? null,
+    session.serverDurable?.role ?? null,
+    session.control ? JSON.stringify(session.control) : null,
+    session.programStatus ? JSON.stringify(session.programStatus) : null,
+    encodeSummaryCache(session),
+  ];
+}
+
+function encodeSummaryCache(session: Session): string {
+  const summary: SessionSummaryCache = {
+    model: session.model,
+    thinkingLevel: session.thinkingLevel,
+    messageCount: session.messageCount,
+    tokens: session.tokens,
+    cost: session.cost,
+    firstMessage: session.firstMessage,
+    lastMessage: session.lastMessage,
+    contextTokens: session.contextTokens,
+    contextWindow: session.contextWindow,
+    lastAgentReplyAt: session.lastAgentReplyAt,
+    changeStats: session.changeStats,
+  };
+  return JSON.stringify(summary);
 }
 
 function parseJsonValue<T>(
@@ -1206,9 +1007,6 @@ function normalizeDeclaredSession(session: Session): Session {
   if (session.workspaceId !== undefined && session.workspaceId !== null) {
     normalized.workspaceId = session.workspaceId;
   }
-  if (session.workspaceName !== undefined && session.workspaceName !== null) {
-    normalized.workspaceName = session.workspaceName;
-  }
   if (session.worktreeId !== undefined && session.worktreeId !== null) {
     normalized.worktreeId = session.worktreeId;
   }
@@ -1249,7 +1047,14 @@ function normalizeDeclaredSession(session: Session): Session {
     normalized.thinkingLevel = session.thinkingLevel;
   }
   normalized.runtime = normalizeStoredSessionRuntimeKind(session.runtime) ?? "oppi";
-  if (session.serverDurable !== undefined) {
+  // An empty binding (no store, conversation, or role) has no columns to live in, so it is
+  // dropped here and the cache agrees with what a later read decodes.
+  if (
+    session.serverDurable !== undefined &&
+    (session.serverDurable.storeId !== undefined ||
+      session.serverDurable.conversationId !== undefined ||
+      session.serverDurable.role === "control")
+  ) {
     const id = session.serverDurable.conversationId;
     if (id !== undefined && (!Number.isSafeInteger(id) || id <= 0)) {
       throw new Error("Invalid server durable conversation binding");
@@ -1289,37 +1094,9 @@ function normalizeDeclaredSession(session: Session): Session {
   return normalized;
 }
 
-interface ParsedStoredSessionCopy {
-  session: Record<string, unknown>;
-  rawLaunch: Record<string, unknown>;
-  launch: Record<string, unknown>;
-}
-
-interface ParsedStoredLaunchCopy {
-  rawLaunch: Record<string, unknown>;
-  launch: Record<string, unknown>;
-}
-
-function parseStoredSessionCopy(rawJson: string): ParsedStoredSessionCopy | undefined {
+function parseStoredLaunch(rawJson: string): Record<string, unknown> | undefined {
   try {
-    const session = JSON.parse(rawJson) as unknown;
-    if (!isRecord(session) || !isRecord(session.launch)) return undefined;
-    const launch = normalizeStoredLaunchIcon(session.launch, true);
-    if (!launch) return undefined;
-    return { session, rawLaunch: session.launch, launch };
-  } catch {
-    return undefined;
-  }
-}
-
-function parseStoredLaunchCopy(rawJson: string | null): ParsedStoredLaunchCopy | undefined {
-  if (rawJson === null) return undefined;
-  try {
-    const rawLaunch = JSON.parse(rawJson) as unknown;
-    if (!isRecord(rawLaunch)) return undefined;
-    const launch = normalizeStoredLaunchIcon(rawLaunch, true);
-    if (!launch) return undefined;
-    return { rawLaunch, launch };
+    return normalizeStoredLaunchIcon(JSON.parse(rawJson) as unknown, true);
   } catch {
     return undefined;
   }
@@ -1329,7 +1106,7 @@ function parseStoredLaunchCopy(rawJson: string | null): ParsedStoredLaunchCopy |
  * GC is deliberately more conservative than protocol decoding. Any valid
  * opaque asset ID found in parsed stored JSON may be a future or malformed
  * Genmoji reference, so retaining a false positive is safer than deleting a
- * blob still named by either durable launch copy.
+ * blob still named by stored launch metadata.
  */
 function collectStoredIconAssetIds(value: unknown, assetIds: Set<string>): void {
   if (Array.isArray(value)) {

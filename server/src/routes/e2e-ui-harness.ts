@@ -506,7 +506,6 @@ async function handleStoppedSessionsFixture(
   for (let index = 0; index < count; index += 1) {
     const session = ctx.storage.createSession(`${namePrefix} ${index + 1}`);
     session.workspaceId = workspace.id;
-    session.workspaceName = workspace.name;
     session.status = "stopped";
     session.createdAt = Math.max(0, lastActivityMs - 1_000);
     session.lastActivity = lastActivityMs;
@@ -634,7 +633,6 @@ async function handleSessionThreadsFixture(
     }
     const session = ctx.storage.createSession(name, stringField(item.model));
     session.workspaceId = workspace.id;
-    session.workspaceName = workspace.name;
     session.status = status;
     session.createdAt = nowMs + createdOffset;
     session.lastActivity = nowMs + activityOffset;

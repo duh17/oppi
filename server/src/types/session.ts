@@ -177,7 +177,8 @@ export interface SessionChangeStats extends SessionSummaryChangeStats {
 export interface Session {
   id: string;
   workspaceId?: string; // workspace that owns this session
-  workspaceName?: string; // denormalized for display
+  /** Display name of the workspace. Not stored: `Storage` sets it from the workspace record on every read and save. */
+  workspaceName?: string;
   worktreeId?: string; // workspace checkout that owns this session; absent sessions use main
   name?: string;
   status: "starting" | "ready" | "busy" | "stopping" | "stopped" | "error";

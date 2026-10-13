@@ -18,10 +18,11 @@ export interface DurableThreadsDeps {
   runtime: DurableHarness;
   storage: Pick<
     Storage,
+    | "findSessionByDurableConversation"
     | "findSessionByLaunchIdempotencyKey"
     | "getSession"
     | "getWorkspace"
-    | "listSessions"
+    | "listDurableStoreConversations"
     | "saveSession"
   >;
   startSession(sessionId: string, workspace?: Workspace): Promise<Session>;
@@ -60,16 +61,6 @@ export class DurableThreads implements DurableSessionsHost {
     const session = this.deps.storage.getSession(sessionId);
     if (!session || session.serverDurable?.conversationId !== caller) return false;
     return durableStoreId(session) === hostOfEnv(env).storeId;
-  }
-
-  private sessionOf(storeId: string, conversationId: ConversationId): Session | undefined {
-    return this.deps.storage
-      .listSessions()
-      .find(
-        (session) =>
-          durableStoreId(session) === storeId &&
-          session.serverDurable?.conversationId === conversationId,
-      );
   }
 
   async refuseReach(
@@ -226,7 +217,7 @@ export class DurableThreads implements DurableSessionsHost {
     const ownerConversation = record?.owner?.conversationId;
     if (ownerConversation === undefined)
       throw new Error(`Durable conversation ${conversationId} is not owned by a parent`);
-    const parent = this.sessionOf(storeId, ownerConversation);
+    const parent = this.deps.storage.findSessionByDurableConversation(storeId, ownerConversation);
     const workspace = parent?.workspaceId
       ? this.deps.storage.getWorkspace(parent.workspaceId)
       : undefined;
@@ -263,7 +254,6 @@ export class DurableThreads implements DurableSessionsHost {
       cost: 0,
       runtime: "oppi",
       workspaceId: parent.workspaceId,
-      ...(parent.workspaceName ? { workspaceName: parent.workspaceName } : {}),
       ...(parent.worktreeId ? { worktreeId: parent.worktreeId } : {}),
       thinkingLevel: agent.thinkingLevel,
       // Bound before anything is submitted, so a restart finds the conversation in `resumeIds`.
@@ -307,17 +297,13 @@ export class DurableThreads implements DurableSessionsHost {
     if (!session || conversationId === undefined) return undefined;
     return this.deps.runtime.withSession(session, async (harness, host) => {
       const { chain, members } = await readThread(harness, conversationId);
-      const storeId = host.storeId;
-      const byConversation = new Map(
-        this.deps.storage
-          .listSessions()
-          .flatMap((candidate) =>
-            durableStoreId(candidate) !== storeId ||
-            candidate.serverDurable?.conversationId === undefined
-              ? []
-              : [[candidate.serverDurable.conversationId as ConversationId, candidate.id] as const],
-          ),
-      );
+      const byConversation = new Map<ConversationId, string>();
+      for (const { conversationId, sessionId } of this.deps.storage.listDurableStoreConversations(
+        host.storeId,
+      )) {
+        const id = conversationId as ConversationId;
+        if (!byConversation.has(id)) byConversation.set(id, sessionId);
+      }
       // The harness root may have lost its Session (deleted). The thread then roots at the
       // nearest remaining ancestor: the topmost conversation above `sessionId` that has one.
       const rootConversation = chain.filter((id) => byConversation.has(id)).at(-1);

@@ -570,7 +570,6 @@ describe("workspace prompt-template quick actions", () => {
       expect(body.session.id).toBe("new-session");
       expect(createSession).toHaveBeenCalledWith(expect.any(String), undefined);
       expect(savedSession?.workspaceId).toBe("w1");
-      expect(savedSession?.workspaceName).toBe("workspace");
       expect(startSession).toHaveBeenCalledWith(
         "new-session",
         expect.objectContaining({ id: "w1" }),

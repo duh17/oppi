@@ -924,7 +924,6 @@ export function createWorkspaceRoutes(ctx: RouteContext, helpers: RouteHelpers):
     });
     const session = ctx.storage.createSession(launch.sessionName, modelSelection.model);
     session.workspaceId = workspace.id;
-    session.workspaceName = workspace.name;
     const quickActionWorktreeId = body.worktreeId?.trim() || selectedSession?.worktreeId?.trim();
     if (quickActionWorktreeId && quickActionWorktreeId !== "main") {
       session.worktreeId = quickActionWorktreeId;

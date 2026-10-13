@@ -185,14 +185,12 @@ describe("storage session metadata format", () => {
     storage.saveSession(oppiSession);
 
     const db = openDatabase(join(dir, "session-state.db"));
-    db.prepare("UPDATE session_state_sessions SET runtime = ?, session_json = ? WHERE id = ?").run(
+    db.prepare("UPDATE session_state_sessions SET runtime = ? WHERE id = ?").run(
       "pi-tui-mirror",
-      JSON.stringify({ ...mirrorSession, runtime: "pi-tui-mirror" }),
       mirrorSession.id,
     );
-    db.prepare("UPDATE session_state_sessions SET runtime = ?, session_json = ? WHERE id = ?").run(
+    db.prepare("UPDATE session_state_sessions SET runtime = ? WHERE id = ?").run(
       "managed",
-      JSON.stringify({ ...oppiSession, runtime: "managed" }),
       oppiSession.id,
     );
     db.close();

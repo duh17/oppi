@@ -1200,7 +1200,6 @@ describe("POST /workspaces/:id/sessions", () => {
       const response = mock.responses[0]!.data as { session: Session };
       expect(response.session.id).toBe("existing-session");
       expect(existing.workspaceId).toBe("ws-1");
-      expect(existing.workspaceName).toBe("test-workspace");
       expect(existing.firstMessage).toBe("existing hello");
     } finally {
       rmSync(dir, { recursive: true, force: true });

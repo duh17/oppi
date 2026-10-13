@@ -1791,7 +1791,6 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
     const sessionName = meaningfulSessionName(state.sessionName);
     const session = existing ?? this.storage.createSession(sessionName, model, { id: piSessionId });
     session.workspaceId = workspace.id;
-    session.workspaceName = workspace.name;
     session.runtime = "pi-tui";
     session.status = state.isIdle === false ? "busy" : "ready";
     const nextName = meaningfulSessionName(state.sessionName, session.id);

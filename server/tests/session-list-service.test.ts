@@ -233,6 +233,29 @@ describe("SessionListService", () => {
     });
   });
 
+  describe("live session workspace names", () => {
+    it("shows the workspace's current name on live rows saved before a rename", async () => {
+      const workspace = makeWorkspace({ id: "ws-1", name: "oppi" });
+      const live = makeSession({ id: "live", status: "busy", workspaceName: "pios" });
+      const { service } = makeService({
+        workspaces: [workspace],
+        allSessions: { "ws-1": [makeSession({ id: "live", workspaceName: "oppi" })] },
+        recentSessions: { "ws-1": [] },
+        activeSessions: [live],
+      });
+
+      const workspaceRows = await service.listWorkspaceSessionRows({
+        workspace,
+        statuses: new Set(["active"]),
+      });
+      expect(workspaceRows.active?.map((row) => row.workspaceName)).toEqual(["oppi"]);
+
+      live.workspaceName = "pios";
+      const recent = service.listRecentWorkspaceSessionSummaries({ recentDays: 3 });
+      expect(recent.sessions.map((row) => [row.id, row.workspaceName])).toEqual([["live", "oppi"]]);
+    });
+  });
+
   describe("listWorkspaceSessionRows", () => {
     it("builds active and stopped workspace rows with live and local sessions", async () => {
       const workspace = makeWorkspace({ hostMount: "~/workspace/oppi" });

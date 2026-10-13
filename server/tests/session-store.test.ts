@@ -279,35 +279,30 @@ describe("session sqlite store", () => {
     }
   });
 
-  it("isolates corrupt session JSON while preserving projected recovery", () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-corrupt-json-"));
+  it("keeps a row listed when its stats cache is corrupt", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-corrupt-summary-"));
     let sqliteStore: SessionSqliteStore | undefined;
 
     try {
       sqliteStore = new SessionSqliteStore(dataDir);
-      for (const [id, name] of [
-        ["sess-good", "good"],
-        ["sess-corrupt", "corrupt"],
-      ] as const) {
-        sqliteStore.upsertSession({
-          id,
-          workspaceId: "ws-1",
-          name,
-          status: "stopped",
-          createdAt: 1,
-          lastActivity: id === "sess-good" ? 3 : 2,
-          messageCount: 0,
-          tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          cost: 0,
-        });
-      }
+      sqliteStore.upsertSession({
+        id: "sess-corrupt",
+        workspaceId: "ws-1",
+        name: "corrupt",
+        status: "stopped",
+        createdAt: 1,
+        lastActivity: 2,
+        messageCount: 4,
+        tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+        cost: 0.1,
+      });
       sqliteStore.close();
       sqliteStore = undefined;
 
       const db = openDatabase(join(dataDir, "session-state.db"));
       try {
-        db.prepare("UPDATE session_state_sessions SET session_json = ? WHERE id = ?").run(
-          '{"id":',
+        db.prepare("UPDATE session_state_sessions SET summary_json = ? WHERE id = ?").run(
+          '{"messageCount":',
           "sess-corrupt",
         );
       } finally {
@@ -315,74 +310,66 @@ describe("session sqlite store", () => {
       }
 
       sqliteStore = new SessionSqliteStore(dataDir);
-      expect(sqliteStore.getSession("sess-corrupt")).toBeUndefined();
-      expect(sqliteStore.listSessions().map((session) => session.id)).toEqual(["sess-good"]);
+      expect(sqliteStore.getSession("sess-corrupt")).toMatchObject({
+        name: "corrupt",
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      });
       expect(
-        sqliteStore
-          .listAllWorkspaceSessionSnapshots("ws-1")
-          .map((session) => [session.id, session.name]),
-      ).toEqual([
-        ["sess-good", "good"],
-        ["sess-corrupt", "corrupt"],
-      ]);
+        sqliteStore.listAllWorkspaceSessionSnapshots("ws-1").map((session) => session.id),
+      ).toEqual(["sess-corrupt"]);
     } finally {
       sqliteStore?.close();
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
 
-  it("resumes a partial schema migration and remains idempotent on reopen", () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-migration-"));
-    let sqliteStore: SessionSqliteStore | undefined;
+  it("lets exactly one of two connections claim the same expired launch lease", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-claim-race-"));
+    const first = new SessionSqliteStore(dataDir);
+    const second = new SessionSqliteStore(dataDir);
 
     try {
-      const db = openDatabase(join(dataDir, "session-state.db"));
-      try {
-        db.exec(`
-          CREATE TABLE session_state_sessions (id TEXT PRIMARY KEY);
-          INSERT INTO session_state_sessions (id) VALUES ('sess-partial');
-        `);
-      } finally {
-        db.close();
-      }
-
-      sqliteStore = new SessionSqliteStore(dataDir);
-      expect(sqliteStore.getSession("sess-partial")).toMatchObject({
-        id: "sess-partial",
-        status: "stopped",
-        runtime: "oppi",
+      first.upsertSession({
+        id: "sess-launch",
+        workspaceId: "ws-1",
+        status: "starting",
+        createdAt: 1,
+        lastActivity: 1,
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        launch: {
+          idempotencyKey: "idem-launch",
+          status: "launching",
+          requestedAt: 1,
+          lease: { owner: "crashed", acquiredAt: 1, expiresAt: 2 },
+        },
       });
-      sqliteStore.close();
-      sqliteStore = new SessionSqliteStore(dataDir);
-      expect(sqliteStore.listSessions()).toHaveLength(1);
-      sqliteStore.close();
-      sqliteStore = undefined;
+      // Both connections read the same expired lease before either claims it.
+      const seenByFirst = first.getSession("sess-launch")!;
+      const seenBySecond = second.getSession("sess-launch")!;
 
-      const migratedDb = openDatabase(join(dataDir, "session-state.db"));
+      const won = first.claimSessionLaunchRecovery(seenByFirst, "owner-a", 10, 1_000);
+      const lost = second.claimSessionLaunchRecovery(seenBySecond, "owner-b", 10, 1_000);
+
+      expect(won?.launch?.lease?.owner).toBe("owner-a");
+      expect(lost).toBeUndefined();
+      expect(second.getSession("sess-launch")?.launch?.lease?.owner).not.toBe("owner-b");
+      const reread = new SessionSqliteStore(dataDir);
       try {
-        expect(
-          migratedDb.prepare("SELECT value FROM session_state_schema WHERE key = 'version'").get(),
-        ).toEqual({ value: "8" });
-        expect(
-          migratedDb.prepare("SELECT COUNT(*) AS count FROM session_state_sessions").get(),
-        ).toEqual({ count: 1 });
-        const row = migratedDb
-          .prepare("SELECT session_json FROM session_state_sessions WHERE id = ?")
-          .get("sess-partial") as { session_json: string };
-        expect(JSON.parse(row.session_json)).toMatchObject({
-          id: "sess-partial",
-          status: "stopped",
-        });
+        expect(reread.getSession("sess-launch")?.launch?.lease?.owner).toBe("owner-a");
       } finally {
-        migratedDb.close();
+        reread.close();
       }
     } finally {
-      sqliteStore?.close();
+      first.close();
+      second.close();
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
 
-  it("lists workspace snapshots from projected columns without parsing session_json", () => {
+  it("round-trips cached stats and the durable binding through workspace snapshots", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-snapshot-"));
     let sqliteStore: SessionSqliteStore | undefined;
 
@@ -391,17 +378,20 @@ describe("session sqlite store", () => {
       sqliteStore.upsertSession({
         id: "sess-projected",
         workspaceId: "ws-1",
-        workspaceName: "Workspace",
         name: "Projected",
         status: "ready",
         createdAt: 1,
         lastActivity: 10,
         lastAgentReplyAt: 11,
+        model: "anthropic/claude",
+        thinkingLevel: "high",
         messageCount: 2,
         tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
         cost: 0.25,
         contextTokens: 123,
         contextWindow: 200,
+        firstMessage: "first",
+        lastMessage: "last",
         changeStats: {
           mutatingToolCalls: 1,
           filesChanged: 1,
@@ -417,149 +407,39 @@ describe("session sqlite store", () => {
           status: "accepted",
           requestedAt: 1,
         },
-        serverDurable: { conversationId: 7 },
+        serverDurable: { storeId: "store-1", conversationId: 7 },
       });
       sqliteStore.close();
-      sqliteStore = undefined;
-
-      const db = openDatabase(join(dataDir, "session-state.db"));
-      try {
-        db.prepare("UPDATE session_state_sessions SET session_json = ? WHERE id = ?").run(
-          "{not-json",
-          "sess-projected",
-        );
-      } finally {
-        db.close();
-      }
-
       sqliteStore = new SessionSqliteStore(dataDir);
-      const sessions = sqliteStore.listWorkspaceTimeRangeSessionSnapshots(
+
+      const [session] = sqliteStore.listWorkspaceTimeRangeSessionSnapshots(
         "ws-1",
         0,
         Number.MAX_SAFE_INTEGER,
       );
-
-      expect(sessions[0]?.id).toBe("sess-projected");
-      expect(sessions[0]?.lastAgentReplyAt).toBe(11);
-      expect(sessions[0]?.contextTokens).toBe(123);
-      expect(sessions[0]?.changeStats?.changedFiles).toEqual(["src/a.ts"]);
-      expect(sessions[0]?.launch).toMatchObject({
-        agentId: "agent-reviewer",
-        agentVersion: 4,
-        agentIcon: { kind: "symbol", name: "checkmark.shield" },
+      expect(session).toMatchObject({
+        id: "sess-projected",
+        lastAgentReplyAt: 11,
+        model: "anthropic/claude",
+        thinkingLevel: "high",
+        messageCount: 2,
+        tokens: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 },
+        cost: 0.25,
+        contextTokens: 123,
+        contextWindow: 200,
+        firstMessage: "first",
+        lastMessage: "last",
+        changeStats: { changedFiles: ["src/a.ts"], addedLines: 2, removedLines: 3 },
+        launch: {
+          agentId: "agent-reviewer",
+          agentVersion: 4,
+          agentIcon: { kind: "symbol", name: "checkmark.shield" },
+        },
       });
-      // List rows report the durable engine from the projection, not session_json.
-      expect(sessions[0]?.serverDurable).toEqual({ conversationId: 7 });
-    } finally {
-      sqliteStore?.close();
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  });
-
-  it("backfills durable enrollment into projections of rows saved before the column existed", () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-durable-backfill-"));
-    let sqliteStore: SessionSqliteStore | undefined;
-    const session = (id: string, serverDurable?: Session["serverDurable"]): Session => ({
-      id,
-      workspaceId: "ws-1",
-      status: "stopped",
-      createdAt: 1,
-      lastActivity: 10,
-      messageCount: 0,
-      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      cost: 0,
-      ...(serverDurable ? { serverDurable } : {}),
-    });
-
-    try {
-      sqliteStore = new SessionSqliteStore(dataDir);
-      sqliteStore.upsertSession(session("bound", { conversationId: 3 }));
-      sqliteStore.upsertSession(session("enrolled", {}));
-      sqliteStore.upsertSession(session("classic"));
-      sqliteStore.close();
-      sqliteStore = undefined;
-
-      const db = openDatabase(join(dataDir, "session-state.db"));
-      try {
-        db.exec("ALTER TABLE session_state_sessions DROP COLUMN server_durable_json");
-      } finally {
-        db.close();
-      }
-
-      sqliteStore = new SessionSqliteStore(dataDir);
-      const byId = new Map(
-        sqliteStore
-          .listAllWorkspaceSessionSnapshots("ws-1")
-          .map((snapshot) => [snapshot.id, snapshot.serverDurable]),
-      );
-      expect(byId).toEqual(
-        new Map<string, Session["serverDurable"]>([
-          ["bound", { conversationId: 3 }],
-          ["enrolled", {}],
-          ["classic", undefined],
-        ]),
-      );
-    } finally {
-      sqliteStore?.close();
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  });
-
-  it("heals durable projections left out of step with session_json on every open", () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-sqlite-durable-heal-"));
-    let sqliteStore: SessionSqliteStore | undefined;
-    const session = (id: string, serverDurable?: Session["serverDurable"]): Session => ({
-      id,
-      workspaceId: "ws-1",
-      status: "stopped",
-      createdAt: 1,
-      lastActivity: 10,
-      messageCount: 0,
-      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      cost: 0,
-      ...(serverDurable ? { serverDurable } : {}),
-    });
-    const engines = () =>
-      new Map(
-        sqliteStore!
-          .listAllWorkspaceSessionSnapshots("ws-1")
-          .map((snapshot) => [snapshot.id, snapshot.serverDurable]),
-      );
-
-    try {
-      sqliteStore = new SessionSqliteStore(dataDir);
-      sqliteStore.upsertSession(session("bound", { conversationId: 3 }));
-      sqliteStore.upsertSession(session("enrolled", {}));
-      sqliteStore.upsertSession(session("unenrolled", {}));
-      sqliteStore.upsertSession(session("classic"));
-      sqliteStore.close();
-      sqliteStore = undefined;
-
-      // The column exists but the backfill never ran (a crash after ALTER), or an
-      // older server rewrote session_json without knowing about the column.
-      const db = openDatabase(join(dataDir, "session-state.db"));
-      try {
-        db.exec(
-          "UPDATE session_state_sessions SET server_durable_json = NULL WHERE id IN ('bound', 'enrolled')",
-        );
-        db.exec(
-          "UPDATE session_state_sessions SET session_json = json_remove(session_json, '$.serverDurable') WHERE id = 'unenrolled'",
-        );
-      } finally {
-        db.close();
-      }
-
-      const healed = new Map<string, Session["serverDurable"]>([
-        ["bound", { conversationId: 3 }],
-        ["enrolled", {}],
-        ["unenrolled", undefined],
-        ["classic", undefined],
-      ]);
-      sqliteStore = new SessionSqliteStore(dataDir);
-      expect(engines()).toEqual(healed);
-      sqliteStore.close();
-      sqliteStore = new SessionSqliteStore(dataDir);
-      expect(engines()).toEqual(healed);
+      expect(session?.serverDurable).toEqual({ storeId: "store-1", conversationId: 7 });
+      expect(sqliteStore.findSessionByDurableConversation("store-1", 7)?.id).toBe("sess-projected");
+      // Conversation ids are per store.
+      expect(sqliteStore.findSessionByDurableConversation("store-2", 7)).toBeUndefined();
     } finally {
       sqliteStore?.close();
       rmSync(dataDir, { recursive: true, force: true });
@@ -837,6 +717,46 @@ describe("legacy workspace session migration", () => {
 
       const reloaded = new Storage(dataDir).getSession("legacy-1");
       expect(reloaded?.workspaceId).toBeUndefined();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("session workspace name", () => {
+  it("follows the workspace record through renames and deletion", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-workspace-name-"));
+
+    try {
+      const projectDir = join(dataDir, "project");
+      mkdirSync(projectDir, { recursive: true });
+      const storage = new Storage(dataDir);
+      const workspace = storage.createWorkspace({ name: "pios", hostMount: projectDir });
+      const session: Session = {
+        id: "sess-named",
+        workspaceId: workspace.id,
+        status: "stopped",
+        createdAt: 1,
+        lastActivity: 2,
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+      };
+      storage.saveSession(session);
+      expect(session.workspaceName).toBe("pios");
+
+      storage.updateWorkspace(workspace.id, { name: "oppi" });
+      expect(storage.getSession("sess-named")?.workspaceName).toBe("oppi");
+      expect(
+        storage.listAllWorkspaceSessionSnapshots(workspace.id).map((item) => item.workspaceName),
+      ).toEqual(["oppi"]);
+      expect(new Storage(dataDir).getSession("sess-named")?.workspaceName).toBe("oppi");
+
+      storage.deleteWorkspace(workspace.id);
+      expect(storage.getSession("sess-named")).not.toHaveProperty("workspaceName");
+      expect(storage.listSessions().find((item) => item.id === "sess-named")).not.toHaveProperty(
+        "workspaceName",
+      );
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

@@ -522,7 +522,6 @@ function expectDropped(dbPath: string): void {
     for (const column of DEAD_SESSION_COLUMNS) {
       expect(sessionColumns.has(column)).toBe(false);
     }
-    expect(sessionColumns.has("session_json")).toBe(true);
     expect(sessionColumns.has("launch_idempotency_key")).toBe(true);
     expect(sessionColumns.has("launch_status")).toBe(true);
     const tuiColumns = new Set(
