@@ -233,7 +233,7 @@ export function createWorkspaceFileRoutes(
     const mappedPath = resolveWorkspaceUserPath({
       workspace,
       requestedPath: dirPath || ".",
-      hostMount: workspaceRoot,
+      root: workspaceRoot,
     });
     if (!mappedPath) {
       helpers.error(res, 404, "Directory not found");
@@ -268,7 +268,7 @@ export function createWorkspaceFileRoutes(
     const mappedRoot = resolveWorkspaceUserPath({
       workspace,
       requestedPath: ".",
-      hostMount: workspaceRoot,
+      root: workspaceRoot,
     });
     if (!mappedRoot) {
       helpers.error(res, 404, "Workspace not found");

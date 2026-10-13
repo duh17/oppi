@@ -53,12 +53,12 @@ import type { SdkBackendDisposeResult } from "./sdk-backend.js";
 import type { ServerMetricCollector } from "./server-metric-collector.js";
 import {
   SdkBackend,
-  resolveSandboxGuestCwd,
   resolveSessionSeedModel,
   resolveSdkSessionCwdAsync,
   toCommandLocation,
   type QueuedModelTurnBatch,
 } from "./sdk-backend.js";
+import { resolveSandboxGuestCwd } from "./workspace-folder.js";
 import {
   SessionRuntimeTransaction,
   type SessionRuntimeTransactionPermit,

@@ -39,7 +39,8 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { SdkBackend, resolveSandboxGuestCwd } from "../src/sdk-backend.js";
+import { SdkBackend } from "../src/sdk-backend.js";
+import { resolveSandboxGuestCwd } from "../src/workspace-folder.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 import { DurableBackend, DurableNotSupportedError } from "../src/durable-backend.js";
 import { Storage } from "../src/storage.js";

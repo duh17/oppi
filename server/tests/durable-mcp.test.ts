@@ -16,7 +16,8 @@ import {
 import type { GondolinExecResult, GondolinProcess, GondolinVm } from "../src/gondolin-ops.js";
 import { SessionHost } from "../src/durable-harness.js";
 import { PROJECT_TRUST_OPTIONS } from "../src/project-trust.js";
-import { SdkBackend, resolveSandboxGuestCwd } from "../src/sdk-backend.js";
+import { SdkBackend } from "../src/sdk-backend.js";
+import { resolveSandboxGuestCwd } from "../src/workspace-folder.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import type { ServerMessage, Workspace } from "../src/types.js";

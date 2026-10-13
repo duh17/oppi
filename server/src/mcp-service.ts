@@ -23,7 +23,7 @@ import {
 import { ProjectTrustStore } from "@earendil-works/pi-coding-agent";
 import { projectTrustState } from "./project-trust.js";
 import { sandboxMcpBlockReason } from "./sandbox-mcp.js";
-import { resolveSdkSessionCwd } from "./sdk-backend.js";
+import { workspaceMountRoot } from "./session-work-root.js";
 
 interface Scope {
   id: string;
@@ -138,7 +138,7 @@ export class McpService {
           ];
         // Every host workspace gets the cwd its sessions (and its Extensions settings)
         // use, so the project file matches.
-        const cwd = resolveSdkSessionCwd(workspace);
+        const cwd = workspaceMountRoot(workspace, { create: true });
         return [
           {
             id: workspace.id,

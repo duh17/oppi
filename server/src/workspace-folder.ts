@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { posix, resolve } from "node:path";
 
 import type { Workspace } from "./types.js";
 
@@ -13,6 +13,11 @@ export function workspaceSlug(workspace: WorkspaceNameId): string {
       .replace(/-+/g, "-")
       .replace(/^-|-$/g, "") || workspace.id
   );
+}
+
+/** A sandbox workspace's cwd inside the VM: `/workspace/<slug>`. */
+export function resolveSandboxGuestCwd(workspace: WorkspaceNameId): string {
+  return posix.join("/workspace", workspaceSlug(workspace));
 }
 
 /** Display-form hostMount Oppi stores for a sandbox workspace with an empty folder. */

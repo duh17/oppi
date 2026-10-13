@@ -2,26 +2,24 @@ import { isAbsolute, resolve } from "node:path";
 
 import { toHostPath } from "./gondolin-ops.js";
 import { isPathWithinRoot } from "./git-utils.js";
-import { resolveSandboxGuestCwd, resolveSdkSessionCwd } from "./sdk-backend.js";
-import type { Session, Workspace } from "./types.js";
+import type { Workspace } from "./types.js";
+import { resolveSandboxGuestCwd } from "./workspace-folder.js";
 
 export interface ResolveWorkspaceUserPathParams {
   workspace: Workspace;
   requestedPath: string;
-  session?: Pick<Session, "worktreeId">;
-  /** Override the host mount, e.g. a worktree path from a browse query. */
-  hostMount?: string;
+  /** Host directory the path resolves under: the workspace mount or a worktree path. */
+  root: string;
 }
 
 /**
- * Map a user-facing browse or current-file path onto the workspace host mount.
+ * Map a user-facing browse or current-file path onto `root` (the workspace host mount or a
+ * worktree path the caller already resolved).
  *
- * Humans always read sandbox artifacts from the host mount. Sandbox sessions
- * advertise guest cwd `/workspace/<slug>`, so that prefix is rewritten with
- * toHostPath. Relative paths still resolve under the mount. `~`, host-home,
- * `/etc`, other workspace slugs, and anything outside the guest prefix / host
- * mount are rejected. Parent and child Agent sessions share the workspace id
- * and therefore this mapping; do not branch on launch source.
+ * Humans always read sandbox artifacts from the host side. Sandbox sessions advertise guest cwd
+ * `/workspace/<slug>`, so that prefix is rewritten with toHostPath. Relative paths resolve under
+ * `root`. `~`, host-home, `/etc`, other workspace slugs, and anything outside the guest prefix or
+ * `root` are rejected.
  */
 export function resolveWorkspaceUserPath(params: ResolveWorkspaceUserPathParams): string | null {
   const requestedPath = params.requestedPath;
@@ -29,13 +27,7 @@ export function resolveWorkspaceUserPath(params: ResolveWorkspaceUserPathParams)
   if (requestedPath.toLowerCase().startsWith("file:")) return null;
   if (requestedPath.startsWith("~")) return null;
 
-  let hostMount: string;
-  try {
-    hostMount = params.hostMount ?? resolveSdkSessionCwd(params.workspace, params.session);
-  } catch {
-    return null;
-  }
-  const hostRoot = resolve(hostMount);
+  const hostRoot = resolve(params.root);
 
   if (requestedPath === "" || requestedPath === "." || requestedPath === "./") {
     return hostRoot;

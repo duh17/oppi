@@ -20,13 +20,11 @@ import * as GondolinManagerModule from "../src/gondolin-manager.js";
 import {
   enforceLaunchModelPolicy,
   normalizeThinkingLevel,
-  resolveSandboxGuestCwd,
   resolveSessionSeedModel,
-  resolveSdkSessionCwd,
   resolveSdkSessionCwdAsync,
-  resolveSdkSessionDisplayCwd,
   SdkBackend,
 } from "../src/sdk-backend.js";
+import { resolveSandboxGuestCwd } from "../src/workspace-folder.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
 import { loadDurableProjectResources } from "../src/durable-project-resources.js";
 import {
@@ -44,11 +42,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("resolveSdkSessionCwd", () => {
-  it("defaults to home dir when workspace is missing", async () => {
-    expect(resolveSdkSessionCwd(undefined)).toBe(homedir());
-  });
-
+describe("resolveSdkSessionCwdAsync", () => {
   it("uses an owner-only internal cwd for declared control sessions", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-cwd-"));
     const session = {
@@ -60,7 +54,6 @@ describe("resolveSdkSessionCwd", () => {
       expect(cwd).toBe(join(dataDir, "control-sessions", "cwd"));
       expect(lstatSync(cwd).isDirectory()).toBe(true);
       expect(lstatSync(cwd).mode & 0o777).toBe(0o700);
-      expect(resolveSdkSessionDisplayCwd(undefined, session)).toBe("Pi Control");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
@@ -83,22 +76,6 @@ describe("resolveSdkSessionCwd", () => {
       rmSync(dataDir, { recursive: true, force: true });
       rmSync(outside, { recursive: true, force: true });
     }
-  });
-
-  it("expands tilde hostMount to an absolute path", async () => {
-    const workspace = { hostMount: "~/workspace/oppi" } as Workspace;
-    expect(resolveSdkSessionCwd(workspace)).toBe(resolvePath(homedir(), "workspace", "oppi"));
-  });
-
-  it("expands bare tilde hostMount", async () => {
-    const workspace = { hostMount: "~" } as Workspace;
-    expect(resolveSdkSessionCwd(workspace)).toBe(homedir());
-  });
-
-  it("keeps absolute hostMount unchanged", async () => {
-    const mount = resolvePath(homedir(), "workspace", "oppi");
-    const workspace = { hostMount: mount } as Workspace;
-    expect(resolveSdkSessionCwd(workspace)).toBe(mount);
   });
 
   it("never falls back to main when a session worktree is unavailable", async () => {
@@ -145,29 +122,8 @@ describe("resolveSdkSessionCwd", () => {
   });
 });
 
-describe("resolveSdkSessionDisplayCwd", () => {
-  it("uses a sandbox guest path instead of the host backing path", async () => {
-    const uniqueName = `Oppi Sandbox Display ${Date.now()}`;
-    const slug = uniqueName.toLowerCase().replace(/[^a-z0-9-_]/g, "-");
-    const workspace = {
-      id: "ws-sandbox",
-      name: uniqueName,
-      runtime: "sandbox",
-      hostMount: `~/sandbox/${slug}`,
-    } as Workspace;
-    const hostBackingDir = resolvePath(homedir(), "sandbox", slug);
-
-    try {
-      expect(resolveSandboxGuestCwd(workspace)).toBe(`/workspace/${slug}`);
-      expect(resolveSdkSessionDisplayCwd(workspace)).toBe(`/workspace/${slug}`);
-      expect(resolveSdkSessionCwd(workspace)).toBe(hostBackingDir);
-    } finally {
-      rmSync(hostBackingDir, { recursive: true, force: true });
-    }
-  });
-
-  it("keeps a persisted sandbox hostMount after the workspace is renamed", async () => {
-    const hostBackingDir = resolvePath(homedir(), "sandbox", "original-name");
+describe("resolveSandboxGuestCwd", () => {
+  it("names the guest folder from the current workspace name, not the persisted mount", () => {
     const workspace = {
       id: "ws-sandbox",
       name: "Renamed Title",
@@ -175,19 +131,7 @@ describe("resolveSdkSessionDisplayCwd", () => {
       hostMount: "~/sandbox/original-name",
     } as Workspace;
 
-    try {
-      expect(resolveSdkSessionCwd(workspace)).toBe(hostBackingDir);
-      expect(resolveSandboxGuestCwd(workspace)).toBe("/workspace/renamed-title");
-    } finally {
-      rmSync(hostBackingDir, { recursive: true, force: true });
-    }
-  });
-
-  it("keeps host workspaces on their resolved host cwd", async () => {
-    const mount = resolvePath(homedir(), "workspace", "oppi");
-    const workspace = { hostMount: mount, runtime: "host" } as Workspace;
-
-    expect(resolveSdkSessionDisplayCwd(workspace)).toBe(mount);
+    expect(resolveSandboxGuestCwd(workspace)).toBe("/workspace/renamed-title");
   });
 });
 
@@ -324,7 +268,6 @@ describe("SdkBackend control sessions", () => {
       expect(first.session.getToolDefinition("oppi")).toBeUndefined();
       expect(session.piSessionFile).toBeDefined();
       expect(session.piSessionFile).not.toContain("Pi Control");
-      expect(resolveSdkSessionDisplayCwd(undefined, session)).toBe("Pi Control");
 
       await first.dispose();
       reopened = await SdkBackend.create({

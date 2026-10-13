@@ -16,7 +16,7 @@ import {
 import { isPathWithinRoot } from "./git-utils.js";
 import { encodeHostResolvedPathHeader, expandExactHostPath } from "./host-file-path.js";
 import { logRejectedByteRange, parseByteRangeHeader } from "./http-range.js";
-import { resolveSdkSessionCwd } from "./sdk-backend.js";
+import { workspaceMountRoot } from "./session-work-root.js";
 import type { Workspace } from "./types.js";
 import { resolveWorkspaceUserPath } from "./workspace-user-path.js";
 import { resolveWorkspaceWorktree } from "./worktrees.js";
@@ -246,7 +246,7 @@ export async function resolveWorkspaceFileRoot(
 ): Promise<string | null> {
   const requested = worktreeId?.trim();
   if (workspace.runtime === "sandbox" || !requested) {
-    return resolveSdkSessionCwd(workspace);
+    return workspaceMountRoot(workspace, { create: true });
   }
   return (await resolveWorkspaceWorktree(workspace, requested, { dataDir }))?.path ?? null;
 }
@@ -297,7 +297,7 @@ export async function resolveCurrentFilePath(
     resolveWorkspaceUserPath({
       workspace: origin.workspace,
       requestedPath,
-      hostMount: origin.root,
+      root: origin.root,
     }) ?? (sandboxed ? null : resolveHostWorkspacePath(requestedPath, realRoot));
   if (!lexicalPath) return sandboxed ? { kind: "outside-sandbox" } : { kind: "not-found" };
 

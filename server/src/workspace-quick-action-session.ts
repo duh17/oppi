@@ -11,7 +11,7 @@ import { getCommitDetail } from "./git-commits.js";
 import { gitTrustForWorkspace } from "./git-safe.js";
 import { normalizePath } from "./git-utils.js";
 import { getGitStatus } from "./git-status.js";
-import { resolveSdkSessionCwd } from "./sdk-backend.js";
+import { workspaceMountRoot } from "./session-work-root.js";
 import { buildWorkspaceReviewFilesResponse } from "./workspace-review.js";
 import { resolveWorkspaceWorktree } from "./worktrees.js";
 import type { Session, Workspace, WorkspaceQuickActionOption } from "./types.js";
@@ -45,7 +45,7 @@ type QuickActionSessionSelection = {
 export async function loadWorkspacePromptTemplates(
   workspace: Workspace,
 ): Promise<PromptTemplate[]> {
-  const cwd = resolveSdkSessionCwd(workspace);
+  const cwd = workspaceMountRoot(workspace, { create: true });
   const agentDir = getAgentDir();
   const settingsManager = SettingsManager.create(cwd, agentDir);
   const loader = new DefaultResourceLoader({

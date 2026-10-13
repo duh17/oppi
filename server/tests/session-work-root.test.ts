@@ -1,13 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
   attachmentWorkRoot,
   sessionWorkRoot,
+  workspaceMountRoot,
   type SessionWorkRootStore,
 } from "../src/session-work-root.js";
 import type { Session, Workspace } from "../src/types.js";
@@ -232,6 +233,25 @@ describe("sessionWorkRoot", () => {
       { create: true },
     );
     expect(result).toEqual({ kind: "no-workspace" });
+  });
+});
+
+describe("workspaceMountRoot", () => {
+  it("expands a tilde hostMount to an absolute path", () => {
+    expect(workspaceMountRoot(workspaceAt("~/workspace/oppi"), { create: false })).toBe(
+      resolve(homedir(), "workspace", "oppi"),
+    );
+    expect(workspaceMountRoot(workspaceAt("~"), { create: false })).toBe(homedir());
+  });
+
+  it("creates a sandbox's backing folder only when asked", () => {
+    const backing = join(tempDir("sandbox"), "backing");
+    const sandbox = workspaceAt(backing, { runtime: "sandbox" });
+
+    expect(workspaceMountRoot(sandbox, { create: false })).toBe(backing);
+    expect(existsSync(backing)).toBe(false);
+    expect(workspaceMountRoot(sandbox, { create: true })).toBe(backing);
+    expect(existsSync(backing)).toBe(true);
   });
 });
 

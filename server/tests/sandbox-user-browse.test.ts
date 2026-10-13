@@ -8,7 +8,7 @@ import { createRouteHelpers } from "../src/routes/http.js";
 import { createHostFileRoutes } from "../src/routes/host-files.js";
 import { createWorkspaceFileRoutes } from "../src/routes/workspace-files.js";
 import type { RouteContext } from "../src/routes/types.js";
-import { resolveSdkSessionCwd } from "../src/sdk-backend.js";
+import { workspaceMountRoot } from "../src/session-work-root.js";
 import type { Session, Workspace } from "../src/types.js";
 import { resolveWorkspaceUserPath } from "../src/workspace-user-path.js";
 import { makeResponse } from "./harness/route-test-helpers.js";
@@ -80,59 +80,26 @@ describe("sandbox user browse of host-mount artifacts", () => {
   describe("resolveWorkspaceUserPath", () => {
     it("maps a guest file and guest directory onto the host mount", () => {
       const { hostMount, workspace, guestFile, guestDir, hostFile, hostDir } = seedSandboxMount();
+      const map = (requestedPath: string) =>
+        resolveWorkspaceUserPath({ workspace, requestedPath, root: hostMount });
 
-      expect(resolveWorkspaceUserPath({ workspace, requestedPath: guestFile })).toBe(
-        resolve(hostFile),
-      );
-      expect(resolveWorkspaceUserPath({ workspace, requestedPath: guestDir })).toBe(
-        resolve(hostDir),
-      );
-      expect(resolveWorkspaceUserPath({ workspace, requestedPath: "reports/foo.png" })).toBe(
-        resolve(hostFile),
-      );
+      expect(map(guestFile)).toBe(resolve(hostFile));
+      expect(map(guestDir)).toBe(resolve(hostDir));
+      expect(map("reports/foo.png")).toBe(resolve(hostFile));
       // A guest path whose leading slash was dropped still maps onto the mount.
-      expect(
-        resolveWorkspaceUserPath({
-          workspace,
-          requestedPath: "workspace/deep-research/reports/foo.png",
-        }),
-      ).toBe(resolve(hostFile));
+      expect(map("workspace/deep-research/reports/foo.png")).toBe(resolve(hostFile));
     });
 
     it("rejects /etc/passwd, tilde paths, host-home, and a different workspace slug", () => {
-      const { workspace } = seedSandboxMount();
+      const { hostMount, workspace } = seedSandboxMount();
+      const map = (requestedPath: string) =>
+        resolveWorkspaceUserPath({ workspace, requestedPath, root: hostMount });
 
-      expect(resolveWorkspaceUserPath({ workspace, requestedPath: "/etc/passwd" })).toBeNull();
-      expect(resolveWorkspaceUserPath({ workspace, requestedPath: "~/secret.txt" })).toBeNull();
-      expect(resolveWorkspaceUserPath({ workspace, requestedPath: "~" })).toBeNull();
-      expect(
-        resolveWorkspaceUserPath({
-          workspace,
-          requestedPath: join(homedir(), "secret.txt"),
-        }),
-      ).toBeNull();
-      expect(
-        resolveWorkspaceUserPath({
-          workspace,
-          requestedPath: "/workspace/other-project/reports/foo.png",
-        }),
-      ).toBeNull();
-    });
-
-    it("uses the same mapping for a second session in the same sandbox workspace", () => {
-      const { workspace, guestFile, hostFile } = seedSandboxMount();
-      const parent = makeSession();
-      const child = makeSession({
-        id: "sess-child",
-        launch: { source: "agent", parentSessionId: parent.id },
-      });
-
-      expect(
-        resolveWorkspaceUserPath({ workspace, requestedPath: guestFile, session: parent }),
-      ).toBe(resolve(hostFile));
-      expect(
-        resolveWorkspaceUserPath({ workspace, requestedPath: guestFile, session: child }),
-      ).toBe(resolveWorkspaceUserPath({ workspace, requestedPath: guestFile, session: parent }));
+      expect(map("/etc/passwd")).toBeNull();
+      expect(map("~/secret.txt")).toBeNull();
+      expect(map("~")).toBeNull();
+      expect(map(join(homedir(), "secret.txt"))).toBeNull();
+      expect(map("/workspace/other-project/reports/foo.png")).toBeNull();
     });
   });
 
@@ -243,7 +210,7 @@ describe("sandbox user browse of host-mount artifacts", () => {
       try {
         process.env.HOME = home;
         writeFileSync(join(home, "owner-only.txt"), "owner home\n");
-        const backing = resolveSdkSessionCwd(workspace);
+        const backing = workspaceMountRoot(workspace, { create: true });
         writeFileSync(join(backing, "demo-tool-rendering-prompt.md"), "sandbox note\n");
 
         const listing = await dispatchWorkspace(

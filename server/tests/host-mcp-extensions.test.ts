@@ -27,7 +27,8 @@ import { resolveSelectedAgentExtensionPaths } from "../src/agent-extension-selec
 import type { AgentDefinition } from "../src/agent-launch-service.js";
 import { availableMcpBuiltinNames } from "../src/host-mcp-extensions.js";
 import * as GondolinManagerModule from "../src/gondolin-manager.js";
-import { resolveSandboxGuestCwd, SdkBackend } from "../src/sdk-backend.js";
+import { SdkBackend } from "../src/sdk-backend.js";
+import { resolveSandboxGuestCwd } from "../src/workspace-folder.js";
 import { SessionManager as ManagedSessions } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import { serverResourceId } from "../src/server-resource-id.js";

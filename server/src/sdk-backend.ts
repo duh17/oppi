@@ -7,7 +7,6 @@
 
 import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { safeErrorMessage } from "./log-utils.js";
-import { isControlConversation, isDeclaredControlSession } from "./control-session.js";
 import { createLogger } from "./logger.js";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -87,8 +86,8 @@ import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { resolveSelectedAgentExtensionPaths } from "./agent-extension-selection.js";
 import { SdkUiBridge } from "./sdk-ui-bridge.js";
 import { hostMountValidationError } from "./host.js";
-import { resolveSessionWorkRoot, workspaceMountRoot } from "./session-work-root.js";
-import { workspaceSlug } from "./workspace-folder.js";
+import { resolveSessionWorkRoot } from "./session-work-root.js";
+import { resolveSandboxGuestCwd } from "./workspace-folder.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
 import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "./oppi-docs.js";
 import type { ReadonlyMount, ReadonlyMountSpec, VmSecretDefinition } from "./gondolin-manager.js";
@@ -318,38 +317,6 @@ export function resolveSessionSeedModel(
 }
 
 /**
- * Resolve workspace host mount into an absolute SDK cwd.
- *
- * Workspace hostMount is stored in display form (commonly "~/...").
- * Node path APIs do not expand "~" and will treat it as a relative path,
- * producing cwd values like "<server-cwd>/~/workspace/...". Normalize here
- * before passing cwd into SDK components.
- */
-export function resolveSandboxGuestCwd(workspace: Workspace): string {
-  return posix.join("/workspace", workspaceSlug(workspace));
-}
-
-/**
- * Host directory of a workspace's mount (no session). Session directories,
- * including control sessions and worktrees, come from `resolveSessionWorkRoot`.
- * A sandbox's backing folder is created lazily so an empty-folder sandbox
- * still has a real cwd on first use.
- */
-export function resolveSdkSessionCwd(
-  workspace?: Workspace,
-  session?: Pick<Session, "worktreeId">,
-): string {
-  if (workspace?.runtime !== "sandbox" && session?.worktreeId) {
-    throw new Error("Host worktree cwd is resolved by resolveSdkSessionCwdAsync");
-  }
-
-  // A workspace-less caller has no folder of its own.
-  if (!workspace) return homedir();
-
-  return workspaceMountRoot(workspace, { create: true });
-}
-
-/**
  * Session start cwd: `resolveSessionWorkRoot` with creation, thrown on
  * unavailability. A start with no workspace row keeps the home fallback.
  */
@@ -372,25 +339,6 @@ export async function resolveSdkSessionCwdAsync(
     case "workspace-missing":
       return homedir();
   }
-}
-
-export function resolveSdkSessionDisplayCwd(
-  workspace?: Workspace,
-  session?: Pick<Session, "workspaceId" | "worktreeId" | "control" | "serverDurable">,
-): string {
-  if (session && isDeclaredControlSession(session)) {
-    return "Pi Control";
-  }
-  if (session && isControlConversation(session)) {
-    return "Oppi Control";
-  }
-  if (workspace?.runtime === "sandbox") {
-    return resolveSandboxGuestCwd(workspace);
-  }
-  if (session?.worktreeId) {
-    throw new Error("Host worktree display cwd requires resolveSdkSessionCwdAsync");
-  }
-  return resolveSdkSessionCwd(workspace);
 }
 
 type AgentContextFile = { path: string; content: string };

@@ -25,7 +25,7 @@ import {
 } from "../host.js";
 import { listConfiguredHostExtensionResources } from "../extension-loader.js";
 import { projectTrustState } from "../project-trust.js";
-import { resolveSdkSessionCwd } from "../sdk-backend.js";
+import { workspaceMountRoot } from "../session-work-root.js";
 import type { ProjectTrustState } from "../types.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
 
@@ -667,7 +667,7 @@ export function createSkillRoutes(ctx: RouteContext, helpers: RouteHelpers): Rou
       throw new WorkspaceResourceScopeError("Workspace not found", 404);
     }
 
-    const cwd = resolveSdkSessionCwd(workspace);
+    const cwd = workspaceMountRoot(workspace, { create: true });
     return {
       cwd,
       workspaceScoped: true,

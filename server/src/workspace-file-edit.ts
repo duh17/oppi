@@ -214,7 +214,7 @@ export async function inspectWorkspaceFileForEdit(input: {
   const lexicalPath = resolveWorkspaceUserPath({
     workspace: input.workspace,
     requestedPath: input.requestedPath,
-    hostMount: input.root,
+    root: input.root,
   });
   if (!lexicalPath) {
     return input.workspace.runtime === "sandbox" ? { kind: "forbidden" } : { kind: "not-found" };
