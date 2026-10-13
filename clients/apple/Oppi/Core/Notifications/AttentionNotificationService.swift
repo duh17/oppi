@@ -234,7 +234,7 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
                 deliver(request())
                 return
             }
-            guard await ensureAuthorizationForNotification() else {
+            guard await notificationsAuthorized() else {
                 return
             }
             do {
@@ -245,7 +245,9 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         }
     }
 
-    private func ensureAuthorizationForNotification() async -> Bool {
+    /// The app's one notification-permission prompt, for local banners and push registration:
+    /// asks on first use, true when alerts may show.
+    func notificationsAuthorized() async -> Bool {
         #if DEBUG
         // Screenshot previews must not raise the system permission alert.
         if ScreenshotPreviewConfig.isEnabled { return false }

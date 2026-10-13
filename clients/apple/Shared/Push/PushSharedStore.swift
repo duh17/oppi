@@ -53,7 +53,7 @@ enum PushSharedStore {
     }
 
     static func loadKey(keyId: Data) -> KeyRecord? {
-        var query = keyQuery(account: keyId.base64URLEncodedPushString)
+        var query = keyQuery(account: keyId.base64URLEncodedString)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: AnyObject?
@@ -63,7 +63,7 @@ enum PushSharedStore {
     }
 
     static func saveKey(_ record: KeyRecord) throws {
-        let account = try record.keyId.base64URLEncodedPushString
+        let account = try record.keyId.base64URLEncodedString
         let data = try JSONEncoder().encode(record)
         let attributes: [String: Any] = [
             kSecValueData as String: data,
@@ -92,7 +92,7 @@ enum PushSharedStore {
     }
 
     static func deleteKey(keyId: Data) {
-        SecItemDelete(keyQuery(account: keyId.base64URLEncodedPushString) as CFDictionary)
+        SecItemDelete(keyQuery(account: keyId.base64URLEncodedString) as CFDictionary)
     }
 
     // MARK: - App Group files
@@ -150,7 +150,7 @@ enum PushSharedStore {
                 keyId: keyId,
                 now: now,
                 ledgerURL: directory.appendingPathComponent("replay.json"),
-                liveKeyIds: { Set(allKeys().compactMap { try? $0.keyId.base64URLEncodedPushString }) }
+                liveKeyIds: { Set(allKeys().compactMap { try? $0.keyId.base64URLEncodedString }) }
             )
         }
         return accepted ?? false
@@ -180,7 +180,7 @@ enum PushSharedStore {
         }
         guard ledger.accept(messageId: messageId, keyId: keyId, now: now) else { return false }
         // Entries for deleted keys go with them.
-        ledger.retainKeys(liveKeyIds().union([keyId.base64URLEncodedPushString]))
+        ledger.retainKeys(liveKeyIds().union([keyId.base64URLEncodedString]))
         do {
             try write(JSONEncoder().encode(ledger), to: url)
             return true

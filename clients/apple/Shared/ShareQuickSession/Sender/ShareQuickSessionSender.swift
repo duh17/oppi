@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import os
 import Security
@@ -730,12 +729,7 @@ private final class ShareQuickSessionTrustDelegate: NSObject, URLSessionDelegate
             return
         }
 
-        let digest = Data(SHA256.hash(data: SecCertificateCopyData(leaf) as Data))
-        let encodedDigest = digest.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-        let fingerprint = "sha256:\(encodedDigest)"
+        let fingerprint = (SecCertificateCopyData(leaf) as Data).sha256Fingerprint
         switch ServerTLSTrustPolicy.decision(
             pinnedLeafFingerprint: pinnedLeafFingerprint,
             presentedFingerprint: fingerprint,

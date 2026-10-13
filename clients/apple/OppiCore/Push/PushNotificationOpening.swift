@@ -4,19 +4,6 @@ import Foundation
 /// tests run the same path: open the envelope, check replay, redact, or fall back.
 enum PushNotificationOpening {
     static func presentation(
-        userInfo: [AnyHashable: Any],
-        now: Date,
-        key: (Data) -> PushKeyMaterial?,
-        acceptMessage: (_ messageId: Data, _ keyId: Data) -> Bool,
-        redaction: () -> PushRedactionSnapshot
-    ) -> PushAlertPresentation {
-        presentation(
-            for: open(userInfo: userInfo, now: now, key: key, acceptMessage: acceptMessage),
-            redaction: redaction
-        )
-    }
-
-    static func presentation(
         for result: Result<OpenedPushEnvelope, PushEnvelopeRejection>,
         redaction: () -> PushRedactionSnapshot
     ) -> PushAlertPresentation {

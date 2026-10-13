@@ -1,7 +1,6 @@
 import CryptoKit
 import OSLog
 import UIKit
-import UserNotifications
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Push")
 
@@ -81,7 +80,10 @@ final class PushRegistration {
             logger.error("Push registration skipped for server \(server, privacy: .public): no aps-environment")
             return false
         }
-        guard let token = await currentDeviceToken(), await notificationsAuthorized() else { return false }
+        // A denied permission keeps the token off the relay: it could only deliver alerts iOS
+        // would not show.
+        guard let token = await currentDeviceToken(),
+              await AttentionNotificationService.shared.notificationsAuthorized() else { return false }
         Self.publishRedactionSnapshot()
         do {
             try await register(
@@ -143,7 +145,7 @@ final class PushRegistration {
 
         let key = try currentOrNewKey(serverId: serverId)
         let publicKey = key.privateKey.publicKey.rawRepresentation
-        let keyId = PushEnvelope.keyId(forPublicKey: publicKey).base64URLEncodedPushString
+        let keyId = PushEnvelope.keyId(forPublicKey: publicKey).base64URLEncodedString
         let issuedAt = Int64(Date().timeIntervalSince1970 * 1000)
         let message = PushRegistrationSignature.message(
             deviceId: deviceId,
@@ -157,16 +159,16 @@ final class PushRegistration {
         let signature = try DeviceKeyProvider.shared.loadOrCreate().sign(message)
         let response = try await api.putPushRegistration(PushRegistrationRequest(
             keyId: keyId,
-            publicKey: publicKey.base64URLEncodedPushString,
+            publicKey: publicKey.base64URLEncodedString,
             sendToken: minted.sendToken,
             relay: relay.absoluteString,
             issuedAt: issuedAt,
-            signature: signature.base64URLEncodedPushString
+            signature: signature.base64URLEncodedString
         ))
 
         // Pin: only the server whose identity this phone paired with may sign its pushes.
-        guard let serverPublicKey = Data(base64URLEncodedPushString: response.serverPublicKey),
-              PushRegistrationSignature.serverFingerprint(forPublicKey: serverPublicKey) == serverId,
+        guard let serverPublicKey = Data(base64URLEncoded: response.serverPublicKey),
+              serverPublicKey.sha256Fingerprint == serverId,
               response.keyId == keyId else {
             try? await api.deletePushRegistration()
             throw PushRegistrationError.serverKeyMismatch
@@ -283,27 +285,6 @@ final class PushRegistration {
         tokenWaiters.removeAll()
         for waiter in waiters {
             waiter.resume(returning: token)
-        }
-    }
-
-    /// Ask on first use. A denied permission keeps the token off the relay: it could only
-    /// deliver alerts iOS would not show.
-    private func notificationsAuthorized() async -> Bool {
-        let center = UNUserNotificationCenter.current()
-        switch await center.notificationSettings().authorizationStatus {
-        case .authorized, .provisional, .ephemeral:
-            return true
-        case .notDetermined:
-            do {
-                return try await center.requestAuthorization(options: [.alert, .sound, .badge])
-            } catch {
-                logger.error("Failed to request notification permission: \(error.localizedDescription, privacy: .public)")
-                return false
-            }
-        case .denied:
-            return false
-        @unknown default:
-            return false
         }
     }
 }

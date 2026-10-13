@@ -442,6 +442,8 @@ targets:
         type: group
       - path: Shared/AppLock
         type: group
+      - path: OppiCore/Client/Base64URL.swift
+        type: file
       - path: OppiCore/Client/DeviceKey.swift
         type: file
       - path: OppiCore/Client/DeviceAuthSession.swift
@@ -560,6 +562,8 @@ targets:
         type: group
       - path: Shared/Constants
         type: group
+      - path: OppiCore/Client/Base64URL.swift
+        type: file
       - path: OppiCore/Client/CrossProcessFileLock.swift
         type: file
     entitlements:

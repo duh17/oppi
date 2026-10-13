@@ -18,16 +18,11 @@ enum PushRegistrationSignature {
             deviceId,
             serverFingerprint,
             keyId,
-            Data(SHA256.hash(data: publicKey)).base64URLEncodedPushString,
-            Data(SHA256.hash(data: Data(sendToken.utf8))).base64URLEncodedPushString,
+            Data(SHA256.hash(data: publicKey)).base64URLEncodedString,
+            Data(SHA256.hash(data: Data(sendToken.utf8))).base64URLEncodedString,
             relay,
             String(issuedAt),
         ]
         return Data(lines.joined(separator: "\n").utf8)
-    }
-
-    /// `sha256:<base64url SHA-256(raw Ed25519 key)>`, the form the app pins at pairing.
-    static func serverFingerprint(forPublicKey publicKey: Data) -> String {
-        "sha256:\(Data(SHA256.hash(data: publicKey)).base64URLEncodedPushString)"
     }
 }

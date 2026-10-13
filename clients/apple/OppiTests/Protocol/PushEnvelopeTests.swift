@@ -61,11 +61,11 @@ struct PushEnvelopeTests {
 
     static func keyLookup(_ vectors: ServerVectors) throws -> (Data) -> PushKeyMaterial? {
         let material = PushKeyMaterial(
-            privateKey: try #require(Data(base64URLEncodedPushString: vectors.recipient.privateKey)),
-            serverPublicKey: try #require(Data(base64URLEncodedPushString: vectors.server.publicKey)),
+            privateKey: try #require(Data(base64URLEncoded: vectors.recipient.privateKey)),
+            serverPublicKey: try #require(Data(base64URLEncoded: vectors.server.publicKey)),
             serverId: serverId
         )
-        let keyId = try #require(Data(base64URLEncodedPushString: vectors.recipient.keyId))
+        let keyId = try #require(Data(base64URLEncoded: vectors.recipient.keyId))
         return { $0 == keyId ? material : nil }
     }
 
@@ -100,11 +100,11 @@ struct PushEnvelopeTests {
 
     @Test func derivesTheServersKeyIdFromThePublicKey() throws {
         let vectors = try Self.vectors()
-        let publicKey = try #require(Data(base64URLEncodedPushString: vectors.recipient.publicKey))
-        let privateKey = try #require(Data(base64URLEncodedPushString: vectors.recipient.privateKey))
+        let publicKey = try #require(Data(base64URLEncoded: vectors.recipient.publicKey))
+        let privateKey = try #require(Data(base64URLEncoded: vectors.recipient.privateKey))
         let derived = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: privateKey).publicKey
         #expect(derived.rawRepresentation == publicKey)
-        #expect(PushEnvelope.keyId(forPublicKey: publicKey).base64URLEncodedPushString == vectors.recipient.keyId)
+        #expect(PushEnvelope.keyId(forPublicKey: publicKey).base64URLEncodedString == vectors.recipient.keyId)
     }
 
     @Test func signsTheSameRegistrationBytesTheServerVerifies() throws {
@@ -113,14 +113,14 @@ struct PushEnvelopeTests {
             deviceId: vector.input.deviceId,
             serverFingerprint: vector.input.serverFingerprint,
             keyId: vector.input.keyId,
-            publicKey: try #require(Data(base64URLEncodedPushString: vector.input.publicKey)),
+            publicKey: try #require(Data(base64URLEncoded: vector.input.publicKey)),
             sendToken: vector.input.sendToken,
             relay: vector.input.relay,
             issuedAt: vector.input.issuedAt
         )
-        #expect(message.base64URLEncodedPushString == vector.message)
-        let serverKey = try #require(Data(base64URLEncodedPushString: try Self.vectors().server.publicKey))
-        #expect(PushRegistrationSignature.serverFingerprint(forPublicKey: serverKey) == (try Self.vectors().server.fingerprint))
+        #expect(message.base64URLEncodedString == vector.message)
+        let serverKey = try #require(Data(base64URLEncoded: try Self.vectors().server.publicKey))
+        #expect(serverKey.sha256Fingerprint == (try Self.vectors().server.fingerprint))
     }
 
     // MARK: - Replay
@@ -204,7 +204,7 @@ struct PushEnvelopeTests {
                 keyId: keyId,
                 now: now,
                 ledgerURL: url,
-                liveKeyIds: { [keyId.base64URLEncodedPushString] }
+                liveKeyIds: { [keyId.base64URLEncodedString] }
             )
         }
 
@@ -244,10 +244,12 @@ struct PushEnvelopeTests {
         let vectors = try Self.vectors()
         let envelope = try #require(vectors.valid.first { $0.name == name }).envelope
         return PushNotificationOpening.presentation(
-            userInfo: ["aps": ["alert": ["title": "Oppi"]], "e": envelope],
-            now: Self.now(vectors),
-            key: try Self.keyLookup(vectors),
-            acceptMessage: { _, _ in true },
+            for: PushNotificationOpening.open(
+                userInfo: ["aps": ["alert": ["title": "Oppi"]], "e": envelope],
+                now: Self.now(vectors),
+                key: try Self.keyLookup(vectors),
+                acceptMessage: { _, _ in true }
+            ),
             redaction: { redaction }
         )
     }
@@ -314,10 +316,12 @@ struct PushEnvelopeTests {
 
     @Test func aPushWithoutAnEnvelopeShowsOnlyTheFixedText() {
         let alert = PushNotificationOpening.presentation(
-            userInfo: ["aps": ["alert": ["title": "Leaked title", "body": "Leaked body"]]],
-            now: Date(),
-            key: { _ in nil },
-            acceptMessage: { _, _ in true },
+            for: PushNotificationOpening.open(
+                userInfo: ["aps": ["alert": ["title": "Leaked title", "body": "Leaked body"]]],
+                now: Date(),
+                key: { _ in nil },
+                acceptMessage: { _, _ in true }
+            ),
             redaction: { PushRedactionSnapshot(appLockEnabled: false, lockedScopes: []) }
         )
         #expect(alert == .fallback)

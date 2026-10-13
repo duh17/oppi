@@ -131,7 +131,7 @@ struct ServerCredentials: Codable, Sendable, Equatable {
             guard var credentials = decodeUnsignedInvitePayload(signedPayload, allowPinnedUnsigned: true) else {
                 return nil
             }
-            let fingerprint = "sha256:\(Data(SHA256.hash(data: publicKeyData)).base64URLEncodedString)"
+            let fingerprint = publicKeyData.sha256Fingerprint
             guard credentials.serverFingerprint == fingerprint else { return nil }
             credentials = credentials.withServerFingerprint(fingerprint)
             return credentials
@@ -258,8 +258,3 @@ private struct InvitePayloadV3: Decodable {
     let fingerprint: String?
 }
 
-private extension Data {
-    var base64URLEncodedString: String {
-        base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
-    }
-}

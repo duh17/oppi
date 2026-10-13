@@ -639,6 +639,7 @@
 		50488D772670770EC7D2F221 /* ToolRowAutoFollowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8014FC4D18656F2822209F7 /* ToolRowAutoFollowTests.swift */; };
 		50490A353D237A3633B59A3F /* HTMLPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA1F58EE677A0E99E3C219E /* HTMLPreviewView.swift */; };
 		5055C2344AC2D63A41A3A9CC /* ServerSyncState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3277D42879F451F1119D4C7B /* ServerSyncState.swift */; };
+		5064180EA6B83E269172BF80 /* Base64URL.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99E150814904F2C7D20629C9 /* Base64URL.swift */; };
 		50839680BD914C7E451571DB /* ScrollStabilityBench.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A7033568128A1F940C6DBCD /* ScrollStabilityBench.swift */; };
 		5092A0DFAC28CEECD5D602DA /* NativeMarkdownImageViewSVGTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC55D2B1108CBDA3F960B296 /* NativeMarkdownImageViewSVGTests.swift */; };
 		50B453F36699DF547F21AEC5 /* ServerStatsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39FA6F8E4FD952F2B0A4AF2D /* ServerStatsTests.swift */; };
@@ -1095,6 +1096,7 @@
 		87C3E08DE4857E3D45057C73 /* TailnetSameUserPairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BCF68FE6990270AE88A02B1 /* TailnetSameUserPairing.swift */; };
 		87DF7DE23A0F7B22F1832F8F /* MacSessionTraceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5DE2240E836293C992187D3 /* MacSessionTraceStore.swift */; };
 		87EF26B456383F620E376A7B /* RestorationState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B99D06FB0C7E848F2EB4018C /* RestorationState.swift */; };
+		87F119FF4F08D6077E4A8ED7 /* Base64URL.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99E150814904F2C7D20629C9 /* Base64URL.swift */; };
 		885A5A3C36F8D86AFBE5F7C8 /* TimelineTurnAssembler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88F77B23934D4E7593979412 /* TimelineTurnAssembler.swift */; };
 		886AC981E6794D69B2BC3308 /* DesktopViewGrantTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0232FD6267FC542D475012B2 /* DesktopViewGrantTests.swift */; };
 		8876D8AF310A6ADE66230B5E /* FeatureEducationTipBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4249268D95BBF9BBDB0EED05 /* FeatureEducationTipBanner.swift */; };
@@ -1508,6 +1510,7 @@
 		BB5A08CF04C1C28490CDAB2F /* MacComposerVisualGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEB5FF0D877AADE6BD04C7FA /* MacComposerVisualGateTests.swift */; };
 		BB612261A2C59369B6343A4C /* MacModelSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B0413D9B519772B076E8EB9 /* MacModelSelection.swift */; };
 		BB6BF1D67D2D368370532654 /* FileIndexStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 585CE55C9F00B5EFE4A62B78 /* FileIndexStoreTests.swift */; };
+		BB7DBF697D8BF10FA87636D5 /* Base64URL.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99E150814904F2C7D20629C9 /* Base64URL.swift */; };
 		BB893B2FC79736CFD0E1208B /* MermaidTimelineRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABA140AF9F8B77AC781BB50C /* MermaidTimelineRenderer.swift */; };
 		BBA54BCDABDFB541F27A09BA /* CodeBlockWrappingHarnessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F2CA632DE148695D6776950 /* CodeBlockWrappingHarnessView.swift */; };
 		BBB806142CCE625FEFF53C6B /* ToolContentDescriptorBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69278C2C473AFFA85909BF8A /* ToolContentDescriptorBuilder.swift */; };
@@ -1691,6 +1694,7 @@
 		D233936E9C924B5EC92BC785 /* WorkspaceSidebarGitStatusPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5BF6F5ABB4DA10FAC8D385D /* WorkspaceSidebarGitStatusPreview.swift */; };
 		D26CB448DB1DBB3A13069B69 /* StatsHeroRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69B8E01DF85CB2297B30142A /* StatsHeroRow.swift */; };
 		D28BC0A4F9B48E4CD1EB50B0 /* ChatViewOutlineColdStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2651D06EDEC4E1A51DD8BABC /* ChatViewOutlineColdStateTests.swift */; };
+		D2996AD422BD882EE1861EF3 /* Base64URL.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99E150814904F2C7D20629C9 /* Base64URL.swift */; };
 		D2A0D1B6B97A681C2CDC1942 /* AppEventStreamClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E46AC773C38E8894285C3F8 /* AppEventStreamClient.swift */; };
 		D2B75AE8E3BF0CA3912B02F3 /* ServerSkillFileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D440D9C2C8667D23A58C8FB /* ServerSkillFileView.swift */; };
 		D2F1E25CAFF2E8EB9F09D731 /* ServerDetailConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29AC529CAF01429313FB8B5A /* ServerDetailConfigurationTests.swift */; };
@@ -3189,6 +3193,7 @@
 		9920180F42588F5A1C5B901A /* ToolFileInspection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolFileInspection.swift; sourceTree = "<group>"; };
 		9937F5BDC28674602BEB36B0 /* DesktopLocalPreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopLocalPreviewTests.swift; sourceTree = "<group>"; };
 		99B013DD15FC1F376AADFA69 /* SessionTreeDisplayLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTreeDisplayLayoutTests.swift; sourceTree = "<group>"; };
+		99E150814904F2C7D20629C9 /* Base64URL.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Base64URL.swift; sourceTree = "<group>"; };
 		99E4E6048E6D2BBBFDA698FA /* PiAvatarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiAvatarView.swift; sourceTree = "<group>"; };
 		9A2597A5A0793F31D2B4AF86 /* MacToolAudioPlaybackController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacToolAudioPlaybackController.swift; sourceTree = "<group>"; };
 		9A2C5743B2790EA0C608DA57 /* HardwareKeybindingResponder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HardwareKeybindingResponder.swift; sourceTree = "<group>"; };
@@ -6290,6 +6295,7 @@
 			isa = PBXGroup;
 			children = (
 				A4CE2ABE3351FCA6E703FF4F /* AppPreferenceStore.swift */,
+				99E150814904F2C7D20629C9 /* Base64URL.swift */,
 				1558B61485C2084D8B980AF0 /* ConnectionTransportPath.swift */,
 				81B1D557257E0246F9E92149 /* CrossProcessFileLock.swift */,
 				24F80637EB2D077A3410259D /* DeviceAuthSession.swift */,
@@ -7536,6 +7542,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D2996AD422BD882EE1861EF3 /* Base64URL.swift in Sources */,
 				95149F324EA5B4EDEE8F671C /* CrossProcessFileLock.swift in Sources */,
 				59DDCBEF182F5D1399FAE27A /* NotificationService.swift in Sources */,
 				DD2DEA0B071AB4F0AF570CB0 /* PushAlertPresentation.swift in Sources */,
@@ -7566,6 +7573,7 @@
 				C7CC43541E65B79B9ED64060 /* AskRequestStore.swift in Sources */,
 				77068F2EE8288E7B4C7C0D4F /* AskResponseEncoder.swift in Sources */,
 				5A45504918138F091706C544 /* AttentionNotificationPolicy.swift in Sources */,
+				87F119FF4F08D6077E4A8ED7 /* Base64URL.swift in Sources */,
 				FB0A36E37EDE48CF329EB429 /* BashEmbeddedLanguageDetector.swift in Sources */,
 				CA8D21423C4B73DCBA7D4860 /* BuiltInToolFacts.swift in Sources */,
 				24B0E0E89A178123932F3888 /* CMarkFastParser.swift in Sources */,
@@ -8135,6 +8143,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A3939F8BFDB7C9602F856486 /* AppLockSettings.swift in Sources */,
+				BB7DBF697D8BF10FA87636D5 /* Base64URL.swift in Sources */,
 				EC7F12FA504817FFC86EE704 /* CrossProcessFileLock.swift in Sources */,
 				326B499DA16EE5BAF6CE7E0E /* DeviceAuthSession.swift in Sources */,
 				0A0BE2B2E8404B7380DC44E9 /* DeviceCredential.swift in Sources */,
@@ -8718,6 +8727,7 @@
 				95A3DE41B75EDFB97FDCF5A9 /* AutoTitleSettingsView.swift in Sources */,
 				A2BA7C2EE178A7814D65AFBF /* BackgroundKeepAlive.swift in Sources */,
 				690FCD4B6A10CD30B75840A4 /* BadgePickerViews.swift in Sources */,
+				5064180EA6B83E269172BF80 /* Base64URL.swift in Sources */,
 				34751F05C0637D7B1F59B09D /* BaselineSafeTextView.swift in Sources */,
 				E83122BA98B616259715DA34 /* BashEmbeddedLanguageDetector.swift in Sources */,
 				7747419D039E7F0C739353EA /* BashToolRowView.swift in Sources */,

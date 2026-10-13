@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import Security
 
@@ -90,7 +89,7 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
         }
 
         let certData = SecCertificateCopyData(leafCertificate) as Data
-        let fingerprint = Self.certFingerprint(for: certData)
+        let fingerprint = certData.sha256Fingerprint
 
         switch ServerTLSTrustPolicy.decision(
             pinnedLeafFingerprint: pinnedLeafFingerprint,
@@ -106,15 +105,6 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
         }
     }
 
-    /// Compute the `sha256:<base64url>` fingerprint for raw DER certificate data.
-    ///
-    /// Exposed as `internal` so unit tests can exercise the fingerprint
-    /// calculation without going through a live URLAuthenticationChallenge.
-    static func certFingerprint(for certData: Data) -> String {
-        let digest = Data(SHA256.hash(data: certData))
-        return "sha256:\(digest.base64URLEncodedString())"
-    }
-
     static func allowsPublicCATrustFallback(
         forHost host: String,
         pinnedLeafFingerprint: String? = nil
@@ -127,14 +117,5 @@ final class PinnedServerTrustDelegate: NSObject, URLSessionDelegate, URLSessionT
 
     private static func normalizeFingerprint(_ value: String?) -> String? {
         ServerTLSTrustPolicy.normalizeFingerprint(value)
-    }
-}
-
-private extension Data {
-    func base64URLEncodedString() -> String {
-        base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
     }
 }

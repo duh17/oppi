@@ -560,15 +560,6 @@ private struct InvitePayloadV3Fixture: Codable {
     var fingerprint: String?
 }
 
-private extension Data {
-    var base64URLEncodedString: String {
-        base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
-}
-
 @Suite("PairDeviceResponse")
 struct PairDeviceResponseTests {
     @Test func olderPairingResponseRequiresServerUpdateAndRepairing() {

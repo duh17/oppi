@@ -54,8 +54,8 @@ struct PushCanaryCaptureTests {
 
     private func material(privateKey: String) throws -> PushKeyMaterial {
         PushKeyMaterial(
-            privateKey: try #require(Data(base64URLEncodedPushString: privateKey)),
-            serverPublicKey: try #require(Data(base64URLEncodedPushString: capture.serverPublicKey)),
+            privateKey: try #require(Data(base64URLEncoded: privateKey)),
+            serverPublicKey: try #require(Data(base64URLEncoded: capture.serverPublicKey)),
             serverId: capture.serverFingerprint
         )
     }
@@ -66,22 +66,24 @@ struct PushCanaryCaptureTests {
         ledger: URL
     ) throws -> (([AnyHashable: Any]) -> PushAlertPresentation) {
         let material = try material(privateKey: privateKey)
-        let keyId = try #require(Data(base64URLEncodedPushString: keys.recipient.keyId))
+        let keyId = try #require(Data(base64URLEncoded: keys.recipient.keyId))
         let now = Date(timeIntervalSince1970: capture.now / 1000)
         return { userInfo in
             PushNotificationOpening.presentation(
-                userInfo: userInfo,
-                now: now,
-                key: { $0 == keyId ? material : nil },
-                acceptMessage: { messageId, keyId in
-                    PushSharedStore.acceptMessage(
-                        messageId,
-                        keyId: keyId,
-                        now: now,
-                        ledgerURL: ledger,
-                        liveKeyIds: { [keyId.base64URLEncodedPushString] }
-                    )
-                },
+                for: PushNotificationOpening.open(
+                    userInfo: userInfo,
+                    now: now,
+                    key: { $0 == keyId ? material : nil },
+                    acceptMessage: { messageId, keyId in
+                        PushSharedStore.acceptMessage(
+                            messageId,
+                            keyId: keyId,
+                            now: now,
+                            ledgerURL: ledger,
+                            liveKeyIds: { [keyId.base64URLEncodedString] }
+                        )
+                    }
+                ),
                 redaction: { PushRedactionSnapshot(appLockEnabled: false, lockedScopes: []) }
             )
         }
@@ -112,8 +114,8 @@ struct PushCanaryCaptureTests {
     }
 
     @Test func thisDevicesKeyRecoversTheCanaries() throws {
-        let serverKey = try #require(Data(base64URLEncodedPushString: capture.serverPublicKey))
-        #expect(PushRegistrationSignature.serverFingerprint(forPublicKey: serverKey) == capture.serverFingerprint)
+        let serverKey = try #require(Data(base64URLEncoded: capture.serverPublicKey))
+        #expect(serverKey.sha256Fingerprint == capture.serverFingerprint)
 
         try withOpener { open in
             let alerts = try capture.apnsPayloads.map { open(try userInfo($0)) }

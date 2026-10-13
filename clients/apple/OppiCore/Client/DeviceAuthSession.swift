@@ -230,6 +230,6 @@ public actor DeviceAuthSession {
     /// the raw 64-byte signature as unpadded base64url.
     static func sign(challenge: DeviceAuthChallenge, key: DeviceKey) throws -> String {
         let input = Data("\(challenge.audience).\(challenge.nonce)".utf8)
-        return DeviceKeyBase64.encode(try key.sign(input))
+        return try key.sign(input).base64URLEncodedString
     }
 }

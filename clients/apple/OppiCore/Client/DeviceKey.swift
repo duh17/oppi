@@ -22,8 +22,8 @@ public struct DevicePublicKey: Codable, Sendable, Equatable, Hashable {
     public static func publicKey(fromRaw raw: Data) -> DevicePublicKey? {
         guard raw.count == 65, raw.first == 0x04 else { return nil }
         return DevicePublicKey(
-            x: DeviceKeyBase64.encode(Data(raw[1..<33])),
-            y: DeviceKeyBase64.encode(Data(raw[33..<65]))
+            x: Data(raw[1..<33]).base64URLEncodedString,
+            y: Data(raw[33..<65]).base64URLEncodedString
         )
     }
 }
@@ -51,14 +51,5 @@ public struct InMemoryP256DeviceKey: DeviceKey {
 
     public func sign(_ data: Data) throws -> Data {
         try privateKey.signature(for: data).rawRepresentation
-    }
-}
-
-enum DeviceKeyBase64 {
-    static func encode(_ data: Data) -> String {
-        data.base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
     }
 }

@@ -65,19 +65,20 @@ enum AttentionNotificationPolicy: Sendable {
     }
 
     /// Local stand-in for the server's `done` push: same title, body, category, and
-    /// payload keys. The push names the session; this banner hides the name while App Lock
-    /// or a scoped lock covers it, like ask banners.
+    /// tap-routing key (`sessionId`). The push names the session; this banner hides the name
+    /// while App Lock or a scoped lock covers it, like ask banners.
     static func sessionDonePayload(
         sessionId: String,
         sessionName: String?,
         revealsSessionName: Bool
     ) -> AttentionNotificationPayload {
         let name = sessionName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let text = PushAlertPresentation.fixedText(event: .done, kind: nil)
         return AttentionNotificationPayload(
             identifier: sessionDoneRequestIdentifier(sessionId: sessionId),
-            title: String(localized: "Session Done"),
+            title: text.title,
             subtitle: revealsSessionName ? name : "",
-            body: String(localized: "The run finished."),
+            body: text.body,
             categoryIdentifier: sessionDoneCategoryId,
             userInfo: [
                 "event": "done",

@@ -3,7 +3,7 @@ import Foundation
 /// APNs environment of this build's signed `aps-environment` entitlement.
 ///
 /// A device token only works on the APNs host that issued it, so the app sends this
-/// with every token and the server routes each push to the matching host.
+/// with its token to the relay, which routes each push to the matching APNs host.
 enum APNsEnvironment: String, Sendable, Equatable {
     case sandbox
     case production

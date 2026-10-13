@@ -92,7 +92,7 @@ struct PushRelayClient: Sendable {
     ) async throws -> Data {
         var headers = ["Authorization": "Bearer \(registration.registrationSecret)"]
         if let keyId = registration.appAttestKeyId {
-            let bodyHash = Data(SHA256.hash(data: body)).base64URLEncodedPushString
+            let bodyHash = Data(SHA256.hash(data: body)).base64URLEncodedString
             let clientData = "oppi-relay-request-v1\n\(method)\n\(path)\n\(bodyHash)"
             let assertion = try await appAttest.generateAssertion(
                 keyId,

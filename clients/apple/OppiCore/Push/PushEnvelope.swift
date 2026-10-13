@@ -91,7 +91,7 @@ enum PushEnvelopeOpener {
         now: Date,
         key: (Data) -> PushKeyMaterial?
     ) throws(PushEnvelopeRejection) -> OpenedPushEnvelope {
-        guard let bytes = Data(base64URLEncodedPushString: envelope), bytes.count == PushEnvelope.length else {
+        guard let bytes = Data(base64URLEncoded: envelope), bytes.count == PushEnvelope.length else {
             throw .size
         }
         guard bytes[bytes.startIndex] == PushEnvelope.version else { throw .version }
@@ -175,8 +175,8 @@ struct PushReplayLedger: Codable, Equatable, Sendable {
             let kept = ids.filter { $0.value >= cutoff }
             return kept.isEmpty ? nil : kept
         }
-        let kid = keyId.base64URLEncodedPushString
-        let id = messageId.base64URLEncodedPushString
+        let kid = keyId.base64URLEncodedString
+        let id = messageId.base64URLEncodedString
         guard accepted[kid]?[id] == nil else { return false }
         accepted[kid, default: [:]][id] = now.timeIntervalSince1970
         return true
@@ -185,26 +185,5 @@ struct PushReplayLedger: Codable, Equatable, Sendable {
     /// Drops entries for keys no longer on the phone.
     mutating func retainKeys(_ keyIds: Set<String>) {
         accepted = accepted.filter { keyIds.contains($0.key) }
-    }
-}
-
-extension Data {
-    /// Base64url without padding (RFC 4648 §5). Nil for any other alphabet.
-    init?(base64URLEncodedPushString value: String) {
-        guard value.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-" || $0 == "_") }) else {
-            return nil
-        }
-        var normalized = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        let remainder = normalized.count % 4
-        if remainder == 1 { return nil }
-        if remainder > 0 { normalized += String(repeating: "=", count: 4 - remainder) }
-        self.init(base64Encoded: normalized)
-    }
-
-    var base64URLEncodedPushString: String {
-        base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
     }
 }
