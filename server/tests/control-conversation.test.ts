@@ -516,7 +516,7 @@ describe("control conversation lifecycle on the durable harness", () => {
     const runtime = await owner;
     const { harness } = await (await runtime.openHost(sessionId)).open();
     const agent = await harness.snapshot(AgentDoc, conversationId as ConversationId, context);
-    expect(agent?.extensions).toEqual(["ask", "working-words", "oppi.control"]);
+    expect(agent?.extensions).toEqual(["ask", "working-words", "oppi.control", "codemode"]);
     expect(agent?.extensions).toEqual((await owner).controlExtensions.map((e) => e.name));
     expect(agent?.tools).toEqual(
       controlConversationTools((await owner).controlExtensions).map((tool) => tool.name),
@@ -555,12 +555,18 @@ describe("control conversation lifecycle on the durable harness", () => {
     expect(storage.listSessions().filter(isControlConversation)).toHaveLength(1);
   });
 
-  it("runs oppi_query on the host the server binds, with the section as its instructions", async () => {
+  it("runs control tools on the host the server binds, directly and from codemode, with the section as its instructions", async () => {
     const { storage, faux } = await setup();
     faux.setResponses([
-      fauxAssistantMessage([fauxToolCall("oppi_query", { code: "return 6 * 7;" })], {
-        stopReason: "toolUse",
-      }),
+      fauxAssistantMessage(
+        [
+          fauxToolCall("codemode", {
+            code: "let reached; try { await tools.agents_list({}); } catch (e) { reached = e.message; } return [6 * 7, reached];",
+          }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage([fauxToolCall("workspaces_list", {})], { stopReason: "toolUse" }),
       fauxAssistantMessage("forty-two"),
     ]);
     const booted = await boot(storage);
@@ -578,11 +584,17 @@ describe("control conversation lifecycle on the durable harness", () => {
     ).wait(context);
     expect(settled.status).toBe("done");
     const page = await conversation.entries({}, 50, undefined, context);
-    const result = page.items
+    const results = page.items
       .flatMap((entry) => entry.model ?? [])
-      .find((message) => message.role === "toolResult");
-    expect(result).toMatchObject({ toolName: "oppi_query", isError: false });
-    expect(JSON.stringify(result?.content)).toContain("42");
+      .filter((message) => message.role === "toolResult");
+    const script = results.find((message) => message.toolName === "codemode");
+    // Both reached the CLI host the server binds, which refuses: this data dir is not paired.
+    expect(script).toMatchObject({ isError: false });
+    expect(JSON.stringify(script?.content)).toContain("[42,");
+    expect(JSON.stringify(script?.content)).toContain("oppi init");
+    const direct = results.find((message) => message.toolName === "workspaces_list");
+    expect(direct).toMatchObject({ isError: true });
+    expect(JSON.stringify(direct?.content)).toContain("oppi init");
     const agent = await conversation.agent(context);
     expect(agent.instructions).toBeUndefined();
     expect(agent.sections.map((section) => section.key)).toContain("oppi-control");
@@ -699,8 +711,8 @@ describe("control conversation lifecycle on the durable harness", () => {
         faux.setResponses([
           fauxAssistantMessage(
             [
-              fauxToolCall("oppi_script", {
-                code: 'return await oppi(["agent","create","--name","Via stream"]);',
+              fauxToolCall("codemode", {
+                code: 'return await tools.oppi({ argv: ["agent","create","--name","Via stream"] });',
               }),
             ],
             { stopReason: "toolUse" },
@@ -734,6 +746,17 @@ describe("control conversation lifecycle on the durable harness", () => {
         await ws.next((m) => m.type === "agent_end");
         expect(store.listAgents()).toHaveLength(before + rows);
         expect(ws.sent.filter((m) => m.type === "error")).toEqual([]);
+        // The script's call reaches the phone as a call of the codemode row, not a row of its own.
+        const script = ws.sent.find((m) => m.type === "tool_start" && m.tool === "codemode") as
+          Extract<ServerMessage, { type: "tool_start" }> | undefined;
+        const nested = ws.sent.filter(
+          (m): m is Extract<ServerMessage, { type: "tool_start" | "tool_end" }> =>
+            (m.type === "tool_start" || m.type === "tool_end") && m.tool === "oppi",
+        );
+        expect(nested.map((m) => m.type)).toEqual(["tool_start", "tool_end"]);
+        expect(nested.every((m) => m.parentToolCallId === script?.toolCallId)).toBe(true);
+        // The envelope is the call's value, an answer either way; a No is its error envelope.
+        expect(nested[1]?.isError).not.toBe(true);
         rmSync(dir, { recursive: true, force: true });
       },
     );

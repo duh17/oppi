@@ -112,10 +112,9 @@ function withoutFlag(argv: readonly string[], flag: string): string[] {
 
 /**
  * Make the write of a keyed command replay-safe: `--flag <call key>:<hash of the rest of argv>`
- * is the ONLY key it carries, and a key the script passed is dropped. The call key (task id and
- * call index) is the same when a crashed script reruns; the hash makes it a different key when
- * the call at that index is not the same call, so a rerun whose calls came out in another order
- * never hands one write another write's key. Other commands are returned unchanged.
+ * is the ONLY key it carries, and a key the caller passed is dropped. The call key (the tool
+ * call's task id) is the same when a crashed call reruns; the hash ties the key to this exact
+ * command, so no other write can ever carry it. Other commands are returned unchanged.
  */
 export function withReplayKey(argv: readonly string[], key: string): string[] {
   let parsed;
@@ -167,7 +166,7 @@ export class DurableControlCli implements DurableControlHost {
     const interceptor = async (request: LocalApiInterceptedRequest): Promise<void> => {
       if (request.method === "GET") return;
       if (!options.onWrite) {
-        const message = `${request.method} ${request.path} is a write; oppi_query is read-only. Use oppi_script.`;
+        const message = `${request.method} ${request.path} is a write; this tool only reads.`;
         outcome.blocked = failure("read_only", message);
         throw new Error(message);
       }

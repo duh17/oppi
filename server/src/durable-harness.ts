@@ -24,6 +24,8 @@ import {
 } from "@earendil-works/pi-durable";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
+import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
+import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -88,6 +90,8 @@ const STORE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
  * A store that cannot reopen after these is given up, so a broken disk does not loop forever.
  */
 const RECOVERY_DELAYS_MS = [0, 1_000, 5_000];
+/** VM memory of one control codemode script; the VM runs in a worker of the server process. */
+const CONTROL_SCRIPT_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
 const METADATA_FILE = "meta.json";
 const STORAGE_FILE = "session.sqlite";
 
@@ -1065,8 +1069,25 @@ export class DurableHarness {
   /** The control conversation's tools; they reach Oppi through the host bound with `bindControl`. */
   readonly controlExtension = createDurableControl(() => this.control);
   /** The control conversation's exact selection. Never part of `baseExtensions`. */
+  /**
+   * Runs the control conversation's codemode scripts. A sandbox only holds defaults; each script
+   * gets its own VM worker, limited so a runaway script fails inside it, not the server.
+   */
+  private readonly controlSandbox = new CodemodeSandbox({
+    memoryLimitBytes: CONTROL_SCRIPT_MEMORY_LIMIT_BYTES,
+  });
+  /**
+   * pi-durable's own `codemode` for the control conversation: scripts call the control tools as
+   * nested calls and resume after a restart without running finished calls again. No `models.*`:
+   * control has no use for classifiers or image generation.
+   */
+  readonly controlCodemode = createCodemodeExtension({
+    sandbox: this.controlSandbox,
+    models: false,
+  });
   readonly controlExtensions: readonly Extension[] = controlConversationExtensions(
     this.controlExtension,
+    this.controlCodemode,
   );
   /**
    * Extensions every process installs, in install order. They are also the Harness default
@@ -1363,6 +1384,7 @@ export class DurableHarness {
     this.closed = true;
     const hosts = [...this.hosts.values()];
     await Promise.all(hosts.map((host) => host.close()));
+    await this.controlSandbox.close();
   }
 }
 

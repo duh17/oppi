@@ -6,6 +6,7 @@ import {
   type AgentEvent,
   type EntryRecord,
   type MessageChange,
+  type NestedToolExecutionResult,
   type SnapshotEvent,
 } from "@earendil-works/pi-durable";
 import type { AssistantMessage, AssistantMessageEvent, Usage } from "@earendil-works/pi-ai";
@@ -159,6 +160,7 @@ export function adaptDurableEvent(
           toolCallId: event.toolCallId,
           toolName: event.toolName,
           args: event.args,
+          ...parentOf(event),
         }),
       ];
     case "tool_execution_update":
@@ -175,6 +177,24 @@ export function adaptDurableEvent(
     default:
       return [];
   }
+}
+
+/**
+ * A codemode script's nested call names the call that made it; the protocol groups it under that
+ * call's Calls instead of showing it as a row of its own.
+ */
+function parentOf(event: { parentToolCallId?: string }): { parentToolCallId?: string } {
+  return event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {};
+}
+
+/** What a nested call gave its script, as the text a tool row shows. */
+function nestedResultText(result: NestedToolExecutionResult): string {
+  const value = result.structuredOutput;
+  if (value !== undefined) return typeof value === "string" ? value : JSON.stringify(value);
+  return result.diagnostics
+    .filter((diagnostic) => diagnostic.severity === "error")
+    .map((diagnostic) => diagnostic.message)
+    .join("\n");
 }
 
 function adaptMessageUpdate(
@@ -226,6 +246,7 @@ function adaptToolUpdate(
         content: full.length > 0 ? [{ type: "text", text: full }] : [],
         ...(details !== undefined && details !== null ? { details } : {}),
       },
+      ...parentOf(event),
     }),
   ];
 }
@@ -248,6 +269,24 @@ function adaptToolEnd(
         args,
         result: { content: message.content, details: message.details },
         isError: message.isError === true,
+        ...parentOf(event),
+      }),
+    ];
+  }
+  // A nested call writes no transcript entry; its result is what the script got.
+  if (event.result) {
+    return [
+      asPi({
+        type: "tool_execution_end",
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        args,
+        result: {
+          content: [{ type: "text", text: nestedResultText(event.result) }],
+          details: event.result.details ?? {},
+        },
+        isError: event.result.isError,
+        ...parentOf(event),
       }),
     ];
   }
@@ -259,6 +298,7 @@ function adaptToolEnd(
       args,
       result: { content: [{ type: "text", text: "" }], details: {} },
       isError: true,
+      ...parentOf(event),
     }),
   ];
 }

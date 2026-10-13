@@ -87,13 +87,13 @@ async function startDurable(runtime: "host" | "sandbox") {
 
 describe("oppi.control is not offered to other durable sessions", () => {
   it.each(["host", "sandbox"] as const)(
-    "a fresh %s session has no oppi_query or oppi_script",
+    "a fresh %s session has no control tools and no codemode",
     async (runtime) => {
       const agent = await startDurable(runtime);
       const tools = agent.tools.map((tool) => tool.name);
       expect(tools).toContain("session_spawn");
-      expect(tools).not.toContain("oppi_query");
-      expect(tools).not.toContain("oppi_script");
+      for (const name of ["oppi", "agents_create", "sessions_send", "codemode"])
+        expect(tools).not.toContain(name);
       expect(agent.extensions.map((extension) => extension.name)).not.toContain("oppi.control");
       expect(agent.sections.map((section) => section.key)).not.toContain("oppi-control");
     },
