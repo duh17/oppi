@@ -365,7 +365,7 @@ export default defineDurableExtension({
         replay: "safe", // a read; rerun after a crash
         async execute(_args, api, context) {
           const result = await api.env!.exec("cat CHANGELOG.md", {}, context);
-          return { content: [{ type: "text", text: result.ok ? result.value.stdout : result.error.message }] };
+          return { output: [{ type: "text", text: result.ok ? result.value.stdout : result.error.message }] };
         },
       }),
     ],

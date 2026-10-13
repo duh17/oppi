@@ -301,7 +301,7 @@ async function crashedQueuedTools(f: Awaited<ReturnType<typeof fixture>>) {
         });
       }
       effects.push(api.conversationId);
-      return { content: [{ type: "text", text: "counted" }] };
+      return { output: [{ type: "text", text: "counted" }] };
     },
   };
   let harness = await openHarness(f.dir, f.models, tool);
@@ -759,7 +759,7 @@ describe("server durable managed runtime", () => {
             { id: `probe:${api.taskId}`, method, ...fields },
             ctx,
           );
-          return { content: [{ type: "text", text: JSON.stringify(response) }] };
+          return { output: [{ type: "text", text: JSON.stringify(response) }] };
         },
       });
       const f = await fixture([
@@ -924,7 +924,7 @@ describe("server durable managed runtime", () => {
           { id: `timeout:${api.taskId}`, method: "confirm", title: "Expires", timeout: 25 },
           ctx,
         );
-        return { content: [{ type: "text", text: response.cancelled ? "TIMED_OUT" : "ANSWERED" }] };
+        return { output: [{ type: "text", text: response.cancelled ? "TIMED_OUT" : "ANSWERED" }] };
       },
     });
     const f = await fixture([
@@ -3542,7 +3542,7 @@ describe("server durable managed runtime", () => {
         }
         effects.push(api.conversationId);
         if (effects.length === 3) recoveredAll();
-        return { content: [{ type: "text", text: "counted" }] };
+        return { output: [{ type: "text", text: "counted" }] };
       },
     };
     let harness = await openHarness(f.dir, f.models, tool);

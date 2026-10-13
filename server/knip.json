@@ -4,7 +4,6 @@
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [
     "@earendil-works/pi-tui",
-    "@earendil-works/pi-server",
     "@earendil-works/pi-codemode"
   ]
 }

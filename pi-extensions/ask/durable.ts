@@ -102,7 +102,9 @@ const ask = defineTool({
           );
       }
     }
-    return buildAskToolResult(args.questions, answers);
+    // ask-shared builds the classic Pi result shape; Durable names its model content `output`.
+    const { content, details } = buildAskToolResult(args.questions, answers);
+    return { output: content, details };
   },
 });
 export const DurableAsk = defineExtension({

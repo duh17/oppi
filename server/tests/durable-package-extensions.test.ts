@@ -56,7 +56,7 @@ function writePackage(name: string, extensionName = name): string {
       '      description: "Report the code version.",',
       "      parameters: Type.Object({}),",
       "      async execute() {",
-      '        return { content: [{ type: "text", text: VERSION }] };',
+      '        return { output: [{ type: "text", text: VERSION }] };',
       "      },",
       "    })],",
       "  }),",

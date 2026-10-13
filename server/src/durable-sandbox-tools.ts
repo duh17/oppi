@@ -43,7 +43,7 @@ export const DurableSandboxTools: Extension = defineExtension<ToolRegistration>(
           }),
         });
         const result = await tool.execute(api.callId, args, context.abortSignal);
-        return { content: result.content, details: jsonDetails(result.details) };
+        return { output: result.content, details: jsonDetails(result.details) };
       },
     }),
     defineTool({
@@ -60,7 +60,7 @@ export const DurableSandboxTools: Extension = defineExtension<ToolRegistration>(
             env.workspaceRoot,
           ),
         }).execute(api.callId, args, context.abortSignal);
-        return { content: result.content, details: jsonDetails(result.details) };
+        return { output: result.content, details: jsonDetails(result.details) };
       },
     }),
     defineTool({
@@ -82,7 +82,7 @@ export const DurableSandboxTools: Extension = defineExtension<ToolRegistration>(
           undefined,
           undefined as unknown as ExtensionToolContext,
         );
-        return { content: result.content };
+        return { output: result.content };
       },
     }),
   ],
@@ -102,7 +102,7 @@ export const DurableSandboxTools: Extension = defineExtension<ToolRegistration>(
           args,
           context.abortSignal,
         );
-        return { content: result.content };
+        return { output: result.content };
       },
     })),
   ],

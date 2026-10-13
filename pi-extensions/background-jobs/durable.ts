@@ -554,7 +554,7 @@ async function start(
 }
 function notice(job: Job): ToolExecutionResult {
   return {
-    content: [
+    output: [
       {
         type: "text" as const,
         text: `${formatBackgroundNotice(job.id).replace("in a batched follow-up, not one reply per job", "as a follow-up")}\n\ncommand: ${job.command}`,
@@ -599,7 +599,7 @@ const backgroundJob = defineTool({
         job.cancelRequested = true;
         job.cancelTask = api.taskId;
         return {
-          content: [
+          output: [
             {
               type: "text" as const,
               text: `Cancel requested for ${job.id}. You will be told when it stops. Do not poll.`,
@@ -687,7 +687,7 @@ const bash = defineTool({
             timeoutSeconds: selected.timeout,
           });
     return {
-      content: [{ type: "text" as const, text: formatted.text }],
+      output: [{ type: "text" as const, text: formatted.text }],
       isError: formatted.isError,
       details: { jobId: selected.id, backgrounded: false },
       ...(selected.status === "interrupted"

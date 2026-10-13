@@ -587,14 +587,14 @@ function scriptTool(
         const result = await sandbox.execute(input.code, {
           ...(context.abortSignal ? { signal: context.abortSignal } : {}),
         });
-        const content: Array<{ type: "text"; text: string }> = result.output.flatMap((item) =>
+        const output: Array<{ type: "text"; text: string }> = result.output.flatMap((item) =>
           item.type === "text" ? [{ type: "text" as const, text: item.text }] : [],
         );
         if (result.ok && result.value !== undefined)
-          content.push({ type: "text", text: JSON.stringify(result.value) });
+          output.push({ type: "text", text: JSON.stringify(result.value) });
         if (!result.ok)
-          content.push({ type: "text", text: result.error.stack ?? result.error.message });
-        return { content, details: script.stats(), ...(result.ok ? {} : { isError: true }) };
+          output.push({ type: "text", text: result.error.stack ?? result.error.message });
+        return { output, details: script.stats(), ...(result.ok ? {} : { isError: true }) };
       } finally {
         await sandbox.close();
       }

@@ -129,7 +129,7 @@ function durableTool(definition: ToolDefinition): ToolRegistration {
       );
       const isError = (result as { isError?: boolean }).isError === true;
       return {
-        content: result.content,
+        output: result.content,
         details: JSON.parse(JSON.stringify(result.details ?? null)) as JsonValue,
         ...(isError ? { isError } : {}),
       };
@@ -573,7 +573,7 @@ export class DurableMcp {
                 .map((tool) => `- ${tool.name}: ${firstLine(tool.description.trim())}`)
                 .join("\n")}`;
         return {
-          content: [{ type: "text", text }],
+          output: [{ type: "text", text }],
           details: { loaded: loaded.map((tool) => tool.name) },
           ...(loaded.length ? { control: { addTools: loaded.map((tool) => tool.name) } } : {}),
         };

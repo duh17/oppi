@@ -194,7 +194,7 @@ function reply(
   details: ReplyDetails,
   isError = false,
 ): ToolExecutionResult<ReplyDetails> {
-  return { content: [{ type: "text" as const, text }], details, ...(isError ? { isError } : {}) };
+  return { output: [{ type: "text" as const, text }], details, ...(isError ? { isError } : {}) };
 }
 
 /** `api.commit` read of a conversation's owner; undefined for an ownerless conversation. */
