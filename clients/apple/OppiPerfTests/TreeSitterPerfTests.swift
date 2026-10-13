@@ -92,12 +92,12 @@ class TreeSitterPerfTests: XCTestCase {
 
     // MARK: - Registry Initialization
 
-    /// Measure one-time grammar registration cost (query compilation).
-    /// This runs once at app launch and should be <50ms.
+    /// Measure the first-use cost of the most common grammar: a fresh
+    /// registry plus the Shell highlights query compile. Other grammars
+    /// compile only when their language is first highlighted.
     func testGrammarRegistryInit() {
         measure {
-            // Force re-creation (normally a singleton)
-            _ = TreeSitterHighlighter.GrammarRegistry.shared.supports(.shell)
+            _ = TreeSitterHighlighter.GrammarRegistry().highlightsQuery(for: .shell)
         }
     }
 }

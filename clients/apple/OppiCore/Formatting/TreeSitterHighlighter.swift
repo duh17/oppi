@@ -31,7 +31,7 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Tree
 /// Adding a new language:
 /// 1. Add the SPM dependency in `project.yml`
 /// 2. Import the grammar module
-/// 3. Add a `register()` call in `GrammarRegistry.shared`
+/// 3. Add a `register()` call in `GrammarRegistry.makeEntries()`
 /// 4. Add conformance tests in `TreeSitter<Lang>HighlightTests.swift`
 ///
 /// Thread safety: `Parser` is not Sendable, so each `scanTokenRanges`
@@ -138,14 +138,56 @@ enum TreeSitterHighlighter {
 
     // MARK: - Grammar Registry
 
-    /// Cached grammar configurations. Each entry holds the compiled
-    /// Language and highlights Query, created once and reused.
+    /// Registered grammars and their highlights queries.
+    ///
+    /// Compiling a highlights query is the expensive step (Shell ~11 ms,
+    /// C++/Ruby/TSX 50-65 ms each on an M-series simulator; about 3x that on
+    /// an iPhone efficiency core). Compiling all 16 up front made the first
+    /// highlight after every launch cost ~380 ms on the main thread or ~1.25 s
+    /// on a `.utility` task, even for a one-line bash command. Each query is
+    /// therefore compiled on its language's first use. `supports(_:)` and
+    /// `language(for:)` never compile.
+    ///
+    /// `entries` is immutable after `init`, so concurrent reads need no
+    /// lock. Each entry serializes its own compile: callers for one language
+    /// share a single compile, and other languages are never blocked by it.
     final class GrammarRegistry: @unchecked Sendable {
         static let shared = GrammarRegistry()
 
-        private struct Entry {
+        private final class Entry: @unchecked Sendable {
             let language: Language
-            let highlightsQuery: Query?
+            private let queryResources: [QueryResource]
+            private let supplement: String?
+            private let syntaxLanguage: SyntaxLanguage
+            private let lock = NSLock()
+            /// `nil` until compiled; `.some(nil)` when the query is missing or invalid.
+            private var compiled: Query??
+
+            init(
+                syntaxLanguage: SyntaxLanguage,
+                language: Language,
+                queryResources: [QueryResource],
+                supplement: String?
+            ) {
+                self.syntaxLanguage = syntaxLanguage
+                self.language = language
+                self.queryResources = queryResources
+                self.supplement = supplement
+            }
+
+            var highlightsQuery: Query? {
+                lock.lock()
+                defer { lock.unlock() }
+                if let compiled { return compiled }
+                let query = GrammarRegistry.loadHighlightsQuery(
+                    language: language,
+                    queryResources: queryResources,
+                    supplement: supplement,
+                    syntaxLanguage: syntaxLanguage
+                )
+                compiled = .some(query)
+                return query
+            }
         }
 
         private struct QueryResource {
@@ -153,17 +195,38 @@ enum TreeSitterHighlighter {
             let fileName: String
         }
 
-        /// Map from SyntaxLanguage to cached grammar entry.
-        private var entries: [SyntaxLanguage: Entry] = [:]
+        private let entries: [SyntaxLanguage: Entry]
 
-        private init() {
-            registerAll()
+        /// Production code uses `shared`. Tests build a fresh registry to
+        /// observe first-use behavior.
+        init() {
+            entries = Self.makeEntries()
         }
 
         /// Register all available grammars.
         /// Add new grammars here as SPM dependencies are added.
         /// JS/Python stay on 0.23.x: 0.25 Package.swift skips scanner.c under Xcode SPM.
-        private func registerAll() {
+        private static func makeEntries() -> [SyntaxLanguage: Entry] {
+            var entries: [SyntaxLanguage: Entry] = [:]
+
+            /// Register a grammar whose highlights query compiles on first use.
+            ///
+            /// The language is always registered so a missing query resource paints
+            /// plain text instead of silently falling back to the line scanner.
+            func register(
+                _ syntaxLanguage: SyntaxLanguage,
+                tsLanguage: OpaquePointer,
+                queryResources: [QueryResource],
+                supplement: String? = nil
+            ) {
+                entries[syntaxLanguage] = Entry(
+                    syntaxLanguage: syntaxLanguage,
+                    language: Language(language: tsLanguage),
+                    queryResources: queryResources,
+                    supplement: supplement
+                )
+            }
+
             let bash = Self.bundleName("TreeSitterBash")
             let c = Self.bundleName("TreeSitterC")
             let cpp = Self.bundleName("TreeSitterCPP")
@@ -282,34 +345,11 @@ enum TreeSitterHighlighter {
             // Swift: no official tree-sitter-swift SPM package. Keep the scanner.
             // JSON, XML, and diff stay on dedicated scanners. Do not register JSON.
             // HTML tree-sitter is SyntaxLanguage.html only; XML stays on scanXMLRanges.
+            return entries
         }
 
         private static func bundleName(_ module: String) -> String {
             "\(module)_\(module)"
-        }
-
-        /// Register a grammar by loading its highlights queries from SPM bundles.
-        ///
-        /// The language is always registered so a missing query resource paints
-        /// plain text instead of silently falling back to the line scanner.
-        private func register(
-            _ syntaxLanguage: SyntaxLanguage,
-            tsLanguage: OpaquePointer,
-            queryResources: [QueryResource],
-            supplement: String? = nil
-        ) {
-            let language = Language(language: tsLanguage)
-            let highlightsQuery = Self.loadHighlightsQuery(
-                language: language,
-                queryResources: queryResources,
-                supplement: supplement,
-                syntaxLanguage: syntaxLanguage
-            )
-
-            entries[syntaxLanguage] = Entry(
-                language: language,
-                highlightsQuery: highlightsQuery
-            )
         }
 
         /// Load and concatenate query files from grammar SPM resource bundles.
@@ -401,7 +441,7 @@ enum TreeSitterHighlighter {
             entries[syntaxLanguage]?.language
         }
 
-        /// Get the compiled highlights query.
+        /// Get the highlights query, compiling it on this language's first use.
         func highlightsQuery(for syntaxLanguage: SyntaxLanguage) -> Query? {
             entries[syntaxLanguage]?.highlightsQuery
         }

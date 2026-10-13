@@ -176,6 +176,54 @@ struct TreeSitterGrammarSubstitutionTests {
         )
     }
 
+    private static let treeSitterLanguages: [SyntaxLanguage] = [
+        .shell, .javascript, .jsx, .typescript, .tsx, .python, .go,
+        .rust, .c, .cpp, .html, .css, .ruby, .java, .yaml, .toml,
+    ]
+
+    /// Compiling every highlights query up front cost ~380 ms on the first
+    /// highlight after launch (main thread for small rows), even when only
+    /// Shell was needed. Support checks must not pay for query compilation.
+    @Test func freshRegistryAnswersSupportWithoutCompilingQueries() {
+        let clock = ContinuousClock()
+        var supported = 0
+        let elapsed = clock.measure {
+            let registry = TreeSitterHighlighter.GrammarRegistry()
+            for language in Self.treeSitterLanguages
+            where registry.supports(language) && registry.language(for: language) != nil {
+                supported += 1
+            }
+        }
+        #expect(supported == Self.treeSitterLanguages.count)
+        #expect(elapsed < .milliseconds(50), "support checks took \(elapsed); queries compiled eagerly")
+    }
+
+    /// Deferred highlights run on detached tasks, so first use of one
+    /// language can race across threads. Every caller must get the same
+    /// compiled query.
+    @Test func concurrentFirstUseCompilesEachQueryOnce() {
+        let registry = TreeSitterHighlighter.GrammarRegistry()
+        let languages = Self.treeSitterLanguages
+        let callsPerLanguage = 4
+        let lock = NSLock()
+        var seen: [Int: [ObjectIdentifier?]] = [:]
+
+        DispatchQueue.concurrentPerform(iterations: languages.count * callsPerLanguage) { index in
+            let languageIndex = index % languages.count
+            let identity = registry.highlightsQuery(for: languages[languageIndex]).map(ObjectIdentifier.init)
+            lock.lock()
+            seen[languageIndex, default: []].append(identity)
+            lock.unlock()
+        }
+
+        for (languageIndex, identities) in seen {
+            let name = languages[languageIndex].displayName
+            #expect(identities.count == callsPerLanguage)
+            #expect(identities.allSatisfy { $0 != nil }, "\(name) must load a real highlights query")
+            #expect(Set(identities).count == 1, "\(name) compiled more than one query")
+        }
+    }
+
     @Test func iosPainterUsesSubstitutedPythonRanges() {
         let code = "def foo():\n    return 1\n"
         #expect(TreeSitterHighlighter.scanTokenRanges(code, language: .python) != nil)
