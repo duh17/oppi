@@ -41,6 +41,25 @@ export function activePushRelays(config: Pick<ServerConfig, "push">): string[] |
   return push.relays;
 }
 
+/**
+ * Tells the relay that these registrations' send permissions are no longer used (spec §5).
+ * Resolves to the registrations whose release failed; the relay's DELETE is idempotent, so a
+ * failure is real: that send token stays usable at the relay until the app revokes it.
+ */
+export async function releasePushPermissions(
+  relays: string[],
+  registrations: PushRegistration[],
+  fetchImpl?: typeof fetch,
+): Promise<PushRegistration[]> {
+  const client = new RelayClient(relays, { fetch: fetchImpl });
+  const released = await Promise.all(
+    registrations.map((registration) =>
+      client.deletePermission(registration.sendToken).catch(() => false),
+    ),
+  );
+  return registrations.filter((_, index) => !released[index]);
+}
+
 /** Stable per device and session, unlinkable across devices (spec §5). */
 export function pushCollapseId(sendToken: string, sessionId: string): string {
   const key = createHash("sha256").update(sendToken, "utf8").digest();
@@ -146,14 +165,9 @@ export class PushSender {
   releasePermission(registration: PushRegistration): void {
     const relays = this.relays();
     if (!relays) return;
-    void new RelayClient(relays, { fetch: this.options.fetch })
-      .deletePermission(registration.sendToken)
-      .catch(() => false)
-      .then((released) => {
-        // The relay's DELETE is idempotent, so false is a real failure: the send token stays
-        // usable at the relay until the app revokes it.
-        if (!released)
-          log.warn("push.permission_release_failed", { device: registration.deviceId });
-      });
+    void releasePushPermissions(relays, [registration], this.options.fetch).then((failed) => {
+      if (failed.length > 0)
+        log.warn("push.permission_release_failed", { device: registration.deviceId });
+    });
   }
 }

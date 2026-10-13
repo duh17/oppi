@@ -41,6 +41,7 @@ import {
 } from "./tls.js";
 import type { ServerConfig } from "./types.js";
 import { generateInvite, type GeneratedInvite } from "./invite.js";
+import { activePushRelays, releasePushPermissions } from "./push/push-sender.js";
 import { allowsTrustedPrivateHttpBind, parsePublicUrl } from "./proxy-config.js";
 import { getPackageInfo } from "./version.js";
 import {
@@ -974,10 +975,29 @@ async function cmdInit(flags: Record<string, string>): Promise<void> {
   const tlsMode = !storage.isPaired()
     ? chooseFirstRunTlsMode(storage, undefined, console.log)
     : undefined;
+  // Rotation revokes every device and drops their push registrations, so release those
+  // relay permissions too, as `POST /auth/rotate` does.
+  const pushRelays = activePushRelays(storage.getConfig());
+  const pushRegistrations = pushRelays ? (storage.getConfig().pushRegistrations ?? []) : [];
   storage.rotateToken();
 
   console.log(c.green("  ✓ Config written to ") + c.dim(storage.getConfigPath()));
   console.log(c.green("  ✓ Owner token generated"));
+  if (pushRelays && pushRegistrations.length > 0) {
+    console.log(
+      c.dim(`  Releasing ${pushRegistrations.length} push permission(s) at the relay...`),
+    );
+    const failed = await releasePushPermissions(pushRelays, pushRegistrations);
+    const released = pushRegistrations.length - failed.length;
+    if (released > 0) console.log(c.green(`  ✓ Released ${released} push permission(s)`));
+    if (failed.length > 0) {
+      console.log(
+        c.yellow(
+          `  ! The relay did not release the push permission of device(s) ${failed.map((entry) => entry.deviceId).join(", ")}; it stays usable until that app turns push off`,
+        ),
+      );
+    }
+  }
   if (tlsMode) {
     console.log(c.green(`  ✓ TLS mode set to ${tlsMode}`));
   }

@@ -2456,6 +2456,56 @@ describe("oppi status", () => {
   });
 });
 
+// ── Init ──
+
+describe("oppi init", () => {
+  it("re-init releases the relay permissions of the push registrations it drops", async () => {
+    const initDir = mkdtempSync(join(tmpdir(), "oppi-cli-init-push-"));
+    const released: string[] = [];
+    const relay = createHttpServer((req, res) => {
+      if (req.method === "DELETE" && req.url === "/v1/permission") {
+        released.push(req.headers.authorization ?? "");
+        res.writeHead(204).end();
+        return;
+      }
+      res.writeHead(404).end();
+    });
+    await new Promise<void>((resolveListen) => relay.listen(0, "127.0.0.1", resolveListen));
+    const { port } = relay.address() as { port: number };
+
+    try {
+      expect(run(["init", "--yes", "--data-dir", initDir]).exitCode).toBe(0);
+      const registration = (deviceId: string) => ({
+        deviceId,
+        keyId: `kid-${deviceId}`,
+        publicKey: "AAAA",
+        sendToken: `send-${deviceId}`,
+        registeredAt: 1,
+      });
+      new Storage(initDir).updateConfig({
+        push: { mode: "relay", relays: [`http://127.0.0.1:${port}`] },
+        pushRegistrations: [registration("phone"), registration("ipad")],
+      });
+
+      const { stdout, exitCode } = await runAsync([
+        "init",
+        "--yes",
+        "--force",
+        "--data-dir",
+        initDir,
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(released.sort()).toEqual(["Bearer send-ipad", "Bearer send-phone"]);
+      expect(stdout).toContain("Released 2 push permission(s)");
+      expect(new Storage(initDir).getConfig().pushRegistrations ?? []).toEqual([]);
+    } finally {
+      await new Promise((resolveClose) => relay.close(resolveClose));
+      rmSync(initDir, { recursive: true, force: true });
+    }
+  });
+});
+
 // ── Token ──
 
 describe("oppi token", () => {
