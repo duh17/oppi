@@ -1032,6 +1032,26 @@ final class ConnectionCoordinator {
         return .pairedWithoutSelection
     }
 
+    /// Persist a pairing, then undo it if this attempt is no longer current.
+    /// `addServerReady` writes the credential before its first `await`, so Cancel
+    /// during setup can still leave a stored server. Callers must not load
+    /// sessions or navigate after a nil result.
+    @discardableResult
+    func addServerReadyIfCurrent(
+        _ server: PairedServer,
+        switchTo: Bool = true,
+        isCurrent: @MainActor () -> Bool
+    ) async -> ServerPairingOutcome? {
+        let outcome = await addServerReady(server, switchTo: switchTo)
+        guard isCurrent() else {
+            if outcome != .failed {
+                await removeServer(id: server.id)
+            }
+            return nil
+        }
+        return outcome
+    }
+
     /// Remove a server. Cleans up all associated data.
     func removeServer(id: String) async {
         // Revoke pending activation even when an inactive pairing is removed.

@@ -304,6 +304,55 @@ struct AppEventRoutingTests {
         await refresh.value
         #expect(connection.pendingPairingApprovals.map(\.id) == ["pa_1"])
     }
+
+    @Test func olderOverlappingPairingApprovalRefreshDoesNotReplaceNewer() async {
+        let connection = ServerConnection()
+        let newer = PendingPairingApproval(
+            id: "pa_2",
+            deviceName: "iPhone",
+            method: "invite",
+            source: "100.64.0.8",
+            requestedAt: 2,
+            expiresAt: 9_999_999_999_999,
+            keyThumbprint: "thumb-2"
+        )
+        final class Gate: @unchecked Sendable {
+            var resume: CheckedContinuation<Void, Never>?
+            func wait() async {
+                await withCheckedContinuation { resume = $0 }
+            }
+            func open() {
+                resume?.resume()
+                resume = nil
+            }
+        }
+        let olderGate = Gate()
+        let newerGate = Gate()
+        var calls = 0
+        connection._listPairingApprovalsForTesting = {
+            calls += 1
+            if calls == 1 {
+                await olderGate.wait()
+                return []
+            }
+            await newerGate.wait()
+            return [newer]
+        }
+        let olderRefresh = Task { await connection.refreshPairingApprovals() }
+        for _ in 0..<50 where olderGate.resume == nil {
+            await Task.yield()
+        }
+        let newerRefresh = Task { await connection.refreshPairingApprovals() }
+        for _ in 0..<50 where newerGate.resume == nil {
+            await Task.yield()
+        }
+        newerGate.open()
+        await newerRefresh.value
+        #expect(connection.pendingPairingApprovals.map(\.id) == ["pa_2"])
+        olderGate.open()
+        await olderRefresh.value
+        #expect(connection.pendingPairingApprovals.map(\.id) == ["pa_2"])
+    }
 }
 
 enum AppEventSessionCleanupCase: CaseIterable {

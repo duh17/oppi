@@ -42,6 +42,7 @@ final class ServerConnection {
     /// Pending pairing approvals for this server (`GET /auth/pairing-approvals` + app events).
     var pendingPairingApprovals: [PendingPairingApproval] = []
     var pairingApprovalsMutationGeneration: UInt64 = 0
+    var pairingApprovalsRefreshSequence: UInt64 = 0
 
     // Networking
     private(set) var apiClient: APIClient?

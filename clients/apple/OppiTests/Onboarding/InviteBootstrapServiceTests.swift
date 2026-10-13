@@ -177,6 +177,41 @@ struct InviteBootstrapServiceTests {
         #expect(await pairingAPI.lastPairedDeviceName() == "Chen iPhone")
     }
 
+    @Test func cancelAfterAddServerReadyLeavesNoStoredServer() async throws {
+        let fingerprint = "sha256:pairing-cancel-\(UUID().uuidString)"
+        let credentials = ServerCredentials(
+            host: "pairing-cancel.example.test",
+            port: 7749,
+            token: "sk_test",
+            name: "Cancel Pair",
+            scheme: .https,
+            serverFingerprint: fingerprint
+        )
+        let server = try #require(PairedServer(from: credentials, sortOrder: 0))
+        let store = ServerStore()
+        let coordinator = ConnectionCoordinator(serverStore: store)
+        coordinator.networkPathType = { "wifi" }
+        coordinator._initialLANEndpointForTesting = { _ in nil }
+        coordinator._serverInfoBootstrapForTesting = { _, _ in pairingTestServerInfo() }
+
+        let kept = await coordinator.addServerReadyIfCurrent(
+            server,
+            switchTo: true,
+            isCurrent: { true }
+        )
+        #expect(kept != nil && kept != .failed)
+        #expect(store.server(for: server.id) != nil)
+        await coordinator.removeServer(id: server.id)
+
+        let stale = await coordinator.addServerReadyIfCurrent(
+            server,
+            switchTo: true,
+            isCurrent: { false }
+        )
+        #expect(stale == nil)
+        #expect(store.server(for: server.id) == nil)
+    }
+
     @Test func decodesCredentialsFromInviteURL() throws {
         let payload = #"{"v":3,"host":"pairing.example.test","port":7749,"token":"invite-token","name":"Pairing Server"}"#
         let encoded = try #require(payload.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed))
@@ -238,6 +273,37 @@ struct WhatsNewManagerTests {
         #expect(WhatsNewManager.caption(marketingVersion: "  ") == "What’s new in this version")
         #expect(!WhatsNewManager.caption(marketingVersion: "1.1.0").contains("Build 45"))
     }
+}
+
+private func pairingTestServerInfo() -> ServerInfo {
+    ServerInfo(
+        name: "Test",
+        version: "1.0.0",
+        uptime: 1,
+        os: "darwin",
+        arch: "arm64",
+        hostname: "test.local",
+        nodeVersion: "22",
+        piVersion: "1",
+        configVersion: 1,
+        identity: nil,
+        uploadProtocol: nil,
+        images: nil,
+        capabilities: .init(
+            sessionStream: .init(version: 1),
+            dictationStream: nil,
+            appEventStream: nil,
+            extensionNativeUI: nil,
+            controlSessions: nil
+        ),
+        stats: .init(
+            workspaceCount: 0,
+            activeSessionCount: 0,
+            totalSessionCount: 0,
+            skillCount: 0,
+            modelCount: 0
+        )
+    )
 }
 
 private actor InviteBootstrapCallLog {

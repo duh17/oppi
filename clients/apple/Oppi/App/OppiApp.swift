@@ -149,6 +149,38 @@ enum InAppInviteLink {
     }
 }
 
+/// Generation is the lock for invite overlay pairing. A new invite cancels the
+/// previous task and must run even if the previous attempt's in-flight flag is
+/// still set.
+struct InvitePairingGate {
+    private(set) var generation: UInt64 = 0
+    private(set) var inFlight = false
+
+    mutating func beginIncoming() -> UInt64 {
+        generation &+= 1
+        return generation
+    }
+
+    mutating func cancel() {
+        generation &+= 1
+        inFlight = false
+    }
+
+    func shouldRun(_ attempt: UInt64) -> Bool {
+        attempt == generation
+    }
+
+    mutating func markStarted(_ attempt: UInt64) {
+        guard shouldRun(attempt) else { return }
+        inFlight = true
+    }
+
+    mutating func markFinished(_ attempt: UInt64) {
+        guard shouldRun(attempt) else { return }
+        inFlight = false
+    }
+}
+
 enum MissingSessionDeepLinkNavigationPolicy {
     @MainActor
     static func showWorkspaceRoot(in navigation: AppNavigation) {
@@ -410,10 +442,9 @@ struct OppiApp: App {
     private var serverStore: ServerStore { coordinator.serverStore }
     @State private var mainThreadLagWatchdog = MainThreadLagWatchdog()
 
-    @State private var inviteBootstrapInFlight = false
+    @State private var invitePairingGate = InvitePairingGate()
     @State private var invitePairingWaitExpiresAt: Int64?
     @State private var invitePairingTask: Task<Void, Never>?
-    @State private var invitePairingGeneration: UInt64 = 0
     @State private var appStartupComplete = false
     @State private var intentSessionOpenTrigger = IntentSessionOpenTrigger.shared
     @State private var pendingSessionDeepLinkId: String?
@@ -1440,7 +1471,7 @@ struct OppiApp: App {
             sessionIsAvailable: foundSession != nil,
             launchPhase: navigation.launchPhase,
             startupComplete: appStartupComplete,
-            inviteBootstrapInFlight: inviteBootstrapInFlight,
+            inviteBootstrapInFlight: invitePairingGate.inFlight,
             parkingAllowed: parkingAllowed
         ) {
         case .open:
@@ -1525,18 +1556,16 @@ struct OppiApp: App {
     }
 
     private func cancelInvitePairing() {
-        invitePairingGeneration &+= 1
+        invitePairingGate.cancel()
         invitePairingTask?.cancel()
         invitePairingTask = nil
-        inviteBootstrapInFlight = false
         invitePairingWaitExpiresAt = nil
     }
 
     @MainActor
     private func handleIncomingInviteURL(_ url: URL) async {
         invitePairingTask?.cancel()
-        invitePairingGeneration &+= 1
-        let generation = invitePairingGeneration
+        let generation = invitePairingGate.beginIncoming()
         let task = Task { @MainActor in
             await runInviteBootstrap(url, generation: generation)
         }
@@ -1546,18 +1575,17 @@ struct OppiApp: App {
 
     @MainActor
     private func runInviteBootstrap(_ url: URL, generation: UInt64) async {
-        guard generation == invitePairingGeneration else { return }
-        guard !inviteBootstrapInFlight else { return }
+        guard invitePairingGate.shouldRun(generation) else { return }
         guard let credentials = ServerCredentials.decodeInviteURL(url) else {
             if InAppInviteLink.claims(url) {
                 connection.extensionToast = "Unsupported invite link format"
             }
             return
         }
-        inviteBootstrapInFlight = true
+        invitePairingGate.markStarted(generation)
         defer {
-            if generation == invitePairingGeneration {
-                inviteBootstrapInFlight = false
+            invitePairingGate.markFinished(generation)
+            if invitePairingGate.shouldRun(generation) {
                 invitePairingWaitExpiresAt = nil
             }
         }
@@ -1591,7 +1619,7 @@ struct OppiApp: App {
                         return await BiometricService.shared.authenticate(reason: reason)
                     },
                     onWaitingForApproval: { expiresAt in
-                        guard generation == invitePairingGeneration else { return }
+                        guard invitePairingGate.shouldRun(generation) else { return }
                         invitePairingWaitExpiresAt = expiresAt
                     }
                 )
@@ -1604,21 +1632,25 @@ struct OppiApp: App {
                     return await BiometricService.shared.authenticate(reason: reason)
                 },
                 onWaitingForApproval: { expiresAt in
-                    guard generation == invitePairingGeneration else { return }
+                    guard invitePairingGate.shouldRun(generation) else { return }
                     invitePairingWaitExpiresAt = expiresAt
                 }
             )
 #endif
 
             // Add to ServerStore via coordinator (creates connection state for split streams)
-            guard generation == invitePairingGeneration, !Task.isCancelled else { return }
+            guard invitePairingGate.shouldRun(generation), !Task.isCancelled else { return }
             guard let pairedServer = PairedServer(
                 from: bootstrap.effectiveCredentials,
                 sortOrder: serverStore.servers.count
             ) else {
                 throw InviteBootstrapError.message("Missing server fingerprint in invite credentials")
             }
-            let pairingOutcome = await coordinator.addServerReady(pairedServer, switchTo: true)
+            guard let pairingOutcome = await coordinator.addServerReadyIfCurrent(
+                pairedServer,
+                switchTo: true,
+                isCurrent: { invitePairingGate.shouldRun(generation) && !Task.isCancelled }
+            ) else { return }
             guard pairingOutcome != .failed else {
                 throw InviteBootstrapError.message("Connection blocked by server transport policy")
             }
@@ -1651,10 +1683,10 @@ struct OppiApp: App {
             selectedConnection.extensionToast = "Connected to \(bootstrap.effectiveCredentials.name)"
 #endif
         } catch is CancellationError {
-            guard generation == invitePairingGeneration else { return }
+            guard invitePairingGate.shouldRun(generation) else { return }
             connection.sessionStore.markSyncFailed()
         } catch {
-            guard generation == invitePairingGeneration else { return }
+            guard invitePairingGate.shouldRun(generation) else { return }
             connection.sessionStore.markSyncFailed()
 #if DEBUG
             if isE2EInviteLaunch, !serverStore.servers.isEmpty {

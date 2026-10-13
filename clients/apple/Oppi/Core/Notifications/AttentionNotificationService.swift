@@ -21,6 +21,46 @@ private struct NotificationCompletion: @unchecked Sendable {
     }
 }
 
+/// Signals that iOS reclaimed the pairing-deny background budget.
+private final class PairingDenyBudget: @unchecked Sendable {
+    private let lock = NSLock()
+    private var expired = false
+    private var task = UIBackgroundTaskIdentifier.invalid
+
+    func setTask(_ task: UIBackgroundTaskIdentifier) {
+        lock.lock()
+        self.task = task
+        lock.unlock()
+    }
+
+    func markExpired() {
+        lock.lock()
+        expired = true
+        let task = self.task
+        self.task = .invalid
+        lock.unlock()
+        if task != .invalid {
+            UIApplication.shared.endBackgroundTask(task)
+        }
+    }
+
+    var isExpired: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return expired
+    }
+
+    func endTaskIfNeeded() {
+        lock.lock()
+        let task = self.task
+        self.task = .invalid
+        lock.unlock()
+        if task != .invalid {
+            UIApplication.shared.endBackgroundTask(task)
+        }
+    }
+}
+
 /// Manages local notifications for attention requests received while the app is running.
 ///
 /// Fires ask alerts when:
@@ -397,23 +437,44 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         _ payload: PairingNotificationPayload,
         completion: NotificationCompletion
     ) async {
-        var backgroundTask = UIBackgroundTaskIdentifier.invalid
-        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "oppi.pairing.deny") {
-            UIApplication.shared.endBackgroundTask(backgroundTask)
-            backgroundTask = .invalid
+        let budget = PairingDenyBudget()
+        let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "oppi.pairing.deny") {
+            // Pending approvals live for 2 minutes on the server, then expire
+            // (fail closed). If this background budget runs out before the deny
+            // POST succeeds or 404s, the in-memory retry queue dies with the
+            // process. No local persistence layer.
+            notificationLogger.error(
+                "Pairing deny background budget expired; approval fails closed when the server TTL elapses"
+            )
+            budget.markExpired()
         }
-        defer {
-            completion.call()
-            if backgroundTask != .invalid {
-                UIApplication.shared.endBackgroundTask(backgroundTask)
-                backgroundTask = .invalid
+        budget.setTask(backgroundTask)
+
+        let denyWork = Task { @MainActor in
+            while self.onPairingDeny == nil {
+                if budget.isExpired || Task.isCancelled { return }
+                try? await Task.sleep(for: .milliseconds(20))
             }
+            guard let handler = self.onPairingDeny, !budget.isExpired, !Task.isCancelled else {
+                return
+            }
+            await handler(payload)
         }
-        if let onPairingDeny {
-            await onPairingDeny(payload)
-        } else {
-            pendingPairingNotifications.append(payload)
+
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await denyWork.value }
+            group.addTask {
+                while !budget.isExpired && !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(20))
+                }
+            }
+            await group.next()
+            denyWork.cancel()
+            group.cancelAll()
         }
+
+        completion.call()
+        budget.endTaskIfNeeded()
     }
 
     private func deliverPendingNavigationTapsIfPossible() {

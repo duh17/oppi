@@ -308,8 +308,11 @@ struct OnboardingView: View {
                 return
             }
 
-            let pairingOutcome = await coordinator.addServerReady(pairedServer, switchTo: true)
-            guard generation == pairingGeneration, !Task.isCancelled else { return }
+            guard let pairingOutcome = await coordinator.addServerReadyIfCurrent(
+                pairedServer,
+                switchTo: true,
+                isCurrent: { generation == pairingGeneration && !Task.isCancelled }
+            ) else { return }
             guard pairingOutcome != .failed else {
                 connectionTest = .failed("Connection blocked by server transport policy")
                 return
@@ -606,6 +609,7 @@ enum InviteBootstrapService {
         serverStore: ServerStore,
         coordinator: ConnectionCoordinator,
         onWaitingForApproval: (@MainActor (Int64) -> Void)? = nil,
+        isCurrent: @MainActor () -> Bool = { !Task.isCancelled },
         confirmTrust: @MainActor (String) async -> Bool
     ) async throws -> (name: String, selected: Bool) {
         guard let credentials = ServerCredentials.decodeInviteURLString(inviteURL) else {
@@ -629,7 +633,13 @@ enum InviteBootstrapService {
         ) else {
             throw InviteBootstrapError.message("Missing server fingerprint")
         }
-        let outcome = await coordinator.addServerReady(pairedServer, switchTo: true)
+        guard let outcome = await coordinator.addServerReadyIfCurrent(
+            pairedServer,
+            switchTo: true,
+            isCurrent: isCurrent
+        ) else {
+            throw PairingEnrollment.Failure.cancelled
+        }
         guard outcome != .failed else {
             throw InviteBootstrapError.message("Connection blocked by server transport policy")
         }

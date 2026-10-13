@@ -404,6 +404,7 @@ struct TailnetSettingsView: View {
                     guard generation == pairingGeneration else { return }
                     pairingWaitExpiresAt = expiresAt
                 },
+                isCurrent: { generation == pairingGeneration && !Task.isCancelled },
                 confirmTrust: { reason in
                     await BiometricService.shared.authenticate(reason: reason)
                 }

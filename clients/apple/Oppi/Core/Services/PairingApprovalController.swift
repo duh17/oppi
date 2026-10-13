@@ -121,7 +121,12 @@ final class PairingApprovalController {
         coordinator: ConnectionCoordinator
     ) async {
         queueDeny(serverId: serverId, approvalId: approvalId)
-        await performQueuedDenies(coordinator: coordinator)
+        while hasQueuedDeny(serverId: serverId, approvalId: approvalId), !Task.isCancelled {
+            await performQueuedDenies(coordinator: coordinator)
+            if hasQueuedDeny(serverId: serverId, approvalId: approvalId) {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
         sync(coordinator: coordinator)
     }
 
@@ -252,27 +257,12 @@ final class PairingApprovalController {
         approvalId: String,
         coordinator: ConnectionCoordinator
     ) async throws {
-        if let connection = coordinator.connection(for: serverId), connection.apiClient != nil {
-            try await connection.denyPairingApproval(id: approvalId)
-            return
-        }
-        if let client = coordinator.apiClient(for: serverId) {
-            try await client.denyPairingApproval(id: approvalId)
-            return
-        }
-        guard let server = coordinator.serverStore.server(for: serverId),
-              let baseURL = server.baseURL else {
+        // Wait for the DeviceAuthSession-backed connection client. A raw
+        // APIClient built from `effectiveAccessToken` cannot refresh, so an
+        // expired `at_` gets 401 and the deny never lands.
+        guard let client = await coordinator.apiClientReady(for: serverId) else {
             throw APIError.server(status: 503, message: "server_unavailable")
         }
-        let token = server.credentials.effectiveAccessToken
-        guard !token.isEmpty else {
-            throw APIError.server(status: 503, message: "server_unavailable")
-        }
-        let client = APIClient(
-            baseURL: baseURL,
-            token: token,
-            tlsCertFingerprint: server.tlsCertFingerprint
-        )
         try await client.denyPairingApproval(id: approvalId)
     }
 

@@ -111,6 +111,8 @@ extension ServerConnection {
     }
 
     func refreshPairingApprovals() async {
+        pairingApprovalsRefreshSequence &+= 1
+        let sequence = pairingApprovalsRefreshSequence
         let generation = pairingApprovalsMutationGeneration
         do {
             let list: [PendingPairingApproval]
@@ -121,7 +123,8 @@ extension ServerConnection {
             } else {
                 return
             }
-            guard pairingApprovalsMutationGeneration == generation else { return }
+            guard pairingApprovalsRefreshSequence == sequence,
+                  pairingApprovalsMutationGeneration == generation else { return }
             pendingPairingApprovals = list.sorted { $0.requestedAt < $1.requestedAt }
             NotificationCenter.default.post(name: .pairingApprovalsDidChange, object: nil)
         } catch {

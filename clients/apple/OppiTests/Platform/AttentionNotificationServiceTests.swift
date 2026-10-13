@@ -101,6 +101,27 @@ struct AttentionNotificationServiceTests {
     }
 }
 
+@Suite("Invite pairing gate")
+struct InvitePairingGateTests {
+    @Test func secondInviteProceedsWhilePreviousAttemptIsInFlight() {
+        var gate = InvitePairingGate()
+        let first = gate.beginIncoming()
+        gate.markStarted(first)
+        #expect(gate.inFlight)
+
+        let second = gate.beginIncoming()
+        #expect(gate.shouldRun(second))
+        #expect(!gate.shouldRun(first))
+
+        gate.markStarted(second)
+        #expect(gate.inFlight)
+        gate.markFinished(first)
+        #expect(gate.inFlight)
+        gate.markFinished(second)
+        #expect(!gate.inFlight)
+    }
+}
+
 @Suite("Session deep-link navigation policy")
 struct SessionDeepLinkNavigationPolicyTests {
     @Test func unavailableNotificationDuringLaunchIsParked() {
