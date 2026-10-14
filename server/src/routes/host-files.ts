@@ -354,16 +354,24 @@ export function createHostFileRoutes(
         return;
       }
       // Only audio is parsed; any other servable file has no media info.
-      const info = servable.file.contentType.startsWith("audio/")
-        ? await readAudioMediaInfo(servable.file.filePath, servable.file.contentType)
-        : {};
-      if (!info) {
-        helpers.error(res, 404, "File not found");
+      if (!servable.file.contentType.startsWith("audio/")) {
+        status = 200;
+        helpers.json(res, {});
         return;
       }
-      durationKnown = info.durationSeconds !== undefined;
+      const read = await readAudioMediaInfo(servable.file.filePath, servable.file.contentType);
+      if (read.kind === "error") {
+        status = read.status;
+        helpers.error(
+          res,
+          read.status,
+          read.status === 404 ? "File not found" : "Failed to read file",
+        );
+        return;
+      }
+      durationKnown = read.info.durationSeconds !== undefined;
       status = 200;
-      helpers.json(res, info);
+      helpers.json(res, read.info);
     } finally {
       log.info("currentfile.media_info", { origin: originKind, status, durationKnown });
     }

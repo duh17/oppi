@@ -575,6 +575,47 @@ struct MarkdownInlineAudioTests {
     }
 
     @MainActor
+    @Test("only the playing or paused clip shows elapsed time and progress")
+    func playingStripShowsElapsedAndProgress() throws {
+        let player = AudioPlayerService()
+        player._setPlaybackStateForTesting(playing: "audio-1", loading: nil)
+        player._setProgressForTesting(currentTime: 30, duration: 120)
+        func strip(_ itemID: String, duration: TimeInterval) throws -> (UILabel, UIProgressView) {
+            let strip = NativeAudioPlayerStripView()
+            strip.apply(
+                itemID: itemID, title: "\(itemID).wav", durationSeconds: duration,
+                audioPlayer: player, showsTitle: true, isUnavailable: false,
+                onPlay: {}, onExpand: {}
+            )
+            let time = try #require(timelineAllLabels(in: strip).first {
+                $0.accessibilityIdentifier == "chat.timeline.row.\(itemID).audio.time"
+            })
+            return (time, try #require(timelineFirstView(ofType: UIProgressView.self, in: strip)))
+        }
+
+        let (playingTime, playingProgress) = try strip("audio-1", duration: 120)
+        #expect(playingTime.text == "0:30 / 2:00")
+        #expect(!playingProgress.isHidden)
+        #expect(playingProgress.progress == 0.25)
+
+        let (otherTime, otherProgress) = try strip("audio-2", duration: 60)
+        #expect(otherTime.text == "1:00")
+        #expect(otherProgress.isHidden)
+
+        player._setPausedForTesting(true)
+        let (pausedTime, pausedProgress) = try strip("audio-1", duration: 120)
+        #expect(pausedTime.text == "0:30 / 2:00")
+        #expect(!pausedProgress.isHidden)
+    }
+
+    @Test("clock labels an out-of-range length instead of trapping")
+    func clockRejectsLengthsBeyondInt() {
+        #expect(AudioPlaybackTimeFormatting.clock(9.3e18) == "--:--")
+        #expect(AudioPlaybackTimeFormatting.clock(.infinity) == "--:--")
+        #expect(AudioPlaybackTimeFormatting.clock(3_725) == "1:02:05")
+    }
+
+    @MainActor
     @Test("strip controls use fg and comment, not purple")
     func stripControlsUseForegroundNotPurple() throws {
         let strip = NativeAudioPlayerStripView()

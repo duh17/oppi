@@ -558,11 +558,21 @@ describe("GET /files/current/media-info", () => {
     for (const { handle } of clipHandles) expect(handle.fd).toBe(-1);
   });
 
-  it("answers without a length for unparseable audio and non-audio files", async () => {
+  it("answers without a length for unparseable, implausible, and non-audio files", async () => {
     const fixture = seed();
     writeFileSync(join(fixture.home, "broken.wav"), "not a wave file");
+    // A crafted header: 1 Hz with a `fact` sample count of 2^32-1 parses to
+    // ~4.3e9 s, which is not audio and must not reach the card.
+    const fact = Buffer.alloc(12);
+    fact.write("fact", 0, "ascii");
+    fact.writeUInt32LE(4, 4);
+    fact.writeUInt32LE(0xffff_ffff, 8);
+    const header = wav(0, 1);
+    const crafted = Buffer.concat([header.subarray(0, 36), fact, header.subarray(36)]);
+    crafted.writeUInt32LE(crafted.length - 8, 4);
+    writeFileSync(join(fixture.home, "crafted.wav"), crafted);
 
-    for (const path of ["~/broken.wav", "~/notes.md"]) {
+    for (const path of ["~/broken.wav", "~/crafted.wav", "~/notes.md"]) {
       const res = await request(
         fixture,
         "GET",

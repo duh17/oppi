@@ -22,20 +22,26 @@ const PARSE_DEADLINE_MS = 5_000;
 /** A single tag payload (lyrics, chapters) above this fails the parse. */
 const MAX_METADATA_PAYLOAD_BYTES = 4 * 1024 * 1024;
 const MAX_CACHE_ENTRIES = 256;
+/**
+ * About 115 days. A crafted Ogg/MP4 header (sample rate or timescale 1, huge
+ * granule or duration) parses to ~2^63 s; that is not audio, so it gets no label.
+ */
+const MAX_DURATION_SECONDS = 10_000_000;
 
 const cache = new Map<string, Promise<MediaInfo>>();
 
 /**
  * Reads through the handle `openVerifiedFile` proves is the checked path, so a
  * symlink swapped in after the confinement check cannot redirect the parse.
- * Returns null when that open fails (the file changed or vanished).
+ * An open failure keeps `openVerifiedFile`'s status: 404 for a swapped or
+ * vanished path, 500 when the server cannot read the file.
  */
 export async function readAudioMediaInfo(
   realPath: string,
   mimeType: string,
-): Promise<MediaInfo | null> {
+): Promise<{ kind: "ok"; info: MediaInfo } | { kind: "error"; status: number }> {
   const opened = await openVerifiedFile(realPath);
-  if (opened.kind === "error") return null;
+  if (opened.kind === "error") return opened;
   const { handle, size } = opened;
   let key: string;
   try {
@@ -43,20 +49,20 @@ export async function readAudioMediaInfo(
     key = `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}`;
   } catch {
     await handle.close();
-    return null;
+    return { kind: "error", status: 500 };
   }
-  const cached = cache.get(key);
-  if (cached) {
+  let parsed = cache.get(key);
+  if (parsed) {
     await handle.close();
-    return cached;
+  } else {
+    parsed = parseDuration(handle, size, mimeType);
+    cache.set(key, parsed);
+    if (cache.size > MAX_CACHE_ENTRIES) {
+      const oldest = cache.keys().next().value;
+      if (oldest !== undefined) cache.delete(oldest);
+    }
   }
-  const parsed = parseDuration(handle, size, mimeType);
-  cache.set(key, parsed);
-  if (cache.size > MAX_CACHE_ENTRIES) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
-  }
-  return parsed;
+  return { kind: "ok", info: await parsed };
 }
 
 async function parseDuration(
@@ -77,7 +83,7 @@ async function parseDuration(
       maxMemoryAllocation: MAX_METADATA_PAYLOAD_BYTES,
     });
     const duration = metadata.format.duration;
-    return typeof duration === "number" && Number.isFinite(duration) && duration >= 0
+    return typeof duration === "number" && duration >= 0 && duration <= MAX_DURATION_SECONDS
       ? { durationSeconds: duration }
       : {};
   } catch {
