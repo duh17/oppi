@@ -637,16 +637,20 @@ struct AudioPlaybackTransportControls: View {
     }
 
     private var chapterMenu: some View {
-        let current = currentChapterIndex
+        // Rows capture chapter values, not indices into the live `chapters`
+        // property: Menu content renders lazily, and closing the player clears
+        // the chapters before SwiftUI drops this menu.
+        let chapters = chapters
+        let current = AudioChapters.index(in: chapters, at: elapsed)
         return Menu {
-            ForEach(chapters.indices, id: \.self) { index in
+            ForEach(Array(chapters.enumerated()), id: \.offset) { index, chapter in
                 Button {
-                    audioPlayer?.seek(to: chapters[index].start)
+                    audioPlayer?.seek(to: chapter.start)
                 } label: {
                     if index == current {
-                        Label(chapters[index].title, systemImage: "checkmark")
+                        Label(chapter.title, systemImage: "checkmark")
                     } else {
-                        Text(chapters[index].title)
+                        Text(chapter.title)
                     }
                 }
             }
