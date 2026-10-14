@@ -192,11 +192,52 @@ enum ControlSessionIntent: String, Codable, Sendable {
     case revise
 }
 
+/// Server-declared control-session metadata.
+///
+/// The server may add domains and intents this build does not know. A row with an
+/// unknown value must still decode (and stay a control session) so one new
+/// session never fails a whole session page. The wire strings are kept verbatim;
+/// `domain` and `intent` are nil when this build does not recognize them.
 struct ControlSessionMetadata: Codable, Sendable, Equatable {
-    let domain: ControlSessionDomain
-    let intent: ControlSessionIntent
+    let domainValue: String
+    let intentValue: String
     let targetId: String?
     let targetName: String?
+
+    var domain: ControlSessionDomain? { ControlSessionDomain(rawValue: domainValue) }
+    var intent: ControlSessionIntent? { ControlSessionIntent(rawValue: intentValue) }
+
+    init(
+        domain: ControlSessionDomain,
+        intent: ControlSessionIntent,
+        targetId: String?,
+        targetName: String?
+    ) {
+        domainValue = domain.rawValue
+        intentValue = intent.rawValue
+        self.targetId = targetId
+        self.targetName = targetName
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case domain, intent, targetId, targetName
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        domainValue = try container.decode(String.self, forKey: .domain)
+        intentValue = try container.decode(String.self, forKey: .intent)
+        targetId = try container.decodeIfPresent(String.self, forKey: .targetId)
+        targetName = try container.decodeIfPresent(String.self, forKey: .targetName)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(domainValue, forKey: .domain)
+        try container.encode(intentValue, forKey: .intent)
+        try container.encodeIfPresent(targetId, forKey: .targetId)
+        try container.encodeIfPresent(targetName, forKey: .targetName)
+    }
 }
 
 /// Presentation-only subset of immutable session launch metadata.

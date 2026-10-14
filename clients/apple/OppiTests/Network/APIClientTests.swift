@@ -458,6 +458,41 @@ struct APIClientTests {
         #expect(summaries[1].pendingAskCount == 0)
     }
 
+    /// A server may add control domains/intents a shipped build does not know. The row
+    /// must stay a control session instead of failing the whole recent-sessions page.
+    @Test func recentSessionPageDecodesUnknownControlDomainAndIntent() async throws {
+        let client = makeClient()
+        defer { cleanup() }
+
+        MockURLProtocol.handler = { _ in
+            self.mockResponse(json: """
+            {"sessions":[
+                {"id":"known","status":"ready","createdAt":0,"lastActivity":3000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"agents","intent":"create"}},
+                {"id":"future","status":"ready","createdAt":0,"lastActivity":2000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0,"control":{"domain":"future-domain","intent":"future-intent","targetId":"t1"}},
+                {"id":"plain","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":1000,"messageCount":0,"tokens":{"input":0,"output":0},"cost":0}
+            ]}
+            """)
+        }
+
+        let summaries = try await client.listRecentWorkspaceSessionSummaries()
+        #expect(summaries.map(\.id) == ["known", "future", "plain"])
+        #expect(summaries[0].control?.domain == .agents)
+
+        let future = summaries[1].session
+        #expect(future.control != nil)
+        #expect(future.control?.domain == nil)
+        #expect(future.control?.intent == nil)
+        #expect(future.control?.targetId == "t1")
+        #expect(future.usesControlRoutes)
+        #expect(SessionInboxSessionRouting.routeScope(for: future) == .control)
+        #expect(summaries[2].control == nil)
+
+        // Cached copies keep the server's value rather than coercing it.
+        let encoded = try String(decoding: JSONEncoder().encode(future), as: UTF8.self)
+        #expect(encoded.contains("future-domain"))
+        #expect(try JSONDecoder().decode(Session.self, from: JSONEncoder().encode(future)) == future)
+    }
+
     @Test func getSessionRecordUsesGenericSessionRoute() async throws {
         let client = makeClient()
         defer { cleanup() }
