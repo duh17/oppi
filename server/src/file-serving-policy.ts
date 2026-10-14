@@ -42,6 +42,7 @@ const STREAMING_MEDIA_CONTENT_TYPES: Record<string, string> = {
   ".caf": "audio/x-caf",
   ".flac": "audio/flac",
   ".m4a": "audio/mp4",
+  ".m4b": "audio/mp4",
   ".mid": "audio/midi",
   ".midi": "audio/midi",
   ".mp3": "audio/mpeg",

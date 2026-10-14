@@ -881,7 +881,7 @@ enum MediaPlaybackTelemetry {
 
         let ext = sourceFileExtension?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
         if ["mp4", "mov", "webm", "mkv"].contains(ext) { return "video" }
-        if ["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus"].contains(ext) { return "audio" }
+        if ["wav", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "opus"].contains(ext) { return "audio" }
         if ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tiff"].contains(ext) { return "image" }
         return "unknown"
     }
@@ -1049,7 +1049,8 @@ final class AuthenticatedMediaPlaybackSession {
     private let loader: AuthenticatedMediaResourceLoader
     var responseErrorMessage: String? { loader.responseErrorMessage }
     func clearResponseErrorMessage() { loader.clearResponseErrorMessage() }
-    private let asset: AVURLAsset
+    /// Read by audio playback for chapter metadata, through the same authenticated loader.
+    let asset: AVURLAsset
     private var timeControlObservation: NSKeyValueObservation?
     private var bufferEmptyObservation: NSKeyValueObservation?
     private var muteObservation: NSKeyValueObservation?
@@ -1072,6 +1073,8 @@ final class AuthenticatedMediaPlaybackSession {
                 "hasProtectedContent",
             ]
         )
+        // Speech-friendly pitch correction when listening faster or slower.
+        item.audioTimePitchAlgorithm = .timeDomain
         player = CaptureAwareMediaPlayer(playerItem: item)
         captureReleaseObserver = VoiceInputManager.shared.observeCaptureRelease(
             isPlaybackActive: { [weak player] in

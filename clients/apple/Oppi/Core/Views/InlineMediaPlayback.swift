@@ -342,7 +342,7 @@ enum MediaMimeType {
     static func audioMimeType(forPathExtension pathExtension: String?) -> String? {
         switch (pathExtension ?? "").lowercased() {
         case "mp3": return "audio/mpeg"
-        case "m4a", "aac": return "audio/mp4"
+        case "m4a", "m4b", "aac": return "audio/mp4"
         case "wav": return "audio/wav"
         case "aif", "aiff", "aifc": return "audio/aiff"
         case "caf": return "audio/x-caf"

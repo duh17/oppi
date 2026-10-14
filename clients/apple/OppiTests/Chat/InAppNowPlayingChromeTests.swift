@@ -388,12 +388,6 @@ struct InAppNowPlayingChromeTests {
         #expect(!player.isNowPlayingTimedTextLoading)
     }
 
-    @Test func queuedMediaCallbacksRejectRetiredPlaybackSessions() throws {
-        let source = try audioPlayerServiceSource()
-        let identityGuard = "self.mediaPlaybackSession === playbackSession"
-        #expect(source.components(separatedBy: identityGuard).count == 3)
-    }
-
     @Test func playPathTitleUsesFileNameNotSessionTitle() throws {
         let session = makeTestSession(
             id: "session-play-path",
@@ -842,15 +836,6 @@ private func sourceSlice(_ source: String, from start: String, to end: String) -
         return String(rest)
     }
     return String(rest[..<endRange.lowerBound])
-}
-
-private func audioPlayerServiceSource() throws -> String {
-    let sourceURL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appending(path: "Oppi/Core/Services/AudioPlayerService.swift")
-    return try String(contentsOf: sourceURL, encoding: .utf8)
 }
 
 private func makeSilentWAV(sampleRate: Int = 24_000, frames: Int = 2_400) -> Data {

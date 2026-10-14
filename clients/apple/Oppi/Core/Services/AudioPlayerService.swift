@@ -96,6 +96,29 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     /// True when the active item is paused rather than stopped.
     private(set) var isPaused = false
 
+    /// Listening speed for file, clip, and media playback. Live PCM streams play at 1×.
+    private(set) var playbackRate: Float = AudioPlaybackRate.stored()
+
+    /// Chapters from the active file's own metadata (M4B/MP4). Empty when it has none.
+    private(set) var chapters: [AudioChapter] = []
+
+    private(set) var sleepTimer: AudioSleepTimer?
+
+    var resumeStore = AudioResumeStore()
+    /// File path or media URL of the active long recording, for resume.
+    private var resumeKey: String?
+    private var lastResumeSaveAt: Date?
+    private var chapterLoadTask: Task<Void, Never>?
+    /// AVPlayer seeks land asynchronously and its clock reads the old position until
+    /// then. While set, `currentTime` stays on this target so resume saves and the
+    /// sleep timer never see the stale clock.
+    private var pendingMediaSeekTarget: TimeInterval?
+    /// Identifies the latest media seek; an older or cancelled seek never clears the hold.
+    private var mediaSeekToken = 0
+    /// A resumed stream waits for its first seek to land before playing, so it never
+    /// plays or saves from the beginning. Whichever seek lands last starts it.
+    private var mediaStartAwaitingSeek = false
+
     private var nowPlayingItemTitle: String?
     /// Timed sidecar owned by the active file so compact and full-screen players
     /// follow the same subtitle track.
@@ -339,6 +362,8 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     func stop() {
         let activeStreamID = streamID
+        saveResumePosition()
+        endLongformItem()
         player?.stop()
         player = nil
         playbackDelegate = nil
@@ -367,6 +392,8 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         mediaPlaybackSession?.player.pause()
         streamNode?.pause()
         isPaused = true
+        sleepTimer?.pause(now: Date())
+        saveResumePosition()
         stopProgressUpdates()
         publishProgress()
         updateNowPlayingInfo(
@@ -398,7 +425,10 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
         player?.play()
         mediaPlaybackSession?.player.play()
+        // An explicit resume starts the stream itself; a landing seek must not start it again.
+        mediaStartAwaitingSeek = false
         isPaused = false
+        sleepTimer?.resume(now: Date())
         if streamNode != nil, ensureStreamEngineIsRunning() {
             streamNode?.play()
         }
@@ -446,17 +476,138 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         if let mediaPlayer = mediaPlaybackSession?.player {
             let duration = mediaPlayer.currentItem?.duration.seconds
             let clamped = duration?.isFinite == true ? min(time, duration ?? time) : time
-            mediaPlayer.seek(to: CMTime(seconds: clamped, preferredTimescale: 600))
+            seekMedia(mediaPlayer, to: clamped)
         }
         currentTime = time
+        sleepTimer?.seek(to: time, chapters: chapters, duration: duration)
+        saveResumePosition()
         publishProgress()
         // Pass the seek target, not currentTime: publishProgress can read a stale AVPlayer clock.
         updateNowPlayingInfo(
             durationSeconds: duration ?? lastNowPlayingDurationSeconds,
             isLiveStream: lastNowPlayingIsLiveStream,
-            playbackRate: isPaused ? 0 : 1,
             elapsed: time
         )
+    }
+
+    // MARK: - Long-form listening
+
+    func setPlaybackRate(_ rate: Float) {
+        // Live voice streams play at normal speed; a change made during one must not rewrite the saved speed.
+        guard streamID == nil, AudioPlaybackRate.options.contains(rate) else { return }
+        playbackRate = rate
+        AudioPlaybackRate.store(rate)
+        player?.rate = rate
+        if let mediaPlayer = mediaPlaybackSession?.player {
+            mediaPlayer.defaultRate = rate
+            if !isPaused, mediaPlayer.rate != 0 { mediaPlayer.rate = rate }
+        }
+        updateNowPlayingInfo(
+            durationSeconds: duration ?? lastNowPlayingDurationSeconds,
+            isLiveStream: lastNowPlayingIsLiveStream
+        )
+        publishProgress()
+    }
+
+    func setSleepTimer(_ option: AudioSleepTimer.Option?) {
+        sleepTimer = option.map {
+            AudioSleepTimer(
+                $0,
+                now: Date(),
+                isPlaying: playingItemID != nil && !isPaused,
+                time: currentTime,
+                chapters: chapters,
+                duration: duration
+            )
+        }
+        publishProgress()
+    }
+
+    func skipChapter(forward: Bool) {
+        let target = forward
+            ? AudioChapters.nextTarget(in: chapters, at: currentTime)
+            : AudioChapters.previousTarget(in: chapters, at: currentTime)
+        guard let target else { return }
+        seek(to: target)
+    }
+
+    /// Seeks the AVPlayer and holds `currentTime` on the target until this seek, and no
+    /// newer one, finishes. A cancelled seek keeps the hold so the stale clock is never saved.
+    private func seekMedia(_ mediaPlayer: AVPlayer, to target: TimeInterval) {
+        mediaSeekToken += 1
+        let token = mediaSeekToken
+        pendingMediaSeekTarget = target
+        currentTime = target
+        let session = mediaPlaybackSession
+        mediaPlayer.seek(to: CMTime(seconds: target, preferredTimescale: 600)) { [weak self] finished in
+            Task { @MainActor in
+                guard let self, finished, self.mediaPlaybackSession === session,
+                      self.mediaSeekToken == token else { return }
+                self.pendingMediaSeekTarget = nil
+                self.startMediaIfAwaitingSeek()
+            }
+        }
+    }
+
+    private func startMediaIfAwaitingSeek() {
+        guard mediaStartAwaitingSeek, !isPaused, let mediaPlayer = mediaPlaybackSession?.player else { return }
+        mediaStartAwaitingSeek = false
+        mediaPlayer.play()
+        startProgressUpdates()
+    }
+
+    private func saveResumePosition() {
+        guard let resumeKey, playingItemID != nil else { return }
+        resumeStore.save(currentTime, duration: duration, for: resumeKey)
+        lastResumeSaveAt = Date()
+    }
+
+    /// Clears per-item listening state. A recording that played to its end forgets its position.
+    private func endLongformItem(completed: Bool = false) {
+        if completed, let resumeKey { resumeStore.clear(resumeKey) }
+        resumeKey = nil
+        lastResumeSaveAt = nil
+        chapterLoadTask?.cancel()
+        chapterLoadTask = nil
+        chapters = []
+        sleepTimer = nil
+    }
+
+    private func loadChapters(from asset: AVAsset, itemID: String) {
+        chapterLoadTask?.cancel()
+        chapterLoadTask = Task { [weak self] in
+            let loaded = await Self.chapters(in: asset)
+            guard !Task.isCancelled, let self,
+                  self.playingItemID == itemID || self.loadingItemID == itemID else { return }
+            self.chapters = loaded
+            self.publishProgress()
+        }
+    }
+
+    /// Main-actor isolated: the asset belongs to the active player, and every load here is an await.
+    static func chapters(in asset: AVAsset) async -> [AudioChapter] {
+        // Tools like ffmpeg tag chapter tracks "und", which no preferred language
+        // matches. The file's own locales follow the reader's, so theirs still win.
+        let fileLocales = (try? await asset.load(.availableChapterLocales))?.map(\.identifier) ?? []
+        let groups = (try? await asset.loadChapterMetadataGroups(
+            bestMatchingPreferredLanguages: Locale.preferredLanguages + fileLocales
+        )) ?? []
+        var chapters: [AudioChapter] = []
+        for (index, group) in groups.enumerated() {
+            let start = group.timeRange.start.seconds
+            guard start.isFinite else { continue }
+            let titleItem = AVMetadataItem.metadataItems(
+                from: group.items,
+                filteredByIdentifier: .commonIdentifierTitle
+            ).first
+            let title = (try? await titleItem?.load(.stringValue))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            chapters.append(AudioChapter(
+                title: title.flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "Chapter \(index + 1)"),
+                start: start
+            ))
+        }
+        return chapters.sorted { $0.start < $1.start }
     }
 
     func shouldAutoplayAudioMessage(itemID: String, playbackBehavior: AudioPlaybackBehavior?, sessionId: String? = nil) -> Bool {
@@ -544,6 +695,8 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     // MARK: - Private
 
     private func stopMediaPlaybackSession() {
+        pendingMediaSeekTarget = nil
+        mediaStartAwaitingSeek = false
         stopProgressUpdates()
         mediaStatusObservation?.invalidate()
         mediaStatusObservation = nil
@@ -567,7 +720,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
         let audioPlayer = try AVAudioPlayer(data: data)
         beginNowPlayingItem(title: Self.nowPlayingDisplayTitle())
-        attachAndStartPlayer(audioPlayer, itemID: itemID)
+        attachAndStartPlayer(audioPlayer, itemID: itemID, resumeKey: nil)
         recordVoicePlaybackStart(source: "data", mode: mode, durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs))
         logger.info("Playing audio data for item \(itemID), duration: \(audioPlayer.duration, format: .fixed(precision: 1))s")
     }
@@ -583,7 +736,8 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
         let audioPlayer = try AVAudioPlayer(contentsOf: fileURL)
         beginNowPlayingItem(title: Self.nowPlayingDisplayTitle(fileURL: fileURL))
-        attachAndStartPlayer(audioPlayer, itemID: itemID)
+        attachAndStartPlayer(audioPlayer, itemID: itemID, resumeKey: fileURL.standardizedFileURL.path)
+        loadChapters(from: AVURLAsset(url: fileURL), itemID: itemID)
         recordVoicePlaybackStart(source: "file", mode: mode, durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs))
         logger.info("Playing audio file for item \(itemID): \(fileURL.lastPathComponent, privacy: .public)")
     }
@@ -612,7 +766,10 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             timedText: timedText
         )
         activePlaybackContext = sessionContext
+        resumeKey = source.url.absoluteString
+        player.defaultRate = playbackRate
         setPlaybackState(playing: nil, loading: itemID)
+        loadChapters(from: playbackSession.asset, itemID: itemID)
         if timedText.tracks.isEmpty, let timedTextLoader {
             loadNowPlayingTimedText(for: itemID, using: timedTextLoader)
         }
@@ -625,6 +782,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.mediaPlaybackSession === playbackSession else { return }
+                self.endLongformItem(completed: true)
                 self.stopMediaPlaybackSession()
                 self.deactivatePlaybackAudioSessionIfPossible()
                 self.setPlaybackState(playing: nil, loading: nil)
@@ -645,8 +803,14 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                         durationSeconds: duration.isFinite ? duration : nil,
                         isLiveStream: false
                     )
-                    player.play()
-                    self.startProgressUpdates()
+                    if let key = self.resumeKey,
+                       let resumeAt = self.resumeStore.position(for: key, duration: self.duration) {
+                        self.mediaStartAwaitingSeek = true
+                        self.seekMedia(player, to: resumeAt)
+                    } else {
+                        player.play()
+                        self.startProgressUpdates()
+                    }
                     self.recordVoicePlaybackStart(
                         source: "media",
                         mode: mode,
@@ -671,10 +835,13 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
     }
 
-    private func attachAndStartPlayer(_ audioPlayer: AVAudioPlayer, itemID: String) {
-        let delegate = PlaybackDelegate { [weak self] in
+    private func attachAndStartPlayer(_ audioPlayer: AVAudioPlayer, itemID: String, resumeKey: String?) {
+        let playerID = ObjectIdentifier(audioPlayer)
+        let delegate = PlaybackDelegate { [weak self] completed in
             Task { @MainActor in
-                self?.handleDataPlaybackFinished()
+                // A late callback from a replaced player must not end the next item.
+                guard let self, self.player.map(ObjectIdentifier.init) == playerID else { return }
+                self.handleDataPlaybackFinished(completed: completed)
             }
         }
         audioPlayer.delegate = delegate
@@ -685,6 +852,14 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         isPaused = false
         currentTime = 0
         duration = audioPlayer.duration.isFinite && audioPlayer.duration > 0 ? audioPlayer.duration : nil
+        self.resumeKey = resumeKey
+        if let resumeKey, let resumeAt = resumeStore.position(for: resumeKey, duration: duration) {
+            audioPlayer.currentTime = resumeAt
+            currentTime = resumeAt
+        }
+        // Rate must be enabled before the player prepares.
+        audioPlayer.enableRate = true
+        audioPlayer.rate = playbackRate
         setPlaybackState(playing: itemID, loading: nil)
         updateNowPlayingInfo(durationSeconds: audioPlayer.duration, isLiveStream: false)
 
@@ -692,7 +867,13 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         startProgressUpdates()
     }
 
-    private func handleDataPlaybackFinished() {
+    /// `completed` is false for a decode error or an unsuccessful finish, which keep the bookmark.
+    private func handleDataPlaybackFinished(completed: Bool) {
+        if !completed {
+            if let player { currentTime = player.currentTime }
+            saveResumePosition()
+        }
+        endLongformItem(completed: completed)
         stopProgressUpdates()
         player = nil
         playbackDelegate = nil
@@ -1089,7 +1270,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 
     // periphery:ignore - test seam used by audio completion tests
     func _finishDataPlaybackForTesting() {
-        handleDataPlaybackFinished()
+        handleDataPlaybackFinished(completed: true)
     }
 
     // periphery:ignore - test seam used by audio skip clamp tests
@@ -1278,7 +1459,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             ) { [weak self] time in
                 Task { @MainActor in
                     guard let self else { return }
-                    if time.seconds.isFinite {
+                    if time.seconds.isFinite, self.pendingMediaSeekTarget == nil {
                         self.currentTime = time.seconds
                     }
                     self.publishProgress()
@@ -1303,12 +1484,23 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             duration = player.duration.isFinite && player.duration > 0 ? player.duration : duration
         } else if let mediaPlayer = mediaPlaybackSession?.player {
             let elapsed = mediaPlayer.currentTime().seconds
-            if elapsed.isFinite {
+            if elapsed.isFinite, pendingMediaSeekTarget == nil {
                 currentTime = elapsed
             }
             let itemDuration = mediaPlayer.currentItem?.duration.seconds
             if let itemDuration, itemDuration.isFinite, itemDuration > 0 {
                 duration = itemDuration
+            }
+        }
+        if playingItemID != nil, !isPaused {
+            let now = Date()
+            if let sleepTimer, sleepTimer.shouldPause(now: now, time: currentTime) {
+                self.sleepTimer = nil
+                pause()
+                return
+            }
+            if resumeKey != nil, now.timeIntervalSince(lastResumeSaveAt ?? .distantPast) >= 15 {
+                saveResumePosition()
             }
         }
         NotificationCenter.default.post(
@@ -1384,9 +1576,12 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     private func updateNowPlayingInfo(
         durationSeconds: Double?,
         isLiveStream: Bool,
-        playbackRate: Float = 1.0,
+        playbackRate overrideRate: Float? = nil,
         elapsed: TimeInterval? = nil
     ) {
+        // Live PCM streams always play at normal speed; everything else uses the listening speed.
+        let listeningRate: Float = streamID != nil ? 1 : self.playbackRate
+        let playbackRate = overrideRate ?? (isPaused ? 0 : listeningRate)
         lastNowPlayingDurationSeconds = durationSeconds
         lastNowPlayingIsLiveStream = isLiveStream
 
@@ -1405,8 +1600,13 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
             MPMediaItemPropertyArtist: presentation?.subtitle ?? Self.nowPlayingFallbackArtist,
             MPMediaItemPropertyAlbumTitle: "Voice reply",
             MPNowPlayingInfoPropertyPlaybackRate: playbackRate,
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: listeningRate,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsedPlaybackTime,
         ]
+        if let chapterIndex = AudioChapters.index(in: chapters, at: elapsedPlaybackTime) {
+            info[MPNowPlayingInfoPropertyChapterNumber] = chapterIndex
+            info[MPNowPlayingInfoPropertyChapterCount] = chapters.count
+        }
         if let durationSeconds {
             info[MPMediaItemPropertyPlaybackDuration] = durationSeconds
         }
@@ -1415,6 +1615,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         Self.setRemoteSeekingEnabled(AudioPlaybackSeek.isSeekable(duration: durationSeconds))
+        MPRemoteCommandCenter.shared().changePlaybackRateCommand.isEnabled = streamID == nil
     }
 
     private static func setRemoteSeekingEnabled(_ enabled: Bool) {
@@ -1445,6 +1646,15 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         center.changePlaybackPositionCommand.isEnabled = false
         center.skipForwardCommand.preferredIntervals = [NSNumber(value: skipInterval)]
         center.skipBackwardCommand.preferredIntervals = [NSNumber(value: skipInterval)]
+        center.changePlaybackRateCommand.supportedPlaybackRates = AudioPlaybackRate.options.map { NSNumber(value: $0) }
+        center.changePlaybackRateCommand.addTarget { event in
+            guard let event = event as? MPChangePlaybackRateCommandEvent else { return .commandFailed }
+            let rate = event.playbackRate
+            Task { @MainActor in
+                Self.activePlaybackOwner?.setPlaybackRate(rate)
+            }
+            return .success
+        }
         center.playCommand.addTarget { _ in
             Task { @MainActor in
                 Self.activePlaybackOwner?.resume()
@@ -1507,17 +1717,18 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
 // MARK: - Delegate
 
 private final class PlaybackDelegate: NSObject, AVAudioPlayerDelegate, Sendable {
-    private let onFinish: @Sendable () -> Void
+    /// `true` only when the file played to its end.
+    private let onFinish: @Sendable (Bool) -> Void
 
-    init(onFinish: @escaping @Sendable () -> Void) {
+    init(onFinish: @escaping @Sendable (Bool) -> Void) {
         self.onFinish = onFinish
     }
 
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        onFinish()
+        onFinish(flag)
     }
 
     func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: (any Error)?) {
-        onFinish()
+        onFinish(false)
     }
 }

@@ -101,7 +101,7 @@ enum FileType: Equatable {
             return .image
         case "svg":
             return .image
-        case "wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "caf":
+        case "wav", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "opus", "caf":
             return .audio
         case "mp4", "mov", "m4v", "avi", "webm":
             return .video

@@ -487,6 +487,14 @@ struct AudioPlaybackTransportControls: View {
     var body: some View {
         VStack(spacing: density.stackSpacing) {
             VStack(spacing: 6) {
+                if showsListeningControls, let index = currentChapterIndex {
+                    Text(chapters[index].title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.themeFgDim)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("\(accessibilityPrefix).chapterTitle")
+                }
                 AudioPlaybackSeekBar(
                     fraction: displayedFraction,
                     isSeekable: isSeekable,
@@ -506,7 +514,10 @@ struct AudioPlaybackTransportControls: View {
                 .foregroundStyle(.themeComment)
             }
 
-            HStack(spacing: density.controlSpacing) {
+            HStack(spacing: hasChapterControls ? 16 : density.controlSpacing) {
+                if hasChapterControls {
+                    chapterButton(forward: false)
+                }
                 skipButton(
                     interval: -AudioPlayerService.skipInterval,
                     symbol: "gobackward.15",
@@ -533,6 +544,13 @@ struct AudioPlaybackTransportControls: View {
                     label: "Skip forward 15 seconds",
                     identifier: "\(accessibilityPrefix).skipForward"
                 )
+                if hasChapterControls {
+                    chapterButton(forward: true)
+                }
+            }
+
+            if showsListeningControls {
+                listeningControls
             }
 
             if !matchesPlayback, openFile != nil {
@@ -553,6 +571,131 @@ struct AudioPlaybackTransportControls: View {
         guard let audioPlayer else { return false }
         return audioPlayer.playingItemID == itemID
             || audioPlayer.isStreamingPlaybackActive(itemID: itemID)
+    }
+
+    // MARK: Long-form listening
+
+    /// Speed, chapters, and sleep timer live on the full-screen player only.
+    private var showsListeningControls: Bool { density == .fullScreen }
+
+    private var chapters: [AudioChapter] {
+        _ = progressTick
+        return matchesPlayback ? audioPlayer?.chapters ?? [] : []
+    }
+
+    private var currentChapterIndex: Int? {
+        AudioChapters.index(in: chapters, at: elapsed)
+    }
+
+    private var hasChapterControls: Bool {
+        showsListeningControls && !chapters.isEmpty
+    }
+
+    private var listeningControls: some View {
+        HStack(spacing: 10) {
+            speedMenu
+            if !chapters.isEmpty {
+                chapterMenu
+            }
+            if matchesPlayback {
+                sleepMenu
+            }
+        }
+    }
+
+    private var speedMenu: some View {
+        let rate = audioPlayer?.playbackRate ?? 1
+        return Menu {
+            Picker(
+                "Playback Speed",
+                selection: Binding(
+                    get: { audioPlayer?.playbackRate ?? 1 },
+                    set: { audioPlayer?.setPlaybackRate($0) }
+                )
+            ) {
+                ForEach(AudioPlaybackRate.options, id: \.self) { option in
+                    Text(AudioPlaybackRate.label(option)).tag(option)
+                }
+            }
+        } label: {
+            listeningChip(Text(AudioPlaybackRate.label(rate)), isActive: rate != 1)
+        }
+        .accessibilityLabel("Playback Speed")
+        .accessibilityValue(AudioPlaybackRate.label(rate))
+        .accessibilityIdentifier("\(accessibilityPrefix).speed")
+    }
+
+    private var chapterMenu: some View {
+        let current = currentChapterIndex
+        return Menu {
+            ForEach(chapters.indices, id: \.self) { index in
+                Button {
+                    audioPlayer?.seek(to: chapters[index].start)
+                } label: {
+                    if index == current {
+                        Label(chapters[index].title, systemImage: "checkmark")
+                    } else {
+                        Text(chapters[index].title)
+                    }
+                }
+            }
+        } label: {
+            listeningChip(Label("Chapters", systemImage: "list.bullet"), isActive: false)
+        }
+        .accessibilityIdentifier("\(accessibilityPrefix).chapters")
+    }
+
+    private var sleepMenu: some View {
+        let timer = audioPlayer?.sleepTimer
+        return Menu {
+            ForEach(AudioSleepTimer.minuteOptions, id: \.self) { minutes in
+                Button("\(minutes) Minutes") { audioPlayer?.setSleepTimer(.minutes(minutes)) }
+            }
+            if !chapters.isEmpty {
+                Button("End of Chapter") { audioPlayer?.setSleepTimer(.endOfChapter) }
+            }
+            if timer != nil {
+                Button("Turn Off Timer", role: .destructive) { audioPlayer?.setSleepTimer(nil) }
+            }
+        } label: {
+            listeningChip(Label(sleepLabel(timer), systemImage: "moon.zzz"), isActive: timer != nil)
+        }
+        .accessibilityLabel("Sleep Timer")
+        .accessibilityValue(timer == nil ? "Off" : sleepLabel(timer))
+        .accessibilityIdentifier("\(accessibilityPrefix).sleepTimer")
+    }
+
+    private func sleepLabel(_ timer: AudioSleepTimer?) -> String {
+        _ = progressTick
+        guard let timer else { return String(localized: "Sleep") }
+        if timer.option == .endOfChapter { return String(localized: "Chapter End") }
+        return AudioPlaybackTimeFormatting.clock(timer.remainingTime(now: Date()))
+    }
+
+    private func listeningChip(_ content: some View, isActive: Bool) -> some View {
+        content
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(isActive ? Color.themePurple : Color.themeFg)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(.themeBgHighlight.opacity(0.9), in: Capsule())
+    }
+
+    private func chapterButton(forward: Bool) -> some View {
+        Button {
+            audioPlayer?.skipChapter(forward: forward)
+        } label: {
+            Image(systemName: forward ? "forward.end.fill" : "backward.end.fill")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(.themeFg)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isSeekable)
+        .opacity(isSeekable ? 1 : 0.45)
+        .accessibilityLabel(forward ? "Next Chapter" : "Previous Chapter")
+        .accessibilityIdentifier("\(accessibilityPrefix).\(forward ? "nextChapter" : "previousChapter")")
     }
 
     private var controlAction: AudioPlaybackControlAction {

@@ -286,7 +286,7 @@ struct FileIcon: Equatable, Sendable {
             return Self(symbolName: "photo.fill", tint: .purple)
 
         // Audio
-        case "wav", "mp3", "m4a", "aac", "flac", "ogg", "opus",
+        case "wav", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "opus",
              "caf", "aiff", "wma":
             return Self(symbolName: "waveform", tint: .purple)
 
