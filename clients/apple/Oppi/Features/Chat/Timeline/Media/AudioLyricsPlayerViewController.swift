@@ -191,10 +191,18 @@ final class AudioLyricsPlayerViewController: UIViewController {
         let matches = player.map {
             $0.playingItemID == configuration.itemID || $0.isStreamingPlaybackActive(itemID: configuration.itemID)
         } ?? false
-        let currentIndex = AudioLyrics.presentationCurrentIndex(in: lines, at: matches ? player?.currentTime : nil)
-        guard renderedCurrentIndex != .some(currentIndex) else { return }
+        let time = matches ? player?.currentTime : nil
+        let currentIndex = AudioLyrics.presentationCurrentIndex(in: lines, at: time)
+        let progress = currentIndex.flatMap { index in
+            time.flatMap { AudioLyrics.lineProgress(in: lines, at: index, time: $0) }
+        }
+        guard renderedCurrentIndex != .some(currentIndex) else {
+            // Same line: only the spoken-word sweep moves.
+            if !lines.isEmpty { transcript.updateProgress(progress) }
+            return
+        }
         renderedCurrentIndex = currentIndex
-        renderPlayback(currentIndex: currentIndex)
+        renderPlayback(currentIndex: currentIndex, progress: progress)
     }
 
     // MARK: - Content
@@ -247,7 +255,8 @@ final class AudioLyricsPlayerViewController: UIViewController {
             foreground: style.foreground,
             dimmed: style.comment,
             unnamed: style.comment,
-            speakerColors: speakerColors
+            speakerColors: speakerColors,
+            direction: style.orange
         )
         renderedCurrentIndex = nil
         setNeedsUpdateProperties()
@@ -261,13 +270,14 @@ final class AudioLyricsPlayerViewController: UIViewController {
         return style.speakerAccents[member.paletteIndex % style.speakerAccents.count]
     }
 
-    private func renderPlayback(currentIndex: Int?) {
+    private func renderPlayback(currentIndex: Int?, progress: Double?) {
         if !lines.isEmpty, let transcriptPalette {
             transcript.update(
                 lines: lines,
                 style: transcriptStyle,
                 palette: transcriptPalette,
                 currentIndex: currentIndex,
+                currentProgress: progress,
                 followsPlayback: followsPlayback
             )
         }

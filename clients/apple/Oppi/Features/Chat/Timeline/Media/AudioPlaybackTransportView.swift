@@ -11,6 +11,7 @@ struct AudioPlayerChromeStyle {
     let cyan: UIColor
     let purple: UIColor
     let yellow: UIColor
+    let orange: UIColor
     /// Speaker accents without an authored WebVTT color, in cast order.
     let speakerAccents: [UIColor]
 
@@ -23,6 +24,7 @@ struct AudioPlayerChromeStyle {
         cyan = UIColor(palette.cyan)
         purple = UIColor(palette.purple)
         yellow = UIColor(palette.yellow)
+        orange = UIColor(palette.orange)
         speakerAccents = [palette.orange, palette.blue, palette.green, palette.purple, palette.red, palette.cyan, palette.yellow]
             .map { UIColor($0) }
     }

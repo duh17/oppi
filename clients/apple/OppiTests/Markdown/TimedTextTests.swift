@@ -253,6 +253,52 @@ struct TimedTextTests {
         #expect(lines.indices.map { AudioReaderCast.startsTurn(lines, at: $0) } == [true, false, true, false, true])
     }
 
+    @Test("bracketed stage directions become tags; the rest stays spoken text")
+    func stageDirectionMarkup() {
+        let markup = AudioLineMarkup("[sneers] 萧峰，你一个契丹人！[ laughs ]")
+        #expect(markup.segments == [.direction("sneers"), .spoken(" 萧峰，你一个契丹人！"), .direction("laughs")])
+        // Directions are not words the sweep waits on.
+        #expect(markup.words.allSatisfy { $0.segment == 1 })
+
+        // Empty, multi-line, and over-long brackets stay ordinary text.
+        #expect(AudioLineMarkup("a [] b").segments == [.spoken("a [] b")])
+        #expect(AudioLineMarkup("a [ ] b").segments == [.spoken("a "), .spoken("[ ]"), .spoken(" b")])
+        #expect(!AudioLineMarkup("see [note\nhere]").hasDirections)
+        #expect(!AudioLineMarkup("[" + String(repeating: "x", count: 41) + "]").hasDirections)
+    }
+
+    @Test("spoken-word sweep lights each word once the line reaches its first character")
+    func spokenWordSweep() {
+        let markup = AudioLineMarkup("I'm fine. Really. [whispering] Go on")
+        #expect(markup.words.count == 5)
+        #expect(markup.spokenWordCount(at: 0) == 0)
+        #expect(markup.spokenWordCount(at: 0.01) == 1)
+        // Words weigh by length: "I'm" + "fine" are 7 of 17 characters.
+        #expect(markup.spokenWordCount(at: 7.0 / 17) == 2)
+        #expect(markup.spokenWordCount(at: 7.5 / 17) == 3)
+        #expect(markup.spokenWordCount(at: 1) == 5)
+        #expect(AudioLineMarkup("[music]").spokenWordCount(at: 0.5) == 0)
+    }
+
+    @Test("line progress runs to the cue end, else the nearest later line start")
+    func lineProgressBounds() {
+        let lines = [
+            AudioLyrics.Line(text: "cue", startTime: 10, endTime: 14),
+            AudioLyrics.Line(text: "lrc", startTime: 20),
+            AudioLyrics.Line(text: "earlier, out of order", startTime: 16),
+            AudioLyrics.Line(text: "later", startTime: 30),
+            AudioLyrics.Line(text: "last", startTime: 40),
+            AudioLyrics.Line(text: "untimed", startTime: nil),
+        ]
+        #expect(AudioLyrics.lineProgress(in: lines, at: 0, time: 12) == 0.5)
+        // Past the cue end (a gap before the next line) the line stays fully spoken.
+        #expect(AudioLyrics.lineProgress(in: lines, at: 0, time: 15) == 1)
+        // No cue end: the next start in time (30), not the next row (16).
+        #expect(AudioLyrics.lineProgress(in: lines, at: 1, time: 25) == 0.5)
+        #expect(AudioLyrics.lineProgress(in: lines, at: 4, time: 41) == nil)
+        #expect(AudioLyrics.lineProgress(in: lines, at: 5, time: 41) == nil)
+    }
+
     @Test("line change repaints every row whose heard/upcoming paint can change")
     func transcriptRepaintScope() {
         typealias View = AudioTranscriptCollectionView

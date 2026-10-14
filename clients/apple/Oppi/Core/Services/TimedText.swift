@@ -216,7 +216,7 @@ enum TimedText {
     }
 
     static func lyricsLines(from cues: [Cue]) -> [AudioLyrics.Line] {
-        cues.map { AudioLyrics.Line(text: $0.text, startTime: $0.startTime, speaker: $0.speaker) }
+        cues.map { AudioLyrics.Line(text: $0.text, startTime: $0.startTime, speaker: $0.speaker, endTime: $0.endTime) }
     }
 
     static func currentCue(in cues: [Cue], at time: TimeInterval) -> Cue? {

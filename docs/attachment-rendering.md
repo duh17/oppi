@@ -235,6 +235,8 @@ STYLE
 
 Only `#RRGGBB` colors on `v[voice="…"]` selectors are read. Speakers without one take the theme's accent colors. In both the script reader and timed lyrics, auto-scroll follows playback until the text is dragged; **Current Line** resumes it. Long-press a line for **Play from Here** (timed lines) or **Copy**.
 
+Short stage directions in square brackets, such as `[laughs]` or `[whispering]` (1 to 40 characters on one line), show as small tags in the speaker's color, or the theme's orange in lyrics without speakers. The current line lights up word by word as it plays. A cue only has a start and an end, so the sweep spreads its words evenly across that time (longer words take longer); a line without its own end runs to the next line's start, and the last such line stays fully lit.
+
 The full-screen player has long-form listening controls:
 
 - **Speed:** 0.75× to 2×, kept as a preference and shown on the lock screen, which can change it too. Live voice streams always play at normal speed.
