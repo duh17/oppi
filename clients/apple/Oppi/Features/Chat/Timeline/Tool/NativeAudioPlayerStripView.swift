@@ -18,6 +18,7 @@ final class NativeAudioPlayerStripView: UIView {
     private var onPlay: (() -> Void)?
     private var onExpand: (() -> Void)?
     private var showsTitle = true
+    private var isUnavailable = false
     nonisolated(unsafe) private var audioStateObserver: NSObjectProtocol?
 
     override init(frame: CGRect) {
@@ -53,6 +54,7 @@ final class NativeAudioPlayerStripView: UIView {
         self.audioPlayer = audioPlayer
         self.durationSeconds = durationSeconds
         self.showsTitle = showsTitle
+        self.isUnavailable = isUnavailable
         self.onPlay = onPlay
         self.onExpand = onExpand
         accessibilityIdentifier = "chat.timeline.row.\(itemID).audio.strip"
@@ -76,7 +78,6 @@ final class NativeAudioPlayerStripView: UIView {
         titleLabel.isHidden = !showsTitle || (title?.isEmpty ?? true) || isUnavailable
         unavailableLabel.isHidden = !isUnavailable
         playButton.isHidden = isUnavailable
-        progressView.isHidden = isUnavailable
         timeLabel.isHidden = isUnavailable
         expandButton.isHidden = false
         isAccessibilityElement = false
@@ -101,7 +102,9 @@ final class NativeAudioPlayerStripView: UIView {
 
         titleLabel.font = .preferredFont(forTextStyle: .subheadline)
         titleLabel.adjustsFontForContentSizeCategory = true
-        titleLabel.lineBreakMode = .byTruncatingTail
+        // Generated clips share prefixes (`take-4bit-overlap`, `take-4bit-stream`);
+        // keep the distinguishing end visible.
+        titleLabel.lineBreakMode = .byTruncatingMiddle
         titleLabel.numberOfLines = 1
 
         timeLabel.font = .preferredFont(forTextStyle: .caption1)
@@ -170,7 +173,8 @@ final class NativeAudioPlayerStripView: UIView {
             progressView.heightAnchor.constraint(equalToConstant: 3),
             controls.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             controls.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            controls.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            // Centered: the progress line below is hidden while idle.
+            controls.centerYAnchor.constraint(equalTo: centerYAnchor),
             progressView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             progressView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             progressView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
@@ -218,16 +222,18 @@ final class NativeAudioPlayerStripView: UIView {
         }
         playButton.accessibilityLabel = playAccessibilityLabel()
 
-        let elapsed: TimeInterval
-        let duration: TimeInterval?
-        if isMatchingPlayback() {
-            elapsed = audioPlayer?.currentTime ?? 0
-            duration = audioPlayer?.duration ?? durationSeconds
-        } else {
-            elapsed = 0
-            duration = durationSeconds
+        // Idle: the clip's length alone, or nothing until it is known. The
+        // elapsed clock and progress line appear only for this clip's playback.
+        guard isMatchingPlayback() else {
+            timeLabel.text = durationSeconds.map { AudioPlaybackTimeFormatting.clock($0) }
+            progressView.isHidden = true
+            progressView.progress = 0
+            return
         }
+        let elapsed = audioPlayer?.currentTime ?? 0
+        let duration = audioPlayer?.duration ?? durationSeconds
         timeLabel.text = AudioPlaybackTimeFormatting.elapsedDuration(elapsed: elapsed, duration: duration)
+        progressView.isHidden = isUnavailable
         if let duration, duration > 0 {
             progressView.progress = Float(min(max(elapsed / duration, 0), 1))
         } else {

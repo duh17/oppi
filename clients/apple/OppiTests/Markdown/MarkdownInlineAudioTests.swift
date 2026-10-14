@@ -546,6 +546,35 @@ struct MarkdownInlineAudioTests {
     }
 
     @MainActor
+    @Test("idle strip shows only the clip length and no progress line")
+    func idleStripShowsLengthOnly() throws {
+        let strip = NativeAudioPlayerStripView()
+        func apply(duration: TimeInterval?) {
+            strip.apply(
+                itemID: "audio-1",
+                title: "clip.wav",
+                durationSeconds: duration,
+                audioPlayer: AudioPlayerService(),
+                showsTitle: true,
+                isUnavailable: false,
+                onPlay: {},
+                onExpand: {}
+            )
+        }
+        apply(duration: nil)
+        let time = try #require(timelineAllLabels(in: strip).first {
+            $0.accessibilityIdentifier == "chat.timeline.row.audio-1.audio.time"
+        })
+        let progress = try #require(timelineFirstView(ofType: UIProgressView.self, in: strip))
+        #expect(time.text?.isEmpty ?? true)
+        #expect(progress.isHidden)
+
+        apply(duration: 263.4)
+        #expect(time.text == "4:23")
+        #expect(progress.isHidden)
+    }
+
+    @MainActor
     @Test("strip controls use fg and comment, not purple")
     func stripControlsUseForegroundNotPurple() throws {
         let strip = NativeAudioPlayerStripView()

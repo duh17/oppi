@@ -48,6 +48,7 @@ const sessionOperationIds = [
   "headCurrentFile",
   "putCurrentFile",
   "listCurrentFileSidecars",
+  "getCurrentFileMediaInfo",
   "getHostContentsRoot",
   "getHostContents",
   "createSessionAttachment",

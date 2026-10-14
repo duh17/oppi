@@ -97,6 +97,53 @@ struct AuthenticatedMediaSourceShareTests {
             _ = try await source.loadFileData(configuration: configuration)
         }
     }
+
+    @Test("clip length comes from the media-info route, not audio bytes")
+    func loadsDurationFromMediaInfo() async throws {
+        defer { AudioShareURLProtocol.handler = nil }
+        let mediaInfoURL = testUnwrap(URL(string: "https://server.example.com/files/current/media-info?origin=host&path=~/a.wav"))
+        nonisolated(unsafe) var body = #"{"durationSeconds":4.32}"#
+        AudioShareURLProtocol.handler = { request in
+            #expect(request.url == mediaInfoURL)
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer fresh-token")
+            return (
+                Data(body.utf8),
+                (try #require(HTTPURLResponse(
+                    url: testUnwrap(request.url),
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )))
+            )
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AudioShareURLProtocol.self]
+        let source = AuthenticatedMediaSource(
+            url: testUnwrap(URL(string: "https://server.example.com/files/current?origin=host&path=~/a.wav")),
+            authorizationProvider: { "Bearer fresh-token" },
+            tlsCertFingerprint: nil,
+            contentTypeHint: "audio/wav",
+            sourceFileExtension: "wav",
+            mediaInfoURL: mediaInfoURL
+        )
+
+        #expect(try await source.loadDurationSeconds(configuration: configuration) == 4.32)
+
+        // The server could not read a length: no label, no error.
+        body = "{}"
+        #expect(try await source.loadDurationSeconds(configuration: configuration) == nil)
+
+        // Attachment sources have no media-info route and make no request.
+        AudioShareURLProtocol.handler = { _ in throw URLError(.badURL) }
+        let attachment = AuthenticatedMediaSource(
+            url: testUnwrap(URL(string: "https://server.example.com/sessions/s1/attachments/a1")),
+            authorizationHeaderValue: "Bearer token",
+            tlsCertFingerprint: nil,
+            contentTypeHint: "audio/wav",
+            sourceFileExtension: "wav"
+        )
+        #expect(try await attachment.loadDurationSeconds(configuration: configuration) == nil)
+    }
 }
 
 private final class RedirectRequestCapture: @unchecked Sendable {

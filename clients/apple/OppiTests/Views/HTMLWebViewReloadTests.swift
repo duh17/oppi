@@ -34,6 +34,7 @@ struct HTMLPreviewBrowserRoutingTests {
     @Test(arguments: [
         "https://example.com/automatic",
         "https://example.com/files/current", "https://example.com/files/current/sidecars",
+        "https://example.com/files/current/media-info",
         "mailto:preview@example.com",
     ])
     func automaticOrProtectedNavigationDoesNotOpenBrowser(urlString: String) throws {

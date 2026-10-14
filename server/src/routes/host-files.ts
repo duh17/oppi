@@ -16,6 +16,7 @@ import {
 import { listDirectoryEntries } from "../directory-listing.js";
 import { decodeWorkspaceRoutePath } from "../file-serving-policy.js";
 import { createLogger, type Logger } from "../logger.js";
+import { readAudioMediaInfo } from "../media-info.js";
 import { sessionWorkRoot, type SessionWorkRoot } from "../session-work-root.js";
 import type { DirectoryListingResponse } from "../types.js";
 import {
@@ -336,6 +337,38 @@ export function createHostFileRoutes(
     helpers.json(res, await listTimedTextSidecars(resolved.file));
   }
 
+  async function handleCurrentFileMediaInfo(url: URL, res: ServerResponse): Promise<void> {
+    let status = 404;
+    let originKind: string | undefined;
+    let durationKnown = false;
+    try {
+      const resolved = await resolveCurrentFileRequest(url, res);
+      if ("status" in resolved) {
+        status = resolved.status;
+        return;
+      }
+      originKind = resolved.originKind;
+      const servable = await statServableFile(resolved.file.realPath, resolved.file.lexicalPath);
+      if (servable.kind !== "ok") {
+        helpers.error(res, 404, "File not found");
+        return;
+      }
+      // Only audio is parsed; any other servable file has no media info.
+      const info = servable.file.contentType.startsWith("audio/")
+        ? await readAudioMediaInfo(servable.file.filePath, servable.file.contentType)
+        : {};
+      if (!info) {
+        helpers.error(res, 404, "File not found");
+        return;
+      }
+      durationKnown = info.durationSeconds !== undefined;
+      status = 200;
+      helpers.json(res, info);
+    } finally {
+      log.info("currentfile.media_info", { origin: originKind, status, durationKnown });
+    }
+  }
+
   return async ({ method, path, url, req, res }) => {
     const normalizedMethod = method.toUpperCase();
     const readsBytes = normalizedMethod === "GET" || normalizedMethod === "HEAD";
@@ -353,6 +386,12 @@ export function createHostFileRoutes(
     if (path === "/files/current/sidecars") {
       if (normalizedMethod !== "GET") return false;
       await handleCurrentFileSidecars(url, res);
+      return true;
+    }
+
+    if (path === "/files/current/media-info") {
+      if (normalizedMethod !== "GET") return false;
+      await handleCurrentFileMediaInfo(url, res);
       return true;
     }
 

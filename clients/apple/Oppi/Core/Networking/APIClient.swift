@@ -2389,11 +2389,9 @@ actor APIClient: ClientLogUploading {
         contentTypeHint: String? = nil,
         sourceFileExtension: String? = nil
     ) throws -> AuthenticatedMediaSource {
-        AuthenticatedMediaSource(
-            url: try makeCurrentFileURL(.host(controlSessionId: controlSessionId), path: path),
-            authorizationProvider: mediaAuthorizationProvider(),
-            tlsCertFingerprint: tlsCertFingerprint,
-            tlsServerName: environment.tlsServerName,
+        try makeCurrentFileMediaSource(
+            .host(controlSessionId: controlSessionId),
+            path: path,
             contentTypeHint: contentTypeHint,
             sourceFileExtension: sourceFileExtension
         )
@@ -2411,11 +2409,9 @@ actor APIClient: ClientLogUploading {
         contentTypeHint: String? = nil,
         sourceFileExtension: String? = nil
     ) throws -> AuthenticatedMediaSource {
-        AuthenticatedMediaSource(
-            url: try makeCurrentFileURL(.workspace(workspaceId: workspaceId, worktreeId: worktreeId), path: path),
-            authorizationProvider: mediaAuthorizationProvider(),
-            tlsCertFingerprint: tlsCertFingerprint,
-            tlsServerName: environment.tlsServerName,
+        try makeCurrentFileMediaSource(
+            .workspace(workspaceId: workspaceId, worktreeId: worktreeId),
+            path: path,
             contentTypeHint: contentTypeHint,
             sourceFileExtension: sourceFileExtension
         )
@@ -2429,20 +2425,35 @@ actor APIClient: ClientLogUploading {
         contentTypeHint: String? = nil,
         sourceFileExtension: String? = nil
     ) throws -> AuthenticatedMediaSource {
+        try makeCurrentFileMediaSource(
+            .session(sessionId: sessionId),
+            path: path,
+            contentTypeHint: contentTypeHint,
+            sourceFileExtension: sourceFileExtension
+        )
+    }
+
+    private func makeCurrentFileMediaSource(
+        _ origin: CurrentFileOrigin,
+        path: String,
+        contentTypeHint: String?,
+        sourceFileExtension: String?
+    ) throws -> AuthenticatedMediaSource {
         AuthenticatedMediaSource(
-            url: try makeCurrentFileURL(.session(sessionId: sessionId), path: path),
+            url: try makeCurrentFileURL(origin, path: path),
             authorizationProvider: mediaAuthorizationProvider(),
             tlsCertFingerprint: tlsCertFingerprint,
             tlsServerName: environment.tlsServerName,
             contentTypeHint: contentTypeHint,
-            sourceFileExtension: sourceFileExtension
+            sourceFileExtension: sourceFileExtension,
+            mediaInfoURL: try makeCurrentFileURL(origin, path: path, route: .mediaInfo)
         )
     }
 
     /// Same-stem timed-text sidecar names beside an existing media file.
     func listCurrentFileSidecars(_ origin: CurrentFileOrigin, mediaPath: String) async throws -> [String] {
         struct Response: Decodable { let names: [String] }
-        let data = try await get(url: makeCurrentFileURL(origin, path: mediaPath, sidecars: true))
+        let data = try await get(url: makeCurrentFileURL(origin, path: mediaPath, route: .sidecars))
         return try JSONDecoder().decode(Response.self, from: data).names
     }
 
@@ -2973,11 +2984,23 @@ actor APIClient: ClientLogUploading {
         case session(sessionId: String)
     }
 
-    /// One current-file URL: `/files/current?origin=…` (or its `/sidecars` listing).
+    /// `/files/current` and its per-file companions, which take the same query.
+    private enum CurrentFileRoute {
+        case bytes, sidecars, mediaInfo
+
+        var pathSegments: [String] {
+            switch self {
+            case .bytes: ["files", "current"]
+            case .sidecars: ["files", "current", "sidecars"]
+            case .mediaInfo: ["files", "current", "media-info"]
+            }
+        }
+    }
+
     private func makeCurrentFileURL(
         _ origin: CurrentFileOrigin,
         path: String,
-        sidecars: Bool = false
+        route: CurrentFileRoute = .bytes
     ) throws -> URL {
         var queryItems: [URLQueryItem]
         switch origin {
@@ -3002,10 +3025,7 @@ actor APIClient: ClientLogUploading {
             ]
         }
         queryItems.append(URLQueryItem(name: "path", value: path))
-        return try makeURL(
-            pathSegments: sidecars ? ["files", "current", "sidecars"] : ["files", "current"],
-            queryItems: queryItems
-        )
+        return try makeURL(pathSegments: route.pathSegments, queryItems: queryItems)
     }
 
     private func makeSkillFileURL(name: String, path: String, cwd: String? = nil) throws -> URL {

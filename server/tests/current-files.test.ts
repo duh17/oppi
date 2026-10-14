@@ -518,6 +518,89 @@ describe("GET /files/current/sidecars", () => {
   });
 });
 
+/** 16-bit mono PCM WAV of `seconds` silence. */
+function wav(seconds: number, sampleRate = 8_000): Buffer {
+  const dataBytes = Math.round(seconds * sampleRate) * 2;
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0, "ascii");
+  header.writeUInt32LE(36 + dataBytes, 4);
+  header.write("WAVEfmt ", 8, "ascii");
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36, "ascii");
+  header.writeUInt32LE(dataBytes, 40);
+  return Buffer.concat([header, Buffer.alloc(dataBytes)]);
+}
+
+describe("GET /files/current/media-info", () => {
+  it("reports audio length from the header and follows a rewrite of the same path", async () => {
+    const fixture = seed();
+    const clip = join(fixture.home, "clip.wav");
+    writeFileSync(clip, wav(4.5));
+    const url = `/files/current/media-info?${query({ origin: "host", path: "~/clip.wav" })}`;
+
+    const first = await request(fixture, "GET", url);
+    expect(first.statusCode).toBe(200);
+    expect(JSON.parse(first.text())).toEqual({ durationSeconds: 4.5 });
+
+    // An agent regenerating the clip in place must not keep the old length.
+    writeFileSync(clip, wav(1.25));
+    const rewritten = await request(fixture, "GET", url);
+    expect(JSON.parse(rewritten.text())).toEqual({ durationSeconds: 1.25 });
+
+    const clipHandles = openedHandles.filter((entry) => entry.path === clip);
+    expect(clipHandles.length).toBeGreaterThan(0);
+    for (const { handle } of clipHandles) expect(handle.fd).toBe(-1);
+  });
+
+  it("answers without a length for unparseable audio and non-audio files", async () => {
+    const fixture = seed();
+    writeFileSync(join(fixture.home, "broken.wav"), "not a wave file");
+
+    for (const path of ["~/broken.wav", "~/notes.md"]) {
+      const res = await request(
+        fixture,
+        "GET",
+        `/files/current/media-info?${query({ origin: "host", path })}`,
+      );
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.text())).toEqual({});
+    }
+  });
+
+  it("keeps sandbox confinement and 404s a missing file", async () => {
+    const fixture = seed();
+    writeFileSync(join(fixture.outside, "host.wav"), wav(2));
+    symlinkSync(join(fixture.outside, "host.wav"), join(fixture.sandboxMount, "escape.wav"));
+    writeFileSync(join(fixture.sandboxMount, "reports", "take.wav"), wav(3));
+    const sandboxURL = (path: string) =>
+      `/files/current/media-info?${query({ origin: "session", sessionId: "sandbox-session", path })}`;
+
+    const inside = await request(
+      fixture,
+      "GET",
+      sandboxURL("/workspace/deep-research/reports/take.wav"),
+    );
+    expect(JSON.parse(inside.text())).toEqual({ durationSeconds: 3 });
+
+    const escape = await request(fixture, "GET", sandboxURL("/workspace/deep-research/escape.wav"));
+    expect(escape.statusCode).toBe(403);
+    expect(escape.text()).not.toContain("durationSeconds");
+
+    const missing = await request(
+      fixture,
+      "GET",
+      `/files/current/media-info?${query({ origin: "host", path: "~/absent.wav" })}`,
+    );
+    expect(missing.statusCode).toBe(404);
+  });
+});
+
 describe("checked path swapped before the bytes are served", () => {
   it("refuses a final-component or intermediate-directory symlink swap", async () => {
     const mount = tempRoot("oppi-swap-mount-");

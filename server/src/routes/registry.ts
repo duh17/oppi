@@ -53,6 +53,7 @@ const sessionOperationIds = new Set<string>([
   "headCurrentFile",
   "putCurrentFile",
   "listCurrentFileSidecars",
+  "getCurrentFileMediaInfo",
   "getHostContentsRoot",
   "getHostContents",
   "createSessionAttachment",
@@ -601,6 +602,14 @@ const rawApiRouteSpecs = [
     surface: "core",
     auth: "owner",
     description: "Same-stem timed-text sidecar names beside an existing media file.",
+  },
+  {
+    method: "GET",
+    path: "/files/current/media-info",
+    operationId: "getCurrentFileMediaInfo",
+    surface: "core",
+    auth: "owner",
+    description: "Header-derived audio length for an existing current file.",
   },
   {
     method: "GET",

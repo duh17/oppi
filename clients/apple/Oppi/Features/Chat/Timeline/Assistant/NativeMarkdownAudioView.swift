@@ -72,6 +72,8 @@ final class NativeMarkdownAudioView: UIView {
     private var currentEmbed: MarkdownAudioEmbed?
     private var currentIdentity: String?
     private var currentSource: AuthenticatedMediaSource?
+    /// Header-derived length from the server, so the idle strip can label the clip.
+    private var durationSeconds: TimeInterval?
     private var resolutionTask: Task<Void, Never>?
     private var sourceProvider: MarkdownAudioMediaSourceProvider?
     private var audioPlayer: AudioPlayerService?
@@ -135,6 +137,7 @@ final class NativeMarkdownAudioView: UIView {
         self.worktreeID = worktreeID
         self.sidecarProvider = sidecarProvider
         currentSource = nil
+        durationSeconds = nil
         isUnavailable = false
         resolutionTask?.cancel()
 
@@ -176,6 +179,11 @@ final class NativeMarkdownAudioView: UIView {
                 self.currentSource = source
                 self.isUnavailable = false
                 self.refreshStrip()
+                // A missing length only leaves the label blank; playback still works.
+                let duration = try? await source.loadDurationSeconds()
+                guard !Task.isCancelled, self.currentIdentity == identity, let duration else { return }
+                self.durationSeconds = duration
+                self.refreshStrip()
             } catch {
                 guard let self, !Task.isCancelled, self.currentIdentity == identity else { return }
                 self.showUnavailable()
@@ -214,7 +222,7 @@ final class NativeMarkdownAudioView: UIView {
         strip.apply(
             itemID: playbackItemID(for: embed),
             title: (embed.filePath as NSString).lastPathComponent,
-            durationSeconds: nil,
+            durationSeconds: durationSeconds,
             audioPlayer: audioPlayer,
             showsTitle: true,
             isUnavailable: isUnavailable,

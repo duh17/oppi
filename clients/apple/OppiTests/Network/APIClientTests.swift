@@ -1652,6 +1652,12 @@ struct APIClientTests {
         #expect(query(host) == ["origin": "host", "path": "~/Movies/clip.mp4"])
         let control = try await client.makeHostFileMediaSource(path: "clip.mp4", controlSessionId: "c1")
         #expect(query(control) == ["origin": "session", "sessionId": "c1", "path": "clip.mp4"])
+        // Media info describes the same file through the same origin query.
+        for source in [session, workspace, host, control] {
+            let mediaInfoURL = try #require(source.mediaInfoURL)
+            #expect(mediaInfoURL.path == "/files/current/media-info")
+            #expect(currentFileQuery(mediaInfoURL) == query(source))
+        }
 
         MockURLProtocol.handler = { request in
             #expect(request.url?.path == "/files/current/sidecars")

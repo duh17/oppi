@@ -2031,7 +2031,7 @@ struct ToolTimelineRowContentViewTests {
         let time = try #require(timelineAllLabels(in: view).first {
             $0.accessibilityIdentifier == "chat.timeline.row.\(config.itemID).audio.time"
         })
-        #expect(time.text == AudioPlaybackTimeFormatting.elapsedDuration(elapsed: 0, duration: 4.2))
+        #expect(time.text == "0:04")
     }
 
     @MainActor

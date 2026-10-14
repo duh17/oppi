@@ -15,6 +15,9 @@ struct AuthenticatedMediaSource: Sendable {
     let tlsServerName: String?
     let contentTypeHint: String?
     let sourceFileExtension: String?
+    /// `/files/current/media-info` for the same file. Nil for sources the
+    /// server cannot describe (session attachments).
+    let mediaInfoURL: URL?
 
     init(
         url: URL,
@@ -22,7 +25,8 @@ struct AuthenticatedMediaSource: Sendable {
         tlsCertFingerprint: String?,
         tlsServerName: String? = nil,
         contentTypeHint: String?,
-        sourceFileExtension: String?
+        sourceFileExtension: String?,
+        mediaInfoURL: URL? = nil
     ) {
         self.url = url
         self.authorizationProvider = authorizationProvider
@@ -30,6 +34,7 @@ struct AuthenticatedMediaSource: Sendable {
         self.tlsServerName = tlsServerName
         self.contentTypeHint = contentTypeHint
         self.sourceFileExtension = sourceFileExtension
+        self.mediaInfoURL = mediaInfoURL
     }
 
     /// Convenience for tests and static-credential callers.
@@ -39,7 +44,8 @@ struct AuthenticatedMediaSource: Sendable {
         tlsCertFingerprint: String?,
         tlsServerName: String? = nil,
         contentTypeHint: String?,
-        sourceFileExtension: String?
+        sourceFileExtension: String?,
+        mediaInfoURL: URL? = nil
     ) {
         self.init(
             url: url,
@@ -47,7 +53,8 @@ struct AuthenticatedMediaSource: Sendable {
             tlsCertFingerprint: tlsCertFingerprint,
             tlsServerName: tlsServerName,
             contentTypeHint: contentTypeHint,
-            sourceFileExtension: sourceFileExtension
+            sourceFileExtension: sourceFileExtension,
+            mediaInfoURL: mediaInfoURL
         )
     }
 
@@ -64,6 +71,26 @@ struct AuthenticatedMediaSource: Sendable {
     /// Fetch the complete media file only for an explicit export/share action.
     /// Playback continues to use range requests through the AV resource loader.
     func loadFileData(configuration: URLSessionConfiguration = .ephemeral) async throws -> Data {
+        try await authenticatedGET(url, configuration: configuration)
+    }
+
+    /// Header-derived length, without downloading audio bytes. Nil when the
+    /// source has no media-info route or the server could not read a length.
+    func loadDurationSeconds(
+        configuration: URLSessionConfiguration = .ephemeral
+    ) async throws -> TimeInterval? {
+        guard let mediaInfoURL else { return nil }
+        struct MediaInfo: Decodable { let durationSeconds: Double? }
+        let data = try await authenticatedGET(mediaInfoURL, configuration: configuration)
+        let seconds = try JSONDecoder().decode(MediaInfo.self, from: data).durationSeconds
+        guard let seconds, seconds.isFinite, seconds >= 0 else { return nil }
+        return seconds
+    }
+
+    private func authenticatedGET(
+        _ url: URL,
+        configuration: URLSessionConfiguration
+    ) async throws -> Data {
         let authorization = try await authorizationProvider()
         guard !authorization.isEmpty else {
             throw URLError(.userAuthenticationRequired)
