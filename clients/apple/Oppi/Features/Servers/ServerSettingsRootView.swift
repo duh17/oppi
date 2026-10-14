@@ -81,10 +81,12 @@ struct ServerSettingsRootView: View {
                 Text("Appends Oppi's link and rich-content rendering guide to new and explicitly reloaded managed Pi sessions, including Pi Control. Terminal-owned Mirror sessions are unchanged.")
             }
 
-            ServerPushNotificationsSection(
-                serverId: pairedServer.id,
-                connection: coordinator.connection(for: pairedServer.id)
-            )
+            if ReleaseFeatures.pushNotificationsEnabled {
+                ServerPushNotificationsSection(
+                    serverId: pairedServer.id,
+                    connection: coordinator.connection(for: pairedServer.id)
+                )
+            }
 
             Section {
                 ScopedLockToggle(title: "Lock Server", scope: .server(serverId: pairedServer.id))
