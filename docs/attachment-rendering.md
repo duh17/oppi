@@ -224,7 +224,16 @@ Workspace, host, and session video can overlay same-directory sidecar captions (
 
 Use `![[audio-file]]` or `![label](audio-file)` to embed a current workspace, worktree, session-reported, or exact owner host audio file as a compact native player strip. Use `[[audio-file]]` or `[label](audio-file)` when the file must remain an ordinary navigable link that opens the lyrics-first full-screen player.
 
-Eligible extensions are the `FileType` audio set: `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`, `opus`, and `caf`. The strip is compact (about 56–72 pt) and never uses 16:9 video geometry. Playback never starts automatically. Expand, or a plain `[[audio-file]]` link, opens the full-screen player. The full-screen player shares the original audio file through the iOS share sheet and keeps its filename. Wiki audio without a transcript or sidecar shows “No lyrics”. Workspace and session audio can load same-directory sidecar lyrics (`stem(.lang)?.(lrc|vtt|srt|ass|ssa)`) on expand, not on the compact strip. Host files use the same bounded same-stem discovery as host video. Voice `audio_presentation` rows keep the message transcript and do not fetch a sidecar. Oppi does not embed remote audio sites, arbitrary URLs, HTML `<audio>`, `data:`, `attachment:` IDs, or `javascript:` through this syntax. Those targets never become an audio segment and do not start a fetch. Failure keeps the strip up with “Audio unavailable” and an open-file fallback.
+Eligible extensions are the `FileType` audio set: `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`, `opus`, and `caf`. The strip is compact (about 56-72 pt) and never uses 16:9 video geometry. Playback never starts automatically. Expand, or a plain `[[audio-file]]` link, opens the full-screen player. The full-screen player shares the original audio file through the iOS share sheet and keeps its filename. Wiki audio without a transcript or sidecar shows "No lyrics". Workspace and session audio can load same-directory sidecar lyrics (`stem(.lang)?.(lrc|vtt|srt|ass|ssa)`) on expand, not on the compact strip. Host files use the same bounded same-stem discovery as host video. Voice `audio_presentation` rows keep the message transcript and do not fetch a sidecar. Oppi does not embed remote audio sites, arbitrary URLs, HTML `<audio>`, `data:`, `attachment:` IDs, or `javascript:` through this syntax. Those targets never become an audio segment and do not start a fetch. Failure keeps the strip up with "Audio unavailable" and an open-file fallback.
+
+When a lyrics sidecar names speakers, the full-screen player reads it as a script (audiobooks, audio dramas). Speakers come from WebVTT voice spans (`<v Narrator>Night fell.</v>`; a cue that mixes voices has no single speaker) or the ASS/SSA `Name` field. The script reader lists the cast as chips in order of first line and lights up the current speaker. Each new speaker's turn starts with a colored name, and the current paragraph is highlighted. Tapping a paragraph jumps to it. A WebVTT `STYLE` block can set each speaker's color:
+
+```text
+STYLE
+::cue(v[voice="Narrator"]) { color: #c9c9cf; }
+```
+
+Only `#RRGGBB` colors on `v[voice="…"]` selectors are read. Speakers without one take the theme's accent colors. In both the script reader and timed lyrics, auto-scroll follows playback until the text is dragged; **Current Line** resumes it.
 
 ## Markdown inline USDZ
 

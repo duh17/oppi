@@ -5,6 +5,7 @@ enum AudioLyrics {
     struct Line: Equatable, Sendable {
         var text: String
         var startTime: TimeInterval?
+        var speaker: String? = nil
     }
 
     static func lines(from text: String?) -> [Line] {
@@ -67,6 +68,39 @@ enum AudioLyrics {
             sentences.append(trailing)
         }
         return sentences.isEmpty ? [text] : sentences
+    }
+}
+
+/// Speaker-tagged timed text reads as a script. The cast is listed in order of first line.
+enum AudioReaderCast {
+    struct Member: Equatable, Sendable {
+        var name: String
+        /// Authored `#RRGGBB`; `nil` means the view picks a theme color by `paletteIndex`.
+        var colorHex: String?
+        var paletteIndex: Int
+    }
+
+    static func isScript(_ lines: [AudioLyrics.Line]) -> Bool {
+        lines.contains { $0.speaker != nil }
+    }
+
+    static func members(in lines: [AudioLyrics.Line], voiceColors: [String: String]) -> [Member] {
+        var seen = Set<String>()
+        var members: [Member] = []
+        for speaker in lines.compactMap(\.speaker) where seen.insert(speaker).inserted {
+            members.append(Member(
+                name: speaker,
+                colorHex: voiceColors[speaker],
+                paletteIndex: members.count
+            ))
+        }
+        return members
+    }
+
+    /// A speaker's label shows when the line opens a new turn, like a printed script.
+    static func startsTurn(_ lines: [AudioLyrics.Line], at index: Int) -> Bool {
+        guard lines.indices.contains(index), lines[index].speaker != nil else { return false }
+        return index == 0 || lines[index - 1].speaker != lines[index].speaker
     }
 }
 

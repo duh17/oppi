@@ -32,6 +32,9 @@ enum TimedText {
         var text: String
         var startTime: TimeInterval?
         var endTime: TimeInterval?
+        /// Authored speaker: a WebVTT `<v Name>` voice span or the ASS/SSA `Name` field.
+        /// `nil` when the cue names no speaker or mixes several voices.
+        var speaker: String? = nil
     }
 
     struct Candidate: Equatable, Sendable {
@@ -45,6 +48,8 @@ enum TimedText {
     struct Track: Equatable, Sendable {
         var candidate: Candidate
         var cues: [Cue]
+        /// `#RRGGBB` per speaker from WebVTT `STYLE ::cue(v[voice="Name"]) { color: … }`.
+        var voiceColors: [String: String] = [:]
 
         var languageLabel: String {
             candidate.language ?? "Default"
@@ -199,8 +204,19 @@ enum TimedText {
         }
     }
 
+    /// One parsed sidecar file, or `nil` when it holds no timed cue.
+    static func track(candidate: Candidate, text: String) -> Track? {
+        let cues = parse(text, format: candidate.format)
+        guard !cues.isEmpty else { return nil }
+        return Track(
+            candidate: candidate,
+            cues: cues,
+            voiceColors: candidate.format == .vtt ? vttVoiceColors(text) : [:]
+        )
+    }
+
     static func lyricsLines(from cues: [Cue]) -> [AudioLyrics.Line] {
-        cues.map { AudioLyrics.Line(text: $0.text, startTime: $0.startTime) }
+        cues.map { AudioLyrics.Line(text: $0.text, startTime: $0.startTime, speaker: $0.speaker) }
     }
 
     static func currentCue(in cues: [Cue], at time: TimeInterval) -> Cue? {
@@ -414,18 +430,14 @@ enum TimedText {
                 let fileName = (path as NSString).lastPathComponent
                 let ext = (fileName as NSString).pathExtension.lowercased()
                 guard let format = Format(rawValue: ext) else { continue }
-                let cues = parse(text, format: format)
-                guard !cues.isEmpty else { continue }
                 let candidate = Candidate(
                     fileName: fileName,
                     path: path,
                     format: format,
                     language: nil
                 )
-                return LoadResult(
-                    tracks: [Track(candidate: candidate, cues: cues)],
-                    selectedIndex: 0
-                )
+                guard let track = track(candidate: candidate, text: text) else { continue }
+                return LoadResult(tracks: [track], selectedIndex: 0)
             } catch {
                 if access.isMissing(error) { continue }
                 continue
@@ -459,10 +471,9 @@ enum TimedText {
                 let data = try await access.fetchFile(candidate.path)
                 guard !data.isEmpty,
                       let text = decodeText(data),
-                      !text.isEmpty else { continue }
-                let cues = parse(text, format: candidate.format)
-                guard !cues.isEmpty else { continue }
-                tracks.append(Track(candidate: candidate, cues: cues))
+                      !text.isEmpty,
+                      let track = track(candidate: candidate, text: text) else { continue }
+                tracks.append(track)
             } catch {
                 continue
             }
@@ -582,9 +593,48 @@ enum TimedText {
                 .joined(separator: "\n")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
-            cues.append(Cue(text: text, startTime: start, endTime: end))
+            cues.append(Cue(
+                text: text,
+                startTime: start,
+                endTime: end,
+                speaker: isVTT ? vttVoice(in: payload) : nil
+            ))
         }
         return cues
+    }
+
+    /// The cue's single voice. A cue that mixes voices has no one speaker.
+    private static func vttVoice(in payload: [String]) -> String? {
+        var voices = Set<String>()
+        for line in payload {
+            for match in line.matches(of: /<v(?:\.[^\s>]*)?[ \t]+([^>]+)>/) {
+                let name = String(match.1).trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty { voices.insert(name) }
+            }
+        }
+        return voices.count == 1 ? voices.first : nil
+    }
+
+    /// `::cue(v[voice="Name"]) { color: #RRGGBB }` rules from WebVTT STYLE blocks.
+    /// Other selectors and non-hex colors are ignored.
+    static func vttVoiceColors(_ text: String) -> [String: String] {
+        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        var colors: [String: String] = [:]
+        for block in normalized.components(separatedBy: "\n\n") {
+            let trimmed = block.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.uppercased().hasPrefix("STYLE") else { continue }
+            let rules = trimmed.matches(
+                of: /::cue\(\s*v\[\s*voice\s*=\s*"([^"]+)"\s*\]\s*\)\s*\{([^}]*)\}/
+            )
+            for rule in rules {
+                guard let color = String(rule.2).firstMatch(
+                    of: /(?:^|[;\s])color\s*:\s*(#[0-9A-Fa-f]{6})\b/
+                ) else { continue }
+                colors[String(rule.1)] = String(color.1).lowercased()
+            }
+        }
+        return colors
     }
 
     private static func isVTTIgnoredBlock(_ line: String) -> Bool {
@@ -618,7 +668,13 @@ enum TimedText {
             }
             let flattened = flattenASSText(fields[9...].joined(separator: ","))
             guard !flattened.isEmpty else { continue }
-            cues.append(Cue(text: flattened, startTime: start, endTime: end))
+            let name = fields[4].trimmingCharacters(in: .whitespaces)
+            cues.append(Cue(
+                text: flattened,
+                startTime: start,
+                endTime: end,
+                speaker: name.isEmpty ? nil : name
+            ))
         }
         return cues
     }

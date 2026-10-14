@@ -175,6 +175,80 @@ struct TimedTextTests {
         #expect(cues[1].endTime == 3)
     }
 
+    @Test("VTT voice spans name the speaker; mixed voices name none")
+    func parseVTTVoices() {
+        let cues = TimedText.parse(
+            """
+            WEBVTT
+
+            00:00:01.000 --> 00:00:02.000
+            <v Narrator>Night fell.</v>
+
+            00:00:02.000 --> 00:00:03.000
+            <v.loud \u{8427}\u{5CF0}>[shouts] Here!
+
+            00:00:03.000 --> 00:00:04.000
+            <v Ann>Hi</v>
+            <v Bob>Hey</v>
+
+            00:00:04.000 --> 00:00:05.000
+            No voice
+            """,
+            format: .vtt
+        )
+        #expect(cues.map(\.text) == ["Night fell.", "[shouts] Here!", "Hi\nHey", "No voice"])
+        #expect(cues.map(\.speaker) == ["Narrator", "\u{8427}\u{5CF0}", nil, nil])
+    }
+
+    @Test("VTT STYLE voice colors attach to the track; other rules are ignored")
+    func vttVoiceColors() {
+        let text = """
+        WEBVTT
+
+        STYLE
+        ::cue(v[voice="Narrator"]) { color: #C9C9CF; }
+        ::cue(v[voice="Ann"]) { background-color: #000000; color: red }
+        ::cue(.loud) { color: #ff0000 }
+
+        00:00:01.000 --> 00:00:02.000
+        <v Narrator>Night fell.</v>
+        """
+        let candidate = TimedText.Candidate(fileName: "a.vtt", path: "a.vtt", format: .vtt, language: nil)
+        let track = TimedText.track(candidate: candidate, text: text)
+        #expect(track?.cues.map(\.text) == ["Night fell."])
+        #expect(track?.voiceColors == ["Narrator": "#c9c9cf"])
+    }
+
+    @Test("ASS Name field names the speaker")
+    func parseASSName() {
+        let cues = TimedText.parse(
+            """
+            Dialogue: 0,0:00:01.00,0:00:02.00,Default,Narrator,0,0,0,,Night fell.
+            Dialogue: 0,0:00:02.00,0:00:03.00,Default,,0,0,0,,Unnamed
+            """,
+            format: .ass
+        )
+        #expect(cues.map(\.speaker) == ["Narrator", nil])
+    }
+
+    @Test("script cast lists speakers once in first-line order; labels open each turn")
+    func scriptCastAndTurns() {
+        let lines = [
+            AudioLyrics.Line(text: "a", startTime: 0, speaker: "Narrator"),
+            AudioLyrics.Line(text: "b", startTime: 1, speaker: "Narrator"),
+            AudioLyrics.Line(text: "c", startTime: 2, speaker: "Ann"),
+            AudioLyrics.Line(text: "d", startTime: 3, speaker: nil),
+            AudioLyrics.Line(text: "e", startTime: 4, speaker: "Narrator"),
+        ]
+        #expect(AudioReaderCast.isScript(lines))
+        #expect(!AudioReaderCast.isScript(TimedText.lyricsLines(from: TimedText.parse("[00:01.00]la", format: .lrc))))
+        #expect(AudioReaderCast.members(in: lines, voiceColors: ["Ann": "#ffb347"]) == [
+            AudioReaderCast.Member(name: "Narrator", colorHex: nil, paletteIndex: 0),
+            AudioReaderCast.Member(name: "Ann", colorHex: "#ffb347", paletteIndex: 1),
+        ])
+        #expect(lines.indices.map { AudioReaderCast.startsTurn(lines, at: $0) } == [true, false, true, false, true])
+    }
+
     @Test("ASS/SSA flatten Dialogue start/end and strip override tags")
     func parseASSFlatten() {
         let ass = TimedText.parse(

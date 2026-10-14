@@ -118,6 +118,8 @@ struct AudioLyricsPlayerView: View {
     @State private var progressTick = 0
     @State private var selectedTrackIndex: Int?
     @State private var loadedTimedText: TimedText.LoadResult?
+    /// Auto-scroll follows the current line until the reader drags the text.
+    @State private var followsPlayback = true
 
     private var resolvedTimedText: TimedText.LoadResult? {
         loadedTimedText ?? timedText
@@ -146,9 +148,16 @@ struct AudioLyricsPlayerView: View {
         return selected
     }
 
+    private var selectedTrack: TimedText.Track? {
+        guard let resolvedTimedText, resolvedTimedText.tracks.indices.contains(resolvedTrackIndex) else {
+            return nil
+        }
+        return resolvedTimedText.tracks[resolvedTrackIndex]
+    }
+
     private var lines: [AudioLyrics.Line] {
-        if let resolvedTimedText, resolvedTimedText.tracks.indices.contains(resolvedTrackIndex) {
-            return TimedText.lyricsLines(from: resolvedTimedText.tracks[resolvedTrackIndex].cues)
+        if let selectedTrack {
+            return TimedText.lyricsLines(from: selectedTrack.cues)
         }
         return AudioLyrics.lines(from: lyrics)
     }
@@ -286,29 +295,20 @@ struct AudioLyricsPlayerView: View {
                 .foregroundStyle(.themeComment)
                 .accessibilityIdentifier("audioLyrics.empty")
             Spacer()
+        } else if AudioReaderCast.isScript(verses) {
+            readerBody(verses)
         } else if AudioLyrics.allowsKaraoke(verses) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 28) {
-                        ForEach(Array(verses.enumerated()), id: \.offset) { index, line in
-                            lyricLine(line, index: index, current: currentIndex)
-                                .id(index)
-                                .onTapGesture {
-                                    guard let start = line.startTime else { return }
-                                    audioPlayer?.seek(to: start)
-                                }
-                        }
-                    }
-                    .padding(.horizontal, 28)
-                    .padding(.vertical, 36)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .onChange(of: currentIndex) { _, index in
-                    guard let index else { return }
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        proxy.scrollTo(index, anchor: .center)
+            followingScroll(anchor: .center) {
+                VStack(alignment: .leading, spacing: 28) {
+                    ForEach(Array(verses.enumerated()), id: \.offset) { index, line in
+                        lyricLine(line, index: index, current: currentIndex)
+                            .id(index)
+                            .onTapGesture { jump(to: line) }
                     }
                 }
+                .padding(.horizontal, 28)
+                .padding(.vertical, 36)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         } else {
             ScrollView {
@@ -322,6 +322,199 @@ struct AudioLyricsPlayerView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    /// Scrolls with playback, stops when the reader drags, and offers a way back.
+    private func followingScroll<Content: View>(
+        anchor: UnitPoint,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        let content = content()
+        return ScrollViewReader { proxy in
+            ScrollView {
+                content
+            }
+            .mask {
+                // Soft edges so lines fade under the cast strip and transport instead of clipping.
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 16)
+                    Color.black
+                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 16)
+                }
+            }
+            .onScrollPhaseChange { _, phase in
+                if phase == .interacting {
+                    followsPlayback = false
+                }
+            }
+            .onAppear {
+                guard let currentIndex else { return }
+                proxy.scrollTo(currentIndex, anchor: anchor)
+            }
+            .onChange(of: currentIndex) { _, index in
+                guard followsPlayback, let index else { return }
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    proxy.scrollTo(index, anchor: anchor)
+                }
+            }
+            .onChange(of: followsPlayback) { _, follows in
+                guard follows, let currentIndex else { return }
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    proxy.scrollTo(currentIndex, anchor: anchor)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if !followsPlayback, currentIndex != nil {
+                    Button {
+                        followsPlayback = true
+                    } label: {
+                        Label("Current Line", systemImage: "text.line.first.and.arrowtriangle.forward")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.themeFg)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(.themeBgHighlight.opacity(0.95), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 20)
+                    .transition(.opacity)
+                    .accessibilityIdentifier("audioLyrics.followCurrentLine")
+                }
+            }
+        }
+    }
+
+    private func jump(to line: AudioLyrics.Line) {
+        guard let start = line.startTime else { return }
+        followsPlayback = true
+        audioPlayer?.seek(to: start)
+    }
+
+    // MARK: - Script reader
+
+    private func readerBody(_ verses: [AudioLyrics.Line]) -> some View {
+        let cast = AudioReaderCast.members(in: verses, voiceColors: selectedTrack?.voiceColors ?? [:])
+        let colors = Dictionary(uniqueKeysWithValues: cast.map { ($0.name, Self.color(for: $0)) })
+        let current = currentIndex
+        let currentSpeaker = current.flatMap { verses.indices.contains($0) ? verses[$0].speaker : nil }
+        return VStack(spacing: 0) {
+            castStrip(cast, colors: colors, currentSpeaker: currentSpeaker)
+            followingScroll(anchor: UnitPoint(x: 0.5, y: 0.35)) {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(verses.enumerated()), id: \.offset) { index, line in
+                        readerParagraph(
+                            line,
+                            index: index,
+                            current: current,
+                            startsTurn: AudioReaderCast.startsTurn(verses, at: index),
+                            color: line.speaker.flatMap { colors[$0] } ?? .themeComment
+                        )
+                        .id(index)
+                        .onTapGesture { jump(to: line) }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func castStrip(
+        _ cast: [AudioReaderCast.Member],
+        colors: [String: Color],
+        currentSpeaker: String?
+    ) -> some View {
+        SessionChipFlowLayout(spacing: 8) {
+            ForEach(cast, id: \.name) { member in
+                let color = colors[member.name] ?? .themeComment
+                let isSpeaking = member.name == currentSpeaker
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(color)
+                        .frame(width: 8, height: 8)
+                    Text(member.name)
+                        .font(.footnote.weight(isSpeaking ? .semibold : .regular))
+                        .foregroundStyle(isSpeaking ? Color.themeFg : Color.themeFgDim)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(isSpeaking ? color.opacity(0.22) : Color.themeBgHighlight.opacity(0.7), in: Capsule())
+                .overlay(Capsule().strokeBorder(isSpeaking ? color : .clear, lineWidth: 1))
+                .animation(.easeInOut(duration: 0.2), value: isSpeaking)
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(isSpeaking ? .isSelected : [])
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Cast")
+        .accessibilityIdentifier("audioLyrics.cast")
+    }
+
+    private func readerParagraph(
+        _ line: AudioLyrics.Line,
+        index: Int,
+        current: Int?,
+        startsTurn: Bool,
+        color: Color
+    ) -> some View {
+        let isCurrent = current == index
+        let isPast = current.map { index < $0 } ?? false
+        let textColor: Color = if isCurrent || current == nil {
+            .themeFg
+        } else if isPast {
+            .themeComment
+        } else {
+            .themeFg.opacity(0.78)
+        }
+        return VStack(alignment: .leading, spacing: 4) {
+            if startsTurn, let speaker = line.speaker {
+                Text(speaker)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(color)
+                    .padding(.top, index == 0 ? 0 : 10)
+            }
+            Text(line.text)
+                .font(.title3)
+                .foregroundStyle(textColor)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 8)
+        .padding(.leading, 15)
+        .padding(.trailing, 12)
+        .background(
+            isCurrent ? color.opacity(0.12) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay(alignment: .leading) {
+            if isCurrent {
+                Capsule()
+                    .fill(color)
+                    .frame(width: 3)
+                    .padding(.vertical, 10)
+                    .padding(.leading, 5)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: isCurrent)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(line.startTime == nil ? [] : .isButton)
+    }
+
+    /// Authored WebVTT colors win; other speakers take theme accents so they follow the theme.
+    private static func color(for member: AudioReaderCast.Member) -> Color {
+        if let hex = member.colorHex, let authored = Color(hex: hex) {
+            return authored
+        }
+        let palette: [Color] = [.themeOrange, .themeBlue, .themeGreen, .themePurple, .themeRed, .themeCyan, .themeYellow]
+        return palette[member.paletteIndex % palette.count]
     }
 
     private func lyricLine(_ line: AudioLyrics.Line, index: Int, current: Int?) -> some View {

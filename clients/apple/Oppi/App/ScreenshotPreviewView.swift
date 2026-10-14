@@ -272,6 +272,8 @@ struct ScreenshotPreviewView: View {
             GlobalAudioBannerPreview()
         case "audio-file-player":
             AudioFilePlayerScreenshotPreview()
+        case "audio-script-reader":
+            AudioScriptReaderPreview()
         case "share-redaction-report":
             ShareRedactionReportPreview()
         case "share-redaction-settings":

@@ -213,7 +213,7 @@ extension RemoteTheme {
 
 // MARK: - Hex Parsing
 
-private extension Color {
+extension Color {
     /// Parse `#RRGGBB` hex string. Returns nil for empty string or invalid format.
     init?(hex: String) {
         var str = hex.trimmingCharacters(in: .whitespacesAndNewlines)
