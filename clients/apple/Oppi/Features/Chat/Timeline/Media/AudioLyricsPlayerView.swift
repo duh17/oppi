@@ -1,5 +1,5 @@
-import Combine
 import SwiftUI
+import UIKit
 
 /// Whether the player draws its own title in its header.
 ///
@@ -68,7 +68,7 @@ enum AudioLyricsPlayerPresenter {
         ) {
             return
         }
-        let root = AudioLyricsPlayerView(
+        let player = AudioLyricsPlayerViewController(configuration: .init(
             title: title,
             lyrics: lyrics,
             itemID: itemID,
@@ -80,10 +80,9 @@ enum AudioLyricsPlayerPresenter {
             showsCloseButton: true,
             timedText: timedText,
             sidecarLoader: sidecarLoader
-        )
-        let host = UIHostingController(rootView: root)
-        host.modalPresentationStyle = .fullScreen
-        presenter.present(host, animated: true)
+        ))
+        player.modalPresentationStyle = .fullScreen
+        presenter.present(player, animated: true)
     }
 
     @MainActor
@@ -99,6 +98,9 @@ enum AudioLyricsPlayerPresenter {
     }
 }
 
+/// SwiftUI host for ``AudioLyricsPlayerViewController`` in navigation stacks,
+/// the file browser, and previews. Back and Done use the host's dismiss action.
+/// Content stays inside the safe area; the theme background runs under the bars.
 struct AudioLyricsPlayerView: View {
     let title: String
     let lyrics: String?
@@ -114,314 +116,45 @@ struct AudioLyricsPlayerView: View {
     var timedText: TimedText.LoadResult? = nil
     var sidecarLoader: (() async -> TimedText.LoadResult)? = nil
 
-    @Environment(\.dismiss) private var dismiss
-    @State private var progressTick = 0
-    @State private var selectedTrackIndex: Int?
-    @State private var loadedTimedText: TimedText.LoadResult?
-    /// Auto-scroll follows the current line until the reader drags the text.
-    @State private var followsPlayback = true
-
-    private var resolvedTimedText: TimedText.LoadResult? {
-        loadedTimedText ?? timedText
-    }
-
-    private var resolvedTrackIndex: Int {
-        selectedTrackIndex ?? resolvedTimedText?.selectedIndex ?? 0
-    }
-
-    private var playbackTimedText: TimedText.LoadResult? {
-        Self.selectedTimedTextForPlayback(
-            resolvedTimedText,
-            selectedTrackIndex: selectedTrackIndex
-        )
-    }
-
-    static func selectedTimedTextForPlayback(
-        _ timedText: TimedText.LoadResult?,
-        selectedTrackIndex: Int?
-    ) -> TimedText.LoadResult? {
-        guard var selected = timedText else { return nil }
-        if let selectedTrackIndex,
-           selected.tracks.indices.contains(selectedTrackIndex) {
-            selected.selectedIndex = selectedTrackIndex
-        }
-        return selected
-    }
-
-    private var selectedTrack: TimedText.Track? {
-        guard let resolvedTimedText, resolvedTimedText.tracks.indices.contains(resolvedTrackIndex) else {
-            return nil
-        }
-        return resolvedTimedText.tracks[resolvedTrackIndex]
-    }
-
-    private var lines: [AudioLyrics.Line] {
-        if let selectedTrack {
-            return TimedText.lyricsLines(from: selectedTrack.cues)
-        }
-        return AudioLyrics.lines(from: lyrics)
-    }
-
-    private var currentIndex: Int? {
-        AudioLyrics.presentationCurrentIndex(in: lines, at: karaokeTime)
-    }
-
-    private var matchesPlayback: Bool {
-        guard let audioPlayer else { return false }
-        return audioPlayer.playingItemID == itemID
-            || audioPlayer.isStreamingPlaybackActive(itemID: itemID)
-    }
-
-    private var karaokeTime: TimeInterval? {
-        guard matchesPlayback else { return nil }
-        return audioPlayer?.currentTime
-    }
-
     var body: some View {
-        ZStack {
-            Color.themeBg.ignoresSafeArea()
-            VStack(spacing: 0) {
-                header
-                lyricsBody
-                AudioPlaybackTransportControls(
-                    itemID: itemID,
-                    audioPlayer: audioPlayer,
-                    play: { play(playbackTimedText) },
-                    openFile: openFile,
-                    density: .fullScreen
-                )
-            }
-        }
-        .task {
-            guard let sidecarLoader else { return }
-            let loaded = await sidecarLoader()
-            guard !Task.isCancelled else { return }
-            loadedTimedText = loaded
-        }
-        .onAppear {
-            if autoplayOnAppear {
-                play(playbackTimedText)
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: AudioPlayerService.stateDidChangeNotification)) { _ in
-            progressTick += 1
-        }
-        .horizontalBackSwipeGesture(isEnabled: usesNavigationBackButton) {
-            dismiss()
-        }
-    }
-
-    private var header: some View {
-        HStack {
-            if usesNavigationBackButton {
-                Button(action: { dismiss() }, label: {
-                    Image(systemName: "chevron.backward")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.themeCyan)
-                        .frame(width: 44, height: 44)
-                })
-                .buttonStyle(.plain)
-                .accessibilityLabel(String(localized: "Back"))
-                .accessibilityIdentifier("fullscreen-audio.back")
-            } else if showsCloseButton {
-                Button("Done") { dismiss() }
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.themeCyan)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(.themeBgHighlight.opacity(0.9), in: Capsule())
-            }
-            Spacer()
-            if titlePresentation.showsInternalTitle {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(1)
-            }
-            Spacer()
-            // File browser embeds this view with the shared player and
-            // `showsCloseButton: false`. Stop belongs only on presented
-            // Now Playing chrome so it cannot kill unrelated playback.
-            if showsCloseButton || usesNavigationBackButton, let audioPlayer {
-                InAppNowPlayingStopButton(
-                    audioPlayer: audioPlayer,
-                    accessibilityIdentifier: "audioLyrics.stop"
-                )
-            }
-            languageControl
-                .frame(width: 72, alignment: .trailing)
-            if let shareFileData {
-                AsyncFileShareButton(filename: title, loadData: shareFileData)
-                    .frame(width: 44, height: 44)
-                    .accessibilityIdentifier("audioLyrics.share")
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
-    }
-
-    @ViewBuilder
-    private var languageControl: some View {
-        if let resolvedTimedText, resolvedTimedText.showsLanguageControl {
-            Menu {
-                ForEach(resolvedTimedText.tracks.indices, id: \.self) { index in
-                    Button(resolvedTimedText.tracks[index].languageLabel) {
-                        selectTrack(index, in: resolvedTimedText)
-                    }
-                }
-            } label: {
-                Text(resolvedTimedText.tracks.indices.contains(resolvedTrackIndex)
-                     ? resolvedTimedText.tracks[resolvedTrackIndex].languageLabel
-                     : "Language")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.themePurple)
-                    .lineLimit(1)
-            }
-            .accessibilityLabel("Lyrics language")
-            .accessibilityIdentifier("audioLyrics.language")
-        } else {
-            Color.clear.frame(width: 72, height: 1)
-        }
-    }
-
-    @ViewBuilder
-    private var lyricsBody: some View {
-        let verses = lines
-        if verses.isEmpty {
-            Spacer()
-            Text("No lyrics")
-                .font(.title2)
-                .foregroundStyle(.themeComment)
-                .accessibilityIdentifier("audioLyrics.empty")
-            Spacer()
-        } else if AudioReaderCast.isScript(verses) {
-            readerBody(verses)
-        } else {
-            transcript(verses, style: .lyrics, speakerColors: [:])
-        }
-    }
-
-    /// UIKit transcript with soft edges. It follows playback until the reader drags,
-    /// then offers Current Line to resume.
-    private func transcript(
-        _ verses: [AudioLyrics.Line],
-        style: AudioTranscriptStyle,
-        speakerColors: [String: Color]
-    ) -> some View {
-        AudioTranscriptView(
-            lines: verses,
-            style: style,
-            palette: AudioTranscriptPalette(
-                foreground: UIColor(Color.themeFg),
-                dimmed: UIColor(Color.themeComment),
-                unnamed: UIColor(Color.themeComment),
-                speakerColors: speakerColors.mapValues { UIColor($0) }
-            ),
-            currentIndex: currentIndex,
-            followsPlayback: $followsPlayback,
-            onSelectLine: { index in jump(to: verses[index]) }
-        )
-        .mask {
-            // Soft edges so lines fade under the cast strip and transport instead of clipping.
-            VStack(spacing: 0) {
-                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 16)
-                Color.black
-                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 16)
-            }
-        }
-        .overlay(alignment: .bottom) {
-            if !followsPlayback, currentIndex != nil {
-                Button {
-                    followsPlayback = true
-                } label: {
-                    Label("Current Line", systemImage: "text.line.first.and.arrowtriangle.forward")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.themeFg)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(.themeBgHighlight.opacity(0.95), in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .padding(.bottom, 20)
-                .transition(.opacity)
-                .accessibilityIdentifier("audioLyrics.followCurrentLine")
-            }
-        }
-    }
-
-    private func jump(to line: AudioLyrics.Line) {
-        guard let start = line.startTime else { return }
-        followsPlayback = true
-        audioPlayer?.seek(to: start)
-    }
-
-    // MARK: - Script reader
-
-    private func readerBody(_ verses: [AudioLyrics.Line]) -> some View {
-        let cast = AudioReaderCast.members(in: verses, voiceColors: selectedTrack?.voiceColors ?? [:])
-        let colors = Dictionary(uniqueKeysWithValues: cast.map { ($0.name, Self.color(for: $0)) })
-        let currentSpeaker = currentIndex.flatMap { verses.indices.contains($0) ? verses[$0].speaker : nil }
-        return VStack(spacing: 0) {
-            castStrip(cast, colors: colors, currentSpeaker: currentSpeaker)
-            transcript(verses, style: .script, speakerColors: colors)
-        }
-    }
-
-    private func castStrip(
-        _ cast: [AudioReaderCast.Member],
-        colors: [String: Color],
-        currentSpeaker: String?
-    ) -> some View {
-        SessionChipFlowLayout(spacing: 8) {
-            ForEach(cast, id: \.name) { member in
-                let color = colors[member.name] ?? .themeComment
-                let isSpeaking = member.name == currentSpeaker
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(color)
-                        .frame(width: 8, height: 8)
-                    Text(member.name)
-                        .font(.footnote.weight(isSpeaking ? .semibold : .regular))
-                        .foregroundStyle(isSpeaking ? Color.themeFg : Color.themeFgDim)
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(isSpeaking ? color.opacity(0.22) : Color.themeBgHighlight.opacity(0.7), in: Capsule())
-                .overlay(Capsule().strokeBorder(isSpeaking ? color : .clear, lineWidth: 1))
-                .animation(.easeInOut(duration: 0.2), value: isSpeaking)
-                .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(isSpeaking ? .isSelected : [])
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Cast")
-        .accessibilityIdentifier("audioLyrics.cast")
-    }
-
-    /// Authored WebVTT colors win; other speakers take theme accents so they follow the theme.
-    private static func color(for member: AudioReaderCast.Member) -> Color {
-        if let hex = member.colorHex, let authored = Color(hex: hex) {
-            return authored
-        }
-        let palette: [Color] = [.themeOrange, .themeBlue, .themeGreen, .themePurple, .themeRed, .themeCyan, .themeYellow]
-        return palette[member.paletteIndex % palette.count]
-    }
-
-    private func selectTrack(_ index: Int, in timedText: TimedText.LoadResult) {
-        selectedTrackIndex = index
-        var selected = timedText
-        selected.selectedIndex = index
-        audioPlayer?.setNowPlayingTimedText(selected, for: itemID)
+        AudioLyricsPlayerHost(player: self)
+            .background { Color.themeBg.ignoresSafeArea() }
     }
 }
 
+private struct AudioLyricsPlayerHost: UIViewControllerRepresentable {
+    let player: AudioLyricsPlayerView
+
+    func makeUIViewController(context: Context) -> AudioLyricsPlayerViewController {
+        AudioLyricsPlayerViewController(configuration: configuration(context))
+    }
+
+    func updateUIViewController(_ controller: AudioLyricsPlayerViewController, context: Context) {
+        controller.apply(configuration(context))
+    }
+
+    private func configuration(_ context: Context) -> AudioLyricsPlayerViewController.Configuration {
+        let dismiss = context.environment.dismiss
+        return .init(
+            title: player.title,
+            lyrics: player.lyrics,
+            itemID: player.itemID,
+            audioPlayer: player.audioPlayer,
+            play: player.play,
+            openFile: player.openFile,
+            shareFileData: player.shareFileData,
+            autoplayOnAppear: player.autoplayOnAppear,
+            showsCloseButton: player.showsCloseButton,
+            usesNavigationBackButton: player.usesNavigationBackButton,
+            titlePresentation: player.titlePresentation,
+            timedText: player.timedText,
+            sidecarLoader: player.sidecarLoader,
+            dismiss: { dismiss() }
+        )
+    }
+}
+
+/// Spinner with a cancel glyph for the SwiftUI Now Playing pill's play slot.
 struct AudioLoadingCancelControl: View {
     nonisolated static let cancelSymbolName = "xmark"
     let size: CGFloat
@@ -469,438 +202,4 @@ enum AudioPlaybackTransportDensity {
     var horizontalPadding: CGFloat { self == .fullScreen ? 24 : 0 }
     var bottomPadding: CGFloat { self == .fullScreen ? 28 : 0 }
     var topPadding: CGFloat { self == .fullScreen ? 8 : 0 }
-}
-
-/// Shared seek and transport controls for full-screen and expanded Now Playing.
-struct AudioPlaybackTransportControls: View {
-    let itemID: String
-    let audioPlayer: AudioPlayerService?
-    let play: () -> Void
-    var openFile: (() -> Void)? = nil
-    var density: AudioPlaybackTransportDensity = .fullScreen
-    var accessibilityPrefix = "audioLyrics"
-
-    @State private var progressTick = 0
-    @State private var isScrubbing = false
-    @State private var scrubFraction: Double = 0
-
-    var body: some View {
-        VStack(spacing: density.stackSpacing) {
-            VStack(spacing: 6) {
-                if showsListeningControls, let index = currentChapterIndex {
-                    Text(chapters[index].title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.themeFgDim)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .accessibilityIdentifier("\(accessibilityPrefix).chapterTitle")
-                }
-                AudioPlaybackSeekBar(
-                    fraction: displayedFraction,
-                    isSeekable: isSeekable,
-                    accessibilityIdentifier: "\(accessibilityPrefix).seek",
-                    onScrub: { fraction in
-                        isScrubbing = true
-                        scrubFraction = fraction
-                    },
-                    onCommit: commitSeek
-                )
-                HStack {
-                    Text(AudioPlaybackTimeFormatting.clock(elapsed))
-                    Spacer()
-                    Text(AudioPlaybackTimeFormatting.clock(duration))
-                }
-                .font(.caption)
-                .foregroundStyle(.themeComment)
-            }
-
-            HStack(spacing: hasChapterControls ? 16 : density.controlSpacing) {
-                if hasChapterControls {
-                    chapterButton(forward: false)
-                }
-                skipButton(
-                    interval: -AudioPlayerService.skipInterval,
-                    symbol: "gobackward.15",
-                    label: "Skip back 15 seconds",
-                    identifier: "\(accessibilityPrefix).skipBack"
-                )
-                Button(action: togglePlay) {
-                    if controlAction == .cancelLoading {
-                        AudioLoadingCancelControl(size: density.playSize)
-                    } else {
-                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: density.playSymbolSize, weight: .semibold))
-                            .foregroundStyle(.themeFg)
-                            .frame(width: density.playSize, height: density.playSize)
-                            .contentShape(Rectangle())
-                    }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(controlAccessibilityLabel)
-                .accessibilityIdentifier("\(accessibilityPrefix).playPause")
-                skipButton(
-                    interval: AudioPlayerService.skipInterval,
-                    symbol: "goforward.15",
-                    label: "Skip forward 15 seconds",
-                    identifier: "\(accessibilityPrefix).skipForward"
-                )
-                if hasChapterControls {
-                    chapterButton(forward: true)
-                }
-            }
-
-            if let failure = audioPlayer?.playbackFailure, failure.itemID == itemID {
-                Label(
-                    String(localized: "Can't play this audio. \(failure.reason)"),
-                    systemImage: "exclamationmark.triangle"
-                )
-                .font(.footnote)
-                .foregroundStyle(.themeYellow)
-                .multilineTextAlignment(.center)
-                .accessibilityIdentifier("\(accessibilityPrefix).playbackFailure")
-            }
-
-            if showsListeningControls {
-                listeningControls
-            }
-
-            if !matchesPlayback, openFile != nil {
-                Button("Open file", action: { openFile?() })
-                    .font(.subheadline)
-                    .foregroundStyle(.themePurple)
-            }
-        }
-        .padding(.horizontal, density.horizontalPadding)
-        .padding(.bottom, density.bottomPadding)
-        .padding(.top, density.topPadding)
-        .onReceive(NotificationCenter.default.publisher(for: AudioPlayerService.stateDidChangeNotification)) { _ in
-            progressTick += 1
-        }
-    }
-
-    private var matchesPlayback: Bool {
-        guard let audioPlayer else { return false }
-        return audioPlayer.playingItemID == itemID
-            || audioPlayer.isStreamingPlaybackActive(itemID: itemID)
-    }
-
-    // MARK: Long-form listening
-
-    /// Speed, chapters, and sleep timer live on the full-screen player only.
-    private var showsListeningControls: Bool { density == .fullScreen }
-
-    private var chapters: [AudioChapter] {
-        _ = progressTick
-        return matchesPlayback ? audioPlayer?.chapters ?? [] : []
-    }
-
-    private var currentChapterIndex: Int? {
-        AudioChapters.index(in: chapters, at: elapsed)
-    }
-
-    private var hasChapterControls: Bool {
-        showsListeningControls && !chapters.isEmpty
-    }
-
-    private var listeningControls: some View {
-        HStack(spacing: 10) {
-            speedMenu
-            if !chapters.isEmpty {
-                chapterMenu
-            }
-            if matchesPlayback {
-                sleepMenu
-            }
-        }
-    }
-
-    private var speedMenu: some View {
-        let rate = audioPlayer?.playbackRate ?? 1
-        return Menu {
-            Picker(
-                "Playback Speed",
-                selection: Binding(
-                    get: { audioPlayer?.playbackRate ?? 1 },
-                    set: { audioPlayer?.setPlaybackRate($0) }
-                )
-            ) {
-                ForEach(AudioPlaybackRate.options, id: \.self) { option in
-                    Text(AudioPlaybackRate.label(option)).tag(option)
-                }
-            }
-        } label: {
-            listeningChip(Text(AudioPlaybackRate.label(rate)), isActive: rate != 1)
-        }
-        .accessibilityLabel("Playback Speed")
-        .accessibilityValue(AudioPlaybackRate.label(rate))
-        .accessibilityIdentifier("\(accessibilityPrefix).speed")
-    }
-
-    private var chapterMenu: some View {
-        // Rows capture chapter values, not indices into the live `chapters`
-        // property: Menu content renders lazily, and closing the player clears
-        // the chapters before SwiftUI drops this menu.
-        let chapters = chapters
-        let current = AudioChapters.index(in: chapters, at: elapsed)
-        return Menu {
-            ForEach(Array(chapters.enumerated()), id: \.offset) { index, chapter in
-                Button {
-                    audioPlayer?.seek(to: chapter.start)
-                } label: {
-                    if index == current {
-                        Label(chapter.title, systemImage: "checkmark")
-                    } else {
-                        Text(chapter.title)
-                    }
-                }
-            }
-        } label: {
-            listeningChip(Label("Chapters", systemImage: "list.bullet"), isActive: false)
-        }
-        .accessibilityIdentifier("\(accessibilityPrefix).chapters")
-    }
-
-    private var sleepMenu: some View {
-        let timer = audioPlayer?.sleepTimer
-        return Menu {
-            ForEach(AudioSleepTimer.minuteOptions, id: \.self) { minutes in
-                Button("\(minutes) Minutes") { audioPlayer?.setSleepTimer(.minutes(minutes)) }
-            }
-            if !chapters.isEmpty {
-                Button("End of Chapter") { audioPlayer?.setSleepTimer(.endOfChapter) }
-            }
-            if timer != nil {
-                Button("Turn Off Timer", role: .destructive) { audioPlayer?.setSleepTimer(nil) }
-            }
-        } label: {
-            listeningChip(Label(sleepLabel(timer), systemImage: "moon.zzz"), isActive: timer != nil)
-        }
-        .accessibilityLabel("Sleep Timer")
-        .accessibilityValue(timer == nil ? "Off" : sleepLabel(timer))
-        .accessibilityIdentifier("\(accessibilityPrefix).sleepTimer")
-    }
-
-    private func sleepLabel(_ timer: AudioSleepTimer?) -> String {
-        _ = progressTick
-        guard let timer else { return String(localized: "Sleep") }
-        if timer.option == .endOfChapter { return String(localized: "Chapter End") }
-        return AudioPlaybackTimeFormatting.clock(timer.remainingTime(now: Date()))
-    }
-
-    private func listeningChip(_ content: some View, isActive: Bool) -> some View {
-        content
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(isActive ? Color.themePurple : Color.themeFg)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(.themeBgHighlight.opacity(0.9), in: Capsule())
-    }
-
-    private func chapterButton(forward: Bool) -> some View {
-        Button {
-            audioPlayer?.skipChapter(forward: forward)
-        } label: {
-            Image(systemName: forward ? "forward.end.fill" : "backward.end.fill")
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(.themeFg)
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!isSeekable)
-        .opacity(isSeekable ? 1 : 0.45)
-        .accessibilityLabel(forward ? "Next Chapter" : "Previous Chapter")
-        .accessibilityIdentifier("\(accessibilityPrefix).\(forward ? "nextChapter" : "previousChapter")")
-    }
-
-    private var controlAction: AudioPlaybackControlAction {
-        AudioPlaybackControlAction.resolve(
-            isLoading: audioPlayer?.loadingItemID == itemID,
-            isActive: matchesPlayback,
-            isPaused: audioPlayer?.isPaused == true
-        )
-    }
-
-    private var controlAccessibilityLabel: String {
-        switch controlAction {
-        case .start: return "Play"
-        case .cancelLoading: return "Cancel Loading"
-        case .pause: return "Pause"
-        case .resume: return "Play"
-        }
-    }
-
-    private var elapsed: TimeInterval {
-        _ = progressTick
-        if isScrubbing,
-           let time = AudioPlaybackSeek.time(forFraction: scrubFraction, duration: duration) {
-            return time
-        }
-        guard matchesPlayback else { return 0 }
-        return audioPlayer?.currentTime ?? 0
-    }
-
-    private var duration: TimeInterval? {
-        matchesPlayback ? audioPlayer?.duration : nil
-    }
-
-    private var isPlaying: Bool {
-        matchesPlayback && audioPlayer?.isPaused == false
-    }
-
-    private var isSeekable: Bool {
-        matchesPlayback && AudioPlaybackSeek.isSeekable(duration: duration)
-    }
-
-    private var displayedFraction: Double {
-        if isScrubbing { return scrubFraction }
-        return AudioPlaybackSeek.fraction(elapsed: elapsed, duration: duration)
-    }
-
-    private func commitSeek(_ fraction: Double) {
-        isScrubbing = false
-        scrubFraction = fraction
-        guard isSeekable,
-              let time = AudioPlaybackSeek.time(forFraction: fraction, duration: duration) else {
-            return
-        }
-        audioPlayer?.seek(to: time)
-    }
-
-    private func skipButton(
-        interval: TimeInterval,
-        symbol: String,
-        label: String,
-        identifier: String
-    ) -> some View {
-        Button {
-            guard matchesPlayback else { return }
-            audioPlayer?.skip(by: interval)
-        } label: {
-            Image(systemName: symbol)
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(.themeFg)
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!isSeekable)
-        .opacity(isSeekable ? 1 : 0.45)
-        .accessibilityLabel(label)
-        .accessibilityIdentifier(identifier)
-    }
-
-    private func togglePlay() {
-        switch controlAction {
-        case .start:
-            play()
-        case .cancelLoading:
-            audioPlayer?.stop()
-        case .pause:
-            audioPlayer?.pause()
-        case .resume:
-            audioPlayer?.resume()
-        }
-    }
-}
-
-/// 44pt track that scrubs on drag and tap-to-position. Native Slider is thumb-only.
-private struct AudioPlaybackSeekBar: View {
-    var fraction: Double
-    var isSeekable: Bool
-    var accessibilityIdentifier = "audioLyrics.seek"
-    var onScrub: (Double) -> Void
-    var onCommit: (Double) -> Void
-
-    /// `@GestureState` tracks the drag so the back-swipe claim is released even
-    /// when the gesture is cancelled (e.g. `isSeekable` flips off mid-scrub).
-    @GestureState private var isTrackingSeek = false
-    @State private var scrubClaim: BackSwipeExclusiveClaim?
-
-    var body: some View {
-        GeometryReader { geo in
-            let width = max(geo.size.width, 1)
-            let clamped = min(1, max(0, fraction))
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.themeComment.opacity(0.35))
-                    .frame(height: 4)
-                Capsule()
-                    .fill(.themeFg)
-                    .frame(width: width * clamped, height: 4)
-                Circle()
-                    .fill(.themeFg)
-                    .frame(width: 12, height: 12)
-                    .offset(x: (width * clamped) - 6)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 0)
-                    .updating($isTrackingSeek) { _, state, _ in
-                        state = true
-                    }
-                    .onChanged { value in
-                        beginClaim()
-                        onScrub(Self.fraction(forX: value.location.x, width: width))
-                    }
-                    .onEnded { value in
-                        onCommit(Self.fraction(forX: value.location.x, width: width))
-                    }
-            )
-        }
-        .frame(height: 44)
-        .allowsHitTesting(isSeekable)
-        .opacity(isSeekable ? 1 : 0.55)
-        .onChange(of: isTrackingSeek) { _, tracking in
-            if !tracking {
-                releaseClaim()
-            }
-        }
-        .onChange(of: isSeekable) { _, seekable in
-            if !seekable {
-                releaseClaim()
-            }
-        }
-        .onDisappear { releaseClaim() }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Playback position")
-        .accessibilityValue(percentValue)
-        .accessibilityIdentifier(accessibilityIdentifier)
-        .accessibilityAdjustableAction { direction in
-            guard isSeekable else { return }
-            let step = 0.05
-            switch direction {
-            case .increment:
-                onCommit(min(1, fraction + step))
-            case .decrement:
-                onCommit(max(0, fraction - step))
-            @unknown default:
-                break
-            }
-        }
-    }
-
-    private var percentValue: String {
-        "\(Int((min(1, max(0, fraction)) * 100).rounded())) percent"
-    }
-
-    /// Acquire inside the gesture callback so a fast flick cannot reach the
-    /// parent's first `onChanged` before the claim exists.
-    private func beginClaim() {
-        guard scrubClaim == nil else { return }
-        scrubClaim = HorizontalBackSwipeGesturePolicy.acquireExclusiveClaim()
-    }
-
-    private func releaseClaim() {
-        if let claim = scrubClaim {
-            HorizontalBackSwipeGesturePolicy.releaseExclusiveClaim(claim)
-            scrubClaim = nil
-        }
-    }
-
-    private static func fraction(forX x: CGFloat, width: CGFloat) -> Double {
-        guard width > 0 else { return 0 }
-        return min(1, max(0, Double(x / width)))
-    }
 }

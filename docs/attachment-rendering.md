@@ -238,7 +238,7 @@ Only `#RRGGBB` colors on `v[voice="…"]` selectors are read. Speakers without o
 The full-screen player has long-form listening controls:
 
 - **Speed:** 0.75× to 2×, kept as a preference and shown on the lock screen, which can change it too. Live voice streams always play at normal speed.
-- **Chapters:** read from the file's own chapter metadata (M4B/MP4). The current chapter's title shows above the seek bar; previous/next chapter buttons sit beside the skip buttons, and **Chapters** lists them all. Previous restarts the chapter unless you are in its first three seconds.
+- **Chapters:** read from the file's own chapter metadata (M4B/MP4). The current chapter's title shows above the seek bar; previous/next chapter buttons sit beside the skip buttons, and **Chapters** lists them all with the current one checked. Previous restarts the chapter unless you are in its first three seconds.
 - **Resume:** recordings of five minutes or more reopen where you left off. Positions within 30 seconds of either end start over, and finishing a recording forgets its position.
 - **Sleep timer:** 15, 30, 45, or 60 minutes of listening (pausing does not count down), or the end of the current chapter.
 

@@ -184,7 +184,7 @@ struct InAppNowPlayingChromeTests {
             selectedIndex: 0
         )
 
-        let selected = AudioLyricsPlayerView.selectedTimedTextForPlayback(
+        let selected = AudioLyricsPlayerViewController.selectedTimedTextForPlayback(
             timedText,
             selectedTrackIndex: 1
         )
@@ -673,10 +673,6 @@ struct InAppNowPlayingChromeTests {
         #expect(chrome.contains("\\(accessibilityPrefix).stop"))
         #expect(chrome.contains("stopHitSize"))
         #expect(chrome.contains("frame(width: size, height: size)"))
-
-        let lyrics = try audioLyricsPlayerSource()
-        #expect(lyrics.contains("InAppNowPlayingStopButton"))
-        #expect(lyrics.contains("audioLyrics.stop"))
     }
 
     @Test func stopEndsActivePlaybackWhilePauseAndDoneDoNot() throws {
@@ -700,17 +696,6 @@ struct InAppNowPlayingChromeTests {
         #expect(stopButton.contains("xmark"))
         #expect(chrome.contains("case .pause:\n            audioPlayer.pause()"))
         #expect(chrome.contains("case .cancelLoading:\n            audioPlayer.stop()"))
-
-        let lyrics = try audioLyricsPlayerSource()
-        let header = try #require(sourceSlice(
-            lyrics,
-            from: "private var header:",
-            to: "private var languageControl"
-        ))
-        #expect(header.contains("Button(\"Done\") { dismiss() }"))
-        #expect(!header.contains("audioPlayer.stop()"))
-        #expect(!header.contains("audioPlayer?.stop()"))
-        #expect(header.contains("InAppNowPlayingStopButton") || header.contains("audioLyrics.stop"))
     }
 
     @Test func titlePlayAndStopHitRegionsStayDistinct() throws {
@@ -753,44 +738,41 @@ struct InAppNowPlayingChromeTests {
         #expect(!playPause.contains("Stop Playback"))
     }
 
-    @Test func embeddedLyricsPlayerOmitsStopWhilePresentedPlayerKeepsIt() throws {
-        let lyrics = try audioLyricsPlayerSource()
-        let header = try #require(sourceSlice(
-            lyrics,
-            from: "private var header:",
-            to: "private var languageControl"
-        ))
-        #expect(header.contains("InAppNowPlayingStopButton"))
-        #expect(header.contains("audioLyrics.stop"))
-        #expect(header.contains("if showsCloseButton || usesNavigationBackButton, let audioPlayer"))
-        #expect(!header.contains("if let audioPlayer {"))
+    /// Stop belongs to presented players (modal Done, pushed Back). The file
+    /// browser embeds the player over the shared service, so Stop there could
+    /// kill unrelated playback.
+    @Test func stopShowsOnlyOnPresentedPlayerChrome() {
+        let player = AudioPlayerService()
+        func stopIsVisible(showsCloseButton: Bool, usesNavigationBackButton: Bool) -> Bool {
+            let controller = AudioLyricsPlayerViewController(configuration: .init(
+                title: "clip.m4a",
+                lyrics: nil,
+                itemID: "audio-1",
+                audioPlayer: player,
+                play: { _ in },
+                openFile: nil,
+                showsCloseButton: showsCloseButton,
+                usesNavigationBackButton: usesNavigationBackButton
+            ))
+            controller.loadViewIfNeeded()
+            guard let stop = firstSubview(withAccessibilityIdentifier: "audioLyrics.stop", in: controller.view) else {
+                return false
+            }
+            return !stop.isHidden
+        }
 
-        let presenter = try #require(sourceSlice(
-            lyrics,
-            from: "static func present(",
-            to: "struct AudioLyricsPlayerView"
-        ))
-        #expect(presenter.contains("showsCloseButton: true"))
-
-        let chrome = try nowPlayingChromeSource()
-        let screen = try #require(sourceSlice(
-            chrome,
-            from: "struct InAppNowPlayingPlayerScreen",
-            to: "private func dismissIfPlaybackEnded"
-        ))
-        #expect(screen.contains("usesNavigationBackButton: true"))
-        #expect(!screen.contains("showsStopButton: false"))
-
-        let fileBrowser = try fileBrowserContentSource()
-        let audioView = try #require(sourceSlice(
-            fileBrowser,
-            from: "private func audioView(",
-            to: "// MARK: - Loading"
-        ))
-        #expect(audioView.contains("showsCloseButton: false"))
-        #expect(!audioView.contains("showsStopButton: true"))
-        #expect(!audioView.contains("InAppNowPlayingStopButton"))
+        #expect(stopIsVisible(showsCloseButton: true, usesNavigationBackButton: false))
+        #expect(stopIsVisible(showsCloseButton: false, usesNavigationBackButton: true))
+        #expect(!stopIsVisible(showsCloseButton: false, usesNavigationBackButton: false))
     }
+}
+
+private func firstSubview(withAccessibilityIdentifier identifier: String, in root: UIView) -> UIView? {
+    if root.accessibilityIdentifier == identifier { return root }
+    for subview in root.subviews {
+        if let match = firstSubview(withAccessibilityIdentifier: identifier, in: subview) { return match }
+    }
+    return nil
 }
 
 private func nowPlayingChromeSource() throws -> String {
@@ -808,24 +790,6 @@ private func chatViewSource() throws -> String {
         .deletingLastPathComponent()
         .deletingLastPathComponent()
         .appending(path: "Oppi/Features/Chat/ChatView.swift")
-    return try String(contentsOf: sourceURL, encoding: .utf8)
-}
-
-private func audioLyricsPlayerSource() throws -> String {
-    let sourceURL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appending(path: "Oppi/Features/Chat/Timeline/Media/AudioLyricsPlayerView.swift")
-    return try String(contentsOf: sourceURL, encoding: .utf8)
-}
-
-private func fileBrowserContentSource() throws -> String {
-    let sourceURL = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appending(path: "Oppi/Features/FileBrowser/FileBrowserContentView.swift")
     return try String(contentsOf: sourceURL, encoding: .utf8)
 }
 

@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// How the full-screen audio player lays out transcript lines.
@@ -21,37 +20,9 @@ struct AudioTranscriptPalette: Equatable {
     }
 }
 
-/// UIKit transcript pane: a self-sizing collection view, so long audiobooks only
+/// Transcript pane: a self-sizing collection view, so long audiobooks only
 /// reconfigure the outgoing and incoming current line per playback tick, and
-/// follow-scroll lands on real cell geometry instead of SwiftUI height estimates.
-struct AudioTranscriptView: UIViewRepresentable {
-    var lines: [AudioLyrics.Line]
-    var style: AudioTranscriptStyle
-    var palette: AudioTranscriptPalette
-    var currentIndex: Int?
-    @Binding var followsPlayback: Bool
-    var onSelectLine: (Int) -> Void
-
-    func makeUIView(context: Context) -> AudioTranscriptCollectionView {
-        AudioTranscriptCollectionView()
-    }
-
-    func updateUIView(_ view: AudioTranscriptCollectionView, context: Context) {
-        let follows = $followsPlayback
-        view.onSelectLine = onSelectLine
-        view.onUserScroll = {
-            if follows.wrappedValue { follows.wrappedValue = false }
-        }
-        view.update(
-            lines: lines,
-            style: style,
-            palette: palette,
-            currentIndex: currentIndex,
-            followsPlayback: followsPlayback
-        )
-    }
-}
-
+/// follow-scroll lands on real cell geometry instead of height estimates.
 final class AudioTranscriptCollectionView: UIView, UICollectionViewDelegate {
     var onSelectLine: ((Int) -> Void)?
     var onUserScroll: (() -> Void)?

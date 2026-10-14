@@ -496,6 +496,7 @@ private struct AudioFilePlayerScreenshotPreview: View {
             showsCloseButton: false,
             usesNavigationBackButton: true
         )
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("screenshot.ready")
     }
 }

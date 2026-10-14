@@ -37,7 +37,8 @@ final class AudioScriptReaderUITests: XCTestCase {
         XCTAssertTrue(waitUntil { target.isHittable }, "Line 4 should be visible below the current line")
         target.tap()
         XCTAssertTrue(waitUntil { target.isSelected }, "Tapping a line should seek playback to it")
-        XCTAssertFalse(playing.isSelected, "The previous line should no longer be current")
+        let current = app.cells.matching(NSPredicate(format: "selected == true"))
+        XCTAssertEqual(current.count, 1, "Only the tapped line should be current; the previous line no longer is")
     }
 
     func testSpeedAndSleepTimerControls() {

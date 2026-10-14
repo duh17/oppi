@@ -110,6 +110,7 @@ struct AudioScriptReaderPreview: View {
             audioPlayer.seek(to: 31)
             audioPlayer.pause()
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("screenshot.ready")
     }
 
