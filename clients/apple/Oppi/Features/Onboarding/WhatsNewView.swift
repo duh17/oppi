@@ -78,56 +78,63 @@ struct WhatsNewView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
 
-    /// Build 54 · Changes since Build 52
+    /// Build 55 · Changes since Build 54
     private let features: [WhatsNewFeature] = [
         WhatsNewFeature(
-            id: "mcp-servers",
-            icon: "puzzlepiece.extension",
-            iconColor: .themePurple,
-            title: String(localized: "MCP servers"),
-            description: String(localized: "Sessions load your Pi MCP servers. From iPhone, see each server's status, tools, and errors; turn servers on or off, change exposure, add or remove them, and sign in, for all workspaces or one.")
-        ),
-        WhatsNewFeature(
-            id: "codemode",
-            icon: "curlybraces",
-            iconColor: .themeCyan,
-            title: String(localized: "Codemode"),
-            description: String(localized: "The agent can write one script that calls several tools and MCP servers. Each run shows as a notebook cell with its code, calls, and output; double-tap opens it full screen. Keep codemode on in every session from Pi → Tools.")
-        ),
-        WhatsNewFeature(
-            id: "tailscale",
-            icon: "point.3.connected.trianglepath.dotted",
+            id: "chat-style",
+            icon: "bubble.left.and.text.bubble.right",
             iconColor: .themeBlue,
-            title: String(localized: "Built-in Tailscale"),
-            description: String(localized: "Oppi joins your tailnet itself, without the Tailscale app, and setup can pair through it. Check a Mac or Linux machine over SSH and pair from there; on Wi-Fi, Oppi tries your local network first.")
+            title: String(localized: "Chat styles"),
+            description: String(localized: "Settings → Chat → Style picks Full, Compact, or Chat for every chat. Chat puts your messages in bubbles and folds each turn's work into one pill. Your prompts stand apart from replies, and the built-in themes have stronger contrast.")
         ),
         WhatsNewFeature(
-            id: "message-queue",
-            icon: "tray.full",
+            id: "app-lock",
+            icon: "lock",
             iconColor: .themeGreen,
-            title: String(localized: "Simpler message queue"),
-            description: String(localized: "Remove one queued message, or move the whole queue back into the composer; Stop does that first. Editing in place and reordering are gone. Needs server 0.51.0.")
+            title: String(localized: "App Lock"),
+            description: String(localized: "Settings → Privacy & Security → App Lock asks for Face ID when you return to Oppi, right away or after 1, 5, or 15 minutes away. You can also lock one server, workspace, or session. Audio keeps playing while Oppi is locked.")
         ),
         WhatsNewFeature(
-            id: "siri",
-            icon: "waveform",
+            id: "device-approval",
+            icon: "checkmark.shield",
+            iconColor: .themePurple,
+            title: String(localized: "Approve new devices"),
+            description: String(localized: "A new device that pairs through Tailscale or with a long-lived invite waits for a phone you already paired to approve it with Face ID. The request shows while Oppi is open on that phone.")
+        ),
+        WhatsNewFeature(
+            id: "session-status",
+            icon: "smallcircle.filled.circle",
             iconColor: .themeYellow,
-            title: String(localized: "Start sessions with Siri"),
-            description: String(localized: "Siri and Shortcuts show the exact prompt before starting a session. Canceling sends nothing.")
+            title: String(localized: "Clearer session status"),
+            description: String(localized: "Rows and pills show Working, Needs Approval, Question, Error, or Done. Done and Error keep a dot until you open the session, also after Oppi relaunches.")
         ),
         WhatsNewFeature(
-            id: "restart-resume",
-            icon: "arrow.clockwise",
+            id: "audiobooks",
+            icon: "headphones",
             iconColor: .themeOrange,
-            title: String(localized: "Sessions resume"),
-            description: String(localized: "Sessions running when the server restarts continue on the next start. One caught mid-turn is asked to carry on, which costs a turn.")
+            title: String(localized: "Audiobooks"),
+            description: String(localized: "The audio player adds speed, chapters, resume for long recordings, and a sleep timer. Speaker-tagged scripts show the cast and follow each line. Audio cards show a clip's length before you play it.")
+        ),
+        WhatsNewFeature(
+            id: "custom-themes",
+            icon: "paintpalette",
+            iconColor: .themeCyan,
+            title: String(localized: "Themes from a prompt"),
+            description: String(localized: "Settings → Appearance → Custom Themes: describe a theme and an Oppi session writes it, or choose Edit with Oppi on any theme.")
+        ),
+        WhatsNewFeature(
+            id: "extension-notes",
+            icon: "text.bubble",
+            iconColor: .themePurple,
+            title: String(localized: "Quieter extension notes"),
+            description: String(localized: "An extension's note shows as a small chip above the composer and goes away on its own, instead of opening a sheet.")
         ),
         WhatsNewFeature(
             id: "experiments",
             icon: "testtube.2",
             iconColor: .themeComment,
             title: String(localized: "Opt-in experiments"),
-            description: String(localized: "Session Threads and SSH Terminal are under Settings → Experiments. With Durable Sessions on, new sessions start durable on servers that offer it.")
+            description: String(localized: "The SSH Terminal experiment puts text a host program copies on your clipboard, shows program notifications, and reconnects when you come back to Oppi.")
         ),
     ]
 

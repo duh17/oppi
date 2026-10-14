@@ -114,9 +114,9 @@ struct ScreenshotPreviewView: View {
         case "review-comment-inline-draft":
             ReviewCommentInlineDraftScreenshotPreview()
                 .ignoresSafeArea()
-        case "whats-new-build54-light", "whats-new-build53-light", "whats-new-build52-light", "whats-new-build51-light", "whats-new-build50-light", "whats-new-build49-light":
+        case "whats-new-build55-light", "whats-new-build54-light", "whats-new-build53-light", "whats-new-build52-light", "whats-new-build51-light", "whats-new-build50-light", "whats-new-build49-light":
             WhatsNewScreenshotPreview(themeID: .light)
-        case "whats-new-build54-dark", "whats-new-build53-dark", "whats-new-build52-dark", "whats-new-build51-dark", "whats-new-build50-dark", "whats-new-build49-dark":
+        case "whats-new-build55-dark", "whats-new-build54-dark", "whats-new-build53-dark", "whats-new-build52-dark", "whats-new-build51-dark", "whats-new-build50-dark", "whats-new-build49-dark":
             WhatsNewScreenshotPreview(themeID: .dark)
         case "server-resources-skills":
             ServerResourcesScreenshotPreview(screen: .skills)
