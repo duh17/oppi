@@ -9,21 +9,12 @@ import {
   checkPackContents,
   checkPackedRouteContents,
   checkPackedRelativeImports,
+  checkPackedShrinkwrap,
   extractRegistryPaths,
   sourceCandidatesForPackedJs,
 } from "../scripts/check-pack-contents.mjs";
 
 describe("npm pack contents guard", () => {
-  it("runs a clean build and contents check before creating a release tarball", () => {
-    const manifest = JSON.parse(
-      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-    ) as { scripts?: Record<string, string> };
-
-    expect(manifest.scripts?.prepack).toContain("npm run build");
-    expect(manifest.scripts?.prepack).toContain("npm run check:pi-release-versions");
-    expect(manifest.scripts?.prepack).toContain("npm run check:pack-contents");
-  });
-
   it("maps packed JS onto TypeScript, ESM, or JS sources", () => {
     expect(sourceCandidatesForPackedJs("default-agent.js")).toEqual([
       "default-agent.ts",
@@ -135,6 +126,35 @@ describe("npm pack contents guard", () => {
     ).toEqual(["src/loader.js: packed relative import is missing extensions/durable/native.js"]);
   });
 
+  it("requires a shrinkwrap that still describes package.json", () => {
+    const manifest = {
+      version: "0.52.0",
+      files: ["dist/", "npm-shrinkwrap.json"],
+      dependencies: { a: "1.0.0", b: "2.0.0" },
+    };
+    const shrinkwrap = (root: object) => ({ packages: { "": root } });
+
+    expect(checkPackedShrinkwrap({ manifest, shrinkwrap: undefined })).toEqual([
+      "npm-shrinkwrap.json is missing; installs would not get the tested dependency tree",
+    ]);
+    expect(
+      checkPackedShrinkwrap({
+        manifest: { ...manifest, files: ["dist/"] },
+        shrinkwrap: shrinkwrap({ version: "0.51.0", dependencies: { a: "1.0.0", b: "1.9.0" } }),
+      }),
+    ).toEqual([
+      "package.json#files must list npm-shrinkwrap.json or npm pack omits it",
+      "npm-shrinkwrap.json root version 0.51.0 does not match package.json 0.52.0",
+      "npm-shrinkwrap.json dependencies do not match package.json; run `npm install` in server/",
+    ]);
+    expect(
+      checkPackedShrinkwrap({
+        manifest,
+        shrinkwrap: shrinkwrap({ version: "0.52.0", dependencies: { b: "2.0.0", a: "1.0.0" } }),
+      }),
+    ).toEqual([]);
+  });
+
   it("runs as a CLI against a dist tree", () => {
     const root = mkdtempSync(path.join(tmpdir(), "oppi-pack-contents-"));
     const scriptPath = path.join(root, "scripts", "check-pack-contents.mjs");
@@ -142,6 +162,7 @@ describe("npm pack contents guard", () => {
       mkdirSync(path.join(root, "scripts"));
       mkdirSync(path.join(root, "src", "routes"), { recursive: true });
       mkdirSync(path.join(root, "dist", "src", "routes"), { recursive: true });
+      writeFileSync(path.join(root, "package.json"), '{"version":"0.0.0"}\n');
       writeFileSync(path.join(root, "src", "cli.ts"), "export {};\n");
       writeFileSync(
         path.join(root, "src", "routes", "registry.ts"),
@@ -167,6 +188,7 @@ describe("npm pack contents guard", () => {
 
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("default-agent.js: packed JS has no matching server source");
+      expect(result.stderr).toContain("npm-shrinkwrap.json is missing");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

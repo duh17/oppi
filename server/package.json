@@ -17,7 +17,8 @@
     "themes/",
     "docs/",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "npm-shrinkwrap.json"
   ],
   "engines": {
     "node": ">=22.19.0"
@@ -48,7 +49,8 @@
     "dev": "tsx --preserve-symlinks watch src/cli.ts serve",
     "start": "node dist/src/cli.js serve",
     "prepublishOnly": "npm run build",
-    "prepack": "npm run build && npm run check:pi-release-versions && npm run check:pack-contents",
+    "prepack": "npm run build && npm run check:pi-release-versions && cp package-lock.json npm-shrinkwrap.json && npm run check:pack-contents || { rm -f npm-shrinkwrap.json; exit 1; }",
+    "postpack": "rm -f npm-shrinkwrap.json",
     "check:pi-release-versions": "node scripts/check-pi-release-versions.mjs",
     "check:pack-contents": "node scripts/check-pack-contents.mjs",
     "test": "vitest run",

@@ -1,6 +1,8 @@
 # Dependencies and build outputs
 node_modules/
 server/dist/
+# Copied from server/package-lock.json by prepack, removed by postpack.
+server/npm-shrinkwrap.json
 server/coverage/
 clients/apple/build/
 clients/apple/.build/

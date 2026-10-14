@@ -259,6 +259,20 @@ authoritative dependency lockfile for those flows. Use `npm ci` when you need
 CI's dependency tree. Otherwise, Bun executes only the TypeScript repository
 scripts referenced by `package.json`.
 
+The published package ships the same tree. `prepack` copies `package-lock.json`
+to `npm-shrinkwrap.json` (gitignored, removed by `postpack`), `files` lists it
+because npm does not pack it otherwise, and `check:pack-contents` fails if the
+shrinkwrap is missing or no longer matches `package.json`. For registry installs,
+npm installs a package's shrinkwrap exactly, so a later Pi release cannot change
+what `npm i -g oppi-server` resolves. npm reads it only when registry metadata
+reports `_hasShrinkwrap: true`, so installing a local `oppi-server-*.tgz`
+ignores it and re-resolves ranges; verify a published version with
+`npm view oppi-server@<version> _hasShrinkwrap`. Do not commit
+`npm-shrinkwrap.json`; npm would prefer it over `package-lock.json` locally.
+`server/.npmrc` sets `ignore-scripts=true`, so pack with
+`npm pack --ignore-scripts=false` or the lifecycle checks and the shrinkwrap are
+skipped.
+
 The source-checkout bootstrapper is currently an exception. Root `install.sh`
 delegates to `server/setup.sh`, which prefers Bun when installed and runs `bun install --ignore-scripts`. That documented flow consumes `bun.lock`, so the Bun lockfile cannot be removed until the bootstrapper installs dependencies with
 npm. In the meantime, its dependency tree can diverge from the npm/CI tree.

@@ -78,6 +78,40 @@ export function checkPackedRelativeImports(distJsByRelativePath) {
   return failures;
 }
 
+// npm installs a published package's npm-shrinkwrap.json exactly. Without it, a
+// fresh `npm i -g oppi-server` re-resolves Pi's transitive caret ranges, which is
+// how 0.51.0 broke once pi-codemode 1.2.0 shipped. prepack copies it from
+// package-lock.json, so it must still describe this package.json. npm-packlist
+// (npm 11) packs it only when package.json#files lists it.
+export function checkPackedShrinkwrap({ manifest, shrinkwrap }) {
+  if (!shrinkwrap) {
+    return [
+      "npm-shrinkwrap.json is missing; installs would not get the tested dependency tree",
+    ];
+  }
+  const failures = [];
+  if (!manifest.files?.includes("npm-shrinkwrap.json")) {
+    failures.push("package.json#files must list npm-shrinkwrap.json or npm pack omits it");
+  }
+  const root = shrinkwrap.packages?.[""] ?? {};
+  if (root.version !== manifest.version) {
+    failures.push(
+      `npm-shrinkwrap.json root version ${root.version} does not match package.json ${manifest.version}`,
+    );
+  }
+  const sorted = (deps) => JSON.stringify(Object.entries(deps ?? {}).sort());
+  if (sorted(root.dependencies) !== sorted(manifest.dependencies)) {
+    failures.push(
+      "npm-shrinkwrap.json dependencies do not match package.json; run `npm install` in server/",
+    );
+  }
+  return failures;
+}
+
+function readJsonIfExists(file) {
+  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : undefined;
+}
+
 export function packedJsRelPathsFromTarListing(names) {
   return names
     .filter(
@@ -141,12 +175,16 @@ function runCli() {
   const srcDir = path.join(serverDir, "src");
   let extractRoot;
   let distSrcDir = path.join(serverDir, "dist", "src");
+  // Without --tarball (prepack), npm packs server/ as-is and always includes
+  // npm-shrinkwrap.json when present.
+  let packageDir = serverDir;
   let jsRelPaths;
 
   try {
     if (tarball) {
       extractRoot = extractTarball(path.resolve(tarball));
-      distSrcDir = path.join(extractRoot, "package", "dist", "src");
+      packageDir = path.join(extractRoot, "package");
+      distSrcDir = path.join(packageDir, "dist", "src");
       jsRelPaths = packedJsRelPathsFromTarListing(
         spawnSync("tar", ["-tzf", path.resolve(tarball)], { encoding: "utf8" })
           .stdout.split("\n")
@@ -167,20 +205,24 @@ function runCli() {
         distJsByRelativePath,
       }),
       ...checkPackedRelativeImports(distJsByRelativePath),
+      ...checkPackedShrinkwrap({
+        manifest: JSON.parse(readFileSync(path.join(packageDir, "package.json"), "utf8")),
+        shrinkwrap: readJsonIfExists(path.join(packageDir, "npm-shrinkwrap.json")),
+      }),
     ];
 
     if (failures.length > 0) {
       console.error("npm pack contents guard failed:");
       for (const failure of failures) console.error(`  - ${failure}`);
       console.error(
-        "Clean-build before packing so dist matches current source. Stale dist is how 0.47.3 omitted /server/mobile-output-guide.",
+        "Pack with `npm pack --ignore-scripts=false` so prepack clean-builds dist and writes npm-shrinkwrap.json. Stale dist is how 0.47.3 omitted /server/mobile-output-guide.",
       );
       process.exitCode = 1;
       return;
     }
 
     console.log(
-      `npm pack contents match server source (${jsRelPaths.length} JS files, includes ${MOBILE_OUTPUT_GUIDE_PATH}).`,
+      `npm pack contents match server source (${jsRelPaths.length} JS files, includes ${MOBILE_OUTPUT_GUIDE_PATH} and npm-shrinkwrap.json).`,
     );
   } finally {
     if (extractRoot) rmSync(extractRoot, { recursive: true, force: true });
