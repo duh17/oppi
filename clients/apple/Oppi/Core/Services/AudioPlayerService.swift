@@ -1052,7 +1052,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                 ?? nsError?.localizedDescription
                 ?? String(localized: "The audio could not be loaded.")
         )
-        logger.error("Audio \(source, privacy: .public) playback failed (\(phase, privacy: .public)): \(nsError?.localizedDescription ?? "unknown", privacy: .public)")
+        logger.error("Audio \(source, privacy: .public) playback failed (\(phase, privacy: .public)): \(nsError?.localizedDescription ?? "unknown")")
         ClientLog.warning("AudioPlayer", "Audio playback failed", metadata: [
             "source": source,
             "phase": phase,
