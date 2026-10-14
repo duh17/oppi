@@ -297,91 +297,57 @@ struct AudioLyricsPlayerView: View {
             Spacer()
         } else if AudioReaderCast.isScript(verses) {
             readerBody(verses)
-        } else if AudioLyrics.allowsKaraoke(verses) {
-            followingScroll(anchor: .center) {
-                VStack(alignment: .leading, spacing: 28) {
-                    ForEach(Array(verses.enumerated()), id: \.offset) { index, line in
-                        lyricLine(line, index: index, current: currentIndex)
-                            .id(index)
-                            .onTapGesture { jump(to: line) }
-                    }
-                }
-                .padding(.horizontal, 28)
-                .padding(.vertical, 36)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
         } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    ForEach(Array(verses.enumerated()), id: \.offset) { index, line in
-                        lyricLine(line, index: index, current: nil)
-                    }
-                }
-                .padding(.horizontal, 28)
-                .padding(.vertical, 36)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            transcript(verses, style: .lyrics, speakerColors: [:])
         }
     }
 
-    /// Scrolls with playback, stops when the reader drags, and offers a way back.
-    private func followingScroll<Content: View>(
-        anchor: UnitPoint,
-        @ViewBuilder content: () -> Content
+    /// UIKit transcript with soft edges. It follows playback until the reader drags,
+    /// then offers Current Line to resume.
+    private func transcript(
+        _ verses: [AudioLyrics.Line],
+        style: AudioTranscriptStyle,
+        speakerColors: [String: Color]
     ) -> some View {
-        let content = content()
-        return ScrollViewReader { proxy in
-            ScrollView {
-                content
+        AudioTranscriptView(
+            lines: verses,
+            style: style,
+            palette: AudioTranscriptPalette(
+                foreground: UIColor(Color.themeFg),
+                dimmed: UIColor(Color.themeComment),
+                unnamed: UIColor(Color.themeComment),
+                speakerColors: speakerColors.mapValues { UIColor($0) }
+            ),
+            currentIndex: currentIndex,
+            followsPlayback: $followsPlayback,
+            onSelectLine: { index in jump(to: verses[index]) }
+        )
+        .mask {
+            // Soft edges so lines fade under the cast strip and transport instead of clipping.
+            VStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 16)
+                Color.black
+                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 16)
             }
-            .mask {
-                // Soft edges so lines fade under the cast strip and transport instead of clipping.
-                VStack(spacing: 0) {
-                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                        .frame(height: 16)
-                    Color.black
-                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                        .frame(height: 16)
+        }
+        .overlay(alignment: .bottom) {
+            if !followsPlayback, currentIndex != nil {
+                Button {
+                    followsPlayback = true
+                } label: {
+                    Label("Current Line", systemImage: "text.line.first.and.arrowtriangle.forward")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.themeFg)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(.themeBgHighlight.opacity(0.95), in: Capsule())
                 }
-            }
-            .onScrollPhaseChange { _, phase in
-                if phase == .interacting {
-                    followsPlayback = false
-                }
-            }
-            .onAppear {
-                guard let currentIndex else { return }
-                proxy.scrollTo(currentIndex, anchor: anchor)
-            }
-            .onChange(of: currentIndex) { _, index in
-                guard followsPlayback, let index else { return }
-                withAnimation(.easeInOut(duration: 0.25)) {
-                    proxy.scrollTo(index, anchor: anchor)
-                }
-            }
-            .onChange(of: followsPlayback) { _, follows in
-                guard follows, let currentIndex else { return }
-                withAnimation(.easeInOut(duration: 0.25)) {
-                    proxy.scrollTo(currentIndex, anchor: anchor)
-                }
-            }
-            .overlay(alignment: .bottom) {
-                if !followsPlayback, currentIndex != nil {
-                    Button {
-                        followsPlayback = true
-                    } label: {
-                        Label("Current Line", systemImage: "text.line.first.and.arrowtriangle.forward")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.themeFg)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(.themeBgHighlight.opacity(0.95), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.bottom, 20)
-                    .transition(.opacity)
-                    .accessibilityIdentifier("audioLyrics.followCurrentLine")
-                }
+                .buttonStyle(.plain)
+                .padding(.bottom, 20)
+                .transition(.opacity)
+                .accessibilityIdentifier("audioLyrics.followCurrentLine")
             }
         }
     }
@@ -397,28 +363,10 @@ struct AudioLyricsPlayerView: View {
     private func readerBody(_ verses: [AudioLyrics.Line]) -> some View {
         let cast = AudioReaderCast.members(in: verses, voiceColors: selectedTrack?.voiceColors ?? [:])
         let colors = Dictionary(uniqueKeysWithValues: cast.map { ($0.name, Self.color(for: $0)) })
-        let current = currentIndex
-        let currentSpeaker = current.flatMap { verses.indices.contains($0) ? verses[$0].speaker : nil }
+        let currentSpeaker = currentIndex.flatMap { verses.indices.contains($0) ? verses[$0].speaker : nil }
         return VStack(spacing: 0) {
             castStrip(cast, colors: colors, currentSpeaker: currentSpeaker)
-            followingScroll(anchor: UnitPoint(x: 0.5, y: 0.35)) {
-                LazyVStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(verses.enumerated()), id: \.offset) { index, line in
-                        readerParagraph(
-                            line,
-                            index: index,
-                            current: current,
-                            startsTurn: AudioReaderCast.startsTurn(verses, at: index),
-                            color: line.speaker.flatMap { colors[$0] } ?? .themeComment
-                        )
-                        .id(index)
-                        .onTapGesture { jump(to: line) }
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 20)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            transcript(verses, style: .script, speakerColors: colors)
         }
     }
 
@@ -457,57 +405,6 @@ struct AudioLyricsPlayerView: View {
         .accessibilityIdentifier("audioLyrics.cast")
     }
 
-    private func readerParagraph(
-        _ line: AudioLyrics.Line,
-        index: Int,
-        current: Int?,
-        startsTurn: Bool,
-        color: Color
-    ) -> some View {
-        let isCurrent = current == index
-        let isPast = current.map { index < $0 } ?? false
-        let textColor: Color = if isCurrent || current == nil {
-            .themeFg
-        } else if isPast {
-            .themeComment
-        } else {
-            .themeFg.opacity(0.78)
-        }
-        return VStack(alignment: .leading, spacing: 4) {
-            if startsTurn, let speaker = line.speaker {
-                Text(speaker)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(color)
-                    .padding(.top, index == 0 ? 0 : 10)
-            }
-            Text(line.text)
-                .font(.title3)
-                .foregroundStyle(textColor)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 8)
-        .padding(.leading, 15)
-        .padding(.trailing, 12)
-        .background(
-            isCurrent ? color.opacity(0.12) : Color.clear,
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
-        .overlay(alignment: .leading) {
-            if isCurrent {
-                Capsule()
-                    .fill(color)
-                    .frame(width: 3)
-                    .padding(.vertical, 10)
-                    .padding(.leading, 5)
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: isCurrent)
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(line.startTime == nil ? [] : .isButton)
-    }
-
     /// Authored WebVTT colors win; other speakers take theme accents so they follow the theme.
     private static func color(for member: AudioReaderCast.Member) -> Color {
         if let hex = member.colorHex, let authored = Color(hex: hex) {
@@ -515,17 +412,6 @@ struct AudioLyricsPlayerView: View {
         }
         let palette: [Color] = [.themeOrange, .themeBlue, .themeGreen, .themePurple, .themeRed, .themeCyan, .themeYellow]
         return palette[member.paletteIndex % palette.count]
-    }
-
-    private func lyricLine(_ line: AudioLyrics.Line, index: Int, current: Int?) -> some View {
-        let isCurrent = current == index
-        let isNeighbor = current.map { abs($0 - index) == 1 } ?? false
-        return Text(line.text)
-            .font(isCurrent ? .title.weight(.semibold) : .title2)
-            .foregroundStyle(isCurrent ? Color.themeFg : Color.themeComment.opacity(isNeighbor ? 0.85 : 0.55))
-            .multilineTextAlignment(.leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityAddTraits(line.startTime == nil ? [] : .isButton)
     }
 
     private func selectTrack(_ index: Int, in timedText: TimedText.LoadResult) {

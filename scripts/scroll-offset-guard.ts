@@ -27,6 +27,8 @@ const allowedFiles = new Set([
   "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowContent.swift",
   "clients/apple/Oppi/Features/Chat/Timeline/Rows/ThinkingTimelineRowContent.swift",
   "clients/apple/Oppi/Features/Chat/Timeline/Rows/UserTimelineRowContent.swift",
+  // Full-screen audio player transcript; its own collection view, never the chat timeline.
+  "clients/apple/Oppi/Features/Chat/Timeline/Media/AudioTranscriptView.swift",
 ]);
 
 function walkSwiftFiles(root: string): string[] {

@@ -217,6 +217,10 @@ struct TimedTextTests {
         let track = TimedText.track(candidate: candidate, text: text)
         #expect(track?.cues.map(\.text) == ["Night fell."])
         #expect(track?.voiceColors == ["Narrator": "#c9c9cf"])
+        // CR-only files keep their colors, like their cues.
+        let crOnly = TimedText.track(candidate: candidate, text: text.replacingOccurrences(of: "\n", with: "\r"))
+        #expect(crOnly?.cues.map(\.speaker) == ["Narrator"])
+        #expect(crOnly?.voiceColors == ["Narrator": "#c9c9cf"])
     }
 
     @Test("ASS Name field names the speaker")
@@ -247,6 +251,20 @@ struct TimedTextTests {
             AudioReaderCast.Member(name: "Ann", colorHex: "#ffb347", paletteIndex: 1),
         ])
         #expect(lines.indices.map { AudioReaderCast.startsTurn(lines, at: $0) } == [true, false, true, false, true])
+    }
+
+    @Test("line change repaints every row whose heard/upcoming paint can change")
+    func transcriptRepaintScope() {
+        typealias View = AudioTranscriptCollectionView
+        // Script: a one-line step touches two rows; play, stop, seek, and skip touch all.
+        #expect(View.repaintScope(previous: 3, current: 4, style: .script, count: 10) == .rows([3, 4]))
+        #expect(View.repaintScope(previous: 2, current: 8, style: .script, count: 10) == .all)
+        #expect(View.repaintScope(previous: nil, current: 4, style: .script, count: 10) == .all)
+        #expect(View.repaintScope(previous: 4, current: nil, style: .script, count: 10) == .all)
+        // Lyrics: current line and neighbors only, clamped to the transcript.
+        #expect(View.repaintScope(previous: 3, current: 7, style: .lyrics, count: 10) == .rows([2, 3, 4, 6, 7, 8]))
+        #expect(View.repaintScope(previous: nil, current: 0, style: .lyrics, count: 2) == .rows([0, 1]))
+        #expect(View.repaintScope(previous: 1, current: nil, style: .lyrics, count: 2) == .rows([0, 1]))
     }
 
     @Test("ASS/SSA flatten Dialogue start/end and strip override tags")

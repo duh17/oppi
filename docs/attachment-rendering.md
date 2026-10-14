@@ -233,7 +233,7 @@ STYLE
 ::cue(v[voice="Narrator"]) { color: #c9c9cf; }
 ```
 
-Only `#RRGGBB` colors on `v[voice="…"]` selectors are read. Speakers without one take the theme's accent colors. In both the script reader and timed lyrics, auto-scroll follows playback until the text is dragged; **Current Line** resumes it.
+Only `#RRGGBB` colors on `v[voice="…"]` selectors are read. Speakers without one take the theme's accent colors. In both the script reader and timed lyrics, auto-scroll follows playback until the text is dragged; **Current Line** resumes it. Long-press a line for **Play from Here** (timed lines) or **Copy**.
 
 ## Markdown inline USDZ
 
