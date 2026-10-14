@@ -62,9 +62,10 @@ export function createSessionStateSessionsTable(db: SqliteDatabase, table: strin
  * before any change. A failure inside the transaction rolls back to the old table. The file is
  * vacuumed once after the commit. Returns whether the rebuild ran.
  *
- * The source is the 37-column table the previous release kept complete (it added any missing
- * column on every open). A file last opened by an older release fails here with a SQL error;
- * open it once with the previous release, or restore a backup.
+ * The source is the table a release kept complete (it added any missing column on every open).
+ * oppi-server 0.51.0 predates `program_status_json`; its rows copy NULL there, and startup
+ * derives the status from the lifecycle. A file last opened by a release older than 0.51.0 fails
+ * here with a SQL error; open it once with oppi-server 0.51.0, or restore a backup.
  */
 export function runSessionColumnsRecordMigration(db: SqliteDatabase, dataDir: string): boolean {
   const key = SESSION_COLUMNS_RECORD_MIGRATION_KEY;
@@ -73,7 +74,8 @@ export function runSessionColumnsRecordMigration(db: SqliteDatabase, dataDir: st
     return false;
   }
 
-  if (tableColumns(db, "session_state_sessions").has("summary_json")) {
+  const sourceColumns = tableColumns(db, "session_state_sessions");
+  if (sourceColumns.has("summary_json")) {
     // Created in the current shape; nothing to rebuild.
     recordMigration(db, key);
     return false;
@@ -83,7 +85,7 @@ export function runSessionColumnsRecordMigration(db: SqliteDatabase, dataDir: st
   const counts = db.transaction(() => {
     refuseUnreadableSources(db);
     createSessionStateSessionsTable(db, "session_state_sessions_next");
-    db.exec(COPY_SESSIONS_SQL);
+    db.exec(copySessionsSql(sourceColumns.has("program_status_json")));
     const copied = count(db, "SELECT COUNT(*) AS count FROM session_state_sessions_next");
     const source = count(db, "SELECT COUNT(*) AS count FROM session_state_sessions");
     if (copied !== source) {
@@ -127,7 +129,7 @@ export function runSessionColumnsRecordMigration(db: SqliteDatabase, dataDir: st
  * instead of failing every start. `json_patch` onto '{}' drops null members, so absent stats
  * stay absent.
  */
-const COPY_SESSIONS_SQL = `
+const copySessionsSql = (hasProgramStatus: boolean): string => `
   INSERT INTO session_state_sessions_next (
     id, workspace_id, worktree_id, name, status, created_at, last_activity,
     current_turn_started_at, warnings_json, runtime, mirror_json, pi_session_file,
@@ -147,7 +149,7 @@ const COPY_SESSIONS_SQL = `
     CASE WHEN json_valid(session_json) THEN
       CASE WHEN json_type(session_json, '$.control') = 'object'
         THEN json_extract(session_json, '$.control') END END,
-    program_status_json,
+    ${hasProgramStatus ? "program_status_json" : "NULL"},
     json_patch('{}', json_object(
       'model', model,
       'thinkingLevel', thinking_level,

@@ -114,12 +114,42 @@ describe("session_state_sessions columns-only migration", () => {
     }
   });
 
-  function legacyDataDir(): string {
+  function legacyDataDir(
+    schema = PREVIOUS_RELEASE_SCHEMA,
+    sessions: readonly Session[] = LEGACY_SESSIONS,
+  ): string {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-session-columns-record-"));
     dirs.push(dataDir);
-    seedLegacySessions(join(dataDir, "session-state.db"));
+    seedLegacySessions(join(dataDir, "session-state.db"), schema, sessions);
     return dataDir;
   }
+
+  it("upgrades the table oppi-server 0.51.0 wrote, which has no program_status_json", () => {
+    // 0.51.0 predates program status; its session_json never carried one.
+    const sessions = LEGACY_SESSIONS.map((session) => ({ ...session, programStatus: undefined }));
+    const dataDir = legacyDataDir(OPPI_SERVER_0_51_0_SCHEMA, sessions);
+
+    const store = new SessionSqliteStore(dataDir);
+    try {
+      for (const legacy of sessions) {
+        expect(store.getSession(legacy.id)).toEqual(expectedAfterMigration(legacy));
+      }
+      expect(store.findSessionByDurableConversation("store-1", 3)?.id).toBe("sess-durable");
+      expect(store.findSessionByDurableConversation("store-control", 9)?.control).toEqual(
+        CONTROL_SESSION.control,
+      );
+      expect(store.findSessionByLaunchIdempotencyKey("idem-durable")?.id).toBe("sess-durable");
+    } finally {
+      store.close();
+    }
+
+    const migrated = readShape(join(dataDir, "session-state.db"));
+    expect(migrated.completedAt).toBeTypeOf("number");
+    expect(migrated.columns).toContain("program_status_json");
+    for (const column of [...DROPPED_COLUMNS, "agent_id", "schedule_id", "updated_at"]) {
+      expect(migrated.columns).not.toContain(column);
+    }
+  });
 
   it("keeps every session, its control metadata, binding, and stats; a second open is a no-op", () => {
     const dataDir = legacyDataDir();
@@ -285,10 +315,7 @@ function expectedAfterMigration(legacy: Session): Session {
 }
 
 /** The table as the previous server wrote it, after the dead-schema cleanup. */
-function seedLegacySessions(dbPath: string): void {
-  const db = openDatabase(dbPath);
-  try {
-    db.exec(`
+const PREVIOUS_RELEASE_SCHEMA = `
       CREATE TABLE session_state_sessions (
         id TEXT PRIMARY KEY,
         workspace_id TEXT,
@@ -334,63 +361,136 @@ function seedLegacySessions(dbPath: string): void {
         ON session_state_sessions (launch_idempotency_key)
         WHERE launch_idempotency_key IS NOT NULL;
       CREATE TABLE app_state_migrations (key TEXT PRIMARY KEY, completed_at INTEGER NOT NULL);
-    `);
-    db.prepare("INSERT INTO app_state_migrations (key, completed_at) VALUES (?, 1)").run(
-      SESSION_STATE_DEAD_SCHEMA_CLEANUP_MIGRATION_KEY,
+      INSERT INTO app_state_migrations (key, completed_at)
+        VALUES ('${SESSION_STATE_DEAD_SCHEMA_CLEANUP_MIGRATION_KEY}', 1);
+`;
+
+/**
+ * The table and indexes published oppi-server 0.51.0 (`b747bb59c`) created: before the
+ * dead-schema cleanup, and before `program_status_json` existed.
+ */
+const OPPI_SERVER_0_51_0_SCHEMA = `
+      CREATE TABLE session_state_sessions (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT,
+        workspace_name TEXT,
+        worktree_id TEXT,
+        name TEXT,
+        status TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_activity INTEGER NOT NULL,
+        last_agent_reply_at INTEGER,
+        current_turn_started_at INTEGER,
+        model TEXT,
+        message_count INTEGER NOT NULL,
+        tokens_input INTEGER NOT NULL,
+        tokens_output INTEGER NOT NULL,
+        tokens_cache_read INTEGER NOT NULL,
+        tokens_cache_write INTEGER NOT NULL,
+        cost REAL NOT NULL,
+        change_stats_json TEXT,
+        context_tokens INTEGER,
+        context_window INTEGER,
+        first_message TEXT,
+        last_message TEXT,
+        warnings_json TEXT,
+        thinking_level TEXT,
+        runtime TEXT,
+        mirror_json TEXT,
+        pi_session_file TEXT,
+        pi_session_files_json TEXT,
+        ephemeral INTEGER NOT NULL DEFAULT 0,
+        agent_id TEXT,
+        agent_version INTEGER,
+        launch_source TEXT,
+        launch_status TEXT,
+        launch_lease_owner TEXT,
+        launch_lease_until_ms INTEGER,
+        parent_session_id TEXT,
+        todo_id TEXT,
+        goal_id TEXT,
+        schedule_id TEXT,
+        schedule_run_id TEXT,
+        launch_idempotency_key TEXT,
+        launch_metadata_json TEXT,
+        server_durable_json TEXT,
+        session_json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX session_state_sessions_workspace_activity_idx
+        ON session_state_sessions (workspace_id, last_activity DESC, id ASC);
+      CREATE INDEX session_state_sessions_workspace_worktree_activity_idx
+        ON session_state_sessions (workspace_id, worktree_id, last_activity DESC, id ASC);
+      CREATE INDEX session_state_sessions_status_activity_idx
+        ON session_state_sessions (status, last_activity DESC, id ASC);
+      CREATE UNIQUE INDEX session_state_sessions_launch_idempotency_idx
+        ON session_state_sessions (launch_idempotency_key)
+        WHERE launch_idempotency_key IS NOT NULL;
+      CREATE INDEX session_state_sessions_launch_schedule_idx
+        ON session_state_sessions (schedule_id, schedule_run_id)
+        WHERE schedule_id IS NOT NULL;
+      CREATE TABLE app_state_migrations (key TEXT PRIMARY KEY, completed_at INTEGER NOT NULL);
+`;
+
+/** Writes `sessions` into `schema`, setting only the columns that schema has. */
+function seedLegacySessions(dbPath: string, schema: string, sessions: readonly Session[]): void {
+  const db = openDatabase(dbPath);
+  try {
+    db.exec(schema);
+    const columns = new Set(
+      (
+        db.prepare("PRAGMA table_info(session_state_sessions)").all() as Array<{ name: string }>
+      ).map((row) => row.name),
     );
-    const insert = db.prepare(`
-      INSERT INTO session_state_sessions (
-        id, workspace_id, workspace_name, worktree_id, name, status, created_at, last_activity,
-        last_agent_reply_at, current_turn_started_at, model, message_count, tokens_input,
-        tokens_output, tokens_cache_read, tokens_cache_write, cost, change_stats_json,
-        context_tokens, context_window, first_message, last_message, warnings_json,
-        thinking_level, runtime, mirror_json, pi_session_file, pi_session_files_json, ephemeral,
-        launch_status, launch_lease_owner, launch_lease_until_ms, launch_idempotency_key,
-        launch_metadata_json, server_durable_json, program_status_json, session_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
     const json = (value: unknown): string | null =>
       value === undefined ? null : JSON.stringify(value);
-    for (const s of LEGACY_SESSIONS) {
-      insert.run(
-        s.id,
-        s.workspaceId ?? null,
-        s.workspaceName ?? null,
-        s.worktreeId ?? null,
-        s.name ?? null,
-        s.status,
-        s.createdAt,
-        s.lastActivity,
-        s.lastAgentReplyAt ?? null,
-        s.currentTurnStartedAt ?? null,
-        s.model ?? null,
-        s.messageCount,
-        s.tokens.input,
-        s.tokens.output,
-        s.tokens.cacheRead,
-        s.tokens.cacheWrite,
-        s.cost,
-        json(s.changeStats),
-        s.contextTokens ?? null,
-        s.contextWindow ?? null,
-        s.firstMessage ?? null,
-        s.lastMessage ?? null,
-        json(s.warnings),
-        s.thinkingLevel ?? null,
-        s.runtime ?? null,
-        json(s.mirror),
-        s.piSessionFile ?? null,
-        json(s.piSessionFiles),
-        s.ephemeral ? 1 : 0,
-        s.launch?.status ?? null,
-        s.launch?.lease?.owner ?? null,
-        s.launch?.lease?.expiresAt ?? null,
-        s.launch?.idempotencyKey ?? null,
-        json(s.launch),
-        json(s.serverDurable),
-        json(s.programStatus),
-        JSON.stringify(s),
-      );
+    for (const s of sessions) {
+      const row = Object.entries({
+        id: s.id,
+        workspace_id: s.workspaceId ?? null,
+        workspace_name: s.workspaceName ?? null,
+        worktree_id: s.worktreeId ?? null,
+        name: s.name ?? null,
+        status: s.status,
+        created_at: s.createdAt,
+        last_activity: s.lastActivity,
+        last_agent_reply_at: s.lastAgentReplyAt ?? null,
+        current_turn_started_at: s.currentTurnStartedAt ?? null,
+        model: s.model ?? null,
+        message_count: s.messageCount,
+        tokens_input: s.tokens.input,
+        tokens_output: s.tokens.output,
+        tokens_cache_read: s.tokens.cacheRead,
+        tokens_cache_write: s.tokens.cacheWrite,
+        cost: s.cost,
+        change_stats_json: json(s.changeStats),
+        context_tokens: s.contextTokens ?? null,
+        context_window: s.contextWindow ?? null,
+        first_message: s.firstMessage ?? null,
+        last_message: s.lastMessage ?? null,
+        warnings_json: json(s.warnings),
+        thinking_level: s.thinkingLevel ?? null,
+        runtime: s.runtime ?? null,
+        mirror_json: json(s.mirror),
+        pi_session_file: s.piSessionFile ?? null,
+        pi_session_files_json: json(s.piSessionFiles),
+        ephemeral: s.ephemeral ? 1 : 0,
+        agent_id: s.launch?.agentId ?? null,
+        launch_source: s.launch?.source ?? null,
+        launch_status: s.launch?.status ?? null,
+        launch_lease_owner: s.launch?.lease?.owner ?? null,
+        launch_lease_until_ms: s.launch?.lease?.expiresAt ?? null,
+        launch_idempotency_key: s.launch?.idempotencyKey ?? null,
+        launch_metadata_json: json(s.launch),
+        server_durable_json: json(s.serverDurable),
+        program_status_json: json(s.programStatus),
+        session_json: JSON.stringify(s),
+        updated_at: s.lastActivity,
+      }).filter(([column]) => columns.has(column));
+      db.prepare(
+        `INSERT INTO session_state_sessions (${row.map(([column]) => column).join(", ")})
+         VALUES (${row.map(() => "?").join(", ")})`,
+      ).run(...row.map(([, value]) => value));
     }
   } finally {
     db.close();
