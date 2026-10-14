@@ -226,6 +226,32 @@ enum AuthenticatedMediaResponseValidator {
     }
 }
 
+/// UTI handed to AVFoundation for a resource-loader asset.
+///
+/// The server's MIME type wins when it names a format. A generic one
+/// (`application/octet-stream`, which maps to `public.data`) gives AVFoundation
+/// nothing to open, and neither does an unregistered (dynamic) type, so the
+/// client's own hint and file extension take over. That
+/// keeps formats a server does not know yet, such as `.m4b` on an older server,
+/// playable instead of failing with "Cannot Open".
+enum AuthenticatedMediaContentType {
+    static func resolve(
+        responseMimeType: String?,
+        contentTypeHint: String?,
+        fileExtension: String?
+    ) -> String {
+        let candidates: [UTType?] = [
+            responseMimeType.flatMap { UTType(mimeType: $0) },
+            contentTypeHint.flatMap { UTType(mimeType: $0) },
+            fileExtension.flatMap { UTType(filenameExtension: $0) },
+        ]
+        for case let type? in candidates where type != .data && !type.isDynamic {
+            return type.identifier
+        }
+        return UTType.data.identifier
+    }
+}
+
 /// Body length is checked against the **response** Content-Range span, not the
 /// requested HTTP chunk. A valid shorter 206 must continue at the next actual
 /// byte rather than fail or skip to the advertised request end.
@@ -816,10 +842,10 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
     ) {
         guard let info else { return }
 
-        let mimeType = response.mimeType ?? source.contentTypeHint
-        info.contentType = resourceLoaderContentType(
-            mimeType: mimeType,
-            fallbackExtension: source.sourceFileExtension
+        info.contentType = AuthenticatedMediaContentType.resolve(
+            responseMimeType: response.mimeType,
+            contentTypeHint: source.contentTypeHint,
+            fileExtension: source.sourceFileExtension
         )
         info.isByteRangeAccessSupported = true
 
@@ -828,20 +854,6 @@ private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Senda
         } else if response.expectedContentLength >= 0 {
             info.contentLength = response.expectedContentLength
         }
-    }
-
-    private func resourceLoaderContentType(mimeType: String?, fallbackExtension: String?) -> String {
-        if let mimeType,
-           let type = UTType(mimeType: mimeType) {
-            return type.identifier
-        }
-
-        if let fallbackExtension,
-           let type = UTType(filenameExtension: fallbackExtension) {
-            return type.identifier
-        }
-
-        return UTType.data.identifier
     }
 
     private func totalLengthFromContentRange(_ header: String?) -> Int64? {

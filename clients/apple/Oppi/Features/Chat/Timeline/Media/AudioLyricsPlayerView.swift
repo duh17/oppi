@@ -549,6 +549,17 @@ struct AudioPlaybackTransportControls: View {
                 }
             }
 
+            if let failure = audioPlayer?.playbackFailure, failure.itemID == itemID {
+                Label(
+                    String(localized: "Can't play this audio. \(failure.reason)"),
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.footnote)
+                .foregroundStyle(.themeYellow)
+                .multilineTextAlignment(.center)
+                .accessibilityIdentifier("\(accessibilityPrefix).playbackFailure")
+            }
+
             if showsListeningControls {
                 listeningControls
             }

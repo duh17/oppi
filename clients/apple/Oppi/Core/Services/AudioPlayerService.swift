@@ -87,6 +87,15 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     /// ID of the ChatItem currently loading/decoding audio.
     private(set) var loadingItemID: String?
 
+    struct PlaybackFailure: Equatable {
+        let itemID: String
+        let reason: String
+    }
+
+    /// The item whose last start or load failed, so its controls can say why
+    /// instead of silently returning to Play. Cleared by the next attempt or stop.
+    private(set) var playbackFailure: PlaybackFailure?
+
     /// Elapsed playback time for the active item.
     private(set) var currentTime: TimeInterval = 0
 
@@ -263,8 +272,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         do {
             try play(fileURL: fileURL, itemID: itemID, mode: mode, startedAtMs: startedAtMs)
         } catch {
-            recordVoicePlaybackError(source: "file", phase: "start", error: error)
-            logger.error("Audio file playback failed: \(error.localizedDescription)")
+            reportPlaybackFailure(itemID: itemID, source: "file", phase: "start", error: error)
         }
     }
 
@@ -280,8 +288,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
         do {
             try play(data: data, itemID: itemID, mode: mode, startedAtMs: startedAtMs)
         } catch {
-            recordVoicePlaybackError(source: "data", phase: "start", error: error)
-            logger.error("Audio blob playback failed: \(error.localizedDescription)")
+            reportPlaybackFailure(itemID: itemID, source: "data", phase: "start", error: error)
         }
     }
 
@@ -310,8 +317,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                 startedAtMs: startedAtMs
             )
         } catch {
-            recordVoicePlaybackError(source: "media", phase: "start", error: error)
-            logger.error("Audio media playback failed: \(error.localizedDescription)")
+            reportPlaybackFailure(itemID: itemID, source: "media", phase: "start", error: error)
         }
     }
 
@@ -361,6 +367,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
     }
 
     func stop() {
+        playbackFailure = nil
         let activeStreamID = streamID
         saveResumePosition()
         endLongformItem()
@@ -817,8 +824,7 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                         durationMs: max(0, ChatSessionTelemetry.nowMs() - startedAtMs)
                     )
                 case .failed:
-                    self.recordVoicePlaybackError(source: "media", phase: "load", error: item.error)
-                    logger.error("Audio media playback failed to load: \(item.error?.localizedDescription ?? "unknown")")
+                    self.reportPlaybackFailure(itemID: itemID, source: "media", phase: "load", error: item.error)
                     self.stopMediaPlaybackSession()
                     self.deactivatePlaybackAudioSessionIfPossible()
                     self.setPlaybackState(playing: nil, loading: nil)
@@ -1034,6 +1040,27 @@ final class AudioPlayerService: NSObject, VoicePlaybackInterrupter, VoicePlaybac
                 "status": "ok",
             ]
         )
+    }
+
+    private func reportPlaybackFailure(itemID: String, source: String, phase: String, error: Error?) {
+        recordVoicePlaybackError(source: source, phase: phase, error: error)
+        let nsError = error as NSError?
+        let underlying = nsError?.userInfo[NSUnderlyingErrorKey] as? NSError
+        playbackFailure = PlaybackFailure(
+            itemID: itemID,
+            reason: nsError?.localizedFailureReason
+                ?? nsError?.localizedDescription
+                ?? String(localized: "The audio could not be loaded.")
+        )
+        logger.error("Audio \(source, privacy: .public) playback failed (\(phase, privacy: .public)): \(nsError?.localizedDescription ?? "unknown", privacy: .public)")
+        ClientLog.warning("AudioPlayer", "Audio playback failed", metadata: [
+            "source": source,
+            "phase": phase,
+            "error_domain": nsError?.domain ?? "",
+            "error_code": nsError.map { String($0.code) } ?? "",
+            "underlying_domain": underlying?.domain ?? "",
+            "underlying_code": underlying.map { String($0.code) } ?? "",
+        ])
     }
 
     private func recordVoicePlaybackError(

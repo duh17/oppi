@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import UniformTypeIdentifiers
 @testable import Oppi
 
 // swiftlint:disable force_unwrapping
@@ -1970,6 +1971,34 @@ struct APIClientTests {
         }
 
         #expect(sawRequest)
+    }
+
+    @Test func authenticatedMediaContentTypePrefersSpecificServerType() {
+        let type = AuthenticatedMediaContentType.resolve(
+            responseMimeType: "audio/mpeg",
+            contentTypeHint: "audio/mp4",
+            fileExtension: "m4a"
+        )
+        #expect(type == UTType.mp3.identifier)
+    }
+
+    @Test func authenticatedMediaContentTypeIgnoresGenericServerType() {
+        // An older server serves `.m4b` as octet-stream; AVFoundation cannot open `public.data`.
+        let type = AuthenticatedMediaContentType.resolve(
+            responseMimeType: "application/octet-stream",
+            contentTypeHint: "audio/mp4",
+            fileExtension: "m4b"
+        )
+        #expect(type == UTType.mpeg4Audio.identifier)
+    }
+
+    @Test func authenticatedMediaContentTypeFallsBackToExtension() {
+        let type = AuthenticatedMediaContentType.resolve(
+            responseMimeType: "application/octet-stream",
+            contentTypeHint: nil,
+            fileExtension: "mp4"
+        )
+        #expect(type == UTType.mpeg4Movie.identifier)
     }
 
     @Test func authenticatedMediaResponseValidatorAcceptsMatchingPartialContent() {
