@@ -52,7 +52,7 @@ struct SettingsExperimentsPage: View {
                 Toggle("Live Remote Screen", isOn: $desktopLiveViewEnabled)
                     .accessibilityIdentifier("settings.experiments.desktopLiveView")
             } footer: {
-                Text("Shows a live view of a granted Mac window on iPhone when the server offers Live Remote Screen. Off keeps the still viewer. Frames are not saved.")
+                Text("Shows a live view of a granted Mac window on iPhone when the server offers Live Remote Screen. Off hides Remote Screen. Frames are not saved.")
             }
         }
         .settingsPage("Experiments")
