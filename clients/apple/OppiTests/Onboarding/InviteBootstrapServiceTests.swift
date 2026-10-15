@@ -207,6 +207,75 @@ struct InviteBootstrapServiceTests {
         #expect(Array(events.suffix(2)) == ["waiting:ended", "client:at_paired"])
     }
 
+    /// Cancel lands as the poll answers enrolled: the server already enrolled this
+    /// device, so the phone reports the cancel, keeps no credential, and revokes
+    /// that device with its own just-issued token.
+    @Test func cancelAsApprovalCompletesRevokesTheEnrolledDevice() async throws {
+        let log = InviteBootstrapCallLog()
+        let credentials = credentials()
+        let task = Task { @MainActor in
+            try await InviteBootstrapService.validateAndBootstrap(
+                credentials: credentials,
+                existingCredentials: nil,
+                confirmTrust: { _ in true },
+                apiFactory: { _, token, _ in
+                    RecordingInviteBootstrapAPI(
+                        log: log,
+                        accessToken: "at_paired",
+                        approvalRequired: true,
+                        cancelOnPoll: true,
+                        bearer: token
+                    )
+                },
+                deviceKeyProvider: { InMemoryP256DeviceKey() }
+            )
+        }
+
+        await #expect(throws: InviteBootstrapError.message("Pairing cancelled.")) {
+            _ = try await task.value
+        }
+        // No authenticated bootstrap: the caller gets no credential to save.
+        let calls = try await waitForCalls(log, count: 3)
+        #expect(calls == [
+            "pair:one-time-token",
+            "poll:pa_test",
+            "revoke:dev_https bearer:at_paired",
+        ])
+    }
+
+    @Test func cancelBeforeEnrollmentRevokesNothing() async throws {
+        let log = InviteBootstrapCallLog()
+        let credentials = credentials()
+        let task = Task { @MainActor in
+            try await InviteBootstrapService.validateAndBootstrap(
+                credentials: credentials,
+                existingCredentials: nil,
+                confirmTrust: { _ in true },
+                apiFactory: { _, token, _ in
+                    RecordingInviteBootstrapAPI(log: log, approvalRequired: true, bearer: token)
+                },
+                deviceKeyProvider: { InMemoryP256DeviceKey() }
+            )
+        }
+        _ = try await waitForCalls(log, count: 1)
+        task.cancel()
+
+        await #expect(throws: InviteBootstrapError.message("Pairing cancelled.")) {
+            _ = try await task.value
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(await log.snapshot() == ["pair:one-time-token"])
+    }
+
+    private func waitForCalls(_ log: InviteBootstrapCallLog, count: Int) async throws -> [String] {
+        for _ in 0..<200 {
+            let calls = await log.snapshot()
+            if calls.count >= count { return calls }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        return await log.snapshot()
+    }
+
     @Test func decodesCredentialsFromInviteURL() throws {
         let payload = #"{"v":3,"host":"pairing.example.test","port":7749,"token":"invite-token","name":"Pairing Server"}"#
         let encoded = try #require(payload.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed))
@@ -312,18 +381,26 @@ private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
     private let accessToken: String
     private let incompleteResponse: Bool
     private let approvalRequired: Bool
+    /// Cancels the polling task as the poll answers enrolled.
+    private let cancelOnPoll: Bool
+    /// The bearer this client was created with.
+    private let bearer: String
     private var pairedDeviceName: String?
 
     init(
         log: InviteBootstrapCallLog,
         accessToken: String = "at_current",
         incompleteResponse: Bool = false,
-        approvalRequired: Bool = false
+        approvalRequired: Bool = false,
+        cancelOnPoll: Bool = false,
+        bearer: String = ""
     ) {
         self.log = log
         self.accessToken = accessToken
         self.incompleteResponse = incompleteResponse
         self.approvalRequired = approvalRequired
+        self.cancelOnPoll = cancelOnPoll
+        self.bearer = bearer
     }
 
     private func enrolledResponse() -> PairDeviceResponse {
@@ -370,6 +447,7 @@ private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
     ) async throws -> PairingApprovalPoll {
         guard approvalRequired else { throw APIError.invalidResponse }
         await log.append("poll:\(approvalId)")
+        if cancelOnPoll { withUnsafeCurrentTask { $0?.cancel() } }
         return .enrolled(enrolledResponse())
     }
 
@@ -386,6 +464,10 @@ private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
     func listSessionsFromWorkspaces(recentDays: Int) async throws -> [Session] {
         await log.append("listSessions:\(recentDays)")
         return []
+    }
+
+    func revokeAuthDevice(id: String) async throws {
+        await log.append("revoke:\(id) bearer:\(bearer)")
     }
 }
 
@@ -417,4 +499,5 @@ private actor FailingInviteBootstrapAPI: InviteBootstrapAPI {
     func health() async throws -> Bool { throw error }
     func me() async throws -> User { throw error }
     func listSessionsFromWorkspaces(recentDays _: Int) async throws -> [Session] { throw error }
+    func revokeAuthDevice(id _: String) async throws { throw error }
 }

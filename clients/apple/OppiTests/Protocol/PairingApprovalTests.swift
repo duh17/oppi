@@ -199,44 +199,6 @@ struct PairingEnrollmentTests {
         }
     }
 
-    @Test func cancelAfterEnrolledPollDoesNotReturnCredentials() async throws {
-        var pollResume: CheckedContinuation<Void, Never>?
-        let task = Task { @MainActor in
-            try await PairingEnrollment.complete(
-                start: .approvalRequired(
-                    PairingApprovalRequired(
-                        status: "approval_required",
-                        approvalId: "pa_1",
-                        pendingToken: "pw_1",
-                        expiresAt: 100
-                    )
-                ),
-                poll: { _, _ in
-                    await withCheckedContinuation { continuation in
-                        pollResume = continuation
-                    }
-                    return .enrolled(self.enrolled)
-                },
-                pollInterval: .zero,
-                sleep: { _ in }
-            )
-        }
-        for _ in 0..<50 where pollResume == nil {
-            await Task.yield()
-        }
-        let resume = try #require(pollResume)
-        task.cancel()
-        resume.resume()
-        do {
-            let response = try await task.value
-            Issue.record("Cancelled enrollment returned \(response.deviceId)")
-        } catch let failure as PairingEnrollment.Failure {
-            #expect(failure == .cancelled)
-        } catch {
-            Issue.record("Unexpected error \(error)")
-        }
-    }
-
     @Test func cancelFailsClosed() async {
         await #expect(throws: PairingEnrollment.Failure.cancelled) {
             try await PairingEnrollment.complete(

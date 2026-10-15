@@ -64,6 +64,9 @@ enum PairingEnrollment {
         }
     }
 
+    /// Returns an enrolled credential even when the task was cancelled as the
+    /// poll answered: the server already enrolled this device, so the caller
+    /// must see the credential to revoke it before reporting the cancel.
     @MainActor
     static func complete(
         start: PairDeviceStart,
@@ -100,7 +103,6 @@ enum PairingEnrollment {
                 }
                 switch result {
                 case .enrolled(let response):
-                    if Task.isCancelled { throw Failure.cancelled }
                     return response
                 case .pending(let expiresAt):
                     onWaiting?(expiresAt)

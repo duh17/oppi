@@ -1,5 +1,8 @@
+import OSLog
 import SwiftUI
 import VisionKit
+
+private let pairingLogger = Logger(subsystem: AppIdentifiers.subsystem, category: "Pairing")
 
 /// Mode for the onboarding flow.
 enum OnboardingMode {
@@ -445,6 +448,7 @@ protocol InviteBootstrapAPI: Sendable {
     func health() async throws -> Bool
     func me() async throws -> User
     func listSessionsFromWorkspaces(recentDays: Int) async throws -> [Session]
+    func revokeAuthDevice(id: String) async throws
 }
 
 extension APIClient: InviteBootstrapAPI {}
@@ -519,7 +523,19 @@ enum InviteBootstrapService {
                         onWaitingForApproval?(expiresAt)
                     }
                 )
-                if Task.isCancelled { throw PairingEnrollment.Failure.cancelled }
+                if Task.isCancelled {
+                    if let deviceCredential = pairResult.deviceCredential {
+                        revokeAbandonedEnrollment(
+                            deviceId: deviceCredential.deviceId,
+                            using: apiFactory(
+                                baseURL,
+                                deviceCredential.accessToken,
+                                credentials.normalizedTLSCertFingerprint
+                            )
+                        )
+                    }
+                    throw PairingEnrollment.Failure.cancelled
+                }
                 if didRequireApproval { onWaitingForApproval?(nil) }
             } catch {
                 throw InviteBootstrapError.message(
@@ -546,6 +562,24 @@ enum InviteBootstrapService {
         api = apiFactory(baseURL, credentials.effectiveAccessToken, credentials.normalizedTLSCertFingerprint)
         let sessions = try await bootstrapSessions(using: api)
         return InviteBootstrapResult(effectiveCredentials: credentials, sessions: sessions)
+    }
+
+    /// Cancel landed as the server enrolled this device, so the phone keeps no
+    /// credential. Revoke the device with its own just-issued bearer so it does
+    /// not stay in Paired Devices. Best effort: runs outside the cancelled task,
+    /// and a failure is only logged. A Cancel while the poll request is in
+    /// flight never sees the credential and still leaves the device enrolled.
+    static func revokeAbandonedEnrollment(deviceId: String, using api: any InviteBootstrapAPI) {
+        Task {
+            do {
+                try await api.revokeAuthDevice(id: deviceId)
+                pairingLogger.notice("Revoked the device enrolled as pairing was cancelled")
+            } catch {
+                pairingLogger.error(
+                    "Revoking the device enrolled as pairing was cancelled failed: \(String(describing: type(of: error)), privacy: .public)"
+                )
+            }
+        }
     }
 
     private static func bootstrapSessions(using api: any InviteBootstrapAPI) async throws -> [Session] {
@@ -705,7 +739,19 @@ enum E2EAppAuthBootstrap {
                     )
                 }
             )
-            if Task.isCancelled { throw PairingEnrollment.Failure.cancelled }
+            if Task.isCancelled {
+                if let deviceCredential = pairResult.deviceCredential {
+                    InviteBootstrapService.revokeAbandonedEnrollment(
+                        deviceId: deviceCredential.deviceId,
+                        using: apiFactory(
+                            baseURL,
+                            deviceCredential.accessToken,
+                            credentials.normalizedTLSCertFingerprint
+                        )
+                    )
+                }
+                throw PairingEnrollment.Failure.cancelled
+            }
         } catch {
             throw InviteBootstrapError.message(
                 InviteBootstrapService.pairingFailureMessage(for: error, host: credentials.host)

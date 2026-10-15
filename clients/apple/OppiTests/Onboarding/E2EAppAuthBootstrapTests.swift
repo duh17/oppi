@@ -175,4 +175,8 @@ private actor E2EAppAuthRecordingAPI: InviteBootstrapAPI {
         await log.append("listSessions:\(recentDays)")
         return []
     }
+
+    func revokeAuthDevice(id: String) async throws {
+        await log.append("revoke:\(id)")
+    }
 }
