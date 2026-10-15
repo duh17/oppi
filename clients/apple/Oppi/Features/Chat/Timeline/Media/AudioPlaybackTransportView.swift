@@ -113,6 +113,8 @@ final class AudioPlaybackTransportView: UIView {
     let accessibilityPrefix: String
     private var configuration: Configuration
     private var style = AudioPlayerChromeStyle()
+    /// Text size the current button configurations were built for.
+    private var styledContentSizeCategory: UIContentSizeCategory?
 
     private var isScrubbing = false
     private var scrubFraction: Double = 0
@@ -177,10 +179,6 @@ final class AudioPlaybackTransportView: UIView {
             name: .oppiThemeDidChange,
             object: nil
         )
-        // Button configuration titles do not follow Dynamic Type on their own.
-        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (view: Self, _) in
-            view.applyStyle()
-        }
     }
 
     @available(*, unavailable)
@@ -197,6 +195,7 @@ final class AudioPlaybackTransportView: UIView {
 
     /// Colors and button configurations from the current theme and text size.
     private func applyStyle() {
+        styledContentSizeCategory = traitCollection.preferredContentSizeCategory
         chapterTitleLabel.textColor = style.dimmed
         seekBar.trackColor = style.comment.withAlphaComponent(0.35)
         seekBar.fillColor = style.foreground
@@ -380,6 +379,11 @@ final class AudioPlaybackTransportView: UIView {
 
     override func updateProperties() {
         super.updateProperties()
+        // Button configuration titles do not follow Dynamic Type on their own.
+        // Reading the category here makes UIKit re-run this pass when it changes.
+        if traitCollection.preferredContentSizeCategory != styledContentSizeCategory {
+            applyStyle()
+        }
         let player = configuration.audioPlayer
         let matches = matchesPlayback
         let duration = matches ? player?.duration : nil

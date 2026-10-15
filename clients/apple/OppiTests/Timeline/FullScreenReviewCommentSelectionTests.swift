@@ -2884,7 +2884,8 @@ struct FullScreenReviewCommentSelectionTests {
 
         #expect(fixture.saveComment(body: "And rename this.") == nil)
         let incremented = await waitForMainActorCondition {
-            fixture.controller.floatingStashButtonForTesting?.accessibilityValue == "2 staged comments"
+            fixture.controller.view.layoutIfNeeded()
+            return fixture.controller.floatingStashButtonForTesting?.accessibilityValue == "2 staged comments"
         }
         #expect(incremented)
 

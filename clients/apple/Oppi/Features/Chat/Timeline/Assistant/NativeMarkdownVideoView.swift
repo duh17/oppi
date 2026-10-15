@@ -63,9 +63,12 @@ final class NativeMarkdownVideoView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupViews()
-        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (view: Self, _) in
-            view.applyDynamicTypeFonts()
-        }
+    }
+
+    /// Reading the category here makes UIKit re-run this pass when it changes.
+    override func updateProperties() {
+        super.updateProperties()
+        applyDynamicTypeFonts(for: traitCollection.preferredContentSizeCategory)
     }
 
     @available(*, unavailable)
@@ -204,7 +207,7 @@ final class NativeMarkdownVideoView: UIView {
         openButton.titleLabel?.numberOfLines = 2
         openButton.accessibilityIdentifier = "markdown-video-open"
         openButton.addTarget(self, action: #selector(openReference), for: .touchUpInside)
-        applyDynamicTypeFonts()
+        applyDynamicTypeFonts(for: traitCollection.preferredContentSizeCategory)
 
         addSubview(statusLabel)
         addSubview(openButton)
@@ -517,8 +520,11 @@ final class NativeMarkdownVideoView: UIView {
         }
     }
 
-    private func applyDynamicTypeFonts() {
-        let font = UIFont.preferredFont(forTextStyle: .caption1)
+    private func applyDynamicTypeFonts(for category: UIContentSizeCategory) {
+        let font = UIFont.preferredFont(
+            forTextStyle: .caption1,
+            compatibleWith: UITraitCollection(preferredContentSizeCategory: category)
+        )
         statusLabel.font = font
         statusLabel.adjustsFontForContentSizeCategory = true
         openButton.titleLabel?.font = font

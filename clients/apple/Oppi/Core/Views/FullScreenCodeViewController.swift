@@ -120,7 +120,6 @@ final class FullScreenCodeViewController: UIViewController {
     private var trailingFloatingAccessoryCount = 0
     private var viewingOptionsBottomConstraint: NSLayoutConstraint?
     private var lastPresentedStashCount = 0
-    private var isObservingReviewCommentStash = false
     private weak var presentedStashSheetHost: UIViewController?
     private var isSnapshotting = false
     private let addToChatDestination: ComposerCanvasDestination?
@@ -301,7 +300,6 @@ final class FullScreenCodeViewController: UIViewController {
             nav.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         nav.didMove(toParent: self)
-        startObservingReviewCommentStash()
     }
 
     @objc private func handleThemeChangeNotification(_: Notification) {
@@ -1124,34 +1122,18 @@ final class FullScreenCodeViewController: UIViewController {
         reviewCommentSelectionContext?.dispatcher.stash
     }
 
-    private func startObservingReviewCommentStash() {
-        guard !isObservingReviewCommentStash else { return }
-        isObservingReviewCommentStash = true
-        trackReviewCommentStashChanges()
-    }
-
-    private func trackReviewCommentStashChanges() {
-        guard isObservingReviewCommentStash,
-              let comments = reviewCommentStash as? ChatReviewCommentsController else {
-            return
-        }
-        withObservationTracking {
-            _ = comments.stagedCount
-            _ = comments.stagedComments
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.handleReviewCommentStashChange()
-            }
-        }
-    }
-
-    private func handleReviewCommentStashChange() {
-        if isViewLoaded, let host = contentHostController {
-            configureFloatingStashButton(on: host, palette: bodyThemeID.palette)
-            installRightBarItems(on: host, palette: bodyThemeID.palette)
-            refreshPresentedStashSheet()
-        }
-        trackReviewCommentStashChanges()
+    /// UIKit tracks the stash reads here and re-runs this when the staged comments
+    /// change. Reads go through the concrete `@Observable` controller; the
+    /// `ReviewCommentStashHandling` existential alone is not observable.
+    override func updateProperties() {
+        super.updateProperties()
+        guard let comments = reviewCommentStash as? ChatReviewCommentsController else { return }
+        _ = comments.stagedCount
+        _ = comments.stagedComments
+        guard isViewLoaded, let host = contentHostController else { return }
+        configureFloatingStashButton(on: host, palette: bodyThemeID.palette)
+        installRightBarItems(on: host, palette: bodyThemeID.palette)
+        refreshPresentedStashSheet()
     }
 
     private func configureFloatingStashButton(

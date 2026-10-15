@@ -527,9 +527,12 @@ final class HTMLDOMHighlightView: UIView {
         layer.cornerRadius = 4
         isAccessibilityElement = true
         accessibilityIdentifier = "html.pick.highlight"
-        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: Self, _) in
-            view.updateBorderColor()
-        }
+        updateBorderColor()
+    }
+
+    /// UIKit tracks the trait read in `updateBorderColor` and re-runs this on change.
+    override func updateProperties() {
+        super.updateProperties()
         updateBorderColor()
     }
 

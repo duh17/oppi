@@ -27,6 +27,8 @@ final class AudioLyricsPlayerViewController: UIViewController {
 
     private var configuration: Configuration
     private var style = AudioPlayerChromeStyle()
+    /// Text size the current button configurations were built for.
+    private var styledContentSizeCategory: UIContentSizeCategory?
 
     private var selectedTrackIndex: Int?
     private var loadedTimedText: TimedText.LoadResult?
@@ -140,10 +142,6 @@ final class AudioLyricsPlayerViewController: UIViewController {
             name: .oppiThemeDidChange,
             object: nil
         )
-        // Button configuration titles do not follow Dynamic Type on their own.
-        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (controller: Self, _) in
-            controller.applyStyle()
-        }
     }
 
     @objc private func themeDidChange() {
@@ -154,6 +152,7 @@ final class AudioLyricsPlayerViewController: UIViewController {
     /// Colors and button configurations from the current theme and text size.
     /// Rebuilding content repaints the cast, transcript palette, and language label.
     private func applyStyle() {
+        styledContentSizeCategory = traitCollection.preferredContentSizeCategory
         view.backgroundColor = style.background
         backButton.configuration?.baseForegroundColor = style.cyan
         stopButton.configuration?.baseForegroundColor = style.foreground
@@ -187,6 +186,11 @@ final class AudioLyricsPlayerViewController: UIViewController {
 
     override func updateProperties() {
         super.updateProperties()
+        // Button configuration titles do not follow Dynamic Type on their own.
+        // Reading the category here makes UIKit re-run this pass when it changes.
+        if isViewLoaded, traitCollection.preferredContentSizeCategory != styledContentSizeCategory {
+            applyStyle()
+        }
         let player = configuration.audioPlayer
         let matches = player.map {
             $0.playingItemID == configuration.itemID || $0.isStreamingPlaybackActive(itemID: configuration.itemID)

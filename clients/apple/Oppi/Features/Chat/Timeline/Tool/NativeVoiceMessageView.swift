@@ -21,7 +21,6 @@ final class NativeAudioMessageView: UIView {
     private var suppressAutoplay = false
     private var durationSeconds: TimeInterval?
     private var isUnavailable = false
-    nonisolated(unsafe) private var audioStateObserver: NSObjectProtocol?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -54,8 +53,15 @@ final class NativeAudioMessageView: UIView {
     deinit {
         decodeTask?.cancel()
         fetchTask?.cancel()
-        if let audioStateObserver {
-            NotificationCenter.default.removeObserver(audioStateObserver)
+    }
+
+    /// UIKit tracks the `loadingItemID` read here and re-runs this when it changes.
+    override func updateProperties() {
+        super.updateProperties()
+        if let id, audioPlayer?.loadingItemID == id {
+            spinner.startAnimating()
+        } else {
+            spinner.stopAnimating()
         }
     }
 
@@ -185,7 +191,8 @@ final class NativeAudioMessageView: UIView {
         self.attachmentMediaSourceProvider = nil
         fetchTask?.cancel()
         fetchTask = nil
-        bindAudioStateObservationIfNeeded()
+        // A new player instance needs fresh tracking in `updateProperties()`.
+        setNeedsUpdateProperties()
 
         container.backgroundColor = .clear
         container.layer.borderColor = UIColor.clear.cgColor
@@ -248,24 +255,6 @@ final class NativeAudioMessageView: UIView {
             spinner.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: container.centerYAnchor),
         ])
-    }
-
-    private func bindAudioStateObservationIfNeeded() {
-        guard audioStateObserver == nil else { return }
-        audioStateObserver = NotificationCenter.default.addObserver(
-            forName: AudioPlayerService.stateDidChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                if let id = self.id, self.audioPlayer?.loadingItemID == id {
-                    self.spinner.startAnimating()
-                } else {
-                    self.spinner.stopAnimating()
-                }
-            }
-        }
     }
 
     private func refreshStrip() {

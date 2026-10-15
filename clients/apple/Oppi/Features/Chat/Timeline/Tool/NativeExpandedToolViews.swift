@@ -519,7 +519,6 @@ final class NativeExpandedAudioAttachmentView: UIView {
     private var fileURL: URL?
     private var audioPlayer: AudioPlayerService?
     private var decodeTask: Task<Void, Never>?
-    nonisolated(unsafe) private var audioStateObserver: NSObjectProtocol?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -531,9 +530,12 @@ final class NativeExpandedAudioAttachmentView: UIView {
 
     deinit {
         decodeTask?.cancel()
-        if let audioStateObserver {
-            NotificationCenter.default.removeObserver(audioStateObserver)
-        }
+    }
+
+    /// UIKit tracks the `AudioPlayerService` reads in `updateButton` and re-runs this on change.
+    override func updateProperties() {
+        super.updateProperties()
+        updateButton(palette: ThemeRuntimeState.currentPalette())
     }
 
     func apply(
@@ -548,7 +550,8 @@ final class NativeExpandedAudioAttachmentView: UIView {
         self.id = id
         self.audioPlayer = audioPlayer
         self.fileURL = nil
-        bindAudioStateObservationIfNeeded()
+        // A new player instance needs fresh tracking in `updateProperties()`.
+        setNeedsUpdateProperties()
 
         titleLabel.text = title
         titleLabel.textColor = UIColor(palette.fg)
@@ -615,20 +618,6 @@ final class NativeExpandedAudioAttachmentView: UIView {
             spinner: spinner,
             playAction: #selector(togglePlayback)
         )
-    }
-
-    private func bindAudioStateObservationIfNeeded() {
-        guard audioStateObserver == nil else { return }
-        audioStateObserver = NotificationCenter.default.addObserver(
-            forName: AudioPlayerService.stateDidChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.updateButton(palette: ThemeRuntimeState.currentPalette())
-            }
-        }
     }
 
     private func updateButton(palette: ThemePalette) {

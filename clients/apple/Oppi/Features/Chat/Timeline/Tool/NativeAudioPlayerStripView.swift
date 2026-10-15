@@ -19,21 +19,20 @@ final class NativeAudioPlayerStripView: UIView {
     private var onExpand: (() -> Void)?
     private var showsTitle = true
     private var isUnavailable = false
-    nonisolated(unsafe) private var audioStateObserver: NSObjectProtocol?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupViews()
-        bindAudioStateObservationIfNeeded()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    deinit {
-        if let audioStateObserver {
-            NotificationCenter.default.removeObserver(audioStateObserver)
-        }
+    /// UIKit tracks the `AudioPlayerService` reads made while repainting
+    /// (item IDs, pause state, elapsed time, duration) and re-runs this on change.
+    override func updateProperties() {
+        super.updateProperties()
+        refreshPlaybackChrome()
     }
 
     override var intrinsicContentSize: CGSize {
@@ -86,6 +85,8 @@ final class NativeAudioPlayerStripView: UIView {
         expandButton.accessibilityLabel = isUnavailable ? "Open audio file" : "Expand player"
         playButton.accessibilityLabel = playAccessibilityLabel()
         refreshPlaybackChrome()
+        // A new player instance needs fresh tracking in `updateProperties()`.
+        setNeedsUpdateProperties()
     }
 
     private func setupViews() {
@@ -186,19 +187,6 @@ final class NativeAudioPlayerStripView: UIView {
             unavailableLabel.centerYAnchor.constraint(equalTo: controls.centerYAnchor),
             heightAnchor.constraint(equalToConstant: MarkdownInlineAudioLayout.compactHeight),
         ])
-    }
-
-    private func bindAudioStateObservationIfNeeded() {
-        guard audioStateObserver == nil else { return }
-        audioStateObserver = NotificationCenter.default.addObserver(
-            forName: AudioPlayerService.stateDidChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.refreshPlaybackChrome()
-            }
-        }
     }
 
     private func refreshPlaybackChrome() {

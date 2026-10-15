@@ -79,6 +79,12 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         super.init(frame: .zero)
         accessibilityIdentifier = "tool.notebook.cell"
         build()
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) {
+            (view: Self, previous: UITraitCollection) in
+            guard previous.preferredContentSizeCategory
+                != view.traitCollection.preferredContentSizeCategory else { return }
+            view.fittedHeightByWidth.removeAll()
+        }
     }
 
     @available(*, unavailable)
@@ -189,13 +195,6 @@ final class NotebookCellView: UIView, UITextViewDelegate {
             fittedWidthBucket = bucket
             fittedHeightByWidth.removeAll()
         }
-    }
-
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        guard previousTraitCollection?.preferredContentSizeCategory
-            != traitCollection.preferredContentSizeCategory else { return }
-        fittedHeightByWidth.removeAll()
     }
 
     // MARK: - Build

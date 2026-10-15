@@ -13,6 +13,21 @@ import UIKit
 /// cascade, which adjusts contentOffset AFTER `layoutSubviews()` returns.
 @MainActor
 final class AnchoredCollectionView: UICollectionView {
+    override init(frame: CGRect, collectionViewLayout layout: UICollectionViewLayout) {
+        super.init(frame: frame, collectionViewLayout: layout)
+        registerForTraitChanges([UITraitAccessibilityContrast.self]) {
+            (view: Self, previous: UITraitCollection) in
+            guard previous.accessibilityContrast != view.traitCollection.accessibilityContrast else {
+                return
+            }
+            (view.delegate as? ChatTimelineCollectionHost.Controller)?
+                .handleSpeakerAccessibilityDidChange()
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
     /// UIKit keeps a touch on `UIControl` unless this returns true, so a
     /// slow drag on a path pill never becomes a timeline pan.
     override func touchesShouldCancel(in view: UIView) -> Bool {
@@ -386,15 +401,6 @@ final class AnchoredCollectionView: UICollectionView {
     override func safeAreaInsetsDidChange() {
         super.safeAreaInsetsDidChange()
         collectionViewLayout.invalidateLayout()
-    }
-
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        guard previousTraitCollection?.accessibilityContrast != traitCollection.accessibilityContrast else {
-            return
-        }
-        (delegate as? ChatTimelineCollectionHost.Controller)?
-            .handleSpeakerAccessibilityDidChange()
     }
 
     override func layoutSubviews() {

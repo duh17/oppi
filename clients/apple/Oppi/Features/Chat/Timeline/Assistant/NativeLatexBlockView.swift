@@ -105,6 +105,18 @@ final class NativeLatexBlockView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupViews()
+        registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) {
+            (view: Self, previous: UITraitCollection) in
+            guard previous.preferredContentSizeCategory
+                    != view.traitCollection.preferredContentSizeCategory,
+                  let currentCode = view.currentCode,
+                  let currentPalette = view.currentPalette,
+                  view.isShowingFormula else {
+                return
+            }
+            view.currentRenderIdentity = nil
+            view.applyAsFormula(code: currentCode, palette: currentPalette)
+        }
     }
 
     @available(*, unavailable)
@@ -452,19 +464,6 @@ final class NativeLatexBlockView: UIView {
         accessibilityLabel = FlatSegment.formulaAccessibilityLabel(for: code)
         accessibilityHint = String(localized: "Opens formula full screen")
         accessibilityTraits = [.button]
-    }
-
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        guard previousTraitCollection?.preferredContentSizeCategory
-                != traitCollection.preferredContentSizeCategory,
-              let currentCode,
-              let currentPalette,
-              isShowingFormula else {
-            return
-        }
-        currentRenderIdentity = nil
-        applyAsFormula(code: currentCode, palette: currentPalette)
     }
 
     override func accessibilityActivate() -> Bool {
