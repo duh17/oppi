@@ -577,12 +577,12 @@ export function extractCompilerLinkerErrors(logText: string): string[] {
 /**
  * First Swift runtime crash line in an xcodebuild log. The runtime prints `<file>:<line>: Fatal error:
  * <message>` (location optional) and the simulator log relays it behind an os_log prefix,
- * `<time> <process>[<pid>:<tid>] `. Anchored on that wording at the start of the line or right after
- * the prefix, so app log lines (`Dictation error (fatal=true): STT crashed`) and test names that
- * mention a crash never match.
+ * `<date> <time> <process>[<pid>:<tid>] `. The whole line must have that shape, so app log lines
+ * (`Dictation error (fatal=true): STT crashed`) and test names or log text that merely quote a
+ * crash never match.
  */
 export function hostCrashLine(logText: string): string | undefined {
-  return logText.split("\n").find((line) => /(?:^|\] )(?:[^\s:][^:]*:\d+: )?Fatal error: \S/.test(line));
+  return logText.split("\n").find((line) => /^(?:\d{4}-\d{2}-\d{2} \S+ \S+\[\d+:\d+\] )?(?:\S+:\d+: )?Fatal error: \S/.test(line));
 }
 
 export function extractBuildTimingSummary(logText: string): string[] {
@@ -1691,7 +1691,7 @@ export async function commandRun(
       attemptArtifacts.push(artifactFile);
       if (result.hung && !result.completion && attempt < config.hangRetries) {
         // A crashed host crashes the same way after a simulator erase; only a silent hang is worth retrying.
-        hostCrash = hostCrashLine(existsSync(logFile) ? readFileSync(logFile, "utf8") : "");
+        hostCrash = hostCrashLine(readFileSync(logFile, "utf8"));
         if (hostCrash) {
           log(`[sim-pool] Skipping simulator retry: the test host crashed (${hostCrash})`);
         } else {

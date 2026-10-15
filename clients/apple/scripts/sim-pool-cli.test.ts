@@ -1061,6 +1061,8 @@ sleep 30
     const result = runCompletionFixture([
       "Dictation error (fatal=true): STT crashed",
       "Test case 'crashed host report fixture Fatal error: boom' started",
+      "Test case 'OppiApp.swift:469: Fatal error: friction-repro' started",
+      "Build log] Fatal error: boom",
       "",
     ].join("\n"));
     expect(result.attempts).toHaveLength(2);
