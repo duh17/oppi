@@ -58,6 +58,12 @@ const INPUT_CARDS_KIND = DurableInputCards.definition.kind;
 
 /** `older` pages: visible entries per request by default, and at most. */
 export const CONVERSATION_OLDER_LIMIT = 100;
+/**
+ * Active entries a snapshot covers at most; older ones page in through `older`, like
+ * trace history pages. Without it a long uncompacted conversation sent its whole
+ * context as one frame (megabytes once it held images) on every fresh attach.
+ */
+export const CONVERSATION_SNAPSHOT_LIMIT = 100;
 export const CONVERSATION_OLDER_MAX = 500;
 
 type SendFrame = (frame: ConversationStreamServerMessage) => void;
@@ -385,10 +391,23 @@ class ConversationRoom implements ToolPresenter {
     return view;
   }
 
-  /** Active entries a snapshot shows, in display order. */
-  visibleEntries(): ConversationEntryView[] {
+  /**
+   * Smallest entry id a snapshot sends: the oldest of the newest
+   * `CONVERSATION_SNAPSHOT_LIMIT` active entries, or 0 when they all fit. It only cuts
+   * entries after the head entry, so a snapshot never splits the head marker from the
+   * entries it keeps. Hidden entries count too, so the floor only rises until the head
+   * moves: every client still holds the entries from the current floor on.
+   */
+  windowFloor(): number {
+    const index = this.entries.length - CONVERSATION_SNAPSHOT_LIMIT;
+    const entry = index > 0 ? this.entries[index] : undefined;
+    return entry && entry.id > this.head ? entry.id : 0;
+  }
+
+  /** Active entries a snapshot shows from `floor` on, in display order. */
+  visibleEntries(floor: number): ConversationEntryView[] {
     return this.entries
-      .filter((entry) => !this.hidden.has(entry.id))
+      .filter((entry) => entry.id >= floor && !this.hidden.has(entry.id))
       .map((entry) => this.entryView(entry));
   }
 
@@ -402,21 +421,28 @@ class ConversationRoom implements ToolPresenter {
       .map((entry) => this.entryView(entry));
   }
 
-  /** Active entries up to `entryId` whose presentation changed after `revision`, by id. */
-  changedSince(revision: number, entryId: number): ConversationEntryView[] {
+  /**
+   * Active entries from `floor` up to `entryId` whose presentation changed after
+   * `revision`, by id.
+   */
+  changedSince(revision: number, floor: number, entryId: number): ConversationEntryView[] {
     return this.restate(
-      (entry) => entry.id <= entryId && (this.revisions.get(entry.id) ?? 0) > revision,
+      (entry) =>
+        entry.id >= floor && entry.id <= entryId && (this.revisions.get(entry.id) ?? 0) > revision,
     );
   }
 
   /**
-   * Active entries up to `entryId` whose presentation is not their content alone: aborted
-   * attempts, shown or hidden, and input cards. A resumed client may hold either form.
+   * Active entries from `floor` up to `entryId` whose presentation is not their content
+   * alone: aborted attempts, shown or hidden, and input cards. A resumed client may hold
+   * either form.
    */
-  presentedUpTo(entryId: number): ConversationEntryView[] {
+  presentedUpTo(floor: number, entryId: number): ConversationEntryView[] {
     return this.restate(
       (entry) =>
-        entry.id <= entryId && (this.attempts.has(entry.id) || this.inputCards.has(entry.id)),
+        entry.id >= floor &&
+        entry.id <= entryId &&
+        (this.attempts.has(entry.id) || this.inputCards.has(entry.id)),
     );
   }
 
@@ -480,6 +506,13 @@ export class ConversationStreamSubscription {
   private sentTip = 0;
   /** The room's presentation revision as of the last frame. */
   private sentRevision = 0;
+  /**
+   * Oldest entry id this client is known to hold from its first frame on. Presentation
+   * changes below it are not restated: a restated entry the client lacks would land
+   * before its window and make `older` skip the entries between. Pages the client loaded
+   * through `older` keep the presentation they had, like trace history pages.
+   */
+  private sentFloor = 0;
   private sentDocs = new Map<string, JsonObject>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private lastSentAt = 0;
@@ -509,6 +542,8 @@ export class ConversationStreamSubscription {
     ) {
       this.sentHead = this.room.head;
       this.sentTip = afterEntryId;
+      // The client's window is unknown; its snapshot floor was at most the current one.
+      this.sentFloor = this.room.windowFloor();
       this.flush(true);
     } else this.sendSnapshot();
   }
@@ -548,13 +583,14 @@ export class ConversationStreamSubscription {
     this.sentHead = this.room.head;
     this.sentTip = this.room.tip;
     this.sentRevision = this.room.revision;
+    this.sentFloor = this.room.windowFloor();
     this.sentDocs = new Map(docs);
     this.emit({
       type: "snapshot",
       conversationId: this.room.conversationId,
       head: this.room.head,
-      hasOlder: this.room.hasOlder,
-      entries: this.room.visibleEntries(),
+      hasOlder: this.room.hasOlder || this.sentFloor > 0,
+      entries: this.room.visibleEntries(this.sentFloor),
       docs: Object.fromEntries(docs),
     });
   }
@@ -571,8 +607,8 @@ export class ConversationStreamSubscription {
       return;
     }
     const restated = resume
-      ? this.room.presentedUpTo(this.sentTip)
-      : this.room.changedSince(this.sentRevision, this.sentTip);
+      ? this.room.presentedUpTo(this.sentFloor, this.sentTip)
+      : this.room.changedSince(this.sentRevision, this.sentFloor, this.sentTip);
     const entries = [...restated, ...this.room.entriesAfter(this.sentTip)];
     this.sentRevision = this.room.revision;
     const current = this.room.clientDocs();

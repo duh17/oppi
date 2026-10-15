@@ -29,6 +29,7 @@ import {
   DurableUIClientDoc,
 } from "../extensions/durable/durable-ui.js";
 import {
+  CONVERSATION_SNAPSHOT_LIMIT,
   attachConversationStream,
   readOlderConversationEntries,
   type ConversationStreamSubscription,
@@ -520,9 +521,7 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
     expect(JSON.stringify(client.entries)).not.toContain("raw job output");
     // Re-attaching from the cursor, as SessionHost does, shows it as its card.
     const resumed = await attach(f, client.tip, client);
-    expect(resumed.entries.find((entry) => entry.inputCard)?.card?.title).toBe(
-      "Background job 1",
-    );
+    expect(resumed.entries.find((entry) => entry.inputCard)?.card?.title).toBe("Background job 1");
     await expectConverged(f, resumed);
   });
 
@@ -820,5 +819,45 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
       entries: [],
       hasOlder: false,
     });
+  });
+
+  it("cuts a long snapshot to its window and pages the rest back to the whole context", async () => {
+    const f = await fixture([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
+    const id = f.conversation.id;
+    await prompt(f.conversation, "first");
+    await f.conversation.commit(async (tx) => {
+      for (let index = 0; index < CONVERSATION_SNAPSHOT_LIMIT + 20; index += 1)
+        await tx.appendEntry(id, {
+          kind: "oppi.notice",
+          data: { card: { title: `Card ${index}`, at: index } },
+        });
+    }, context);
+    const client = await attach(f);
+    expect(client.frames[0]).toMatchObject({ type: "snapshot", hasOlder: true });
+    expect(client.entries).toHaveLength(CONVERSATION_SNAPSHOT_LIMIT);
+    const sentIds = client.entries.map((entry) => entry.id);
+
+    // A new entry still appends after the window.
+    await prompt(f.conversation, "second");
+    await settle();
+    expect(client.entries.slice(0, CONVERSATION_SNAPSHOT_LIMIT).map((entry) => entry.id)).toEqual(
+      sentIds,
+    );
+
+    const renderers = new MobileRendererRegistry();
+    let more = true;
+    while (more) {
+      const page = wire(
+        await readOlderConversationEntries({
+          harness: f.harness,
+          conversationId: id,
+          renderers,
+          beforeEntryId: Math.min(...client.entries.map((entry) => entry.id)),
+        }),
+      );
+      client.apply(page);
+      more = page.type === "older" && page.hasOlder;
+    }
+    await expectConverged(f, client);
   });
 });
