@@ -574,6 +574,17 @@ export function extractCompilerLinkerErrors(logText: string): string[] {
   return [...new Set(lines)];
 }
 
+/**
+ * First Swift runtime crash line in an xcodebuild log. The runtime prints `<file>:<line>: Fatal error:
+ * <message>` (location optional) and the simulator log relays it behind an os_log prefix,
+ * `<time> <process>[<pid>:<tid>] `. Anchored on that wording at the start of the line or right after
+ * the prefix, so app log lines (`Dictation error (fatal=true): STT crashed`) and test names that
+ * mention a crash never match.
+ */
+export function hostCrashLine(logText: string): string | undefined {
+  return logText.split("\n").find((line) => /(?:^|\] )(?:[^\s:][^:]*:\d+: )?Fatal error: \S/.test(line));
+}
+
 export function extractBuildTimingSummary(logText: string): string[] {
   const lines = logText.split("\n");
   const output: string[] = [];
@@ -1216,6 +1227,8 @@ function printSummary(input: {
   videoPath?: string;
   derivedData?: string;
   completion?: TestCompletion;
+  /** Crash line that made the run skip its hang retry. */
+  hostCrash?: string;
 }): boolean {
   const duration = input.endedAt - input.startedAt;
   const totalDuration = input.totalEndedAt - input.totalStartedAt;
@@ -1243,6 +1256,9 @@ function printSummary(input: {
     lines.push("Result bundle/coverage may be incomplete; the test result above comes from the finished test run.");
   } else if (input.hangDetected) {
     lines.push(`Hang detection: triggered (no log, DerivedData, or build CPU progress for timeout)`);
+    if (input.hostCrash) {
+      lines.push("Test host crashed; skipped simulator retry:", input.hostCrash);
+    }
   }
   lines.push("");
   let extractUncertain = false;
@@ -1556,6 +1572,7 @@ export async function commandRun(
   let derivedData = "";
   let exitCode = 1;
   let hangDetected = false;
+  let hostCrash: string | undefined;
   let attemptsUsed = 0;
   let testCompletion: TestCompletion | undefined;
   let completionMetadata: Record<string, unknown> = {};
@@ -1673,9 +1690,15 @@ export async function commandRun(
       });
       attemptArtifacts.push(artifactFile);
       if (result.hung && !result.completion && attempt < config.hangRetries) {
-        log("[sim-pool] Retrying after simulator hang recovery...");
-        attempt += 1;
-        continue;
+        // A crashed host crashes the same way after a simulator erase; only a silent hang is worth retrying.
+        hostCrash = hostCrashLine(existsSync(logFile) ? readFileSync(logFile, "utf8") : "");
+        if (hostCrash) {
+          log(`[sim-pool] Skipping simulator retry: the test host crashed (${hostCrash})`);
+        } else {
+          log("[sim-pool] Retrying after simulator hang recovery...");
+          attempt += 1;
+          continue;
+        }
       }
       break;
     }
@@ -1770,6 +1793,7 @@ export async function commandRun(
           extra: {
             ...completionMetadata,
             attempt_artifacts: attemptArtifacts,
+            ...(hostCrash ? { host_crash_line: hostCrash } : {}),
             ...(videoPath ? { video_path: videoPath } : {}),
             ...(videoRecording ? { video_recording: videoRecording } : {}),
             timing_breakdown_seconds: {
@@ -1806,6 +1830,7 @@ export async function commandRun(
           videoPath,
           derivedData,
           completion: testCompletion,
+          hostCrash,
         });
       } catch {
         uncertain = true;

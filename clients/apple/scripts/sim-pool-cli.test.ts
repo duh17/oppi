@@ -1028,6 +1028,46 @@ sleep 30
     expect(result.summary.elapsed_seconds).toBeLessThan(11);
   }, 20_000);
 
+  test("silent hang is retried after a simulator erase", () => {
+    const result = runCompletionFixture("Test session started\n");
+    expect(result.run.status).not.toBe(0);
+    expect(result.attempts).toHaveLength(2);
+    expect(result.calls).toContain("simctl erase");
+    expect(result.summary.host_crash_line).toBeUndefined();
+  }, 20_000);
+
+  test("hang after a Swift runtime crash is not retried or erased and the summary shows the crash", () => {
+    const crash = "/Users/x/Oppi/App/OppiApp.swift:430: Fatal error: No Observable object of type ConnectionCoordinator found";
+    const result = runCompletionFixture(`${crash}\n`);
+    expect(result.run.status).not.toBe(0);
+    expect(result.attempts).toHaveLength(1);
+    expect(result.calls).not.toContain("simctl erase");
+    expect(result.run.stderr).toContain("Skipping simulator retry: the test host crashed");
+    expect(result.run.stdout).toContain(`Test host crashed; skipped simulator retry:\n${crash}`);
+    expect(result.summary).toMatchObject({ hang_detected: true, attempt_count: 1, host_crash_line: crash });
+  }, 20_000);
+
+  test("crash line relayed behind an os_log prefix, or without a location, also skips the retry", () => {
+    const relayed = "2026-10-15 07:50:15.632817-0700 Oppi[56780:74827238] Oppi/OppiApp.swift:469: Fatal error: boom";
+    const result = runCompletionFixture(`${relayed}\n`);
+    expect(result.attempts).toHaveLength(1);
+    expect(result.summary.host_crash_line).toBe(relayed);
+    const bare = runCompletionFixture("Fatal error: boom\n");
+    expect(bare.attempts).toHaveLength(1);
+    expect(bare.summary.host_crash_line).toBe("Fatal error: boom");
+  }, 30_000);
+
+  test("app log and test names that mention a crash do not suppress the hang retry", () => {
+    const result = runCompletionFixture([
+      "Dictation error (fatal=true): STT crashed",
+      "Test case 'crashed host report fixture Fatal error: boom' started",
+      "",
+    ].join("\n"));
+    expect(result.attempts).toHaveLength(2);
+    expect(result.calls).toContain("simctl erase");
+    expect(result.summary.host_crash_line).toBeUndefined();
+  }, 20_000);
+
   test("completion deadline is not postponed by continuing app log output", () => {
     const result = runCompletionFixture(swiftTestPrelude + swiftPassed, {
       afterLog: "while :; do echo app-heartbeat; /bin/sleep 0.1; done",
