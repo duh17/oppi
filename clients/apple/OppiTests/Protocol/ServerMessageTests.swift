@@ -132,7 +132,7 @@ struct ServerMessageTests {
         let structured = try ServerMessage.decode(
             from: #"{"type":"message_end","role":"assistant","content":"Before\n\nAfter","assistantContent":[{"kind":"text","content":"Before","contentIndex":0},{"kind":"thinking","content":"Check","contentIndex":1},{"kind":"text","content":"After","contentIndex":2}]}"#
         )
-        guard case .messageEnd(let role, let content, let assistantContent, _) = structured else {
+        guard case .messageEnd(let role, let content, let assistantContent, _, _) = structured else {
             Issue.record("Expected .messageEnd")
             return
         }
@@ -147,7 +147,7 @@ struct ServerMessageTests {
         let olderPeer = try ServerMessage.decode(
             from: #"{"type":"message_end","role":"assistant","content":"Done"}"#
         )
-        guard case .messageEnd(_, let olderContent, let olderAssistantContent, _) = olderPeer else {
+        guard case .messageEnd(_, let olderContent, let olderAssistantContent, _, _) = olderPeer else {
             Issue.record("Expected older .messageEnd")
             return
         }
@@ -159,7 +159,7 @@ struct ServerMessageTests {
         let structured = try ServerMessage.decode(
             from: #"{"type":"message_end","role":"assistant","content":"Before\n\nAfter","entryId":"entry-assistant-1","assistantContent":[{"kind":"text","content":"Before","contentIndex":0,"id":"entry-assistant-1-text-0"},{"kind":"thinking","content":"Check","contentIndex":1,"id":"entry-assistant-1-think-1"},{"kind":"text","content":"After","contentIndex":2,"id":"entry-assistant-1-text-2"}]}"#
         )
-        guard case .messageEnd(let role, let content, let assistantContent, let entryId) = structured else {
+        guard case .messageEnd(let role, let content, let assistantContent, let entryId, _) = structured else {
             Issue.record("Expected .messageEnd")
             return
         }

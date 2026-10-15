@@ -46,7 +46,7 @@ enum TimelineCellFactory {
         switch item {
         case .assistantMessage:
             return registrations.assistant(collectionView, indexPath, itemID)
-        case .userMessage:
+        case .userMessage, .agentMessage:
             return registrations.user(collectionView, indexPath, itemID)
         case .thinking:
             return registrations.thinking(collectionView, indexPath, itemID)

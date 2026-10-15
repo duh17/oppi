@@ -8,6 +8,9 @@ import type { GitStatus } from "./git.js";
 import type { Session, SessionSummary } from "./session.js";
 import type { StyledSegment } from "./shared.js";
 import type { ThinkingLevel } from "../thinking-levels.js";
+import type { MessageOrigin } from "../../extensions/durable/sessions/agent-message.js";
+
+export type { MessageOrigin };
 
 /** Producer-resolved identity; raw tool names remain separate. */
 export interface ToolDisplay {
@@ -491,6 +494,8 @@ export type ServerMessage =
         content: string;
         /** Pi SessionEntry.id once the message is persisted. */
         entryId?: string;
+        /** User role only: another agent session sent this input; `content` is its displayed text. */
+        origin?: MessageOrigin;
         /** Ordered assistant structure for clients that can render split content. */
         assistantContent?: AssistantMessageContentPart[];
       }

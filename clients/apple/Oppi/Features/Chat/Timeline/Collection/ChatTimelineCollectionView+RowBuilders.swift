@@ -96,7 +96,17 @@ extension ChatTimelineCollectionHost.Controller {
     }
 
     func userRowConfiguration(itemID: String, item: ChatItem) -> UserTimelineRowConfiguration? {
-        guard case .userMessage(_, let text, let images, _) = item else { return nil }
+        let text: String
+        let images: [ImageAttachment]
+        let origin: MessageOrigin?
+        switch item {
+        case .userMessage(_, let userText, let userImages, _):
+            (text, images, origin) = (userText, userImages, nil)
+        case .agentMessage(_, let agentText, let agentOrigin, _):
+            (text, images, origin) = (agentText, [], agentOrigin)
+        default:
+            return nil
+        }
 
         // Fork/branch actions now live in Session Timeline sheet so review-comment
         // selection in row bubbles is never blocked by context-menu competition.
@@ -121,7 +131,8 @@ extension ChatTimelineCollectionHost.Controller {
             interactionContext: interactionContext,
             increasedContrast: speakerIncreasedContrast,
             differentiateWithoutColor: speakerDifferentiateWithoutColor,
-            chromeStyle: chromeStyle
+            chromeStyle: chromeStyle,
+            origin: origin
         )
     }
 

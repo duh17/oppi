@@ -46,7 +46,7 @@ enum ServerMessageEffects {
             return [.textDelta(sessionId: sessionId, delta: delta, contentIndex: contentIndex, replace: replace)]
         case .thinkingDelta(let delta, let contentIndex, let replace):
             return [.thinkingDelta(sessionId: sessionId, delta: delta, contentIndex: contentIndex, replace: replace)]
-        case .messageEnd(let role, let content, let assistantContent, let entryId) where role == "assistant":
+        case .messageEnd(let role, let content, let assistantContent, let entryId, _) where role == "assistant":
             return [.messageEnd(
                 sessionId: sessionId,
                 content: content,

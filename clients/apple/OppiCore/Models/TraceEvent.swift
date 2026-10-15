@@ -88,6 +88,9 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
     // Optional semantic presentation for custom/system events.
     let presentation: TraceEventPresentation?
 
+    /// User events only: another agent session sent this input.
+    var origin: MessageOrigin? = nil
+
     init(
         id: String,
         type: TraceEventType,
@@ -115,7 +118,8 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         outputAvailability: ToolOutputAvailability? = nil,
         inputPresentation: ToolInputPresentation? = nil,
         nestedCalls: NestedToolCalls? = nil,
-        display: ToolDisplay? = nil
+        display: ToolDisplay? = nil,
+        origin: MessageOrigin? = nil
     ) {
         self.id = id
         self.type = type
@@ -144,6 +148,29 @@ struct TraceEvent: Codable, Identifiable, Equatable, Sendable {
         self.inputPresentation = inputPresentation
         self.nestedCalls = nestedCalls
         self.display = display
+        self.origin = origin
+    }
+}
+
+/// Who sent a user-role input the user did not type: another agent session.
+struct MessageOrigin: Codable, Equatable, Sendable {
+    /// `session` today; the field leaves room for other agent senders.
+    let kind: String
+    let sessionId: String
+    let name: String?
+    /// `task` (handed over at spawn), `report` (a background child's answer),
+    /// or `message` (session_send). Unknown values still decode.
+    let intent: String
+
+    /// Row caption: what it is and who sent it, e.g. "Report from Review".
+    var caption: String {
+        let sender = name.flatMap { $0.isEmpty ? nil : $0 } ?? String(localized: "another session")
+        switch intent {
+        case "report": return String(localized: "Report from \(sender)")
+        case "task": return String(localized: "Task from \(sender)")
+        case "message": return String(localized: "Message from \(sender)")
+        default: return String(localized: "From \(sender)")
+        }
     }
 }
 

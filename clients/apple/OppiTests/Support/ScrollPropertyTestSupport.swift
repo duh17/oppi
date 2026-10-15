@@ -687,7 +687,7 @@ struct ScrollPropertyTestHarness {
         switch item {
         case .assistantMessage(let id, _, _):
             return id == currentStreamingID ? 136 : 108
-        case .userMessage:
+        case .userMessage, .agentMessage:
             return 96
         case .audioClip:
             return 88

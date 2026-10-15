@@ -22,6 +22,7 @@ import {
   durableStoreSqlitePath,
 } from "../src/durable-harness.js";
 import { SessionManager } from "../src/sessions.js";
+import { readDurableTrace } from "../src/durable-history.js";
 import { Storage } from "../src/storage.js";
 import { recordLiveSessionsForRestart } from "../src/session-restart-resume.js";
 import { createRouteHelpers } from "../src/routes/http.js";
@@ -416,9 +417,8 @@ describe("durable-native threads", () => {
       }),
     );
     await f.manager.startSession(f.parent.id, f.workspace);
-    const parentEnd = observe(f.manager, f.parent.id).next(
-      (message) => message.type === "agent_end",
-    );
+    const parentEvents = observe(f.manager, f.parent.id);
+    const parentEnd = parentEvents.next((message) => message.type === "agent_end");
     await f.manager.sendPrompt(f.parent.id, "Delegate in the background");
     await parentEnd;
     const harness = await f.harness();
@@ -454,6 +454,27 @@ describe("durable-native threads", () => {
     expect(reports).toEqual([
       `[session Later (${child.id}) finished, no reply needed] BACKGROUND_ANSWER`,
     ]);
+
+    // The model reads the header; the transcript shows the child's answer, attributed to it.
+    const report = { kind: "session", sessionId: child.id, name: "Later", intent: "report" };
+    const parentTrace = await readDurableTrace(harness, parentConversation, "full");
+    expect(parentTrace.filter((event) => event.origin)).toEqual([
+      expect.objectContaining({ type: "user", text: "BACKGROUND_ANSWER", origin: report }),
+    ]);
+    expect(
+      parentEvents.messages.filter(
+        (message) => message.type === "message_end" && message.role === "user",
+      ),
+    ).toEqual([
+      expect.not.objectContaining({ origin: expect.anything() }),
+      expect.objectContaining({ content: "BACKGROUND_ANSWER", origin: report }),
+    ]);
+    // The child's task is the parent's message.
+    const childTrace = await readDurableTrace(harness, childConversation, "full");
+    expect(childTrace.find((event) => event.type === "user")).toMatchObject({
+      text: "CHILD_TASK later",
+      origin: { kind: "session", sessionId: f.parent.id, intent: "task" },
+    });
   });
 
   it("keeps a background child running through its busy parent's Stop", async () => {
@@ -752,6 +773,13 @@ describe("durable-native threads", () => {
     expect(receipt?.type).toBe("input");
     expect(requestIds(f.storage, f.dir, child.id, "oppi-send:")).toEqual([sent.details!.requestId]);
     expect(await userTexts(harness, childConversation)).toContain("HELLO_CHILD");
+    const childTrace = await readDurableTrace(harness, childConversation, "full");
+    expect(childTrace.find((event) => event.text === "HELLO_CHILD")?.origin).toEqual({
+      kind: "session",
+      sessionId: f.parent.id,
+      name: f.parent.name,
+      intent: "message",
+    });
 
     await f.manager.sendPrompt(f.parent.id, "Wait for it please");
     await until(async () => (await toolResults(harness, parentConversation)).length === 3, "wait");

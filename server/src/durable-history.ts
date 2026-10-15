@@ -71,7 +71,18 @@ async function projectEntries(
               firstKeptEntryId: String(entry.head),
             }
           : message
-            ? { type: "message", id: String(entry.id), parentId, timestamp, message }
+            ? {
+                type: "message",
+                id: String(entry.id),
+                parentId,
+                timestamp,
+                message,
+                // An input placed as an application kind (an agent message) keeps
+                // its kind and data for the trace; `pi.*` kinds are plain messages.
+                ...(entry.kind.startsWith("pi.")
+                  ? {}
+                  : { customType: entry.kind, data: entry.data }),
+              }
             : // Display/bookkeeping entries have no model contribution. Preserve their
               // payload for the existing custom-entry renderer, never send it to the model.
               {

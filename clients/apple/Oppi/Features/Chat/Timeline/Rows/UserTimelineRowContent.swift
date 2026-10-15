@@ -47,6 +47,9 @@ struct UserTimelineRowConfiguration: UIContentConfiguration {
     var increasedContrast: Bool = false
     var differentiateWithoutColor: Bool = false
     var chromeStyle: ChatTimelineChromeStyle = .standard
+    /// Set for an agent message: another session sent this input. The row drops the
+    /// user card fill and prompt glyph and captions the sender instead.
+    var origin: MessageOrigin? = nil
 
     func makeContentView() -> any UIView & UIContentView {
         UserTimelineRowContentView(configuration: self)
@@ -387,8 +390,8 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         currentConfiguration = configuration
 
         let palette = ThemeRuntimeState.currentPalette()
-        iconLabel.textColor = UIColor(palette.userMessageText)
-        messageTextView.textColor = UIColor(palette.userMessageText)
+        iconLabel.textColor = bodyTextColor(palette)
+        messageTextView.textColor = bodyTextColor(palette)
         messageTextView.font = AppFont.messageBody
         applySpeakerChrome(palette: palette)
 
@@ -401,7 +404,9 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         updatePathPills(content.nonImagePathPills, palette: palette)
         textRow.isHidden = !content.showsTextRow
         bubbleContainer.isHidden = !content.showsBubble(hasImages: !configuration.images.isEmpty)
-        iconLabel.isHidden = !content.showsTextRow || configuration.chromeStyle == .conversation
+        iconLabel.isHidden = !content.showsTextRow
+            || configuration.chromeStyle == .conversation
+            || configuration.origin != nil
         applyChromeGeometry(content: content)
 
         updateReviewCommentSelectionPolicy()
@@ -446,7 +451,35 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         }
     }
 
+    /// User text sits on the user fill; an agent message has no fill, so it uses body text.
+    private func bodyTextColor(_ palette: ThemePalette) -> UIColor {
+        UIColor(currentConfiguration.origin == nil ? palette.userMessageText : palette.fg)
+    }
+
     private func applySpeakerChrome(palette: ThemePalette) {
+        if let origin = currentConfiguration.origin {
+            // Not the user's card: outlined, unfilled, captioned with the sender.
+            bubbleContainer.backgroundColor = TimelineSpeakerChrome.assistantFill(from: palette)
+            bubbleContainer.layer.borderWidth = currentConfiguration.increasedContrast
+                ? TimelineSpeakerChrome.increasedContrastBorderWidth
+                : 1
+            bubbleContainer.layer.borderColor = UIColor(palette.comment)
+                .withAlphaComponent(currentConfiguration.increasedContrast ? 1 : 0.5).cgColor
+            accentBar.isHidden = true
+            youCaption.text = "\u{21B3} \(origin.caption)"
+            youCaption.textColor = UIColor(palette.purple)
+            youCaption.isHidden = false
+            youCaption.isAccessibilityElement = true
+            youCaption.accessibilityLabel = origin.caption
+            youCaption.accessibilityIdentifier = "chat.agent-message.caption"
+            outerStack.directionalLayoutMargins = NSDirectionalEdgeInsets(
+                top: TimelineSpeakerChrome.userTurnSpacingAbove,
+                leading: 0,
+                bottom: 0,
+                trailing: 0
+            )
+            return
+        }
         bubbleContainer.backgroundColor = TimelineSpeakerChrome.userFill(
             from: palette,
             increasedContrast: currentConfiguration.increasedContrast
@@ -454,8 +487,12 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         let accent = TimelineSpeakerChrome.userAccent(from: palette)
         accentBar.backgroundColor = accent
         accentBar.isHidden = accent == nil
+        youCaption.text = String(localized: "You")
         youCaption.textColor = UIColor(palette.userMessageText)
         youCaption.isHidden = !currentConfiguration.differentiateWithoutColor
+        youCaption.isAccessibilityElement = false
+        youCaption.accessibilityLabel = nil
+        youCaption.accessibilityIdentifier = "chat.user.you-caption"
         if currentConfiguration.increasedContrast {
             bubbleContainer.layer.borderWidth = TimelineSpeakerChrome.increasedContrastBorderWidth
             bubbleContainer.layer.borderColor = TimelineSpeakerChrome
@@ -481,7 +518,10 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         let style = currentConfiguration.chromeStyle
         let isConversation = style == .conversation
         let bubble = style.userBubble
-        outerStack.alignment = isConversation ? .trailing : .fill
+        // Only the user's own messages trail; another session's sit on the leading side.
+        outerStack.alignment = isConversation
+            ? (currentConfiguration.origin == nil ? .trailing : .leading)
+            : .fill
         bubbleContainer.shape = bubble.shape
         bubbleStackEdges?.inset(by: bubble.padding)
         conversationBubbleWidthConstraint?.isActive = isConversation
@@ -624,7 +664,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
 
         let pieces = FlatSegment.renderMarkdownPieces(
             text,
-            defaultTextColor: UIColor(palette.userMessageText),
+            defaultTextColor: bodyTextColor(palette),
             palette: palette
         )
         let hasTable = pieces.contains {
@@ -659,7 +699,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
                 } else {
                     let extra = makeExtraMarkdownTextView()
                     extra.attributedText = attributed
-                    extra.textColor = UIColor(palette.userMessageText)
+                    extra.textColor = bodyTextColor(palette)
                     bodyStack.addArrangedSubview(extra)
                     extraMarkdownTextViews.append(extra)
                 }

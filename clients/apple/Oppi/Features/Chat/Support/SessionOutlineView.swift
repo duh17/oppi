@@ -247,7 +247,7 @@ struct SessionOutlineView: View {
 
             let isMessage: Bool
             switch item {
-            case .userMessage, .assistantMessage, .audioClip:
+            case .userMessage, .agentMessage, .assistantMessage, .audioClip:
                 isMessage = true
             default:
                 isMessage = false
@@ -261,7 +261,10 @@ struct SessionOutlineView: View {
             }
 
             let isForkable: Bool
+            // Agent messages are user-role turns too; the server lists them as fork points.
             if case .userMessage = item, UUID(uuidString: item.id) == nil {
+                isForkable = true
+            } else if case .agentMessage = item, UUID(uuidString: item.id) == nil {
                 isForkable = true
             } else {
                 isForkable = false
@@ -390,7 +393,7 @@ struct SessionOutlineView: View {
     private static func outlineKind(for item: ChatItem, isCompaction: Bool) -> OutlineEntryKind {
         if isCompaction { return .compaction }
         switch item {
-        case .userMessage: return .user
+        case .userMessage, .agentMessage: return .user
         case .assistantMessage: return .assistant
         case .audioClip: return .assistant
         case .thinking: return .thinking
@@ -1020,6 +1023,10 @@ struct SessionOutlineView: View {
         switch item {
         case .userMessage(_, let text, _, _):
             return String(text.prefix(120))
+
+        case .agentMessage(_, let text, let origin, _):
+            let clean = text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+            return String("\(origin.caption): \(clean)".prefix(120))
 
         case .assistantMessage(_, let text, _):
             let clean = text.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)

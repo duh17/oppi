@@ -31,6 +31,10 @@ import {
   translatePiEvent,
 } from "./session-protocol.js";
 import { hasToolMediaDetails, materializeAgentEventMedia } from "./session-agent-event-media.js";
+import {
+  agentMessageText,
+  type AgentMessageData,
+} from "../extensions/durable/sessions/agent-message.js";
 import type { EventProcessorSessionState, SessionEventProcessor } from "./session-events.js";
 import type { AgentBackend } from "./agent-backend.js";
 import type { SessionStopCoordinator } from "./session-stop.js";
@@ -451,11 +455,15 @@ export class SessionAgentEventCoordinator {
         ),
       });
     } else if (role === "user") {
+      // The durable adapter attaches an agent message's origin; classic events never carry it.
+      const agentMessage = (event as { agentMessage?: AgentMessageData }).agentMessage;
+      const content = extractAssistantText(message);
       this.deps.broadcast(key, {
         type: "message_end",
         role,
-        content: extractAssistantText(message),
+        content: agentMessage ? agentMessageText(content, agentMessage) : content,
         ...(entryId ? { entryId } : {}),
+        ...(agentMessage ? { origin: agentMessage.origin } : {}),
       });
     }
     if (cacheMissNotice) {

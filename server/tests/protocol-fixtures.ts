@@ -231,6 +231,13 @@ const TYPED_CANONICAL_SERVER_MESSAGES = {
       { kind: "text", content: "After", contentIndex: 2, id: "entry-assistant-1-text-2" },
     ],
   },
+  message_end_agent: {
+    type: "message_end",
+    role: "user",
+    content: "Verdict: correct.",
+    entryId: "42",
+    origin: { kind: "session", sessionId: "child-session-1", name: "Review", intent: "report" },
+  },
   cache_miss: {
     type: "cache_miss",
     id: "cache-miss:1739750460000:anthropic/claude-sonnet-4-20250514",
@@ -770,6 +777,7 @@ const SERVER_MESSAGE_ORDER = [
   "agent_end",
   "agent_settled",
   "message_end",
+  "message_end_agent",
   "cache_miss",
   "notice",
   "custom_card",

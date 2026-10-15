@@ -484,6 +484,16 @@ private struct ChatItemSummaryRow: View, Equatable {
                 context: context
             )
             .padding(.top, MacTimelineProsePaint.messageTopInset)
+        case .agentMessage(let id, let text, _, let timestamp):
+            // Mac has no agent-message row yet; it keeps the user bubble it showed before.
+            MarkdownTimelineBubble(
+                role: .user,
+                timestamp: timestamp,
+                text: text,
+                itemID: id,
+                context: context
+            )
+            .padding(.top, MacTimelineProsePaint.messageTopInset)
         case .assistantMessage(let id, let text, let timestamp):
             MarkdownTimelineBubble(
                 role: .assistant,

@@ -877,7 +877,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             switch item {
             case .audioClip, .toolCall:
                 return true
-            case .assistantMessage, .cacheMiss, .customEvent, .error, .notice, .systemEvent, .thinking, .userMessage:
+            case .agentMessage, .assistantMessage, .cacheMiss, .customEvent, .error, .notice, .systemEvent, .thinking, .userMessage:
                 return false
             }
         }

@@ -47,6 +47,7 @@ struct TraceRenderingTests {
     private func itemType(_ item: ChatItem) -> String {
         switch item {
         case .userMessage: return "user"
+        case .agentMessage: return "agent"
         case .assistantMessage: return "assistant"
         case .audioClip: return "audio"
         case .thinking: return "thinking"

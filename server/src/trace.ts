@@ -18,6 +18,11 @@
 
 import { createHash } from "node:crypto";
 import { sanitizeTranscriptCard } from "../extensions/durable/transcript-card.js";
+import {
+  agentMessageOrigin,
+  agentMessageText,
+  type MessageOrigin,
+} from "../extensions/durable/sessions/agent-message.js";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -395,6 +400,8 @@ export interface TraceEvent {
   thinking?: string;
   /** Optional semantic presentation for custom/system events. */
   presentation?: TraceEventPresentation;
+  /** For user: another agent session sent this input; `text` is its displayed text. */
+  origin?: MessageOrigin;
 }
 
 export interface TraceEventPresentationField {
@@ -935,11 +942,14 @@ function emitMessageEvents(
   if (role === "user") {
     const text = extractText(content);
     if (text) {
+      // Durable agent messages keep their kind and data on the projected entry.
+      const agentMessage = agentMessageOrigin(entry.customType, entry.data);
       events.push({
         id: entry.id,
         type: "user",
         timestamp,
-        text,
+        text: agentMessage ? agentMessageText(text, agentMessage) : text,
+        ...(agentMessage ? { origin: agentMessage.origin } : {}),
       });
     }
   } else if (role === "assistant") {

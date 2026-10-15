@@ -1178,6 +1178,72 @@ struct ChatSessionManagerTests {
         await connectTask.value
     }
 
+    @Test func agentMessageIsItsOwnRowOnceLiveAndAfterTheTrace() async {
+        let sessionId = "agent-message-\(UUID().uuidString)"
+        let text = "Verdict: correct"
+        let origin = MessageOrigin(kind: "session", sessionId: "child-1", name: "Review", intent: "report")
+        // A live session whose fresh trace is still empty: history defers to the live stream.
+        let session = makeTestSession(
+            id: sessionId,
+            workspaceId: "w1",
+            status: .busy,
+            messageCount: 1,
+            firstMessage: "Delegate the review"
+        )
+        let manager = ChatSessionManager(sessionId: sessionId)
+        let streams = ScriptedStreamFactory()
+        manager._streamSessionForTesting = { _ in streams.makeStream() }
+        manager._fetchSessionTraceForTesting = { _, _ in
+            try await Task.sleep(for: .milliseconds(120))
+            return (session, [])
+        }
+        let connection = ServerConnection()
+        _ = connection.configure(credentials: makeTestCredentials())
+        let sessionStore = SessionStore()
+        sessionStore.upsert(session)
+        let connectTask = Task { @MainActor in
+            await manager.connect(connection: connection, sessionStore: sessionStore)
+        }
+
+        func rows() -> (user: [String], agent: [String]) {
+            var user: [String] = []
+            var agent: [String] = []
+            for item in manager.reducer.items {
+                if case .userMessage(_, let text, _, _) = item { user.append(text) }
+                if case .agentMessage(let id, let text, let rowOrigin, _) = item, rowOrigin == origin {
+                    agent.append("\(id):\(text)")
+                }
+            }
+            return (user, agent)
+        }
+
+        #expect(await streams.waitForCreated(1))
+        streams.yield(index: 0, message: .connected(session: session))
+        // The user typed the same words earlier; the child's report is still its own row,
+        // and a replayed message_end for the same entry does not add another.
+        streams.yield(index: 0, message: .messageEnd(role: "user", content: text))
+        streams.yield(index: 0, message: .messageEnd(role: "user", content: text, entryId: "42", origin: origin))
+        streams.yield(index: 0, message: .messageEnd(role: "user", content: text, entryId: "42", origin: origin))
+        #expect(await waitForMainActorCondition { manager.needsInitialScroll })
+        #expect(await waitForMainActorCondition { rows().agent == ["42:\(text)"] })
+        #expect(rows().user == [text])
+
+        // A cached trace from before the report keeps the live row; the caught-up trace replaces it.
+        manager.reducer.loadSession([
+            TraceEvent(id: "41", type: .user, timestamp: "2026-01-01T00:00:00.000Z", text: text),
+        ])
+        #expect(rows().agent == ["42:\(text)"])
+        manager.reducer.loadSession([
+            TraceEvent(id: "41", type: .user, timestamp: "2026-01-01T00:00:00.000Z", text: text),
+            TraceEvent(id: "42", type: .user, timestamp: "2026-01-01T00:00:01.000Z", text: text, origin: origin),
+        ])
+        #expect(rows().user == [text])
+        #expect(rows().agent == ["42:\(text)"])
+
+        streams.finish(index: 0)
+        await connectTask.value
+    }
+
     @Test func liveEmptyFreshTracePreservesFullStreamUserMessage() async {
         let sessionId = "live-empty-trace-\(UUID().uuidString)"
         let workspaceId = "w1"

@@ -10,6 +10,7 @@ import {
   type GenerationCheckpoint,
   type Harness,
   type InboxState,
+  type InputEntry,
   type SettledSubmissionRecord,
   type Submission,
   type Tx,
@@ -64,6 +65,8 @@ export interface PromptOptions {
   requestId: string;
   /** Omitted: a busy conversation rejects the input. */
   whenBusy?: "steer" | "followUp";
+  /** Place the input as this entry instead of `pi.user` (an agent message). */
+  entry?: InputEntry;
   /** Queue display when it differs from the content (an expanded Skill, attachments). */
   display?: { message: string; attachments: ChatAttachmentRef[] };
   /** Once aborted, admission is refused. An admitted input's failure card does not depend on it. */
@@ -150,7 +153,13 @@ export class DurableAgentController {
         return record;
       }, BACKGROUND_CONTEXT);
       const submission = await this.conversation.submit(
-        { type: "input", content, requestId, whenBusy: options.whenBusy ?? "reject" },
+        {
+          type: "input",
+          content,
+          requestId,
+          whenBusy: options.whenBusy ?? "reject",
+          ...(options.entry ? { entry: options.entry } : {}),
+        },
         BACKGROUND_CONTEXT,
       );
       if (!existing) options.onAccepted?.();

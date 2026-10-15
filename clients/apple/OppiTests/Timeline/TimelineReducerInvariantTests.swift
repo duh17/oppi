@@ -458,7 +458,7 @@ private enum ItemSignature: Equatable {
 private func itemSignatures(_ items: [ChatItem]) -> [ItemSignature] {
     items.map { item in
         switch item {
-        case .userMessage(_, let text, _, _):
+        case .userMessage(_, let text, _, _), .agentMessage(_, let text, _, _):
             return .user(text)
         case .assistantMessage(_, let text, _):
             return .assistant(text)

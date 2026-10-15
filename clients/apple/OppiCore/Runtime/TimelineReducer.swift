@@ -497,7 +497,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         //
         // Fast path: skip orphan detection when there are no existing user messages
         // (common case for initial load or after reset).
-        let orphanedUserMessages: [ChatItem]
+        var orphanedUserMessages: [ChatItem]
         if !preserveOrphans {
             orphanedUserMessages = []
         } else {
@@ -545,6 +545,16 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                     }
                     return true
                 }
+            }
+            // A live agent message carries its server entry id, so the trace row
+            // matches by id: keep only the ones this (older) trace does not have yet.
+            let liveAgentMessages = items.filter { item in
+                if case .agentMessage = item { return true }
+                return false
+            }
+            if !liveAgentMessages.isEmpty {
+                let traceIDs = Set(events.lazy.filter { $0.type == .user }.map(\.id))
+                orphanedUserMessages += liveAgentMessages.filter { !traceIDs.contains($0.id) }
             }
         }
         items.removeAll(keepingCapacity: false)
@@ -647,6 +657,15 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         switch event.type {
         case .user:
             let rawText = event.text ?? ""
+            if let origin = event.origin {
+                insertItem(.agentMessage(
+                    id: event.id,
+                    text: rawText,
+                    origin: origin,
+                    timestamp: date
+                ), appendOnly: appendOnly)
+                return nil
+            }
             let (cleanText, images) = UserMessageImageExtractor.extractImagesFromText(rawText)
             insertItem(.userMessage(
                 id: event.id,
@@ -1726,6 +1745,17 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
         bumpItemsMutationSeq()
         return renderMutationCheckpoint() != before
+    }
+
+    /// Live agent message. Keyed by its entry id, so a replayed `message_end` or a
+    /// later trace load lands on the same row.
+    func appendAgentMessage(id: String, text: String, origin: MessageOrigin) {
+        guard indexForID(id) == nil else { return }
+        let item = ChatItem.agentMessage(id: id, text: text, origin: origin, timestamp: Date())
+        items.append(item)
+        indexAppend(item)
+        bumpRenderVersion()
+        timelineMatchesTrace = false
     }
 
     @discardableResult

@@ -57,6 +57,19 @@ export class DurableThreads implements DurableSessionsHost {
     return hostOfEnv(env).storeId;
   }
 
+  sessionOf(
+    conversationId: ConversationId,
+    env?: ExecutionEnv,
+  ): { sessionId: string; name?: string } | undefined {
+    const session = this.deps.storage.findSessionByDurableConversation(
+      hostOfEnv(env).storeId,
+      conversationId,
+    );
+    return session
+      ? { sessionId: session.id, ...(session.name ? { name: session.name } : {}) }
+      : undefined;
+  }
+
   isSelf(sessionId: string, caller: ConversationId, env?: ExecutionEnv): boolean {
     const session = this.deps.storage.getSession(sessionId);
     if (!session || session.serverDurable?.conversationId !== caller) return false;
@@ -132,11 +145,7 @@ export class DurableThreads implements DurableSessionsHost {
 
   async submit(
     sessionId: string,
-    input: {
-      content: string;
-      whenBusy: "steer" | "followUp";
-      requestId: string;
-    },
+    input: Parameters<DurableSessionsHost["submit"]>[1],
   ): Promise<string | undefined> {
     const session = this.deps.storage.getSession(sessionId);
     const conversationId = session?.serverDurable?.conversationId as ConversationId | undefined;
@@ -147,7 +156,10 @@ export class DurableThreads implements DurableSessionsHost {
       if (!(await harness.conversation(conversationId, BACKGROUND_CONTEXT)))
         return `Session ${sessionId} has no conversation.`;
       const controller = await host.controller(conversationId);
-      const options = { requestId: input.requestId };
+      const options = {
+        requestId: input.requestId,
+        ...(input.entry ? { entry: input.entry } : {}),
+      };
       await (input.whenBusy === "steer"
         ? controller.steer(input.content, options)
         : controller.followUp(input.content, options));

@@ -128,7 +128,7 @@ struct ProtocolSnapshotTests {
 
     @Test func orderedAssistantContentContract() throws {
         let messageEnd = try decodeMessage("message_end")
-        guard case .messageEnd(_, let content, let assistantContent, let entryId) = messageEnd else {
+        guard case .messageEnd(_, let content, let assistantContent, let entryId, _) = messageEnd else {
             Issue.record("Expected structured message_end snapshot")
             return
         }
@@ -141,6 +141,16 @@ struct ProtocolSnapshotTests {
             "entry-assistant-1-think-1",
             "entry-assistant-1-text-2",
         ])
+
+        let agentMessage = try decodeMessage("message_end_agent")
+        guard case .messageEnd(let role, let agentText, _, let agentEntryId, let origin) = agentMessage else {
+            Issue.record("Expected an agent message_end snapshot")
+            return
+        }
+        #expect(role == "user")
+        #expect(agentText == "Verdict: correct.")
+        #expect(agentEntryId == "42")
+        #expect(origin == MessageOrigin(kind: "session", sessionId: "child-session-1", name: "Review", intent: "report"))
 
         let textDelta = try decodeMessage("text_delta")
         guard case .textDelta(_, let deltaContentIndex, _) = textDelta else {

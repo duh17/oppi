@@ -10,6 +10,10 @@ import {
   type SnapshotEvent,
 } from "@earendil-works/pi-durable";
 import type { AssistantMessage, AssistantMessageEvent, Usage } from "@earendil-works/pi-ai";
+import {
+  AGENT_MESSAGE_ENTRY_KIND,
+  agentMessageOrigin,
+} from "../extensions/durable/sessions/agent-message.js";
 
 const ZERO_USAGE: Usage = {
   input: 0,
@@ -36,7 +40,7 @@ export function createAdapterState(): AdapterState {
 }
 
 /**
- * Newest assistant written after the latest `pi.user` entry.
+ * Newest assistant written after the latest user input: `pi.user` or an agent message.
  * Compaction summaries and reset handoffs are user-role but not a new turn.
  * An assistant older than that user entry belongs to a finished turn.
  */
@@ -47,7 +51,8 @@ export function newestAssistantOfActiveRun(
   let newest: { id: number; message: AssistantMessage } | undefined;
   for (const entry of entries) {
     const message = entry.model?.[0];
-    if (UserEntry.is(entry) && entry.id > lastUserId) lastUserId = entry.id;
+    if ((UserEntry.is(entry) || entry.kind === AGENT_MESSAGE_ENTRY_KIND) && entry.id > lastUserId)
+      lastUserId = entry.id;
     if (message?.role === "assistant" && (!newest || entry.id > newest.id)) {
       newest = { id: entry.id, message };
     }
@@ -149,7 +154,15 @@ export function adaptDurableEvent(
       const message = event.entry.model?.[0];
       if (!message) return [];
       if (message.role === "assistant") state.partial = undefined;
-      return [asPi({ type: "message_end", message, entryId: String(event.entry.id) })];
+      const agentMessage = agentMessageOrigin(event.entry.kind, event.entry.data);
+      return [
+        asPi({
+          type: "message_end",
+          message,
+          entryId: String(event.entry.id),
+          ...(agentMessage ? { agentMessage } : {}),
+        }),
+      ];
     }
     case "tool_execution_start":
       state.toolArgs.set(event.toolCallId, event.args);

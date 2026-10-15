@@ -83,7 +83,9 @@ enum ServerMessage: Sendable, Equatable {
         role: String,
         content: String,
         assistantContent: [AssistantMessageContentPart]? = nil,
-        entryId: String? = nil
+        entryId: String? = nil,
+        /// User role only: another agent session sent this input.
+        origin: MessageOrigin? = nil
     )
     case cacheMiss(id: String, message: String)
     case notice(id: String, message: String)
@@ -295,7 +297,7 @@ extension ServerMessage: Decodable {
         // session_ended / stop lifecycle
         case reason, source
         // message_end / cache_miss / notice / text_delta / thinking_delta / audio_stream
-        case role, content, assistantContent, entryId, delta, contentIndex, replace, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior, presentation
+        case role, content, assistantContent, entryId, origin, delta, contentIndex, replace, event, mimeType, sampleRate, channels, chunkIndex, audioBase64, durationSeconds, playbackBehavior, presentation
         // tool_start / tool_update / tool_end
         case tool, args, toolCallId, parentToolCallId, details, callSegments, resultSegments, inputPresentation, nestedCalls, display, outputPresentation, outputAvailability
         // tool_output
@@ -390,7 +392,8 @@ extension ServerMessage: Decodable {
                     [AssistantMessageContentPart].self,
                     forKey: .assistantContent
                 ),
-                entryId: try c.decodeIfPresent(String.self, forKey: .entryId)
+                entryId: try c.decodeIfPresent(String.self, forKey: .entryId),
+                origin: try c.decodeIfPresent(MessageOrigin.self, forKey: .origin)
             )
 
         case "cache_miss":

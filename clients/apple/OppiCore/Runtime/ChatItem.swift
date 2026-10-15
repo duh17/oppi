@@ -8,6 +8,8 @@ import Foundation
 /// - Expansion state is external (`Set<String>` in reducer)
 enum ChatItem: Identifiable, Equatable {
     case userMessage(id: String, text: String, images: [ImageAttachment] = [], timestamp: Date)
+    /// A user-role input another agent session sent (a child's report, a parent's task or message).
+    case agentMessage(id: String, text: String, origin: MessageOrigin, timestamp: Date)
     case assistantMessage(id: String, text: String, timestamp: Date)
     /// Locally generated audio clip for playback in the timeline.
     case audioClip(id: String, title: String, fileURL: URL, timestamp: Date)
@@ -31,6 +33,7 @@ enum ChatItem: Identifiable, Equatable {
     var id: String {
         switch self {
         case .userMessage(let id, _, _, _): return id
+        case .agentMessage(let id, _, _, _): return id
         case .assistantMessage(let id, _, _): return id
         case .audioClip(let id, _, _, _): return id
         case .thinking(let id, _, _, _): return id
@@ -47,6 +50,8 @@ enum ChatItem: Identifiable, Equatable {
         switch self {
         case .userMessage(_, let text, let images, let timestamp):
             return .userMessage(id: newID, text: text, images: images, timestamp: timestamp)
+        case .agentMessage(_, let text, let origin, let timestamp):
+            return .agentMessage(id: newID, text: text, origin: origin, timestamp: timestamp)
         case .assistantMessage(_, let text, let timestamp):
             return .assistantMessage(id: newID, text: text, timestamp: timestamp)
         case .audioClip(_, let title, let fileURL, let timestamp):
@@ -97,6 +102,7 @@ extension ChatItem {
     var timestamp: Date? {
         switch self {
         case .userMessage(_, _, _, let ts): return ts
+        case .agentMessage(_, _, _, let ts): return ts
         case .assistantMessage(_, _, let ts): return ts
         case .audioClip(_, _, _, let ts): return ts
         default: return nil

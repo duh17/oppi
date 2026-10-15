@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 67
+    "messageCount": 68
   },
   "messages": {
     "connected": {
@@ -865,6 +865,18 @@
           "id": "entry-assistant-1-text-2"
         }
       ]
+    },
+    "message_end_agent": {
+      "type": "message_end",
+      "role": "user",
+      "content": "Verdict: correct.",
+      "entryId": "42",
+      "origin": {
+        "kind": "session",
+        "sessionId": "child-session-1",
+        "name": "Review",
+        "intent": "report"
+      }
     },
     "cache_miss": {
       "type": "cache_miss",

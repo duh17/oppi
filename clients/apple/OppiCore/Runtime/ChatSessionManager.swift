@@ -1449,8 +1449,10 @@ final class ChatSessionManager {
                 outputPresentation: outputPresentation, outputAvailability: outputAvailability, parentToolCallId: parent, outputStream: outputStream
             ))
 
-        case .messageEnd(let role, let content, _, _):
-            if role == "user", !content.isEmpty,
+        case .messageEnd(let role, let content, _, let entryId, let origin):
+            if role == "user", let origin, !content.isEmpty, !suppressTimelineMutationWhilePaused() {
+                reducer.appendAgentMessage(id: entryId ?? UUID().uuidString, text: content, origin: origin)
+            } else if role == "user", !content.isEmpty,
                !suppressTimelineMutationWhilePaused(),
                !reducer.hasUserMessage(matching: content),
                !reducer.hasLatestImageUserMessage(matchingEcho: content) {

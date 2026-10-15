@@ -17,6 +17,20 @@ import {
   type ToolExecutionApi,
   type ToolExecutionResult,
 } from "@earendil-works/pi-durable";
+import { agentMessageEntry, type MessageOrigin } from "./agent-message.js";
+
+/** A session as the sender of an agent message. */
+type Sender = { sessionId: string; name?: string };
+
+function sentBy(
+  sender: Sender | undefined,
+  intent: MessageOrigin["intent"],
+  textOffset?: number,
+): { entry?: ReturnType<typeof agentMessageEntry> } {
+  return sender
+    ? { entry: agentMessageEntry({ kind: "session", ...sender, intent }, textOffset) }
+    : {};
+}
 
 /**
  * What the sessions tools need from Oppi. The extension is static harness code and
@@ -38,6 +52,8 @@ export interface DurableSessionsHost {
   storeIdOf(sessionId: string): string | undefined;
   /** The store of the calling conversation. */
   storeIdOfEnv(env?: ExecutionEnv): string;
+  /** The Oppi session bound to a conversation of the calling store: who sent an agent message. */
+  sessionOf(conversationId: ConversationId, env?: ExecutionEnv): Sender | undefined;
   /** True when `sessionId` is this calling conversation. */
   isSelf(sessionId: string, caller: ConversationId, env?: ExecutionEnv): boolean;
   /**
@@ -56,6 +72,7 @@ export interface DurableSessionsHost {
       content: string;
       whenBusy: "steer" | "followUp";
       requestId: string;
+      entry?: ReturnType<typeof agentMessageEntry>;
     },
   ): Promise<string | undefined>;
   /** Wait until a bound session's conversation is idle. */
@@ -107,8 +124,22 @@ type ReporterInput = {
   sessionId: string;
   name: string;
   task: string;
+  /** The spawning session; absent on reporters created before agent messages. */
+  parent?: Sender;
 };
-type ReporterState = { phase: "deliver" } | { phase: "report"; report?: string };
+type ReporterState =
+  | { phase: "deliver" }
+  | {
+      phase: "report";
+      report?: string;
+      /** Length of the report's model-only header. */
+      textOffset?: number;
+    };
+
+/** Model-only header of a finished child's report; the transcript shows the text after it. */
+function reportHeader(name: string, sessionId: string): string {
+  return `[session ${name} (${sessionId}) finished, no reply needed] `;
+}
 
 function textOf(message: AssistantMessage | undefined): string {
   return (message?.content ?? [])
@@ -130,17 +161,25 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
   initial: () => ({ phase: "deliver" }),
   phases: {
     deliver: async (reporter, runtime, context) => {
-      const { conversationId, sessionId, name, task } = reporter.input;
+      const { conversationId, sessionId, name, task, parent } = reporter.input;
       const child = await runtime.conversation(conversationId, context);
       if (!child) throw new Error(`Session ${sessionId} conversation disappeared`);
       const submission = await child.submit(
-        { type: "input", content: task, requestId: `oppi-spawn:${reporter.id}` },
+        {
+          type: "input",
+          content: task,
+          requestId: `oppi-spawn:${reporter.id}`,
+          ...sentBy(parent, "task"),
+        },
         context,
       );
       const settled = await submission.wait(context);
       await runtime.commit(async (tx) => {
-        const next = (report?: string) =>
-          ({ status: "running", checkpoint: { phase: "report", report } }) as const;
+        const next = (report?: string, textOffset?: number) =>
+          ({
+            status: "running",
+            checkpoint: { phase: "report", report, ...(textOffset ? { textOffset } : {}) },
+          }) as const;
         // Aborted: stopped or withdrawn. Whoever stopped it knows; nothing to report.
         if (settled.status === "unanswered")
           return next(
@@ -151,11 +190,16 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
         if (settled.type !== "input") return next();
         const answer = (await tx.entry(AssistantEntry, settled.answer))?.model?.[0] as
           AssistantMessage | undefined;
-        return next(`[session ${name} (${sessionId}) finished, no reply needed] ${textOf(answer)}`);
+        const header = reportHeader(name, sessionId);
+        return next(`${header}${textOf(answer)}`, header.length);
       }, context);
     },
     report: async (reporter, runtime, context) => {
-      const report = reporter.state.checkpoint.report;
+      const { report, textOffset: saved } = reporter.state.checkpoint;
+      const { sessionId, name } = reporter.input;
+      // A report checkpointed before agent messages has no offset; its header is the same text.
+      const header = reportHeader(name, sessionId);
+      const textOffset = saved ?? (report?.startsWith(header) ? header.length : undefined);
       if (report !== undefined) {
         const parent = await runtime.conversation(runtime.conversationId, context);
         if (!parent) throw new Error("Parent conversation disappeared");
@@ -166,6 +210,7 @@ const Reporter = defineTask<ReporterInput, ReporterState, null>({
             content: report,
             whenBusy: "followUp",
             requestId: `oppi-report:${reporter.id}`,
+            ...sentBy({ sessionId, name }, "report", textOffset),
           },
           context,
         );
@@ -261,6 +306,7 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
         ...(args.thinking ? { thinking: args.thinking } : {}),
       });
       const name = args.name?.trim() || (task.split("\n", 1)[0] ?? task).slice(0, 80);
+      const parent = sessions.sessionOf(api.conversationId, api.env);
       const choices = {
         ...(agent.model ? { model: agent.model } : {}),
         ...(agent.thinkingLevel ? { thinkingLevel: agent.thinkingLevel } : {}),
@@ -295,7 +341,13 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
           if (entry.reporter !== undefined) return;
           entry.reporter = await tx.createTask(
             Reporter,
-            { conversationId: spawned.conversationId, sessionId, name, task },
+            {
+              conversationId: spawned.conversationId,
+              sessionId,
+              name,
+              task,
+              ...(parent ? { parent } : {}),
+            },
             { ownership: { kind: "conversation" }, background: true },
           );
         }, context);
@@ -323,7 +375,12 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
       if (!child) throw new Error(`Session ${sessionId} conversation disappeared`);
       const settled = await (
         await child.submit(
-          { type: "input", content: task, requestId: `oppi-spawn:${api.taskId}` },
+          {
+            type: "input",
+            content: task,
+            requestId: `oppi-spawn:${api.taskId}`,
+            ...sentBy(parent, "task"),
+          },
           context,
         )
       ).wait(context);
@@ -355,6 +412,7 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
         content: args.text,
         whenBusy: args.mode,
         requestId,
+        ...sentBy(bound().sessionOf(api.conversationId, api.env), "message"),
       });
       if (submitError !== undefined) return reply(submitError, { sessionId: args.sessionId }, true);
       return reply(`Sent to session ${args.sessionId} (${args.mode}).`, {
