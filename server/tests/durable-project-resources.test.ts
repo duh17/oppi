@@ -188,4 +188,30 @@ describe("durable sandbox project resources", () => {
       { path: `${GUEST}/AGENTS.md`, content: `Build in ${GUEST}/src.` },
     ]);
   });
+
+  it("keeps a saved Agent's AGENTS text when a discovered file shares its guest path", async () => {
+    const { hostCwd, agentDir } = layout();
+    writeFileSync(join(hostCwd, ".env"), "HOST_ENV_SECRET=1");
+    symlinkSync(join(hostCwd, ".env"), join(hostCwd, "AGENTS.md"));
+
+    const loaded = await loadDurableProjectResources({
+      hostCwd,
+      agentDir,
+      sandboxGuestCwd: GUEST,
+      projectTrusted: true,
+      resources: { agentsFiles: [{ path: "AGENTS.md", content: "Saved instructions." }] },
+    });
+    // The VM refuses the discovered symlink; the saved definition text stays.
+    const presented = await readSandboxContextFiles(
+      loaded,
+      async () => {
+        throw new Error("ENOENT");
+      },
+      hostCwd,
+      GUEST,
+    );
+    expect(presented.contextFiles).toEqual([
+      { path: `${GUEST}/AGENTS.md`, content: "Saved instructions." },
+    ]);
+  });
 });

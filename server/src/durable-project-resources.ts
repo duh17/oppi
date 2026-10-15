@@ -161,8 +161,12 @@ export async function readSandboxContextFiles(
   const guestPaths = resources.guestContextPaths;
   if (!guestPaths?.size) return resources;
   const contextFiles: ContextFile[] = [];
+  // Discovered files come before saved Agent files (`agentsFilesOverride`), and a saved file
+  // can share a discovered file's guest path. Only the first entry per path is discovered;
+  // a later one is saved definition text and stays as it is.
+  const pending = new Set(guestPaths);
   for (const file of resources.contextFiles) {
-    if (!guestPaths.has(file.path)) {
+    if (!pending.delete(file.path)) {
       contextFiles.push(file);
       continue;
     }
