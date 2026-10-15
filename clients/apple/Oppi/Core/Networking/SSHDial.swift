@@ -1,12 +1,57 @@
 import Darwin
 import Foundation
 
-/// Matches the existing fd handoff rather than introducing another NIO
-/// bootstrap owner. DNS runs off-main; BlockingSocketDial bounds the caller,
-/// cancellation and late-fd disposal. Nonblocking connect/poll also bounds the
-/// worker's connect attempts to one shared 12-second budget across addresses.
-enum SSHDirectTCP {
-    static func dial(host: String, port: UInt16) async throws -> Int32 {
+/// Which network an SSH host is dialed on, for Check a Machine and the SSH
+/// Terminal. Both hand the connected socket to `SSHConnection`.
+enum SSHDial {
+    enum Route: Equatable, Sendable {
+        case tailnet
+        case direct
+        /// A tailnet name while Oppi's Tailscale node is stopped, and the
+        /// caller fails closed.
+        case tailnetRequired
+    }
+
+    /// What a tailnet name does while Oppi's Tailscale node is stopped.
+    enum WhenNodeStopped: Sendable {
+        /// Check a Machine: never hand a `*.ts.net` name to the system resolver.
+        case fail
+        /// SSH Terminal: dial on the system network, where the Tailscale app
+        /// or a VPN may still route it.
+        case direct
+    }
+
+    /// A tailnet name (`ServerTLSTrustPolicy.isTailscaleHostname`, with or
+    /// without a trailing dot) uses the embedded node while it runs. Every
+    /// other host uses the current network.
+    static func route(host: String, tailnetRunning: Bool, whenNodeStopped: WhenNodeStopped) -> Route {
+        var name = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        while name.hasSuffix(".") { name.removeLast() }
+        guard ServerTLSTrustPolicy.isTailscaleHostname(name) else { return .direct }
+        if tailnetRunning { return .tailnet }
+        return whenNodeStopped == .fail ? .tailnetRequired : .direct
+    }
+
+    /// Returns a connected socket that the caller owns. Throws
+    /// `SSHPreflightFailure` or `CancellationError`.
+    @MainActor
+    static func socket(host: String, port: UInt16, whenNodeStopped: WhenNodeStopped) async throws -> Int32 {
+        let tailnet = TailnetNodeController.shared
+        switch route(host: host, tailnetRunning: tailnet.state == .running, whenNodeStopped: whenNodeStopped) {
+        case .tailnet:
+            return try await tailnet.dialTCP(host: host, port: port, timeout: .seconds(15))
+        case .direct:
+            return try await direct(host: host, port: port)
+        case .tailnetRequired:
+            throw SSHPreflightFailure.tailnetNotRunning
+        }
+    }
+
+    /// Matches the existing fd handoff rather than introducing another NIO
+    /// bootstrap owner. DNS runs off-main; BlockingSocketDial bounds the caller,
+    /// cancellation and late-fd disposal. Nonblocking connect/poll also bounds the
+    /// worker's connect attempts to one shared 12-second budget across addresses.
+    private static func direct(host: String, port: UInt16) async throws -> Int32 {
         try await BlockingSocketDial.run(timeout: .seconds(15)) {
             var hints = addrinfo()
             hints.ai_family = AF_UNSPEC
@@ -22,7 +67,7 @@ enum SSHDirectTCP {
             while let current = address {
                 address = current.pointee.ai_next
                 let info = current.pointee
-                let fd = socket(info.ai_family, info.ai_socktype, info.ai_protocol)
+                let fd = Darwin.socket(info.ai_family, info.ai_socktype, info.ai_protocol)
                 guard fd >= 0 else { lastError = errno; continue }
                 let flags = fcntl(fd, F_GETFL)
                 guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else {

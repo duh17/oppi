@@ -47,8 +47,6 @@ final class SSHTerminalConnectSession {
                 let savedKey = try SSHKnownHosts().savedKey(host: value.host, port: value.port)
                 let owner = try SSHTerminalChannel()
                 channel = owner
-                let tailnet = TailnetNodeController.shared
-                let useTailnet = value.host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")).hasSuffix(".ts.net") && tailnet.state == .running
                 let queue = SSHTerminalEventQueue()
                 let session: SSHPTYSession
                 do {
@@ -66,9 +64,7 @@ final class SSHTerminalConnectSession {
                                 return .deviceKey(try await SSHIdentityKeyStore.authenticatedIdentity())
                             }
                         }, dial: {
-                            try await (useTailnet
-                                ? tailnet.dialTCP(host: value.host, port: value.port, timeout: .seconds(15))
-                                : SSHDirectTCP.dial(host: value.host, port: value.port))
+                            try await SSHDial.socket(host: value.host, port: value.port, whenNodeStopped: .direct)
                         }, sink: { queue.push($0) }
                     )
                 } catch { queue.finish(); throw error }

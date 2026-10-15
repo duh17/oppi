@@ -147,7 +147,7 @@ struct SSHPreflightView: View {
                     .accessibilityIdentifier("sshPreflight.check")
             }
         } footer: {
-            if ServerTLSTrustPolicy.isTailscaleHostname(targetHost), tailnet.state != .running {
+            if SSHDial.route(host: targetHost, tailnetRunning: tailnet.state == .running, whenNodeStopped: .fail) == .tailnetRequired {
                 Text("A Tailscale name needs Oppi's Tailscale connection.")
             }
         }
@@ -282,17 +282,9 @@ struct SSHPreflightView: View {
         !pairing && !targetHost.isEmpty && !username.isEmpty && !password.isEmpty
     }
 
-    /// `*.ts.net` uses the embedded node only while it is running. It is not
-    /// dialed on the system network. Every other host uses the current network.
+    /// A tailnet name is never dialed on the system network from here.
     private func dialSSH(host: String) async throws -> Int32 {
-        switch SSHPairDial.route(host: host, tailnetRunning: tailnet.state == .running) {
-        case .tailnet:
-            return try await tailnet.dialTCP(host: host, port: Self.sshPort, timeout: .seconds(15))
-        case .direct:
-            return try await SSHDirectTCP.dial(host: host, port: Self.sshPort)
-        case .tailnetRequired:
-            throw SSHPreflightFailure.tailnetNotRunning
-        }
+        try await SSHDial.socket(host: host, port: Self.sshPort, whenNodeStopped: .fail)
     }
 
     private func selectDefaultMachine() {

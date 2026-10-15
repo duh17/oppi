@@ -92,7 +92,7 @@ The terminal hears these only while it is open: leaving it or Oppi closes the co
 
 ## Network and reconnect
 
-When Oppi’s in-app Tailscale node is running, `*.ts.net` hosts use that node. Other hosts use direct TCP through your current network, including a system Tailscale VPN if active.
+When Oppi’s in-app Tailscale node is running, tailnet names (`*.ts.net` or `*.beta.tailscale.net`, with or without a trailing dot) use that node. Other hosts, and tailnet names while that node is stopped, use direct TCP through your current network, including a system Tailscale VPN if active.
 
 Oppi checks SSH round-trip liveness every 60 seconds by opening and closing an empty session channel, with a 15-second reply timeout. It requests no shell, command, or PTY on that probe. Direct TCP also uses kernel keepalive probes. Failure closes the connection and shows **Disconnected** with **Reconnect**.
 

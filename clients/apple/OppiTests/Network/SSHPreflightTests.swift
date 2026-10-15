@@ -381,11 +381,16 @@ struct SSHPairMintTests {
             #"body=$(wget -qO- --max-redirect=0 --no-proxy --no-hsts --no-check-certificate --timeout=5 "https://127.0.0.1:${port}/health" || true)"#)
     }
 
-    @Test func tailscaleNameDoesNotDialTheSystemNetwork() {
-        #expect(SSHPairDial.route(host: "studio.local", tailnetRunning: false) == .direct)
-        #expect(SSHPairDial.route(host: "oppi.example.com", tailnetRunning: true) == .direct)
-        #expect(SSHPairDial.route(host: "studio.tail1234.ts.net", tailnetRunning: true) == .tailnet)
-        #expect(SSHPairDial.route(host: "studio.tail1234.ts.net", tailnetRunning: false) == .tailnetRequired)
+    @Test func tailnetNamesUseTheNodeAndOnlyTheSetupCheckFailsClosedWhenItStops() {
+        for stopped in [SSHDial.WhenNodeStopped.fail, .direct] {
+            #expect(SSHDial.route(host: "studio.local", tailnetRunning: false, whenNodeStopped: stopped) == .direct)
+            #expect(SSHDial.route(host: "oppi.example.com", tailnetRunning: true, whenNodeStopped: stopped) == .direct)
+            for name in ["studio.tail1234.ts.net", "studio.tail1234.ts.net.", "studio.example.beta.tailscale.net"] {
+                #expect(SSHDial.route(host: name, tailnetRunning: true, whenNodeStopped: stopped) == .tailnet)
+            }
+        }
+        #expect(SSHDial.route(host: "studio.tail1234.ts.net", tailnetRunning: false, whenNodeStopped: .fail) == .tailnetRequired)
+        #expect(SSHDial.route(host: "studio.tail1234.ts.net", tailnetRunning: false, whenNodeStopped: .direct) == .direct)
     }
 
     @Test func inviteJSONDecodesAndRejectsUnsafeOutput() throws {

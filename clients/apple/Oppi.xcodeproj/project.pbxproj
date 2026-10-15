@@ -928,7 +928,6 @@
 		7261B2A60876E5E4A07363EC /* MacInlineOutputFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 159A60643B3F79AD0FA799C3 /* MacInlineOutputFormatter.swift */; };
 		72A1134D23FD38745F3AD76F /* ModelColorHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B2BC0C9C2FCEE1A15B6726B /* ModelColorHelpers.swift */; };
 		72A3D18EF5A5061D4BE3BC2D /* TreeSitterCPP in Frameworks */ = {isa = PBXBuildFile; productRef = 1A7CE2572EAC26E135A45560 /* TreeSitterCPP */; };
-		72AEC4BA2B8046D3ACBB76D8 /* SSHDirectTCP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19C13455DFB1AB9447182559 /* SSHDirectTCP.swift */; };
 		72EEDF0B72AD66304DF48AF0 /* WorkingIndicatorVisibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13B201117843BA2106A11208 /* WorkingIndicatorVisibilityTests.swift */; };
 		72F123A4430F87FB5AAA8153 /* AppPreferenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4CE2ABE3351FCA6E703FF4F /* AppPreferenceStore.swift */; };
 		72FBCC0792564F4BE5384350 /* OrgToMarkdownConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE0DB040FE4B219823572802 /* OrgToMarkdownConverter.swift */; };
@@ -1110,6 +1109,7 @@
 		87B238999B5D3994C699B3B5 /* FileViewerPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7D6B729D5116B4494E8AD96 /* FileViewerPlan.swift */; };
 		87BD1AFEE07F08D7ABE13E49 /* BugBashTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E947463B3CB1E19618FC214 /* BugBashTests.swift */; };
 		87C3E08DE4857E3D45057C73 /* TailnetSameUserPairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BCF68FE6990270AE88A02B1 /* TailnetSameUserPairing.swift */; };
+		87C59F2BC73B12E477C702E4 /* SSHDial.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13F9D5A047A1F818FC2776FA /* SSHDial.swift */; };
 		87DF7DE23A0F7B22F1832F8F /* MacSessionTraceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5DE2240E836293C992187D3 /* MacSessionTraceStore.swift */; };
 		87EF26B456383F620E376A7B /* RestorationState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B99D06FB0C7E848F2EB4018C /* RestorationState.swift */; };
 		87F119FF4F08D6077E4A8ED7 /* Base64URL.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99E150814904F2C7D20629C9 /* Base64URL.swift */; };
@@ -2351,6 +2351,7 @@
 		1358580A5B9010D99DE78FFA /* MathLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MathLayoutTests.swift; sourceTree = "<group>"; };
 		13B201117843BA2106A11208 /* WorkingIndicatorVisibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkingIndicatorVisibilityTests.swift; sourceTree = "<group>"; };
 		13CA6479159C69BBB3B76EA2 /* MarkdownWikiLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownWikiLink.swift; sourceTree = "<group>"; };
+		13F9D5A047A1F818FC2776FA /* SSHDial.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHDial.swift; sourceTree = "<group>"; };
 		140B3F538CF49F38A9782A3F /* OppiControlWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OppiControlWidgetBundle.swift; sourceTree = "<group>"; };
 		14576FB5D56EC9B5C55D35D0 /* CascadiaCode-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "CascadiaCode-SemiBold.ttf"; sourceTree = "<group>"; };
 		147AA8755F380ADB6488261B /* AgentNativeEditView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentNativeEditView.swift; sourceTree = "<group>"; };
@@ -2390,7 +2391,6 @@
 		188D7EFDBEE5BBE8BC991CE7 /* HarnessFrameIntervalRecorderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HarnessFrameIntervalRecorderTests.swift; sourceTree = "<group>"; };
 		18DB8DD1CB9BC1666D7FEE28 /* MacComposerAutocompleteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacComposerAutocompleteTests.swift; sourceTree = "<group>"; };
 		1902F5B6A921600AE703FCD0 /* WorkspaceFileURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceFileURLTests.swift; sourceTree = "<group>"; };
-		19C13455DFB1AB9447182559 /* SSHDirectTCP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHDirectTCP.swift; sourceTree = "<group>"; };
 		19C7B9DE35DBC2463800BC78 /* JSONValueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONValueTests.swift; sourceTree = "<group>"; };
 		19DF6B26AFB30174BDB64DEE /* InAppBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InAppBrowserView.swift; sourceTree = "<group>"; };
 		1A115EFD70539A8D0DFDE2B6 /* MacServerHealthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacServerHealthView.swift; sourceTree = "<group>"; };
@@ -5449,6 +5449,7 @@
 				B745214985773807802D6014 /* SessionToolOutputAccess.swift */,
 				EC9F5CA86714726B2FEE5D49 /* SilenceWatchdog.swift */,
 				E552CCBAAE9D0983625EA179 /* SSHConnection.swift */,
+				13F9D5A047A1F818FC2776FA /* SSHDial.swift */,
 				86FAF1A0A4DF4BA9CD3E8F8E /* SSHHostTrust.swift */,
 				F1915BE34EB3A7D4D3127CF1 /* SSHIdentityKeyStore.swift */,
 				D6022930C329609998BECEDE /* SSHKeychain.swift */,
@@ -6258,7 +6259,6 @@
 			children = (
 				A6F6185F644E55021D87123F /* HerdrAgentsView.swift */,
 				27F897DE13278A8879D439C6 /* HerdrRemote.swift */,
-				19C13455DFB1AB9447182559 /* SSHDirectTCP.swift */,
 				943E8A11B1E33EA9AACAEEA0 /* SSHTerminalAgentDetection.swift */,
 				491FE68E4FDCD214D7D60AFD /* SSHTerminalArrowControl.swift */,
 				7604543D7376547482B645A2 /* SSHTerminalAttention.swift */,
@@ -9221,7 +9221,7 @@
 				0AE6BD5B1AF184C335639E16 /* ReviewFileSummaryBar.swift in Sources */,
 				84ADCEACDC1A3BF57074879F /* ReviewableControlMarkdownView.swift in Sources */,
 				F926B016D6D2499767E90E7B /* SSHConnection.swift in Sources */,
-				72AEC4BA2B8046D3ACBB76D8 /* SSHDirectTCP.swift in Sources */,
+				87C59F2BC73B12E477C702E4 /* SSHDial.swift in Sources */,
 				477F48ECB96747795F738D2E /* SSHHostTrust.swift in Sources */,
 				E34017E5DDAAA11850FC4F02 /* SSHIdentityKeyStore.swift in Sources */,
 				0B1C67356DFF11838ADF31EC /* SSHKeychain.swift in Sources */,

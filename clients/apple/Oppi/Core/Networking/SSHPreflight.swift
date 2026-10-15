@@ -365,21 +365,6 @@ enum SSHPreflightFailure: Error, Equatable, Sendable {
 
 // MARK: - SSH invite mint
 
-/// Where an SSH setup or pair connection is dialed.
-enum SSHPairDial {
-    enum Route: Equatable, Sendable {
-        case tailnet
-        case direct
-        /// A `*.ts.net` name while Oppi's Tailscale node is stopped.
-        case tailnetRequired
-    }
-
-    static func route(host: String, tailnetRunning: Bool) -> Route {
-        guard ServerTLSTrustPolicy.isTailscaleHostname(host) else { return .direct }
-        return tailnetRunning ? .tailnet : .tailnetRequired
-    }
-}
-
 /// Fixed remote commands for pairing over SSH. Nothing here is built from
 /// the username, host, or password. The client runs the status script first
 /// and sends the pair script only when that status says HTTPS and loopback
