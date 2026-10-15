@@ -38,8 +38,6 @@ struct TailnetBusEvent: Equatable, Sendable {
     var browseToURL: String?
     var loginFinished = false
     var errorMessage: String?
-    /// The notification carried a netmap, so the machine list may have changed.
-    var netmapChanged = false
 }
 
 /// Login/run state reduced from IPN bus events and LocalAPI status.

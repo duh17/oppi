@@ -107,9 +107,9 @@ go_is_new_enough() {
   major="${BASH_REMATCH[1]}"
   minor="${BASH_REMATCH[2]}"
   patch="${BASH_REMATCH[4]:-0}"
-  # libtailscale's go.mod requires go >= 1.25.5, and the vendor script sets
+  # libtailscale's go.mod requires go >= 1.27.1, and the vendor script sets
   # GOTOOLCHAIN=local, so an older toolchain cannot upgrade itself.
-  [[ "$major" -gt 1 || "$minor" -gt 25 || ( "$minor" -eq 25 && "$patch" -ge 5 ) ]]
+  [[ "$major" -gt 1 || "$minor" -gt 27 || ( "$minor" -eq 27 && "$patch" -ge 1 ) ]]
 }
 
 ensure_go() {

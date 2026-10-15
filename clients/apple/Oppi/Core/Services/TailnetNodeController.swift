@@ -47,8 +47,24 @@ final class TailnetNodeController {
     /// reclaims it from a suspended app), so the node must be recreated.
     @ObservationIgnored private var busDeliveredSinceWatch = false
     @ObservationIgnored private var lastNodeRestart: ContinuousClock.Instant?
+    @ObservationIgnored private var peerRefresh: Task<Void, Never>?
 
     private static let nodeRestartInterval: Duration = .seconds(30)
+    /// Peer deltas arrive per peer (Online/LastSeen flips included); one status
+    /// read covers a burst. Matches the ~3 s cadence of the retired netmap
+    /// rate limit.
+    private static let peerRefreshDelay: Duration = .seconds(3)
+
+    /// tailscale.com v1.104 rejects the netmap (1 << 3) and rate-limit (1 << 8)
+    /// bits TailscaleKit still names, failing the watch. Peer changes
+    /// (1 << 12) and their narrow patches (1 << 15) replace netmap pushes.
+    /// TailscaleKit's `Ipn.Notify` has no fields for them, so any notification
+    /// without a backend state counts as a possible peer change.
+    private static let busMask: Ipn.NotifyWatchOpt = [
+        .initialState,
+        Ipn.NotifyWatchOpt(rawValue: 1 << 12),
+        Ipn.NotifyWatchOpt(rawValue: 1 << 15),
+    ]
 
     // MARK: - Lifecycle
 
@@ -154,6 +170,8 @@ final class TailnetNodeController {
         generation &+= 1
         busProcessor?.cancel()
         busProcessor = nil
+        peerRefresh?.cancel()
+        peerRefresh = nil
         let node = self.node
         self.node = nil
         isStarted = false
@@ -220,10 +238,7 @@ final class TailnetNodeController {
         )
         do {
             let client = LocalAPIClient(localNode: node, logger: TailnetLogSink())
-            let processor = try await client.watchIPNBus(
-                mask: [.initialState, .netmap, .rateLimitNetmaps, .noPrivateKeys],
-                consumer: consumer
-            )
+            let processor = try await client.watchIPNBus(mask: Self.busMask, consumer: consumer)
             guard generation == self.generation else {
                 processor.cancel()
                 return
@@ -250,8 +265,20 @@ final class TailnetNodeController {
                 unpublishRoute()
             }
         }
-        if event.state != nil || event.netmapChanged {
+        if event.state != nil {
             Task { await refresh() }
+        } else {
+            schedulePeerRefresh()
+        }
+    }
+
+    private func schedulePeerRefresh() {
+        guard peerRefresh == nil else { return }
+        peerRefresh = Task { [weak self] in
+            try? await Task.sleep(for: Self.peerRefreshDelay)
+            guard let self, !Task.isCancelled else { return }
+            self.peerRefresh = nil
+            await self.refresh()
         }
     }
 
@@ -377,8 +404,7 @@ private actor TailnetBusConsumer: MessageConsumer {
             state: notify.State.map(Self.backendState),
             browseToURL: notify.BrowseToURL,
             loginFinished: notify.LoginFinished != nil,
-            errorMessage: notify.ErrMessage,
-            netmapChanged: notify.NetMap != nil
+            errorMessage: notify.ErrMessage
         ))
     }
 

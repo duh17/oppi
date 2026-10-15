@@ -30,7 +30,8 @@ set -euo pipefail
 
 LIBTAILSCALE_REPO="https://github.com/tailscale/libtailscale.git"
 # Bump deliberately; the stamp file forces a rebuild when this changes.
-LIBTAILSCALE_COMMIT="59d4bb82744915815178e0f0776d60026a397ee7"
+# d1dc45d = libtailscale 0.2.0 (tailscale.com v1.104.1).
+LIBTAILSCALE_COMMIT="d1dc45d039edb7759ecbee6ba2aea0c4bca884b8"
 # Bump the suffix whenever OMIT_FEATURES changes so stale vendor/cache copies rebuild.
 BUILD_ID="$LIBTAILSCALE_COMMIT-omit-v2"
 
@@ -42,6 +43,9 @@ BUILD_ID="$LIBTAILSCALE_COMMIT-omit-v2"
 #
 # Must stay compiled in:
 # - netstack, outboundproxy: the userspace stack and the loopback SOCKS5 proxy.
+# - ipnbus: TailnetNodeController reads login URLs and run state from the bus.
+# - udptransport, nattraversal: direct UDP to peers and hole punching through
+#   NAT; without them a phone reaches most peers only through DERP relays.
 # - peerapiclient: tsnet.Server.Close panics ("unreachable") without it.
 # - tailnetlock: without it the node silently skips Tailnet Lock signature
 #   checks, removing Lock's protection in tailnets that enable it.
@@ -166,9 +170,11 @@ export GOMODCACHE="$WORK_DIR/gomodcache"
 export GOCACHE="$WORK_DIR/gocache"
 export GOFLAGS="-modcacherw"
 export GOTOOLCHAIN="local"
-# Newer Go toolchains enable the jsonv2 experiment by default, which switches
-# github.com/go-json-experiment/json (pinned by tailscale.com) to an alias file
-# that no longer matches encoding/json/v2. Build with the Go 1.25 default.
+# Newer Go toolchains enable the jsonv2 experiment by default. tailscale.com
+# v1.94 did not compile with it (its github.com/go-json-experiment/json pin
+# switched to an alias file that no longer matched encoding/json/v2). v1.104.1
+# compiles either way; keep the Go 1.25 default so encoding/json behavior does
+# not change with a toolchain bump.
 export GOEXPERIMENT="nojsonv2"
 
 # The upstream Makefile hardcodes `-tags ios` and command-line tags override
