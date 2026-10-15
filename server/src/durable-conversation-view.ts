@@ -189,7 +189,8 @@ export function projectEntry(
       for (const call of calls) view.toolCalls[call.id] = tools.call(call.name, call.args);
     }
   }
-  if (entry.data !== undefined) view.data = entry.data;
+  // Raw `data` stays on the server: it is extension bookkeeping that can hold private paths.
+  // Clients get only the sanitized card, as trace history shows it.
   if (!entry.model?.length) {
     const data = asRecord(entry.data);
     const card = sanitizeTranscriptCard(data?.card);

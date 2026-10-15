@@ -11,6 +11,9 @@ import {
 } from "@earendil-works/pi-ai/providers/faux";
 import { InboxDoc, type ConversationId } from "@earendil-works/pi-durable";
 import { DurableHarness, durableStoreDir, durableStoreSqlitePath } from "../src/durable-harness.js";
+import { DurableInputCards } from "../extensions/durable/durable-ui.js";
+import { MobileRendererRegistry } from "../src/mobile-renderer.js";
+import type { ConversationStreamServerMessage } from "../src/types.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import { DURABLE_STORE_MISSING } from "../src/session-runtime-capabilities.js";
@@ -210,6 +213,77 @@ describe("durable SessionHost stores", () => {
     await reopened.close();
     await f.manager.startSession(session.id, f.workspace);
     expect(runtime.host(session.id)?.isOpen).toBe(true);
+  });
+
+  it("re-attaches a transcript socket whose room failed, on one subscription", async () => {
+    const f = await fixture([fauxAssistantMessage("done")]);
+    const session = enroll(f.storage, f.workspace.id, "Lost room");
+    await f.manager.startSession(session.id, f.workspace);
+    const conversationId = f.storage.getSession(session.id)!.serverDurable!
+      .conversationId as ConversationId;
+    const runtime = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
+      .durableHarness;
+    const host = runtime.host(session.id)!;
+    const frames: ConversationStreamServerMessage[] = [];
+    const stop = await host.transcript(conversationId, {
+      renderers: new MobileRendererRegistry(),
+      send: (frame) => frames.push(JSON.parse(JSON.stringify(frame))),
+    });
+    try {
+      await host.use(async (harness) => {
+        const conversation = (await harness.conversation(conversationId, context))!;
+        await conversation.commit(async (tx) => {
+          const cards = await tx.doc(DurableInputCards, conversationId);
+          cards.requests["job-1"] = { title: "Background job 1", at: 1 };
+        }, context);
+        // The room's next presentation pass fails its input-card read, as a store error
+        // would. Other readers of the same document (session events) are left alone.
+        const snapshot = harness.snapshot.bind(harness);
+        let failed = false;
+        vi.spyOn(harness, "snapshot").mockImplementation(((doc, id, ctx) => {
+          if (doc === DurableInputCards && !failed && new Error().stack?.includes("presentPass")) {
+            failed = true;
+            return Promise.reject(new Error("store busy"));
+          }
+          return snapshot(doc, id, ctx);
+        }) as typeof harness.snapshot);
+        const submission = await conversation.submit(
+          { type: "input", content: "raw job output", requestId: "job-1" },
+          context,
+        );
+        await submission.wait(context);
+        await conversation.waitForIdle(context);
+        expect(failed).toBe(true);
+      });
+      const sent = () =>
+        frames.flatMap((frame) =>
+          frame.type === "update" || frame.type === "snapshot" ? (frame.entries ?? []) : [],
+        );
+      await until(
+        () => sent().some((entry) => JSON.stringify(entry.model ?? "").includes("done")),
+        "the reply on the re-attached stream",
+      );
+      expect(JSON.stringify(frames)).not.toContain("raw job output");
+      expect(sent().find((entry) => entry.inputCard)?.card?.title).toBe("Background job 1");
+      // One subscription: a later commit reaches the socket once, not once per subscription.
+      const before = frames.length;
+      await host.use(async (harness) => {
+        const conversation = (await harness.conversation(conversationId, context))!;
+        await conversation.commit(async (tx) => {
+          const cards = await tx.doc(DurableInputCards, conversationId);
+          cards.requests["job-1"] = { title: "Background job 1 (renamed)", at: 2 };
+        }, context);
+      });
+      await until(() => frames.length > before, "the renamed card");
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const restated = frames
+        .slice(before)
+        .flatMap((frame) => (frame.type === "update" ? (frame.entries ?? []) : []))
+        .filter((entry) => entry.inputCard);
+      expect(restated.map((entry) => entry.card?.title)).toEqual(["Background job 1 (renamed)"]);
+    } finally {
+      stop();
+    }
   });
 
   it("refuses to open a durable session that has no storeId", async () => {

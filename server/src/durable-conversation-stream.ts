@@ -197,6 +197,10 @@ class ConversationRoom implements ToolPresenter {
           conversationId: this.conversationId,
           error: safeErrorMessage(error),
         });
+        // Flushing now would send entries whose card or hiding is undecided (a raw
+        // extension input, a recovered partial). End the room instead; each owner
+        // re-attaches from its cursor to a fresh room, which decides on load.
+        this.close(true);
       })
       .finally(() => {
         this.passes -= 1;
@@ -457,11 +461,14 @@ class ConversationRoom implements ToolPresenter {
     if (this.subscribers.size === 0) this.close();
   }
 
-  close(): void {
+  /** `lost`: the room failed, so subscribers report the loss to their owners. */
+  close(lost = false): void {
     if (this.closed) return;
     this.closed = true;
     for (const detach of this.detach.splice(0)) detach();
-    for (const subscriber of [...this.subscribers]) subscriber.dispose();
+    for (const subscriber of [...this.subscribers])
+      if (lost) subscriber.lose();
+      else subscriber.dispose();
     const rooms = ROOMS.get(this.harness);
     if (rooms?.get(this.conversationId) === this) rooms.delete(this.conversationId);
   }
@@ -481,6 +488,7 @@ export class ConversationStreamSubscription {
   constructor(
     private readonly room: ConversationRoom,
     private readonly send: SendFrame,
+    private readonly onLost?: () => void,
   ) {}
 
   /** The newest entry id sent; a new subscription started after it resumes this socket. */
@@ -521,6 +529,13 @@ export class ConversationStreamSubscription {
     clearTimeout(this.timer);
     this.timer = undefined;
     this.room.leave(this);
+  }
+
+  /** The room failed: end this subscription and tell its owner, which may re-attach. */
+  lose(): void {
+    if (this.disposed) return;
+    this.dispose();
+    this.onLost?.();
   }
 
   private emit(frame: ConversationStreamServerMessage): void {
@@ -620,6 +635,8 @@ export async function attachConversationStream(options: {
   renderers: MobileRendererRegistry;
   afterEntryId?: number;
   send: SendFrame;
+  /** The room failed after this subscription started; re-attach from `cursor` to resume. */
+  onLost?: () => void;
 }): Promise<ConversationStreamSubscription> {
   for (;;) {
     const room = await roomFor(options.harness, options.conversationId, options.renderers);
@@ -629,7 +646,7 @@ export async function attachConversationStream(options: {
     // itself from ROOMS, so the retry opens a new room.
     if (room.closed) continue;
     if (room.presenting) continue;
-    const subscription = new ConversationStreamSubscription(room, options.send);
+    const subscription = new ConversationStreamSubscription(room, options.send, options.onLost);
     room.join(subscription);
     subscription.start(options.afterEntryId);
     return subscription;

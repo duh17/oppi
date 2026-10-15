@@ -61,7 +61,7 @@ enum ConversationTraceProjector {
     // MARK: - Entry kinds
 
     private static func cardEvent(_ entry: ConversationEntryView, card: ConversationEntryCard) -> TraceEvent {
-        let inputCard = entry.inputCard == true || entry.data?.objectValue?["inputCard"]?.boolValue == true
+        let inputCard = entry.inputCard == true
         let output = inputCard ? card.output.map {
             TraceEventPresentation.Output(
                 kind: $0.kind,

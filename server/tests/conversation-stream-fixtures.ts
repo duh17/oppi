@@ -108,7 +108,6 @@ const failureCard = {
 const cardEntry: ConversationEntryView = {
   id: 12,
   kind: "oppi.failure",
-  data: { card: failureCard },
   card: { kind: "custom", ...failureCard },
 };
 

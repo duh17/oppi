@@ -25,7 +25,7 @@
             "edit",
             "bash"
           ],
-          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-RqwwvL"
+          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-Y5CKC0"
         },
         "pi.usage": {
           "models": {},
@@ -44,7 +44,7 @@
             {
               "role": "user",
               "content": "List the files",
-              "timestamp": 1792039375483
+              "timestamp": 1792049124659
             }
           ]
         },
@@ -160,7 +160,7 @@
                   }
                 }
               ],
-              "timestamp": 1792039375486
+              "timestamp": 1792049124662
             }
           ]
         }
@@ -214,7 +214,7 @@
                   "text": ""
                 }
               ],
-              "api": "faux:1792039375460:85yagi1soct",
+              "api": "faux:1792049124633:022xjhtu6avg",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -232,7 +232,7 @@
                 }
               },
               "stopReason": "pending",
-              "timestamp": 1792039375483
+              "timestamp": 1792049124659
             }
           ]
         ]
@@ -266,7 +266,7 @@
                   }
                 }
               ],
-              "api": "faux:1792039375460:85yagi1soct",
+              "api": "faux:1792049124633:022xjhtu6avg",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -284,7 +284,7 @@
                 }
               },
               "stopReason": "toolUse",
-              "timestamp": 1792039375483
+              "timestamp": 1792049124659
             }
           ],
           "toolCalls": {
@@ -337,12 +337,9 @@
               ],
               "isError": false,
               "durationMs": 4,
-              "timestamp": 1792039375705
+              "timestamp": 1792049124884
             }
-          ],
-          "data": {
-            "diagnostics": []
-          }
+          ]
         }
       ],
       "docs": {
@@ -404,7 +401,7 @@
                   "text": "There are two entries: README.md and src."
                 }
               ],
-              "api": "faux:1792039375460:85yagi1soct",
+              "api": "faux:1792049124633:022xjhtu6avg",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -422,7 +419,7 @@
                 }
               },
               "stopReason": "stop",
-              "timestamp": 1792039375483
+              "timestamp": 1792049124659
             }
           ]
         }
@@ -512,7 +509,7 @@
                   "mimeType": "image/png"
                 }
               ],
-              "timestamp": 1792039376109
+              "timestamp": 1792049125290
             }
           ]
         }
@@ -563,7 +560,7 @@
                   }
                 }
               ],
-              "api": "faux:1792039375460:85yagi1soct",
+              "api": "faux:1792049124633:022xjhtu6avg",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -581,7 +578,7 @@
                 }
               },
               "stopReason": "toolUse",
-              "timestamp": 1792039375483
+              "timestamp": 1792049124659
             }
           ],
           "toolCalls": {
@@ -644,18 +641,9 @@
               ],
               "isError": true,
               "durationMs": 5,
-              "timestamp": 1792039376204
+              "timestamp": 1792049125381
             }
-          ],
-          "data": {
-            "diagnostics": [
-              {
-                "severity": "error",
-                "code": "exit_code",
-                "message": "Command exited with code 3"
-              }
-            ]
-          }
+          ]
         }
       ],
       "docs": {
@@ -734,7 +722,7 @@
                   "text": "The command failed with exit code 3."
                 }
               ],
-              "api": "faux:1792039375460:85yagi1soct",
+              "api": "faux:1792049124633:022xjhtu6avg",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -752,7 +740,7 @@
                 }
               },
               "stopReason": "stop",
-              "timestamp": 1792039375483
+              "timestamp": 1792049124659
             }
           ]
         }
@@ -828,22 +816,6 @@
         {
           "id": 25,
           "kind": "oppi.notice",
-          "data": {
-            "card": {
-              "title": "Deploy finished",
-              "subtitle": "staging",
-              "status": "completed",
-              "body": "All checks passed.",
-              "fields": [
-                {
-                  "label": "Duration",
-                  "value": "42s"
-                }
-              ],
-              "accent": "success",
-              "at": 1791650000000
-            }
-          },
           "card": {
             "kind": "custom",
             "title": "Deploy finished",
@@ -934,7 +906,7 @@
                   "text": "Thanks for the job report."
                 }
               ],
-              "api": "faux:1792039375460:85yagi1soct",
+              "api": "faux:1792049124633:022xjhtu6avg",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -952,7 +924,7 @@
                 }
               },
               "stopReason": "stop",
-              "timestamp": 1792039375483
+              "timestamp": 1792049124659
             }
           ]
         }
@@ -1061,12 +1033,9 @@
                   "text": "The conversation history before this point was compacted into the following summary:\n\n<summary>\nSummary of the work so far: listed files, ran a failing command.\n</summary>"
                 }
               ],
-              "timestamp": 1792039377405
+              "timestamp": 1792049126591
             }
-          ],
-          "data": {
-            "reason": "manual"
-          }
+          ]
         },
         {
           "id": 24,
@@ -1080,7 +1049,7 @@
                   "text": "The command failed with exit code 3."
                 }
               ],
-              "api": "faux:1792039375460:85yagi1soct",
+              "api": "faux:1792049124633:022xjhtu6avg",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -1098,29 +1067,13 @@
                 }
               },
               "stopReason": "stop",
-              "timestamp": 1792039375483
+              "timestamp": 1792049124659
             }
           ]
         },
         {
           "id": 25,
           "kind": "oppi.notice",
-          "data": {
-            "card": {
-              "title": "Deploy finished",
-              "subtitle": "staging",
-              "status": "completed",
-              "body": "All checks passed.",
-              "fields": [
-                {
-                  "label": "Duration",
-                  "value": "42s"
-                }
-              ],
-              "accent": "success",
-              "at": 1791650000000
-            }
-          },
           "card": {
             "kind": "custom",
             "title": "Deploy finished",
@@ -1174,7 +1127,7 @@
                   "text": "Thanks for the job report."
                 }
               ],
-              "api": "faux:1792039375460:85yagi1soct",
+              "api": "faux:1792049124633:022xjhtu6avg",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -1192,7 +1145,7 @@
                 }
               },
               "stopReason": "stop",
-              "timestamp": 1792039375483
+              "timestamp": 1792049124659
             }
           ]
         }
@@ -1213,7 +1166,7 @@
             "edit",
             "bash"
           ],
-          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-RqwwvL"
+          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-Y5CKC0"
         },
         "pi.usage": {
           "models": {
@@ -1247,7 +1200,7 @@
             {
               "role": "user",
               "content": "Explain it at length",
-              "timestamp": 1792039377708
+              "timestamp": 1792049126894
             }
           ]
         },
@@ -1364,7 +1317,7 @@
                   }
                 }
               ],
-              "timestamp": 1792039377710
+              "timestamp": 1792049126898
             }
           ]
         }
@@ -1414,7 +1367,7 @@
                   "text": "partial0 partial1 partial2 parti"
                 }
               ],
-              "api": "faux:1792039375460:85yagi1soct",
+              "api": "faux:1792049124633:022xjhtu6avg",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -1432,7 +1385,7 @@
                 }
               },
               "stopReason": "pending",
-              "timestamp": 1792039375483
+              "timestamp": 1792049124659
             }
           ]
         ]
@@ -1489,7 +1442,7 @@
                       "text": "partial0 partial1 partial2 parti"
                     }
                   ],
-                  "api": "faux:1792039375460:85yagi1soct",
+                  "api": "faux:1792049124633:022xjhtu6avg",
                   "provider": "faux",
                   "model": "faux-1",
                   "usage": {
@@ -1507,7 +1460,7 @@
                     }
                   },
                   "stopReason": "pending",
-                  "timestamp": 1792039375483
+                  "timestamp": 1792049124659
                 }
               }
             }
@@ -1535,7 +1488,7 @@
                 "edit",
                 "bash"
               ],
-              "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-RqwwvL"
+              "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-Y5CKC0"
             }
           ]
         ],
@@ -1582,7 +1535,7 @@
                   "text": "A complete answer after the restart."
                 }
               ],
-              "api": "faux:1792039375460:85yagi1soct",
+              "api": "faux:1792049124633:022xjhtu6avg",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -1600,7 +1553,7 @@
                 }
               },
               "stopReason": "stop",
-              "timestamp": 1792039377853
+              "timestamp": 1792049127040
             }
           ]
         }
@@ -1680,7 +1633,7 @@
             {
               "role": "user",
               "content": "List the files",
-              "timestamp": 1792039375483
+              "timestamp": 1792049124659
             }
           ]
         },
@@ -1796,7 +1749,7 @@
                   }
                 }
               ],
-              "timestamp": 1792039375486
+              "timestamp": 1792049124662
             }
           ]
         },
@@ -1824,7 +1777,7 @@
                   }
                 }
               ],
-              "api": "faux:1792039375460:85yagi1soct",
+              "api": "faux:1792049124633:022xjhtu6avg",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -1842,7 +1795,7 @@
                 }
               },
               "stopReason": "toolUse",
-              "timestamp": 1792039375483
+              "timestamp": 1792049124659
             }
           ],
           "toolCalls": {
@@ -1895,12 +1848,9 @@
               ],
               "isError": false,
               "durationMs": 4,
-              "timestamp": 1792039375705
+              "timestamp": 1792049124884
             }
-          ],
-          "data": {
-            "diagnostics": []
-          }
+          ]
         },
         {
           "id": 16,
@@ -1914,7 +1864,7 @@
                   "text": "There are two entries: README.md and src."
                 }
               ],
-              "api": "faux:1792039375460:85yagi1soct",
+              "api": "faux:1792049124633:022xjhtu6avg",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -1932,7 +1882,7 @@
                 }
               },
               "stopReason": "stop",
-              "timestamp": 1792039375483
+              "timestamp": 1792049124659
             }
           ]
         },
@@ -1953,7 +1903,7 @@
                   "mimeType": "image/png"
                 }
               ],
-              "timestamp": 1792039376109
+              "timestamp": 1792049125290
             }
           ]
         },
@@ -1973,7 +1923,7 @@
                   }
                 }
               ],
-              "api": "faux:1792039375460:85yagi1soct",
+              "api": "faux:1792049124633:022xjhtu6avg",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -1991,7 +1941,7 @@
                 }
               },
               "stopReason": "toolUse",
-              "timestamp": 1792039375483
+              "timestamp": 1792049124659
             }
           ],
           "toolCalls": {
@@ -2054,18 +2004,9 @@
               ],
               "isError": true,
               "durationMs": 5,
-              "timestamp": 1792039376204
+              "timestamp": 1792049125381
             }
-          ],
-          "data": {
-            "diagnostics": [
-              {
-                "severity": "error",
-                "code": "exit_code",
-                "message": "Command exited with code 3"
-              }
-            ]
-          }
+          ]
         }
       ],
       "hasOlder": false
@@ -2075,19 +2016,19 @@
     {
       "id": "8",
       "type": "user",
-      "timestamp": "2026-10-15T04:42:55.483Z",
+      "timestamp": "2026-10-15T07:25:24.659Z",
       "text": "List the files"
     },
     {
       "id": "12-think-0",
       "type": "thinking",
-      "timestamp": "2026-10-15T04:42:55.483Z",
+      "timestamp": "2026-10-15T07:25:24.659Z",
       "thinking": "The user wants a file listing."
     },
     {
       "id": "12-text-1",
       "type": "assistant",
-      "timestamp": "2026-10-15T04:42:55.483Z",
+      "timestamp": "2026-10-15T07:25:24.659Z",
       "text": "Listing the files.",
       "contentIndex": 1,
       "runOrdinal": 0
@@ -2095,7 +2036,7 @@
     {
       "id": "call-list",
       "type": "toolCall",
-      "timestamp": "2026-10-15T04:42:55.483Z",
+      "timestamp": "2026-10-15T07:25:24.659Z",
       "tool": "bash",
       "args": {
         "command": "printf 'README.md\\nsrc\\n'"
@@ -2125,7 +2066,7 @@
     {
       "id": "result-14",
       "type": "toolResult",
-      "timestamp": "2026-10-15T04:42:55.705Z",
+      "timestamp": "2026-10-15T07:25:24.884Z",
       "toolCallId": "call-list",
       "toolName": "bash",
       "output": "README.md\nsrc\n",
@@ -2140,7 +2081,7 @@
     {
       "id": "16-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-15T04:42:55.483Z",
+      "timestamp": "2026-10-15T07:25:24.659Z",
       "text": "There are two entries: README.md and src.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -2148,13 +2089,13 @@
     {
       "id": "17",
       "type": "user",
-      "timestamp": "2026-10-15T04:42:56.109Z",
+      "timestamp": "2026-10-15T07:25:25.290Z",
       "text": "Run the failing command for this image\ndata:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
     },
     {
       "id": "call-fail",
       "type": "toolCall",
-      "timestamp": "2026-10-15T04:42:55.483Z",
+      "timestamp": "2026-10-15T07:25:24.659Z",
       "tool": "bash",
       "args": {
         "command": "echo boom >&2; exit 3"
@@ -2184,7 +2125,7 @@
     {
       "id": "result-22",
       "type": "toolResult",
-      "timestamp": "2026-10-15T04:42:56.204Z",
+      "timestamp": "2026-10-15T07:25:25.381Z",
       "toolCallId": "call-fail",
       "toolName": "bash",
       "output": "boom\n\n<harness>\n[error] Command exited with code 3\n</harness>",
@@ -2205,7 +2146,7 @@
     {
       "id": "24-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-15T04:42:55.483Z",
+      "timestamp": "2026-10-15T07:25:24.659Z",
       "text": "The command failed with exit code 3.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -2257,7 +2198,7 @@
     {
       "id": "30-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-15T04:42:55.483Z",
+      "timestamp": "2026-10-15T07:25:24.659Z",
       "text": "Thanks for the job report.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -2265,19 +2206,19 @@
     {
       "id": "32",
       "type": "compaction",
-      "timestamp": "2026-10-15T04:42:57.405Z",
+      "timestamp": "2026-10-15T07:25:26.591Z",
       "text": "Context compacted: Summary of the work so far: listed files, ran a failing command."
     },
     {
       "id": "34",
       "type": "user",
-      "timestamp": "2026-10-15T04:42:57.708Z",
+      "timestamp": "2026-10-15T07:25:26.894Z",
       "text": "Explain it at length"
     },
     {
       "id": "39-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-15T04:42:57.853Z",
+      "timestamp": "2026-10-15T07:25:27.040Z",
       "text": "A complete answer after the restart.",
       "contentIndex": 0,
       "runOrdinal": 0

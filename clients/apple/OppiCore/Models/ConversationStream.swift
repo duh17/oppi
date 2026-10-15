@@ -51,7 +51,6 @@ struct ConversationEntryView: Codable, Equatable, Sendable {
     var kind: String
     /// Pi model messages as sent; absent on input cards.
     var model: [JSONValue]?
-    var data: JSONValue?
     /// Assistant entries: presentation by tool call id.
     var toolCalls: [String: ConversationToolCallView]?
     /// Tool-result entries: presentation of the result.

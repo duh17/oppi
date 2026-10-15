@@ -489,14 +489,6 @@
         {
           "id": 12,
           "kind": "oppi.failure",
-          "data": {
-            "card": {
-              "title": "Run failed",
-              "body": "Provider overloaded",
-              "accent": "error",
-              "at": 1791650004000
-            }
-          },
           "card": {
             "kind": "custom",
             "title": "Run failed",
@@ -597,14 +589,6 @@
         {
           "id": 12,
           "kind": "oppi.failure",
-          "data": {
-            "card": {
-              "title": "Run failed",
-              "body": "Provider overloaded",
-              "accent": "error",
-              "at": 1791650004000
-            }
-          },
           "card": {
             "kind": "custom",
             "title": "Run failed",

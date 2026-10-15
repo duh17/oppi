@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { applyImmutable, type Op } from "@earendil-works/chord/delta";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -478,6 +478,54 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
     await expectConverged(f, client);
   });
 
+  it("ends the room instead of sending undecided presentation when a pass fails", async () => {
+    const f = await fixture([fauxAssistantMessage("ack")]);
+    const id = f.conversation.id;
+    let lost = 0;
+    const client = new Client();
+    client.subscription = await attachConversationStream({
+      harness: f.harness,
+      conversationId: id,
+      renderers: new MobileRendererRegistry(),
+      send: (frame) => client.apply(wire(frame)),
+      onLost: () => (lost += 1),
+    });
+    subscriptions.add(client.subscription);
+    await f.conversation.commit(async (tx) => {
+      const cards = await tx.doc(DurableInputCards, id);
+      cards.requests["job-1"] = { title: "Background job 1", at: 1 };
+    }, context);
+    await settle();
+    // The input-card read of the next pass fails, as a store error would.
+    const snapshot = f.harness.snapshot.bind(f.harness);
+    let failed = false;
+    vi.spyOn(f.harness, "snapshot").mockImplementation(((doc, conversationId, ctx) => {
+      if (doc === DurableInputCards && !failed) {
+        failed = true;
+        return Promise.reject(new Error("store busy"));
+      }
+      return snapshot(doc, conversationId, ctx);
+    }) as typeof f.harness.snapshot);
+    const submission = await f.conversation.submit(
+      { type: "input", content: "raw job output", requestId: "job-1" },
+      context,
+    );
+    await submission.wait(context);
+    await f.conversation.waitForIdle(context);
+    await settle();
+
+    expect(failed).toBe(true);
+    expect(lost).toBe(1);
+    // The raw extension input never reached the client.
+    expect(JSON.stringify(client.entries)).not.toContain("raw job output");
+    // Re-attaching from the cursor, as SessionHost does, shows it as its card.
+    const resumed = await attach(f, client.tip, client);
+    expect(resumed.entries.find((entry) => entry.inputCard)?.card?.title).toBe(
+      "Background job 1",
+    );
+    await expectConverged(f, resumed);
+  });
+
   it("shows input and display cards like trace history, including card metadata that lands late", async () => {
     const f = await fixture([fauxAssistantMessage("ack one"), fauxAssistantMessage("ack two")]);
     const client = await attach(f);
@@ -527,9 +575,11 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
     }, context);
     await settle();
 
-    expect(client.entries.find((entry) => entry.id === display)).toMatchObject({
+    // Only the sanitized card leaves the server, never the entry's raw data.
+    expect(client.entries.find((entry) => entry.id === display)).toEqual({
+      id: display,
+      kind: "oppi.notice",
       card: { kind: "custom", title: "Job done", body: "ok", accent: "success", at },
-      data: { extra: 1 },
     });
     const inputs = client.entries.filter((entry) => entry.inputCard);
     expect(inputs).toEqual([

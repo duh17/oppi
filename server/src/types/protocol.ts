@@ -799,7 +799,6 @@ export interface ConversationEntryView {
   kind: string;
   /** Model messages; tool-result `details` are sanitized like trace history. Absent on input cards. */
   model?: PiMessage[];
-  data?: unknown;
   /** Assistant entries: presentation by tool call id. */
   toolCalls?: Record<string, ConversationToolCallView>;
   /** Tool-result entries: presentation of the result. */

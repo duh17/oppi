@@ -224,12 +224,16 @@ function writeStoreMeta(directory: string, meta: DurableStoreMeta): void {
   renameSync(tmp, dest);
 }
 
-/** One socket's transcript stream; re-attached to the reopened Harness when the store recovers. */
+/**
+ * One socket's transcript stream; re-attached from its cursor when the store recovers or its
+ * room fails.
+ */
 interface TranscriptStream {
   readonly id: ConversationId;
   readonly options: {
     renderers: MobileRendererRegistry;
     send: (frame: ConversationStreamServerMessage) => void;
+    onLost: () => void;
   };
   subscription: ConversationStreamSubscription;
 }
@@ -497,13 +501,19 @@ export class SessionHost {
     const release = this.retain("stream");
     try {
       const { harness } = await this.open();
+      const streamOptions: TranscriptStream["options"] = {
+        renderers: options.renderers,
+        send: options.send,
+        onLost: () => void this.reattachLostTranscript(stream),
+      };
       const stream: TranscriptStream = {
         id,
-        options: { renderers: options.renderers, send: options.send },
+        options: streamOptions,
         subscription: await attachConversationStream({
           harness,
           conversationId: id,
-          ...options,
+          ...streamOptions,
+          ...(options.afterEntryId !== undefined ? { afterEntryId: options.afterEntryId } : {}),
         }),
       };
       this.transcripts.add(stream);
@@ -792,18 +802,39 @@ export class SessionHost {
     this.runtime.forgetHost(this);
   }
 
+  /** The stream's room failed while the store stayed open: resume the socket on a fresh room. */
+  private async reattachLostTranscript(stream: TranscriptStream): Promise<void> {
+    if (!this.transcripts.has(stream)) return;
+    // The store itself is failing: its recovery re-attaches every transcript.
+    if (this.failedWithStore(undefined)) return;
+    try {
+      await this.use((harness) => this.reattachTranscript(harness, stream));
+    } catch (error) {
+      log.error("durable_store.transcript_reattach_failed", {
+        storeId: this.storeId,
+        conversationId: stream.id,
+        error: safeErrorMessage(error),
+      });
+    }
+  }
+
   /** Resume the socket where it was: the subscription's cursor is the last entry it sent. */
   private async reattachTranscript(harness: Harness, stream: TranscriptStream): Promise<void> {
+    const previous = stream.subscription;
     try {
       const subscription = await attachConversationStream({
         harness,
         conversationId: stream.id,
         ...stream.options,
-        ...(stream.subscription.cursor ? { afterEntryId: stream.subscription.cursor } : {}),
+        ...(previous.cursor ? { afterEntryId: previous.cursor } : {}),
       });
-      // The socket left while this attached: end the new subscription too.
-      if (!this.transcripts.has(stream)) subscription.dispose();
-      else stream.subscription = subscription;
+      // The socket left, or another re-attach (store recovery and a lost room can race)
+      // already replaced the subscription: one socket keeps exactly one subscription.
+      if (!this.transcripts.has(stream) || stream.subscription !== previous) subscription.dispose();
+      else {
+        stream.subscription = subscription;
+        previous.dispose();
+      }
     } catch (error) {
       log.error("durable_store.transcript_reattach_failed", {
         storeId: this.storeId,
