@@ -819,11 +819,11 @@ final class WebSocketClient {
                             "WebSocket handshake rejected",
                             metadata: metadata
                         )
-                    } else if WebSocketRecoveryPolicy.isNonRetryableCloseCode(ws.closeCode()) {
+                    } else if WebSocketRecoveryPolicy.isTerminalReceiveFailure(error, closeCode: ws.closeCode()) {
                         shouldAttemptReconnect = false
                         let metadata = self.receiveFailureMetadata(for: ws, error: error)
                             .merging(self.consumeReceiveErrorSuppressionMetadata()) { _, new in new }
-                        logger.error("WebSocket terminal close code \(ws.closeCode().rawValue)")
+                        logger.error("WebSocket terminal receive failure, close code \(ws.closeCode().rawValue)")
                         self.wsLogError(
                             "WebSocket terminal protocol close",
                             metadata: metadata

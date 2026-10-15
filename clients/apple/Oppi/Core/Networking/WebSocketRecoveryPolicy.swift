@@ -71,11 +71,16 @@ enum WebSocketRecoveryPolicy {
         [400, 401, 403, 404, 410, 426].contains(statusCode)
     }
 
-    /// Close codes that report a terminal payload, policy, or WebSocket protocol rejection.
+    /// A receive failure that a reconnect would only repeat:
+    /// - a close code reporting a payload, policy, or WebSocket protocol rejection;
+    /// - an inbound frame over this task's `maximumMessageSize`. URLSession fails it locally
+    ///   with `EMSGSIZE` and no close code, and the server sends the same frame (a
+    ///   conversation snapshot) to the next socket, so retrying loops.
     /// Transport closures such as abnormalClosure, goingAway, and internalServerError remain
     /// recoverable because a later connection can succeed without changing the request.
-    nonisolated static func isNonRetryableCloseCode(
-        _ closeCode: URLSessionWebSocketTask.CloseCode
+    nonisolated static func isTerminalReceiveFailure(
+        _ error: Error,
+        closeCode: URLSessionWebSocketTask.CloseCode
     ) -> Bool {
         switch closeCode {
         case .protocolError,
@@ -85,7 +90,8 @@ enum WebSocketRecoveryPolicy {
              .messageTooBig:
             return true
         default:
-            return false
+            let nsError = error as NSError
+            return nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(EMSGSIZE)
         }
     }
 

@@ -351,7 +351,7 @@ final class AppEventStreamClient {
                                 extra: ["httpStatusCode": String(statusCode)]
                             )
                         }
-                    } else if WebSocketRecoveryPolicy.isNonRetryableCloseCode(ws.closeCode()) {
+                    } else if WebSocketRecoveryPolicy.isTerminalReceiveFailure(error, closeCode: ws.closeCode()) {
                         shouldAttemptReconnect = false
                         reconnectReason = "protocol_close"
                         appEventClientLogger.error("App event stream terminal close code \(ws.closeCode().rawValue, privacy: .public)")

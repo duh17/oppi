@@ -190,6 +190,38 @@ struct WebSocketClientAuthRefreshTests {
         await consumer.value
     }
 
+    @Test func oversizedInboundFrameDisconnectsWithoutReconnectLoop() async throws {
+        let factory = ScriptedFocusedWebSocketFactory()
+        let transport = RecordingDeviceAuthTransport(nextToken: "at_fresh")
+        let client = makeClient(factory: factory, transport: transport)
+        let stream = client.connect()
+        let consumer = Task { @MainActor in
+            for await _ in stream {}
+        }
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            factory.sockets.count == 1
+        })
+        let socket = try #require(factory.sockets.first)
+        // URLSession fails a frame over maximumMessageSize locally: EMSGSIZE, no close code.
+        // The server would send the same frame to a new socket, so a reconnect only loops.
+        socket.fail(
+            NSError(domain: NSPOSIXErrorDomain, code: Int(EMSGSIZE)),
+            responseStatusCode: 101,
+            closeCode: .invalid
+        )
+
+        #expect(await waitForMainActorCondition(timeout: .seconds(2)) {
+            client.status == .disconnected
+        })
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(factory.sockets.count == 1)
+        #expect(await transport.refreshCallCount() == 0)
+
+        client.disconnect()
+        await consumer.value
+    }
+
     @Test func authRefreshFailureDisconnectsTerminallyWithoutReconnect() async throws {
         let factory = ScriptedFocusedWebSocketFactory()
         let transport = RecordingDeviceAuthTransport(

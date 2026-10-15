@@ -203,6 +203,7 @@ struct PathChangeReconnectDelaySanityTests {
     }
 
     @Test func protocolAndPolicyCloseCodesAreTerminal() {
+        let closed = NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTCONN))
         let terminalCodes: [URLSessionWebSocketTask.CloseCode] = [
             .protocolError,
             .unsupportedData,
@@ -211,7 +212,7 @@ struct PathChangeReconnectDelaySanityTests {
             .messageTooBig,
         ]
         for closeCode in terminalCodes {
-            #expect(WebSocketRecoveryPolicy.isNonRetryableCloseCode(closeCode))
+            #expect(WebSocketRecoveryPolicy.isTerminalReceiveFailure(closed, closeCode: closeCode))
         }
         for closeCode in [
             URLSessionWebSocketTask.CloseCode.normalClosure,
@@ -222,8 +223,12 @@ struct PathChangeReconnectDelaySanityTests {
                 rawValue: WebSocketRecoveryPolicy.authExpiredCloseCodeRawValue
             ) ?? .goingAway,
         ] {
-            #expect(!WebSocketRecoveryPolicy.isNonRetryableCloseCode(closeCode))
+            #expect(!WebSocketRecoveryPolicy.isTerminalReceiveFailure(closed, closeCode: closeCode))
         }
+        // A frame over maximumMessageSize fails locally with no close code; the next socket
+        // gets the same frame, so it must not reconnect.
+        let tooLarge = NSError(domain: NSPOSIXErrorDomain, code: Int(EMSGSIZE))
+        #expect(WebSocketRecoveryPolicy.isTerminalReceiveFailure(tooLarge, closeCode: .invalid))
         #expect(
             WebSocketRecoveryPolicy.isAuthExpiredCloseCode(
                 URLSessionWebSocketTask.CloseCode(
