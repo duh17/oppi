@@ -1,6 +1,6 @@
 # Durable conversation stream (experimental)
 
-Part of [Oppi server architecture](../architecture-server.md). The wire that replicates one durable conversation's `{ entries, docs }` to a client. It is the server half of the durable-only target model. OppiCore models it (`ConversationReplica`, `ConversationTraceProjector`), but the app does not attach yet, so v1 still changes in place.
+Part of [Oppi server architecture](../architecture-server.md). The wire that replicates one durable conversation's `{ entries, docs }` to a client. It is the server half of the durable-only target model. The iOS app attaches for durable sessions and feeds their timeline from the replica ([client flow](../architecture-client/flows.md#durable-sessions-the-conversation-stream)); v1 still changes in place.
 
 ## Gate and transport
 
@@ -92,9 +92,15 @@ Paths are arrays of keys and indexes, always inline (no Chord wire interning). `
 - `server/tests/durable-conversation-stream.integration.test.ts` drives a real `Server` over WSS: the capability, snapshot on attach, appends, the landing frame, resume after a disconnect while a turn ran, a `compact` command forcing a snapshot, `older` after it, `older` refused before `attach`, a socket without `attach` getting no stream frames, and a classic session refusing `attach`. It writes payload sizes for one streamed reply to `$TMPDIR/oppi-conversation-stream-payload.json`.
 - `protocol/conversation-stream-golden.json` holds every frame one client received for a real Harness conversation (thinking, a bash call with terminal output, a failing call, an image input, a display card, an input card, a real compaction, a restart that retried an answer, and `older` pages) and that conversation's mobile trace (`view=full` with presentation segments). `server/tests/conversation-stream-golden.ts` writes it, run only by `npm run protocol:fixtures:update`. The Apple `ConversationStreamTests` replays the frames into `ConversationReplica`, projects them with `ConversationTraceProjector`, and requires exactly that trace. The same suite applies `conversation-stream.json` in order and checks each op kind.
 
+## Client
+
+`ChatSessionManager` attaches when the focused socket connects a durable session on a server with the capability, and `ConversationStreamDriver` owns the replica, `attach`/`older`, and the timeline sync. `ServerMessage.conversationStream` decodes the three frames on the focused socket, and `ServerConnection` routes them to the session the socket is bound to, since they carry no `sessionId`. `ClientMessage.conversationAttach` and `.conversationOlder` encode the requests. `OppiTests/Chat/ConversationStreamSessionTests` drives the runtime with scripted frames: resume cursor, fresh attach after a failed apply or attach, incremental append, live rows replaced at the landing, ignored classic events, and `older`. `ConversationStreamPerfTests` prints per-frame main-thread cost on a 1,600-entry conversation.
+
 ## Not yet covered
 
-- The app does not attach yet: wiring `ChatSessionManager` and projecting `pi.live` into streaming rows is the next step. Then the event path can be deleted for durable sessions.
+- The server still sends classic timeline events to an attached socket, and the client ignores them. Stopping them for attached sockets, and deleting the client's event path for durable sessions, is next.
+- The busy indicator, stop button, and queue still read session status and `queue_state` rather than `pi.live.run` and `pi.inbox` directly; the server derives both from those documents.
+- The Mac app does not attach.
 - Child-conversation streams for subagents.
 - `toolResult.display` cannot restore an MCP server's configured spelling for `mcp__` tool names, which the trace route does with the session's MCP server names (`resolveToolDisplay`'s `configuredServerNames`). Titles from result details are exact.
 - Nested codemode calls (`nestedCalls` on tool results) are not projected; durable sessions do not produce them.

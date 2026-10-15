@@ -81,6 +81,7 @@ graph TD
   Stream[Focused-stream port]
   Effects[Effects/state port]
   Coalescer[DeltaCoalescer]
+  Replica[ConversationStreamDriver<br/>durable sessions]
   Reducer[TimelineReducer]
   Paint[iOS UIKit or Mac AppKit/SwiftUI timeline]
 
@@ -90,11 +91,23 @@ graph TD
   Manager --> Stream
   Manager --> Effects
   Manager --> Coalescer
+  Manager --> Replica
   Coalescer --> Reducer
+  Replica --> Reducer
   Reducer --> Paint
 ```
 
 The manager loads cached trace first for immediate display, then fetches the latest trace page in the background. On first WebSocket connect it seeds sequence tracking from the server. On reconnect it uses focused-session catch-up. A ring miss (`live: true`, `catchUpComplete: false`) and an existing session with no event ring (`live: false`) both repair from trace history. `live: false` keeps the old not-active recovery: reload history and do not persist the response cursor. A missing session is still HTTP 404.
+
+### Durable sessions: the conversation stream
+
+When the server advertises `capabilities.conversationStream` v1 and the focused socket's `connected` session is durable (`engine: durable`), the timeline comes from the [conversation stream](../architecture-server/durable-conversation-stream.md) instead of classic events and trace catch-up. There is no flag and no fallback to the event path. Mac does not attach yet (its port reports no capability), and stopped durable sessions stay history-only.
+
+- **Attach.** On `connected` the manager cancels the pending trace reload, seeds the event cursor without catch-up, and sends `attach` with a `requestId`. The first open has no cursor. A reconnect of the same runtime resumes with `conversationId` and `afterEntryId` from its `ConversationReplica`, which `ConversationStreamDriver` keeps across reconnects. A failed `command_result` attaches again without a cursor once; a second failure takes the existing fatal setup path. A frame the replica cannot apply also attaches without a cursor, and frames are dropped until that snapshot.
+- **Committed rows.** `ConversationCommittedProjection` keeps the replica's entries as trace events (`ConversationTraceProjector`). An update whose entries are all newer than the replica projects only those and tells `TimelineReducer.applyConversationCommitted` where they start, so it takes `loadSession`'s incremental path without re-comparing the held events; that comparison is linear in the conversation. A snapshot, an `older` page, an entry restated in place, or a result that changes its call's presentation projects everything again. The cache still seeds the timeline before the snapshot; the projection replaces it and is saved back after each snapshot and at lifecycle flushes.
+- **Live tail.** `ConversationLiveProjector` reads only `pi.live`, and `TimelineReducer.applyLiveTail` writes it with the reducer's streaming rows and stores: assistant, thinking, and tool rows for the answer in flight after the committed rows; running output on the committed call row in `ToolOutputStore`; `streamingAssistantID` from `pi.live.run`; compaction and retry status rows. Unchanged rows are left alone. The frame that commits an answer also clears it from `pi.live`, and both are applied in one main-actor turn, so live rows are replaced by committed rows without a gap or a duplicate. Tool rows keep their call id across that landing. Calls left unanswered when the run ends show as interrupted.
+- **Classic events.** They still arrive on the socket. Their timeline mutations are ignored; session status, queue state, extension UI, audio, dictation, voice settings, command results, stop feedback rows, and fatal connection errors still apply. The busy indicator, stop button, and queued messages keep reading session status and `queue_state`, which the server derives from the same `pi.live.run` and `pi.inbox`.
+- **Paging.** "Load earlier" sends `older { beforeEntryId: replica.oldestEntryId }` and waits for its `command_result`; the page prepends through the replica. Deep links page back until the entry is held. A forced history reload attaches without a cursor and waits for the snapshot. While the scene is paused, frames update the replica only and the timeline resyncs on resume.
 
 Each mounted chat runtime holds a focus claim (`FocusedSessionStore`) for its view's lifetime and releases only that claim. A newer claim supersedes older ones, and a superseded runtime never binds, reconnects, or releases the shared stream. When the current claim is released while an older runtime for the same session is still mounted (an iPad layout swap mounts a transient duplicate chat), `ServerConnection` hands focus back to that runtime and calls `ChatSessionManager.focusClaimRegained()` so it rebinds. A claim on another session drops the held claims, so a background chat claims again only when it re-appears.
 

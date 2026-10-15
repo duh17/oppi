@@ -135,6 +135,10 @@ enum ServerMessage: Sendable, Equatable {
     // Errors
     case error(message: String, code: String?, fatal: Bool)
 
+    /// Durable conversation stream frame (`snapshot`, `update`, `older`) after `attach`.
+    /// The frames carry no `sessionId`: the focused socket is bound to one session.
+    case conversationStream(ConversationStreamServerMessage)
+
     // Unknown server message types are skipped, not fatal.
     case unknown(type: String)
 }
@@ -682,6 +686,9 @@ extension ServerMessage: Decodable {
             let fatal = try c.decodeIfPresent(Bool.self, forKey: .fatal) ?? false
             self = .dictationError(error: errorMsg, fatal: fatal)
 
+        case "snapshot", "update", "older":
+            self = .conversationStream(try ConversationStreamServerMessage(from: decoder))
+
         default:
             self = .unknown(type: type)
         }
@@ -823,6 +830,7 @@ extension ServerMessage {
         case .dictationFinal: "dictationFinal"
         case .dictationError: "dictationError"
         case .error: "error"
+        case .conversationStream: "conversationStream"
         case .unknown(let type): "unknown(\(type))"
         }
     }

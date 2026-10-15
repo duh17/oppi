@@ -70,6 +70,8 @@ struct ServerInfo: Codable, Sendable, Equatable {
         var workspaceFileEditing: WorkspaceFileEditingCapability? = nil
         /// Create requests may ask for `engine: "durable"` (`experimental.serverDurable`).
         var durableSessions: CapabilityVersion? = nil
+        /// Durable sessions replicate over the focused socket (`attach` / `snapshot` / `update`).
+        var conversationStream: CapabilityVersion? = nil
         /// Experimental live H.264 of a granted Mac window (`experimental.desktopLiveView`).
         var desktopLiveView: CapabilityVersion? = nil
         /// The server pushes end to end encrypted through this relay (`push.mode` relay).

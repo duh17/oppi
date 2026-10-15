@@ -370,6 +370,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         loadedTraceEventIDs.removeAll()
         timelineMatchesTrace = false
         _lastLoadWasIncrementalForTesting = false
+        liveTailRowIDs.removeAll()
+        liveToolOverlayIDs.removeAll()
+        liveTailWasRunning = false
+        liveTailNeedsTerminalPass = false
+        localUserRowIDs.removeAll()
         renderVersion &+= 1
     }
 
@@ -430,11 +435,15 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     ///   false when loading an authoritative fresh trace (e.g., from
     ///   `loadHistory`) to avoid "ghost" user messages at the bottom.
     func loadSession(_ events: [TraceEvent], preserveOrphans: Bool = true) {
+        loadSession(events, mode: loadSessionMode(events: events), preserveOrphans: preserveOrphans)
+    }
+
+    private func loadSession(_ events: [TraceEvent], mode: HistoryLoadMode, preserveOrphans: Bool) {
         environment.markdownPrewarmer.cancel()
 
         let dateFormatter = Self.makeTraceDateFormatter()
 
-        switch loadSessionMode(events: events) {
+        switch mode {
         case .noOp:
             _lastLoadWasIncrementalForTesting = true
             if loadedTraceEvents.isEmpty {
@@ -512,40 +521,9 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 }
                 return true
             }
-            if existingUserMessages.isEmpty {
-                orphanedUserMessages = []
-            } else {
-                var remainingTraceTexts = events.reduce(into: [String: Int]()) { counts, event in
-                    guard event.type == .user else { return }
-                    let key = Self.comparableTimelineUserText(event.text ?? "")
-                    counts[key, default: 0] += 1
-                }
-                var remainingImageEchoes = events.reduce(0) { count, event in
-                    guard event.type == .user, Self.traceUserEventCarriesImages(event.text ?? "") else {
-                        return count
-                    }
-                    return count + 1
-                }
-                orphanedUserMessages = existingUserMessages.filter { item in
-                    guard case .userMessage(_, let text, let images, _) = item else { return false }
-                    let key = Self.comparableTimelineUserText(text)
-                    if let count = remainingTraceTexts[key], count > 0 {
-                        remainingTraceTexts[key] = count - 1
-                        if !images.isEmpty, remainingImageEchoes > 0 {
-                            remainingImageEchoes -= 1
-                        }
-                        return false
-                    }
-                    // The composer photo row is only a marker plus thumbnails.
-                    // Its trace echo carries the materialized files, so text does
-                    // not match. Pair one local image row with one image echo.
-                    if !images.isEmpty, remainingImageEchoes > 0 {
-                        remainingImageEchoes -= 1
-                        return false
-                    }
-                    return true
-                }
-            }
+            orphanedUserMessages = existingUserMessages.isEmpty
+                ? []
+                : Self.unechoedUserMessages(existingUserMessages, in: events)
             // A live agent message carries its server entry id, so the trace row
             // matches by id: keep only the ones this (older) trace does not have yet.
             let liveAgentMessages = items.filter { item in
@@ -619,6 +597,43 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         environment.markdownPrewarmer.prewarm(assistantTextsToCache)
     }
 
+    /// The user rows in `rows` that no user event in `events` echoes, each event echoing one row.
+    private static func unechoedUserMessages(
+        _ rows: [ChatItem],
+        in events: some Sequence<TraceEvent>
+    ) -> [ChatItem] {
+        var remainingTraceTexts = events.reduce(into: [String: Int]()) { counts, event in
+            guard event.type == .user else { return }
+            let key = Self.comparableTimelineUserText(event.text ?? "")
+            counts[key, default: 0] += 1
+        }
+        var remainingImageEchoes = events.reduce(0) { count, event in
+            guard event.type == .user, Self.traceUserEventCarriesImages(event.text ?? "") else {
+                return count
+            }
+            return count + 1
+        }
+        return rows.filter { item in
+            guard case .userMessage(_, let text, let images, _) = item else { return false }
+            let key = Self.comparableTimelineUserText(text)
+            if let count = remainingTraceTexts[key], count > 0 {
+                remainingTraceTexts[key] = count - 1
+                if !images.isEmpty, remainingImageEchoes > 0 {
+                    remainingImageEchoes -= 1
+                }
+                return false
+            }
+            // The composer photo row is only a marker plus thumbnails.
+            // Its trace echo carries the materialized files, so text does
+            // not match. Pair one local image row with one image echo.
+            if !images.isEmpty, remainingImageEchoes > 0 {
+                remainingImageEchoes -= 1
+                return false
+            }
+            return true
+        }
+    }
+
     @discardableResult
     func prependTracePage(_ olderEvents: [TraceEvent]) -> Bool {
         guard !olderEvents.isEmpty else { return false }
@@ -635,6 +650,272 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     func traceEventsForCache() -> [TraceEvent] {
         loadedTraceEvents
+    }
+
+    // MARK: - Durable conversation replica
+    //
+    // A durable session attached to the conversation stream feeds the timeline from its
+    // replica instead of live AgentEvents (`ConversationStreamDriver`):
+    //
+    // - Committed rows: the replica's entries projected to trace events and loaded by
+    //   `applyConversationCommitted`. That is `loadSession`, so an update that only appends
+    //   entries takes the incremental path and a snapshot that changes history rebuilds.
+    // - Live tail: `pi.live` through `applyLiveTail`. It writes the rows and stores streaming
+    //   events write (assistant, thinking, and tool rows from `TimelineTurnAssembler`, running
+    //   output in `toolOutputStore`, `streamingAssistantID` from the turn fields), but from
+    //   the whole live document, so a frame replays no deltas and never touches committed
+    //   rows. Rows of the answer in flight follow the committed rows; a running call's output
+    //   goes onto its committed row.
+    // - Landing: the frame that commits an answer also clears it from `pi.live`. The
+    //   committed apply takes the live rows out and appends the committed ones, then
+    //   `applyLiveTail` adds what is still live, in one main-actor turn: the timeline never
+    //   shows both or neither. Tool rows keep their call id across the landing.
+
+    /// Rows `applyLiveTail` owns, in order.
+    private var liveTailRowIDs: [String] = []
+    /// Committed tool rows showing running output from `pi.live.tools`.
+    private var liveToolOverlayIDs: Set<String> = []
+    private var liveTailWasRunning = false
+    /// Committed rows changed since the last live apply; an idle conversation's unanswered
+    /// calls are interrupted again.
+    private var liveTailNeedsTerminalPass = false
+    /// Optimistic prompts (`appendUserMessage`). The committed user entry replaces one.
+    private var localUserRowIDs: [String] = []
+
+    /// Load the replica's committed rows. Follow with `applyLiveTail`.
+    ///
+    /// `appendStart`: the projection kept `events[..<appendStart]` exactly as the events it
+    /// passed last time, so the incremental path need not compare them again (that check
+    /// is linear in the conversation and was the whole cost of a landing frame).
+    func applyConversationCommitted(_ events: [TraceEvent], appendStart: Int? = nil) {
+        removeLiveTail()
+        // The prefix is still what this reducer loaded only if nothing else loaded since.
+        let knownStart = appendStart.flatMap { start in
+            start > 0 && start == loadedTraceEvents.count && start <= events.count
+                && loadedTraceEventIDs.last == events[start - 1].id ? start : nil
+        }
+        let pendingPrompts = removeEchoedLocalUserRows(in: events, newFrom: knownStart)
+        // The replica owns every committed row. Live rows just came out, and local rows (an
+        // optimistic prompt, an error) only append after committed ones, so the rows still
+        // match the loaded trace and `loadSession` may append to it.
+        timelineMatchesTrace = true
+        // Committed rows the replica no longer holds (before a compaction) must go.
+        if let knownStart {
+            loadSession(
+                events,
+                mode: knownStart == events.count ? .noOp : .incremental(appendStart: knownStart),
+                preserveOrphans: false
+            )
+        } else {
+            loadSession(events, preserveOrphans: false)
+        }
+        // A rebuild drops local rows; prompts still waiting for their entry come back.
+        for row in pendingPrompts where indexForID(row.id) == nil {
+            items.append(row)
+            indexAppend(row)
+        }
+        liveTailNeedsTerminalPass = true
+    }
+
+    /// Show `pi.live`. Unchanged rows are left alone, so a text append rewrites one row.
+    func applyLiveTail(_ tail: TimelineLiveTail) {
+        let before = renderMutationCheckpoint()
+        var changed = false
+
+        var rows: [ChatItem] = []
+        var streamingTextID: String?
+        for (position, block) in tail.blocks.enumerated() {
+            let isLast = position == tail.blocks.count - 1
+            switch block {
+            case .text(let index, let text):
+                guard !StringFastChecks.isEffectivelyEmpty(text) else { continue }
+                let id = "pi.live-text-\(index)"
+                rows.append(TimelineTurnAssembler.makeAssistantItem(
+                    id: id,
+                    text: text,
+                    timestamp: liveRowTimestamp(id: id, tail: tail)
+                ))
+                if isLast { streamingTextID = id }
+            case .thinking(let index, let text):
+                rows.append(TimelineTurnAssembler.makeThinkingItem(
+                    id: "pi.live-think-\(index)",
+                    preview: text,
+                    hasMore: text.utf8.count > ChatItem.maxPreviewLength,
+                    isDone: !isLast
+                ))
+            case .toolCall(let id, let name, let args, let view):
+                // A committed call (same id) already has its row.
+                guard liveTailRowIDs.contains(id) || indexForID(id) == nil else { continue }
+                rows.append(TimelineTurnAssembler.makeToolCallItem(
+                    id: id,
+                    tool: name.isEmpty ? "unknown" : name,
+                    argsSummary: args.map { "\($0.key): \($0.value.summary())" }.joined(separator: ", "),
+                    outputPreview: "",
+                    outputByteCount: 0,
+                    isError: false,
+                    isDone: false
+                ))
+                if toolArgsStore.args(for: id) != args { toolArgsStore.setPreview(args, for: id); changed = true }
+                if let segments = view?.callSegments, toolSegmentStore.callSegments(for: id) != segments {
+                    toolSegmentStore.setCallSegments(segments, for: id)
+                    changed = true
+                }
+                if let input = view?.inputPresentation { toolArgsStore.setInputPresentation(input, for: id) }
+                if let output = view?.outputPresentation { toolArgsStore.setOutputPresentation(output, for: id) }
+                if let display = view?.display { toolArgsStore.setDisplay(display, for: id) }
+            }
+        }
+        if tail.isCompacting {
+            rows.append(.systemEvent(id: "pi.live-compaction", message: String(localized: "Compacting context...")))
+        }
+        if let retry = tail.retry {
+            let error = UserFacingErrorText.normalize(retry.error)
+            let message = retry.attempt.map { "Retrying (attempt \($0)): \(error)" } ?? "Retrying: \(error)"
+            rows.append(.error(id: "pi.live-retry", message: message))
+        }
+        if replaceLiveTailRows(with: rows) { changed = true }
+
+        var overlays: Set<String> = []
+        for tool in tail.tools {
+            guard let index = indexForID(tool.id), case .toolCall = items[index] else { continue }
+            overlays.insert(tool.id)
+            if toolOutputStore.replace(tool.output, for: tool.id, previewOnly: tool.truncated, totalBytes: tool.totalBytes) {
+                changed = true
+            }
+            if let details = tool.details, toolDetailsStore.details(for: tool.id) != details {
+                toolDetailsStore.set(details, for: tool.id)
+                changed = true
+            }
+            if tool.running, toolStartTimes[tool.id] == nil, toolElapsedSeconds[tool.id] == nil {
+                toolStartTimes[tool.id] = Date()
+                changed = true
+            }
+            if updateToolCallPreview(id: tool.id, isError: false) { changed = true }
+        }
+        for id in liveToolOverlayIDs.subtracting(overlays) {
+            if toolElapsedSeconds[id] == nil, let startedAt = toolStartTimes[id] {
+                toolElapsedSeconds[id] = max(0, Int(Date().timeIntervalSince(startedAt)))
+            }
+            // Ended without a result: show what is committed, nothing.
+            if let index = indexForID(id), case .toolCall(_, _, _, _, _, _, false) = items[index] {
+                toolOutputStore.clear(itemIDs: [id])
+                _ = updateToolCallPreview(id: id, isError: false)
+            }
+            changed = true
+        }
+        liveToolOverlayIDs = overlays
+
+        turnInProgress = tail.isRunning
+        currentAssistantID = streamingTextID
+        lastAssistantIDThisTurn = tail.isRunning ? streamingTextID ?? latestAssistantIDInOpenTurn() : nil
+        if !tail.isRunning, liveTailWasRunning || liveTailNeedsTerminalPass {
+            // A call left unanswered when the run ended was interrupted.
+            if closeAllOrphanedTools() { changed = true }
+        }
+        liveTailWasRunning = tail.isRunning
+        liveTailNeedsTerminalPass = false
+
+        if changed || renderMutationCheckpoint() != before {
+            bumpRenderVersion()
+        }
+    }
+
+    /// Live rows keep the answer's timestamp, or the one they were first shown with.
+    private func liveRowTimestamp(id: String, tail: TimelineLiveTail) -> Date {
+        if let index = indexForID(id), case .assistantMessage(_, _, let timestamp) = items[index] {
+            return timestamp
+        }
+        return tail.timestamp ?? Date()
+    }
+
+    /// The newest assistant row of the open turn (after the last user row).
+    private func latestAssistantIDInOpenTurn() -> String? {
+        for item in items.reversed() {
+            switch item {
+            case .assistantMessage(let id, _, _): return id
+            case .userMessage, .agentMessage: return nil
+            default: continue
+            }
+        }
+        return nil
+    }
+
+    /// Make the live rows `rows`, in place when only content or new trailing rows changed.
+    private func replaceLiveTailRows(with rows: [ChatItem]) -> Bool {
+        let ids = rows.map(\.id)
+        let trailing = items.count >= liveTailRowIDs.count
+            && items[(items.count - liveTailRowIDs.count)...].map(\.id) == liveTailRowIDs
+        if ids == liveTailRowIDs || (trailing && ids.starts(with: liveTailRowIDs)) {
+            var changed = false
+            for row in rows.prefix(liveTailRowIDs.count) {
+                guard let index = indexForID(row.id), items[index] != row else { continue }
+                items[index] = row
+                changed = true
+            }
+            for row in rows.dropFirst(liveTailRowIDs.count) {
+                items.append(row)
+                indexAppend(row)
+                changed = true
+            }
+            liveTailRowIDs = ids
+            if changed { bumpItemsMutationSeq() }
+            return changed
+        }
+        removeLiveTailRows()
+        for row in rows {
+            items.append(row)
+            indexAppend(row)
+        }
+        liveTailRowIDs = ids
+        bumpItemsMutationSeq()
+        return true
+    }
+
+    private func removeLiveTailRows() {
+        guard !liveTailRowIDs.isEmpty else { return }
+        let count = liveTailRowIDs.count
+        if items.count >= count, items[(items.count - count)...].map(\.id) == liveTailRowIDs {
+            items.removeLast(count)
+            for id in liveTailRowIDs { itemIndex.remove(id: id) }
+        } else {
+            let ids = Set(liveTailRowIDs)
+            items.removeAll { ids.contains($0.id) }
+            rebuildIndex()
+        }
+        liveTailRowIDs = []
+        bumpItemsMutationSeq()
+    }
+
+    /// Before a committed apply: live rows out, and running output off committed rows so a
+    /// result that lands now is not appended to it. `applyLiveTail` restores what is live.
+    private func removeLiveTail() {
+        removeLiveTailRows()
+        if !liveToolOverlayIDs.isEmpty {
+            toolOutputStore.clear(itemIDs: liveToolOverlayIDs)
+        }
+    }
+
+    /// Drop optimistic prompts that the newly committed user entries echo; returns the rest.
+    /// Only entries the timeline did not hold yet can echo a prompt sent since: those from
+    /// `newFrom` when known, else those not loaded.
+    private func removeEchoedLocalUserRows(in events: [TraceEvent], newFrom: Int?) -> [ChatItem] {
+        localUserRowIDs.removeAll { indexForID($0) == nil }
+        let rows = localUserRowIDs.compactMap { id in indexForID(id).map { items[$0] } }
+        guard !rows.isEmpty else { return rows }
+        let pending: [ChatItem]
+        if let newFrom {
+            pending = Self.unechoedUserMessages(rows, in: events[newFrom...])
+        } else {
+            let loaded = Set(loadedTraceEventIDs)
+            pending = Self.unechoedUserMessages(rows, in: events.lazy.filter { !loaded.contains($0.id) })
+        }
+        let echoed = Set(rows.map(\.id)).subtracting(pending.map(\.id))
+        guard !echoed.isEmpty else { return pending }
+        items.removeAll { echoed.contains($0.id) }
+        rebuildIndex()
+        localUserRowIDs.removeAll { echoed.contains($0) }
+        bumpItemsMutationSeq()
+        return pending
     }
 
     @discardableResult
@@ -1761,6 +2042,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     @discardableResult
     func appendUserMessage(_ text: String, images: [ImageAttachment] = []) -> String {
         let id = UUID().uuidString
+        localUserRowIDs.append(id)
         items.append(.userMessage(
             id: id,
             text: text,

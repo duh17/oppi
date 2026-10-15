@@ -165,6 +165,9 @@ protocol ChatSessionFocusedStreamPort: AnyObject {
     var transportPath: ConnectionTransportPath { get }
     var fatalSetupError: Bool { get set }
     var isBindTerminal: Bool { get }
+    /// The server advertises `capabilities.conversationStream` v1: a durable session's
+    /// timeline comes from the conversation stream replica.
+    var conversationStreamAvailable: Bool { get }
 
     /// Focus `sessionId` and return a new ownership claim, or nil when focus is
     /// refused. Each call supersedes older claims on the same session. A port
@@ -215,6 +218,9 @@ extension ChatSessionFocusedStreamPort {
     func send(_ message: ClientMessage) async throws {
         throw ChatSessionFocusedStreamBindError.timedOut
     }
+
+    /// Mac does not attach yet; its durable sessions keep the event path.
+    var conversationStreamAvailable: Bool { false }
 }
 
 /// Shared session state and outward effects produced by the chat runtime.

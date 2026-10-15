@@ -148,6 +148,14 @@ final class IOSChatSessionRuntimeAdapter:
 
     var isBindTerminal: Bool { connection?.isFocusedStreamBindTerminal() == true }
 
+    var conversationStreamAvailable: Bool { connection?.conversationStreamAvailable == true }
+
+    /// Conversation stream `attach` / `older` on the focused socket.
+    func send(_ message: ClientMessage) async throws {
+        guard let connection else { throw ChatSessionFocusedStreamBindError.timedOut }
+        try await connection.send(message)
+    }
+
     /// Called when focus returns to this runtime's claim after a newer chat for
     /// the same session released it. The iOS `ChatSessionManager` composition
     /// routes it to `focusClaimRegained()`.

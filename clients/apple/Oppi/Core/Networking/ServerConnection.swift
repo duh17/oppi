@@ -257,6 +257,8 @@ final class ServerConnection {
     private(set) var controlSessionsAvailable = false
     /// The server accepts durable-engine creates. With the experiment on, new sessions default durable.
     private(set) var durableSessionsAvailable = false
+    /// The server replicates durable conversations on the focused socket (`capabilities.conversationStream`).
+    private(set) var conversationStreamAvailable = false
     /// The server advertises experimental live H.264 (`capabilities.desktopLiveView`).
     private(set) var desktopLiveViewAvailable = false
     /// Relay the server pushes through (`capabilities.pushNotifications`); nil when it does not.
@@ -996,6 +998,7 @@ final class ServerConnection {
         self.connectedServerVersion = nil
         self.dictationStreamAvailable = false
         self.durableSessionsAvailable = false
+        self.conversationStreamAvailable = false
         self.desktopLiveViewAvailable = false
         self.pushRelay = nil
         self.appEventStreamAvailable = false
@@ -1413,6 +1416,7 @@ final class ServerConnection {
         appEventStreamAvailable = capabilities?.appEventStream?.version ?? 0 >= 1
         controlSessionsAvailable = capabilities?.controlSessions?.version ?? 0 >= 1
         durableSessionsAvailable = capabilities?.durableSessions?.version ?? 0 >= 1
+        conversationStreamAvailable = capabilities?.conversationStream?.version ?? 0 >= 1
         desktopLiveViewAvailable = capabilities?.desktopLiveView?.version ?? 0 >= 1
         let previousRelay = pushRelay
         pushRelay = capabilities?.pushRelay
@@ -1716,8 +1720,14 @@ final class ServerConnection {
     func shutdownTransport() async {}
 
     func routeStreamMessage(_ frameEvent: StreamFrameEvent) {
-        let sessionId = frameEvent.sessionId
         let message = frameEvent.message
+        // Conversation stream frames carry no sessionId: they belong to the session the
+        // focused socket is bound to.
+        let sessionId: String? = if case .conversationStream = message {
+            frameEvent.sessionId ?? focusedSessionStreamSessionId
+        } else {
+            frameEvent.sessionId
+        }
 
         // Handle stream-level events (no sessionId)
         if case .streamConnected(_, let available) = message {
@@ -3108,11 +3118,13 @@ final class ServerConnection {
         dictationStream: Bool = false,
         appEventStream: Bool = false,
         durableSessions: Bool = false,
+        conversationStream: Bool = false,
         desktopLiveView: Bool = false,
         pushRelay: URL? = nil
     ) {
         dictationStreamAvailable = dictationStream
         durableSessionsAvailable = durableSessions
+        conversationStreamAvailable = conversationStream
         desktopLiveViewAvailable = desktopLiveView
         self.pushRelay = pushRelay
         appEventStreamAvailable = appEventStream

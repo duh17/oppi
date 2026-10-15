@@ -121,8 +121,14 @@ final class ChatSessionManager {
     private(set) var tracePage: TracePageMetadata?
     private(set) var isLoadingOlderTracePage = false
 
+    /// A durable session on a server with `capabilities.conversationStream`: the timeline comes
+    /// from this replica, not from classic events or trace catch-up. Set when the focused
+    /// socket connects and kept across reconnects so `attach` resumes from the replica.
+    private(set) var conversationStream: ConversationStreamDriver?
+
     var hasOlderTracePage: Bool {
-        reducer.canPrependTracePage && tracePage?.hasOlder == true && tracePage?.olderCursor != nil
+        if let conversationStream { return conversationStream.hasOlder }
+        return reducer.canPrependTracePage && tracePage?.hasOlder == true && tracePage?.olderCursor != nil
     }
 
     /// Test seam: inject a scripted bare message stream to exercise lifecycle
@@ -734,6 +740,11 @@ final class ChatSessionManager {
     /// intentionally discarded instead of being published in the background.
     func reloadTimelineAfterPresentationOverflow() {
         cancelPresentationReloadRetry()
+        if let conversationStream {
+            conversationStream.resync(reducer)
+            coalescer.acknowledgePresentationTraceReload()
+            return
+        }
         scheduleHistoryReload(
             generation: connectionGeneration,
             cachedSignature: nil,
@@ -792,6 +803,7 @@ final class ChatSessionManager {
         cancelAutoReconnect()
         cancelStateSync()
         reducer.reset()
+        conversationStream?.reducerWasReset()
         coalescer.sessionId = sessionId
         toolCallCorrelator.reset()
 
@@ -831,6 +843,8 @@ final class ChatSessionManager {
         if FocusedSessionConnectionPolicy.initialAction(for: sessionStatus)
             == .refreshHistoryBeforeStreamDecision {
             transitionTo(.stopped(historyLoaded: false))
+            // History-only: no socket to attach, so trace history owns the timeline.
+            conversationStream = nil
             log.warning("Session \(self.sessionId) is stopped — loading history only unless the server reports it active")
             scheduleHistoryReload(
                 generation: generation,
@@ -855,7 +869,8 @@ final class ChatSessionManager {
 
         // Keep HTTP history as a fallback when the bound socket cannot open.
         // Cache gives instant display; this gives ground truth even while the
-        // focused stream is still waiting to bind.
+        // focused stream is still waiting to bind. An attaching durable session
+        // cancels it: its replica is the history from then on.
         scheduleHistoryReload(
             generation: generation,
             cachedSignature: latestTraceSignature
@@ -1058,9 +1073,21 @@ final class ChatSessionManager {
         markSyncSucceeded()
         telemetry.updateTransportPath(focusedStreamPort.transportPath)
 
+        if case .conversationStream(let frame) = message {
+            if case .streaming = entryState {
+                applyConversationFrame(frame)
+            }
+            return
+        }
+        if case .commandResult(_, let requestId?, let success, _, let error) = message,
+           let outcome = conversationStream?.commandResult(requestId: requestId, success: success, error: error) {
+            handleConversationCommandOutcome(outcome)
+            return
+        }
+
         switch entryState {
         case .awaitingConnected:
-            if case .connected = message {
+            if case .connected(let session) = message {
                 let transportTag = focusedStreamPort.transportPath.rawValue
 
                 if let receivedAtMs = inboundMeta?.receivedAtMs {
@@ -1085,7 +1112,10 @@ final class ChatSessionManager {
                 // when there is no cached timeline to reconcile from. Cache-backed re-entry uses
                 // the fresh trace reload path; empty-cache relaunches need the server ring for
                 // events emitted while the app had no bound-session subscriber.
-                if let currentSeq = inboundMeta?.currentSeq {
+                // A durable session attaches to its conversation stream instead.
+                if startConversationStreamIfOffered(for: session, meta: inboundMeta) {
+                    log.warning("First connect attached the conversation stream for \(self.sessionId)")
+                } else if let currentSeq = inboundMeta?.currentSeq {
                     let canFetchCatchUp = _loadCatchUpForTesting != nil || historyPort.canFetchCatchUp
                     if canFetchCatchUp {
                         let outcome = await performCatchUpIfNeeded(
@@ -1122,9 +1152,13 @@ final class ChatSessionManager {
         case .streaming:
             // Detect reconnection: a second `.connected` message means the WS
             // dropped and recovered. Use ring catch-up to fill the gap;
-            // fall back to full history reload on ring miss.
-            if case .connected = message {
-                if let currentSeq = inboundMeta?.currentSeq {
+            // fall back to full history reload on ring miss. A durable session
+            // resumes its conversation stream from the replica's cursor.
+            if case .connected(let session) = message {
+                if startConversationStreamIfOffered(for: session, meta: inboundMeta) {
+                    log.warning("WS reconnected — conversation stream resumed for \(self.sessionId)")
+                    telemetry.recordFreshContentLagIfNeeded(reason: "reconnect_conversation_stream")
+                } else if let currentSeq = inboundMeta?.currentSeq {
                     let outcome = await performCatchUpIfNeeded(
                         currentSeq: currentSeq,
                         runtimeEpoch: inboundMeta?.runtimeEpoch,
@@ -1252,6 +1286,7 @@ final class ChatSessionManager {
         }
 
         effectsStatePort.emitTimelineSessionEnded(sessionId: sessionId)
+        conversationStream?.cancelPendingRequests()
 
         // A stale tail must not clear a newer owner's (or another session's)
         // watchdog handler; a leftover handler of ours is inert once unowned.
@@ -1313,7 +1348,11 @@ final class ChatSessionManager {
 
         let trace: [TraceEvent]?
         let page: TracePageMetadata?
-        if let fetchHook = _fetchTraceSnapshotForTesting {
+        if let conversationStream {
+            // The replica is current; no trace fetch.
+            trace = conversationStream.committedEvents
+            page = nil
+        } else if let fetchHook = _fetchTraceSnapshotForTesting {
             trace = await fetchHook()
             page = tracePage
         } else if historyPort.canFetchRemoteHistory {
@@ -1372,6 +1411,7 @@ final class ChatSessionManager {
         coalescer.flushNow()
         transitionTo(.disconnected(reason: .cancelled))
         resumeStreamingWaiters(with: .failure(CancellationError()))
+        conversationStream?.cancelPendingRequests()
         cancelStateSync()
         // The only release: the claim lives as long as the view's runtime.
         releaseFocusClaim()
@@ -1388,8 +1428,17 @@ final class ChatSessionManager {
         _ message: ServerMessage,
         storeResult: ChatSessionStoreUpdateResult = .notHandled
     ) {
-        for event in ServerMessageEffects.timelineEvents(for: message, sessionId: sessionId) {
-            coalescer.receive(event)
+        // An attached durable session's conversation comes from its replica. Its classic
+        // timeline events still arrive on the socket; only their other effects apply
+        // (session status, queue, extension UI, audio, voice settings, command results),
+        // plus stop feedback rows and fatal connection errors.
+        let replicaOwnsTimeline = conversationStream != nil
+        if !replicaOwnsTimeline {
+            for event in ServerMessageEffects.timelineEvents(for: message, sessionId: sessionId) {
+                coalescer.receive(event)
+            }
+        } else if case .error(let text, _, true) = message {
+            coalescer.receive(.error(sessionId: sessionId, message: text))
         }
 
         if let stopEffect = FocusedSessionStopTurnPolicy.timelineEffect(for: message) {
@@ -1399,7 +1448,7 @@ final class ChatSessionManager {
                 reducer.appendSystemEvent(message)
             case .confirmed(let message, let finalizeTerminalArtifacts):
                 coalescer.flushNow()
-                if finalizeTerminalArtifacts {
+                if finalizeTerminalArtifacts, !replicaOwnsTimeline {
                     reducer.finalizeTerminalArtifactsAsInterrupted()
                 }
                 reducer.appendSystemEvent(message)
@@ -1415,6 +1464,19 @@ final class ChatSessionManager {
 
         case .audioStream(let stream):
             effectsStatePort.handleAudioStream(stream, sessionId: sessionId)
+
+        case .toolStart where replicaOwnsTimeline,
+             .toolUpdate where replicaOwnsTimeline,
+             .toolOutput where replicaOwnsTimeline,
+             .messageEnd where replicaOwnsTimeline,
+             .queueItemStarted where replicaOwnsTimeline:
+            break
+
+        case .toolEnd(_, _, let details, let isError, _, _, let outputPresentation, _, _, _)
+            where replicaOwnsTimeline:
+            if !isError, outputPresentation?.settingEffect == "voiceReplyMode" {
+                effectsStatePort.applyVoiceReplyModeDetails(details, sessionId: sessionId)
+            }
 
         case .toolStart(let tool, let args, let toolCallId, let callSegments, let inputPresentation, let display, let outputPresentation, let parent):
             coalescer.receive(toolCallCorrelator.start(
@@ -1502,7 +1564,7 @@ final class ChatSessionManager {
             // Only finalize when leaving a running state. Re-broadcast ready/idle
             // snapshots (state or session_summary) must not flip in-progress tools
             // to Interrupted. Missed agent_settled still recovers on the transition.
-            if storeResult.didTransitionOutOfRunning {
+            if storeResult.didTransitionOutOfRunning, !replicaOwnsTimeline {
                 guard !suppressTimelineMutationWhilePaused() else { break }
                 coalescer.flushNow()
                 reducer.finalizeTerminalArtifactsAsInterrupted()
@@ -1724,6 +1786,134 @@ final class ChatSessionManager {
         guard coalescer.isPresentationPaused else { return false }
         coalescer.markPresentationNeedsTraceReload()
         return true
+    }
+
+    // MARK: - Durable conversation stream
+
+    private static let conversationRequestTimeout: Duration = .seconds(10)
+    private static let conversationAroundMaxPages = 20
+
+    /// Attach the conversation stream when `session` is durable and the server offers it.
+    /// Replaces trace catch-up: the durable event cursor only moves forward, so classic
+    /// events keep their non-timeline effects after a gap. Resumes from the replica's
+    /// cursor when it holds the conversation.
+    private func startConversationStreamIfOffered(for session: Session, meta: InboundStreamMeta?) -> Bool {
+        guard focusedStreamPort.conversationStreamAvailable, session.engine == .durable else {
+            conversationStream = nil
+            return false
+        }
+        if conversationStream == nil {
+            conversationStream = ConversationStreamDriver()
+        }
+        cancelHistoryReload()
+        if let currentSeq = meta?.currentSeq {
+            focusedStreamPort.seedLastSeenSeq(sessionId: sessionId, value: currentSeq)
+            focusedStreamPort.seedRuntimeEpoch(sessionId: sessionId, value: meta?.runtimeEpoch)
+            focusedStreamPort.persistSeq(currentSeq, sessionId: sessionId)
+            focusedStreamPort.persistEpoch(meta?.runtimeEpoch, sessionId: sessionId)
+        }
+        sendConversationAttach(fresh: false)
+        return true
+    }
+
+    private func sendConversationAttach(fresh: Bool) {
+        guard let conversationStream else { return }
+        let request = conversationStream.attachRequest(fresh: fresh)
+        Task { @MainActor [weak self] in
+            do {
+                try await self?.focusedStreamPort.send(request.message)
+            } catch {
+                // The socket is gone; its next `connected` attaches again.
+                log.warning("Conversation stream attach send failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    /// Attach without a cursor and wait until its snapshot is applied.
+    private func reattachConversationStream() async -> Bool {
+        guard let conversationStream else { return false }
+        return await conversationStream.perform(
+            conversationStream.attachRequest(fresh: true),
+            timeout: Self.conversationRequestTimeout
+        ) { [focusedStreamPort] message in
+            try await focusedStreamPort.send(message)
+        }
+    }
+
+    private func applyConversationFrame(_ frame: ConversationStreamServerMessage) {
+        guard let conversationStream else { return }
+        let isSnapshot = if case .snapshot = frame { true } else { false }
+        let outcome = conversationStream.receive(
+            frame,
+            into: reducer,
+            presentationPaused: coalescer.isPresentationPaused
+        )
+        switch outcome {
+        case .ignored:
+            return
+        case .applyFailed(let error):
+            log.error("Conversation stream frame did not apply for \(self.sessionId, privacy: .public): \(error, privacy: .public) \u{2014} attaching fresh")
+            effectsStatePort.recordLog(
+                .error,
+                message: "Conversation stream frame did not apply; attaching fresh",
+                metadata: ["sessionId": sessionId, "error": error]
+            )
+            sendConversationAttach(fresh: true)
+            return
+        case .deferred:
+            // Resynced from the replica when presentation resumes.
+            coalescer.markPresentationNeedsTraceReload()
+            return
+        case .applied:
+            break
+        }
+        telemetry.recordFreshContentLagIfNeeded(reason: "conversation_stream", workspaceId: resolveWorkspaceId())
+        guard isSnapshot else { return }
+        needsInitialScroll = true
+        telemetry.recordSessionLoadIfNeeded(
+            path: "conversation_stream",
+            itemCount: reducer.items.count,
+            workspaceId: resolveWorkspaceId()
+        )
+        saveConversationStreamCache()
+    }
+
+    private func handleConversationCommandOutcome(_ outcome: ConversationStreamDriver.CommandOutcome) {
+        switch outcome {
+        case .attached, .older, .superseded:
+            break
+        case .retryFreshAttach:
+            log.warning("Conversation stream attach failed for \(self.sessionId, privacy: .public) \u{2014} attaching fresh")
+            sendConversationAttach(fresh: true)
+        case .attachFailed(let error):
+            effectsStatePort.recordLog(
+                .error,
+                message: "Conversation stream attach failed",
+                metadata: ["sessionId": sessionId, "error": error]
+            )
+            // Terminal like a fatal server error: no automatic reconnect loop. A send or
+            // Resume reconnects, which attaches again.
+            focusedStreamPort.fatalSetupError = true
+            failFocusedStreamSetup(message: "Conversation stream unavailable: \(error)")
+        }
+    }
+
+    /// The replica's committed rows are the cached timeline of an attached session.
+    private func saveConversationStreamCache() {
+        guard let events = conversationStream?.committedEvents, !events.isEmpty else { return }
+        Task { @MainActor [historyPort, sessionId] in
+            await historyPort.saveCachedTrace(sessionId: sessionId, events: events, page: nil)
+        }
+    }
+
+    private func loadOlderConversationEntries(limit: Int? = nil) async -> Bool {
+        guard let conversationStream, !isLoadingOlderTracePage,
+              let request = conversationStream.olderRequest(limit: limit) else { return false }
+        isLoadingOlderTracePage = true
+        defer { isLoadingOlderTracePage = false }
+        return await conversationStream.perform(request, timeout: Self.conversationRequestTimeout) { [focusedStreamPort] message in
+            try await focusedStreamPort.send(message)
+        }
     }
 
     // MARK: - History Loading
@@ -1954,6 +2144,9 @@ final class ChatSessionManager {
 
     @discardableResult
     func loadOlderTracePage() async -> Bool {
+        if conversationStream != nil {
+            return await loadOlderConversationEntries()
+        }
         guard !isLoadingOlderTracePage else { return false }
         guard reducer.canPrependTracePage else { return false }
         guard let cursor = tracePage?.olderCursor, tracePage?.hasOlder == true else { return false }
@@ -1984,6 +2177,14 @@ final class ChatSessionManager {
     @discardableResult
     func loadTracePageAround(entryId: String) async -> Bool {
         guard !reducer.items.contains(where: { $0.id == entryId }) else { return true }
+        if conversationStream != nil {
+            // Page back until the entry is held; bounded like a deep link should be.
+            for _ in 0..<Self.conversationAroundMaxPages {
+                guard await loadOlderConversationEntries(limit: 500) else { break }
+                if reducer.items.contains(where: { $0.id == entryId }) { return true }
+            }
+            return false
+        }
         guard !isLoadingOlderTracePage else { return false }
         guard reducer.canPrependTracePage else { return false }
         guard historyPort.canFetchRemoteHistory else { return false }
@@ -2137,6 +2338,9 @@ final class ChatSessionManager {
     func forceHistoryReload() async -> Bool {
         cancelPresentationReloadRetry()
         cancelHistoryReload()
+        if conversationStream != nil {
+            return await reattachConversationStream()
+        }
 
         if let loadHook = _loadHistoryForTesting {
             let presentationReloadMarker = coalescer.presentationTraceReloadMarker

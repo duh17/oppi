@@ -76,6 +76,10 @@ enum ClientMessage: Sendable {
     case dictationStart(contextualStrings: [String] = [])
     case dictationStop
     case dictationCancel
+
+    // ── Durable conversation stream (socket-only, not a server `ClientMessage`) ──
+    case conversationAttach(ConversationStreamAttach)
+    case conversationOlder(ConversationStreamOlderRequest)
 }
 
 // MARK: - Supporting Types
@@ -210,9 +214,20 @@ struct ShareSessionRedactionPolicy: Codable, Sendable, Equatable {
 
 extension ClientMessage: Encodable {
     func encode(to encoder: Encoder) throws {
+        switch self {
+        case .conversationAttach(let attach):
+            return try attach.encode(to: encoder)
+        case .conversationOlder(let older):
+            return try older.encode(to: encoder)
+        default:
+            break
+        }
         var c = encoder.container(keyedBy: CodingKeys.self)
 
         switch self {
+        case .conversationAttach, .conversationOlder:
+            break
+
         // ── Prompting ──
         case .prompt(let message, let attachments, let behavior, let reqId, let turnId):
             try c.encode("prompt", forKey: .type)
@@ -469,6 +484,8 @@ extension ClientMessage {
         case .dictationStart: return "dictation_start"
         case .dictationStop: return "dictation_stop"
         case .dictationCancel: return "dictation_cancel"
+        case .conversationAttach: return "attach"
+        case .conversationOlder: return "older"
         }
     }
 

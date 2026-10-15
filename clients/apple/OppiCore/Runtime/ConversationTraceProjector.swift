@@ -11,8 +11,17 @@ import Foundation
 /// where a compaction sits after the entries it kept.
 enum ConversationTraceProjector {
     static func traceEvents(from entries: [ConversationEntryView]) -> [TraceEvent] {
-        let shown = entries.filter { $0.hidden != true }.sorted { $0.id < $1.id }
-        // A call's output presentation and display name come from its result when there is one.
+        let shown = shownEntries(entries)
+        return traceEvents(shown: shown, results: toolResults(in: shown))
+    }
+
+    /// Entries that render, in id order.
+    static func shownEntries(_ entries: some Sequence<ConversationEntryView>) -> [ConversationEntryView] {
+        entries.filter { $0.hidden != true }.sorted { $0.id < $1.id }
+    }
+
+    /// A call's output presentation and display name come from its result when there is one.
+    static func toolResults(in shown: [ConversationEntryView]) -> [String: ConversationToolResultView] {
         var results: [String: ConversationToolResultView] = [:]
         for entry in shown {
             guard let message = entry.model?.first?.objectValue,
@@ -20,6 +29,22 @@ enum ConversationTraceProjector {
                   let callId = message["toolCallId"]?.stringValue, !callId.isEmpty else { continue }
             results[callId] = entry.toolResult ?? ConversationToolResultView()
         }
+        return results
+    }
+
+    /// What a call row shows from its result: the result's presentation replaces the call's.
+    static func callPresentation(
+        call: ConversationToolCallView?,
+        result: ConversationToolResultView?
+    ) -> (output: ToolOutputPresentation?, display: ToolDisplay?) {
+        (result.map(\.outputPresentation) ?? call?.outputPresentation, result.map(\.display) ?? call?.display)
+    }
+
+    /// `shown` entries projected with `results` from every shown entry.
+    static func traceEvents(
+        shown: [ConversationEntryView],
+        results: [String: ConversationToolResultView]
+    ) -> [TraceEvent] {
         var events: [TraceEvent] = []
         for entry in shown {
             if let card = entry.card {
@@ -184,7 +209,7 @@ enum ConversationTraceProjector {
         default: nil
         }
         let call = callId.flatMap { entry.toolCalls?[$0] }
-        let result = results[eventId]
+        let presentation = callPresentation(call: call, result: results[eventId])
         return TraceEvent(
             id: eventId,
             type: .toolCall,
@@ -192,9 +217,9 @@ enum ConversationTraceProjector {
             tool: name.isEmpty ? "unknown" : name,
             args: args,
             callSegments: call?.callSegments,
-            outputPresentation: result.map(\.outputPresentation) ?? call?.outputPresentation,
+            outputPresentation: presentation.output,
             inputPresentation: call?.inputPresentation,
-            display: result.map(\.display) ?? call?.display
+            display: presentation.display
         )
     }
 
@@ -250,7 +275,7 @@ enum ConversationTraceProjector {
 
     /// `joinAssistantTextBlocks`: adjacent text blocks, with a paragraph break where joining
     /// them directly would run two words or Markdown tokens together.
-    private static func joinTextBlocks(_ parts: [String]) -> String {
+    static func joinTextBlocks(_ parts: [String]) -> String {
         var joined = ""
         for part in parts where !part.isEmpty {
             if let last = joined.unicodeScalars.last, !last.properties.isWhitespace,
@@ -278,7 +303,7 @@ enum ConversationTraceProjector {
         return summary.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func parsedObject(_ value: JSONValue?) -> [String: JSONValue]? {
+    static func parsedObject(_ value: JSONValue?) -> [String: JSONValue]? {
         guard let json = value?.stringValue, let data = json.data(using: .utf8) else { return nil }
         return (try? JSONDecoder().decode(JSONValue.self, from: data))?.objectValue
     }
@@ -306,5 +331,47 @@ enum ConversationTraceProjector {
             year, month, day,
             ofDay / 3_600_000, ofDay / 60000 % 60, ofDay / 1000 % 60, ofDay % 1000
         )
+    }
+}
+
+/// The replica's committed rows, kept between frames so an update that only appends
+/// entries projects only those entries. Anything else (a snapshot, an older page, an entry
+/// restated in place, a result that changes its call's presentation) projects every entry
+/// again. Either way `events` equals `ConversationTraceProjector.traceEvents(from:)` of the
+/// replica's entries, and unchanged events keep their storage, so the reducer's prefix
+/// comparison stays cheap.
+struct ConversationCommittedProjection {
+    private(set) var events: [TraceEvent] = []
+    /// Index in `events` of each tool call row, by call id.
+    private var callIndex: [String: Int] = [:]
+
+    mutating func reproject(_ entries: [ConversationEntryView]) {
+        events = ConversationTraceProjector.traceEvents(from: entries)
+        callIndex.removeAll(keepingCapacity: true)
+        indexCalls(from: 0)
+    }
+
+    /// Projects `appended`, entries newer than every entry already projected. Returns false,
+    /// leaving `events` alone, when a new result restates an earlier call's presentation.
+    mutating func append(_ appended: ArraySlice<ConversationEntryView>) -> Bool {
+        let shown = ConversationTraceProjector.shownEntries(appended)
+        let results = ConversationTraceProjector.toolResults(in: shown)
+        for (callId, result) in results {
+            guard let index = callIndex[callId] else { continue }
+            let presentation = ConversationTraceProjector.callPresentation(call: nil, result: result)
+            if events[index].outputPresentation != presentation.output || events[index].display != presentation.display {
+                return false
+            }
+        }
+        let start = events.count
+        events.append(contentsOf: ConversationTraceProjector.traceEvents(shown: shown, results: results))
+        indexCalls(from: start)
+        return true
+    }
+
+    private mutating func indexCalls(from start: Int) {
+        for index in events.indices[start...] where events[index].type == .toolCall {
+            callIndex[events[index].id] = index
+        }
     }
 }
