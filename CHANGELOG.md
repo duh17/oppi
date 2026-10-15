@@ -132,6 +132,7 @@ Example:
 ### Fixed
 
 - **Client:** About This Server explains when the server is older than the app but there is nothing newer to install, naming the version the app needs and the newest available, instead of showing an empty Update section. Its Server Settings row reads **Server Outdated** instead of **Update Available**.
+- **Client:** Opening a thread while Oppi is still connecting after launch no longer leaves a permanent "Server connection is unavailable" error. The thread shows Connecting and loads once the connection is ready.
 - **Client:** Tapping the chat composer right after a back swipe no longer opens Quick Session. The interactive back gesture could leave the All Sessions message button under the chat composer.
 - **Client/Server:** A custom message an extension adds to the transcript appears in the open chat when it arrives, instead of only after you leave and reopen the session.
 - **Client:** Tapping a notification while another chat is open now shows the tapped session's timeline. Before, the app reused the open chat screen for the new session and never connected it, so you saw "Working…" and the ask card over an empty timeline until you left and reopened the chat.
