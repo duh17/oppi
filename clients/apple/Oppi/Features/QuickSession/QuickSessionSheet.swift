@@ -167,8 +167,9 @@ struct QuickSessionSheet: View {
     /// Set when launched from a thread; the new session joins that thread.
     @State private var threadParent: QuickSessionThreadParent?
     @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var durableExperimentEnabled = false
-    /// The user switched this one launch from the durable default to Classic.
-    @State private var userChoseClassic = false
+    @AppStorage(AppPreferences.Experiments.durableSessionsDefaultKey) private var durableByDefault = false
+    /// The engine the user picked with the pill for this one launch; `nil` follows the default.
+    @State private var chosenEngine: SessionEngine?
     /// Whether the launch context's or remembered Agent has been applied. A launch is
     /// blocked while it is not, so a saved Agent's launch never goes out as a plain session.
     @State private var agentResolution: DurableSessions.AgentResolution = .resolved
@@ -223,8 +224,9 @@ struct QuickSessionSheet: View {
         DurableSessions.launchDecision(
             experimentEnabled: durableExperimentEnabled,
             serverOffersDurable: selectedServerConnection()?.durableSessionsAvailable == true,
+            durableByDefault: durableByDefault,
             savedAgentSelected: selectedAgentId != nil,
-            userChoseClassic: userChoseClassic,
+            chosenEngine: chosenEngine,
             agentResolution: agentResolution
         )
     }
@@ -808,7 +810,7 @@ struct QuickSessionSheet: View {
         let decision = engineDecision
         if decision.canToggle {
             Button {
-                userChoseClassic.toggle()
+                chosenEngine = decision.engine == .durable ? .classic : .durable
             } label: {
                 enginePillLabel(decision.engine == .durable ? "Durable" : "Classic")
             }

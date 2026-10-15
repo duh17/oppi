@@ -1,7 +1,8 @@
 import Foundation
 
 /// Rules for the Durable Sessions experiment: with the device opted in and the
-/// server offering durable sessions, new sessions start durable.
+/// server offering durable sessions, the composer can start a session durable.
+/// New sessions start Classic unless the device also chose Durable by default.
 enum DurableSessions {
     /// Durable applies only when this device opted in and the server advertises
     /// `capabilities.durableSessions`. Gates the Oppi Control entry, the composer's
@@ -21,7 +22,7 @@ enum DurableSessions {
         /// been resolved, and a plain durable session would lose that Agent's definition.
         let blocksLaunch: Bool
 
-        /// The pill switches this launch between Durable and Classic.
+        /// The pill switches this launch between Classic and Durable.
         var canToggle: Bool { showsPill && classicReason == nil && !blocksLaunch }
     }
 
@@ -49,11 +50,14 @@ enum DurableSessions {
         }
     }
 
+    /// `durableByDefault` picks the engine a launch starts with; `chosenEngine` is the
+    /// user's pill choice for this one launch and wins over the default.
     static func launchDecision(
         experimentEnabled: Bool,
         serverOffersDurable: Bool,
+        durableByDefault: Bool,
         savedAgentSelected: Bool,
-        userChoseClassic: Bool,
+        chosenEngine: SessionEngine?,
         agentResolution: AgentResolution = .resolved
     ) -> LaunchDecision {
         guard isAvailable(experimentEnabled: experimentEnabled, serverOffersDurable: serverOffersDurable) else {
@@ -68,7 +72,10 @@ enum DurableSessions {
             )
         }
         return LaunchDecision(
-            engine: userChoseClassic ? .classic : .durable, showsPill: true, classicReason: nil, blocksLaunch: false
+            engine: chosenEngine ?? (durableByDefault ? .durable : .classic),
+            showsPill: true,
+            classicReason: nil,
+            blocksLaunch: false
         )
     }
 }

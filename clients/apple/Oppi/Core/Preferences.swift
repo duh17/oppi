@@ -73,10 +73,12 @@ enum AppPreferences {
         static let sessionThreadsKey = "\(AppIdentifiers.subsystem).experiments.sessionThreads"
         static let sshTerminalKey = "\(AppIdentifiers.subsystem).experiments.sshTerminal"
         static let durableSessionsKey = "\(AppIdentifiers.subsystem).experiments.durableSessions"
+        static let durableSessionsDefaultKey = "\(AppIdentifiers.subsystem).experiments.durableSessionsDefault"
         static let desktopLiveViewKey = "\(AppIdentifiers.subsystem).experiments.desktopLiveView"
 
-        /// Durable Sessions: new sessions start durable on servers that advertise
-        /// durable sessions.
+        /// Durable Sessions: the new-session composer can start durable sessions on
+        /// servers that advertise them. New sessions start Classic unless
+        /// `durableSessionsDefaultKey` is also on.
         static var durableSessionsEnabled: Bool {
             UserDefaults.standard.bool(forKey: durableSessionsKey)
         }

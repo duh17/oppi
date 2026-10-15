@@ -7,45 +7,57 @@ struct DurableSessionsTests {
     private func decide(
         experiment: Bool,
         offered: Bool,
+        durableDefault: Bool = false,
         savedAgent: Bool = false,
-        chose classic: Bool = false,
+        chose engine: SessionEngine? = nil,
         agent resolution: DurableSessions.AgentResolution = .resolved
     ) -> DurableSessions.LaunchDecision {
         DurableSessions.launchDecision(
             experimentEnabled: experiment,
             serverOffersDurable: offered,
+            durableByDefault: durableDefault,
             savedAgentSelected: savedAgent,
-            userChoseClassic: classic,
+            chosenEngine: engine,
             agentResolution: resolution
         )
     }
 
-    @Test func newSessionsStartDurableOnlyWhenTheDeviceOptsInAndTheServerOffersDurable() {
-        let durable = decide(experiment: true, offered: true)
+    @Test func newSessionsStartClassicWithASwitchUnlessDurableIsTheDefault() {
+        let classic = decide(experiment: true, offered: true)
+        #expect(classic.engine == .classic)
+        #expect(classic.showsPill)
+        #expect(classic.canToggle)
+        #expect(classic.classicReason == nil)
+
+        let durable = decide(experiment: true, offered: true, durableDefault: true)
         #expect(durable.engine == .durable)
         #expect(durable.showsPill)
         #expect(durable.canToggle)
-        #expect(durable.classicReason == nil)
+    }
 
+    @Test func durableNeedsTheDeviceOptInAndTheServerEvenWhenItIsTheDefault() {
         for (experiment, offered) in [(true, false), (false, true), (false, false)] {
-            let classic = decide(experiment: experiment, offered: offered)
+            let classic = decide(experiment: experiment, offered: offered, durableDefault: true, chose: .durable)
             #expect(classic.engine == .classic, "experiment \(experiment), offered \(offered)")
             #expect(!classic.showsPill)
             #expect(!classic.canToggle)
         }
     }
 
-    @Test func switchingToClassicIsOneLaunchAndReversible() {
-        let classic = decide(experiment: true, offered: true, chose: true)
+    @Test func thePillChoiceOverridesTheDefaultForOneLaunchInEitherDirection() {
+        let durable = decide(experiment: true, offered: true, chose: .durable)
+        #expect(durable.engine == .durable)
+        #expect(durable.canToggle)
+
+        let classic = decide(experiment: true, offered: true, durableDefault: true, chose: .classic)
         #expect(classic.engine == .classic)
-        #expect(classic.showsPill)
         #expect(classic.canToggle)
         #expect(classic.classicReason == nil)
     }
 
     @Test func savedAgentLaunchRunsClassicWithAReasonAndCannotBeToggled() {
-        for chose in [false, true] {
-            let agent = decide(experiment: true, offered: true, savedAgent: true, chose: chose)
+        for chose in [nil, SessionEngine.durable] {
+            let agent = decide(experiment: true, offered: true, durableDefault: true, savedAgent: true, chose: chose)
             #expect(agent.engine == .classic)
             #expect(agent.showsPill)
             #expect(!agent.canToggle)
@@ -55,9 +67,9 @@ struct DurableSessionsTests {
 
     @Test func aLaunchWhoseSavedAgentIsNotResolvedIsBlockedAndNeverDurable() {
         for resolution in [DurableSessions.AgentResolution.pending, .failed] {
-            for chose in [false, true] {
-                let held = decide(experiment: true, offered: true, chose: chose, agent: resolution)
-                #expect(held.blocksLaunch, "\(resolution), chose classic \(chose)")
+            for chose in [nil, SessionEngine.durable] {
+                let held = decide(experiment: true, offered: true, durableDefault: true, chose: chose, agent: resolution)
+                #expect(held.blocksLaunch, "\(resolution), chose \(String(describing: chose))")
                 #expect(held.engine == .classic)
                 #expect(!held.canToggle)
                 #expect(held.classicReason == resolution.blockReason)
@@ -70,8 +82,8 @@ struct DurableSessionsTests {
         #expect(!decide(experiment: true, offered: false, agent: .failed).blocksLaunch)
     }
 
-    @Test func aClassicChoiceOrAgentChangesNothingWhenDurableIsUnavailable() {
-        let off = decide(experiment: false, offered: true, savedAgent: true, chose: true)
+    @Test func aChoiceOrAgentChangesNothingWhenDurableIsUnavailable() {
+        let off = decide(experiment: false, offered: true, savedAgent: true, chose: .classic)
         #expect(off.engine == .classic)
         #expect(!off.showsPill)
         #expect(off.classicReason == nil)
