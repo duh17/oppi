@@ -588,7 +588,7 @@ function buildSdkAppendSystemPrompt(
   return prompts.length > 0 ? prompts : undefined;
 }
 
-export function normalizeAgentContextFiles(
+function normalizeAgentContextFiles(
   agentDefinition: AgentDefinition | undefined,
   sandboxGuestCwd?: string,
 ): AgentContextFile[] {

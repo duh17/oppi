@@ -14,7 +14,7 @@ export type MessageOrigin = {
   /** Sending session. */
   sessionId: string;
   name?: string;
-  /** task: handed over at spawn; report: a background child's answer; message: session_send. */
+  /** task: handed over at spawn; report: a background child's answer; message: `subagent send`. */
   intent: "task" | "report" | "message";
 };
 

@@ -111,6 +111,14 @@ export interface AgentLaunchServiceDeps {
       message: string,
       opts?: { attachments?: ChatAttachmentRef[] },
     ): Promise<void>;
+    /**
+     * Rejects with `agent_extensions_unavailable` when a durable launch selects an Extension
+     * that has no durable entry for the runtime. Required for durable launches.
+     */
+    assertDurableExtensions?(
+      extensionIds: readonly string[],
+      runtime: "host" | "sandbox",
+    ): Promise<void>;
   };
   ensureSessionContextWindow: (session: Session) => Session;
   nowMs?: () => number;
@@ -159,13 +167,8 @@ export function parseRequestedEngine(
  * refuses these at start; create routes refuse them before a session exists, so
  * a durable request never leaves a shell that can only fail.
  */
-export function durableUnsupportedFeature(params: {
-  ephemeral?: boolean;
-  agentDefinition?: AgentDefinition;
-}): string | undefined {
+export function durableUnsupportedFeature(params: { ephemeral?: boolean }): string | undefined {
   if (params.ephemeral) return "Incognito sessions";
-  // Classic extension factories cannot run in a durable conversation.
-  if (params.agentDefinition?.resources?.extensionIds?.length) return "Saved Agent Extensions";
   return undefined;
 }
 
@@ -174,6 +177,27 @@ export class DelegationPolicyError extends Error {
     super(message);
     this.name = "DelegationPolicyError";
   }
+}
+
+/**
+ * The nested-delegation rules every launch from a session follows (`oppi session create
+ * --parent`, durable `subagent spawn`): a session may launch children when it is top-level or
+ * holds the grant; the grant passes down the subtree; a sandbox parent's children cannot
+ * receive it. Returns whether the child holds the grant.
+ */
+export function childDelegationGrant(
+  parent: { maySpawn: boolean; grant: boolean; sandbox: boolean },
+  requested: boolean,
+): boolean {
+  if (!parent.maySpawn)
+    throw new DelegationPolicyError("Nested delegation is not authorized for this caller session");
+  if (parent.sandbox) {
+    if (requested)
+      throw new DelegationPolicyError("Sandbox sessions cannot authorize nested delegation");
+    // Children of a sandbox parent stay in-workspace and cannot spawn.
+    return false;
+  }
+  return parent.grant || requested;
 }
 
 export class AgentLaunchService {
@@ -431,35 +455,24 @@ export class AgentLaunchService {
     }
 
     const inheritedGrant = this.effectiveNestedGrant(parent);
-    if (parent.launch?.parentSessionId && !inheritedGrant) {
-      throw new DelegationPolicyError(
-        "Nested delegation is not authorized for this caller session",
-      );
-    }
-
     const parentWorkspace = parent.workspaceId
       ? this.deps.storage.getWorkspace(parent.workspaceId)
       : undefined;
-    if (parentWorkspace?.runtime === "sandbox") {
-      if (request.target.workspace.id !== parent.workspaceId) {
-        throw new DelegationPolicyError(
-          "Sandbox sessions can only launch children in the same sandbox workspace",
-        );
-      }
-      if (request.allowNestedDelegation) {
-        throw new DelegationPolicyError("Sandbox sessions cannot authorize nested delegation");
-      }
-      // Children of a sandbox parent stay in-workspace and cannot spawn.
-      return { parentSessionId };
+    const sandbox = parentWorkspace?.runtime === "sandbox";
+    const maySpawn = !parent.launch?.parentSessionId || inheritedGrant;
+    if (maySpawn && sandbox && request.target.workspace.id !== parent.workspaceId) {
+      throw new DelegationPolicyError(
+        "Sandbox sessions can only launch children in the same sandbox workspace",
+      );
     }
-
     // The nested-delegation grant propagates down the subtree: children of an
     // authorized session inherit the grant, so an explicitly requested
     // grandchild session can be created without re-authorizing each level.
-    return {
-      parentSessionId,
-      ...(inheritedGrant || request.allowNestedDelegation ? { allowsNestedDelegation: true } : {}),
-    };
+    const grant = childDelegationGrant(
+      { maySpawn, grant: inheritedGrant, sandbox },
+      request.allowNestedDelegation === true,
+    );
+    return { parentSessionId, ...(grant ? { allowsNestedDelegation: true } : {}) };
   }
 
   /**
@@ -578,6 +591,17 @@ export class AgentLaunchService {
   ): Promise<void> {
     const extensionIds = request.agent.resources?.extensionIds;
     if (extensionIds === undefined || extensionIds.length === 0) return;
+    if (request.engine === "durable") {
+      // A durable session runs durable entries, not classic extension factories.
+      const sessions = this.deps.sessions;
+      if (!sessions.assertDurableExtensions)
+        throw new Error("Durable Extension selection cannot be checked");
+      await sessions.assertDurableExtensions(
+        extensionIds,
+        request.target.workspace.runtime === "sandbox" ? "sandbox" : "host",
+      );
+      return;
+    }
 
     let hostCwd: string;
     try {

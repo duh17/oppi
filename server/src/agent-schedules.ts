@@ -40,6 +40,8 @@ export type AgentScheduleAction =
       thinkingLevel?: ThinkingLevel;
       worktreeId?: string;
       name?: string;
+      /** "durable" starts a durable session (needs `experimental.serverDurable`); else classic. */
+      engine?: "durable";
     }
   | {
       type: "existing_session";
@@ -58,6 +60,7 @@ export type AgentScheduleActionPatch = {
   thinkingLevel?: ThinkingLevel | null;
   worktreeId?: string | null;
   name?: string | null;
+  engine?: "durable" | null;
   sessionId?: string;
   streamingBehavior?: "steer" | "followUp" | null;
 };
@@ -840,11 +843,15 @@ function validateActionPatch(input: unknown): AgentScheduleActionPatch {
       "thinkingLevel",
       "worktreeId",
       "name",
+      "engine",
       "sessionId",
       "streamingBehavior",
     ]),
     "Schedule action",
   );
+  if (input.engine !== undefined && input.engine !== null && input.engine !== "durable") {
+    throw new Error('Schedule action engine must be "durable" or null');
+  }
   if (
     input.type !== undefined &&
     input.type !== "new_session" &&
@@ -915,6 +922,7 @@ function validateActionShape(input: unknown): AgentScheduleAction {
         "thinkingLevel",
         "worktreeId",
         "name",
+        "engine",
       ]),
       "Schedule action",
     );
@@ -922,6 +930,9 @@ function validateActionShape(input: unknown): AgentScheduleAction {
     validateRequiredString(input.prompt, "Schedule action prompt");
     for (const key of ["agentId", "model", "worktreeId", "name"] as const) {
       validateOptionalString(input[key], `Schedule action ${key}`);
+    }
+    if (input.engine !== undefined && input.engine !== "durable") {
+      throw new Error('Schedule action engine must be "durable"');
     }
     if (input.thinkingLevel !== undefined && !isThinkingLevel(input.thinkingLevel as string)) {
       throw new Error("Schedule action thinkingLevel is invalid");

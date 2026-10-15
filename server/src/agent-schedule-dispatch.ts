@@ -34,6 +34,10 @@ export interface AgentScheduleDispatchDeps {
         requestId?: string;
       },
     ): Promise<void>;
+    assertDurableExtensions?(
+      extensionIds: readonly string[],
+      runtime: "host" | "sandbox",
+    ): Promise<void>;
   };
   ensureSessionContextWindow: (session: Session) => Session;
   appEvents?: Pick<AppEventEmitter, "emitSessionCreated" | "emitSessionSummary">;
@@ -82,6 +86,8 @@ async function launchNewSession(
       slotKey: input.run.slotKey,
     },
     sessionName: input.action.name,
+    // The durable session resolves the saved Agent when it first attaches (`resolveDurableAgent`).
+    ...(input.action.engine === "durable" ? { engine: "durable" as const } : {}),
   });
   if (result.kind === "launch_in_progress") {
     throw new ScheduleDispatchError("launch_in_progress");

@@ -12,7 +12,9 @@ import {
 import {
   watchEvents,
   AgentDoc,
+  type AgentChange,
   type AgentEventStream,
+  type ModelRef,
   type Conversation,
   type ConversationView,
   type Harness,
@@ -37,6 +39,12 @@ import {
   type SessionModelUsageSnapshot,
 } from "./session-stats.js";
 import { durableUnsupportedFeature, type AgentDefinition } from "./agent-launch-service.js";
+import {
+  OppiAgentDoc,
+  resolveDurableAgent,
+  toolAllowed,
+  type OppiAgentState,
+} from "./durable-agent.js";
 import type { AgentBackend } from "./agent-backend.js";
 import { isControlConversation } from "./control-session.js";
 import { readRequestDisplay, type DurableAgentController } from "./durable-agent-controller.js";
@@ -162,7 +170,45 @@ async function resolveProjectTrust(
   }
 }
 
-/** Store the rendered sections; a changed section reaches the model on its next request. */
+/** What a session runs as. */
+interface LaunchedAs {
+  /** Its `oppi.agent` document; undefined for a conversation bound before the document existed. */
+  doc: OppiAgentState | undefined;
+  /** It may use `subagent spawn`. */
+  spawn: boolean;
+  /** For the conversation this attach creates: the resolved agent and document. */
+  created?: ReturnType<typeof resolveDurableAgent>;
+}
+
+/** The model and thinking level a new conversation starts with: the session's, else Pi's defaults. */
+function seedModel(
+  models: ModelRuntime,
+  hostCwd: string,
+  session: Session,
+): { model: ModelRef; thinkingLevel?: ThinkingLevel } {
+  const registry = new ModelRegistry(models);
+  const settings = SettingsManager.create(hostCwd, getAgentDir(), { projectTrusted: false });
+  const defaultModel =
+    settings.getDefaultProvider() && settings.getDefaultModel()
+      ? `${settings.getDefaultProvider()}/${settings.getDefaultModel()}`
+      : undefined;
+  const first = registry.getAvailable()[0];
+  const model = resolveSessionSeedModel(
+    registry,
+    session.model ?? defaultModel ?? (first ? `${first.provider}/${first.id}` : ""),
+    settings.getEnabledModels(),
+  );
+  if (!model) throw new Error(`Server durable model is unavailable: ${session.model ?? "default"}`);
+  const thinkingLevel =
+    session.thinkingLevel !== undefined && isThinkingLevel(session.thinkingLevel)
+      ? session.thinkingLevel
+      : settings.getDefaultThinkingLevel();
+  return {
+    model: { provider: model.provider, modelId: model.id },
+    ...(thinkingLevel ? { thinkingLevel } : {}),
+  };
+}
+
 /**
  * Fork-list text for a user message, empty when the trace shows no user row for it. The trace
  * emits a row for text and for image/audio blocks that carry data, so a media-only message
@@ -191,6 +237,7 @@ function asErrorText(message: unknown): string | undefined {
     : undefined;
 }
 
+/** Store the rendered sections; a changed section reaches the model on its next request. */
 async function syncProjectContext(
   conversation: Conversation,
   resources: DurableProjectResources,
@@ -256,12 +303,9 @@ export class DurableBackend implements AgentBackend {
   }
 
   static async create(options: DurableBackendOptions): Promise<DurableBackend> {
-    const { models, session, agentDefinition } = options;
+    const { models, session } = options;
     const workspace = options.workspace;
-    const unsupported = durableUnsupportedFeature({
-      ephemeral: session.ephemeral,
-      agentDefinition,
-    });
+    const unsupported = durableUnsupportedFeature({ ephemeral: session.ephemeral });
     if (unsupported) throw new DurableNotSupportedError(unsupported);
     const sandbox = workspace?.runtime === "sandbox";
     const hostCwd = await resolveSdkSessionCwdAsync(options.workspace, session, {
@@ -270,72 +314,124 @@ export class DurableBackend implements AgentBackend {
     const cwd = sandbox ? resolveSandboxGuestCwd(workspace) : hostCwd;
     const host = options.host;
     const agentDir = getAgentDir();
+    const control = isControlConversation(session);
+    const launched = control
+      ? undefined
+      : await DurableBackend.launchedAs(options, { hostCwd, cwd, sandbox });
     // Sandboxes see only the workspace, as SDK sandbox sessions: trusted.
     const projectTrusted = sandbox || (await resolveProjectTrust(hostCwd, agentDir, options));
-    const resources = await loadDurableProjectResources({
-      hostCwd,
-      agentDir,
-      ...(sandbox ? { sandboxGuestCwd: cwd } : {}),
-      projectTrusted,
-      agentDefinition,
-    });
+    const loadResources = (): Promise<DurableProjectResources> =>
+      loadDurableProjectResources({
+        hostCwd,
+        agentDir,
+        ...(sandbox ? { sandboxGuestCwd: cwd } : {}),
+        projectTrusted,
+        ...(launched?.doc?.resources ? { resources: launched.doc.resources } : {}),
+        projectContext: launched?.doc?.projectContext !== false,
+      });
+    const resources = await loadResources();
     // Set by `bind` once this attachment's workspace VM is up, before servers connect.
     let sandboxVm: GondolinVm | undefined;
-    // The control conversation selects an exact extension list; it gets no MCP tools.
-    const mcp = isControlConversation(session)
-      ? undefined
-      : await host.replaceMcp(session.id, async () => {
-          const registry = new ModelRegistry(models);
-          return DurableMcp.open({
-            sessionId: session.id,
-            // The MCP root servers see via roots/list: a sandbox gets only the guest path.
-            cwd,
-            agentDir,
-            projectTrusted,
-            ...(sandbox
-              ? {
-                  sandbox: await sandboxMcpForWorkspace({
-                    workspace,
-                    agentDir,
-                    dataDir: options.dataDir,
-                    guestCwd: cwd,
-                    // This attachment's VM, as classic sandbox sessions use theirs.
-                    vm: async () => {
-                      if (!sandboxVm) throw new Error("The sandbox VM is not ready");
-                      return sandboxVm;
-                    },
-                  }),
-                }
-              : {}),
-            policy: session.launch?.tools,
-            providerToken: (provider) => registry.getApiKeyForProvider(provider),
-            install: (extension) => host.runtime.installExtension(extension),
-            uninstall: (extension) => host.runtime.uninstallExtension(extension),
-            metrics: options.metrics,
+    // The control conversation selects an exact extension list; it gets no MCP tools, and an
+    // exact Extension selection without `builtin:mcp` gets none either.
+    const mcp =
+      control || launched?.doc?.extensions?.mcp === false
+        ? undefined
+        : await host.replaceMcp(session.id, async () => {
+            const registry = new ModelRegistry(models);
+            return DurableMcp.open({
+              sessionId: session.id,
+              // The MCP root servers see via roots/list: a sandbox gets only the guest path.
+              cwd,
+              agentDir,
+              projectTrusted,
+              ...(sandbox
+                ? {
+                    sandbox: await sandboxMcpForWorkspace({
+                      workspace,
+                      agentDir,
+                      dataDir: options.dataDir,
+                      guestCwd: cwd,
+                      // This attachment's VM, as classic sandbox sessions use theirs.
+                      vm: async () => {
+                        if (!sandboxVm) throw new Error("The sandbox VM is not ready");
+                        return sandboxVm;
+                      },
+                    }),
+                  }
+                : {}),
+              policy: session.launch?.tools,
+              providerToken: (provider) => registry.getApiKeyForProvider(provider),
+              install: (extension) => host.runtime.installExtension(extension),
+              uninstall: (extension) => host.runtime.uninstallExtension(extension),
+              metrics: options.metrics,
+            });
           });
-        });
     try {
       return await DurableBackend.bind(options, {
         hostCwd,
         cwd,
         mcp,
+        launched,
         onSandboxVm: (vm) => {
           sandboxVm = vm;
         },
         resources,
-        loadResources: () =>
-          loadDurableProjectResources({
-            hostCwd,
-            agentDir,
-            ...(sandbox ? { sandboxGuestCwd: cwd } : {}),
-            projectTrusted,
-            agentDefinition,
-          }),
+        loadResources,
       });
     } catch (error) {
       await host.closeMcp(session.id);
       throw error;
     }
+  }
+
+  /**
+   * A bound conversation's stored `oppi.agent` document, or, for the conversation this attach
+   * creates, the agent the one resolver makes from the session's saved Agent, model, tool
+   * policy, and delegation grant (`AgentLaunchService` recorded them on the row).
+   */
+  private static async launchedAs(
+    options: DurableBackendOptions,
+    target: { hostCwd: string; cwd: string; sandbox: boolean },
+  ): Promise<LaunchedAs> {
+    const { harness, session, host } = options;
+    const id = session.serverDurable?.conversationId as ConversationId | undefined;
+    if (id !== undefined) {
+      const doc = await harness.snapshot(OppiAgentDoc, id, BACKGROUND_CONTEXT);
+      if (doc) return { doc, spawn: doc.spawn };
+      const record = await harness.commit((tx) => tx.conversation(id), BACKGROUND_CONTEXT);
+      return { doc: undefined, spawn: record?.owner === undefined };
+    }
+    const runtime = target.sandbox ? "sandbox" : "host";
+    const grant = session.launch?.allowsNestedDelegation === true;
+    // As `oppi session create --parent`: a delegated session spawns only with the grant.
+    const spawn = !session.launch?.parentSessionId || grant;
+    const agentId = session.launch?.agentId;
+    const definition = options.agentDefinition;
+    const workspacePrompt = options.workspace?.systemPrompt;
+    const created = resolveDurableAgent({
+      ...(agentId && definition
+        ? { saved: { id: agentId, version: session.launch?.agentVersion ?? 0, definition } }
+        : {}),
+      ...seedModel(options.models, target.hostCwd, session),
+      ...(session.launch?.tools ? { policy: session.launch.tools } : {}),
+      runtime,
+      base: [
+        CodingTools,
+        ...(target.sandbox ? [DurableSandboxTools] : []),
+        DurableAsk,
+        DurableWorkingWords,
+        DurableBackgroundJobs,
+        DurableProjectContext,
+        ...host.runtime.packageExtensionsFor(runtime),
+      ],
+      loaded: host.runtime.loadedPackages,
+      sessions: host.runtime.sessionsExtension,
+      spawn,
+      grant,
+      instructions: { cwd: target.cwd, ...(workspacePrompt ? { workspacePrompt } : {}) },
+    });
+    return { doc: created.doc, spawn, created };
   }
 
   private static async bind(
@@ -344,21 +440,30 @@ export class DurableBackend implements AgentBackend {
       hostCwd: string;
       cwd: string;
       mcp: DurableMcp | undefined;
+      launched: LaunchedAs | undefined;
       onSandboxVm: (vm: GondolinVm) => void;
       resources: DurableProjectResources;
       loadResources: () => Promise<DurableProjectResources>;
     },
   ): Promise<DurableBackend> {
-    const { harness, models, session, agentDefinition, host } = options;
-    const { hostCwd, cwd, mcp, resources } = target;
+    const { harness, models, session, host } = options;
+    const { hostCwd, cwd, mcp, resources, launched } = target;
     const workspace = options.workspace;
     const sandbox = workspace?.runtime === "sandbox";
     const id = session.serverDurable?.conversationId;
     const control = isControlConversation(session);
-    // Extensions from Pi packages' durable entries allowed in this runtime; never on control.
+    // Extensions from Pi packages' durable entries allowed in this runtime, or the exact
+    // selection the session launched with; never on control.
+    const exact = launched?.doc?.extensions?.packages;
     const packageExtensions = control
       ? []
-      : host.runtime.packageExtensionsFor(sandbox ? "sandbox" : "host");
+      : exact
+        ? host.runtime.loadedPackages
+            .filter((loaded) => exact.includes(loaded.extension.name))
+            .map((loaded) => loaded.extension)
+        : host.runtime.packageExtensionsFor(sandbox ? "sandbox" : "host");
+    // A child without the `allowNestedDelegation` grant has no `subagent` tool.
+    const sessionsExtension = launched?.spawn ? [host.runtime.sessionsExtension] : [];
     let conversation: Conversation;
     if (id !== undefined) {
       const existing = await harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
@@ -388,11 +493,13 @@ export class DurableBackend implements AgentBackend {
                   DurableAsk,
                   DurableWorkingWords,
                   DurableBackgroundJobs,
-                  host.runtime.sessionsExtension,
+                  ...sessionsExtension,
                   DurableProjectContext,
                   ...packageExtensions,
                   ...(mcp ? [mcp.selection] : []),
                 ],
+                // The host default selection includes it.
+                ...(sessionsExtension.length ? {} : { remove: [host.runtime.sessionsExtension] }),
               },
             },
         BACKGROUND_CONTEXT,
@@ -407,18 +514,12 @@ export class DurableBackend implements AgentBackend {
               DurableAsk,
               DurableWorkingWords,
               DurableBackgroundJobs,
-              host.runtime.sessionsExtension,
+              ...sessionsExtension,
               ...packageExtensions,
             ]
       )
         .flatMap((extension) => extension.tools ?? [])
-        .filter(
-          (tool) =>
-            !selected.has(tool.name) &&
-            !policy?.noTools &&
-            (!policy?.allowed || policy.allowed.includes(tool.name)) &&
-            !policy?.excluded?.includes(tool.name),
-        );
+        .filter((tool) => !selected.has(tool.name) && toolAllowed(policy, tool.name));
       // Append names instead of rewriting the list from resolved tools: MCP tools a
       // previous attachment offered are not registered until their servers reconnect.
       if (additions.length)
@@ -429,46 +530,21 @@ export class DurableBackend implements AgentBackend {
             if (!state.tools.includes(tool.name)) state.tools.push(tool.name);
         }, BACKGROUND_CONTEXT);
     } else {
-      const registry = new ModelRegistry(models);
-      const settings = SettingsManager.create(hostCwd, getAgentDir(), { projectTrusted: false });
-      const defaultModel =
-        settings.getDefaultProvider() && settings.getDefaultModel()
-          ? `${settings.getDefaultProvider()}/${settings.getDefaultModel()}`
-          : undefined;
-      const available = registry.getAvailable();
-      const first = available[0];
-      const model = resolveSessionSeedModel(
-        registry,
-        session.model ?? defaultModel ?? (first ? `${first.provider}/${first.id}` : ""),
-        settings.getEnabledModels(),
-      );
-      if (!model)
-        throw new Error(`Server durable model is unavailable: ${session.model ?? "default"}`);
-      const policy = session.launch?.tools;
-      const tools = (
-        control
-          ? controlConversationTools(host.runtime.controlExtensions)
-          : [
-              ...(CodingTools.tools ?? []),
-              ...(DurableAsk.tools ?? []),
-              ...(sandbox ? (DurableSandboxTools.tools ?? []) : []),
-              ...(DurableBackgroundJobs.tools ?? []),
-              ...(host.runtime.sessionsExtension.tools ?? []),
-              ...packageExtensions.flatMap((extension) => extension.tools ?? []),
-            ]
-      ).filter(
-        (tool) =>
-          !policy?.noTools &&
-          (!policy?.allowed || policy.allowed.includes(tool.name)) &&
-          !policy?.excluded?.includes(tool.name),
-      );
-      const instructions = agentDefinition?.instructions;
-      const append = [
-        options.workspace?.systemPrompt,
-        instructions?.mode === "append" ? instructions.text : undefined,
-      ]
-        .filter(Boolean)
-        .join("\n\n");
+      const created = launched?.created;
+      // The control conversation's instructions are its `oppi-control` prompt section.
+      const agent: AgentChange = created
+        ? {
+            ...created.change,
+            cwd,
+            extensions: [...created.change.extensions, ...(mcp ? [mcp.selection] : [])],
+            tools: [...created.change.tools, ...(mcp?.initialTools ?? [])],
+          }
+        : {
+            extensions: [...host.runtime.controlExtensions],
+            ...seedModel(models, hostCwd, session),
+            cwd,
+            tools: controlConversationTools(host.runtime.controlExtensions),
+          };
       conversation = await harness.createConversation(
         {
           ownership: { kind: "ownerless" },
@@ -476,56 +552,10 @@ export class DurableBackend implements AgentBackend {
             const runtime = await tx.doc(DurableRuntime, id);
             runtime.kind = sandbox ? "sandbox" : "host";
             if (sandbox) runtime.workspaceId = workspace.id;
+            if (created) Object.assign(await tx.doc(OppiAgentDoc, id), created.doc);
           },
-          agent: {
-            extensions: control
-              ? [...host.runtime.controlExtensions]
-              : sandbox
-                ? [
-                    CodingTools,
-                    DurableSandboxTools,
-                    DurableAsk,
-                    DurableWorkingWords,
-                    DurableBackgroundJobs,
-                    host.runtime.sessionsExtension,
-                    DurableProjectContext,
-                    ...packageExtensions,
-                    ...(mcp ? [mcp.selection] : []),
-                  ]
-                : [
-                    CodingTools,
-                    DurableAsk,
-                    DurableWorkingWords,
-                    DurableBackgroundJobs,
-                    host.runtime.sessionsExtension,
-                    DurableProjectContext,
-                    ...packageExtensions,
-                    ...(mcp ? [mcp.selection] : []),
-                  ],
-            model: { provider: model.provider, modelId: model.id },
-            thinkingLevel:
-              session.thinkingLevel !== undefined && isThinkingLevel(session.thinkingLevel)
-                ? session.thinkingLevel
-                : settings.getDefaultThinkingLevel(),
-            cwd,
-            tools: [...tools, ...(mcp?.initialTools ?? [])],
-            // Pi's experimental prompt loader is not published in 1.0.0. Do not
-            // reach into private dist paths or load classic extension factories.
-            // The control conversation's instructions are its `oppi-control` prompt section.
-            ...(control
-              ? {}
-              : {
-                  instructions: [
-                    instructions?.mode === "replace"
-                      ? instructions.text
-                      : "You are an expert coding assistant. Use the available tools to inspect and change files. Be concise.",
-                    `Working directory: ${cwd}`,
-                    append,
-                  ]
-                    .filter(Boolean)
-                    .join("\n\n"),
-                }),
-          },
+          // The resolved agent, committed with the conversation: one configure.
+          agent,
         },
         BACKGROUND_CONTEXT,
       );

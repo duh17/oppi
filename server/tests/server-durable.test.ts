@@ -1932,15 +1932,12 @@ describe("server durable managed runtime", () => {
       "write",
       "edit",
       "bash",
-      "ask",
       "ls",
       "find",
       "grep",
+      "ask",
       "background_job",
-      "session_spawn",
-      "session_send",
-      "session_wait",
-      "session_abort",
+      "subagent",
     ]);
     const settled = await (
       await conversation.submit({ type: "input", content: "write and read" }, context)

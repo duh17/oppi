@@ -616,6 +616,18 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return (await this.durableHarness).reloadExtensions();
   }
 
+  /** A durable launch's saved-Agent Extension selection, checked before its session exists. */
+  async assertDurableExtensions(
+    extensionIds: readonly string[],
+    runtime: "host" | "sandbox",
+  ): Promise<void> {
+    if (!this.durableHarness) throw new Error("Durable sessions are not available on this server");
+    const harness = await this.durableHarness;
+    await harness.ensureShared();
+    const { resolveDurableExtensionSelection } = await import("./durable-agent.js");
+    resolveDurableExtensionSelection(extensionIds, harness.loadedPackages, runtime);
+  }
+
   /**
    * Attach a socket to the session's durable conversation stream. Sends the first frame
    * before resolving; the returned function ends the stream. Fails for a session that is

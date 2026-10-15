@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,13 +14,25 @@ import {
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { InboxDoc, LiveDoc, type ConversationId, type Harness } from "@earendil-works/pi-durable";
+import {
+  AgentDoc,
+  InboxDoc,
+  LiveDoc,
+  type ConversationId,
+  type Harness,
+} from "@earendil-works/pi-durable";
+import { OppiAgentDoc } from "../src/durable-agent.js";
 import {
   DurableHarness,
   DurableRuntime,
   SessionHost,
+  durableStoreDir,
   durableStoreSqlitePath,
 } from "../src/durable-harness.js";
+import { ProjectContextDoc } from "../extensions/durable/project-context/durable.js";
+import { createAgentRoutes } from "../src/routes/agents.js";
+import { createAgentScheduleDispatchHooks } from "../src/agent-schedule-dispatch.js";
+import type { NewSessionDispatchInput } from "../src/agent-schedules.js";
 import { SessionManager } from "../src/sessions.js";
 import { readDurableTrace } from "../src/durable-history.js";
 import { Storage } from "../src/storage.js";
@@ -87,10 +99,11 @@ function model(
   return Array.from({ length: 60 }, () => step) as FauxResponseStep[];
 }
 
-const spawnCall = (args: Record<string, unknown>) =>
-  fauxAssistantMessage([fauxToolCall("session_spawn", args)], { stopReason: "toolUse" });
 const toolCall = (name: string, args: Record<string, unknown>) =>
   fauxAssistantMessage([fauxToolCall(name, args)], { stopReason: "toolUse" });
+const subagentCall = (action: string, args: Record<string, unknown> = {}) =>
+  toolCall("subagent", { action, ...args });
+const spawnCall = (args: Record<string, unknown>) => subagentCall("spawn", args);
 
 async function fixture(responses: FauxResponseStep[], options?: { serverDurable?: boolean }) {
   const dir = mkdtempSync(join(tmpdir(), "oppi-durable-sessions-test-"));
@@ -100,7 +113,7 @@ async function fixture(responses: FauxResponseStep[], options?: { serverDurable?
     modelsStorePath: join(dir, "models-cache.json"),
     refreshOnCreate: false,
   });
-  const faux = fauxProvider();
+  const faux = fauxProvider({ models: [{ id: "faux-1" }, { id: "faux-2" }] });
   faux.setResponses(responses);
   models.registerNativeProvider(faux.provider);
   await models.setRuntimeApiKey("faux", "test-only-faux-credential");
@@ -309,7 +322,7 @@ describe("durable-native threads", () => {
       model(async ({ last, text, signal }) => {
         if (last.role === "toolResult") return fauxAssistantMessage("PARENT_DONE");
         if (text.includes("Delegate"))
-          return spawnCall({ task: "CHILD_TASK scout", name: "Scout" });
+          return spawnCall({ task: "CHILD_TASK scout", name: "Scout", wait: true });
         childStarted();
         await childGate.wait(signal);
         return fauxAssistantMessage("CHILD_ANSWER");
@@ -367,9 +380,9 @@ describe("durable-native threads", () => {
     await parentEnd;
     const [result] = await toolResults(harness, parentConversation);
     expect(result).toMatchObject({
-      toolName: "session_spawn",
+      toolName: "subagent",
       text: "CHILD_ANSWER",
-      details: { conversationId: childConversation, sessionId: child.id },
+      details: { name: "Scout", conversationId: childConversation, sessionId: child.id },
     });
     expect((await harness.snapshot(LiveDoc, childConversation, context))?.run).toBeUndefined();
   });
@@ -380,7 +393,8 @@ describe("durable-native threads", () => {
     const started = new Promise<void>((resolve) => (childStarted = resolve));
     const f = await fixture(
       model(async ({ text, signal }) => {
-        if (text.includes("Delegate")) return spawnCall({ task: "CHILD_TASK park" });
+        if (text.includes("Delegate"))
+          return spawnCall({ task: "CHILD_TASK park", name: "Parked", wait: true });
         childStarted();
         await childGate.wait(signal);
         return fauxAssistantMessage("NEVER_ANSWERED");
@@ -411,7 +425,7 @@ describe("durable-native threads", () => {
         if (text.includes("[session")) return fauxAssistantMessage("NOTED");
         if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
         if (text.includes("Delegate"))
-          return spawnCall({ task: "CHILD_TASK later", name: "Later", background: true });
+          return spawnCall({ task: "CHILD_TASK later", name: "Later" });
         await childGate.wait(signal);
         return fauxAssistantMessage("BACKGROUND_ANSWER");
       }),
@@ -488,7 +502,7 @@ describe("durable-native threads", () => {
           return fauxAssistantMessage("STARTED");
         }
         if (text.includes("Delegate"))
-          return spawnCall({ task: "CHILD_TASK later", background: true });
+          return spawnCall({ task: "CHILD_TASK later", name: "Later" });
         await childGate.wait(signal);
         return fauxAssistantMessage("SURVIVOR_ANSWER");
       }),
@@ -527,8 +541,7 @@ describe("durable-native threads", () => {
       model(async ({ last, text, signal }) => {
         if (text.includes("[session")) return fauxAssistantMessage("NOTED");
         if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
-        if (text.includes("Delegate"))
-          return spawnCall({ task: "CHILD_TASK long", background: true });
+        if (text.includes("Delegate")) return spawnCall({ task: "CHILD_TASK long", name: "Long" });
         childCalls += 1;
         if (childCalls === 1) {
           // Interrupted by the shutdown: the answer must come from the resumed run.
@@ -585,81 +598,83 @@ describe("durable-native threads", () => {
     ).toHaveLength(1);
   });
 
-  it("lets a session abort only children it spawned", async () => {
+  it("stops a child's current work by name; the child stays usable, and wait returns its answer", async () => {
     const childGate = gate();
-    const state: { childSession?: string } = {};
     const f = await fixture(
       model(async ({ last, text, signal }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
         if (last.role === "toolResult") return fauxAssistantMessage("DONE");
-        if (text.includes("Spawn")) return spawnCall({ task: "CHILD_TASK work", background: true });
-        if (text.includes("Stranger abort"))
-          return toolCall("session_abort", { sessionId: state.childSession });
-        if (text.includes("Owner abort"))
-          return toolCall("session_abort", { sessionId: state.childSession });
+        if (text.includes("Spawn")) return spawnCall({ task: "CHILD_TASK work", name: "Worker" });
+        if (text.includes("Stop nobody")) return subagentCall("stop", { name: "Nobody" });
+        if (text.includes("Stop it")) return subagentCall("stop", { name: "Worker" });
+        if (text.includes("Ask again"))
+          return subagentCall("send", { name: "Worker", message: "SECOND_TASK" });
+        if (text.includes("Wait for it")) return subagentCall("wait", { names: ["Worker"] });
+        if (text.includes("List them")) return subagentCall("list");
         if (text.includes("CHILD_TASK")) {
           await childGate.wait(signal);
           return fauxAssistantMessage("CHILD_DONE");
         }
+        if (text.includes("SECOND_TASK")) return fauxAssistantMessage("SECOND_ANSWER");
         return fauxAssistantMessage("OTHER");
       }),
     );
-    const stranger = f.session("Stranger");
     await f.manager.startSession(f.parent.id, f.workspace);
-    await f.manager.startSession(stranger.id, f.workspace);
-    await f.manager.sendPrompt(f.parent.id, "Spawn it");
     const harness = await f.harness();
     const parentConversation = conversationOf(f.storage, f.parent);
-    await until(async () => (await toolResults(harness, parentConversation)).length === 1, "spawn");
-    const child = f.storage
-      .listSessions()
-      .find((session) => session.id !== f.parent.id && session.id !== stranger.id)!;
-    state.childSession = child.id;
+    let results = 0;
+    const call = async (prompt: string): Promise<ToolResult> => {
+      await f.manager.sendPrompt(f.parent.id, prompt);
+      results += 1;
+      await until(
+        async () =>
+          (await toolResults(harness, parentConversation)).length === results &&
+          (await harness.snapshot(LiveDoc, parentConversation, context))?.run === undefined,
+        prompt,
+      );
+      return (await toolResults(harness, parentConversation))[results - 1]!;
+    };
+    await call("Spawn it");
+    const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
     const childConversation = conversationOf(f.storage, child);
-    const strangerConversation = conversationOf(f.storage, stranger);
-    await until(
-      async () => (await harness.snapshot(LiveDoc, parentConversation, context))?.run === undefined,
-      "parent idle",
-    );
-
-    // A session that did not spawn the child cannot stop it.
-    await f.manager.sendPrompt(stranger.id, "Stranger abort");
-    const strangerHarness = await f.openStore(stranger.id);
-    await until(
-      async () => (await toolResults(strangerHarness, strangerConversation)).length === 1,
-      "refusal",
-    );
-    expect((await toolResults(strangerHarness, strangerConversation))[0]).toMatchObject({
-      toolName: "session_abort",
-      isError: true,
-    });
-    expect((await toolResults(strangerHarness, strangerConversation))[0]!.text).toContain(
-      "not one of your children",
-    );
     expect((await harness.snapshot(LiveDoc, childConversation, context))?.run).toBeDefined();
 
-    // The spawning parent can.
-    await f.manager.sendPrompt(f.parent.id, "Owner abort it");
-    await until(async () => (await toolResults(harness, parentConversation)).length === 2, "abort");
-    expect((await toolResults(harness, parentConversation))[1]).toMatchObject({
-      toolName: "session_abort",
-      text: `Stopped session ${child.id}.`,
+    expect(await call("Stop nobody")).toMatchObject({
+      toolName: "subagent",
+      isError: true,
+      text: "No subagent named Nobody.",
+    });
+    expect((await harness.snapshot(LiveDoc, childConversation, context))?.run).toBeDefined();
+
+    expect(await call("Stop it")).toMatchObject({
+      text: "Stopped Worker.",
+      details: { name: "Worker", sessionId: child.id },
     });
     expect((await harness.snapshot(LiveDoc, childConversation, context))?.run).toBeUndefined();
+
+    // Stopped, not removed: its transcript stays and it takes new work.
+    expect(await call("Ask again")).toMatchObject({ text: "Sent to Worker (steer)." });
+    expect(await call("Wait for it")).toMatchObject({ text: "Worker: SECOND_ANSWER" });
+    expect(await userTexts(harness, childConversation)).toEqual(["CHILD_TASK work", "SECOND_TASK"]);
+    const listed = await call("List them");
+    expect(listed.text).toBe(
+      `Worker | idle | agent: none | model: faux/faux-1 | session: ${child.id}`,
+    );
+    // A stopped task has no report.
+    expect(requestIds(f.storage, f.dir, f.parent.id, "oppi-report:")).toEqual([]);
   });
 
-  it("does not abort a colliding conversation id in another store", async () => {
+  it("stops only the caller's own child when another store has the same name and conversation id", async () => {
     const ownerGate = gate();
     const strangerGate = gate();
-    const state: { ownerChild?: string } = {};
     const f = await fixture(
       model(async ({ last, text, signal }) => {
         if (last.role === "toolResult") return fauxAssistantMessage("DONE");
         if (text.includes("Owner spawn"))
-          return spawnCall({ task: "OWNER_CHILD work", background: true });
+          return spawnCall({ task: "OWNER_CHILD work", name: "Worker" });
         if (text.includes("Stranger spawn"))
-          return spawnCall({ task: "STRANGER_CHILD work", background: true });
-        if (text.includes("Stranger abort"))
-          return toolCall("session_abort", { sessionId: state.ownerChild });
+          return spawnCall({ task: "STRANGER_CHILD work", name: "Worker" });
+        if (text.includes("Stranger stop")) return subagentCall("stop", { name: "Worker" });
         if (text.includes("OWNER_CHILD")) {
           await ownerGate.wait(signal);
           return fauxAssistantMessage("OWNER_DONE");
@@ -694,7 +709,6 @@ describe("durable-native threads", () => {
     const strangerChild = f.storage
       .listSessions()
       .find((session) => session.launch?.parentSessionId === stranger.id)!;
-    state.ownerChild = ownerChild.id;
     const ownerChildConversation = conversationOf(f.storage, ownerChild);
     const strangerChildConversation = conversationOf(f.storage, strangerChild);
     expect(ownerChildConversation).toBe(strangerChildConversation);
@@ -712,39 +726,33 @@ describe("durable-native threads", () => {
       "stranger child running",
     );
 
-    await f.manager.sendPrompt(stranger.id, "Stranger abort");
+    await f.manager.sendPrompt(stranger.id, "Stranger stop");
     await until(
       async () => (await toolResults(strangerHarness, strangerConversation)).length === 2,
-      "stranger abort",
+      "stranger stop",
     );
     expect((await toolResults(strangerHarness, strangerConversation))[1]).toMatchObject({
-      toolName: "session_abort",
-      isError: true,
-      text: expect.stringContaining("not one of your children"),
+      toolName: "subagent",
+      text: "Stopped Worker.",
+      details: { sessionId: strangerChild.id },
     });
     expect(
       (await ownerHarness.snapshot(LiveDoc, ownerChildConversation, context))?.run,
     ).toBeDefined();
     expect(
       (await strangerHarness.snapshot(LiveDoc, strangerChildConversation, context))?.run,
-    ).toBeDefined();
+    ).toBeUndefined();
   });
 
-  it("records the oppi-send request id when a session messages another, and reserves the prefix", async () => {
-    const state: { childSession?: string } = {};
+  it("records the oppi-send request id when a session messages its child, and reserves the prefix", async () => {
     const f = await fixture(
       model(async ({ last, text }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
         if (last.role === "toolResult") return fauxAssistantMessage("DONE");
-        if (text.includes("Spawn"))
-          return spawnCall({ task: "CHILD_TASK quick", background: true });
+        if (text.includes("Spawn")) return spawnCall({ task: "CHILD_TASK quick", name: "Quick" });
         if (text.includes("Message it"))
-          return toolCall("session_send", {
-            sessionId: state.childSession,
-            text: "HELLO_CHILD",
-            mode: "followUp",
-          });
-        if (text.includes("Wait for it"))
-          return toolCall("session_wait", { sessionIds: [state.childSession] });
+          return subagentCall("send", { name: "Quick", message: "HELLO_CHILD", followUp: true });
+        if (text.includes("Wait for it")) return subagentCall("wait", { names: ["Quick"] });
         return fauxAssistantMessage("CHILD_REPLY");
       }),
     );
@@ -754,13 +762,12 @@ describe("durable-native threads", () => {
     const parentConversation = conversationOf(f.storage, f.parent);
     await until(async () => (await toolResults(harness, parentConversation)).length === 1, "spawn");
     const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
-    state.childSession = child.id;
     const childConversation = conversationOf(f.storage, child);
 
     await f.manager.sendPrompt(f.parent.id, "Message it now");
     await until(async () => (await toolResults(harness, parentConversation)).length === 2, "send");
     const sent = (await toolResults(harness, parentConversation))[1]!;
-    expect(sent.toolName).toBe("session_send");
+    expect(sent).toMatchObject({ toolName: "subagent", text: "Sent to Quick (followUp)." });
     const parentStore = f.storage.getSession(f.parent.id)!.serverDurable!.storeId!;
     const sendRequestId = String(sent.details?.requestId);
     const sendPrefix = `oppi-send:${parentStore}:${parentConversation}:`;
@@ -784,8 +791,8 @@ describe("durable-native threads", () => {
     await f.manager.sendPrompt(f.parent.id, "Wait for it please");
     await until(async () => (await toolResults(harness, parentConversation)).length === 3, "wait");
     expect((await toolResults(harness, parentConversation))[2]).toMatchObject({
-      toolName: "session_wait",
-      text: `Idle: ${child.id}.`,
+      toolName: "subagent",
+      text: "Quick: CHILD_REPLY",
     });
 
     // Clients cannot occupy the namespace.
@@ -794,7 +801,7 @@ describe("durable-native threads", () => {
     ).rejects.toThrow("reserved durable requestId namespace");
   });
 
-  it("admits one request id once across the session socket and session_send", async () => {
+  it("admits one request id once across the session socket and subagent send", async () => {
     const busy = gate();
     let held!: () => void;
     const holding = new Promise<void>((resolve) => (held = resolve));
@@ -813,7 +820,7 @@ describe("durable-native threads", () => {
     const id = conversationOf(f.storage, f.parent);
     const events = observe(f.manager, f.parent.id);
 
-    // The socket and session_send race one request id: one admission, one user row.
+    // The socket and subagent send race one request id: one admission, one user row.
     const answered = events.next((message) => message.type === "agent_end");
     await Promise.all([
       f.manager.sendPrompt(f.parent.id, "SAME", { clientTurnId: "shared-turn" }),
@@ -827,7 +834,7 @@ describe("durable-native threads", () => {
     expect(await userTexts(harness, id)).toEqual(["SAME"]);
     expect(requestIds(f.storage, f.dir, f.parent, "shared-turn")).toEqual(["shared-turn"]);
 
-    // A repeated session_send to a busy session queues once; changed content is a conflict.
+    // A repeated send to a busy session queues once; changed content is a conflict.
     await f.manager.sendPrompt(f.parent.id, "HOLD");
     await holding;
     const send = { content: "QUEUED", whenBusy: "followUp" as const, requestId: "repeat-send" };
@@ -849,66 +856,6 @@ describe("durable-native threads", () => {
     expect(await userTexts(harness, id)).toEqual(["SAME", "HOLD", "QUEUED"]);
   });
 
-  it("delivers session_send from two stores when task ids collide", async () => {
-    const state: { target?: string } = {};
-    const f = await fixture(
-      model(async ({ last, text }) => {
-        if (last.role === "toolResult") return fauxAssistantMessage("DONE");
-        if (text.includes("Send from alpha"))
-          return toolCall("session_send", {
-            sessionId: state.target,
-            text: "FROM_ALPHA",
-            mode: "followUp",
-          });
-        if (text.includes("Send from beta"))
-          return toolCall("session_send", {
-            sessionId: state.target,
-            text: "FROM_BETA",
-            mode: "followUp",
-          });
-        return fauxAssistantMessage("OK");
-      }),
-    );
-    const beta = f.session("Beta");
-    const target = f.session("Target");
-    state.target = target.id;
-    await f.manager.startSession(f.parent.id, f.workspace);
-    await f.manager.startSession(beta.id, f.workspace);
-    await f.manager.startSession(target.id, f.workspace);
-    const alphaHarness = await f.harness();
-    const betaHarness = await f.openStore(beta.id);
-    const alphaConversation = conversationOf(f.storage, f.parent);
-    const betaConversation = conversationOf(f.storage, beta);
-    expect(alphaConversation).toBe(betaConversation);
-
-    await f.manager.sendPrompt(f.parent.id, "Send from alpha");
-    await until(
-      async () => (await toolResults(alphaHarness, alphaConversation)).length === 1,
-      "alpha send",
-    );
-    await f.manager.sendPrompt(beta.id, "Send from beta");
-    await until(
-      async () => (await toolResults(betaHarness, betaConversation)).length === 1,
-      "beta send",
-    );
-    const alphaSent = (await toolResults(alphaHarness, alphaConversation))[0]!;
-    const betaSent = (await toolResults(betaHarness, betaConversation))[0]!;
-    expect(alphaSent.isError).toBeFalsy();
-    expect(betaSent.isError).toBeFalsy();
-    const alphaStore = f.storage.getSession(f.parent.id)!.serverDurable!.storeId!;
-    const betaStore = f.storage.getSession(beta.id)!.serverDurable!.storeId!;
-    expect(String(alphaSent.details?.requestId)).toContain(alphaStore);
-    expect(String(betaSent.details?.requestId)).toContain(betaStore);
-    expect(alphaSent.details?.requestId).not.toBe(betaSent.details?.requestId);
-
-    const targetHarness = await f.openStore(target.id);
-    const targetConversation = conversationOf(f.storage, target);
-    await until(async () => {
-      const texts = await userTexts(targetHarness, targetConversation);
-      return texts.includes("FROM_ALPHA") && texts.includes("FROM_BETA");
-    }, "both sends delivered");
-  });
-
   it("reruns a foreground spawn after a restart against the same child and Session", async () => {
     let childCalls = 0;
     const firstCall = gate();
@@ -916,7 +863,7 @@ describe("durable-native threads", () => {
       model(async ({ last, text, signal }) => {
         if (last.role === "toolResult") return fauxAssistantMessage("PARENT_DONE");
         if (text.includes("Delegate"))
-          return spawnCall({ task: "CHILD_TASK foreground", name: "Fg" });
+          return spawnCall({ task: "CHILD_TASK foreground", name: "Fg", wait: true });
         childCalls += 1;
         if (childCalls === 1) {
           await firstCall.wait(signal);
@@ -957,131 +904,262 @@ describe("durable-native threads", () => {
     expect(childCalls).toBe(2);
   });
 
-  it("refuses a nested spawn: the child's call errors and no third session appears", async () => {
+  it("gives a child no subagent tool without the grant; a granted child's subtree spawns two levels down", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult") return fauxAssistantMessage("DONE");
+        if (text.includes("Delegate plain"))
+          return spawnCall({ name: "Plain", task: "PLAIN_TASK", wait: true });
+        if (text.includes("Delegate lead"))
+          return spawnCall({
+            name: "Lead",
+            task: "LEAD_TASK",
+            wait: true,
+            allowNestedDelegation: true,
+          });
+        // The plain child tries anyway; the lead's subtree really spawns.
+        if (text.includes("PLAIN_TASK")) return spawnCall({ name: "Grand", task: "GRAND_TASK" });
+        if (text.includes("LEAD_TASK"))
+          return spawnCall({ name: "Mid", task: "MID_TASK", wait: true });
+        if (text.includes("MID_TASK"))
+          return spawnCall({ name: "Leaf", task: "LEAF_TASK", wait: true });
+        return fauxAssistantMessage("LEAF_ANSWER");
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    const rowNamed = (name: string) =>
+      f.storage.listSessions().find((session) => session.name === name);
+    const agentOf = async (session: Session) =>
+      (await harness.conversation(conversationOf(f.storage, session), context))!.agent(context);
+    const toolsOf = async (session: Session) =>
+      (await agentOf(session)).tools.map((tool) => tool.name);
+
+    await f.manager.sendPrompt(f.parent.id, "Delegate plain");
+    await until(
+      async () => (await toolResults(harness, parentConversation)).length === 1,
+      "plain spawn",
+    );
+    const plain = rowNamed("Plain")!;
+    const plainConversation = conversationOf(f.storage, plain);
+    expect(plain.launch?.allowsNestedDelegation).toBeUndefined();
+    expect(await toolsOf(plain)).not.toContain("subagent");
+    // Nor its guidance: the extension is not selected, also after the child attached.
+    expect((await agentOf(plain)).sections.map((section) => section.key)).not.toContain("sessions");
+    expect(await toolsOf(f.parent)).toContain("subagent");
+    const [refused] = await toolResults(harness, plainConversation);
+    expect(refused).toMatchObject({ toolName: "subagent", isError: true });
+    expect(
+      (
+        await harness.commit(
+          (tx) => tx.scanConversations({ ownerConversationId: plainConversation }, 10),
+          context,
+        )
+      ).items,
+    ).toHaveLength(0);
+
+    await f.manager.sendPrompt(f.parent.id, "Delegate lead");
+    await until(
+      async () => (await toolResults(harness, parentConversation)).length === 2,
+      "lead spawn",
+    );
+    const [lead, mid, leaf] = ["Lead", "Mid", "Leaf"].map((name) => rowNamed(name)!);
+    // The grant passes down; each row's parent is its direct parent.
+    expect(lead!.launch).toMatchObject({
+      parentSessionId: f.parent.id,
+      allowsNestedDelegation: true,
+    });
+    expect(mid!.launch).toMatchObject({ parentSessionId: lead!.id, allowsNestedDelegation: true });
+    expect(leaf!.launch).toMatchObject({ parentSessionId: mid!.id, allowsNestedDelegation: true });
+    expect(await toolsOf(leaf!)).toContain("subagent");
+    expect((await toolResults(harness, conversationOf(f.storage, mid!)))[0]).toMatchObject({
+      text: "LEAF_ANSWER",
+      details: { name: "Leaf", sessionId: leaf!.id },
+    });
+    expect((await getThread(f, leaf!.id)).sessions.map((session) => session.id).sort()).toEqual(
+      [f.parent.id, plain.id, lead!.id, mid!.id, leaf!.id].sort(),
+    );
+  });
+
+  it("refuses a grant from a sandbox parent, before any child exists", async () => {
+    const f = await fixture(
+      model(async ({ last, text }) => {
+        if (last.role === "toolResult") return fauxAssistantMessage("DONE");
+        if (text.includes("Grant"))
+          return spawnCall({ name: "Granted", task: "T", allowNestedDelegation: true });
+        return fauxAssistantMessage("OK");
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    await harness.commit(async (tx) => {
+      const runtime = await tx.doc(DurableRuntime, parentConversation);
+      runtime.kind = "sandbox";
+      runtime.workspaceId = f.workspace.id;
+    }, context);
+    (await f.owner()).bindSandboxEnv(parentConversation, new NodeExecutionEnv({ cwd: f.dir }));
+
+    await f.manager.sendPrompt(f.parent.id, "Grant it");
+    await until(async () => (await toolResults(harness, parentConversation)).length === 1, "grant");
+    expect((await toolResults(harness, parentConversation))[0]).toMatchObject({
+      toolName: "subagent",
+      isError: true,
+      text: expect.stringContaining("Sandbox sessions cannot authorize nested delegation"),
+    });
+    expect(f.storage.listSessions().map((session) => session.id)).toEqual([f.parent.id]);
+  });
+
+  it("steers a busy child or queues after its answer", async () => {
     const childGate = gate();
     const f = await fixture(
       model(async ({ last, text, signal }) => {
         if (text.includes("[session")) return fauxAssistantMessage("NOTED");
         if (last.role === "toolResult") return fauxAssistantMessage("DONE");
-        if (text.includes("Spawn")) return spawnCall({ task: "CHILD_TASK work", background: true });
-        await childGate.wait(signal);
-        return spawnCall({ task: "grandchild" });
+        if (text.includes("Spawn")) return spawnCall({ name: "Busy", task: "BUSY_TASK" });
+        if (text.includes("Steer it"))
+          return subagentCall("send", { name: "Busy", message: "STEER_MSG" });
+        if (text.includes("Queue it"))
+          return subagentCall("send", { name: "Busy", message: "QUEUE_MSG", followUp: true });
+        if (text.includes("BUSY_TASK")) await childGate.wait(signal);
+        return fauxAssistantMessage(`ANSWER ${text}`);
       }),
     );
     await f.manager.startSession(f.parent.id, f.workspace);
-    await f.manager.sendPrompt(f.parent.id, "Spawn it");
     const harness = await f.harness();
     const parentConversation = conversationOf(f.storage, f.parent);
-    await until(async () => (await toolResults(harness, parentConversation)).length === 1, "spawn");
+    for (const [prompt, results] of [
+      ["Spawn it", 1],
+      ["Steer it", 2],
+      ["Queue it", 3],
+    ] as const) {
+      await f.manager.sendPrompt(f.parent.id, prompt);
+      await until(
+        async () =>
+          (await toolResults(harness, parentConversation)).length === results &&
+          (await harness.snapshot(LiveDoc, parentConversation, context))?.run === undefined,
+        prompt,
+      );
+    }
     const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
     const childConversation = conversationOf(f.storage, child);
+    expect(
+      (await harness.snapshot(InboxDoc, childConversation, context))?.items.map((item) => [
+        item.mode,
+        item.mode === "write" ? undefined : item.content,
+      ]),
+    ).toEqual([
+      ["steer", "STEER_MSG"],
+      ["followUp", "QUEUE_MSG"],
+    ]);
 
-    // Now the child really calls session_spawn.
     childGate.open();
     await until(
-      async () => (await toolResults(harness, childConversation)).length === 1,
-      "refusal",
+      async () => (await userTexts(harness, childConversation)).includes("QUEUE_MSG"),
+      "the queued message",
     );
-    expect((await toolResults(harness, childConversation))[0]).toMatchObject({
-      toolName: "session_spawn",
-      isError: true,
-      text: expect.stringContaining("Child sessions cannot spawn sessions."),
-    });
-    expect(
-      f.storage
-        .listSessions()
-        .map((session) => session.id)
-        .sort(),
-    ).toEqual([f.parent.id, child.id].sort());
-    const grandchildren = await harness.commit(
-      (tx) => tx.scanConversations({ ownerConversationId: childConversation }, 10),
-      context,
-    );
-    expect(grandchildren.items).toHaveLength(0);
+    expect(await userTexts(harness, childConversation)).toEqual([
+      "BUSY_TASK",
+      "STEER_MSG",
+      "QUEUE_MSG",
+    ]);
   });
 
-  it("keeps a sandbox session from prompting host sessions or another workspace's sandbox", async () => {
-    const state: { host?: string; same?: string; other?: string } = {};
+  it("spawns a saved Agent as its AgentChange: model, tools, replaced instructions without project context", async () => {
     const f = await fixture(
       model(async ({ last, text }) => {
         if (last.role === "toolResult") return fauxAssistantMessage("DONE");
-        const send = (sessionId?: string) =>
-          toolCall("session_send", { sessionId, text: "ATTACK", mode: "followUp" });
-        if (text.includes("Send host")) return send(state.host);
-        if (text.includes("Wait host"))
-          return toolCall("session_wait", { sessionIds: [state.host] });
-        if (text.includes("Send other")) return send(state.other);
-        if (text.includes("Send same")) return send(state.same);
-        return fauxAssistantMessage("OK");
+        if (text.includes("Review it"))
+          return spawnCall({ name: "Rev", task: "REVIEW_TASK", agent: "Reviewer", wait: true });
+        if (text.includes("Plug it"))
+          return spawnCall({ name: "Plug", task: "T", agent: "Plugged", wait: true });
+        if (text.includes("Fence it"))
+          return spawnCall({ name: "Fence", task: "T", agent: "Fenced", wait: true });
+        if (text.includes("List them")) return subagentCall("list");
+        return fauxAssistantMessage("REVIEWED");
       }),
     );
-    const otherWorkspace = f.storage.createWorkspace({ name: "Elsewhere", hostMount: f.dir });
-    const host = f.session("Host target");
-    const same = f.session("Same sandbox");
-    const other = f.session("Other sandbox");
-    other.workspaceId = otherWorkspace.id;
-    f.storage.saveSession(other);
+    writeFileSync(join(f.dir, "AGENTS.md"), "PROJECT_RULES_MARKER");
+    const agents = f.storage.getAgentDefinitionStore();
+    const reviewer = agents.createAgent({
+      name: "Reviewer",
+      instructions: { mode: "replace", text: "REVIEWER_PROMPT" },
+      sessionDefaults: { model: "faux/faux-2", thinkingLevel: "high", tools: ["read", "ask"] },
+    });
+    agents.createAgent({
+      name: "Plugged",
+      resources: { extensionIds: ["extension_missing", "builtin:codemode"] },
+    });
+    agents.createAgent({
+      name: "Fenced",
+      launchConstraints: { allowedWorkspaceIds: ["elsewhere"] },
+    });
     await f.manager.startSession(f.parent.id, f.workspace);
-    await f.manager.startSession(host.id, f.workspace);
-    await f.manager.startSession(same.id, f.workspace);
-    await f.manager.startSession(other.id, otherWorkspace);
-    // Detached host target: reaching it would have to attach it first.
-    await f.manager.stopSession(host.id);
-    expect(f.manager.isActive(host.id)).toBe(false);
-    Object.assign(state, { host: host.id, same: same.id, other: other.id });
-
     const harness = await f.harness();
-    // Mark the conversation as a sandbox one, with a stand-in guest env the harness will accept.
-    const sandbox = async (session: Session, workspaceId: string) => {
-      const id = conversationOf(f.storage, session);
-      const host = await f.openHost(session.id);
-      await (
-        await host.open()
-      ).harness.commit(async (tx) => {
-        const runtime = await tx.doc(DurableRuntime, id);
-        runtime.kind = "sandbox";
-        runtime.workspaceId = workspaceId;
-      }, context);
-      host.bindSandboxEnv(id, new NodeExecutionEnv({ cwd: f.dir }));
-    };
-    await sandbox(f.parent, f.workspace.id);
-    await sandbox(same, f.workspace.id);
-    await sandbox(other, otherWorkspace.id);
-
     const parentConversation = conversationOf(f.storage, f.parent);
     let results = 0;
-    const call = async (prompt: string) => {
+    const call = async (prompt: string): Promise<ToolResult> => {
       await f.manager.sendPrompt(f.parent.id, prompt);
       results += 1;
       await until(
-        async () => (await toolResults(harness, parentConversation)).length === results,
+        async () =>
+          (await toolResults(harness, parentConversation)).length === results &&
+          (await harness.snapshot(LiveDoc, parentConversation, context))?.run === undefined,
         prompt,
       );
-      await until(
-        async () =>
-          (await harness.snapshot(LiveDoc, parentConversation, context))?.run === undefined,
-        "parent idle",
-      );
+      return (await toolResults(harness, parentConversation))[results - 1]!;
     };
-    await call("Send host");
-    await call("Wait host");
-    await call("Send other");
-    await call("Send same");
 
-    const [sendHost, waitHost, sendOther, sendSame] = await toolResults(
-      harness,
-      parentConversation,
+    expect(await call("Review it")).toMatchObject({ text: "REVIEWED" });
+    const child = f.storage.listSessions().find((session) => session.name === "Rev")!;
+    const childConversation = conversationOf(f.storage, child);
+    const stored = await harness.snapshot(AgentDoc, childConversation, context);
+    expect(stored).toMatchObject({
+      model: { provider: "faux", modelId: "faux-2" },
+      thinkingLevel: "high",
+      tools: ["read", "ask"],
+    });
+    expect(stored?.instructions?.startsWith("REVIEWER_PROMPT\n\nWorking directory: ")).toBe(true);
+    expect(await harness.snapshot(OppiAgentDoc, childConversation, context)).toEqual({
+      agent: { id: reviewer.id, version: 1, name: "Reviewer", icon: { kind: "default" } },
+      spawn: false,
+      grant: false,
+      projectContext: false,
+      tools: { allowed: ["read", "ask"] },
+    });
+    // The parent reads the project's AGENTS.md; the replaced prompt drops that section.
+    expect(
+      (await harness.snapshot(ProjectContextDoc, parentConversation, context))?.projectContext,
+    ).toContain("PROJECT_RULES_MARKER");
+    expect(
+      (await harness.snapshot(ProjectContextDoc, childConversation, context))?.projectContext,
+    ).toBeUndefined();
+    expect(child.launch).toMatchObject({
+      agentId: reviewer.id,
+      agentVersion: 1,
+      model: "faux/faux-2",
+      tools: { allowed: ["read", "ask"] },
+    });
+
+    const plugged = await call("Plug it");
+    expect(plugged).toMatchObject({ isError: true });
+    expect(plugged.text).toContain(
+      "Selected Agent Extension has no durable entry for a host session: extension_missing, builtin:codemode",
     );
-    for (const refused of [sendHost, waitHost, sendOther])
-      expect(refused).toMatchObject({ isError: true, text: expect.stringContaining("sandbox") });
-    expect(sendSame?.isError).toBeFalsy();
-
-    // Nothing reached the host session: not attached, nothing submitted.
-    expect(f.manager.isActive(host.id)).toBe(false);
-    expect(requestIds(f.storage, f.dir, host, "oppi-send:")).toEqual([]);
-    expect(requestIds(f.storage, f.dir, other, "oppi-send:")).toEqual([]);
-    // The same sandbox workspace stays reachable.
-    expect(requestIds(f.storage, f.dir, same, "oppi-send:")).toHaveLength(1);
+    const fenced = await call("Fence it");
+    expect(fenced).toMatchObject({ isError: true });
+    expect(fenced.text).toContain("Start it as a top-level session instead");
+    expect(
+      f.storage
+        .listSessions()
+        .map((session) => session.name)
+        .sort(),
+    ).toEqual(["Parent", "Rev"]);
+    expect((await call("List them")).text).toBe(
+      `Rev | idle | agent: Reviewer | model: faux/faux-2 | session: ${child.id}`,
+    );
   });
 
   it("does not start new host turns from a background report once its parent is stopped", async () => {
@@ -1091,7 +1169,7 @@ describe("durable-native threads", () => {
         if (text.includes("[session")) return fauxAssistantMessage("NOTED");
         if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
         if (text.includes("Delegate"))
-          return spawnCall({ task: "CHILD_TASK later", background: true });
+          return spawnCall({ task: "CHILD_TASK later", name: "Later" });
         await childGate.wait(signal);
         return fauxAssistantMessage("LATE_ANSWER");
       }),
@@ -1133,7 +1211,7 @@ describe("durable-native threads", () => {
     const f = await fixture(
       model(async ({ last, text, signal }) => {
         if (last.role === "toolResult") return fauxAssistantMessage("DONE");
-        if (text.includes("Spawn")) return spawnCall({ task: "CHILD_TASK work", background: true });
+        if (text.includes("Spawn")) return spawnCall({ task: "CHILD_TASK work", name: "Worker" });
         await childGate.wait(signal);
         return fauxAssistantMessage("OK");
       }),
@@ -1174,10 +1252,8 @@ describe("durable-native threads", () => {
       model(async ({ last, text, signal }) => {
         if (text.includes("[session")) return fauxAssistantMessage("NOTED");
         if (last.role === "toolResult") return fauxAssistantMessage("DONE");
-        if (text.includes("Spawn one"))
-          return spawnCall({ task: "CHILD_TASK one", background: true });
-        if (text.includes("Spawn two"))
-          return spawnCall({ task: "CHILD_TASK two", background: true });
+        if (text.includes("Spawn one")) return spawnCall({ task: "CHILD_TASK one", name: "One" });
+        if (text.includes("Spawn two")) return spawnCall({ task: "CHILD_TASK two", name: "Two" });
         await childGate.wait(signal);
         return fauxAssistantMessage("OK");
       }),
@@ -1241,7 +1317,9 @@ describe("durable engine on create requests", () => {
             } as unknown as RouteContext,
             createRouteHelpers(),
           )
-        : createSessionRoutes(routeContext, createRouteHelpers());
+        : path.startsWith("/agents/")
+          ? createAgentRoutes(routeContext, createRouteHelpers())
+          : createSessionRoutes(routeContext, createRouteHelpers());
     // List handlers read their query from req.url.
     const req = Object.assign(makeRequest(body), { url: path });
     await routes({ method, path: url.pathname, url, req: req as never, res: res as never });
@@ -1253,7 +1331,7 @@ describe("durable engine on create requests", () => {
       model(({ last, text }) => {
         if (last.role === "toolResult") return fauxAssistantMessage("PARENT_DONE");
         if (text.includes("Delegate"))
-          return spawnCall({ task: "CHILD_TASK scout", name: "Scout" });
+          return spawnCall({ task: "CHILD_TASK scout", name: "Scout", wait: true });
         return fauxAssistantMessage("CHILD_ANSWER");
       }),
     );
@@ -1301,6 +1379,102 @@ describe("durable engine on create requests", () => {
     );
     const stoppedRows = stopped.body.stopped as Array<{ id: string; engine?: string }>;
     expect(stoppedRows.find((row) => row.id === sessionId)?.engine).toBe("durable");
+  });
+
+  it("launches a saved Agent durable through the one resolver, and records it in meta.json", async () => {
+    const f = await fixture(model(() => fauxAssistantMessage("AGENT_ANSWER")));
+    const agents = f.storage.getAgentDefinitionStore();
+    const agent = agents.createAgent({
+      name: "Scout",
+      instructions: { mode: "append", text: "SCOUT_RULES" },
+      sessionDefaults: { model: "faux/faux-2", excludeTools: ["bash"] },
+    });
+    const created = await route(f, "POST", `/agents/${agent.id}/sessions`, {
+      prompt: { text: "Scout around" },
+      target: { workspaceId: f.workspace.id },
+      engine: "durable",
+    });
+    expect(created.status).toBe(201);
+    const sessionId = (created.body.session as Session).id;
+    const conversation = conversationOf(f.storage, sessionId);
+    const harness = await f.openStore(sessionId);
+    await until(
+      async () => (await userTexts(harness, conversation)).includes("Scout around"),
+      "the agent's first prompt",
+    );
+    const stored = await harness.snapshot(AgentDoc, conversation, context);
+    expect(stored?.model).toEqual({ provider: "faux", modelId: "faux-2" });
+    expect(stored?.tools).toContain("subagent");
+    expect(stored?.tools).not.toContain("bash");
+    expect(stored?.instructions).toMatch(/^You are an expert coding assistant[^]*SCOUT_RULES$/);
+    expect(await harness.snapshot(OppiAgentDoc, conversation, context)).toMatchObject({
+      agent: { id: agent.id, version: 1, name: "Scout" },
+      spawn: true,
+      grant: false,
+      tools: { excluded: ["bash"] },
+    });
+    const meta = JSON.parse(
+      readFileSync(join(durableStoreDir(f.dir, sessionId), "meta.json"), "utf8"),
+    ) as { agent?: unknown };
+    expect(meta.agent).toEqual({ id: agent.id, version: 1 });
+
+    // A selection the durable engine cannot honor fails closed before a session exists.
+    const plugged = agents.createAgent({
+      name: "Plugged",
+      resources: { extensionIds: ["extension_missing"] },
+    });
+    const before = f.storage.listSessions().length;
+    const refused = await route(f, "POST", `/agents/${plugged.id}/sessions`, {
+      prompt: { text: "Never runs" },
+      target: { workspaceId: f.workspace.id },
+      engine: "durable",
+    });
+    expect(refused.status).toBe(422);
+    expect(refused.body).toMatchObject({
+      code: "agent_extensions_unavailable",
+      recovery: { unavailableExtensions: ["extension_missing"] },
+    });
+    expect(f.storage.listSessions()).toHaveLength(before);
+  });
+
+  it("runs a durable new-session schedule as its saved Agent", async () => {
+    const f = await fixture(model(() => fauxAssistantMessage("SCHEDULED_ANSWER")));
+    const agent = f.storage.getAgentDefinitionStore().createAgent({
+      name: "Nightly",
+      instructions: { mode: "replace", text: "NIGHTLY_PROMPT" },
+    });
+    const hooks = createAgentScheduleDispatchHooks(
+      {
+        storage: f.storage,
+        sessions: f.manager,
+        ensureSessionContextWindow: (session) => session,
+      },
+      "test-runner",
+    );
+    const result = (await hooks.launchNewSession({
+      run: { id: "run-1", idempotencyKey: "schedule-run-1", slotKey: "slot-1" },
+      schedule: { id: "schedule-1" },
+      action: {
+        type: "new_session",
+        workspaceId: f.workspace.id,
+        prompt: "Nightly check",
+        agentId: agent.id,
+        engine: "durable",
+      },
+    } as unknown as NewSessionDispatchInput)) as { sessionId: string };
+    const conversation = conversationOf(f.storage, result.sessionId);
+    expect(conversation).toBeDefined();
+    const harness = await f.openStore(result.sessionId);
+    const stored = await harness.snapshot(AgentDoc, conversation, context);
+    expect(stored?.instructions?.startsWith("NIGHTLY_PROMPT\n\nWorking directory: ")).toBe(true);
+    expect(await harness.snapshot(OppiAgentDoc, conversation, context)).toMatchObject({
+      agent: { id: agent.id, version: 1, name: "Nightly" },
+      projectContext: false,
+    });
+    expect(f.storage.getSession(result.sessionId)?.launch).toMatchObject({
+      source: "schedule",
+      agentId: agent.id,
+    });
   });
 
   it("keeps an omitted or classic engine classic while durable is available", async () => {

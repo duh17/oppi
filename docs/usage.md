@@ -116,11 +116,13 @@ Durable sessions run on the server's durable engine instead of the classic Pi se
 
 Durable sessions are a development playground. They don't run your Pi extensions yet, and they don't match terminal coding agents feature for feature.
 
-Turn on **Settings → Experiments → Durable Sessions** (off by default, saved on this device). When the server you start a session on offers durable sessions, the Quick Session composer shows a **Classic** pill beside the workspace; tap it to start that one session **∞ Durable** (tap again to switch back). New sessions start Classic unless you also turn on **Start Sessions as Durable** below the experiment toggle; then they start durable and the pill switches one session to Classic. A saved Agent can't start durable sessions yet, so picking an Agent shows **Classic · Saved Agents** and the pill can't be switched. Incognito sessions are always Classic. With the experiment off, or on a server that doesn't offer durable sessions, every session is Classic and the composer shows no pill.
+Turn on **Settings → Experiments → Durable Sessions** (off by default, saved on this device). When the server you start a session on offers durable sessions, the Quick Session composer shows a **Classic** pill beside the workspace; tap it to start that one session **∞ Durable** (tap again to switch back). New sessions start Classic unless you also turn on **Start Sessions as Durable** below the experiment toggle; then they start durable and the pill switches one session to Classic. The app still starts saved Agents Classic, so picking an Agent shows **Classic · Saved Agents** and the pill can't be switched. Incognito sessions are always Classic. With the experiment off, or on a server that doesn't offer durable sessions, every session is Classic and the composer shows no pill.
 
 Durable sessions appear in All Sessions like any other session, with a small **∞** after the title. Durable chats follow **Settings → Chat → Style** like any other chat; the title shows a small **Durable** label. The composer is the normal chat input bar.
 
-From the CLI, `oppi session create --workspace <id> --prompt <text> --engine durable` starts a durable session; it fails while the server flag is off. Adding `--agent` fails too: saved Agents can't start durable sessions yet.
+From the CLI, `oppi session create --workspace <id> --prompt <text> --engine durable` starts a durable session; it fails while the server flag is off. Add `--agent <name>` to start it as a saved Agent, or use `oppi schedule create --engine durable` for a schedule. An Agent Extension that has no durable version fails the launch and names the Extension.
+
+A durable session can start helper sessions of its own with its `subagent` tool. Each one is a child session you can open from the tool row, listed in All Sessions. It reports its answer back to the session that started it. A child can start its own children only when its parent allows it.
 
 ## Live Remote Screen experiment
 

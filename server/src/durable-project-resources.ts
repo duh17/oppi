@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { posix } from "node:path";
 import {
   DefaultResourceLoader,
   SettingsManager,
@@ -6,14 +7,13 @@ import {
   stripFrontmatter,
   type Skill,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentDefinition } from "./agent-launch-service.js";
+import type { DurableAgentResources } from "./durable-agent.js";
 import type { ReadonlyMount } from "./gondolin-manager.js";
 import {
   assertSelectedAgentResourcesAvailable,
   assertSelectedAgentSkillsLoaded,
   assertSelectedAgentSkillsOutsideUntrustedProject,
   hostWorkspacePathToGuest,
-  normalizeAgentContextFiles,
   normalizeSelectedAgentSkillPaths,
   redactHostEnvironment,
   sandboxGuestSkills,
@@ -44,18 +44,21 @@ export async function loadDurableProjectResources(options: {
   sandboxGuestCwd?: string;
   /** Host sessions: the project trust decision. Sandbox sessions are always trusted. */
   projectTrusted: boolean;
-  agentDefinition?: AgentDefinition;
+  /** The saved Agent's selection, from the session's `oppi.agent` document. */
+  resources?: DurableAgentResources;
+  /** False when the Agent's instructions replace the prompt: no context files at all. */
+  projectContext?: boolean;
 }): Promise<DurableProjectResources> {
-  const { hostCwd, agentDir, sandboxGuestCwd, agentDefinition } = options;
-  const selectedSkillPaths = normalizeSelectedAgentSkillPaths(
-    agentDefinition?.resources?.skillPaths,
-    hostCwd,
-  );
+  const { hostCwd, agentDir, sandboxGuestCwd, resources } = options;
+  const selectedSkillPaths = normalizeSelectedAgentSkillPaths(resources?.skillPaths, hostCwd);
   const projectTrusted = sandboxGuestCwd !== undefined || options.projectTrusted;
   if (!projectTrusted)
     assertSelectedAgentSkillsOutsideUntrustedProject(selectedSkillPaths, hostCwd);
   assertSelectedAgentResourcesAvailable(selectedSkillPaths, undefined);
-  const savedAgentFiles = normalizeAgentContextFiles(agentDefinition, sandboxGuestCwd);
+  const savedAgentFiles = (resources?.agentsFiles ?? []).map((file) => ({
+    path: sandboxGuestCwd ? posix.join(sandboxGuestCwd, file.path) : file.path,
+    content: file.content,
+  }));
   const mounts = new Map<string, ReadonlyMount>();
   const hostSkillFiles = new Map<string, string>();
   const loader = new DefaultResourceLoader({
@@ -70,7 +73,7 @@ export async function loadDurableProjectResources(options: {
     ...(selectedSkillPaths !== undefined
       ? { noSkills: true, additionalSkillPaths: selectedSkillPaths }
       : {}),
-    ...(agentDefinition?.resources?.noContextFiles ? { noContextFiles: true } : {}),
+    ...(resources?.noContextFiles ? { noContextFiles: true } : {}),
     skillsOverride: (base) => {
       // Validate the saved Agent selection against host paths, before the sandbox rewrite.
       assertSelectedAgentSkillsLoaded(selectedSkillPaths, base);
@@ -95,7 +98,7 @@ export async function loadDurableProjectResources(options: {
   });
   await loader.reload();
   return {
-    contextFiles: loader.getAgentsFiles().agentsFiles,
+    contextFiles: options.projectContext === false ? [] : loader.getAgentsFiles().agentsFiles,
     skills: loader.getSkills().skills,
     hostSkillFiles,
     readonlyMounts: [...mounts.values()],

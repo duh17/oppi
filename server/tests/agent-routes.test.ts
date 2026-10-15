@@ -1430,7 +1430,7 @@ describe("agent routes", () => {
     }
   });
 
-  it("refuses a durable saved-Agent launch before saving a session, and still launches classic", async () => {
+  it("launches a saved Agent durable on request, and refuses what durable cannot run before saving a session", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-agent-engine-refusal-"));
     const store = new AgentDefinitionStore(dataDir);
     const sessions: Session[] = [];
@@ -1487,18 +1487,23 @@ describe("agent routes", () => {
         return res;
       };
 
-      // The server offers durable sessions; saved Agents still cannot use them.
-      const refused = await launch({ engine: "durable", idempotencyKey: "agent-durable-1" });
-      expect(refused.statusCode).toBe(400);
-      expect(JSON.parse(refused.body)).toEqual({
-        error:
-          "Saved Agents cannot start durable sessions yet; start a plain durable session instead.",
-      });
+      const incognito = await launch({ engine: "durable", ephemeral: true });
+      expect(incognito.statusCode).toBe(400);
+      expect(JSON.parse(incognito.body).error).toBe(
+        "Incognito sessions cannot run on the durable engine; omit engine",
+      );
+      expect((await launch({ engine: "fast" })).statusCode).toBe(400);
       expect(sessions).toEqual([]);
       expect(startSession).not.toHaveBeenCalled();
 
+      expect(
+        (await launch({ engine: "durable", idempotencyKey: "agent-durable-1" })).statusCode,
+      ).toBe(201);
       expect((await launch({ engine: "classic" })).statusCode).toBe(201);
-      expect(sessions.map((session) => session.serverDurable)).toEqual([undefined]);
+      expect(sessions.map((session) => session.serverDurable && session.launch?.agentId)).toEqual([
+        agent.id,
+        undefined,
+      ]);
     } finally {
       store.close();
       rmSync(dataDir, { recursive: true, force: true });

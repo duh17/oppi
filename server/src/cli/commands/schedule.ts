@@ -71,6 +71,7 @@ async function newSessionAction(
     ...(resolvedModel?.thinkingLevel ? { thinkingLevel: resolvedModel.thinkingLevel } : {}),
     ...(flags.worktree ? { worktreeId: flags.worktree } : {}),
     ...(flags.name ? { name: flags.name } : {}),
+    ...(flags.engine ? { engine: flags.engine } : {}),
   };
 }
 

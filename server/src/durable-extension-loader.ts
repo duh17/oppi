@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DurableExtensionModule, DurableExtensionRuntime } from "./durable-extension-api.js";
+import { serverResourceId } from "./server-resource-id.js";
 
 /** A Pi package that has a durable entry next to (or instead of) its classic one. */
 export interface DurableExtensionPackage {
@@ -13,12 +14,16 @@ export interface DurableExtensionPackage {
   readonly root: string;
   /** The `durable.ts` (or `package.json` `oppi.durable`) file, resolved through symlinks. */
   readonly entry: string;
+  /** Server resource IDs of the package's classic extensions, as saved Agents select them. */
+  readonly extensionIds: readonly string[];
 }
 
 export interface LoadedDurableExtension {
   readonly extension: Extension;
   readonly runtimes: readonly DurableExtensionRuntime[];
   readonly entry: string;
+  /** The classic extension IDs this durable extension stands for in a saved Agent's selection. */
+  readonly extensionIds: readonly string[];
 }
 
 export interface DurableExtensionIssue {
@@ -66,8 +71,7 @@ export async function discoverDurableExtensionPackages(agentDir: string): Promis
     entry: agentDir,
     message: `Pi settings (${entry.scope}): ${entry.error.message}`,
   }));
-  const packages: DurableExtensionPackage[] = [];
-  const seen = new Set<string>();
+  const packages: Array<{ root: string; entry: string; extensionIds: string[] }> = [];
   for (const resource of resolved.extensions) {
     if (!resource.enabled) continue;
     const root = packageRoot(resource.path, resource.metadata);
@@ -82,9 +86,13 @@ export async function discoverDurableExtensionPackages(agentDir: string): Promis
     if (!entry) continue;
     // The real path, so a symlinked package's relative imports resolve where its files are.
     const real = realpathSync(entry);
-    if (seen.has(real)) continue;
-    seen.add(real);
-    packages.push({ root, entry: real });
+    const id = serverResourceId("extension", resource.path);
+    const known = packages.find((candidate) => candidate.entry === real);
+    if (known) {
+      if (!known.extensionIds.includes(id)) known.extensionIds.push(id);
+      continue;
+    }
+    packages.push({ root, entry: real, extensionIds: [id] });
   }
   return { packages, errors };
 }
@@ -141,7 +149,7 @@ export async function loadDurableExtensions(
   const errors: DurableExtensionIssue[] = [];
   const names = new Set<string>();
   const tools = new Set<string>();
-  for (const { entry } of packages) {
+  for (const { entry, extensionIds } of packages) {
     let module: unknown;
     try {
       module = await jiti.import(entry, { default: true });
@@ -175,7 +183,7 @@ export async function loadDurableExtensions(
     }
     names.add(extension.name);
     for (const tool of extension.tools ?? []) tools.add(tool.name);
-    loaded.push({ extension, runtimes, entry });
+    loaded.push({ extension, runtimes, entry, extensionIds });
   }
   return { loaded, skipped, errors };
 }

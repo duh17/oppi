@@ -4,7 +4,7 @@ export const DURABLE_QUEUE_REQUEST_ID_PREFIX = "oppi-queue:";
 export const DURABLE_FAILURE_REQUEST_ID_PREFIX = "oppi-failure:";
 export const DURABLE_RESERVED_REQUEST_ID_PREFIXES = [
   "background-job:",
-  // Session tools: a child's first task, its report to the parent, and `session_send`.
+  // The subagent tool: a child's first task, its report to the parent, and `subagent send`.
   "oppi-spawn:",
   "oppi-report:",
   "oppi-send:",

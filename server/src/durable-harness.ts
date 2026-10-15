@@ -1186,6 +1186,11 @@ export class DurableHarness {
       .map((loaded) => loaded.extension);
   }
 
+  /** Every loaded Pi package durable extension, with the classic IDs saved Agents select it by. */
+  get loadedPackages(): readonly LoadedDurableExtension[] {
+    return this.packageExtensions;
+  }
+
   /**
    * Re-read the durable entries of enabled Pi packages and install them in the open
    * registry. Installing an extension under an installed name replaces it in place: running

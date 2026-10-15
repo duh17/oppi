@@ -91,7 +91,7 @@ describe("oppi.control is not offered to other durable sessions", () => {
     async (runtime) => {
       const agent = await startDurable(runtime);
       const tools = agent.tools.map((tool) => tool.name);
-      expect(tools).toContain("session_spawn");
+      expect(tools).toContain("subagent");
       for (const name of ["oppi", "agents_create", "sessions_send", "codemode"])
         expect(tools).not.toContain(name);
       expect(agent.extensions.map((extension) => extension.name)).not.toContain("oppi.control");
