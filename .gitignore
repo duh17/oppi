@@ -28,6 +28,8 @@ scripts/*
 !scripts/duplication-scan.ts
 !scripts/scroll-offset-guard.ts
 !scripts/theme-surface-guard.ts
+!scripts/uikit-structure-guard.ts
+!scripts/uikit-structure-baseline.json
 !scripts/pre-push-plan.ts
 !scripts/pre-push-plan.test.ts
 !scripts/detect-ci-relevant-paths.sh

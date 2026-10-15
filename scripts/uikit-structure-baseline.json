@@ -1,0 +1,1004 @@
+{
+  "version": 1,
+  "files": {
+    "clients/apple/Oppi/App/AgentIconProofPreview.swift": {
+      "NavigationStack": 3,
+      "NavigationLink": 4,
+      ".navigationDestination(": 1,
+      ".sheet(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/AppNavigation.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/AppRootEnvironment.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/AskCardIntentRegressionPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ChatOutlineColdHarnessView.swift": {
+      "NavigationStack": 1,
+      ".navigationDestination(": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/CodeBlockWrappingHarnessView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/CodeGutterAlignmentHarnessView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ContentView.swift": {
+      "NavigationStack": 2,
+      ".sheet(": 2,
+      ".fullScreenCover(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ExtensionDockStressPreview.swift": {
+      "NavigationStack": 1,
+      ".sheet(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ExtensionNotifyChipScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/FeatureEducationP0TipPreview.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/FullScreenReviewCommentHarnessView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/HTMLDOMAnnotationHarnessView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/NavigationBreadcrumb.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/NavigationChromeProfileHarnessView.swift": {
+      "NavigationStack": 2,
+      "NavigationLink": 1,
+      ".navigationDestination(": 4,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/OppiApp.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ReviewCommentStashHarnessView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ReviewCommentStripScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviewView.swift": {
+      "NavigationStack": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/AskCardScreenshotPreview.swift": {
+      ".sheet(": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/AudioScreenshotPreview.swift": {
+      "NavigationStack": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/BuiltInToolFactsPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/ChatFileBrowserPanelPreview.swift": {
+      "NavigationStack": 1,
+      ".inspector(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/ChatSpeakerContrastPreview.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/ComposerScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/ContextBarOverlapPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/DurableConversationScreenshotPreview.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/DurableSessionsScreenshotPreview.swift": {
+      "NavigationStack": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/ExtensionSurfacePreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/FeatureEducationTipsPreview.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/FullscreenChromePreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/GeoJSONMountRainierPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/InboxProviderSetupPreview.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/LatexRenderingPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/LiveActivityScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/MermaidScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/MetalOrbScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/QuietWorkStripPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/RailToolbarScreenshotPreview.swift": {
+      "NavigationStack": 7,
+      ".navigationDestination(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/SSHTerminalScreenshotPreview.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/ScopedLocksScreenshotPreview.swift": {
+      "NavigationStack": 6,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/SessionStatusScreenshotPreview.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/SessionTimelinePreview.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/SettingsScreenshotPreview.swift": {
+      "NavigationStack": 1,
+      ".navigationDestination(": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/SettingsSweepScreenshotPreview.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/ShareRedactionPreview.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/SidePanelScreenshotPreview.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/SplitFileNavigationRegressionPreview.swift": {
+      "NavigationStack": 1,
+      ".navigationDestination(": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/SyntaxLanguagesPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/USDZRenderingPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/WhatsNewScreenshotPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ScreenshotPreviews/WorkspaceSettingsScreenshotPreview.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/SemanticPickHarnessView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/ServerResourcesScreenshotPreview.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/StreamingFlickerPreviewView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/UIHangHarnessView.swift": {
+      "NavigationStack": 1,
+      ".navigationDestination(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/UIKitSheetPresentation.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/WorkspaceAdaptiveRootView.swift": {
+      "NavigationStack": 2,
+      "NavigationSplitView": 1,
+      ".navigationDestination(": 10,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/App/WorkspaceSidebarGitStatusPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Extensions/Color+Theme.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Extensions/SessionStatus+Color.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Extensions/View+iPadReadableContent.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Formatting/ANSIAttributedStringRenderer.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Formatting/ProviderColor.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Formatting/SyntaxHighlighter.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Models/QuickCommentTemplate.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Models/SlashCommand+SwiftUI.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Networking/APIClientEnvironment.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Services/AppLockCoverController.swift": {
+      "UIHostingController(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Services/ComposerDraftEnvironment.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Services/FileSharePresenter.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Services/FileShareService.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Services/IconAssetCache.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Theme/AppFontConstants.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Theme/AppTheme.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Theme/RemoteTheme.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Theme/ThemeCatalog.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Theme/ThemeContrast.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Theme/ThemeStore.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/AgentIconView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/AppLockCoverView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/AuthenticatedMediaPlayback.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/CameraPicker.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/DiffChunkCollectionView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/EmbeddedFileViewerView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/FileIcon.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/FullScreenCodeBodies.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/FullScreenCodeSupport.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/FullScreenCodeView.swift": {
+      ".sheet(": 1,
+      ".fullScreenCover(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/FullScreenCodeViewController.swift": {
+      "UIHostingController(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/FullScreenReviewCommentStashOverlay.swift": {
+      ".sheet(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/GraphicalRendererView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/ImageBlobView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/InlineMediaPlayback.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/MarkdownContentViewWrapper.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/MarkdownText.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/PaperMarkupCanvasHostController.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/PastableTextView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/PhotoLibraryPicker.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/PiAvatarView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/ProviderIcon.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/ScopedLockViews.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/SettingsKit.swift": {
+      "NavigationLink": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/StatusPill.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/TerminalMirrorIndicatorView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/UnifiedDiffView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Core/Views/WorkingSpinnerView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Agents/AgentIconPickerView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Agents/AgentManagementView.swift": {
+      "NavigationLink": 2,
+      ".navigationDestination(": 1,
+      ".sheet(": 6,
+      ".fullScreenCover(": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Agents/AgentNativeEditView.swift": {
+      "NavigationStack": 1,
+      "NavigationLink": 4,
+      ".sheet(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/ChatTimelineDestinationPresenter.swift": {
+      "NavigationStack": 1,
+      "UIHostingController(": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/ChatView.swift": {
+      "NavigationStack": 2,
+      ".navigationDestination(": 2,
+      ".sheet(": 2,
+      ".fullScreenCover(": 2,
+      ".inspector(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Composer/AskCard.swift": {
+      ".sheet(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Composer/AskCardExpanded.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Composer/AskCardShared.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Composer/ChatInputBar.swift": {
+      ".popover(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Composer/ComposerShared.swift": {
+      ".fullScreenCover(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Composer/ExpandedComposerView.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Composer/FileSuggestionList.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Composer/MessageQueueContainer.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Composer/MicButtonChromeView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Composer/MicButtonLabel.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Composer/SlashCommandSuggestionList.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Output/ToolPresentationBuilder.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/ReviewComments/ReviewCommentInlineDraftPresenter.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/ReviewComments/ReviewCommentStashSheet.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/ReviewComments/ReviewCommentStripChrome.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Selection/ReviewCommentSelection.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Session/ChatActionHandler.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Session/ChatScrollController.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/ChatSubviews.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/ContextInspectorView.swift": {
+      "NavigationLink": 1,
+      ".navigationDestination(": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/ContextUsageViews.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/ExtensionNativeBlockViews.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/ExtensionNotifyChip.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift": {
+      ".fullScreenCover(": 1,
+      "UIHostingController(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/ModelPickerSheet.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/SessionFiles/ChatFileBrowserPanel.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/SessionFiles/SessionFilesListView.swift": {
+      "NavigationLink": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/SessionFiles/SessionTouchedFileContentView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/SessionOutlineView.swift": {
+      "NavigationStack": 2,
+      ".sheet(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/SessionToolbar.swift": {
+      ".popover(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/Sharing/ShareSessionRedactionSheet.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/WorkspaceContextBar.swift": {
+      "NavigationStack": 2,
+      ".navigationDestination(": 1,
+      ".sheet(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownAudioView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownImageView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownUSDZView.swift": {
+      "UIHostingController(": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/ChatItemRow.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/ChatTimelineView.swift": {
+      "UIHostingController(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Collection/ChatTimelineCollectionView+DataSource.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Collection/ChatTimelineCollectionView+RowBuilders.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Collection/ChatTimelineCollectionView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Media/AudioLyricsPlayerView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Media/AudioLyricsPlayerViewController.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Media/AudioPlaybackTransportView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Rows/CompactionTimelineRowContent.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Rows/CustomTimelineRowContent.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Rows/ErrorTimelineRowContent.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Rows/SystemTimelineRowContent.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Rows/ThinkingTimelineRowContent.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Rows/UserTimelineRowContent.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/SegmentRenderer.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/TimelineBubbleStyle.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Tool/BashToolRowView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Tool/CollapsedToolTimelineRowContent.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Tool/NativeExpandedToolViews.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Tool/NotebookCellView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolCallDocumentPreview.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolRowAudioController.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolRowCodeRenderStrategy.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolRowTextRenderer.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowContent.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowDisplayState.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowStatusAppearance.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Timeline/Tool/ToolTimelineRowViewStyler.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/ControlSessions/GuidedControlSessionComposer.swift": {
+      "NavigationStack": 1,
+      ".sheet(": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/ControlSessions/ReviewableControlMarkdownView.swift": {
+      ".sheet(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Extensions/ServerExtensionDetailView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Extensions/ServerExtensionsView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/FeatureEducation/FeatureEducationTipBanner.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/FeatureEducation/FeatureEducationTips.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditChrome.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditorViewController.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/FileBrowser/FileBrowserContentView.swift": {
+      ".sheet(": 1,
+      "UIHostingController(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/FileBrowser/FileBrowserMotionPreviewSupport.swift": {
+      "NavigationStack": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/FileBrowser/FileBrowserView.swift": {
+      "NavigationLink": 4,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Icons/IconPickerView.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Mcp/McpAddServerView.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Mcp/McpServerDetailView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Mcp/McpServersView.swift": {
+      "NavigationLink": 1,
+      ".sheet(": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Mcp/McpSignInOwner.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Mcp/McpSignInSheet.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Onboarding/OnboardingView.swift": {
+      "NavigationStack": 2,
+      ".sheet(": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Onboarding/QRScannerView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Onboarding/WaitingForPairingApprovalView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Onboarding/WhatsNewView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/QuickSession/QuickSessionSheet.swift": {
+      ".sheet(": 1,
+      ".fullScreenCover(": 1,
+      ".popover(": 3,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Review/CommitDetailView.swift": {
+      "NavigationStack": 2,
+      ".navigationDestination(": 1,
+      ".sheet(": 1,
+      ".inspector(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Review/GitStatusColor.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Review/ReviewFileSummaryBar.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Review/TrailingSidePanelPolicy.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Review/WorkspaceReviewFileDetailView.swift": {
+      "NavigationStack": 1,
+      ".navigationDestination(": 1,
+      ".inspector(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/HerdrAgentsView.swift": {
+      "NavigationStack": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalArrowControl.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalAttention.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalComposer.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalConnectSession.swift": {
+      "NavigationStack": 1,
+      ".navigationDestination(": 1,
+      ".sheet(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalHostListView.swift": {
+      ".navigationDestination(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalNoticeCard.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalSetupView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalStatusGlyph.swift": {
+      ".popover(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalSurface.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalView.swift": {
+      ".sheet(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Schedules/ScheduleManagementView.swift": {
+      ".navigationDestination(": 1,
+      ".sheet(": 2,
+      ".fullScreenCover(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Schedules/ScheduleNativeEditView.swift": {
+      "NavigationStack": 2,
+      ".sheet(": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Server/DailyCostChartView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Server/DailyDetailView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Server/ModelBreakdownSection.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Server/ServerHealthSection.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Server/ServerView.swift": {
+      "NavigationStack": 1,
+      ".navigationDestination(": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Server/StatsHeroRow.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Server/WorkspaceBreakdownSection.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Servers/BadgePickerViews.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Servers/ModelProvidersManagementView.swift": {
+      "NavigationStack": 4,
+      ".navigationDestination(": 1,
+      ".sheet(": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Servers/ModelProvidersView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Servers/PairingApprovalPrompt.swift": {
+      "NavigationStack": 1,
+      ".sheet(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Servers/ServerAboutPage.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Servers/ServerBadgePage.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Servers/ServerPairedDevicesPage.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Servers/ServerPushNotificationsSection.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Servers/ServerSettingsRootView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Sessions/LocalSessionRow.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Sessions/SessionListEntryRow.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Sessions/SessionRow.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Sessions/SessionRowDisplay.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Sessions/SessionRowDisplayEditor.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Sessions/SessionStatusPill.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Sessions/SessionThreadViews.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/AutoTitleSettingsView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/DictationDictionaryView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/QuickCommentsSettingsView.swift": {
+      "NavigationStack": 1,
+      ".sheet(": 1,
+      ".popover(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/SSHPreflightView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/ScopedLockToggle.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsAppearancePage.swift": {
+      "NavigationLink": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsChatPage.swift": {
+      "NavigationLink": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsExperimentsPage.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsGeneralPage.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsPrivacyPage.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsSessionsPage.swift": {
+      "NavigationLink": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsStoragePage.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsTextPage.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/SettingsVoicePage.swift": {
+      "NavigationLink": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/TailnetSettingsView.swift": {
+      "NavigationLink": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Settings/ThemeImportView.swift": {
+      ".sheet(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Skills/ServerCatalogServerRow.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Skills/ServerSkillBrowserView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Skills/ServerSkillDetailView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Skills/ServerSkillFileView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Skills/ServerSkillsView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Skills/SkillDetailView.swift": {
+      "NavigationLink": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Skills/SkillFileView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/DesktopCurrentStillViewerView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/DesktopLiveSampleBufferView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/DesktopLiveViewerView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/SessionInboxComposeChrome.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/SessionInboxView.swift": {
+      "NavigationStack": 1,
+      ".navigationDestination(": 13,
+      ".fullScreenCover(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceComponents.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceCreateView.swift": {
+      "NavigationStack": 1,
+      ".sheet(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceDetailView.swift": {
+      ".navigationDestination(": 2,
+      ".fullScreenCover(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceDetailsPage.swift": {
+      ".sheet(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceExtensionsPage.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceFolderValidationView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceHomeView.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceInstructionsPage.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceListView.swift": {
+      ".navigationDestination(": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceNetworkAccessPage.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceSandboxMcpPage.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceSessionNavigationChromePolicy.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceSettingsRootView.swift": {
+      "NavigationLink": 1,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceSkillsPage.swift": {
+      ".navigationDestination(": 2,
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceStoppedSessionsSection.swift": {
+      "import SwiftUI": 1
+    }
+  }
+}

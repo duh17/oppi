@@ -1,6 +1,6 @@
 # Oppi client architecture
 
-The Oppi Apple clients control and render server-owned and terminal-owned Pi sessions. They keep workspace navigation HTTP-first and reserve WebSockets for live streams. iOS paints the hot chat timeline with UIKit over authenticated HTTPS/WSS. Mac paints with AppKit/SwiftUI over the owner Unix socket.
+The Oppi Apple clients control and render server-owned and terminal-owned Pi sessions. They keep workspace navigation HTTP-first and reserve WebSockets for live streams. iOS paints the hot chat timeline with UIKit over authenticated HTTPS/WSS. Mac paints with AppKit and existing SwiftUI over the owner Unix socket.
 
 ## Audience and scope
 
@@ -107,9 +107,25 @@ graph TD
   Reducer --> UIKit
 ```
 
-## App root environment and UIKit sheets
+## UIKit and SwiftUI ownership
 
-`OppiApp` publishes the app-scoped services (`ConnectionCoordinator`, `AppNavigation`, `ServerStore`, theme, the active server's scoped stores) through one `AppRootEnvironment` and `appRootEnvironment(_:)` in `Oppi/App/AppRootEnvironment.swift`. A sheet whose content reads those services through `@Environment` uses `uiKitSheet(item:)` or `uiKitSheet(isPresented:)` (`Oppi/App/UIKitSheetPresentation.swift`), not SwiftUI `.sheet`. UIKit presents a hosting controller and re-applies the root set explicitly. On the iOS app on Mac, SwiftUI's sheet environment bridge dropped `ConnectionCoordinator` and crashed build 54. The same contract as `.sheet` applies: the binding presents and dismisses, and `onDismiss` runs after swipe-down and after the content calls `dismiss()`. Sheets that need presenter-local stores, such as chat's reducer, still use SwiftUI `.sheet`.
+UIKit owns iOS structure. Decided 2026-10-15; the ratchet guard below enforces it.
+
+**iOS (`clients/apple/Oppi`)**
+
+1. **UIKit owns app structure and every modal.** Window root, split view, navigation stacks, and every presentation (sheet, full-screen cover, popover, inspector) belong to UIKit. The target end state is one UIKit router driven by `AppNavigation`. Until it exists, `uiKitSheet(item:)` and `uiKitSheet(isPresented:)` (`Oppi/App/UIKitSheetPresentation.swift`) are the transitional UIKit presentation path. UIKit presents a hosting controller and re-applies the root environment explicitly. Its contract matches SwiftUI `.sheet`: the binding presents and dismisses, and `onDismiss` runs after swipe-down and after the content calls `dismiss()`. SwiftUI alerts, confirmation dialogs, and menus inside an existing SwiftUI screen may stay until that screen moves.
+2. **New screens and views are UIKit.** Write view controllers and views. Read `@Observable` stores in `updateProperties()` (iOS 26 automatic observation tracking). Use `UICollectionView` list layout with content configurations for lists and settings, `navigationItem` bar items (set `visibilityPriority` and `axisBehavior` where Duo vertical bars matter), `UISheetPresentationController` for sheets, and `UIGlassEffect` for custom glass.
+3. **Existing SwiftUI screens stay until a trigger moves them.** The triggers are a crash or bug in the screen, a substantive rewrite, or the router migration reaching it. The commit names the trigger. No tidy-up conversions: a conversion with no trigger adds risk and no behavior.
+4. **SwiftUI shown from UIKit gets app services through `appRootEnvironment(_:)`.** `OppiApp` publishes the app-scoped services (`ConnectionCoordinator`, `AppNavigation`, `ServerStore`, theme, the active server's scoped stores) as one `AppRootEnvironment` (`Oppi/App/AppRootEnvironment.swift`). Never hand-write an environment list at a hosting seam. Required `@Environment(Type.self)` lookups that were missing across a UIKit↔SwiftUI seam caused two crashes: build 54 on the iOS app on Mac, where SwiftUI's sheet environment bridge dropped `ConnectionCoordinator` (`0ffdb2e5b`), and the file viewer (`06d79f50c`). A sheet that reads those services uses `uiKitSheet`, not SwiftUI `.sheet`. Legacy: a few sheets that need presenter-local stores, such as chat's reducer, still use SwiftUI `.sheet`. Do not copy that pattern for new code; present from UIKit and pass the presenter-local values explicitly.
+5. **SwiftUI only where Apple requires it.** That means widgets, control widgets, and Live Activities (`OppiControlWidget`, `OppiActivityExtension`).
+
+**Mac (`clients/apple/OppiMac`)**
+
+New Mac views are AppKit by default. Existing SwiftUI Mac code stays until a separate migration decision. The AGENTS.md rule still holds: a feature does not touch the Mac app unless the request names Mac, macOS, desktop, or OppiMac.
+
+**OppiCore** stays UI-framework-free.
+
+**Ratchet guard.** `scripts/uikit-structure-guard.ts` counts these SwiftUI constructs per file under `clients/apple/Oppi/**/*.swift` after stripping comments and string literals: `NavigationStack`, `NavigationSplitView`, `NavigationLink`, `.navigationDestination(`, `.sheet(`, `.fullScreenCover(`, `.popover(`, `.inspector(`, `UIHostingController(`, and `import SwiftUI`. A file fails when a count exceeds `scripts/uikit-structure-baseline.json`; new files have baseline 0, and decreases pass. Raising a baseline needs Chen's approval. Lowering it after a migration is expected: run `bun scripts/uikit-structure-guard.ts --update` and commit the reduced baseline with the migration. Renaming or moving a file keeps its counts, so `--update` after a rename is fine when the baseline diff only moves entries. Ordinary runs never write the baseline.
 
 ## Terminal tool output
 
@@ -123,7 +139,7 @@ These rules are enforced by `server/scripts/check-architecture-boundaries.ts` du
 
 - `clients/apple/OppiCore/Runtime/TimelineReducer.swift` and `DeltaCoalescer.swift` must stay platform-neutral under the shared-core import rule.
 - `clients/apple/OppiCore/**` files must not import UIKit, AppKit, SwiftUI, ActivityKit, UserNotifications, Speech, AVFoundation, WebKit, or MetricKit. Put platform-specific code in the iOS or macOS app target.
-- `clients/apple/OppiMac/**` files must not import UIKit. Mac paint stays on AppKit/SwiftUI.
+- `clients/apple/OppiMac/**` files must not import UIKit. New Mac views are AppKit by default; existing SwiftUI Mac code stays until a separate migration decision.
 - `project.yml` is the Mac target membership authority. OppiMac may compile `OppiMac/**`, `OppiCore/**`, `Shared/**`, and only the established `Oppi/**` adapter files listed there; do not add arbitrary iOS production files to the Mac target.
 - `clients/apple/Oppi/Core/Views/**` and `clients/apple/Oppi/Features/Chat/Timeline/**` must not reference `APIClient` or `WebSocketClient` directly.
 - `clients/apple/Oppi/Core/Views/**` and `clients/apple/Oppi/Features/Chat/Timeline/**` must not reference `ServerConnection`, `ConnectionCoordinator`, `apiClient` (member, environment key path, or binding), `wsClient`, or `SessionStore`/`WorkspaceStore` (`view-layer-connection-boundary`). They receive explicit values (`SessionContentAccess`, icon cache) and typed actions from chat composition.
@@ -132,3 +148,4 @@ These rules are enforced by `server/scripts/check-architecture-boundaries.ts` du
 - iOS content web links use `MarkdownLinkInteractionSupport` or `.webLinkTapped`; `OppiApp` applies the browser preference. Direct system opens are limited to that owner and allowlisted non-HTTP fallbacks. Only that owner and Tailnet authentication may present `InAppBrowserPresenter` directly. Timeline `UITextViewDelegate` conformances must implement `primaryActionFor` in the same file.
 - Generic extension UI rendering and routing must not branch on concrete tool names, extension names, status keys, widget keys, or display names. Add semantic protocol metadata at the producer boundary instead. This includes `ExtensionSurfacePanel.swift` and `MacExtensionSurfacePanel.swift`.
 - SwiftUI foreground, fill, and stroke styling must use the environment-resolved `.theme*` `ShapeStyle` shorthand. `Color.theme*` is a runtime snapshot for APIs that require a concrete `Color` or a UIKit/AppKit bridge. Persistent list and panel modifiers must read `theme` or `themeID` from the environment so mounted content repaints after a theme switch. `scripts/theme-surface-guard.ts` enforces the shorthand boundary during the iOS architecture check.
+- iOS SwiftUI structure constructs (`NavigationStack`, `NavigationSplitView`, `NavigationLink`, `.navigationDestination(`, `.sheet(`, `.fullScreenCover(`, `.popover(`, `.inspector(`, `UIHostingController(`, `import SwiftUI`) may not exceed the per-file counts in `scripts/uikit-structure-baseline.json`. New files start at 0. `scripts/uikit-structure-guard.ts` enforces the ratchet during the iOS architecture check; see [UIKit and SwiftUI ownership](#uikit-and-swiftui-ownership).

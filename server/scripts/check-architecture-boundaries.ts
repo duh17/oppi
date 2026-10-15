@@ -118,6 +118,10 @@ function runScrollOffsetGuard(repoRoot) {
   runRepoGuard(repoRoot, "scroll-offset-guard.ts");
 }
 
+function runUiKitStructureGuard(repoRoot) {
+  runRepoGuard(repoRoot, "uikit-structure-guard.ts");
+}
+
 function run(options) {
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const repoRoot = path.resolve(scriptDir, "../..");
@@ -169,6 +173,7 @@ function run(options) {
     if (options.scope === "all" || options.scope === "ios") {
       runThemeSurfaceGuard(repoRoot);
       runScrollOffsetGuard(repoRoot);
+      runUiKitStructureGuard(repoRoot);
     }
     console.log(`Architecture boundary checks passed (scope: ${options.scope}).`);
     return;
