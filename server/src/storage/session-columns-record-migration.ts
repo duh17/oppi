@@ -63,9 +63,10 @@ export function createSessionStateSessionsTable(db: SqliteDatabase, table: strin
  * that backup. The file is vacuumed once after the commit. Returns whether the rebuild ran.
  *
  * The source is the table a release kept complete (it added any missing column on every open).
- * oppi-server 0.51.0 predates `program_status_json`; its rows copy NULL there, and startup
- * derives the status from the lifecycle. A file last opened by a release older than 0.51.0 fails
- * here with a SQL error; open it once with oppi-server 0.51.0, or restore a backup.
+ * Columns later releases added copy NULL when the source lacks them: oppi-server 0.51.0 predates
+ * `program_status_json` (startup derives the status from the lifecycle), and 0.50.0 / 0.49.1
+ * also predate `server_durable_json` (no durable sessions existed, so every row is classic).
+ * Those three table shapes are the supported floor; anything older is untested.
  */
 export function runSessionColumnsRecordMigration(db: SqliteDatabase, dataDir: string): boolean {
   const key = SESSION_COLUMNS_RECORD_MIGRATION_KEY;
@@ -81,11 +82,13 @@ export function runSessionColumnsRecordMigration(db: SqliteDatabase, dataDir: st
     return false;
   }
 
+  const optionalColumn = (name: string): string => (sourceColumns.has(name) ? name : "NULL");
+  const serverDurable = optionalColumn("server_durable_json");
   const { backupPath, result: counts } = migrateWithBackup(db, dataDir, key, () =>
     db.transaction(() => {
-      refuseUnreadableSources(db);
+      refuseUnreadableSources(db, serverDurable);
       createSessionStateSessionsTable(db, "session_state_sessions_next");
-      db.exec(copySessionsSql(sourceColumns.has("program_status_json")));
+      db.exec(copySessionsSql(optionalColumn("program_status_json"), serverDurable));
       const copied = count(db, "SELECT COUNT(*) AS count FROM session_state_sessions_next");
       const source = count(db, "SELECT COUNT(*) AS count FROM session_state_sessions");
       if (copied !== source) {
@@ -128,9 +131,10 @@ export function runSessionColumnsRecordMigration(db: SqliteDatabase, dataDir: st
  * from its column. JSON is read through `json_valid` (nested CASE, since `json_type` throws on
  * malformed text and AND does not promise evaluation order), so one corrupt value is dropped
  * instead of failing every start. `json_patch` onto '{}' drops null members, so absent stats
- * stay absent.
+ * stay absent. `programStatus` and `serverDurable` are the source column, or NULL when the
+ * source table predates it.
  */
-const copySessionsSql = (hasProgramStatus: boolean): string => `
+const copySessionsSql = (programStatus: string, serverDurable: string): string => `
   INSERT INTO session_state_sessions_next (
     id, workspace_id, worktree_id, name, status, created_at, last_activity,
     current_turn_started_at, warnings_json, runtime, mirror_json, pi_session_file,
@@ -150,7 +154,7 @@ const copySessionsSql = (hasProgramStatus: boolean): string => `
     CASE WHEN json_valid(session_json) THEN
       CASE WHEN json_type(session_json, '$.control') = 'object'
         THEN json_extract(session_json, '$.control') END END,
-    ${hasProgramStatus ? "program_status_json" : "NULL"},
+    ${programStatus},
     json_patch('{}', json_object(
       'model', model,
       'thinkingLevel', thinking_level,
@@ -171,8 +175,8 @@ const copySessionsSql = (hasProgramStatus: boolean): string => `
     ))
   FROM (
     SELECT *,
-      CASE WHEN json_valid(server_durable_json) THEN
-        CASE WHEN json_type(server_durable_json) = 'object' THEN server_durable_json END END
+      CASE WHEN json_valid(${serverDurable}) THEN
+        CASE WHEN json_type(${serverDurable}) = 'object' THEN ${serverDurable} END END
         AS durable
     FROM session_state_sessions
   )
@@ -183,16 +187,16 @@ const copySessionsSql = (hasProgramStatus: boolean): string => `
  * silently make a session classic or drop its control metadata, so such rows stop the
  * migration instead (the transaction rolls back to the old table) and are named in the error.
  */
-function refuseUnreadableSources(db: SqliteDatabase): void {
+function refuseUnreadableSources(db: SqliteDatabase, serverDurable: string): void {
   const rows = db
     .prepare(
       `SELECT id FROM session_state_sessions
        WHERE (
-         server_durable_json IS NOT NULL AND server_durable_json <> '' AND
-         CASE WHEN json_valid(server_durable_json) THEN
-           CASE WHEN json_type(server_durable_json) = 'object' THEN
-             COALESCE(json_type(server_durable_json, '$.conversationId') <> 'integer', 0)
-             OR COALESCE(json_type(server_durable_json, '$.storeId') <> 'text', 0)
+         ${serverDurable} IS NOT NULL AND ${serverDurable} <> '' AND
+         CASE WHEN json_valid(${serverDurable}) THEN
+           CASE WHEN json_type(${serverDurable}) = 'object' THEN
+             COALESCE(json_type(${serverDurable}, '$.conversationId') <> 'integer', 0)
+             OR COALESCE(json_type(${serverDurable}, '$.storeId') <> 'text', 0)
            ELSE 0 END
          ELSE 1 END
        ) OR (

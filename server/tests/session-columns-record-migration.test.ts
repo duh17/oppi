@@ -167,6 +167,37 @@ describe("session_state_sessions columns-only migration", () => {
     }
   });
 
+  it("upgrades the table oppi-server 0.50.0 wrote, which has no server_durable_json", () => {
+    // 0.50.0 had no durable sessions and no program status; control sessions existed.
+    const sessions = LEGACY_SESSIONS.map((session) => ({
+      ...session,
+      programStatus: undefined,
+      serverDurable: undefined,
+    }));
+    const dataDir = legacyDataDir(OPPI_SERVER_0_50_0_SCHEMA, sessions);
+    const seeded = readShape(join(dataDir, "session-state.db")).columns;
+    expect(seeded).toHaveLength(44);
+    expect(seeded).not.toContain("server_durable_json");
+
+    const store = new SessionSqliteStore(dataDir);
+    try {
+      for (const legacy of sessions) {
+        expect(store.getSession(legacy.id)).toEqual(expectedAfterMigration(legacy));
+      }
+      expect(store.findSessionByDurableConversation("store-1", 3)).toBeUndefined();
+      expect(store.findSessionByLaunchIdempotencyKey("idem-durable")?.id).toBe("sess-durable");
+    } finally {
+      store.close();
+    }
+
+    const migrated = readShape(join(dataDir, "session-state.db"));
+    expect(migrated.completedAt).toBeTypeOf("number");
+    expect(migrated.columns).toContain("durable_store_id");
+    for (const column of [...DROPPED_COLUMNS, "agent_id", "schedule_id", "updated_at"]) {
+      expect(migrated.columns).not.toContain(column);
+    }
+  });
+
   it("keeps every session, its control metadata, binding, and stats; a second open is a no-op", () => {
     const dataDir = legacyDataDir();
 
@@ -473,6 +504,16 @@ const OPPI_SERVER_0_51_0_SCHEMA = `
         WHERE schedule_id IS NOT NULL;
       CREATE TABLE app_state_migrations (key TEXT PRIMARY KEY, completed_at INTEGER NOT NULL);
 `;
+
+/**
+ * The table and indexes published oppi-server 0.50.0 (`39e50f408`, the same as 0.49.1
+ * `a3f03ef64`) created, read from a data dir it wrote: no `server_durable_json` yet, and an
+ * empty migration ledger.
+ */
+const OPPI_SERVER_0_50_0_SCHEMA = OPPI_SERVER_0_51_0_SCHEMA.replace(
+  "        server_durable_json TEXT,\n",
+  "",
+);
 
 /** Writes `sessions` into `schema`, setting only the columns that schema has. */
 function seedLegacySessions(dbPath: string, schema: string, sessions: readonly Session[]): void {
