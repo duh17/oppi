@@ -132,6 +132,7 @@ Example:
 
 ### Fixed
 
+- **Client:** Editing a staged review comment shows one Save and one Cancel, both in the navigation bar. The form also carried its own Save and Cancel rows, so VoiceOver and UI tests saw every control twice.
 - **Client:** The iOS app on a Mac no longer crashes when it opens **New Workspace**, **Add Server**, or **Connect through Tailscale**. Those sheets are now presented by UIKit and given the app's connection services directly, without relying on SwiftUI to pass them into the sheet.
 - **Client:** Inline audio cards and voice message players keep their full height. A message with several audio files in a row could collapse some cards to zero height, drawing their controls on top of the neighboring card.
 - **Client:** About This Server explains when the server is older than the app but there is nothing newer to install, naming the version the app needs and the newest available, instead of showing an empty Update section. Its Server Settings row reads **Server Outdated** instead of **Update Available**.

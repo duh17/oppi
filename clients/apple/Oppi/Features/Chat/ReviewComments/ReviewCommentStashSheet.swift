@@ -324,13 +324,9 @@ private struct ReviewCommentEditorView: View {
                         .foregroundStyle(.themeRed)
                 }
             }
-
-            Section {
-                Button("Save", action: save)
-                    .disabled(saveDisabled)
-                Button("Cancel", role: .cancel, action: onCancel)
-            }
         }
+        // Save and Cancel live only in the navigation bar (Cancel from the
+        // stash chrome modifier). An inline copy in the form duplicated both.
         .navigationTitle("Edit Comment")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
