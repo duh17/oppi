@@ -375,6 +375,8 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         liveTailWasRunning = false
         liveTailNeedsTerminalPass = false
         localUserRowIDs.removeAll()
+        liveAnswerRowIDs.removeAll()
+        landedRowIDs.removeAll()
         renderVersion &+= 1
     }
 
@@ -563,6 +565,13 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 assistantTextsToCache.append(assistantText)
             }
         }
+        // A landed durable answer keeps its live row id through rebuilds too, so a
+        // snapshot or a restated entry does not replace its cell.
+        for (eventID, rowID) in landedRowIDs {
+            guard let index = indexForID(eventID) else { continue }
+            items[index] = items[index].replacingID(rowID)
+            itemIndex.rekey(from: eventID, to: rowID, at: index)
+        }
 
         for (id, source, text) in retainedCardOutput {
             guard let index = indexForID(id),
@@ -669,7 +678,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     // - Landing: the frame that commits an answer also clears it from `pi.live`. The
     //   committed apply takes the live rows out and appends the committed ones, then
     //   `applyLiveTail` adds what is still live, in one main-actor turn: the timeline never
-    //   shows both or neither. Tool rows keep their call id across the landing.
+    //   shows both or neither. The committed text and thinking rows take over the live
+    //   rows' ids (`adoptLandedAnswer`), so their cells are reconfigured, not replaced;
+    //   `timelineItemID(for:)` maps the committed event id to the row, and rebuilds keep
+    //   the mapping, so the row never changes id again. The cache saves committed events,
+    //   so a reload from it starts on committed ids. Tool rows share their call id anyway.
 
     /// Rows `applyLiveTail` owns, in order.
     private var liveTailRowIDs: [String] = []
@@ -679,8 +692,20 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// Committed rows changed since the last live apply; an idle conversation's unanswered
     /// calls are interrupted again.
     private var liveTailNeedsTerminalPass = false
-    /// Optimistic prompts (`appendUserMessage`). The committed user entry replaces one.
+    /// Optimistic prompts (`appendUserMessage`), oldest first. A committed user entry
+    /// replaces one.
     private var localUserRowIDs: [String] = []
+    /// Live answer rows by block (`text-<i>`, `think-<i>`), for the landing to take over.
+    private var liveAnswerRowIDs: [String: String] = [:]
+    /// Numbers live answer row ids; a landed answer keeps its ids, so the next uses new ones.
+    private var liveAnswerGeneration = 0
+    /// Committed event id to the live row id it landed in; kept until `reset`.
+    private var landedRowIDs: [String: String] = [:]
+
+    /// The row showing trace event `id`: the live row a landed answer kept, or `id`.
+    func timelineItemID(for id: String) -> String {
+        landedRowIDs[id] ?? id
+    }
 
     /// Load the replica's committed rows. Follow with `applyLiveTail`.
     ///
@@ -688,13 +713,18 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// passed last time, so the incremental path need not compare them again (that check
     /// is linear in the conversation and was the whole cost of a landing frame).
     func applyConversationCommitted(_ events: [TraceEvent], appendStart: Int? = nil) {
+        let landingRows = liveAnswerRowIDs
         removeLiveTail()
         // The prefix is still what this reducer loaded only if nothing else loaded since.
         let knownStart = appendStart.flatMap { start in
             start > 0 && start == loadedTraceEvents.count && start <= events.count
                 && loadedTraceEventIDs.last == events[start - 1].id ? start : nil
         }
-        let pendingPrompts = removeEchoedLocalUserRows(in: events, newFrom: knownStart)
+        // Without a known start, new events are the ones not loaded before this apply.
+        let loadedBefore: Set<String> = knownStart == nil ? Set(loadedTraceEventIDs) : []
+        removeEchoedLocalUserRows(in: events, newFrom: knownStart, loadedBefore: loadedBefore)
+        // Only a load without a known start can rebuild; an append keeps every row in place.
+        var clientRows = knownStart == nil ? clientOnlyRows() : []
         // The replica owns every committed row. Live rows just came out, and local rows (an
         // optimistic prompt, an error) only append after committed ones, so the rows still
         // match the loaded trace and `loadSession` may append to it.
@@ -709,12 +739,98 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         } else {
             loadSession(events, preserveOrphans: false)
         }
-        // A rebuild drops local rows; prompts still waiting for their entry come back.
-        for row in pendingPrompts where indexForID(row.id) == nil {
-            items.append(row)
-            indexAppend(row)
+        if let knownStart {
+            settleNewEvents(events[knownStart...], landingRows: landingRows, clientRows: &clientRows)
+        } else {
+            let newEvents = events.lazy.filter { !loadedBefore.contains($0.id) }
+            settleNewEvents(newEvents, landingRows: landingRows, clientRows: &clientRows)
         }
+        // A rebuild drops the client's rows; they come back after the row each followed,
+        // or at the end, in their order.
+        var restored = false
+        for (row, after) in clientRows where indexForID(row.id) == nil {
+            if let after, let index = indexForID(after) {
+                items.insert(row, at: index + 1)
+                rebuildIndex()
+            } else {
+                items.append(row)
+                indexAppend(row)
+            }
+            restored = true
+        }
+        if restored { bumpItemsMutationSeq() }
         liveTailNeedsTerminalPass = true
+    }
+
+    private func settleNewEvents(
+        _ newEvents: some Sequence<TraceEvent>,
+        landingRows: [String: String],
+        clientRows: inout [(row: ChatItem, after: String?)]
+    ) {
+        if !landingRows.isEmpty { adoptLandedAnswer(landingRows, newEvents: newEvents) }
+        removeErrorRowsRestated(by: newEvents, clientRows: &clientRows)
+    }
+
+    /// A durable run failure shows live as an error frame, then commits as a card with the
+    /// same text (its body); the committed card replaces the error row.
+    private func removeErrorRowsRestated(
+        by newEvents: some Sequence<TraceEvent>,
+        clientRows: inout [(row: ChatItem, after: String?)]
+    ) {
+        var bodies: Set<String> = []
+        for event in newEvents where event.type == .system {
+            guard let body = event.presentation?.body, !body.isEmpty else { continue }
+            bodies.insert(UserFacingErrorText.normalize(body))
+        }
+        guard !bodies.isEmpty else { return }
+        // Trace events make no error rows, so every error row is the client's.
+        func restated(_ item: ChatItem) -> Bool {
+            if case .error(_, let message) = item { bodies.contains(message) } else { false }
+        }
+        clientRows.removeAll { restated($0.row) }
+        guard items.contains(where: restated) else { return }
+        items.removeAll(where: restated)
+        rebuildIndex()
+        bumpItemsMutationSeq()
+    }
+
+    /// The first newly committed assistant entry is the answer that was live: its text and
+    /// thinking rows take the live rows' ids, block by block (same content index), so the
+    /// collection reconfigures those cells instead of replacing them.
+    private func adoptLandedAnswer(_ landingRows: [String: String], newEvents: some Sequence<TraceEvent>) {
+        var entry: Substring?
+        var adopted = false
+        for event in newEvents where event.type == .assistant || event.type == .thinking {
+            guard let block = Self.answerBlock(of: event) else { continue }
+            if entry == nil { entry = block.entry }
+            guard block.entry == entry else { break }
+            // The live rows came out before the load, so the id is free.
+            guard let liveID = landingRows[block.key], let index = indexForID(event.id) else { continue }
+            items[index] = items[index].replacingID(liveID)
+            itemIndex.rekey(from: event.id, to: liveID, at: index)
+            landedRowIDs[event.id] = liveID
+            adopted = true
+        }
+        if adopted {
+            liveAnswerGeneration += 1
+            bumpItemsMutationSeq()
+        }
+    }
+
+    /// The entry id and live block key of a committed text or thinking event
+    /// (`<entry>-text-<i>`, `<entry>-think-<i>`, or a plain-string answer `<entry>`).
+    private static func answerBlock(of event: TraceEvent) -> (entry: Substring, key: String)? {
+        let id = event.id
+        switch event.type {
+        case .thinking:
+            guard let range = id.range(of: "-think-", options: .backwards) else { return nil }
+            return (id[..<range.lowerBound], "think-\(id[range.upperBound...])")
+        case .assistant:
+            guard let range = id.range(of: "-text-", options: .backwards) else { return (id[...], "text-0") }
+            return (id[..<range.lowerBound], "text-\(id[range.upperBound...])")
+        default:
+            return nil
+        }
     }
 
     /// Show `pi.live`. Unchanged rows are left alone, so a text append rewrites one row.
@@ -723,13 +839,15 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         var changed = false
 
         var rows: [ChatItem] = []
+        var answerRowIDs: [String: String] = [:]
         var streamingTextID: String?
         for (position, block) in tail.blocks.enumerated() {
             let isLast = position == tail.blocks.count - 1
             switch block {
             case .text(let index, let text):
                 guard !StringFastChecks.isEffectivelyEmpty(text) else { continue }
-                let id = "pi.live-text-\(index)"
+                let id = "pi.live-\(liveAnswerGeneration)-text-\(index)"
+                answerRowIDs["text-\(index)"] = id
                 rows.append(TimelineTurnAssembler.makeAssistantItem(
                     id: id,
                     text: text,
@@ -737,8 +855,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 ))
                 if isLast { streamingTextID = id }
             case .thinking(let index, let text):
+                let id = "pi.live-\(liveAnswerGeneration)-think-\(index)"
+                answerRowIDs["think-\(index)"] = id
                 rows.append(TimelineTurnAssembler.makeThinkingItem(
-                    id: "pi.live-think-\(index)",
+                    id: id,
                     preview: text,
                     hasMore: text.utf8.count > ChatItem.maxPreviewLength,
                     isDone: !isLast
@@ -774,6 +894,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             rows.append(.error(id: "pi.live-retry", message: message))
         }
         if replaceLiveTailRows(with: rows) { changed = true }
+        liveAnswerRowIDs = answerRowIDs
 
         var overlays: Set<String> = []
         for tool in tail.tools {
@@ -883,6 +1004,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             rebuildIndex()
         }
         liveTailRowIDs = []
+        liveAnswerRowIDs = [:]
         bumpItemsMutationSeq()
     }
 
@@ -895,27 +1017,56 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
     }
 
-    /// Drop optimistic prompts that the newly committed user entries echo; returns the rest.
-    /// Only entries the timeline did not hold yet can echo a prompt sent since: those from
-    /// `newFrom` when known, else those not loaded.
-    private func removeEchoedLocalUserRows(in events: [TraceEvent], newFrom: Int?) -> [ChatItem] {
+    /// Drop the optimistic prompts that newly committed user entries land.
+    ///
+    /// Each new user entry is one sent prompt landing, so it takes the oldest pending row
+    /// whatever its text: the server may expand or rewrite what was typed. A prompt stays
+    /// pending only while no newer user entry has landed. Agent messages (`origin`) and
+    /// input cards (system rows) are not the user's prompts. New entries are those from
+    /// `newFrom` when known, else those not loaded before.
+    private func removeEchoedLocalUserRows(in events: [TraceEvent], newFrom: Int?, loadedBefore: Set<String>) {
         localUserRowIDs.removeAll { indexForID($0) == nil }
-        let rows = localUserRowIDs.compactMap { id in indexForID(id).map { items[$0] } }
-        guard !rows.isEmpty else { return rows }
-        let pending: [ChatItem]
+        let rows = localUserRowIDs
+        guard !rows.isEmpty else { return }
+        func isPrompt(_ event: TraceEvent) -> Bool { event.type == .user && event.origin == nil }
+        let landed: Int
         if let newFrom {
-            pending = Self.unechoedUserMessages(rows, in: events[newFrom...])
+            landed = events[newFrom...].count(where: isPrompt)
         } else {
-            let loaded = Set(loadedTraceEventIDs)
-            pending = Self.unechoedUserMessages(rows, in: events.lazy.filter { !loaded.contains($0.id) })
+            landed = events.count { isPrompt($0) && !loadedBefore.contains($0.id) }
         }
-        let echoed = Set(rows.map(\.id)).subtracting(pending.map(\.id))
-        guard !echoed.isEmpty else { return pending }
-        items.removeAll { echoed.contains($0.id) }
+        guard landed > 0 else { return }
+        let taken = Set(rows.prefix(landed))
+        items.removeAll { taken.contains($0.id) }
         rebuildIndex()
-        localUserRowIDs.removeAll { echoed.contains($0) }
+        localUserRowIDs.removeAll { taken.contains($0) }
         bumpItemsMutationSeq()
-        return pending
+    }
+
+    /// Rows only this client holds, which a rebuild from committed events drops: pending
+    /// prompts, and rows only classic frames or local actions add (notices, errors, cache
+    /// misses, system rows such as a session-ended reason, audio clips). Each comes with
+    /// the row it followed, or nil when no committed row followed it (it trails the
+    /// conversation and stays at the end).
+    private func clientOnlyRows() -> [(row: ChatItem, after: String?)] {
+        let pending = Set(localUserRowIDs)
+        func mayBeClientOnly(_ item: ChatItem) -> Bool {
+            switch item {
+            case .notice, .error, .cacheMiss, .systemEvent, .audioClip: true
+            case .userMessage(let id, _, _, _): pending.contains(id)
+            default: false
+            }
+        }
+        guard items.contains(where: mayBeClientOnly) else { return [] }
+        // Trace rows carry their event id (a landed answer its live id); a tool result has
+        // no row of its own, which does not matter here.
+        let committed = Set(loadedTraceEventIDs.lazy.map { self.timelineItemID(for: $0) })
+        let lastCommitted = items.lastIndex { committed.contains($0.id) } ?? -1
+        var rows: [(row: ChatItem, after: String?)] = []
+        for (index, item) in items.enumerated() where mayBeClientOnly(item) && !committed.contains(item.id) {
+            rows.append((item, index > lastCommitted || index == 0 ? nil : items[index - 1].id))
+        }
+        return rows
     }
 
     @discardableResult

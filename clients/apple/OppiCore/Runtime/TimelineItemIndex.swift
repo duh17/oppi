@@ -32,6 +32,12 @@ final class TimelineItemIndex {
         }
     }
 
+    /// A row kept its position but changed id.
+    func rekey(from oldID: String, to newID: String, at index: Int) {
+        indexByID.removeValue(forKey: oldID)
+        indexByID[newID] = index
+    }
+
     func indexAppend(_ item: ChatItem, itemCount: Int) {
         indexByID[item.id] = itemCount - 1
     }

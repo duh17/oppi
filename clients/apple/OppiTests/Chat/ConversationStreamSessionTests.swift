@@ -105,15 +105,15 @@ struct ConversationStreamSessionTests {
         // A live frame changes only the live row.
         let committedBefore = Array(reducer.items.prefix(3))
         harness.frame(.update(.init(conversationId: 7, docs: ["pi.live": [.replace(Wire.live(text: "Wor"))]])))
-        #expect(await harness.waitForRows(["1", "2-text-0", "3", "pi.live-text-0"]))
+        #expect(await harness.waitForRows(["1", "2-text-0", "3", "pi.live-0-text-0"]))
         let versionBefore = reducer.renderVersion
         harness.frame(.update(.init(conversationId: 7, docs: ["pi.live": [
             .append([.key("generation"), .key("message"), .key("content"), .index(0), .key("text")], "king"),
         ]])))
         #expect(await waitForMainActorCondition { reducer.renderVersion > versionBefore })
         #expect(Array(reducer.items.prefix(3)) == committedBefore)
-        #expect(harness.assistantText("pi.live-text-0") == "Working")
-        #expect(reducer.streamingAssistantID == "pi.live-text-0")
+        #expect(harness.assistantText("pi.live-0-text-0") == "Working")
+        #expect(reducer.streamingAssistantID == "pi.live-0-text-0")
         await harness.finish()
     }
 
@@ -125,7 +125,7 @@ struct ConversationStreamSessionTests {
         harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "go")], docs: [
             "pi.live": Wire.live(content: [Wire.thinking("plan"), Wire.toolCall("call-1", "bash", ["command": "ls"])]),
         ])))
-        #expect(await harness.waitForRows(["1", "pi.live-think-0", "call-1"]))
+        #expect(await harness.waitForRows(["1", "pi.live-0-think-0", "call-1"]))
         #expect(harness.isDone("call-1") == false)
 
         // The answer lands; the run goes on to execute the call.
@@ -134,7 +134,10 @@ struct ConversationStreamSessionTests {
             entries: [Wire.assistant(2, [Wire.thinking("plan"), Wire.toolCall("call-1", "bash", ["command": "ls"])])],
             docs: ["pi.live": [.delete([.key("generation")])]]
         )))
-        #expect(await harness.waitForRows(["1", "2-think-0", "call-1"]))
+        // The committed thinking keeps the live row's id.
+        #expect(await harness.waitForCommitted(["1", "2-think-0", "call-1"]))
+        #expect(reducer.items.map(\.id) == ["1", "pi.live-0-think-0", "call-1"])
+        #expect(reducer.timelineItemID(for: "2-think-0") == "pi.live-0-think-0")
 
         // Running output goes onto the committed call row.
         harness.frame(.update(.init(conversationId: 7, docs: ["pi.live": [.set([.key("tools")], [
@@ -150,18 +153,22 @@ struct ConversationStreamSessionTests {
         )))
         #expect(await waitForMainActorCondition { harness.isDone("call-1") == true })
         #expect(reducer.toolOutput(for: "call-1") == "README.md\nsrc\n")
+        // The result restates its call's presentation, so that frame rebuilt; the landed
+        // thinking row keeps its id through it.
+        #expect(reducer.items.map(\.id) == ["1", "pi.live-0-think-0", "call-1"])
 
         // The final answer streams, then lands with the run ending.
         harness.frame(.update(.init(conversationId: 7, docs: ["pi.live": [
             .set([.key("generation")], ["attempt": 1, "message": ["role": "assistant", "content": [Wire.text("Two files.")], "timestamp": 1_791_650_003_000]]),
         ]])))
-        #expect(await harness.waitForRows(["1", "2-think-0", "call-1", "pi.live-text-0"]))
+        #expect(await harness.waitForRows(["1", "pi.live-0-think-0", "call-1", "pi.live-1-text-0"]))
         harness.frame(.update(.init(
             conversationId: 7,
             entries: [Wire.assistant(4, [Wire.text("Two files.")])],
             docs: ["pi.live": [.delete([.key("run")]), .delete([.key("generation")]), .delete([.key("tools")])]]
         )))
-        #expect(await harness.waitForRows(["1", "2-think-0", "call-1", "4-text-0"]))
+        #expect(await harness.waitForCommitted(["1", "2-think-0", "call-1", "result-3", "4-text-0"]))
+        #expect(reducer.items.map(\.id) == ["1", "pi.live-0-think-0", "call-1", "pi.live-1-text-0"])
         #expect(reducer.streamingAssistantID == nil)
         #expect(harness.manager.reducer.items.filter {
             if case .assistantMessage(_, "Two files.", _) = $0 { true } else { false }
@@ -248,8 +255,189 @@ struct ConversationStreamSessionTests {
         #expect(reducer.traceEventsForCache() == golden.trace)
         let expected = TimelineReducer()
         expected.loadSession(golden.trace)
-        #expect(reducer.items == expected.items)
+        // The same rows; a landed answer keeps the id of the live row it landed in.
+        #expect(reducer.items == expected.items.map { $0.replacingID(reducer.timelineItemID(for: $0.id)) })
+        #expect(reducer.items.map(\.id) != expected.items.map(\.id))
         #expect(reducer.streamingAssistantID == nil)
+        await harness.finish()
+    }
+
+    /// Each socket gets its own fresh-attach retry: a retry left unanswered by a dropped
+    /// socket must not turn the next socket's first failure into a fatal one.
+    @Test func attachRetryBudgetResetsForEachSocket() async throws {
+        let harness = Harness()
+        await harness.connect()
+        let first = try await harness.attach(1)
+        harness.yield(.commandResult(command: "attach", requestId: first.requestId, success: false, data: nil, error: "busy"))
+        _ = try await harness.attach(2)
+
+        // The socket drops and recovers before the fresh retry is answered.
+        harness.yield(.connected(session: harness.session))
+        let resumed = try await harness.attach(3)
+        harness.yield(.commandResult(command: "attach", requestId: resumed.requestId, success: false, data: nil, error: "busy"))
+
+        let retry = try await harness.attach(4)
+        #expect(retry.afterEntryId == nil)
+        #expect(harness.manager.entryState == .streaming)
+        #expect(!harness.manager.reducer.items.contains { if case .error = $0 { true } else { false } })
+        await harness.finish()
+    }
+
+    /// Rows only classic frames carry (a worktree rebind notice, a non-fatal prompt error,
+    /// a cache miss, a session that ended) still show while the replica owns the timeline.
+    @Test func classicOnlyRowsStillShowForAnAttachedSession() async throws {
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "go")], docs: [:])))
+        #expect(await harness.waitForRows(["1"]))
+
+        // A notice restating a committed card (`entry:<id>`) is not one of them.
+        harness.yield(.notice(id: "entry:1", message: "Job finished"))
+        harness.yield(.notice(id: "rebind", message: "Resuming on Main checkout. The worktree is gone."))
+        harness.yield(.error(message: "Could not answer the extension", code: nil, fatal: false))
+        harness.yield(.cacheMiss(id: "miss", message: "Prompt cache missed"))
+        harness.yield(.sessionEnded(reason: "store could not reattach"))
+
+        let reducer = harness.manager.reducer
+        #expect(await waitForMainActorCondition {
+            harness.manager.coalescer.flushNow()
+            return reducer.items.count == 5
+        })
+        #expect(reducer.items.contains { if case .notice("rebind", _) = $0 { true } else { false } })
+        #expect(reducer.items.contains { if case .error(_, "Could not answer the extension") = $0 { true } else { false } })
+        #expect(reducer.items.contains { if case .cacheMiss("miss", _) = $0 { true } else { false } })
+        #expect(reducer.items.contains {
+            if case .systemEvent(_, let message) = $0 { message.contains("store could not reattach") } else { false }
+        })
+        await harness.finish()
+    }
+
+    /// The server sends the worktree rebind notice on connect, before the snapshot that
+    /// rebuilds the timeline. Classic-only rows survive rebuilds in place; a run failure's
+    /// error row gives way to the failure card committed with the same text.
+    @Test func classicOnlyRowsSurviveRebuildsAndFailureCardsReplaceErrors() async throws {
+        let harness = Harness()
+        let reducer = harness.manager.reducer
+        await harness.connect()
+        _ = try await harness.attach(1)
+        let rebind = "worktree-rebind:\(harness.sessionId)"
+        harness.yield(.notice(id: rebind, message: "Resuming on Main checkout. The worktree is gone."))
+        #expect(await waitForMainActorCondition {
+            harness.manager.coalescer.flushNow()
+            return reducer.items.map(\.id) == [rebind]
+        })
+
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "go")], docs: [:])))
+        #expect(await harness.waitForRows(["1", rebind]))
+
+        harness.yield(.error(message: "Model overloaded", code: nil, fatal: false))
+        #expect(await waitForMainActorCondition {
+            harness.manager.coalescer.flushNow()
+            return reducer.items.count == 3
+        })
+        let errorID = try #require(reducer.items.last?.id)
+        harness.frame(.update(.init(conversationId: 7, entries: [Wire.assistant(2, [Wire.text("Partial.")])])))
+        #expect(await harness.waitForRows(["1", rebind, errorID, "2-text-0"]))
+
+        // A snapshot restating an entry rebuilds; the rows stay after the rows they followed.
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [
+            Wire.user(1, "go"), Wire.assistant(2, [Wire.text("Partial, restated.")]),
+        ], docs: [:])))
+        #expect(await waitForMainActorCondition { harness.assistantText("2-text-0") == "Partial, restated." })
+        #expect(!reducer._lastLoadWasIncrementalForTesting)
+        #expect(reducer.items.map(\.id) == ["1", rebind, errorID, "2-text-0"])
+
+        let failure = ConversationEntryView(
+            id: 3, kind: "oppi.failure",
+            card: .init(kind: "custom", title: "Run failed", body: "Model overloaded", accent: "error", at: Wire.at)
+        )
+        harness.frame(.update(.init(conversationId: 7, entries: [failure])))
+        #expect(await harness.waitForRows(["1", rebind, "2-text-0", "3"]))
+        await harness.finish()
+    }
+
+    /// Each committed user entry takes the oldest pending prompt, even when the server
+    /// expanded it (`/skill:` prompts). Agent messages and input cards take none.
+    @Test func committedUserEntriesTakePendingPromptsInOrder() async throws {
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        let reducer = harness.manager.reducer
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "first")], docs: [:])))
+        #expect(await harness.waitForRows(["1"]))
+
+        let skill = reducer.appendUserMessage("/skill:review check this")
+        let followUp = reducer.appendUserMessage("then summarize")
+        var agentMessage = Wire.user(2, "[from Review]\n\nhi")
+        agentMessage.origin = MessageOrigin(kind: "session", sessionId: "child", name: "Review", intent: "report")
+        agentMessage.textOffset = 14
+        let inputCard = ConversationEntryView(
+            id: 3, kind: "pi.user",
+            card: .init(kind: "custom", title: "Job finished", at: Wire.at), inputCard: true
+        )
+        harness.frame(.update(.init(conversationId: 7, entries: [agentMessage, inputCard])))
+        #expect(await harness.waitForRows(["1", skill, followUp, "2", "3"]))
+
+        let expanded = "<skill name=\"review\" location=\"/home/me/.pi/skills/review/SKILL.md\">\nReview carefully.\n</skill>\n\ncheck this"
+        harness.frame(.update(.init(conversationId: 7, entries: [Wire.user(4, expanded)])))
+        #expect(await harness.waitForRows(["1", followUp, "2", "3", "4"]))
+
+        harness.frame(.update(.init(conversationId: 7, entries: [Wire.user(5, "then summarize, please")])))
+        #expect(await harness.waitForRows(["1", "2", "3", "4", "5"]))
+        await harness.finish()
+    }
+
+    /// The landing writes the committed answer into the live rows and keeps their ids, so
+    /// the cells are not replaced. A later rebuild keeps those ids, once each.
+    @Test func landingKeepsLiveRowIdentityAndRebuildsConverge() async throws {
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        let reducer = harness.manager.reducer
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "go")], docs: [
+            "pi.live": Wire.live(content: [Wire.thinking("plan"), Wire.text("Hel")]),
+        ])))
+        #expect(await waitForMainActorCondition { reducer.items.count == 3 })
+        let liveIDs = reducer.items.suffix(2).map(\.id)
+
+        harness.frame(.update(.init(
+            conversationId: 7,
+            entries: [Wire.assistant(2, [Wire.thinking("plan"), Wire.text("Hello")])],
+            docs: ["pi.live": [.delete([.key("run")]), .delete([.key("generation")])]]
+        )))
+        #expect(await waitForMainActorCondition { harness.assistantText(liveIDs[1]) == "Hello" })
+        #expect(reducer.items.map(\.id) == ["1"] + liveIDs)
+        #expect(reducer.items.contains { if case .thinking(liveIDs[0], "plan", _, true) = $0 { true } else { false } })
+        #expect(reducer.traceEventsForCache().map(\.id) == ["1", "2-think-0", "2-text-1"])
+        #expect(await harness.manager.loadTracePageAround(entryId: "2-text-1"))
+
+        // The next answer streams in rows of its own.
+        harness.frame(.update(.init(conversationId: 7, docs: ["pi.live": [.replace(Wire.live(text: "Again"))]])))
+        #expect(await waitForMainActorCondition { reducer.items.count == 4 })
+        let secondLive = try #require(reducer.items.last?.id)
+        #expect(!liveIDs.contains(secondLive))
+        harness.frame(.update(.init(
+            conversationId: 7,
+            entries: [Wire.assistant(3, [Wire.text("Again")])],
+            docs: ["pi.live": [.delete([.key("run")]), .delete([.key("generation")])]]
+        )))
+        #expect(await harness.waitForCommitted(["1", "2-think-0", "2-text-1", "3-text-0"]))
+        #expect(reducer.items.map(\.id) == ["1"] + liveIDs + [secondLive])
+
+        // The cache holds committed ids and loads to the same rows a rebuild gives.
+        let cached = TimelineReducer()
+        cached.loadSession(reducer.traceEventsForCache())
+        #expect(cached.items.map(\.id) == ["1", "2-think-0", "2-text-1", "3-text-0"])
+
+        // A snapshot that changes history rebuilds; the landed rows keep their ids, once each.
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: true, entries: [
+            Wire.assistant(2, [Wire.thinking("plan"), Wire.text("Hello")]), Wire.assistant(3, [Wire.text("Again")]),
+        ], docs: [:])))
+        #expect(await harness.waitForCommitted(["2-think-0", "2-text-1", "3-text-0"]))
+        #expect(reducer.items.map(\.id) == liveIDs + [secondLive])
+        #expect(harness.assistantText(liveIDs[1]) == "Hello")
+        #expect(harness.assistantText(secondLive) == "Again")
         await harness.finish()
     }
 
@@ -324,6 +512,11 @@ private final class Harness {
 
     func frame(_ frame: ConversationStreamServerMessage) {
         yield(.conversationStream(frame))
+    }
+
+    /// The committed events loaded: unlike row ids, these change at a landing.
+    func waitForCommitted(_ ids: [String]) async -> Bool {
+        await waitForMainActorCondition { self.manager.reducer.traceEventsForCache().map(\.id) == ids }
     }
 
     func waitForRows(_ ids: [String]) async -> Bool {

@@ -1431,14 +1431,12 @@ final class ChatSessionManager {
         // An attached durable session's conversation comes from its replica. Its classic
         // timeline events still arrive on the socket; only their other effects apply
         // (session status, queue, extension UI, audio, voice settings, command results),
-        // plus stop feedback rows and fatal connection errors.
+        // plus stop feedback rows and the rows no entry or document carries.
         let replicaOwnsTimeline = conversationStream != nil
-        if !replicaOwnsTimeline {
+        if !replicaOwnsTimeline || Self.isClassicOnlyTimelineRow(message) {
             for event in ServerMessageEffects.timelineEvents(for: message, sessionId: sessionId) {
                 coalescer.receive(event)
             }
-        } else if case .error(let text, _, true) = message {
-            coalescer.receive(.error(sessionId: sessionId, message: text))
         }
 
         if let stopEffect = FocusedSessionStopTurnPolicy.timelineEffect(for: message) {
@@ -1789,6 +1787,23 @@ final class ChatSessionManager {
     }
 
     // MARK: - Durable conversation stream
+
+    /// Timeline rows that exist only as classic frames, so an attached durable session keeps
+    /// them: notices (a worktree rebind, a recovered store), errors (a failed prompt or
+    /// extension UI answer, connection errors), cache misses (from usage, not committed),
+    /// and the reason a session ended. Everything else in `timelineEvents` restates entries
+    /// or `pi.live` (text, thinking, tools, compaction, retry, cards), and so does a notice
+    /// whose id is `entry:<id>`: the durable backend's restatement of a committed card.
+    /// A run failure's error is later committed as a failure card too; the reducer drops
+    /// the error row when that card lands. The reducer keeps all of these rows through
+    /// rebuilds from the replica.
+    private static func isClassicOnlyTimelineRow(_ message: ServerMessage) -> Bool {
+        switch message {
+        case .notice(let id, _): !id.hasPrefix("entry:")
+        case .error, .cacheMiss, .sessionEnded: true
+        default: false
+        }
+    }
 
     private static let conversationRequestTimeout: Duration = .seconds(10)
     private static let conversationAroundMaxPages = 20
@@ -2176,12 +2191,13 @@ final class ChatSessionManager {
 
     @discardableResult
     func loadTracePageAround(entryId: String) async -> Bool {
-        guard !reducer.items.contains(where: { $0.id == entryId }) else { return true }
+        // A landed answer keeps its live row id; resolve the trace id to that row.
+        guard !reducer.items.contains(where: { $0.id == reducer.timelineItemID(for: entryId) }) else { return true }
         if conversationStream != nil {
             // Page back until the entry is held; bounded like a deep link should be.
             for _ in 0..<Self.conversationAroundMaxPages {
                 guard await loadOlderConversationEntries(limit: 500) else { break }
-                if reducer.items.contains(where: { $0.id == entryId }) { return true }
+                if reducer.items.contains(where: { $0.id == reducer.timelineItemID(for: entryId) }) { return true }
             }
             return false
         }

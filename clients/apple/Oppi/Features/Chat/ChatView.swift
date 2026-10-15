@@ -2848,8 +2848,9 @@ struct ChatView: View {
             sessionId: sessionId,
             workspaceId: session?.workspaceId,
             onSelect: { targetID in
+                // A landed durable answer keeps its live row id.
                 Self.selectOutlineTimelineEntry(
-                    targetID,
+                    reducer.timelineItemID(for: targetID),
                     items: reducer.items,
                     scrollController: scrollController
                 ) {

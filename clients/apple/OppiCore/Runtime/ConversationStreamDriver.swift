@@ -59,6 +59,9 @@ final class ConversationStreamDriver {
         let requestId = "attach-\(UUID().uuidString)"
         if let previous = attachRequestId { supersededAttachIds.insert(previous) }
         attachRequestId = requestId
+        // A socket's first attach starts its own budget of one fresh retry; the retry
+        // itself (`fresh`) keeps it spent.
+        if !fresh { freshAttachRetried = false }
         var attach = ConversationStreamAttach(requestId: requestId)
         if !fresh, let conversationId = replica.conversationId, let cursor = replica.resumeCursor {
             attach.conversationId = conversationId
@@ -200,6 +203,7 @@ final class ConversationStreamDriver {
     /// The socket ended; nothing in flight will be answered.
     func cancelPendingRequests() {
         attachRequestId = nil
+        freshAttachRetried = false
         supersededAttachIds.removeAll()
         olderRequestIds.removeAll()
         for requestId in Array(waiters.keys) { resolve(requestId, false) }
