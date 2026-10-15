@@ -94,98 +94,26 @@ struct SSHTerminalProfileTests {
         #expect(throws: SSHKeychainError.passwordRequired) { try store.password(for: expected) }
     }
 
-    @Test func corruptMetadataStillAllowsExplicitPasswordDeletion() throws {
+    @Test func corruptMetadataBlocksSavesUntilResetAndResetLeavesTheKeychainAlone() throws {
         let name = "SSHTerminalProfileTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
-        let keychain = SSHKeychain(service: name)
+        let keychain = RecordingKeychain()
         let store = SSHTerminalProfileStore(defaults: defaults, keychain: keychain)
-        let unrelatedAccount = "host:example.ts.net:22"
-        let otherProfile = UUID()
-        defer {
-            try? keychain.delete(account: SSHTerminalProfileStore.passwordAccount)
-            try? keychain.delete(account: unrelatedAccount)
-            try? keychain.delete(account: SSHTerminalProfileStore.passwordAccount(for: otherProfile))
-        }
-        try keychain.save(Data("legacy-fixture".utf8), account: SSHTerminalProfileStore.passwordAccount)
-        try keychain.save(Data("trusted-host-key".utf8), account: unrelatedAccount)
-        try keychain.save(Data("other-profile-fixture".utf8), account: SSHTerminalProfileStore.passwordAccount(for: otherProfile))
         defaults.set(Data("corrupt fixture".utf8), forKey: SSHTerminalProfileStore.catalogKey)
         #expect(store.metadataIsCorrupt)
         #expect(store.load().isEmpty)
-        try store.deleteLegacyPasswordItem()
+        let profile = SSHTerminalProfile(host: "example.ts.net", username: "alice")
+        // Saving over unreadable metadata would silently drop every other host.
+        #expect(throws: SSHTerminalProfileStoreError.corruptMetadata) { try store.save(profile) }
+        #expect(defaults.data(forKey: SSHTerminalProfileStore.catalogKey) == Data("corrupt fixture".utf8))
         store.discardCorruptMetadata()
         #expect(!store.metadataIsCorrupt)
-        #expect(SecItemCopyMatching(keychain.query(account: SSHTerminalProfileStore.passwordAccount) as CFDictionary, nil) == errSecItemNotFound)
-        #expect(SecItemCopyMatching(keychain.query(account: unrelatedAccount) as CFDictionary, nil) == errSecSuccess)
-        #expect(SecItemCopyMatching(keychain.query(account: SSHTerminalProfileStore.passwordAccount(for: otherProfile)) as CFDictionary, nil) == errSecSuccess)
-    }
-
-    @Test func migrationWritesTheCatalogBeforeRemovingTheLegacyKeyAndDoesNotTouchKeychain() throws {
-        let name = "SSHTerminalProfileTests.\(UUID().uuidString)"
-        let defaults = try #require(RecordingDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
-        let keychain = RecordingKeychain()
-        let legacy = SSHTerminalLegacyProfile(host: "example.ts.net", port: 2222, username: "alice", savesPassword: true, startupCommand: "tmux")
-        defaults.set(try JSONEncoder().encode(legacy), forKey: SSHTerminalProfileStore.storageKey)
-        keychain.items[SSHTerminalProfileStore.passwordAccount] = Data("legacy-secret".utf8)
-        defaults.events.removeAll()
-        let store = SSHTerminalProfileStore(defaults: defaults, keychain: keychain)
-        let migrated = try #require(store.load().first)
-        let again = try #require(store.load().first)
         #expect(keychain.calls.isEmpty)
-        #expect(keychain.items[SSHTerminalProfileStore.passwordAccount] == Data("legacy-secret".utf8))
-        #expect(keychain.items[SSHTerminalProfileStore.passwordAccount(for: migrated.id)] == nil)
-        #expect(defaults.data(forKey: SSHTerminalProfileStore.storageKey) == nil)
-        #expect(defaults.data(forKey: SSHTerminalProfileStore.catalogKey) != nil)
-        #expect(migrated.host == legacy.host && migrated.port == legacy.port && migrated.username == legacy.username)
-        #expect(migrated.startupCommand == "tmux")
-        #expect(migrated.passwordUsesLegacyAccount)
-        #expect(migrated.id == again.id)
-        let setIndex = try #require(defaults.events.firstIndex { $0 == "set:\(SSHTerminalProfileStore.catalogKey)" })
-        let removeIndex = try #require(defaults.events.firstIndex { $0 == "remove:\(SSHTerminalProfileStore.storageKey)" })
-        #expect(setIndex < removeIndex)
-        let unsaved = SSHTerminalLegacyProfile(host: "other.ts.net", username: "bob", savesPassword: false)
-        defaults.set(try JSONEncoder().encode(unsaved), forKey: SSHTerminalProfileStore.storageKey)
-        defaults.removeObject(forKey: SSHTerminalProfileStore.catalogKey)
-        let plain = try #require(SSHTerminalProfileStore(defaults: defaults, keychain: keychain).load().first)
-        #expect(!plain.passwordUsesLegacyAccount)
-        #expect(keychain.calls.isEmpty)
-    }
-
-    @Test func passwordRebindRunsOnlyInsidePasswordForAndAFailedRebindKeepsTheLegacyItem() throws {
-        let name = "SSHTerminalProfileTests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
-        let keychain = RecordingKeychain()
-        let legacy = SSHTerminalLegacyProfile(host: "example.ts.net", username: "alice", savesPassword: true)
-        defaults.set(try JSONEncoder().encode(legacy), forKey: SSHTerminalProfileStore.storageKey)
-        keychain.items[SSHTerminalProfileStore.passwordAccount] = try legacySecret(host: "example.ts.net", username: "alice", password: "rebind-fixture")
-        let store = SSHTerminalProfileStore(defaults: defaults, keychain: keychain)
-        let migrated = try #require(store.load().first)
-        #expect(keychain.calls.isEmpty)
-        let perID = SSHTerminalProfileStore.passwordAccount(for: migrated.id)
-        keychain.failSaveAccounts.insert(perID)
-        #expect(throws: SSHKeychainError.self) { try store.password(for: migrated) }
-        #expect(keychain.items[SSHTerminalProfileStore.passwordAccount] != nil)
-        #expect(!keychain.calls.contains { $0.kind == .delete })
-        #expect(store.profile(id: migrated.id)?.passwordUsesLegacyAccount == true)
-
-        keychain.failSaveAccounts.removeAll()
-        keychain.calls.removeAll()
-        #expect(try store.password(for: migrated) == "rebind-fixture")
-        #expect(keychain.items[SSHTerminalProfileStore.passwordAccount] == nil)
-        #expect(keychain.items[perID] != nil)
-        #expect(store.profile(id: migrated.id)?.passwordUsesLegacyAccount == false)
-        #expect(keychain.calls.contains { $0.kind == .load && $0.account == SSHTerminalProfileStore.passwordAccount && $0.requirePresence })
-        #expect(keychain.calls.contains { $0.kind == .save && $0.account == perID && $0.requirePresence })
-        let saveIndex = try #require(keychain.calls.firstIndex { $0.kind == .save && $0.account == perID })
-        let deleteIndex = try #require(keychain.calls.firstIndex { $0.kind == .delete && $0.account == SSHTerminalProfileStore.passwordAccount })
-        #expect(saveIndex < deleteIndex)
-
-        keychain.calls.removeAll()
-        #expect(try store.password(for: migrated) == "rebind-fixture")
-        #expect(!keychain.calls.contains { $0.account == SSHTerminalProfileStore.passwordAccount })
+        try store.save(profile)
+        #expect(store.load() == [profile])
+        store.discardCorruptMetadata()
+        #expect(store.load() == [profile])
     }
 
     @Test func profilesIsolatePasswordsAndASwappedSecretCannotBeRead() throws {
@@ -234,27 +162,23 @@ struct SSHTerminalProfileTests {
         defer { defaults.removePersistentDomain(forName: name) }
         let keychain = RecordingKeychain()
         let store = SSHTerminalProfileStore(defaults: defaults, keychain: keychain)
-        let legacy = SSHTerminalLegacyProfile(host: "old.ts.net", username: "alice", savesPassword: true)
-        defaults.set(try JSONEncoder().encode(legacy), forKey: SSHTerminalProfileStore.storageKey)
-        keychain.items[SSHTerminalProfileStore.passwordAccount] = try legacySecret(host: "old.ts.net", username: "alice", password: "legacy-fixture")
-        let migrated = try #require(store.load().first)
+        let first = SSHTerminalProfile(host: "old.ts.net", username: "alice", savesPassword: true)
+        try store.save(first, password: "first-secret")
         let second = SSHTerminalProfile(host: "old.ts.net", username: "alice", savesPassword: true, startupCommand: "herdr")
         try store.save(second, password: "second-secret")
         let hostKey = "host:old.ts.net:22"
         let deviceKey = "oppi.ssh.identity.presence.v2"
         keychain.items[hostKey] = Data("trusted".utf8)
         keychain.items[deviceKey] = Data("device-key".utf8)
-        try store.delete(id: migrated.id)
-        #expect(store.profile(id: migrated.id) == nil)
+        try store.delete(id: first.id)
+        #expect(store.profile(id: first.id) == nil)
         #expect(store.profile(id: second.id)?.startupCommand == "herdr")
-        #expect(keychain.items[SSHTerminalProfileStore.passwordAccount] == nil)
-        #expect(keychain.items[SSHTerminalProfileStore.passwordAccount(for: migrated.id)] == nil)
+        #expect(keychain.items[SSHTerminalProfileStore.passwordAccount(for: first.id)] == nil)
         #expect(try store.password(for: second) == "second-secret")
         #expect(keychain.items[hostKey] == Data("trusted".utf8))
         #expect(keychain.items[deviceKey] == Data("device-key".utf8))
         let deleted = Set(keychain.calls.filter { $0.kind == .delete }.map(\.account))
-        #expect(deleted.contains(SSHTerminalProfileStore.passwordAccount(for: migrated.id)))
-        #expect(deleted.contains(SSHTerminalProfileStore.passwordAccount))
+        #expect(deleted.contains(SSHTerminalProfileStore.passwordAccount(for: first.id)))
         #expect(!deleted.contains(hostKey))
         #expect(!deleted.contains(deviceKey))
         #expect(!deleted.contains(SSHTerminalProfileStore.passwordAccount(for: second.id)))
@@ -280,10 +204,8 @@ struct SSHTerminalProfileTests {
             if let mcp { #expect(visible[mcp + 1].target == .sshTerminal) }
         }
         let configured = SSHTerminalCatalog(profiles: [SSHTerminalProfile(host: "example.ts.net", username: "alice")])
-        #expect(SSHTerminalProfileStore.hasConfiguredHost(catalogData: try JSONEncoder().encode(configured), legacyData: Data()))
-        #expect(!SSHTerminalProfileStore.hasConfiguredHost(catalogData: Data(), legacyData: Data()))
-        let legacy = try JSONEncoder().encode(SSHTerminalLegacyProfile(host: "example.ts.net", username: "alice"))
-        #expect(SSHTerminalProfileStore.hasConfiguredHost(catalogData: Data(), legacyData: legacy))
+        #expect(SSHTerminalProfileStore.hasConfiguredHost(catalogData: try JSONEncoder().encode(configured)))
+        #expect(!SSHTerminalProfileStore.hasConfiguredHost(catalogData: Data()))
     }
 }
 
@@ -292,21 +214,6 @@ private func boundSecret(id: UUID, host: String, username: String, password: Str
         "profileID": id.uuidString,
         "profile": [
             "id": id.uuidString,
-            "host": host,
-            "port": 22,
-            "username": username,
-            "authentication": "password",
-            "savesPassword": true,
-            "passwordUsesLegacyAccount": false,
-        ],
-        "password": password,
-    ]
-    return try JSONSerialization.data(withJSONObject: record)
-}
-
-private func legacySecret(host: String, username: String, password: String) throws -> Data {
-    let record: [String: Any] = [
-        "profile": [
             "host": host,
             "port": 22,
             "username": username,
@@ -328,7 +235,6 @@ private final class RecordingKeychain: SSHCredentialStoring, @unchecked Sendable
 
     var items: [String: Data] = [:]
     var calls: [Call] = []
-    var failSaveAccounts: Set<String> = []
 
     func load(account: String, requirePresence: Bool) throws -> Data? {
         calls.append(Call(kind: .load, account: account, requirePresence: requirePresence))
@@ -337,26 +243,11 @@ private final class RecordingKeychain: SSHCredentialStoring, @unchecked Sendable
 
     func save(_ data: Data, account: String, requirePresence: Bool) throws {
         calls.append(Call(kind: .save, account: account, requirePresence: requirePresence))
-        if failSaveAccounts.contains(account) { throw SSHKeychainError.status(errSecAuthFailed) }
         items[account] = data
     }
 
     func delete(account: String) throws {
         calls.append(Call(kind: .delete, account: account, requirePresence: false))
         items.removeValue(forKey: account)
-    }
-}
-
-private final class RecordingDefaults: UserDefaults, @unchecked Sendable {
-    var events: [String] = []
-
-    override func set(_ value: Any?, forKey defaultName: String) {
-        events.append("set:\(defaultName)")
-        super.set(value, forKey: defaultName)
-    }
-
-    override func removeObject(forKey defaultName: String) {
-        events.append("remove:\(defaultName)")
-        super.removeObject(forKey: defaultName)
     }
 }

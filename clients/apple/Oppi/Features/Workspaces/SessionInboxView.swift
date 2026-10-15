@@ -1550,7 +1550,6 @@ struct WorkspaceSidebarView: View {
     @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var sshTerminalEnabled = false
     @AppStorage(AppPreferences.Experiments.desktopLiveViewKey) private var desktopLiveViewEnabled = false
     @AppStorage(SSHTerminalProfileStore.catalogKey) private var sshCatalogData = Data()
-    @AppStorage(SSHTerminalProfileStore.storageKey) private var sshLegacyProfileData = Data()
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation
@@ -1586,9 +1585,7 @@ struct WorkspaceSidebarView: View {
                         WorkspaceSidebarPrimaryUtilities.items(
                             for: UIDevice.current.userInterfaceIdiom,
                             sshTerminalEnabled: sshTerminalEnabled,
-                            hasSSHProfile: SSHTerminalProfileStore.hasConfiguredHost(
-                                catalogData: sshCatalogData, legacyData: sshLegacyProfileData
-                            ),
+                            hasSSHProfile: SSHTerminalProfileStore.hasConfiguredHost(catalogData: sshCatalogData),
                             desktopLiveViewAvailable: DesktopLiveViewPlayground.isAvailable(
                                 experimentEnabled: desktopLiveViewEnabled,
                                 serverOffers: selectedServer

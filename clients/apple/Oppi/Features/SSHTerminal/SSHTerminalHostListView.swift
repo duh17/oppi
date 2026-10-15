@@ -28,7 +28,7 @@ struct SSHTerminalHostListView: View {
     @State private var session = SSHTerminalConnectSession()
     @State private var metadataIsCorrupt = false
     @State private var pendingDelete: SSHTerminalProfile?
-    @State private var confirmingLegacyPasswordDelete = false
+    @State private var confirmingReset = false
 
     var body: some View {
         List {
@@ -69,8 +69,8 @@ struct SSHTerminalHostListView: View {
             }
             if metadataIsCorrupt {
                 Section {
-                    Button("Delete Saved Password", role: .destructive) { confirmingLegacyPasswordDelete = true }
-                        .accessibilityIdentifier("sshTerminal.deleteLegacyPassword")
+                    Button("Reset Host List", role: .destructive) { confirmingReset = true }
+                        .accessibilityIdentifier("sshTerminal.resetHostList")
                 }
             }
         }
@@ -98,13 +98,13 @@ struct SSHTerminalHostListView: View {
             editor = .edit(id)
         }
         .confirmationDialog(
-            "Delete the saved password?",
-            isPresented: $confirmingLegacyPasswordDelete,
+            "Reset the host list?",
+            isPresented: $confirmingReset,
             titleVisibility: .visible
         ) {
-            Button("Delete Saved Password", role: .destructive) { deleteLegacyPassword() }
+            Button("Reset Host List", role: .destructive) { resetHostList() }
         } message: {
-            Text("The saved host data cannot be read. This removes the old saved password and the unreadable host data.")
+            Text("The saved host data cannot be read. This removes it so you can add your hosts again.")
         }
         .confirmationDialog(
             "Delete this host and its saved password?",
@@ -173,16 +173,11 @@ struct SSHTerminalHostListView: View {
         }
     }
 
-    /// Corrupt metadata cannot name per-profile accounts. Delete only the
-    /// legacy password item, then drop undecodable defaults. Do not scan.
-    private func deleteLegacyPassword() {
-        do {
-            try SSHTerminalProfileStore().deleteLegacyPasswordItem()
-            SSHTerminalProfileStore().discardCorruptMetadata()
-            reload()
-        } catch {
-            session.failure = error.localizedDescription
-        }
+    /// Corrupt metadata cannot name per-profile password accounts, so this
+    /// drops only the unreadable defaults value. It does not scan the Keychain.
+    private func resetHostList() {
+        SSHTerminalProfileStore().discardCorruptMetadata()
+        reload()
     }
 
     private func reload() {

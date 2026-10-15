@@ -34,11 +34,6 @@ struct KeychainSSHIdentityStorage: SSHIdentitySealedStorage {
     private static let replacementAccount = "oppi.ssh.identity.replacement-required"
 
     func load() throws -> Data? {
-        // The v1 enclave reference allowed signing without presence and was
-        // shared with extensions. Remove it even if v2 restoration later fails.
-        var legacy = Self.query(account: "oppi.ssh.identity.v1")
-        legacy[kSecAttrAccessGroup as String] = SharedConstants.keychainAccessGroup
-        try Self.delete(legacy)
         if try Self.read(account: Self.replacementAccount) != nil {
             throw SSHIdentityKeyStoreError.devicePasscodeChanged
         }

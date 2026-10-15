@@ -433,29 +433,20 @@ struct SSHPTYSessionTests {
         #expect(SSHIdentityKeyStoreError.devicePasscodeChanged.localizedDescription == "Device passcode changed — create a new key")
     }
 
-    @Test func realKeychainRemovesLegacySharedIdentityAndPersistsReplacementState() throws {
-        func query(_ account: String, legacy: Bool = false) -> [String: Any] {
-            var value: [String: Any] = [
+    @Test func realKeychainPersistsReplacementState() throws {
+        func query(_ account: String) -> [String: Any] {
+            [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: SharedConstants.keychainService,
                 kSecAttrAccount as String: account,
             ]
-            if legacy { value[kSecAttrAccessGroup as String] = SharedConstants.keychainAccessGroup }
-            return value
         }
-        let legacy = query("oppi.ssh.identity.v1", legacy: true)
         let current = query("oppi.ssh.identity.presence.v2")
         let marker = query("oppi.ssh.identity.replacement-required")
-        defer { for item in [legacy, current, marker] { SecItemDelete(item as CFDictionary) } }
-        var add = legacy
-        add[kSecValueData as String] = Data([7])
-        SecItemDelete(legacy as CFDictionary)
-        #expect(SecItemAdd(add as CFDictionary, nil) == errSecSuccess)
+        defer { for item in [current, marker] { SecItemDelete(item as CFDictionary) } }
         let storage = KeychainSSHIdentityStorage()
         try storage.save(Data([2, 3]))
         #expect(try storage.load() == Data([2, 3]))
-        #expect(SecItemCopyMatching(legacy as CFDictionary, nil) == errSecItemNotFound)
-        #expect(try storage.load() == Data([2, 3])) // legacy not-found is harmless
         try storage.requireReplacement()
         #expect(SecItemCopyMatching(current as CFDictionary, nil) == errSecItemNotFound)
         #expect(throws: SSHIdentityKeyStoreError.devicePasscodeChanged) { _ = try KeychainSSHIdentityStorage().load() }

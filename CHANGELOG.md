@@ -165,6 +165,7 @@ Example:
 - **Server:** `GET /sessions/:id/read` is gone; it was an alias of `GET /sessions/:id/trace`. `oppi session read` calls `/trace`.
 - **Server:** Direct APNs push (`apns.json`, the server's APNs client, `POST /me/device-token`, and server-sent Live Activity updates) is removed.
 - **Server:** Durable sessions no longer load the goal extension, so they have no goals or goal decision cards.
+- **Client:** The SSH Terminal no longer upgrades the single saved host from before the host list (Build 53), and no longer moves its saved password or removes the first device-key format. A phone that skipped every build since then adds that host again. If the host list cannot be read, **Reset Host List** replaces **Delete Saved Password**; it clears the unreadable list without searching the Keychain.
 
 ## [0.51.0] - 2026-10-05
 

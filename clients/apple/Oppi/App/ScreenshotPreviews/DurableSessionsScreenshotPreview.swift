@@ -70,7 +70,7 @@ struct DurableSessionsScreenshotPreview: View {
         arguments[AppPreferences.Experiments.durableSessionsKey] = experimentEnabled
         arguments[AppPreferences.Experiments.sshTerminalKey] = true
         let profile = SSHTerminalProfile(host: "mac-studio.local", username: "chen")
-        arguments[SSHTerminalProfileStore.storageKey] = try? JSONEncoder().encode(profile)
+        arguments[SSHTerminalProfileStore.catalogKey] = try? JSONEncoder().encode(SSHTerminalCatalog(profiles: [profile]))
         defaults.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
     }
 
