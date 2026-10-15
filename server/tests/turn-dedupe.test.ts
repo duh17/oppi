@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ServerMessage } from "../src/types.js";
+import { SessionTurnCoordinator } from "../src/session-turns.js";
 import { TurnDedupeCache, type TurnDedupeRecord } from "../src/turn-cache.js";
 
 describe("TurnDedupeCache", () => {
@@ -126,6 +127,48 @@ describe("TurnDedupeCache", () => {
     expect(cache.get("turn-1", now + 4)).not.toBeNull();
     expect(cache.get("turn-2", now + 4)).toBeNull();
     expect(cache.get("turn-3", now + 4)).not.toBeNull();
+  });
+});
+
+describe("SessionTurnCoordinator retries", () => {
+  const ref = {
+    type: "attachment",
+    id: "upload-1",
+    source: "upload",
+    name: "image-1.jpg",
+    mimeType: "image/jpeg",
+    sizeBytes: 123,
+    sha256: "abc",
+    kind: "image",
+  };
+  // The same ref with its keys in another order, as Apple's JSONEncoder may send it.
+  const reordered = Object.fromEntries(Object.entries(ref).reverse());
+
+  function begin() {
+    const coordinator = new SessionTurnCoordinator({ broadcast: () => {} });
+    const state = { turnCache: new TurnDedupeCache(16, 60_000), pendingTurnStarts: [] };
+    const send = (attachment: Record<string, unknown>, message = "look") =>
+      coordinator.beginTurnIntent(
+        "s1",
+        state,
+        "steer",
+        { message, attachments: [attachment] },
+        "t1",
+      );
+    return send;
+  }
+
+  it("treats a resent attachment with reordered keys as the same turn", () => {
+    const send = begin();
+    expect(send(ref).duplicate).toBe(false);
+    expect(send(reordered).duplicate).toBe(true);
+  });
+
+  it("still rejects a different payload under the same clientTurnId", () => {
+    const send = begin();
+    send(ref);
+    expect(() => send({ ...reordered, sha256: "other" })).toThrow("clientTurnId conflict: t1");
+    expect(() => send(ref, "other text")).toThrow("clientTurnId conflict: t1");
   });
 });
 

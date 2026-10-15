@@ -109,10 +109,25 @@ export class TurnDedupeCache {
   }
 }
 
+/**
+ * JSON with object keys sorted. Clients do not promise key order: Apple's `JSONEncoder`
+ * orders keys differently from one encode to the next, so a resent attachment ref must
+ * not read as a different payload.
+ */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, field: unknown) => {
+    if (field === null || typeof field !== "object" || Array.isArray(field)) return field;
+    const record = field as Record<string, unknown>;
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(record).sort()) sorted[key] = record[key];
+    return sorted;
+  });
+}
+
 export function computeTurnPayloadHash(command: TurnCommand, payload: unknown): string {
   return createHash("sha1")
     .update(command)
     .update(":")
-    .update(JSON.stringify(payload))
+    .update(canonicalJson(payload))
     .digest("hex");
 }
