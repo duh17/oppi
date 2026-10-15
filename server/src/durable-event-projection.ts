@@ -20,6 +20,7 @@ import {
   snapshotEvents,
 } from "./durable-event-adapter.js";
 
+import { compactionSummary, isRecoveredPartial } from "./durable-history.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
 
 type Compacting = {
@@ -27,49 +28,6 @@ type Compacting = {
   tokensBefore: number;
   result?: CompactionResult;
 };
-
-/** Hide only interrupted attempts whose SAME generation retries, never a user Stop.
- * A later assistant entry attributed to the same generation proves a retry even
- * if the user subsequently Stops it: hide earlier stubs, keep the latest Stop.
- * Otherwise a live non-abort-marked generation or completed/model-failed receipt
- * proves continuation; aborted/faulted/orphaned/unknown tasks stay visible.
- * Task attribution, not adjacency/text matching, also handles repeated crashes.
- * Shared by live projection and the durable history reader; storage stays untouched.
- */
-export async function isRecoveredPartial(
-  entry: EntryRecord,
-  harness: Harness,
-  entries: readonly EntryRecord[],
-): Promise<boolean> {
-  const message = entry.model?.[0];
-  if (message?.role !== "assistant" || message.stopReason !== "aborted" || !entry.byTaskId)
-    return false;
-  if (
-    entries.some(
-      (later) =>
-        later.id > entry.id &&
-        later.byTaskId === entry.byTaskId &&
-        later.model?.[0]?.role === "assistant",
-    )
-  )
-    return true;
-  const task = await harness.getTask(entry.byTaskId, context);
-  if (!task || task.kind !== "pi.generation" || task.abortRequested) return false;
-  return task.state.status !== "terminal" && task.state.status !== "completing"
-    ? true
-    : task.state.outcome.status === "completed" || task.state.outcome.status === "failed";
-}
-
-export function compactionSummary(entry: EntryRecord): string {
-  const message = entry.model?.[0];
-  if (message?.role !== "user") return "";
-  const text =
-    typeof message.content === "string"
-      ? message.content
-      : message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
-  const wrapped = text.match(/<summary>\n?([\s\S]*?)\n?<\/summary>/);
-  return (wrapped?.[1] ?? text).trim();
-}
 
 /** One serialized watch consumer; never waits for progress inside the watch.
  * Manual/background summary writes can be placed in a later commit, so successful

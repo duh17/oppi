@@ -2,13 +2,16 @@ import { fileURLToPath } from "node:url";
 import type {
   ConversationEntryView,
   ConversationStreamAttach,
+  ConversationStreamOlder,
   ConversationStreamServerMessage,
 } from "../src/types.js";
 import { serializeProtocolFixture } from "./protocol-fixtures.js";
 
 // Experimental durable conversation stream (capabilities.conversationStream v1).
 // Kept apart from server-messages.json: those examples must all decode as known
-// focused-stream events in the Apple client, which does not model this stream yet.
+// focused-stream events in the Apple client, which reads this stream with its own models.
+// The server examples are one ordered sequence: the Apple replica test applies them in
+// this order and checks the result of every op kind.
 
 export const CONVERSATION_STREAM_SNAPSHOT_FILE = fileURLToPath(
   new URL("../../protocol/conversation-stream.json", import.meta.url),
@@ -95,17 +98,52 @@ const answerEntry: ConversationEntryView = {
   ],
 };
 
+const failureCard = {
+  title: "Run failed",
+  body: "Provider overloaded",
+  accent: "error",
+  at: 1_791_650_004_000,
+} as const;
+
 const cardEntry: ConversationEntryView = {
   id: 12,
   kind: "oppi.failure",
-  data: {
-    card: {
-      title: "Run failed",
-      body: "Provider overloaded",
-      accent: "error",
-      at: 1_791_650_004_000,
+  data: { card: failureCard },
+  card: { kind: "custom", ...failureCard },
+};
+
+/** An attempt a restart interrupted; hidden once its generation retries. */
+const partialEntry: ConversationEntryView = {
+  id: 13,
+  kind: "pi.assistant",
+  model: [
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "There are tw" }],
+      api: "anthropic-messages",
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+      usage,
+      stopReason: "aborted",
+      timestamp: 1_791_650_003_500,
     },
+  ],
+};
+
+const inputCardEntry: ConversationEntryView = {
+  id: 21,
+  kind: "pi.user",
+  card: {
+    kind: "custom",
+    title: "Background job 3",
+    status: "completed",
+    body: "npm test",
+    fields: [{ label: "Result", value: "Exit 0" }],
+    accent: "success",
+    output: { kind: "terminal", offset: 0, length: 12, command: "npm test" },
+    at: 1_791_650_006_000,
   },
+  inputCard: true,
 };
 
 const compactionEntry: ConversationEntryView = {
@@ -224,6 +262,38 @@ const CONVERSATION_STREAM_SERVER_MESSAGES = {
       ],
     },
   },
+  update_queue: {
+    type: "update",
+    conversationId: 3,
+    docs: {
+      "pi.inbox": [
+        [
+          "p",
+          ["items"],
+          0,
+          0,
+          [
+            { id: 31, mode: "followUp", content: "first" },
+            { id: 32, mode: "steer", content: "second" },
+            { id: 33, mode: "followUp", content: "third" },
+          ],
+        ],
+        ["m", ["items"], [1, 0, 2]],
+        ["d", ["items", 2]],
+        ["s", ["items", 1, "content"], "first, edited"],
+      ],
+    },
+  },
+  update_partial: {
+    type: "update",
+    conversationId: 3,
+    entries: [partialEntry],
+  },
+  update_hidden: {
+    type: "update",
+    conversationId: 3,
+    entries: [{ id: 13, kind: "pi.assistant", hidden: true }],
+  },
   update_resume: {
     type: "update",
     conversationId: 3,
@@ -244,6 +314,17 @@ const CONVERSATION_STREAM_SERVER_MESSAGES = {
     entries: [compactionEntry, answerEntry, cardEntry],
     docs: { "pi.live": {} },
   },
+  update_input_card: {
+    type: "update",
+    conversationId: 3,
+    entries: [inputCardEntry],
+  },
+  older: {
+    type: "older",
+    conversationId: 3,
+    entries: [userEntry, toolCallEntry, toolResultEntry],
+    hasOlder: false,
+  },
 } satisfies Record<string, ConversationStreamServerMessage>;
 
 const CONVERSATION_STREAM_CLIENT_MESSAGES = {
@@ -251,6 +332,10 @@ const CONVERSATION_STREAM_CLIENT_MESSAGES = {
   attach_resume: { type: "attach", conversationId: 3, afterEntryId: 11, requestId: "req-attach-2" },
   attach_by_session: { type: "attach", sessionId: "test-session-1" },
 } satisfies Record<string, ConversationStreamAttach>;
+
+const CONVERSATION_STREAM_OLDER_REQUESTS = {
+  older: { type: "older", beforeEntryId: 11, limit: 100, requestId: "req-older-1" },
+} satisfies Record<string, ConversationStreamOlder>;
 
 export function buildConversationStreamMessages(): Record<string, unknown> {
   return {
@@ -261,10 +346,10 @@ export function buildConversationStreamMessages(): Record<string, unknown> {
       ]),
     ),
     ...Object.fromEntries(
-      Object.entries(CONVERSATION_STREAM_CLIENT_MESSAGES).map(([key, value]) => [
-        `client.${key}`,
-        value,
-      ]),
+      Object.entries({
+        ...CONVERSATION_STREAM_CLIENT_MESSAGES,
+        ...CONVERSATION_STREAM_OLDER_REQUESTS,
+      }).map(([key, value]) => [`client.${key}`, value]),
     ),
   };
 }

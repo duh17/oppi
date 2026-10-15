@@ -1,5 +1,5 @@
 import type { ShareSessionAction, ShareSessionRedactionPolicyInput } from "./session-share.js";
-import type { ClientMessage, ConversationStreamAttach } from "./types.js";
+import type { ClientMessage, ConversationStreamAttach, ConversationStreamOlder } from "./types.js";
 
 export function toRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
@@ -197,6 +197,34 @@ export function parseConversationStreamAttach(
       ...(requestId !== undefined ? { requestId } : {}),
     };
   }
+}
+
+/** Conversation stream `older`; socket-only, like `attach`. */
+export function parseConversationStreamOlder(
+  record: Record<string, unknown>,
+):
+  | { ok: true; message: ConversationStreamOlder }
+  | { ok: false; error: string; requestId?: string } {
+  const requestId = readOptionalRequestId(record.requestId);
+  const before = record.beforeEntryId;
+  const limit = record.limit;
+  const error =
+    typeof before !== "number" || !Number.isSafeInteger(before) || before < 1
+      ? "Invalid older payload: beforeEntryId must be a positive integer"
+      : limit !== undefined &&
+          (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1)
+        ? "Invalid older payload: limit must be a positive integer"
+        : undefined;
+  if (error) return { ok: false, error, ...(requestId !== undefined ? { requestId } : {}) };
+  return {
+    ok: true,
+    message: {
+      type: "older",
+      beforeEntryId: before as number,
+      ...(limit !== undefined ? { limit: limit as number } : {}),
+      ...(requestId !== undefined ? { requestId } : {}),
+    },
+  };
 }
 
 export function parseClientCommand(body: unknown): ClientCommandParseResult {

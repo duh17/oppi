@@ -10,7 +10,6 @@ import {
   type TraceEvent,
   type TraceViewMode,
 } from "./trace.js";
-import { compactionSummary, isRecoveredPartial } from "./durable-event-projection.js";
 import {
   readSessionTracePageFromEntries,
   tracePageCursorEntryId,
@@ -22,6 +21,56 @@ import type { MobileRendererRegistry } from "./mobile-renderer.js";
 import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
 
 import { readDurableInputCards } from "./durable-input-cards.js";
+
+/** Hide only interrupted attempts whose SAME generation retries, never a user Stop.
+ * A later assistant entry attributed to the same generation proves a retry even
+ * if the user subsequently Stops it: hide earlier stubs, keep the latest Stop.
+ * Otherwise a live non-abort-marked generation or completed/model-failed receipt
+ * proves continuation; aborted/faulted/orphaned/unknown tasks stay visible.
+ * Task attribution, not adjacency/text matching, also handles repeated crashes.
+ * Shared by live projection, the conversation stream, and the durable history reader;
+ * storage stays untouched.
+ */
+export async function isRecoveredPartial(
+  entry: EntryRecord,
+  harness: Harness,
+  entries: readonly EntryRecord[],
+): Promise<boolean> {
+  if (!isAbortedAttempt(entry)) return false;
+  if (
+    entries.some(
+      (later) =>
+        later.id > entry.id &&
+        later.byTaskId === entry.byTaskId &&
+        later.model?.[0]?.role === "assistant",
+    )
+  )
+    return true;
+  const task = await harness.getTask(entry.byTaskId, context);
+  if (!task || task.kind !== "pi.generation" || task.abortRequested) return false;
+  return task.state.status !== "terminal" && task.state.status !== "completing"
+    ? true
+    : task.state.outcome.status === "completed" || task.state.outcome.status === "failed";
+}
+
+/** An aborted assistant entry a task committed: the only entries `isRecoveredPartial` may hide. */
+export function isAbortedAttempt(
+  entry: EntryRecord,
+): entry is EntryRecord & { byTaskId: NonNullable<EntryRecord["byTaskId"]> } {
+  const message = entry.model?.[0];
+  return message?.role === "assistant" && message.stopReason === "aborted" && !!entry.byTaskId;
+}
+
+export function compactionSummary(entry: EntryRecord): string {
+  const message = entry.model?.[0];
+  if (message?.role !== "user") return "";
+  const text =
+    typeof message.content === "string"
+      ? message.content
+      : message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
+  const wrapped = text.match(/<summary>\n?([\s\S]*?)\n?<\/summary>/);
+  return (wrapped?.[1] ?? text).trim();
+}
 
 async function projectEntries(
   harness: Harness,

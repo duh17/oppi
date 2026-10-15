@@ -14,8 +14,11 @@ import {
 import {
   Harness,
   createRegistry,
+  defineExtension,
+  defineTask,
   type Conversation,
   type EntryId,
+  type Extension,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
@@ -27,11 +30,17 @@ import {
 } from "../extensions/durable/durable-ui.js";
 import {
   attachConversationStream,
+  readOlderConversationEntries,
   type ConversationStreamSubscription,
 } from "../src/durable-conversation-stream.js";
+import { readDurableTrace } from "../src/durable-history.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import type { ConversationEntryView, ConversationStreamServerMessage } from "../src/types.js";
-import { conversationReference } from "./harness/conversation-stream-reference.js";
+import {
+  conversationReference,
+  shownEntries,
+  upsertEntries,
+} from "./harness/conversation-stream-reference.js";
 
 const harnesses = new Set<Harness>();
 const subscriptions = new Set<ConversationStreamSubscription>();
@@ -44,7 +53,10 @@ afterEach(async () => {
 
 const LONG_ANSWER = Array.from({ length: 40 }, (_, index) => `word${index}`).join(" ");
 
-async function fixture(responses: FauxResponseStep[], options?: { slow?: boolean }) {
+async function fixture(
+  responses: FauxResponseStep[],
+  options?: { slow?: boolean; extensions?: Extension[] },
+) {
   const dir = mkdtempSync(join(tmpdir(), "oppi-conversation-stream-"));
   const models = await ModelRuntime.create({
     authPath: join(dir, "auth.json"),
@@ -61,17 +73,22 @@ async function fixture(responses: FauxResponseStep[], options?: { slow?: boolean
   await models.refresh({ allowNetwork: false });
   const registry = createRegistry();
   registry.install(CodingTools);
-  const harness = await Harness.open(
-    await openNodeSqliteStorage(join(dir, "stream.sqlite")),
-    {
-      models,
-      registry,
-      env: () => new NodeExecutionEnv({ cwd: dir }),
-      settings: { compaction: { enabled: false } },
-    },
-    context,
-  );
-  harnesses.add(harness);
+  for (const extension of options?.extensions ?? []) registry.install(extension);
+  const open = async () => {
+    const opened = await Harness.open(
+      await openNodeSqliteStorage(join(dir, "stream.sqlite")),
+      {
+        models,
+        registry,
+        env: () => new NodeExecutionEnv({ cwd: dir }),
+        settings: { compaction: { enabled: false } },
+      },
+      context,
+    );
+    harnesses.add(opened);
+    return opened;
+  };
+  const harness = await open();
   const conversation = await harness.createConversation(
     {
       ownership: { kind: "ownerless" },
@@ -83,7 +100,7 @@ async function fixture(responses: FauxResponseStep[], options?: { slow?: boolean
     },
     context,
   );
-  return { harness, conversation, faux };
+  return { harness, conversation, faux, open };
 }
 
 type Frame = ConversationStreamServerMessage & { receivedAt: number };
@@ -103,11 +120,11 @@ class Client {
       this.head = frame.head;
       return;
     }
-    for (const entry of frame.entries ?? []) {
-      const index = this.entries.findIndex((candidate) => candidate.id === entry.id);
-      if (index >= 0) this.entries[index] = entry;
-      else this.entries.push(entry);
+    if (frame.type === "older") {
+      this.entries = [...frame.entries, ...this.entries];
+      return;
     }
+    this.entries = upsertEntries(this.entries, this.head, frame.entries ?? []);
     for (const [kind, ops] of Object.entries(frame.docs ?? {})) {
       if (ops === null) delete this.docs[kind];
       else this.docs[kind] = applyImmutable(this.docs[kind], ops as Op[]);
@@ -161,9 +178,22 @@ async function expectConverged(
     f.conversation.id,
     new MobileRendererRegistry(),
   );
-  expect(client.entries).toEqual(reference.entries);
+  expect(shownEntries(client.entries)).toEqual(reference.entries);
   expect(client.docs).toEqual(reference.docs);
   expect(client.head).toBe(reference.head);
+}
+
+/** Entry ids the trace shows as cards, and every entry id it shows. */
+async function traceCards(f: { harness: Harness; conversation: Conversation }) {
+  const trace = await readDurableTrace(f.harness, f.conversation.id, "full");
+  return {
+    cards: trace.filter((event) => event.presentation).map((event) => Number(event.id)),
+    ids: new Set(trace.map((event) => Number(/^(?:result-)?(\d+)/.exec(event.id)?.[1]))),
+  };
+}
+
+function wire(frame: ConversationStreamServerMessage): ConversationStreamServerMessage {
+  return JSON.parse(JSON.stringify(frame)) as ConversationStreamServerMessage;
 }
 
 function liveTextOps(frame: Frame): Op[] {
@@ -446,5 +476,299 @@ describe("durable conversation stream", { timeout: 30_000 }, () => {
       },
     });
     await expectConverged(f, client);
+  });
+
+  it("shows input and display cards like trace history, including card metadata that lands late", async () => {
+    const f = await fixture([fauxAssistantMessage("ack one"), fauxAssistantMessage("ack two")]);
+    const client = await attach(f);
+    const id = f.conversation.id;
+    const at = 1_791_650_000_000;
+    const display = await f.conversation.commit(async (tx) => {
+      const entry = await tx.appendEntry(id, {
+        kind: "oppi.notice",
+        data: { card: { title: "  Job done ", body: "ok", accent: "success", at }, extra: 1 },
+      });
+      // Not a card: the trace shows nothing for it, and the stream adds no card.
+      await tx.appendEntry(id, { kind: "oppi.notice", data: { card: { title: "" } } });
+      return entry.id;
+    }, context);
+    // Extension-generated input: metadata first, as producers publish it.
+    await f.conversation.commit(async (tx) => {
+      const cards = await tx.doc(DurableInputCards, id);
+      cards.requests["job-1"] = {
+        title: "Background job 1",
+        output: { kind: "terminal", offset: 0, length: 5, command: "make" },
+        at,
+      };
+    }, context);
+    const first = await f.conversation.submit(
+      { type: "input", content: "hello from the job", requestId: "job-1" },
+      context,
+    );
+    await first.wait(context);
+    await f.conversation.waitForIdle(context);
+    // A late card still applies to the input it names.
+    const second = await f.conversation.submit(
+      { type: "input", content: "second job output", requestId: "job-2" },
+      context,
+    );
+    await second.wait(context);
+    await f.conversation.waitForIdle(context);
+    await settle();
+    const plain = client.entries.find(
+      (entry) =>
+        entry.kind === "pi.user" && (JSON.stringify(entry.model) ?? "").includes("second job"),
+    )!;
+    expect(plain.card).toBeUndefined();
+    const sent = client.frames.length;
+    await f.conversation.commit(async (tx) => {
+      const cards = await tx.doc(DurableInputCards, id);
+      cards.requests["job-2"] = { title: "Background job 2", at: at + 1 };
+    }, context);
+    await settle();
+
+    expect(client.entries.find((entry) => entry.id === display)).toMatchObject({
+      card: { kind: "custom", title: "Job done", body: "ok", accent: "success", at },
+      data: { extra: 1 },
+    });
+    const inputs = client.entries.filter((entry) => entry.inputCard);
+    expect(inputs).toEqual([
+      {
+        id: expect.any(Number),
+        kind: "pi.user",
+        card: {
+          kind: "custom",
+          title: "Background job 1",
+          output: { kind: "terminal", offset: 0, length: 5, command: "make" },
+          at,
+        },
+        inputCard: true,
+      },
+      {
+        id: plain.id,
+        kind: "pi.user",
+        card: { kind: "custom", title: "Background job 2", at: at + 1 },
+        inputCard: true,
+      },
+    ]);
+    // The late card arrived as an upsert of the entry the client already held.
+    const restated = client.frames
+      .slice(sent)
+      .flatMap((frame) => (frame.type === "update" ? (frame.entries ?? []) : []));
+    expect(restated.map((entry) => entry.id)).toEqual([plain.id]);
+    // The trace shows exactly these entries as cards.
+    const { cards } = await traceCards(f);
+    expect(cards.sort()).toEqual(
+      client.entries
+        .filter((entry) => entry.card)
+        .map((entry) => entry.id)
+        .sort(),
+    );
+    await expectConverged(f, client);
+
+    // A resumed client gets the input cards it may hold as plain inputs.
+    const resumed = await attach(f, client.tip);
+    const frame = resumed.frames[0];
+    expect(frame?.type === "update" && frame.entries?.map((entry) => entry.id)).toEqual(
+      inputs.map((entry) => entry.id),
+    );
+  });
+
+  it("never sends a partial answer that a restarted generation retried", async () => {
+    const f = await fixture([fauxAssistantMessage(LONG_ANSWER)], { slow: true });
+    const client = await attach(f);
+    const submission = await f.conversation.submit(
+      { type: "input", content: "interrupted" },
+      context,
+    );
+    await expect
+      .poll(() => client.frames.some((frame) => liveTextOps(frame).length > 0), {
+        timeout: 15_000,
+      })
+      .toBe(true);
+    void submission.wait(context).catch(() => undefined);
+    // A restart mid-stream: the room closes with the Harness.
+    await f.harness.close(context);
+    harnesses.delete(f.harness);
+    const cursor = client.tip;
+    f.faux.setResponses([fauxAssistantMessage("fresh complete")]);
+    const harness = await f.open();
+    const conversation = (await harness.conversation(f.conversation.id, context))!;
+    const reopened = { harness, conversation };
+    const resumed = await attach(reopened, cursor, client);
+    harness.resume();
+    await conversation.waitForIdle(context);
+    await settle();
+
+    const assistants = await (async () => {
+      const page = await conversation.entries({}, 50, undefined, context);
+      return page.items.filter((entry) => entry.kind === "pi.assistant");
+    })();
+    const partial = assistants.find(
+      (entry) => entry.model?.[0]?.role === "assistant" && entry.model[0].stopReason === "aborted",
+    )!;
+    expect(partial).toBeDefined();
+    const sentIds = resumed.frames.flatMap((frame) =>
+      frame.type === "snapshot" || frame.type === "update"
+        ? (frame.entries ?? []).map((entry) => entry.id)
+        : [],
+    );
+    expect(sentIds).not.toContain(partial.id);
+    expect(JSON.stringify(shownEntries(resumed.entries))).toContain("fresh complete");
+    expect((await traceCards(reopened)).ids.has(partial.id)).toBe(false);
+    await expectConverged(reopened, resumed);
+    // A cold snapshot omits it too.
+    expect((await attach(reopened)).entries.map((entry) => entry.id)).not.toContain(partial.id);
+  });
+
+  it("upserts an attempt the client holds as hidden once its task retries", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const message = (text: string, stopReason: "aborted" | "stop") => ({
+      role: "assistant" as const,
+      content: [{ type: "text" as const, text }],
+      api: "faux",
+      provider: "faux",
+      model: "faux-1",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason,
+      timestamp: 1,
+    });
+    // Attributed attempts without a Pi generation: only the later answer of the same task
+    // hides the first, exactly the rule the trace applies.
+    const Retry = defineTask<null, { phase: "first" } | { phase: "second" }, null>({
+      name: "oppi.test-retry",
+      version: 1,
+      initial: () => ({ phase: "first" }),
+      phases: {
+        first: (_task, runtime, callContext) =>
+          runtime.commit(async (tx) => {
+            await tx.appendEntry(runtime.conversationId, {
+              kind: "pi.assistant",
+              model: [message("first attempt", "aborted")],
+            });
+            return { status: "running", checkpoint: { phase: "second" } };
+          }, callContext),
+        second: async (_task, runtime, callContext) => {
+          await gate;
+          await runtime.commit(async (tx) => {
+            await tx.appendEntry(runtime.conversationId, {
+              kind: "pi.assistant",
+              model: [message("second attempt", "stop")],
+            });
+            return { status: "terminal", outcome: { status: "completed", result: null } };
+          }, callContext);
+        },
+      },
+      abort: (_task, runtime, callContext) =>
+        runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), callContext),
+    });
+    const f = await fixture([], {
+      extensions: [defineExtension({ name: "oppi.test-retry", tasks: [Retry] })],
+    });
+    const client = await attach(f);
+    const task = await f.conversation.commit(
+      (tx) => tx.createTask(Retry, null, { ownership: { kind: "conversation" } }),
+      context,
+    );
+    f.harness.resume();
+    await expect
+      .poll(() => JSON.stringify(client.entries).includes("first attempt"), { timeout: 5_000 })
+      .toBe(true);
+    const attempt = client.entries.find((entry) =>
+      JSON.stringify(entry).includes("first attempt"),
+    )!;
+    const sent = client.frames.length;
+    release();
+    await f.harness.waitForTask(task, context);
+    await settle();
+
+    const restated = client.frames
+      .slice(sent)
+      .flatMap((frame) => (frame.type === "update" ? (frame.entries ?? []) : []));
+    expect(restated).toContainEqual({ id: attempt.id, kind: "pi.assistant", hidden: true });
+    expect(client.entries.find((entry) => entry.id === attempt.id)).toEqual({
+      id: attempt.id,
+      kind: "pi.assistant",
+      hidden: true,
+    });
+    expect((await traceCards(f)).ids.has(attempt.id)).toBe(false);
+    await expectConverged(f, client);
+    // A fresh snapshot omits it.
+    expect((await attach(f)).entries.map((entry) => entry.id)).not.toContain(attempt.id);
+  });
+
+  it("pages older entries before the replica, oldest first, with the same presentation", async () => {
+    const f = await fixture([
+      fauxAssistantMessage("one"),
+      fauxAssistantMessage("two"),
+      fauxAssistantMessage("three"),
+    ]);
+    await prompt(f.conversation, "first");
+    await prompt(f.conversation, "second");
+    const id = f.conversation.id;
+    await f.conversation.commit(async (tx) => {
+      await tx.appendEntry(id, {
+        kind: "oppi.notice",
+        data: { card: { title: "Old card", at: 1 } },
+      });
+    }, context);
+    await prompt(f.conversation, "third");
+    const all = (await f.conversation.entries({}, 100, undefined, context)).items.reverse();
+    const kept = all.filter((entry) => entry.kind === "pi.user").at(-1)!.id;
+    await f.conversation.commit(async (tx) => {
+      await tx.appendEntry(id, {
+        kind: "pi.compaction",
+        head: kept as EntryId,
+        model: [{ role: "user", content: "<summary>earlier</summary>", timestamp: 1 }],
+      });
+    }, context);
+    const client = await attach(f);
+    expect(client.frames[0]).toMatchObject({ type: "snapshot", hasOlder: true });
+    const oldest = Math.min(...client.entries.map((entry) => entry.id));
+    expect(oldest).toBe(kept);
+
+    const renderers = new MobileRendererRegistry();
+    const page = (beforeEntryId: number, limit?: number) =>
+      readOlderConversationEntries({
+        harness: f.harness,
+        conversationId: id,
+        renderers,
+        beforeEntryId,
+        ...(limit !== undefined ? { limit } : {}),
+      }).then(wire);
+    const first = await page(oldest, 2);
+    expect(first).toMatchObject({ type: "older", conversationId: id, hasOlder: true });
+    const firstIds = first.type === "older" ? first.entries.map((entry) => entry.id) : [];
+    expect(firstIds).toEqual(
+      all
+        .filter((entry) => entry.id < oldest)
+        .map((entry) => entry.id)
+        .slice(-2),
+    );
+    const rest = await page(firstIds[0]!);
+    expect(rest).toMatchObject({ type: "older", hasOlder: false });
+    if (rest.type !== "older" || first.type !== "older") return;
+    const paged = [...rest.entries, ...first.entries];
+    expect(paged.map((entry) => entry.id)).toEqual(
+      all.filter((entry) => entry.id < oldest).map((entry) => entry.id),
+    );
+    // Same decorations as the stream gives entries: the card, and tool presentation.
+    expect(paged.find((entry) => entry.kind === "oppi.notice")?.card).toMatchObject({
+      title: "Old card",
+    });
+    expect(await page(1)).toEqual({
+      type: "older",
+      conversationId: id,
+      entries: [],
+      hasOlder: false,
+    });
   });
 });

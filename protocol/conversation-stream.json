@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Experimental durable conversation stream frames — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 10
+    "messageCount": 16
   },
   "messages": {
     "server.snapshot": {
@@ -371,6 +371,117 @@
         ]
       }
     },
+    "server.update_queue": {
+      "type": "update",
+      "conversationId": 3,
+      "docs": {
+        "pi.inbox": [
+          [
+            "p",
+            [
+              "items"
+            ],
+            0,
+            0,
+            [
+              {
+                "id": 31,
+                "mode": "followUp",
+                "content": "first"
+              },
+              {
+                "id": 32,
+                "mode": "steer",
+                "content": "second"
+              },
+              {
+                "id": 33,
+                "mode": "followUp",
+                "content": "third"
+              }
+            ]
+          ],
+          [
+            "m",
+            [
+              "items"
+            ],
+            [
+              1,
+              0,
+              2
+            ]
+          ],
+          [
+            "d",
+            [
+              "items",
+              2
+            ]
+          ],
+          [
+            "s",
+            [
+              "items",
+              1,
+              "content"
+            ],
+            "first, edited"
+          ]
+        ]
+      }
+    },
+    "server.update_partial": {
+      "type": "update",
+      "conversationId": 3,
+      "entries": [
+        {
+          "id": 13,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "There are tw"
+                }
+              ],
+              "api": "anthropic-messages",
+              "provider": "anthropic",
+              "model": "claude-sonnet-4-5",
+              "usage": {
+                "input": 668,
+                "output": 68,
+                "cacheRead": 0,
+                "cacheWrite": 668,
+                "totalTokens": 1404,
+                "cost": {
+                  "input": 0.002,
+                  "output": 0.001,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0.003
+                }
+              },
+              "stopReason": "aborted",
+              "timestamp": 1791650003500
+            }
+          ]
+        }
+      ]
+    },
+    "server.update_hidden": {
+      "type": "update",
+      "conversationId": 3,
+      "entries": [
+        {
+          "id": 13,
+          "kind": "pi.assistant",
+          "hidden": true
+        }
+      ]
+    },
     "server.update_resume": {
       "type": "update",
       "conversationId": 3,
@@ -385,6 +496,13 @@
               "accent": "error",
               "at": 1791650004000
             }
+          },
+          "card": {
+            "kind": "custom",
+            "title": "Run failed",
+            "body": "Provider overloaded",
+            "accent": "error",
+            "at": 1791650004000
           }
         }
       ],
@@ -486,12 +604,164 @@
               "accent": "error",
               "at": 1791650004000
             }
+          },
+          "card": {
+            "kind": "custom",
+            "title": "Run failed",
+            "body": "Provider overloaded",
+            "accent": "error",
+            "at": 1791650004000
           }
         }
       ],
       "docs": {
         "pi.live": {}
       }
+    },
+    "server.update_input_card": {
+      "type": "update",
+      "conversationId": 3,
+      "entries": [
+        {
+          "id": 21,
+          "kind": "pi.user",
+          "card": {
+            "kind": "custom",
+            "title": "Background job 3",
+            "status": "completed",
+            "body": "npm test",
+            "fields": [
+              {
+                "label": "Result",
+                "value": "Exit 0"
+              }
+            ],
+            "accent": "success",
+            "output": {
+              "kind": "terminal",
+              "offset": 0,
+              "length": 12,
+              "command": "npm test"
+            },
+            "at": 1791650006000
+          },
+          "inputCard": true
+        }
+      ]
+    },
+    "server.older": {
+      "type": "older",
+      "conversationId": 3,
+      "entries": [
+        {
+          "id": 8,
+          "kind": "pi.user",
+          "model": [
+            {
+              "role": "user",
+              "content": "List the files",
+              "timestamp": 1791650000000
+            }
+          ]
+        },
+        {
+          "id": 9,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-1",
+                  "name": "bash",
+                  "arguments": {
+                    "command": "ls"
+                  }
+                }
+              ],
+              "api": "anthropic-messages",
+              "provider": "anthropic",
+              "model": "claude-sonnet-4-5",
+              "usage": {
+                "input": 668,
+                "output": 68,
+                "cacheRead": 0,
+                "cacheWrite": 668,
+                "totalTokens": 1404,
+                "cost": {
+                  "input": 0.002,
+                  "output": 0.001,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0.003
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1791650001000
+            }
+          ],
+          "toolCalls": {
+            "call-1": {
+              "callSegments": [
+                {
+                  "text": "$ ",
+                  "style": "bold"
+                },
+                {
+                  "text": "ls",
+                  "style": "accent"
+                }
+              ],
+              "inputPresentation": {
+                "fields": {
+                  "command": {
+                    "role": "command",
+                    "language": "bash"
+                  }
+                }
+              },
+              "outputPresentation": {
+                "kind": "terminal"
+              }
+            }
+          }
+        },
+        {
+          "id": 10,
+          "kind": "pi.tool-result",
+          "model": [
+            {
+              "role": "toolResult",
+              "toolCallId": "call-1",
+              "toolName": "bash",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "README.md\nsrc\n"
+                }
+              ],
+              "isError": false,
+              "timestamp": 1791650002000
+            }
+          ],
+          "toolResult": {
+            "resultSegments": [
+              {
+                "text": "2 lines",
+                "style": "muted"
+              }
+            ],
+            "outputPresentation": {
+              "kind": "terminal"
+            },
+            "outputAvailability": {
+              "complete": true
+            }
+          }
+        }
+      ],
+      "hasOlder": false
     },
     "client.attach": {
       "type": "attach",
@@ -506,6 +776,12 @@
     "client.attach_by_session": {
       "type": "attach",
       "sessionId": "test-session-1"
+    },
+    "client.older": {
+      "type": "older",
+      "beforeEntryId": 11,
+      "limit": 100,
+      "requestId": "req-older-1"
     }
   }
 }

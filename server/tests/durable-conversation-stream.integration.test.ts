@@ -19,7 +19,11 @@ import { Server } from "../src/server.js";
 import type { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import type { ConversationEntryView, Session, Workspace } from "../src/types.js";
-import { conversationReference } from "./harness/conversation-stream-reference.js";
+import {
+  conversationReference,
+  shownEntries,
+  upsertEntries,
+} from "./harness/conversation-stream-reference.js";
 
 type Frame = Record<string, unknown> & { type: string };
 
@@ -62,12 +66,14 @@ class StreamClient {
       this.entries = [...(frame.entries as ConversationEntryView[])];
       this.docs = { ...(frame.docs as Record<string, unknown>) };
       this.head = frame.head as number;
+    } else if (frame.type === "older") {
+      this.entries = [...(frame.entries as ConversationEntryView[]), ...this.entries];
     } else if (frame.type === "update") {
-      for (const entry of (frame.entries as ConversationEntryView[] | undefined) ?? []) {
-        const index = this.entries.findIndex((candidate) => candidate.id === entry.id);
-        if (index >= 0) this.entries[index] = entry;
-        else this.entries.push(entry);
-      }
+      this.entries = upsertEntries(
+        this.entries,
+        this.head,
+        (frame.entries as ConversationEntryView[] | undefined) ?? [],
+      );
       for (const [kind, ops] of Object.entries((frame.docs ?? {}) as Record<string, Op[] | null>)) {
         if (ops === null) delete this.docs[kind];
         else this.docs[kind] = applyImmutable(this.docs[kind], ops);
@@ -265,7 +271,7 @@ async function expectConverged(client: StreamClient): Promise<void> {
     conversationId as ConversationId,
     sessions.mobileRenderer,
   );
-  expect(client.entries).toEqual(reference.entries);
+  expect(shownEntries(client.entries)).toEqual(reference.entries);
   expect(client.docs).toEqual(reference.docs);
   expect(client.head).toBe(reference.head);
 }
@@ -394,10 +400,28 @@ describe("durable conversation stream over the focused session socket", { timeou
       entries.map((entry) => entry.id),
     );
     expect(entries.length).toBeGreaterThan(1);
+    await expectConverged(client);
+
+    // Paging restores what the compaction left out, oldest first, before the acknowledgement.
+    const before = Math.min(...client.entries.map((entry) => entry.id));
+    const olderId = randomUUID();
+    const olderFrom = client.frames.length;
+    client.send({ type: "older", beforeEntryId: before, requestId: olderId });
+    const ack = await client.next(
+      (frame) => frame.type === "command_result" && frame.requestId === olderId,
+      olderFrom,
+    );
+    expect(ack).toMatchObject({ command: "older", success: true });
+    const older = client.frames.slice(olderFrom).find((frame) => frame.type === "older")!;
+    expect(client.frames.indexOf(older)).toBeLessThan(client.frames.indexOf(ack));
+    expect(older).toMatchObject({ type: "older", hasOlder: false });
+    const olderIds = (older.entries as ConversationEntryView[]).map((entry) => entry.id);
+    expect(olderIds.length).toBeGreaterThan(0);
+    expect(olderIds).toEqual([...olderIds].sort((left, right) => left - right));
+    expect(olderIds.every((id) => id < before)).toBe(true);
 
     const late = await connect();
     expect((await late.attach(stale)).type).toBe("snapshot");
-    await expectConverged(client);
   });
 
   it("refuses attach on a classic session without sending stream frames", async () => {
@@ -413,5 +437,17 @@ describe("durable conversation stream over the focused session socket", { timeou
     expect(result).toMatchObject({ command: "attach", success: false });
     expect(String(result.error)).toContain("durable session");
     expect(client.conversationFrames()).toEqual([]);
+  });
+
+  it("refuses older on a socket that has not attached", async () => {
+    const client = await connect();
+    const requestId = randomUUID();
+    client.send({ type: "older", beforeEntryId: 5, requestId });
+    const result = await client.next(
+      (frame) => frame.type === "command_result" && frame.requestId === requestId,
+    );
+    expect(result).toMatchObject({ command: "older", success: false });
+    expect(String(result.error)).toContain("attach");
+    expect(client.frames.some((frame) => frame.type === "older")).toBe(false);
   });
 });

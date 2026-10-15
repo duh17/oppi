@@ -69,7 +69,7 @@
     "lint:fix": "eslint src/ extensions/ bench/ --fix",
     "architecture:check": "bun scripts/check-architecture-boundaries.ts",
     "protocol:fixtures:typecheck": "node node_modules/@typescript/native/bin/tsc --noEmit -p tsconfig.protocol-fixtures.json",
-    "protocol:fixtures:update": "tsx scripts/update-protocol-fixtures.ts",
+    "protocol:fixtures:update": "tsx --preserve-symlinks scripts/update-protocol-fixtures.ts",
     "push:vectors:update": "bash ../protocol/push/scripts/generate-vectors.sh",
     "push:canary": "tsx scripts/push-canary.ts",
     "mounts:check": "bun scripts/check-compose-mounts.ts",

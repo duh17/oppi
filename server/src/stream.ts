@@ -12,6 +12,7 @@ import type { Storage } from "./storage.js";
 import type {
   ClientMessage,
   ConversationStreamAttach,
+  ConversationStreamOlder,
   ConversationStreamServerMessage,
   ServerMessage,
   Session,
@@ -37,6 +38,7 @@ import { admitSessionRoute } from "./session-route-scope.js";
 import {
   parseClientCommand,
   parseConversationStreamAttach,
+  parseConversationStreamOlder,
   type ClientCommandParseErrorCode,
 } from "./session-command-parse.js";
 import {
@@ -138,6 +140,7 @@ function parseIncomingJsonRecord(
 type IncomingSessionCommand =
   | { ok: true; message: ClientMessage }
   | { ok: true; message: ConversationStreamAttach }
+  | { ok: true; message: ConversationStreamOlder }
   | {
       ok: false;
       error: string;
@@ -155,6 +158,10 @@ function parseIncomingSessionCommand(data: RawData): IncomingSessionCommand {
   if (decoded.record.type === "attach") {
     const attach = parseConversationStreamAttach(decoded.record);
     return attach.ok ? attach : { ...attach, command: "attach", code: "invalid_field" };
+  }
+  if (decoded.record.type === "older") {
+    const older = parseConversationStreamOlder(decoded.record);
+    return older.ok ? older : { ...older, command: "older", code: "invalid_field" };
   }
   return parseClientCommand(decoded.record);
 }
@@ -749,6 +756,41 @@ export class BoundSessionStreamMux {
                 return;
               }
               stopConversationStream = stop;
+              reply(true);
+              return;
+            }
+
+            if (msg.type === "older") {
+              const reply = (success: boolean, error?: string): void => {
+                if (msg.requestId !== undefined) {
+                  send({
+                    type: "command_result",
+                    command: "older",
+                    requestId: msg.requestId,
+                    success,
+                    ...(error ? { error } : {}),
+                    sessionId,
+                  });
+                } else if (error) {
+                  send({ type: "error", error, sessionId });
+                }
+              };
+              // Pages extend the replica this socket attached; without one there is none.
+              if (!stopConversationStream) {
+                reply(false, "Send attach before older");
+                return;
+              }
+              let frame: ConversationStreamServerMessage;
+              try {
+                frame = await this.ctx.sessions.olderConversationEntries(
+                  this.ctx.storage.getSession(sessionId) ?? session,
+                  msg,
+                );
+              } catch (error) {
+                reply(false, safeErrorMessage(error));
+                return;
+              }
+              send(frame, true);
               reply(true);
               return;
             }

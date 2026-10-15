@@ -17,9 +17,11 @@ import {
   type ToolSlot,
 } from "@earendil-works/pi-durable";
 import type { JsonValue } from "@earendil-works/chord";
-import { DurableUIClientDoc } from "../extensions/durable/durable-ui.js";
+import { DurableUIClientDoc, sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
+import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-renderer.js";
 import type {
+  ConversationEntryCard,
   ConversationEntryView,
   ConversationToolCallView,
   ConversationToolResultView,
@@ -118,6 +120,7 @@ export function renderToolCall(
 function renderToolResult(
   renderers: MobileRendererRegistry,
   message: Extract<Message, { role: "toolResult" }>,
+  rawDetails: unknown,
   details: unknown,
 ): ConversationToolResultView {
   const resultSegments = renderers.renderResult(
@@ -125,21 +128,39 @@ function renderToolResult(
     details,
     message.isError === true,
   );
-  const outputPresentation = renderers.outputPresentation(message.toolName, message.details);
+  const outputPresentation = renderers.outputPresentation(message.toolName, rawDetails);
+  const display = resolveToolDisplay(message.toolName, undefined, rawDetails);
   return {
     ...(resultSegments ? { resultSegments } : {}),
     ...(outputPresentation ? { outputPresentation } : {}),
-    outputAvailability: renderers.outputAvailability(message.details),
+    outputAvailability: renderers.outputAvailability(rawDetails),
+    ...(display ? { display } : {}),
   };
 }
 
-/** `EntryRecord` without storage internals, plus tool presentation. */
+/**
+ * How the trace shows an entry beyond its content, decided by the caller from state outside
+ * the entry: `inputCard` from `readDurableInputCards`, `hidden` from `isRecoveredPartial`.
+ */
+export interface EntryPresentation {
+  inputCard?: ConversationEntryCard;
+  hidden?: boolean;
+}
+
+/**
+ * `EntryRecord` without storage internals, plus the presentation trace history gives it
+ * (`projectEntries` in `durable-history.ts`): tool rendering, cards, and hiding.
+ */
 export function projectEntry(
   entry: EntryRecord,
   renderers: MobileRendererRegistry,
   tools: ToolPresenter,
+  presentation: EntryPresentation = {},
 ): ConversationEntryView {
   const view: ConversationEntryView = { id: entry.id, kind: entry.kind };
+  if (presentation.hidden) return { ...view, hidden: true };
+  // Like the trace, an extension-generated input shows only its card, never the raw input.
+  if (presentation.inputCard) return { ...view, card: presentation.inputCard, inputCard: true };
   if (entry.model) {
     const model: Message[] = [];
     for (const message of entry.model) {
@@ -147,15 +168,17 @@ export function projectEntry(
         model.push(message);
         continue;
       }
-      // Trace history strips server-private paths at the client boundary; so does the stream.
-      const details =
+      // Trace history normalizes audio and strips server-private paths at the client
+      // boundary; so does the stream.
+      const raw =
         message.details === undefined
           ? undefined
-          : sanitizeToolResultDetails(message.details).details;
+          : normalizeAudioPresentationDetails(message.details);
+      const details = raw === undefined ? undefined : sanitizeToolResultDetails(raw).details;
       model.push(
         details === message.details ? message : { ...message, details: details as JsonValue },
       );
-      view.toolResult = renderToolResult(renderers, message, details);
+      view.toolResult = renderToolResult(renderers, message, raw, details);
     }
     view.model = model;
     const calls = entry.model.flatMap((message) =>
@@ -167,6 +190,11 @@ export function projectEntry(
     }
   }
   if (entry.data !== undefined) view.data = entry.data;
+  if (!entry.model?.length) {
+    const data = asRecord(entry.data);
+    const card = sanitizeTranscriptCard(data?.card);
+    if (card) view.card = card;
+  }
   return view;
 }
 

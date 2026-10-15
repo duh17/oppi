@@ -12,8 +12,11 @@ import {
   type TranscriptCard,
 } from "../extensions/durable/durable-ui.js";
 
+/** A card as `sanitizeTranscriptCard` returns it. */
+type InputCard = TranscriptCard & { kind: "custom" };
+
 type InputCards = {
-  entries: Map<EntryId, TranscriptCard>;
+  entries: Map<EntryId, InputCard>;
   submissions: Set<SubmissionId>;
 };
 
@@ -21,7 +24,7 @@ type InputCards = {
  * edits: generated inputs are not user-editable messages and retain their IDs.
  */
 export async function resolveDurableInputCards(tx: Tx, id: ConversationId): Promise<InputCards> {
-  const entries = new Map<EntryId, TranscriptCard>();
+  const entries = new Map<EntryId, InputCard>();
   const submissions = new Set<SubmissionId>();
   const metadata = await tx.doc(DurableInputCards, id);
   for (const [requestId, value] of Object.entries(metadata.requests)) {
@@ -43,7 +46,7 @@ export async function readDurableInputCards(
   harness: Harness,
   ids: Iterable<ConversationId>,
 ): Promise<InputCards> {
-  const entries = new Map<EntryId, TranscriptCard>();
+  const entries = new Map<EntryId, InputCard>();
   const submissions = new Set<SubmissionId>();
   for (const id of new Set(ids)) {
     // Existence only: do not capture metadata outside the receipt transaction.

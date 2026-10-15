@@ -60,6 +60,7 @@ import type { DurableMcp } from "./durable-mcp.js";
 import { DurableAgentController } from "./durable-agent-controller.js";
 import {
   attachConversationStream,
+  readOlderConversationEntries,
   type ConversationStreamSubscription,
 } from "./durable-conversation-stream.js";
 import { DurableModels } from "./durable-models.js";
@@ -518,6 +519,16 @@ export class SessionHost {
       release();
       throw error;
     }
+  }
+
+  /** `Transcript` paging: the conversation stream's `older` frame for entries before `beforeEntryId`. */
+  async olderEntries(
+    id: ConversationId,
+    options: { renderers: MobileRendererRegistry; beforeEntryId: number; limit?: number },
+  ): Promise<Extract<ConversationStreamServerMessage, { type: "older" }>> {
+    return this.use((harness) =>
+      readOlderConversationEntries({ harness, conversationId: id, ...options }),
+    );
   }
 
   async use<T>(fn: (harness: Harness, host: SessionHost) => Promise<T>): Promise<T> {

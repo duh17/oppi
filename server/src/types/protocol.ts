@@ -760,23 +760,59 @@ export interface ConversationToolResultView {
   resultSegments?: StyledSegment[];
   outputPresentation?: ToolOutputPresentation;
   outputAvailability?: ToolOutputAvailability;
+  /** Display name read from the result's details (MCP server and tool); overrides the call's. */
+  display?: ToolDisplay;
+}
+
+/** A transcript card, sanitized like trace history (`sanitizeTranscriptCard`). */
+export interface ConversationEntryCard {
+  kind: "custom";
+  title: string;
+  subtitle?: string;
+  status?: string;
+  body?: string;
+  fields?: Array<{ label: string; value: string }>;
+  accent?: "info" | "success" | "warning" | "error";
+  /** UTF-16 range of the card's terminal output in the admitted input (input cards only). */
+  output?: {
+    kind: "terminal";
+    offset: number;
+    length: number;
+    command?: string;
+    truncated?: boolean;
+  };
+  /** Epoch milliseconds. */
+  at: number;
 }
 
 /**
  * One committed Durable entry: `EntryRecord` without storage internals (`conversationId`,
- * `byTaskId`, `head`, `edits`), plus server-rendered tool presentation. Entries never
- * change after commit; clients upsert by `id`.
+ * `byTaskId`, `head`, `edits`), plus server-rendered presentation. Clients upsert by `id`;
+ * an id they do not hold goes in id order after the head entry.
+ *
+ * The content of a committed entry never changes. Its presentation can: an entry the trace
+ * hides (`hidden`) is sent again as `{ id, kind, hidden: true }`, and one that stops being
+ * hidden is sent again whole.
  */
 export interface ConversationEntryView {
   id: number;
   kind: string;
-  /** Model messages; tool-result `details` are sanitized like trace history. */
+  /** Model messages; tool-result `details` are sanitized like trace history. Absent on input cards. */
   model?: PiMessage[];
   data?: unknown;
   /** Assistant entries: presentation by tool call id. */
   toolCalls?: Record<string, ConversationToolCallView>;
   /** Tool-result entries: presentation of the result. */
   toolResult?: ConversationToolResultView;
+  /**
+   * Shown as this card instead of its content: an extension-generated input (`inputCard`),
+   * or an entry without model messages whose `data.card` is a valid card.
+   */
+  card?: ConversationEntryCard;
+  /** The card replaces an extension-generated input, whose text is not sent. */
+  inputCard?: true;
+  /** Never shown: a partial answer from an attempt that was retried. Carries no content. */
+  hidden?: true;
 }
 
 export type ConversationDocPath = ReadonlyArray<string | number>;
@@ -819,6 +855,14 @@ export type ConversationStreamServerMessage =
       entries?: ConversationEntryView[];
       /** Ops per document kind; `null` means the document is gone. */
       docs?: Record<string, ConversationDocOp[] | null>;
+    }
+  | {
+      /** Answer to `ConversationStreamOlder`: entries before `beforeEntryId`, oldest first. */
+      type: "older";
+      conversationId: number;
+      entries: ConversationEntryView[];
+      /** Still older entries exist. */
+      hasOlder: boolean;
     };
 
 /** Client → server: start (or restart) the conversation stream on a focused session socket. */
@@ -830,6 +874,19 @@ export interface ConversationStreamAttach {
   sessionId?: string;
   /** Newest entry id the client holds; resumes with an `update` when still usable. */
   afterEntryId?: number;
+  requestId?: string;
+}
+
+/**
+ * Client → server: page entries older than the replica holds, on a socket that attached.
+ * Answered by an `older` frame, then `command_result { command: "older" }` with a `requestId`.
+ */
+export interface ConversationStreamOlder {
+  type: "older";
+  /** The smallest entry id the client holds. */
+  beforeEntryId: number;
+  /** Visible entries to return; default 100, at most 500. */
+  limit?: number;
   requestId?: string;
 }
 

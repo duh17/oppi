@@ -499,83 +499,7 @@ export class SessionTraceService {
     includeSegments: boolean,
     serverNames: readonly string[],
   ): TraceEvent[] {
-    const toolNames = new Map<string, string>();
-    // Results can follow their calls (or lie on a later trace event). Resolve
-    // identity before mapping, not from whatever happened to be seen so far.
-    const resultDetails = new Map(
-      trace
-        .filter((e) => e.type === "toolResult" && e.toolCallId)
-        .map((e) => [e.toolCallId, e.details]),
-    );
-    const nestedDetails = new Map(
-      trace
-        .filter((e) => e.type === "toolResult" && e.toolName)
-        .map((e) => [e.toolName, e.details]),
-    );
-    return trace.map((original) => {
-      const event = original.nestedCalls
-        ? {
-            ...original,
-            nestedCalls: {
-              ...original.nestedCalls,
-              calls: original.nestedCalls.calls.map((call) => {
-                const display =
-                  resolveToolDisplay(
-                    call.name,
-                    undefined,
-                    nestedDetails.get(call.name),
-                    serverNames,
-                  ) ?? call.display;
-                return { ...call, ...(display ? { display } : {}) };
-              }),
-            },
-          }
-        : original;
-      if (event.type === "toolCall") {
-        const tool = event.tool ?? "unknown";
-        toolNames.set(event.id, tool);
-        const callSegments = includeSegments
-          ? this.mobileRenderers.renderCall(tool, event.args ?? {})
-          : undefined;
-        const inputPresentation = this.mobileRenderers.inputPresentation(tool);
-        const outputPresentation = this.mobileRenderers.outputPresentation(
-          tool,
-          resultDetails.get(event.id),
-        );
-        const display =
-          event.display ??
-          resolveToolDisplay(tool, undefined, resultDetails.get(event.id), serverNames);
-        return {
-          ...event,
-          ...(callSegments ? { callSegments } : {}),
-          ...(inputPresentation ? { inputPresentation } : {}),
-          ...(outputPresentation ? { outputPresentation } : {}),
-          ...(display ? { display } : {}),
-        };
-      }
-      if (event.type === "toolResult") {
-        const tool = event.toolName ?? toolNames.get(event.toolCallId ?? "");
-        // Project availability from server-owned details before stripping paths
-        // at the client boundary, including results whose call is not in this page.
-        const outputAvailability = this.mobileRenderers.outputAvailability(event.details);
-        const details = sanitizeToolResultDetails(event.details).details;
-        const resultSegments =
-          includeSegments && tool
-            ? this.mobileRenderers.renderResult(tool, details, event.isError === true)
-            : undefined;
-        const outputPresentation = tool
-          ? this.mobileRenderers.outputPresentation(tool, event.details)
-          : undefined;
-        return {
-          ...event,
-          ...(event.details !== undefined ? { details } : {}),
-          ...(resultSegments ? { resultSegments } : {}),
-          ...(outputPresentation ? { outputPresentation } : {}),
-          ...(outputAvailability ? { outputAvailability } : {}),
-        };
-      }
-      return event;
-    });
+    return withMobileRenderSegments(trace, this.mobileRenderers, includeSegments, serverNames);
   }
 
   private liveEntryRenderers(sessionId: string): LiveEntryRendererSet | undefined {
@@ -646,6 +570,90 @@ async function pathExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Tool presentation the trace routes add for mobile clients: call and result segments,
+ * input and output presentation, availability, display names, and client-safe details.
+ */
+export function withMobileRenderSegments(
+  trace: TraceEvent[],
+  renderers: MobileRendererRegistry,
+  includeSegments: boolean,
+  serverNames: readonly string[],
+): TraceEvent[] {
+  const toolNames = new Map<string, string>();
+  // Results can follow their calls (or lie on a later trace event). Resolve
+  // identity before mapping, not from whatever happened to be seen so far.
+  const resultDetails = new Map(
+    trace
+      .filter((e) => e.type === "toolResult" && e.toolCallId)
+      .map((e) => [e.toolCallId, e.details]),
+  );
+  const nestedDetails = new Map(
+    trace.filter((e) => e.type === "toolResult" && e.toolName).map((e) => [e.toolName, e.details]),
+  );
+  return trace.map((original) => {
+    const event = original.nestedCalls
+      ? {
+          ...original,
+          nestedCalls: {
+            ...original.nestedCalls,
+            calls: original.nestedCalls.calls.map((call) => {
+              const display =
+                resolveToolDisplay(
+                  call.name,
+                  undefined,
+                  nestedDetails.get(call.name),
+                  serverNames,
+                ) ?? call.display;
+              return { ...call, ...(display ? { display } : {}) };
+            }),
+          },
+        }
+      : original;
+    if (event.type === "toolCall") {
+      const tool = event.tool ?? "unknown";
+      toolNames.set(event.id, tool);
+      const callSegments = includeSegments
+        ? renderers.renderCall(tool, event.args ?? {})
+        : undefined;
+      const inputPresentation = renderers.inputPresentation(tool);
+      const outputPresentation = renderers.outputPresentation(tool, resultDetails.get(event.id));
+      const display =
+        event.display ??
+        resolveToolDisplay(tool, undefined, resultDetails.get(event.id), serverNames);
+      return {
+        ...event,
+        ...(callSegments ? { callSegments } : {}),
+        ...(inputPresentation ? { inputPresentation } : {}),
+        ...(outputPresentation ? { outputPresentation } : {}),
+        ...(display ? { display } : {}),
+      };
+    }
+    if (event.type === "toolResult") {
+      const tool = event.toolName ?? toolNames.get(event.toolCallId ?? "");
+      // Project availability from server-owned details before stripping paths
+      // at the client boundary, including results whose call is not in this page.
+      const outputAvailability = renderers.outputAvailability(event.details);
+      const details = sanitizeToolResultDetails(event.details).details;
+      const resultSegments =
+        includeSegments && tool
+          ? renderers.renderResult(tool, details, event.isError === true)
+          : undefined;
+      const outputPresentation = tool
+        ? renderers.outputPresentation(tool, event.details)
+        : undefined;
+      return {
+        ...event,
+        ...(event.details !== undefined ? { details } : {}),
+        ...(resultSegments ? { resultSegments } : {}),
+        ...(outputPresentation ? { outputPresentation } : {}),
+        ...(outputAvailability ? { outputAvailability } : {}),
+      };
+    }
+    return event;
+  });
 }
 
 function isPathMissingError(error: unknown): boolean {

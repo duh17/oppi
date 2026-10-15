@@ -17,6 +17,7 @@ import type { AgentRuntimeTransport, RuntimeClientCommand } from "./agent-runtim
 import type {
   ChatAttachmentRef,
   ConversationStreamAttach,
+  ConversationStreamOlder,
   ConversationStreamServerMessage,
   MessageQueueState,
   Session,
@@ -638,6 +639,23 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       renderers: this.mobileRenderers,
       ...(request.afterEntryId !== undefined ? { afterEntryId: request.afterEntryId } : {}),
       send,
+    });
+  }
+
+  /** The conversation stream's `older` frame for the session's durable conversation. */
+  async olderConversationEntries(
+    session: Session,
+    request: ConversationStreamOlder,
+  ): Promise<Extract<ConversationStreamServerMessage, { type: "older" }>> {
+    const conversationId = this.boundConversationId(session.id);
+    const runtime = this.durableHarness;
+    if (conversationId === undefined || !runtime)
+      throw new Error("The conversation stream requires a durable session");
+    const host = await (await runtime).openHost(requireDurableStoreId(session));
+    return host.olderEntries(conversationId, {
+      renderers: this.mobileRenderers,
+      beforeEntryId: request.beforeEntryId,
+      ...(request.limit !== undefined ? { limit: request.limit } : {}),
     });
   }
 
