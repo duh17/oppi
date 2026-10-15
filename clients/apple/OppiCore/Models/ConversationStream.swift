@@ -61,6 +61,10 @@ struct ConversationEntryView: Codable, Equatable, Sendable {
     var inputCard: Bool?
     /// Never shown.
     var hidden: Bool?
+    /// User-role input another agent session sent.
+    var origin: MessageOrigin?
+    /// With `origin`: UTF-16 offset where the displayed text starts.
+    var textOffset: Int?
 }
 
 /// One path segment of a document op: an object key or an array index.

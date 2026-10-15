@@ -812,6 +812,10 @@ export interface ConversationEntryView {
   inputCard?: true;
   /** Never shown: a partial answer from an attempt that was retried. Carries no content. */
   hidden?: true;
+  /** User-role input another agent session sent (`oppi.agent-message`), validated like the trace. */
+  origin?: MessageOrigin;
+  /** With `origin`: UTF-16 offset where the displayed text starts; the model-only header before it is hidden. */
+  textOffset?: number;
 }
 
 export type ConversationDocPath = ReadonlyArray<string | number>;

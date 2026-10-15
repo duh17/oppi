@@ -45,7 +45,14 @@ enum ConversationTraceProjector {
             case "user":
                 let text = extractText(message["content"])
                 if !text.isEmpty {
-                    events.append(TraceEvent(id: String(entry.id), type: .user, timestamp: timestamp, text: text))
+                    var event = TraceEvent(
+                        id: String(entry.id),
+                        type: .user,
+                        timestamp: timestamp,
+                        text: entry.origin == nil ? text : agentMessageText(text, offset: entry.textOffset)
+                    )
+                    event.origin = entry.origin
+                    events.append(event)
                 }
             case "assistant":
                 appendAssistant(entry, message: message, timestamp: timestamp, results: results, to: &events)
@@ -59,6 +66,16 @@ enum ConversationTraceProjector {
     }
 
     // MARK: - Entry kinds
+
+    /// `agentMessageText` in `server/extensions/durable/sessions/agent-message.ts`: the text after
+    /// the model-only header (`offset` in UTF-16 units), or the whole text when that is empty.
+    private static func agentMessageText(_ text: String, offset: Int?) -> String {
+        let units = text.utf16
+        guard let offset, offset > 0, offset <= units.count else { return text }
+        let tail = String(decoding: units[units.index(units.startIndex, offsetBy: offset)...], as: UTF16.self)
+        let body = String(tail.drop { $0.isWhitespace })
+        return body.isEmpty ? text : body
+    }
 
     private static func cardEvent(_ entry: ConversationEntryView, card: ConversationEntryCard) -> TraceEvent {
         let inputCard = entry.inputCard == true

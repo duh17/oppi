@@ -25,7 +25,7 @@
             "edit",
             "bash"
           ],
-          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-Y5CKC0"
+          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-h8xOdJ"
         },
         "pi.usage": {
           "models": {},
@@ -44,7 +44,7 @@
             {
               "role": "user",
               "content": "List the files",
-              "timestamp": 1792049124659
+              "timestamp": 1792050076619
             }
           ]
         },
@@ -160,7 +160,7 @@
                   }
                 }
               ],
-              "timestamp": 1792049124662
+              "timestamp": 1792050076622
             }
           ]
         }
@@ -214,7 +214,7 @@
                   "text": ""
                 }
               ],
-              "api": "faux:1792049124633:022xjhtu6avg",
+              "api": "faux:1792050076598:jvn9p83b5ar",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -232,7 +232,7 @@
                 }
               },
               "stopReason": "pending",
-              "timestamp": 1792049124659
+              "timestamp": 1792050076619
             }
           ]
         ]
@@ -266,7 +266,7 @@
                   }
                 }
               ],
-              "api": "faux:1792049124633:022xjhtu6avg",
+              "api": "faux:1792050076598:jvn9p83b5ar",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -284,7 +284,7 @@
                 }
               },
               "stopReason": "toolUse",
-              "timestamp": 1792049124659
+              "timestamp": 1792050076619
             }
           ],
           "toolCalls": {
@@ -336,8 +336,8 @@
                 }
               ],
               "isError": false,
-              "durationMs": 4,
-              "timestamp": 1792049124884
+              "durationMs": 7,
+              "timestamp": 1792050076848
             }
           ]
         }
@@ -401,7 +401,7 @@
                   "text": "There are two entries: README.md and src."
                 }
               ],
-              "api": "faux:1792049124633:022xjhtu6avg",
+              "api": "faux:1792050076598:jvn9p83b5ar",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -419,7 +419,7 @@
                 }
               },
               "stopReason": "stop",
-              "timestamp": 1792049124659
+              "timestamp": 1792050076619
             }
           ]
         }
@@ -509,7 +509,7 @@
                   "mimeType": "image/png"
                 }
               ],
-              "timestamp": 1792049125290
+              "timestamp": 1792050077253
             }
           ]
         }
@@ -560,7 +560,7 @@
                   }
                 }
               ],
-              "api": "faux:1792049124633:022xjhtu6avg",
+              "api": "faux:1792050076598:jvn9p83b5ar",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -578,7 +578,7 @@
                 }
               },
               "stopReason": "toolUse",
-              "timestamp": 1792049124659
+              "timestamp": 1792050076619
             }
           ],
           "toolCalls": {
@@ -641,7 +641,7 @@
               ],
               "isError": true,
               "durationMs": 5,
-              "timestamp": 1792049125381
+              "timestamp": 1792050077352
             }
           ]
         }
@@ -722,7 +722,7 @@
                   "text": "The command failed with exit code 3."
                 }
               ],
-              "api": "faux:1792049124633:022xjhtu6avg",
+              "api": "faux:1792050076598:jvn9p83b5ar",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -740,7 +740,7 @@
                 }
               },
               "stopReason": "stop",
-              "timestamp": 1792049124659
+              "timestamp": 1792050076619
             }
           ]
         }
@@ -906,7 +906,7 @@
                   "text": "Thanks for the job report."
                 }
               ],
-              "api": "faux:1792049124633:022xjhtu6avg",
+              "api": "faux:1792050076598:jvn9p83b5ar",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -924,7 +924,7 @@
                 }
               },
               "stopReason": "stop",
-              "timestamp": 1792049124659
+              "timestamp": 1792050076619
             }
           ]
         }
@@ -996,6 +996,158 @@
     {
       "type": "update",
       "conversationId": 2,
+      "entries": [
+        {
+          "id": 31,
+          "kind": "oppi.agent-message",
+          "model": [
+            {
+              "role": "user",
+              "content": "[Report from session Child]\n\nChild finished: 3 files changed.",
+              "timestamp": 1792050078410
+            }
+          ],
+          "origin": {
+            "kind": "session",
+            "sessionId": "child-session-1",
+            "name": "Child",
+            "intent": "report"
+          },
+          "textOffset": 29
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "s",
+            [
+              "run"
+            ],
+            {
+              "taskId": 33,
+              "inputs": [
+                32
+              ]
+            }
+          ],
+          [
+            "s",
+            [
+              "generation"
+            ],
+            {
+              "attempt": 1
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 34,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Noted the child's report."
+                }
+              ],
+              "api": "faux:1792050076598:jvn9p83b5ar",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 26,
+                "output": 7,
+                "cacheRead": 808,
+                "cacheWrite": 27,
+                "totalTokens": 868,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1792050076619
+            }
+          ]
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "d",
+            [
+              "run"
+            ]
+          ],
+          [
+            "d",
+            [
+              "generation"
+            ]
+          ]
+        ],
+        "pi.usage": [
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "input"
+            ],
+            834
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "output"
+            ],
+            68
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheRead"
+            ],
+            3777
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheWrite"
+            ],
+            836
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "totalTokens"
+            ],
+            5515
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
       "docs": {
         "pi.live": [
           [
@@ -1005,7 +1157,7 @@
             ],
             [
               {
-                "taskId": 31,
+                "taskId": 35,
                 "reason": "manual",
                 "blocking": false,
                 "attempt": 1
@@ -1018,11 +1170,11 @@
     {
       "type": "snapshot",
       "conversationId": 2,
-      "head": 32,
+      "head": 36,
       "hasOlder": true,
       "entries": [
         {
-          "id": 32,
+          "id": 36,
           "kind": "pi.compaction",
           "model": [
             {
@@ -1033,90 +1185,30 @@
                   "text": "The conversation history before this point was compacted into the following summary:\n\n<summary>\nSummary of the work so far: listed files, ran a failing command.\n</summary>"
                 }
               ],
-              "timestamp": 1792049126591
+              "timestamp": 1792050078919
             }
           ]
         },
         {
-          "id": 24,
-          "kind": "pi.assistant",
+          "id": 31,
+          "kind": "oppi.agent-message",
           "model": [
             {
-              "role": "assistant",
-              "content": [
-                {
-                  "type": "text",
-                  "text": "The command failed with exit code 3."
-                }
-              ],
-              "api": "faux:1792049124633:022xjhtu6avg",
-              "provider": "faux",
-              "model": "faux-1",
-              "usage": {
-                "input": 32,
-                "output": 9,
-                "cacheRead": 758,
-                "cacheWrite": 33,
-                "totalTokens": 832,
-                "cost": {
-                  "input": 0,
-                  "output": 0,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0
-                }
-              },
-              "stopReason": "stop",
-              "timestamp": 1792049124659
+              "role": "user",
+              "content": "[Report from session Child]\n\nChild finished: 3 files changed.",
+              "timestamp": 1792050078410
             }
-          ]
-        },
-        {
-          "id": 25,
-          "kind": "oppi.notice",
-          "card": {
-            "kind": "custom",
-            "title": "Deploy finished",
-            "at": 1791650000000,
-            "subtitle": "staging",
-            "status": "completed",
-            "body": "All checks passed.",
-            "fields": [
-              {
-                "label": "Duration",
-                "value": "42s"
-              }
-            ],
-            "accent": "success"
-          }
-        },
-        {
-          "id": 27,
-          "kind": "pi.user",
-          "card": {
-            "kind": "custom",
-            "title": "Background job 1",
-            "at": 1791650001000,
-            "status": "completed",
-            "body": "make build",
-            "fields": [
-              {
-                "label": "Result",
-                "value": "Exit 0"
-              }
-            ],
-            "accent": "success",
-            "output": {
-              "kind": "terminal",
-              "offset": 0,
-              "length": 15,
-              "command": "make build"
-            }
+          ],
+          "origin": {
+            "kind": "session",
+            "sessionId": "child-session-1",
+            "name": "Child",
+            "intent": "report"
           },
-          "inputCard": true
+          "textOffset": 29
         },
         {
-          "id": 30,
+          "id": 34,
           "kind": "pi.assistant",
           "model": [
             {
@@ -1124,18 +1216,18 @@
               "content": [
                 {
                   "type": "text",
-                  "text": "Thanks for the job report."
+                  "text": "Noted the child's report."
                 }
               ],
-              "api": "faux:1792049124633:022xjhtu6avg",
+              "api": "faux:1792050076598:jvn9p83b5ar",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
-                "input": 18,
+                "input": 26,
                 "output": 7,
-                "cacheRead": 790,
-                "cacheWrite": 18,
-                "totalTokens": 833,
+                "cacheRead": 808,
+                "cacheWrite": 27,
+                "totalTokens": 868,
                 "cost": {
                   "input": 0,
                   "output": 0,
@@ -1145,7 +1237,7 @@
                 }
               },
               "stopReason": "stop",
-              "timestamp": 1792049124659
+              "timestamp": 1792050076619
             }
           ]
         }
@@ -1166,16 +1258,16 @@
             "edit",
             "bash"
           ],
-          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-Y5CKC0"
+          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-h8xOdJ"
         },
         "pi.usage": {
           "models": {
             "faux/faux-1": {
-              "input": 1246,
-              "output": 77,
-              "cacheRead": 2969,
-              "cacheWrite": 809,
-              "totalTokens": 5101,
+              "input": 1301,
+              "output": 84,
+              "cacheRead": 3777,
+              "cacheWrite": 836,
+              "totalTokens": 5998,
               "cost": {
                 "input": 0,
                 "output": 0,
@@ -1194,18 +1286,18 @@
       "conversationId": 2,
       "entries": [
         {
-          "id": 34,
+          "id": 38,
           "kind": "pi.user",
           "model": [
             {
               "role": "user",
               "content": "Explain it at length",
-              "timestamp": 1792049126894
+              "timestamp": 1792050079222
             }
           ]
         },
         {
-          "id": 37,
+          "id": 41,
           "kind": "pi.system",
           "model": [
             {
@@ -1317,7 +1409,7 @@
                   }
                 }
               ],
-              "timestamp": 1792049126898
+              "timestamp": 1792050079228
             }
           ]
         }
@@ -1330,9 +1422,9 @@
               "run"
             ],
             {
-              "taskId": 36,
+              "taskId": 40,
               "inputs": [
-                35
+                39
               ]
             }
           ],
@@ -1367,15 +1459,15 @@
                   "text": "partial0 partial1 partial2 parti"
                 }
               ],
-              "api": "faux:1792049124633:022xjhtu6avg",
+              "api": "faux:1792050076598:jvn9p83b5ar",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
-                "input": 766,
+                "input": 765,
                 "output": 148,
                 "cacheRead": 0,
-                "cacheWrite": 766,
-                "totalTokens": 1680,
+                "cacheWrite": 765,
+                "totalTokens": 1678,
                 "cost": {
                   "input": 0,
                   "output": 0,
@@ -1385,7 +1477,7 @@
                 }
               },
               "stopReason": "pending",
-              "timestamp": 1792049124659
+              "timestamp": 1792050076619
             }
           ]
         ]
@@ -1394,42 +1486,16 @@
     {
       "type": "update",
       "conversationId": 2,
-      "entries": [
-        {
-          "id": 27,
-          "kind": "pi.user",
-          "card": {
-            "kind": "custom",
-            "title": "Background job 1",
-            "at": 1791650001000,
-            "status": "completed",
-            "body": "make build",
-            "fields": [
-              {
-                "label": "Result",
-                "value": "Exit 0"
-              }
-            ],
-            "accent": "success",
-            "output": {
-              "kind": "terminal",
-              "offset": 0,
-              "length": 15,
-              "command": "make build"
-            }
-          },
-          "inputCard": true
-        }
-      ],
+      "entries": [],
       "docs": {
         "pi.live": [
           [
             "r",
             {
               "run": {
-                "taskId": 36,
+                "taskId": 40,
                 "inputs": [
-                  35
+                  39
                 ]
               },
               "generation": {
@@ -1442,15 +1508,15 @@
                       "text": "partial0 partial1 partial2 parti"
                     }
                   ],
-                  "api": "faux:1792049124633:022xjhtu6avg",
+                  "api": "faux:1792050076598:jvn9p83b5ar",
                   "provider": "faux",
                   "model": "faux-1",
                   "usage": {
-                    "input": 766,
+                    "input": 765,
                     "output": 148,
                     "cacheRead": 0,
-                    "cacheWrite": 766,
-                    "totalTokens": 1680,
+                    "cacheWrite": 765,
+                    "totalTokens": 1678,
                     "cost": {
                       "input": 0,
                       "output": 0,
@@ -1460,7 +1526,7 @@
                     }
                   },
                   "stopReason": "pending",
-                  "timestamp": 1792049124659
+                  "timestamp": 1792050076619
                 }
               }
             }
@@ -1488,7 +1554,7 @@
                 "edit",
                 "bash"
               ],
-              "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-Y5CKC0"
+              "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-h8xOdJ"
             }
           ]
         ],
@@ -1498,11 +1564,11 @@
             {
               "models": {
                 "faux/faux-1": {
-                  "input": 1246,
-                  "output": 77,
-                  "cacheRead": 2969,
-                  "cacheWrite": 809,
-                  "totalTokens": 5101,
+                  "input": 1301,
+                  "output": 84,
+                  "cacheRead": 3777,
+                  "cacheWrite": 836,
+                  "totalTokens": 5998,
                   "cost": {
                     "input": 0,
                     "output": 0,
@@ -1524,7 +1590,7 @@
       "conversationId": 2,
       "entries": [
         {
-          "id": 39,
+          "id": 43,
           "kind": "pi.assistant",
           "model": [
             {
@@ -1535,15 +1601,15 @@
                   "text": "A complete answer after the restart."
                 }
               ],
-              "api": "faux:1792049124633:022xjhtu6avg",
+              "api": "faux:1792050076598:jvn9p83b5ar",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
                 "input": 0,
                 "output": 9,
-                "cacheRead": 766,
+                "cacheRead": 765,
                 "cacheWrite": 0,
-                "totalTokens": 775,
+                "totalTokens": 774,
                 "cost": {
                   "input": 0,
                   "output": 0,
@@ -1553,7 +1619,7 @@
                 }
               },
               "stopReason": "stop",
-              "timestamp": 1792049127040
+              "timestamp": 1792050079374
             }
           ]
         }
@@ -1581,7 +1647,7 @@
               "faux/faux-1",
               "input"
             ],
-            2012
+            2066
           ],
           [
             "s",
@@ -1590,7 +1656,7 @@
               "faux/faux-1",
               "output"
             ],
-            234
+            241
           ],
           [
             "s",
@@ -1599,7 +1665,7 @@
               "faux/faux-1",
               "cacheRead"
             ],
-            3735
+            4542
           ],
           [
             "s",
@@ -1608,7 +1674,7 @@
               "faux/faux-1",
               "cacheWrite"
             ],
-            1575
+            1601
           ],
           [
             "s",
@@ -1617,7 +1683,7 @@
               "faux/faux-1",
               "totalTokens"
             ],
-            7556
+            8450
           ]
         ]
       }
@@ -1633,7 +1699,7 @@
             {
               "role": "user",
               "content": "List the files",
-              "timestamp": 1792049124659
+              "timestamp": 1792050076619
             }
           ]
         },
@@ -1749,7 +1815,7 @@
                   }
                 }
               ],
-              "timestamp": 1792049124662
+              "timestamp": 1792050076622
             }
           ]
         },
@@ -1777,7 +1843,7 @@
                   }
                 }
               ],
-              "api": "faux:1792049124633:022xjhtu6avg",
+              "api": "faux:1792050076598:jvn9p83b5ar",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -1795,7 +1861,7 @@
                 }
               },
               "stopReason": "toolUse",
-              "timestamp": 1792049124659
+              "timestamp": 1792050076619
             }
           ],
           "toolCalls": {
@@ -1847,8 +1913,8 @@
                 }
               ],
               "isError": false,
-              "durationMs": 4,
-              "timestamp": 1792049124884
+              "durationMs": 7,
+              "timestamp": 1792050076848
             }
           ]
         },
@@ -1864,7 +1930,7 @@
                   "text": "There are two entries: README.md and src."
                 }
               ],
-              "api": "faux:1792049124633:022xjhtu6avg",
+              "api": "faux:1792050076598:jvn9p83b5ar",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -1882,7 +1948,7 @@
                 }
               },
               "stopReason": "stop",
-              "timestamp": 1792049124659
+              "timestamp": 1792050076619
             }
           ]
         },
@@ -1903,7 +1969,7 @@
                   "mimeType": "image/png"
                 }
               ],
-              "timestamp": 1792049125290
+              "timestamp": 1792050077253
             }
           ]
         },
@@ -1923,7 +1989,7 @@
                   }
                 }
               ],
-              "api": "faux:1792049124633:022xjhtu6avg",
+              "api": "faux:1792050076598:jvn9p83b5ar",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -1941,7 +2007,7 @@
                 }
               },
               "stopReason": "toolUse",
-              "timestamp": 1792049124659
+              "timestamp": 1792050076619
             }
           ],
           "toolCalls": {
@@ -2004,7 +2070,119 @@
               ],
               "isError": true,
               "durationMs": 5,
-              "timestamp": 1792049125381
+              "timestamp": 1792050077352
+            }
+          ]
+        },
+        {
+          "id": 24,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The command failed with exit code 3."
+                }
+              ],
+              "api": "faux:1792050076598:jvn9p83b5ar",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 32,
+                "output": 9,
+                "cacheRead": 758,
+                "cacheWrite": 33,
+                "totalTokens": 832,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1792050076619
+            }
+          ]
+        },
+        {
+          "id": 25,
+          "kind": "oppi.notice",
+          "card": {
+            "kind": "custom",
+            "title": "Deploy finished",
+            "at": 1791650000000,
+            "subtitle": "staging",
+            "status": "completed",
+            "body": "All checks passed.",
+            "fields": [
+              {
+                "label": "Duration",
+                "value": "42s"
+              }
+            ],
+            "accent": "success"
+          }
+        },
+        {
+          "id": 27,
+          "kind": "pi.user",
+          "card": {
+            "kind": "custom",
+            "title": "Background job 1",
+            "at": 1791650001000,
+            "status": "completed",
+            "body": "make build",
+            "fields": [
+              {
+                "label": "Result",
+                "value": "Exit 0"
+              }
+            ],
+            "accent": "success",
+            "output": {
+              "kind": "terminal",
+              "offset": 0,
+              "length": 15,
+              "command": "make build"
+            }
+          },
+          "inputCard": true
+        },
+        {
+          "id": 30,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Thanks for the job report."
+                }
+              ],
+              "api": "faux:1792050076598:jvn9p83b5ar",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 18,
+                "output": 7,
+                "cacheRead": 790,
+                "cacheWrite": 18,
+                "totalTokens": 833,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1792050076619
             }
           ]
         }
@@ -2016,19 +2194,19 @@
     {
       "id": "8",
       "type": "user",
-      "timestamp": "2026-10-15T07:25:24.659Z",
+      "timestamp": "2026-10-15T07:41:16.619Z",
       "text": "List the files"
     },
     {
       "id": "12-think-0",
       "type": "thinking",
-      "timestamp": "2026-10-15T07:25:24.659Z",
+      "timestamp": "2026-10-15T07:41:16.619Z",
       "thinking": "The user wants a file listing."
     },
     {
       "id": "12-text-1",
       "type": "assistant",
-      "timestamp": "2026-10-15T07:25:24.659Z",
+      "timestamp": "2026-10-15T07:41:16.619Z",
       "text": "Listing the files.",
       "contentIndex": 1,
       "runOrdinal": 0
@@ -2036,7 +2214,7 @@
     {
       "id": "call-list",
       "type": "toolCall",
-      "timestamp": "2026-10-15T07:25:24.659Z",
+      "timestamp": "2026-10-15T07:41:16.619Z",
       "tool": "bash",
       "args": {
         "command": "printf 'README.md\\nsrc\\n'"
@@ -2066,7 +2244,7 @@
     {
       "id": "result-14",
       "type": "toolResult",
-      "timestamp": "2026-10-15T07:25:24.884Z",
+      "timestamp": "2026-10-15T07:41:16.848Z",
       "toolCallId": "call-list",
       "toolName": "bash",
       "output": "README.md\nsrc\n",
@@ -2081,7 +2259,7 @@
     {
       "id": "16-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-15T07:25:24.659Z",
+      "timestamp": "2026-10-15T07:41:16.619Z",
       "text": "There are two entries: README.md and src.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -2089,13 +2267,13 @@
     {
       "id": "17",
       "type": "user",
-      "timestamp": "2026-10-15T07:25:25.290Z",
+      "timestamp": "2026-10-15T07:41:17.253Z",
       "text": "Run the failing command for this image\ndata:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
     },
     {
       "id": "call-fail",
       "type": "toolCall",
-      "timestamp": "2026-10-15T07:25:24.659Z",
+      "timestamp": "2026-10-15T07:41:16.619Z",
       "tool": "bash",
       "args": {
         "command": "echo boom >&2; exit 3"
@@ -2125,7 +2303,7 @@
     {
       "id": "result-22",
       "type": "toolResult",
-      "timestamp": "2026-10-15T07:25:25.381Z",
+      "timestamp": "2026-10-15T07:41:17.352Z",
       "toolCallId": "call-fail",
       "toolName": "bash",
       "output": "boom\n\n<harness>\n[error] Command exited with code 3\n</harness>",
@@ -2146,7 +2324,7 @@
     {
       "id": "24-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-15T07:25:24.659Z",
+      "timestamp": "2026-10-15T07:41:16.619Z",
       "text": "The command failed with exit code 3.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -2198,27 +2376,47 @@
     {
       "id": "30-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-15T07:25:24.659Z",
+      "timestamp": "2026-10-15T07:41:16.619Z",
       "text": "Thanks for the job report.",
       "contentIndex": 0,
       "runOrdinal": 0
     },
     {
-      "id": "32",
+      "id": "31",
+      "type": "user",
+      "timestamp": "2026-10-15T07:41:18.410Z",
+      "text": "Child finished: 3 files changed.",
+      "origin": {
+        "kind": "session",
+        "sessionId": "child-session-1",
+        "name": "Child",
+        "intent": "report"
+      }
+    },
+    {
+      "id": "34-text-0",
+      "type": "assistant",
+      "timestamp": "2026-10-15T07:41:16.619Z",
+      "text": "Noted the child's report.",
+      "contentIndex": 0,
+      "runOrdinal": 0
+    },
+    {
+      "id": "36",
       "type": "compaction",
-      "timestamp": "2026-10-15T07:25:26.591Z",
+      "timestamp": "2026-10-15T07:41:18.919Z",
       "text": "Context compacted: Summary of the work so far: listed files, ran a failing command."
     },
     {
-      "id": "34",
+      "id": "38",
       "type": "user",
-      "timestamp": "2026-10-15T07:25:26.894Z",
+      "timestamp": "2026-10-15T07:41:19.222Z",
       "text": "Explain it at length"
     },
     {
-      "id": "39-text-0",
+      "id": "43-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-15T07:25:27.040Z",
+      "timestamp": "2026-10-15T07:41:19.374Z",
       "text": "A complete answer after the restart.",
       "contentIndex": 0,
       "runOrdinal": 0

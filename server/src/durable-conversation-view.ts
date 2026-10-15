@@ -18,6 +18,7 @@ import {
 } from "@earendil-works/pi-durable";
 import type { JsonValue } from "@earendil-works/chord";
 import { DurableUIClientDoc, sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
+import { agentMessageOrigin } from "../extensions/durable/sessions/agent-message.js";
 import { normalizeAudioPresentationDetails } from "./audio-presentation.js";
 import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-renderer.js";
 import type {
@@ -190,7 +191,13 @@ export function projectEntry(
     }
   }
   // Raw `data` stays on the server: it is extension bookkeeping that can hold private paths.
-  // Clients get only the sanitized card, as trace history shows it.
+  // Clients get only what trace history derives from it: an agent message's validated
+  // origin, and a sanitized card.
+  const agentMessage = agentMessageOrigin(entry.kind, entry.data);
+  if (agentMessage) {
+    view.origin = agentMessage.origin;
+    if (agentMessage.textOffset) view.textOffset = agentMessage.textOffset;
+  }
   if (!entry.model?.length) {
     const data = asRecord(entry.data);
     const card = sanitizeTranscriptCard(data?.card);

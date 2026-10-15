@@ -16,6 +16,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { DurableInputCards } from "../extensions/durable/durable-ui.js";
+import { agentMessageEntry } from "../extensions/durable/sessions/agent-message.js";
 import {
   attachConversationStream,
   readOlderConversationEntries,
@@ -138,6 +139,7 @@ export async function buildConversationStreamGolden(): Promise<string> {
       ),
       fauxAssistantMessage("The command failed with exit code 3."),
       fauxAssistantMessage("Thanks for the job report."),
+      fauxAssistantMessage("Noted the child's report."),
       fauxAssistantMessage("Summary of the work so far: listed files, ran a failing command."),
       fauxAssistantMessage(INTERRUPTED),
     ]);
@@ -185,6 +187,18 @@ export async function buildConversationStreamGolden(): Promise<string> {
       };
     }, context);
     await turn({ type: "input", content: report, requestId: "job-1" });
+
+    // An agent message: another session's report, placed as `oppi.agent-message`. The
+    // header before `textOffset` is for the model only.
+    const header = "[Report from session Child]\n\n";
+    await turn({
+      type: "input",
+      content: `${header}Child finished: 3 files changed.`,
+      entry: agentMessageEntry(
+        { kind: "session", sessionId: "child-session-1", name: "Child", intent: "report" },
+        header.length,
+      ),
+    });
 
     // A real compaction: the summary request is the next faux answer.
     await conversation.compact(undefined, context);

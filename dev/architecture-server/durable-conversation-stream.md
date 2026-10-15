@@ -41,6 +41,7 @@ The timeline shows some entries differently from their content. The stream decid
 | --- | --- | --- |
 | Extension-generated input | `readDurableInputCards`: a receipt for a request id with card metadata in `oppi.input-cards` | `{ id, kind, card, inputCard: true }`. The input text is not sent, as the trace does not return it. |
 | No model messages and a valid `data.card` | `sanitizeTranscriptCard(data.card)` | `{ id, kind, card }` |
+| Input from another agent session (`oppi.agent-message`) | `agentMessageOrigin(kind, data)` | The entry plus the validated `origin` and `textOffset`. The client shows the text after `textOffset` (the model-only header), as `agentMessageText` does. |
 | Partial answer of a retried attempt | `isRecoveredPartial` | Left out of snapshots and of `entriesAfter`; an already-sent entry is upserted as `{ id, kind, hidden: true }` |
 
 Input cards and hiding depend on state outside the entry: receipts and card metadata, and the attempt's task record. The room therefore decides them in presentation passes, asynchronous and serialized, that call the trace helpers. A pass runs when entries arrive (input cards for new user entries, hiding for every active aborted attempt), when `oppi.input-cards` changes (all user entries, so a late card still applies), and when a commit changes an attempt's task. Subscribers hold frames while a pass runs and flush when it ends, so a new entry never goes out before its presentation is decided. In practice a recovered partial is therefore never sent at all.
