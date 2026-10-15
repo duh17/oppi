@@ -2042,6 +2042,7 @@
 		F9096B2F1C1C31D7BC79A858 /* MacExtensionInteractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B818EE594819D34B9CD7A4E /* MacExtensionInteractionTests.swift */; };
 		F917231C50A02273F65D27BF /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 65097324862E205B033208DE /* VideoToolbox.framework */; };
 		F924077FAE41187DEBC8B350 /* LifecycleSceneStressE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C591F70B03CABD64C424A3A /* LifecycleSceneStressE2ETests.swift */; };
+		F926B016D6D2499767E90E7B /* SSHConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = E552CCBAAE9D0983625EA179 /* SSHConnection.swift */; };
 		F9338774F2E29FCFC115A42E /* MermaidXYChartParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33056886A4351AE6D0E18104 /* MermaidXYChartParser.swift */; };
 		F976AEEF86F68E14C84067B0 /* ScreenAwakeControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34F3E4DC44580B2DFBF8376F /* ScreenAwakeControllerTests.swift */; };
 		F9DC0D4DC005CDCE099F672E /* ChatFileBrowserPanelPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 577FA648F3ACBB19A60924FB /* ChatFileBrowserPanelPreview.swift */; };
@@ -3724,6 +3725,7 @@
 		E4BB69555D112B667C5252E4 /* FuzzyMatchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FuzzyMatchTests.swift; sourceTree = "<group>"; };
 		E51CAFE6104CAF02AAA289C4 /* LoadMoreTimelineRowContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoadMoreTimelineRowContent.swift; sourceTree = "<group>"; };
 		E522AC76802308923F048E54 /* SidePanelScreenshotPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidePanelScreenshotPreview.swift; sourceTree = "<group>"; };
+		E552CCBAAE9D0983625EA179 /* SSHConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHConnection.swift; sourceTree = "<group>"; };
 		E560FCFBC733EFB516ADDA9A /* LANFirstConnectionPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LANFirstConnectionPolicyTests.swift; sourceTree = "<group>"; };
 		E57FAE74DFFB4BC238BBA1CF /* MacUnixSocketHTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacUnixSocketHTTPClient.swift; sourceTree = "<group>"; };
 		E5A82A7D1B88C67FCB93501C /* MacChatSessionRuntimeAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacChatSessionRuntimeAdapter.swift; sourceTree = "<group>"; };
@@ -5429,6 +5431,7 @@
 				D85A9C0E29645C43B2AF9402 /* SessionStreamCoordinator.swift */,
 				B745214985773807802D6014 /* SessionToolOutputAccess.swift */,
 				EC9F5CA86714726B2FEE5D49 /* SilenceWatchdog.swift */,
+				E552CCBAAE9D0983625EA179 /* SSHConnection.swift */,
 				86FAF1A0A4DF4BA9CD3E8F8E /* SSHHostTrust.swift */,
 				F1915BE34EB3A7D4D3127CF1 /* SSHIdentityKeyStore.swift */,
 				D6022930C329609998BECEDE /* SSHKeychain.swift */,
@@ -9194,6 +9197,7 @@
 				DCCC3A1E404FC3955F1828D1 /* ReviewCommentWKWebView.swift in Sources */,
 				0AE6BD5B1AF184C335639E16 /* ReviewFileSummaryBar.swift in Sources */,
 				84ADCEACDC1A3BF57074879F /* ReviewableControlMarkdownView.swift in Sources */,
+				F926B016D6D2499767E90E7B /* SSHConnection.swift in Sources */,
 				72AEC4BA2B8046D3ACBB76D8 /* SSHDirectTCP.swift in Sources */,
 				477F48ECB96747795F738D2E /* SSHHostTrust.swift in Sources */,
 				E34017E5DDAAA11850FC4F02 /* SSHIdentityKeyStore.swift in Sources */,

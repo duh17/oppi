@@ -1,9 +1,7 @@
 import Darwin
 import Foundation
 import NIOCore
-import NIOPosix
 import NIOSSH
-import Security
 import Synchronization
 
 enum SSHPTYEvent: Sendable, Equatable {
@@ -46,33 +44,18 @@ final class SSHPTYInboundFlow: Sendable {
     fileprivate func attach(_ wake: (@Sendable () -> Void)?) { state.withLock { $0.wake = wake } }
 }
 
-enum SSHPTYAuthentication: Sendable {
-    case deviceKey(SSHIdentity)
-    case password(String)
-
-    func delegate(username: String) -> any NIOSSHClientUserAuthenticationDelegate {
-        switch self {
-        case .deviceKey(let identity): PublicKeyAuthDelegate(username: username, identity: identity)
-        case .password(let password): SSHPasswordAuthDelegate(username: username, password: password)
-        }
-    }
-}
-
 struct SSHPTYConfiguration: Sendable {
     let username: String
-    let authentication: SSHPTYAuthentication
+    let authentication: SSHAuthentication
     let savedHostKey: SSHHostKey?
 
-    init(username: String, authentication: SSHPTYAuthentication, savedHostKey: SSHHostKey?, inboundFlow: SSHPTYInboundFlow? = nil) {
+    init(username: String, authentication: SSHAuthentication, savedHostKey: SSHHostKey?, inboundFlow: SSHPTYInboundFlow? = nil) {
         self.username = username
         self.authentication = authentication
         self.savedHostKey = savedHostKey
         self.inboundFlow = inboundFlow
     }
 
-    init(username: String, identity: SSHIdentity, savedHostKey: SSHHostKey?, inboundFlow: SSHPTYInboundFlow? = nil) {
-        self.init(username: username, authentication: .deviceKey(identity), savedHostKey: savedHostKey, inboundFlow: inboundFlow)
-    }
     var term = "xterm-256color"
     var columns = 80
     var rows = 24
@@ -86,87 +69,23 @@ struct SSHPTYConfiguration: Sendable {
     var command: String?
 }
 
-/// Output of a one-shot command on an open connection. No PTY is requested.
-struct SSHExecResult: Sendable, Equatable {
-    let output: Data
-    let errorOutput: Data
-    /// Nil when the server closed the channel without reporting a status.
-    let exitStatus: Int?
-}
-
-enum SSHPTYSessionError: Error, Equatable, Sendable {
-    case unknownHostKey(SSHHostKey)
-    case hostKeyMismatch(saved: SSHHostKey, presented: SSHHostKey)
-    case publicKeyNotAllowed
-    case passwordNotAllowed
-    case unsupportedAlgorithms
-    case authenticationFailed
-    case signInTimedOut
-    case keyExchangeFailed(String)
-    case ptyRequestRejected
-    case shellRequestRejected
-    case commandRequestRejected
-    case commandOutputTooLarge
-    case requestTimedOut
-    case notConnected
-    case notWritable
-    case connectionClosed
-
-    var message: String {
-        switch self {
-        case .unknownHostKey:
-            "Confirm this host's SSH fingerprint before signing in. No credentials were sent."
-        case .hostKeyMismatch:
-            "The SSH host key changed. No credentials were sent."
-        case .publicKeyNotAllowed:
-            "The SSH server does not offer public-key authentication."
-        case .passwordNotAllowed:
-            "The SSH server does not offer password authentication. Keyboard-interactive is not supported."
-        case .unsupportedAlgorithms:
-            "The SSH server offered no supported algorithm. Oppi supports Ed25519/ECDSA keys, Curve25519/ECDH key exchange and AES-GCM; RSA-only and legacy servers are not supported."
-        case .authenticationFailed:
-            "The SSH server rejected the username or credential."
-        case .signInTimedOut:
-            "SSH sign-in timed out."
-        case .keyExchangeFailed(let reason):
-            "SSH key exchange failed: \(reason)"
-        case .ptyRequestRejected:
-            "The SSH server rejected the PTY request."
-        case .shellRequestRejected:
-            "The SSH server rejected the shell request."
-        case .commandRequestRejected:
-            "The SSH server rejected the command request."
-        case .commandOutputTooLarge:
-            "The remote command produced more output than Oppi accepts."
-        case .requestTimedOut:
-            "The SSH server did not finish opening the terminal."
-        case .notConnected:
-            "The SSH terminal is not connected."
-        case .notWritable:
-            "The SSH terminal is applying backpressure. Wait until it becomes writable."
-        case .connectionClosed:
-            "The SSH connection closed."
-        }
-    }
-}
-
-/// Owns one direct SSH connection and exactly one interactive PTY child
-/// channel. It never retries or retains input for replay. Callers may write
-/// only while the child channel is writable; backpressure is surfaced as an
-/// error and through `writabilityChanged` events.
+/// Owns one `SSHConnection` and exactly one interactive PTY child channel on
+/// it. It never retries or retains input for replay. Callers may write only
+/// while the child channel is writable; backpressure is surfaced as an error
+/// and through `writabilityChanged` events.
 final class SSHPTYSession: @unchecked Sendable {
-    static let signInTimeout: TimeAmount = .seconds(20)
     static let requestTimeout: TimeAmount = .seconds(20)
 
     private struct Channels {
-        let parent: Channel
+        let connection: SSHConnection
         let terminal: Channel
         let keepalive: RepeatedTask
     }
 
     private let channels: Mutex<Channels?>
 
-    private init(parent: Channel, terminal: Channel) {
+    private init(connection: SSHConnection, terminal: Channel) {
+        let parent = connection.channel
         // This also works over tailscale_dial's socketpair: opening a child
         // requires a real SSH reply, unlike TCP probes or window-change. No
         // PTY/shell/exec is requested, so sshd starts no process. Backgrounding
@@ -176,7 +95,7 @@ final class SSHPTYSession: @unchecked Sendable {
             Self.probe(parent, timeout: .seconds(15))
         }
         parent.closeFuture.whenComplete { _ in keepalive.cancel() }
-        channels = Mutex(Channels(parent: parent, terminal: terminal, keepalive: keepalive))
+        channels = Mutex(Channels(connection: connection, terminal: terminal, keepalive: keepalive))
     }
 
     /// Owns the pre-dial authentication boundary. No sign-in deadline or socket
@@ -186,7 +105,7 @@ final class SSHPTYSession: @unchecked Sendable {
         savedHostKey: SSHHostKey?,
         inboundFlow: SSHPTYInboundFlow? = nil,
         command: String? = nil,
-        prepareAuthentication: @Sendable () async throws -> SSHPTYAuthentication,
+        prepareAuthentication: @Sendable () async throws -> SSHAuthentication,
         dial: @Sendable () async throws -> Int32,
         sink: @escaping SSHPTYByteSink
     ) async throws -> SSHPTYSession {
@@ -210,48 +129,16 @@ final class SSHPTYSession: @unchecked Sendable {
         socket: Int32,
         sink: @escaping SSHPTYByteSink
     ) async throws -> SSHPTYSession {
-        let loop = MultiThreadedEventLoopGroup.singleton.next()
-        let authenticated = loop.makePromise(of: Void.self)
-        let parent: Channel
-        do {
-            parent = try await ClientBootstrap(group: loop)
-                .channelInitializer { channel in
-                    channel.eventLoop.makeCompletedFuture {
-                        var client = SSHClientConfiguration(
-                            userAuthDelegate: configuration.authentication.delegate(username: configuration.username),
-                            serverAuthDelegate: PTYHostKeyDelegate(saved: configuration.savedHostKey)
-                        )
-                        // NIOSSH advertises a 64-packet receive window. The 128 KiB
-                        // default makes that 8 MiB, which one read can deliver at
-                        // once; the minimum keeps it at 2 MiB so read backpressure
-                        // bounds what the consumer must hold.
-                        client.maximumPacketSize = 32 * 1024
-                        let ssh = NIOSSHHandler(
-                            role: .client(client),
-                            allocator: channel.allocator,
-                            inboundChildChannelInitializer: nil
-                        )
-                        try channel.pipeline.syncOperations.addHandlers(
-                            ssh,
-                            PTYSignInWatcher(authenticated: authenticated)
-                        )
-                    }
-                }
-                .withConnectedSocket(socket)
-                .get()
-        } catch {
-            authenticated.fail(error)
-            throw mapFailure(error)
-        }
-
+        let connection = try await SSHConnection.open(
+            username: configuration.username,
+            authentication: configuration.authentication,
+            savedHostKey: configuration.savedHostKey,
+            socket: socket
+        )
+        let parent = connection.channel
+        let loop = parent.eventLoop
         do {
             return try await withTaskCancellationHandler {
-                let signInDeadline = loop.scheduleTask(in: signInTimeout) {
-                    authenticated.fail(SSHPTYSessionError.signInTimedOut)
-                }
-                defer { signInDeadline.cancel() }
-                try await authenticated.futureResult.get()
-
                 let ready = loop.makePromise(of: Void.self)
                 let openingCompleted = NIOLoopBoundBox.makeBoxSendingValue(false, eventLoop: loop)
                 let requestDeadline = loop.scheduleTask(in: requestTimeout) {
@@ -260,8 +147,8 @@ final class SSHPTYSession: @unchecked Sendable {
                     // this decision on the same event loop.
                     guard !openingCompleted.value else { return }
                     openingCompleted.value = true
-                    ready.fail(SSHPTYSessionError.requestTimedOut)
-                    parent.close(promise: nil)
+                    ready.fail(SSHConnectionError.requestTimedOut)
+                    connection.close()
                 }
                 ready.futureResult.whenComplete { _ in
                     openingCompleted.value = true
@@ -275,14 +162,14 @@ final class SSHPTYSession: @unchecked Sendable {
                     sink: sink
                 )
                 try await ready.futureResult.get()
-                return SSHPTYSession(parent: parent, terminal: terminal)
+                return SSHPTYSession(connection: connection, terminal: terminal)
             } onCancel: {
-                parent.close(promise: nil)
+                connection.close()
             }
         } catch {
-            parent.close(promise: nil)
+            connection.close()
             if Task.isCancelled { throw CancellationError() }
-            throw mapFailure(error)
+            throw SSHConnectionError(mapping: error)
         }
     }
 
@@ -292,11 +179,11 @@ final class SSHPTYSession: @unchecked Sendable {
         let promise = terminal.eventLoop.makePromise(of: Void.self)
         terminal.eventLoop.execute {
             guard terminal.isActive else {
-                promise.fail(SSHPTYSessionError.connectionClosed)
+                promise.fail(SSHConnectionError.connectionClosed)
                 return
             }
             guard terminal.isWritable else {
-                promise.fail(SSHPTYSessionError.notWritable)
+                promise.fail(SSHConnectionError.notWritable)
                 return
             }
             var buffer = terminal.allocator.buffer(capacity: bytes.count)
@@ -309,19 +196,19 @@ final class SSHPTYSession: @unchecked Sendable {
         do {
             try await promise.futureResult.get()
         } catch {
-            throw Self.mapFailure(error)
+            throw SSHConnectionError(mapping: error)
         }
     }
 
     func resize(columns: Int, rows: Int, pixelWidth: Int = 0, pixelHeight: Int = 0) async throws {
         guard columns > 0, rows > 0, pixelWidth >= 0, pixelHeight >= 0 else {
-            throw SSHPTYSessionError.notConnected
+            throw SSHConnectionError.notConnected
         }
         let terminal = try terminalChannel()
         let promise = terminal.eventLoop.makePromise(of: Void.self)
         terminal.eventLoop.execute {
             guard terminal.isActive else {
-                promise.fail(SSHPTYSessionError.connectionClosed)
+                promise.fail(SSHConnectionError.connectionClosed)
                 return
             }
             terminal.triggerUserOutboundEvent(
@@ -337,7 +224,7 @@ final class SSHPTYSession: @unchecked Sendable {
         do {
             try await promise.futureResult.get()
         } catch {
-            throw Self.mapFailure(error)
+            throw SSHConnectionError(mapping: error)
         }
     }
 
@@ -348,7 +235,7 @@ final class SSHPTYSession: @unchecked Sendable {
     private static func probe(_ parent: Channel, timeout: TimeAmount) -> EventLoopFuture<Void> {
         let opened = parent.eventLoop.makePromise(of: Channel.self)
         let deadline = parent.eventLoop.scheduleTask(in: timeout) {
-            opened.fail(SSHPTYSessionError.requestTimedOut)
+            opened.fail(SSHConnectionError.requestTimedOut)
         }
         opened.futureResult.whenComplete { result in
             deadline.cancel()
@@ -373,55 +260,20 @@ final class SSHPTYSession: @unchecked Sendable {
     /// Checks on demand (e.g. after a network path change) that the peer still
     /// answers. A failed check has already closed the connection.
     func checkAlive(timeout: TimeAmount = .seconds(8)) async throws {
-        guard let parent = channels.withLock({ $0?.parent }) else { throw SSHPTYSessionError.notConnected }
-        do { try await Self.probe(parent, timeout: timeout).get() } catch { throw Self.mapFailure(error) }
+        guard let parent = channels.withLock({ $0?.connection.channel }) else { throw SSHConnectionError.notConnected }
+        do { try await Self.probe(parent, timeout: timeout).get() } catch { throw SSHConnectionError(mapping: error) }
     }
 
-    /// Runs one command in its own exec channel on this connection, without a
-    /// PTY and without new authentication, and collects its output. Used for
-    /// structured remote APIs (e.g. `herdr api snapshot`) next to the terminal.
-    /// `input` is written to the command's stdin, which then closes.
+    /// Runs one command next to the terminal on the same connection. Used for
+    /// structured remote APIs (e.g. `herdr api snapshot`) and uploads.
     func run(
         _ command: String,
         input: Data = Data(),
         maximumOutputBytes: Int = 2 * 1024 * 1024,
         timeout: TimeAmount = .seconds(10)
     ) async throws -> SSHExecResult {
-        guard let parent = channels.withLock({ $0?.parent }) else { throw SSHPTYSessionError.notConnected }
-        let result = parent.eventLoop.makePromise(of: SSHExecResult.self)
-        let opened = parent.eventLoop.makePromise(of: Channel.self)
-        opened.futureResult.whenFailure { result.fail($0) }
-        let deadline = parent.eventLoop.scheduleTask(in: timeout) {
-            result.fail(SSHPTYSessionError.requestTimedOut)
-            opened.futureResult.whenSuccess { $0.close(promise: nil) }
-        }
-        result.futureResult.whenComplete { _ in deadline.cancel() }
-        parent.eventLoop.execute {
-            do {
-                let ssh = try parent.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
-                ssh.createChannel(opened, channelType: .session) { child, _ in
-                    child.eventLoop.makeCompletedFuture {
-                        try child.pipeline.syncOperations.addHandler(
-                            SSHExecHandler(command: command, input: input, limit: maximumOutputBytes, result: result)
-                        )
-                    }
-                }
-            } catch {
-                opened.fail(error)
-            }
-        }
-        do {
-            return try await withTaskCancellationHandler {
-                try await result.futureResult.get()
-            } onCancel: {
-                result.fail(CancellationError())
-                opened.futureResult.whenSuccess { $0.close(promise: nil) }
-            }
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            throw Self.mapFailure(error)
-        }
+        guard let connection = channels.withLock({ $0?.connection }) else { throw SSHConnectionError.notConnected }
+        return try await connection.run(command, input: input, maximumOutputBytes: maximumOutputBytes, timeout: timeout)
     }
 
     /// Closes both channels. Input is not retained and cannot be replayed by a
@@ -434,8 +286,8 @@ final class SSHPTYSession: @unchecked Sendable {
         guard let owned else { return }
         owned.keepalive.cancel()
         owned.terminal.close(promise: nil)
-        owned.parent.close(promise: nil)
-        _ = try? await owned.parent.closeFuture.get()
+        owned.connection.close()
+        _ = try? await owned.connection.channel.closeFuture.get()
     }
 
     deinit {
@@ -445,12 +297,12 @@ final class SSHPTYSession: @unchecked Sendable {
         }
         owned?.keepalive.cancel()
         owned?.terminal.close(promise: nil)
-        owned?.parent.close(promise: nil)
+        owned?.connection.close()
     }
 
     private func terminalChannel() throws -> Channel {
         guard let terminal = channels.withLock({ $0?.terminal }) else {
-            throw SSHPTYSessionError.notConnected
+            throw SSHConnectionError.notConnected
         }
         return terminal
     }
@@ -487,119 +339,6 @@ final class SSHPTYSession: @unchecked Sendable {
             throw error
         }
     }
-
-    static func mapFailure(_ error: any Error) -> SSHPTYSessionError {
-        if let failure = error as? SSHPTYSessionError { return failure }
-        if SSHIdentityKeyStoreError.securityStatus(error) == errSecInteractionNotAllowed {
-            return .keyExchangeFailed(SSHIdentityKeyStoreError.authenticationExpired.localizedDescription)
-        }
-        if let preflight = error as? SSHPreflightFailure {
-            switch preflight {
-            case .passwordNotAllowed: return .passwordNotAllowed
-            case .authenticationFailed: return .authenticationFailed
-            default: return .keyExchangeFailed("SSH authentication failed")
-            }
-        }
-        if let ssh = error as? NIOSSHError, ssh.type == .keyExchangeNegotiationFailure {
-            return .unsupportedAlgorithms
-        }
-        if error is ChannelError || error is NIOFcntlFailedError {
-            return .connectionClosed
-        }
-        return .keyExchangeFailed(String(describing: error))
-    }
-}
-
-/// One exec request without a PTY. Once the command starts, `input` is written
-/// to stdin and stdin is closed; stdout and stderr are collected until the
-/// server closes the channel.
-private final class SSHExecHandler: ChannelInboundHandler {
-    typealias InboundIn = SSHChannelData
-    typealias OutboundOut = SSHChannelData
-
-    private let command: String
-    private let input: Data
-    private let limit: Int
-    private let result: EventLoopPromise<SSHExecResult>
-    private var output = ByteBuffer()
-    private var errorOutput = ByteBuffer()
-    private var exitStatus: Int?
-
-    init(command: String, input: Data, limit: Int, result: EventLoopPromise<SSHExecResult>) {
-        self.command = command
-        self.input = input
-        self.limit = limit
-        self.result = result
-    }
-
-    func handlerAdded(context: ChannelHandlerContext) {
-        // Keep reading after the server's EOF so a following exit status lands.
-        try? context.channel.syncOptions?.setOption(ChannelOptions.allowRemoteHalfClosure, value: true)
-    }
-
-    func channelActive(context: ChannelHandlerContext) {
-        let request = context.eventLoop.makePromise(of: Void.self)
-        request.futureResult.whenFailure { [result] error in result.fail(error) }
-        context.triggerUserOutboundEvent(SSHChannelRequestEvent.ExecRequest(command: command, wantReply: true), promise: request)
-        context.fireChannelActive()
-    }
-
-    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
-        switch event {
-        case is ChannelSuccessEvent:
-            guard !input.isEmpty else {
-                context.close(mode: .output, promise: nil)
-                return
-            }
-            // The SSH child channel queues writes past the peer's window, so
-            // one write is enough; EOF follows the last byte.
-            let data = SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(bytes: input)))
-            let channel = context.channel
-            context.writeAndFlush(wrapOutboundOut(data)).whenComplete { [result] outcome in
-                switch outcome {
-                case .success: channel.close(mode: .output, promise: nil)
-                case .failure(let error):
-                    result.fail(error)
-                    channel.close(promise: nil)
-                }
-            }
-        case is ChannelFailureEvent:
-            result.fail(SSHPTYSessionError.commandRequestRejected)
-            context.close(promise: nil)
-        case let status as SSHChannelRequestEvent.ExitStatus:
-            exitStatus = status.exitStatus
-        default:
-            context.fireUserInboundEventTriggered(event)
-        }
-    }
-
-    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        let message = unwrapInboundIn(data)
-        guard case .byteBuffer(var bytes) = message.data else { return }
-        guard output.readableBytes + errorOutput.readableBytes + bytes.readableBytes <= limit else {
-            result.fail(SSHPTYSessionError.commandOutputTooLarge)
-            context.close(promise: nil)
-            return
-        }
-        if message.type == .channel { output.writeBuffer(&bytes) } else { errorOutput.writeBuffer(&bytes) }
-    }
-
-    func errorCaught(context: ChannelHandlerContext, error: any Error) {
-        result.fail(error)
-        context.close(promise: nil)
-    }
-
-    func channelInactive(context: ChannelHandlerContext) {
-        result.succeed(SSHExecResult(
-            output: Data(Array(output.readableBytesView)), errorOutput: Data(Array(errorOutput.readableBytesView)),
-            exitStatus: exitStatus
-        ))
-        context.fireChannelInactive()
-    }
-
-    func handlerRemoved(context: ChannelHandlerContext) {
-        result.fail(ChannelError.ioOnClosedChannel)
-    }
 }
 
 private final class SSHKeepaliveProbeHandler: ChannelInboundHandler {
@@ -611,87 +350,6 @@ private final class SSHKeepaliveProbeHandler: ChannelInboundHandler {
 
     func errorCaught(context: ChannelHandlerContext, error: any Error) {
         context.close(promise: nil)
-    }
-}
-
-private final class PTYHostKeyDelegate: NIOSSHClientServerAuthenticationDelegate {
-    private let saved: SSHHostKey?
-
-    init(saved: SSHHostKey?) {
-        self.saved = saved
-    }
-
-    func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
-        let presented = SSHHostKey(openSSH: String(openSSHPublicKey: hostKey))
-        switch SSHHostKeyVerdict.evaluate(saved: saved, presented: presented) {
-        case .trusted:
-            validationCompletePromise.succeed(())
-        case .unknown:
-            validationCompletePromise.fail(SSHPTYSessionError.unknownHostKey(presented))
-        case .mismatch(let saved):
-            validationCompletePromise.fail(SSHPTYSessionError.hostKeyMismatch(saved: saved, presented: presented))
-        }
-    }
-}
-
-/// Offers exactly one public key and fails closed for every other method.
-private final class PublicKeyAuthDelegate: NIOSSHClientUserAuthenticationDelegate {
-    private let username: String
-    private let identity: SSHIdentity
-    private var offered = false
-
-    init(username: String, identity: SSHIdentity) {
-        self.username = username
-        self.identity = identity
-    }
-
-    func nextAuthenticationType(
-        availableMethods: NIOSSHAvailableUserAuthenticationMethods,
-        nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>
-    ) {
-        guard availableMethods.contains(.publicKey) else {
-            nextChallengePromise.fail(SSHPTYSessionError.publicKeyNotAllowed)
-            return
-        }
-        guard !offered else {
-            nextChallengePromise.fail(SSHPTYSessionError.authenticationFailed)
-            return
-        }
-        offered = true
-        nextChallengePromise.succeed(.init(
-            username: username,
-            serviceName: "ssh-connection",
-            offer: .privateKey(.init(privateKey: identity.privateKey))
-        ))
-    }
-}
-
-private final class PTYSignInWatcher: ChannelInboundHandler {
-    typealias InboundIn = Any
-
-    private let authenticated: EventLoopPromise<Void>
-
-    init(authenticated: EventLoopPromise<Void>) {
-        self.authenticated = authenticated
-    }
-
-    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
-        if event is UserAuthSuccessEvent { authenticated.succeed(()) }
-        context.fireUserInboundEventTriggered(event)
-    }
-
-    func errorCaught(context: ChannelHandlerContext, error: any Error) {
-        authenticated.fail(error)
-        context.close(promise: nil)
-    }
-
-    func channelInactive(context: ChannelHandlerContext) {
-        authenticated.fail(ChannelError.eof)
-        context.fireChannelInactive()
-    }
-
-    func handlerRemoved(context: ChannelHandlerContext) {
-        authenticated.fail(ChannelError.ioOnClosedChannel)
     }
 }
 
@@ -830,10 +488,10 @@ private final class SSHPTYChannelHandler: ChannelInboundHandler {
         case is ChannelFailureEvent:
             switch openingState {
             case .waitingForPTY:
-                ready.fail(SSHPTYSessionError.ptyRequestRejected)
+                ready.fail(SSHConnectionError.ptyRequestRejected)
             case .waitingForShell:
                 ready.fail(configuration.command == nil
-                    ? SSHPTYSessionError.shellRequestRejected : SSHPTYSessionError.commandRequestRejected)
+                    ? SSHConnectionError.shellRequestRejected : SSHConnectionError.commandRequestRejected)
             case .ready:
                 context.fireUserInboundEventTriggered(event)
             }

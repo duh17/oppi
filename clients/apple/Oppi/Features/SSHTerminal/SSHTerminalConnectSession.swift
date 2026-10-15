@@ -8,7 +8,7 @@ final class SSHTerminalConnectSession {
     var connecting = false
     var savingHostOnly = false
     var failure: String?
-    var hostFailure: SSHPTYSessionError?
+    var hostFailure: SSHConnectionError?
     var attemptedHost = ""
     var attemptedPort: UInt16 = 22
     var forgetConfirmation = false
@@ -31,8 +31,8 @@ final class SSHTerminalConnectSession {
         let value = profile.normalized()
         guard value.isConfigured else { return }
         let old = SSHTerminalProfileStore().profile(id: value.id)
-        let hasSavedPassword = old.map { value.sameCredentials(as: $0) && $0.savesPassword } ?? false
-        if value.authentication == .password && suppliedPassword == nil && !(hasSavedPassword && value.savesPassword) {
+        if value.authentication == .password && suppliedPassword == nil
+            && !(value.reusesSavedPassword(of: old) && value.savesPassword) {
             savingHostOnly = false
             passwordPrompt = true
             return
@@ -97,7 +97,7 @@ final class SSHTerminalConnectSession {
         guard value.isConfigured else { return }
         let old = SSHTerminalProfileStore().profile(id: value.id)
         if value.authentication == .password && value.savesPassword && suppliedPassword == nil
-            && !(old.map { value.sameCredentials(as: $0) && $0.savesPassword } ?? false) {
+            && !value.reusesSavedPassword(of: old) {
             savingHostOnly = true
             passwordPrompt = true
             return
@@ -190,7 +190,7 @@ final class SSHTerminalConnectSession {
         if (error as? SSHIdentityKeyStoreError) == .devicePasscodeChanged {
             devicePasscodeChanged = true
         }
-        hostFailure = error as? SSHPTYSessionError
+        hostFailure = error as? SSHConnectionError
         switch hostFailure {
         case .unknownHostKey, .hostKeyMismatch:
             failure = nil
@@ -209,7 +209,7 @@ final class SSHTerminalConnectSession {
 }
 
 struct SSHTerminalTrustRows: View {
-    let hostFailure: SSHPTYSessionError?
+    let hostFailure: SSHConnectionError?
     let connecting: Bool
     let trust: () -> Void
     let requestForget: () -> Void

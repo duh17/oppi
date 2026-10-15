@@ -50,6 +50,13 @@ struct SSHTerminalProfile: Codable, Equatable, Sendable, Identifiable {
             && username == other.username && authentication == other.authentication
     }
 
+    /// Whether `saved` keeps a stored password that still belongs to this
+    /// host: Save Password was on, and host, port, user and method are unchanged.
+    func reusesSavedPassword(of saved: Self?) -> Bool {
+        guard let saved else { return false }
+        return saved.savesPassword && sameCredentials(as: saved)
+    }
+
     var endpointLabel: String {
         let user = username.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = host.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -220,7 +227,7 @@ struct SSHTerminalProfileStore {
         let value = profile.normalized()
         var profiles = try editableProfiles()
         let old = profiles.first { $0.id == value.id }
-        let retain = old.map { value.sameCredentials(as: $0) && $0.savesPassword } ?? false
+        let retain = value.reusesSavedPassword(of: old)
         var stored = value
         if value.authentication == .password && value.savesPassword {
             if let password {
@@ -252,7 +259,7 @@ struct SSHTerminalProfileStore {
     /// This is the only path that moves a migrated password off `terminal.password`.
     /// A failed rebind leaves that item in place.
     func password(for expected: SSHTerminalProfile) throws -> String? {
-        guard let current = profile(id: expected.id), current.savesPassword, expected.sameCredentials(as: current) else {
+        guard let current = profile(id: expected.id), expected.reusesSavedPassword(of: current) else {
             throw SSHKeychainError.passwordRequired
         }
         if current.passwordUsesLegacyAccount {

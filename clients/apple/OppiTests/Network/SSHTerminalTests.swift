@@ -1037,7 +1037,7 @@ private actor TerminalConnectionFixture: SSHTerminalConnection {
         byteSink.yield(data)
     }
     func rejectSuspendedSend() {
-        suspendedSend?.resume(throwing: SSHPTYSessionError.notWritable)
+        suspendedSend?.resume(throwing: SSHConnectionError.notWritable)
         suspendedSend = nil
     }
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) {
@@ -1049,14 +1049,14 @@ private actor TerminalConnectionFixture: SSHTerminalConnection {
     func setRunResult(_ result: SSHExecResult) { runResult = result }
     func run(_ command: String, input: Data) async throws -> SSHExecResult {
         runs.append((command, input))
-        guard let runResult else { throw SSHPTYSessionError.commandRequestRejected }
+        guard let runResult else { throw SSHConnectionError.commandRequestRejected }
         return runResult
     }
     private var alive = true
     func setAlive(_ value: Bool) { alive = value }
-    func checkAlive() throws { if !alive { throw SSHPTYSessionError.requestTimedOut } }
+    func checkAlive() throws { if !alive { throw SSHConnectionError.requestTimedOut } }
     func cancel() {
-        suspendedSend?.resume(throwing: SSHPTYSessionError.connectionClosed)
+        suspendedSend?.resume(throwing: SSHConnectionError.connectionClosed)
         suspendedSend = nil
         byteSink.finish()
         resizeSink.finish()

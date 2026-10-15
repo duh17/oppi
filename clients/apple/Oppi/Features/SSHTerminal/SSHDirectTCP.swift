@@ -59,7 +59,7 @@ enum SSHDirectTCP {
                         close(fd)
                         continue
                     }
-                    return .success(fd) // SSHPTYSession takes ownership.
+                    return .success(fd) // SSHConnection takes ownership.
                 }
                 close(fd)
                 if ContinuousClock.now >= deadline { break }

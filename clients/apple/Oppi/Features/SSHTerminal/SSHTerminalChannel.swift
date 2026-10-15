@@ -305,7 +305,7 @@ final class SSHTerminalChannel {
 
     /// Runs a structured side command on this terminal's connection.
     func run(_ command: String, input: Data = Data()) async throws -> SSHExecResult {
-        guard connected, let connection else { throw SSHPTYSessionError.notConnected }
+        guard connected, let connection else { throw SSHConnectionError.notConnected }
         return try await connection.run(command, input: input)
     }
 
@@ -443,7 +443,7 @@ final class SSHTerminalChannel {
                     try await connection.send(bytes)
                     guard self.connected, !self.inputClosed else { return }
                     self.queuedBytes -= bytes.count
-                } catch SSHPTYSessionError.notWritable {
+                } catch SSHConnectionError.notWritable {
                     guard self.connected, !self.inputClosed, !Task.isCancelled else { return }
                     self.pending.insert(bytes, at: 0)
                     // A rejection describes writability at the attempt, not
@@ -462,7 +462,7 @@ final class SSHTerminalChannel {
     }
 
     static func message(_ error: any Error) -> String {
-        if let error = error as? SSHPTYSessionError { return error.message }
+        if let error = error as? SSHConnectionError { return error.message }
         if let error = error as? SSHPreflightFailure {
             switch error {
             case .dialFailed(let reason):

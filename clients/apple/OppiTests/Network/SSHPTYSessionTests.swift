@@ -22,7 +22,7 @@ struct SSHPTYSessionTests {
                     sink: { _ in }
                 )
                 Issue.record("Untrusted host key unexpectedly connected")
-            } catch let error as SSHPTYSessionError {
+            } catch let error as SSHConnectionError {
                 if saved == nil {
                     guard case .unknownHostKey = error else {
                         Issue.record("Expected unknown host key, got \(error)")
@@ -46,7 +46,7 @@ struct SSHPTYSessionTests {
         do {
             _ = try await fixture.connect(sink: { _ in })
             Issue.record("Connection with no mutually supported algorithms unexpectedly succeeded")
-        } catch let error as SSHPTYSessionError {
+        } catch let error as SSHConnectionError {
             guard case .unsupportedAlgorithms = error else {
                 Issue.record("Expected key-exchange failure, got \(error)")
                 return
@@ -66,13 +66,57 @@ struct SSHPTYSessionTests {
                 #expect(credential == "fixture-correct")
                 #expect(fixture.channelRequests.prefix(2).elementsEqual(["pty", "shell"]))
                 await session.cancel()
-            } catch let error as SSHPTYSessionError {
+            } catch let error as SSHConnectionError {
                 #expect(credential == "fixture-wrong")
                 #expect(error == .authenticationFailed)
                 #expect(fixture.channelRequests.isEmpty)
             }
             #expect(fixture.authKinds == ["password"])
         }
+    }
+
+    @Test func setupCheckUsesTheSharedConnectionAndKeepsItsOwnWording() async throws {
+        let fixture = try await SSHFixture.start(auth: .passwordOnly)
+        defer { fixture.close() }
+        await #expect(throws: SSHPreflightFailure.authenticationFailed) {
+            _ = try await SSHPreflightClient.run(
+                .init(username: "fixture", password: "fixture-wrong", savedHostKey: fixture.savedHostKey),
+                socket: fixture.clientSocket
+            )
+        }
+        #expect(fixture.authKinds == ["password"])
+
+        let unknown = try await SSHFixture.start(auth: .passwordOnly)
+        defer { unknown.close() }
+        do {
+            _ = try await SSHPreflightClient.run(
+                .init(username: "fixture", password: "fixture-correct", savedHostKey: nil),
+                socket: unknown.clientSocket
+            )
+            Issue.record("Unknown host key unexpectedly signed in")
+        } catch SSHPreflightFailure.unknownHostKey(let presented) {
+            #expect(presented == unknown.savedHostKey)
+        }
+        #expect(unknown.authRequests == 0)
+    }
+
+    @Test func cancellingDuringSignInClosesTheConnectionNow() async throws {
+        // The server never answers user authentication, so only Cancel (or the
+        // 20 s sign-in deadline) can end the attempt.
+        let fixture = try await SSHFixture.start(auth: .passwordOnly, holdAuthentication: true)
+        defer { fixture.close() }
+        let checking = Task {
+            try await SSHPreflightClient.run(
+                .init(username: "fixture", password: "fixture-correct", savedHostKey: fixture.savedHostKey),
+                socket: fixture.clientSocket
+            )
+        }
+        try await fixture.authenticationHeld.futureResult.get()
+        let cancelled = ContinuousClock.now
+        checking.cancel()
+        await #expect(throws: CancellationError.self) { _ = try await checking.value }
+        try await fixture.clientClosed.futureResult.get()
+        #expect(ContinuousClock.now - cancelled < .seconds(5))
     }
 
     @Test func acceptedPublicKeyOpensPTYThenShellAndSupportsWindowChange() async throws {
@@ -104,7 +148,7 @@ struct SSHPTYSessionTests {
         // The side command's close does not end the terminal.
         try await session.send(Data("still here".utf8))
         #expect(!collector.events.contains(.closed))
-        await #expect(throws: SSHPTYSessionError.commandOutputTooLarge) {
+        await #expect(throws: SSHConnectionError.commandOutputTooLarge) {
             try await session.run("big", maximumOutputBytes: 4)
         }
         await session.cancel()
@@ -127,7 +171,7 @@ struct SSHPTYSessionTests {
         let fixture = try await SSHFixture.start(auth: .rejectPublicKey)
         defer { fixture.close() }
 
-        await #expect(throws: SSHPTYSessionError.authenticationFailed) {
+        await #expect(throws: SSHConnectionError.authenticationFailed) {
             _ = try await fixture.connect(sink: { _ in })
         }
         #expect(fixture.authRequests == 1)
@@ -138,7 +182,7 @@ struct SSHPTYSessionTests {
         let fixture = try await SSHFixture.start(auth: .passwordOnly)
         defer { fixture.close() }
 
-        await #expect(throws: SSHPTYSessionError.publicKeyNotAllowed) {
+        await #expect(throws: SSHConnectionError.publicKeyNotAllowed) {
             _ = try await fixture.connect(sink: { _ in })
         }
         // NIOSSH starts with the configured public key before the server's
@@ -150,7 +194,7 @@ struct SSHPTYSessionTests {
         let fixture = try await SSHFixture.start(rejectPTY: true)
         defer { fixture.close() }
 
-        await #expect(throws: SSHPTYSessionError.ptyRequestRejected) {
+        await #expect(throws: SSHConnectionError.ptyRequestRejected) {
             _ = try await fixture.connect(sink: { _ in })
         }
         #expect(fixture.channelRequests == ["pty"])
@@ -183,7 +227,7 @@ struct SSHPTYSessionTests {
         for _ in 0..<5 {
             let fixture = try await SSHFixture.start(closeAfterAuth: true)
             defer { fixture.close() }
-            await #expect(throws: SSHPTYSessionError.self) {
+            await #expect(throws: SSHConnectionError.self) {
                 _ = try await fixture.connect(sink: { _ in })
             }
             #expect(fixture.authRequests == 1)
@@ -212,7 +256,9 @@ struct SSHPTYSessionTests {
                 on: parent,
                 configuration: .init(
                     username: "u",
-                    identity: SSHIdentity(privateKey: NIOSSHPrivateKey(p256Key: P256.Signing.PrivateKey()), isHardwareBacked: false),
+                    authentication: .deviceKey(SSHIdentity(
+                        privateKey: NIOSSHPrivateKey(p256Key: P256.Signing.PrivateKey()), isHardwareBacked: false
+                    )),
                     savedHostKey: nil
                 ),
                 ready: ready,
@@ -348,7 +394,7 @@ struct SSHPTYSessionTests {
             try await SSHPTYSession.connect(
                 username: "fixture", savedHostKey: nil,
                 prepareAuthentication: { .deviceKey(try await SSHIdentityKeyStore.authenticatedIdentity(context: context)) },
-                dial: { dialed.withLock { $0 = true }; throw SSHPTYSessionError.connectionClosed },
+                dial: { dialed.withLock { $0 = true }; throw SSHConnectionError.connectionClosed },
                 sink: { _ in }
             )
         }
@@ -382,7 +428,7 @@ struct SSHPTYSessionTests {
             }
             #expect(!expected.localizedDescription.contains("couldn’t be completed"))
         }
-        #expect(SSHPTYSession.mapFailure(NSError(domain: NSOSStatusErrorDomain, code: Int(errSecInteractionNotAllowed)))
+        #expect(SSHConnectionError(mapping: NSError(domain: NSOSStatusErrorDomain, code: Int(errSecInteractionNotAllowed)))
             == .keyExchangeFailed(SSHIdentityKeyStoreError.authenticationExpired.localizedDescription))
         #expect(SSHIdentityKeyStoreError.devicePasscodeChanged.localizedDescription == "Device passcode changed — create a new key")
     }
@@ -449,7 +495,7 @@ struct SSHPTYSessionTests {
         await session.cancel()
         await session.cancel()
         try await fixture.clientClosed.futureResult.get()
-        await #expect(throws: SSHPTYSessionError.notConnected) {
+        await #expect(throws: SSHConnectionError.notConnected) {
             try await session.send(Data([1]))
         }
     }
@@ -551,6 +597,9 @@ private final class SSHFixture: @unchecked Sendable {
     var windowChanged: EventLoopPromise<Void> { state.windowChanged }
     var inputReceived: EventLoopPromise<Void> { state.inputReceived }
     var clientClosed: EventLoopPromise<Void> { state.clientClosed }
+    /// Completed when a held password request arrives (`holdAuthentication`).
+    var authenticationHeld: EventLoopPromise<Void> { state.authenticationHeld }
+    var savedHostKey: SSHHostKey { SSHHostKey(openSSH: String(openSSHPublicKey: hostKey.publicKey)) }
 
     static func start(
         auth: Authentication = .acceptPublicKey,
@@ -558,7 +607,8 @@ private final class SSHFixture: @unchecked Sendable {
         maximumPacketSize: Int = 128 * 1024,
         expectedInputBytes: Int = 0,
         failKeyExchange: Bool = false,
-        closeAfterAuth: Bool = false
+        closeAfterAuth: Bool = false,
+        holdAuthentication: Bool = false
     ) async throws -> SSHFixture {
         var descriptors = [Int32](repeating: 0, count: 2)
         guard socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0 else {
@@ -574,7 +624,8 @@ private final class SSHFixture: @unchecked Sendable {
             auth: auth,
             rejectPTY: rejectPTY,
             expectedInputBytes: expectedInputBytes,
-            closeAfterAuth: closeAfterAuth
+            closeAfterAuth: closeAfterAuth,
+            holdAuthentication: holdAuthentication
         )
         do {
             let server = try await ClientBootstrap(group: loop)
@@ -601,7 +652,10 @@ private final class SSHFixture: @unchecked Sendable {
                 }
                 .withConnectedSocket(descriptors[0])
                 .get()
-            server.closeFuture.whenComplete { _ in state.clientClosed.succeed(()) }
+            server.closeFuture.whenComplete { _ in
+                state.clientClosed.succeed(())
+                state.heldAuthentication.withLock { $0 }?.succeed(.failure)
+            }
             return SSHFixture(
                 clientSocket: descriptors[1],
                 hostKey: hostKey,
@@ -627,15 +681,13 @@ private final class SSHFixture: @unchecked Sendable {
     func clientConfiguration(savedHostKey: SSHHostKey?) -> SSHPTYConfiguration {
         SSHPTYConfiguration(
             username: "fixture-user",
-            identity: SSHIdentity(privateKey: userKey, isHardwareBacked: false),
+            authentication: .deviceKey(SSHIdentity(privateKey: userKey, isHardwareBacked: false)),
             savedHostKey: savedHostKey
         )
     }
 
     func connect(flow: SSHPTYInboundFlow? = nil, command: String? = nil, sink: @escaping SSHPTYByteSink) async throws -> SSHPTYSession {
-        var configuration = clientConfiguration(
-            savedHostKey: SSHHostKey(openSSH: String(openSSHPublicKey: hostKey.publicKey))
-        )
+        var configuration = clientConfiguration(savedHostKey: savedHostKey)
         configuration.inboundFlow = flow
         configuration.command = command
         return try await SSHPTYSession.connect(
@@ -678,6 +730,7 @@ private final class SSHFixture: @unchecked Sendable {
         state.windowChanged.succeed(())
         state.inputReceived.succeed(())
         state.clientClosed.succeed(())
+        state.authenticationHeld.succeed(())
         server.close(promise: nil)
     }
 
@@ -687,6 +740,9 @@ private final class SSHFixture: @unchecked Sendable {
         let rejectPTY: Bool
         let expectedInputBytes: Int
         let closeAfterAuth: Bool
+        let holdAuthentication: Bool
+        /// Answered with `.failure` only when the connection closes.
+        let heldAuthentication = Mutex<EventLoopPromise<NIOSSHUserAuthenticationOutcome>?>(nil)
         let parent = Mutex<Channel?>(nil)
         let authRequests = Mutex(0)
         let authKinds = Mutex<[String]>([])
@@ -697,6 +753,7 @@ private final class SSHFixture: @unchecked Sendable {
         let windowChanged: EventLoopPromise<Void>
         let inputReceived: EventLoopPromise<Void>
         let clientClosed: EventLoopPromise<Void>
+        let authenticationHeld: EventLoopPromise<Void>
 
         init(
             loop: EventLoop,
@@ -704,9 +761,11 @@ private final class SSHFixture: @unchecked Sendable {
             auth: Authentication,
             rejectPTY: Bool,
             expectedInputBytes: Int,
-            closeAfterAuth: Bool
+            closeAfterAuth: Bool,
+            holdAuthentication: Bool
         ) {
             self.closeAfterAuth = closeAfterAuth
+            self.holdAuthentication = holdAuthentication
             self.acceptedKey = acceptedKey
             self.auth = auth
             self.rejectPTY = rejectPTY
@@ -714,6 +773,7 @@ private final class SSHFixture: @unchecked Sendable {
             windowChanged = loop.makePromise(of: Void.self)
             inputReceived = loop.makePromise(of: Void.self)
             clientClosed = loop.makePromise(of: Void.self)
+            authenticationHeld = loop.makePromise(of: Void.self)
         }
     }
 }
@@ -754,6 +814,11 @@ private final class FixtureAuthDelegate: NIOSSHServerUserAuthenticationDelegate 
             }
         case .password(let password):
             state.authKinds.withLock { $0.append("password") }
+            if state.holdAuthentication {
+                state.heldAuthentication.withLock { $0 = responsePromise }
+                state.authenticationHeld.succeed(())
+                return
+            }
             responsePromise.succeed(state.auth == .passwordOnly && password.password == "fixture-correct" ? .success : .failure)
         case .none:
             state.authKinds.withLock { $0.append("none") }

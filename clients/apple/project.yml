@@ -62,7 +62,7 @@ packages:
   tree-sitter-toml:
     url: https://github.com/tree-sitter-grammars/tree-sitter-toml
     exactVersion: "0.7.0"
-  # SSH client for the iOS Mac setup check (password + exec over a tailnet socket).
+  # SSH client for Check a Machine and the SSH Terminal (SSHConnection).
   swift-nio:
     url: https://github.com/apple/swift-nio
     from: "2.81.0"
