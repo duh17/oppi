@@ -383,8 +383,77 @@ struct ConversationStreamSessionTests {
         harness.frame(.update(.init(conversationId: 7, entries: [Wire.user(4, expanded)])))
         #expect(await harness.waitForRows(["1", followUp, "2", "3", "4"]))
 
-        harness.frame(.update(.init(conversationId: 7, entries: [Wire.user(5, "then summarize, please")])))
-        #expect(await harness.waitForRows(["1", "2", "3", "4", "5"]))
+        // A user entry with other text (typed on another device, or in the terminal) does
+        // not take this device's unsent prompt; the prompt's own entry does.
+        harness.frame(.update(.init(conversationId: 7, entries: [Wire.user(5, "from the terminal")])))
+        #expect(await harness.waitForRows(["1", followUp, "2", "3", "4", "5"]))
+        harness.frame(.update(.init(conversationId: 7, entries: [Wire.user(6, "then summarize")])))
+        #expect(await harness.waitForRows(["1", "2", "3", "4", "5", "6"]))
+        await harness.finish()
+    }
+
+    /// Entries that only become visible are not new turns: an older page, or a rebuild after
+    /// a memory warning, never takes a pending prompt, even one with the same text.
+    @Test func olderHistoryNeverTakesAPendingPrompt() async throws {
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        let reducer = harness.manager.reducer
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: true, entries: [
+            Wire.user(10, "newer"), Wire.assistant(11, [Wire.text("reply")]),
+        ], docs: [:])))
+        #expect(await harness.waitForRows(["10", "11-text-0"]))
+        let pending = reducer.appendUserMessage("again")
+
+        let load = Task { @MainActor in await harness.manager.loadOlderTracePage() }
+        #expect(await waitForMainActorCondition { harness.olderRequests.count == 1 })
+        let older = try #require(harness.olderRequests.first)
+        harness.frame(.older(.init(conversationId: 7, entries: [Wire.user(8, "again")], hasOlder: false)))
+        harness.yield(.commandResult(command: "older", requestId: older.requestId, success: true, data: nil, error: nil))
+        #expect(await load.value)
+        #expect(reducer.items.map(\.id) == ["8", "10", "11-text-0", pending])
+
+        // A memory warning forgets the loaded trace; the next rebuild still keeps the prompt.
+        _ = reducer.handleMemoryWarning()
+        harness.frame(.update(.init(conversationId: 7, entries: [Wire.assistant(11, [Wire.text("reply")])])))
+        #expect(await waitForMainActorCondition { reducer.items.map(\.id) == ["8", "10", "11-text-0", pending] })
+
+        // Its own entry lands and takes it.
+        harness.frame(.update(.init(conversationId: 7, entries: [Wire.user(12, "again")])))
+        #expect(await harness.waitForRows(["8", "10", "11-text-0", "12"]))
+        await harness.finish()
+    }
+
+    /// Only the answer that just landed takes the live rows: an older page loaded while an
+    /// answer streams, or an earlier answer committed in the same frame, keeps its own ids.
+    @Test func onlyTheNewestLandedAnswerTakesTheLiveRows() async throws {
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        let reducer = harness.manager.reducer
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: true, entries: [Wire.user(10, "go")], docs: [
+            "pi.live": Wire.live(content: [Wire.text("Hel")]),
+        ])))
+        #expect(await waitForMainActorCondition { reducer.items.count == 2 })
+        let liveID = try #require(reducer.items.last?.id)
+
+        let load = Task { @MainActor in await harness.manager.loadOlderTracePage() }
+        #expect(await waitForMainActorCondition { harness.olderRequests.count == 1 })
+        let older = try #require(harness.olderRequests.first)
+        harness.frame(.older(.init(conversationId: 7, entries: [Wire.user(8, "old"), Wire.assistant(9, [Wire.text("old reply")])], hasOlder: false)))
+        harness.yield(.commandResult(command: "older", requestId: older.requestId, success: true, data: nil, error: nil))
+        #expect(await load.value)
+        #expect(reducer.items.map(\.id) == ["8", "9-text-0", "10", liveID])
+
+        // Two answers commit in one frame: the newer is the one that was live.
+        harness.frame(.update(.init(
+            conversationId: 7,
+            entries: [Wire.assistant(11, [Wire.text("step")]), Wire.assistant(12, [Wire.text("Hello")])],
+            docs: ["pi.live": [.delete([.key("run")]), .delete([.key("generation")])]]
+        )))
+        #expect(await waitForMainActorCondition { harness.assistantText(liveID) == "Hello" })
+        #expect(reducer.items.map(\.id) == ["8", "9-text-0", "10", "11-text-0", liveID])
+        #expect(reducer.timelineItemID(for: "9-text-0") == "9-text-0")
         await harness.finish()
     }
 

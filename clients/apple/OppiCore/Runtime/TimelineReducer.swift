@@ -377,6 +377,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         localUserRowIDs.removeAll()
         liveAnswerRowIDs.removeAll()
         landedRowIDs.removeAll()
+        newestCommittedEntry = 0
         renderVersion &+= 1
     }
 
@@ -701,6 +702,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     private var liveAnswerGeneration = 0
     /// Committed event id to the live row id it landed in; kept until `reset`.
     private var landedRowIDs: [String: String] = [:]
+    /// Newest conversation entry this reducer has applied. Only entries above it are new
+    /// turns: an older page, a snapshot's history, or a reload after a memory warning brings
+    /// entries that are new to the trace but did not just land. Kept until `reset`.
+    private var newestCommittedEntry = 0
 
     /// The row showing trace event `id`: the live row a landed answer kept, or `id`.
     func timelineItemID(for id: String) -> String {
@@ -722,7 +727,14 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
         // Without a known start, new events are the ones not loaded before this apply.
         let loadedBefore: Set<String> = knownStart == nil ? Set(loadedTraceEventIDs) : []
-        removeEchoedLocalUserRows(in: events, newFrom: knownStart, loadedBefore: loadedBefore)
+        let newestBefore = newestCommittedEntry
+        for event in knownStart.map({ events[$0...] }) ?? events[...] {
+            if let entry = Self.entryNumber(of: event) { newestCommittedEntry = max(newestCommittedEntry, entry) }
+        }
+        removeEchoedLocalUserRows(
+            knownStart.map { Array(events[$0...]) } ?? events.filter { !loadedBefore.contains($0.id) },
+            above: newestBefore
+        )
         // Only a load without a known start can rebuild; an append keeps every row in place.
         var clientRows = knownStart == nil ? clientOnlyRows() : []
         // The replica owns every committed row. Live rows just came out, and local rows (an
@@ -740,10 +752,10 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
             loadSession(events, preserveOrphans: false)
         }
         if let knownStart {
-            settleNewEvents(events[knownStart...], landingRows: landingRows, clientRows: &clientRows)
+            settleNewEvents(events[knownStart...], above: newestBefore, landingRows: landingRows, clientRows: &clientRows)
         } else {
             let newEvents = events.lazy.filter { !loadedBefore.contains($0.id) }
-            settleNewEvents(newEvents, landingRows: landingRows, clientRows: &clientRows)
+            settleNewEvents(newEvents, above: newestBefore, landingRows: landingRows, clientRows: &clientRows)
         }
         // A rebuild drops the client's rows; they come back after the row each followed,
         // or at the end, in their order.
@@ -764,10 +776,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
     private func settleNewEvents(
         _ newEvents: some Sequence<TraceEvent>,
+        above newestBefore: Int,
         landingRows: [String: String],
         clientRows: inout [(row: ChatItem, after: String?)]
     ) {
-        if !landingRows.isEmpty { adoptLandedAnswer(landingRows, newEvents: newEvents) }
+        if !landingRows.isEmpty { adoptLandedAnswer(landingRows, newEvents: newEvents, above: newestBefore) }
         removeErrorRowsRestated(by: newEvents, clientRows: &clientRows)
     }
 
@@ -794,16 +807,26 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         bumpItemsMutationSeq()
     }
 
-    /// The first newly committed assistant entry is the answer that was live: its text and
-    /// thinking rows take the live rows' ids, block by block (same content index), so the
-    /// collection reconfigures those cells instead of replacing them.
-    private func adoptLandedAnswer(_ landingRows: [String: String], newEvents: some Sequence<TraceEvent>) {
+    /// The newest assistant entry that just landed (above `newestBefore`) is the answer that
+    /// was live: its text and thinking rows take the live rows' ids, block by block (same
+    /// content index), so the collection reconfigures those cells instead of replacing them.
+    /// Older assistants in the same load (an older page, a snapshot's history, an earlier
+    /// answer committed in the same frame) keep their own ids.
+    private func adoptLandedAnswer(
+        _ landingRows: [String: String],
+        newEvents: some Sequence<TraceEvent>,
+        above newestBefore: Int
+    ) {
         var entry: Substring?
+        for event in newEvents where event.type == .assistant || event.type == .thinking {
+            guard let block = Self.answerBlock(of: event), let number = Int(block.entry),
+                  number > newestBefore, number > entry.flatMap({ Int($0) }) ?? 0 else { continue }
+            entry = block.entry
+        }
+        guard let entry else { return }
         var adopted = false
         for event in newEvents where event.type == .assistant || event.type == .thinking {
-            guard let block = Self.answerBlock(of: event) else { continue }
-            if entry == nil { entry = block.entry }
-            guard block.entry == entry else { break }
+            guard let block = Self.answerBlock(of: event), block.entry == entry else { continue }
             // The live rows came out before the load, so the id is free.
             guard let liveID = landingRows[block.key], let index = indexForID(event.id) else { continue }
             items[index] = items[index].replacingID(liveID)
@@ -814,6 +837,18 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         if adopted {
             liveAnswerGeneration += 1
             bumpItemsMutationSeq()
+        }
+    }
+
+    /// The conversation entry a projected user, answer, or card event came from: its id, or
+    /// the id before `-text-`/`-think-`. Tool events are keyed by call id and have none.
+    private static func entryNumber(of event: TraceEvent) -> Int? {
+        switch event.type {
+        case .user, .assistant, .thinking, .system, .compaction:
+            let head = event.id.prefix { $0.isASCII && $0.isNumber }
+            return head.isEmpty ? nil : Int(head)
+        default:
+            return nil
         }
     }
 
@@ -1024,19 +1059,26 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
     /// pending only while no newer user entry has landed. Agent messages (`origin`) and
     /// input cards (system rows) are not the user's prompts. New entries are those from
     /// `newFrom` when known, else those not loaded before.
-    private func removeEchoedLocalUserRows(in events: [TraceEvent], newFrom: Int?, loadedBefore: Set<String>) {
+    /// A user entry that just landed (above `newestBefore`) replaces the oldest pending prompt
+    /// with the same text, as classic history does (`comparableText` folds a committed
+    /// `<skill>` block back to `/skill:name`). Entries that only became visible (an older page,
+    /// a snapshot's history) and entries typed elsewhere take none, so an unsent prompt stays.
+    /// Agent messages and input cards are not prompts.
+    private func removeEchoedLocalUserRows(_ newEvents: [TraceEvent], above newestBefore: Int) {
         localUserRowIDs.removeAll { indexForID($0) == nil }
-        let rows = localUserRowIDs
-        guard !rows.isEmpty else { return }
-        func isPrompt(_ event: TraceEvent) -> Bool { event.type == .user && event.origin == nil }
-        let landed: Int
-        if let newFrom {
-            landed = events[newFrom...].count(where: isPrompt)
-        } else {
-            landed = events.count { isPrompt($0) && !loadedBefore.contains($0.id) }
+        guard !localUserRowIDs.isEmpty else { return }
+        var pending: [(id: String, text: String)] = localUserRowIDs.compactMap { id in
+            guard let index = indexForID(id), case .userMessage(_, let text, _, _) = items[index] else { return nil }
+            return (id, Self.comparableTimelineUserText(text))
         }
-        guard landed > 0 else { return }
-        let taken = Set(rows.prefix(landed))
+        var taken: Set<String> = []
+        for event in newEvents where event.type == .user && event.origin == nil {
+            guard let entry = Self.entryNumber(of: event), entry > newestBefore else { continue }
+            let text = Self.comparableTimelineUserText(event.text ?? "")
+            guard let match = pending.firstIndex(where: { $0.text == text }) else { continue }
+            taken.insert(pending.remove(at: match).id)
+        }
+        guard !taken.isEmpty else { return }
         items.removeAll { taken.contains($0.id) }
         rebuildIndex()
         localUserRowIDs.removeAll { taken.contains($0) }
