@@ -1,0 +1,2286 @@
+{
+  "_meta": {
+    "description": "Durable conversation stream golden: frames one client received, and the mobile trace of the same conversation. Updated by npm run protocol:fixtures:update"
+  },
+  "frames": [
+    {
+      "type": "snapshot",
+      "conversationId": 2,
+      "head": 0,
+      "hasOlder": false,
+      "entries": [],
+      "docs": {
+        "pi.live": {},
+        "pi.inbox": {
+          "items": []
+        },
+        "pi.agent": {
+          "model": {
+            "provider": "faux",
+            "modelId": "faux-1"
+          },
+          "tools": [
+            "read",
+            "write",
+            "edit",
+            "bash"
+          ],
+          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-RqwwvL"
+        },
+        "pi.usage": {
+          "models": {},
+          "tools": {}
+        }
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 8,
+          "kind": "pi.user",
+          "model": [
+            {
+              "role": "user",
+              "content": "List the files",
+              "timestamp": 1792039375483
+            }
+          ]
+        },
+        {
+          "id": 11,
+          "kind": "pi.system",
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "read",
+                  "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+                  "parameters": {
+                    "type": "object",
+                    "required": [
+                      "path"
+                    ],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "description": "Path to the file to read (relative or absolute)"
+                      },
+                      "offset": {
+                        "type": "number",
+                        "description": "Line number to start reading from (1-indexed)"
+                      },
+                      "limit": {
+                        "type": "number",
+                        "description": "Maximum number of lines to read"
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "write",
+                  "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
+                  "parameters": {
+                    "type": "object",
+                    "required": [
+                      "path",
+                      "content"
+                    ],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "description": "Path to the file to write (relative or absolute)"
+                      },
+                      "content": {
+                        "type": "string",
+                        "description": "Content to write to the file"
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "edit",
+                  "description": "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
+                  "parameters": {
+                    "type": "object",
+                    "required": [
+                      "path",
+                      "edits"
+                    ],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "description": "Path to the file to edit (relative or absolute)"
+                      },
+                      "edits": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "oldText",
+                            "newText"
+                          ],
+                          "properties": {
+                            "oldText": {
+                              "type": "string",
+                              "description": "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call."
+                            },
+                            "newText": {
+                              "type": "string",
+                              "description": "Replacement text for this targeted edit."
+                            }
+                          }
+                        },
+                        "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead."
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "bash",
+                  "description": "Execute a bash command in the current working directory. Returns combined stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.",
+                  "parameters": {
+                    "type": "object",
+                    "required": [
+                      "command"
+                    ],
+                    "properties": {
+                      "command": {
+                        "type": "string",
+                        "description": "Bash command to execute"
+                      },
+                      "timeout": {
+                        "type": "number",
+                        "description": "Timeout in seconds (optional, no default timeout)"
+                      }
+                    }
+                  }
+                }
+              ],
+              "timestamp": 1792039375486
+            }
+          ]
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "s",
+            [
+              "run"
+            ],
+            {
+              "taskId": 10,
+              "inputs": [
+                9
+              ]
+            }
+          ],
+          [
+            "s",
+            [
+              "generation"
+            ],
+            {
+              "attempt": 1
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "docs": {
+        "pi.live": [
+          [
+            "s",
+            [
+              "generation",
+              "message"
+            ],
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "thinking",
+                  "thinking": "The user wants a file listing."
+                },
+                {
+                  "type": "text",
+                  "text": ""
+                }
+              ],
+              "api": "faux:1792039375460:85yagi1soct",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 693,
+                "output": 24,
+                "cacheRead": 0,
+                "cacheWrite": 693,
+                "totalTokens": 1410,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "pending",
+              "timestamp": 1792039375483
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 12,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "thinking",
+                  "thinking": "The user wants a file listing."
+                },
+                {
+                  "type": "text",
+                  "text": "Listing the files."
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-list",
+                  "name": "bash",
+                  "arguments": {
+                    "command": "printf 'README.md\\nsrc\\n'"
+                  }
+                }
+              ],
+              "api": "faux:1792039375460:85yagi1soct",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 693,
+                "output": 24,
+                "cacheRead": 0,
+                "cacheWrite": 693,
+                "totalTokens": 1410,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1792039375483
+            }
+          ],
+          "toolCalls": {
+            "call-list": {
+              "callSegments": [
+                {
+                  "text": "$ ",
+                  "style": "bold"
+                },
+                {
+                  "text": "printf 'README.md\\nsrc\\n'",
+                  "style": "accent"
+                }
+              ],
+              "inputPresentation": {
+                "fields": {
+                  "command": {
+                    "role": "command",
+                    "language": "shell"
+                  }
+                }
+              },
+              "outputPresentation": {
+                "kind": "terminal"
+              }
+            }
+          }
+        },
+        {
+          "id": 14,
+          "kind": "pi.tool-result",
+          "toolResult": {
+            "outputPresentation": {
+              "kind": "terminal"
+            },
+            "outputAvailability": {
+              "complete": true
+            }
+          },
+          "model": [
+            {
+              "role": "toolResult",
+              "toolCallId": "call-list",
+              "toolName": "bash",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "README.md\nsrc\n"
+                }
+              ],
+              "isError": false,
+              "durationMs": 4,
+              "timestamp": 1792039375705
+            }
+          ],
+          "data": {
+            "diagnostics": []
+          }
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "s",
+            [
+              "run",
+              "taskId"
+            ],
+            15
+          ],
+          [
+            "d",
+            [
+              "generation",
+              "message"
+            ]
+          ]
+        ],
+        "pi.usage": [
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1"
+            ],
+            {
+              "input": 693,
+              "output": 24,
+              "cacheRead": 0,
+              "cacheWrite": 693,
+              "totalTokens": 1410,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 16,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "There are two entries: README.md and src."
+                }
+              ],
+              "api": "faux:1792039375460:85yagi1soct",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 35,
+                "output": 11,
+                "cacheRead": 693,
+                "cacheWrite": 35,
+                "totalTokens": 774,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1792039375483
+            }
+          ]
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "d",
+            [
+              "run"
+            ]
+          ],
+          [
+            "d",
+            [
+              "generation"
+            ]
+          ]
+        ],
+        "pi.usage": [
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "input"
+            ],
+            728
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "output"
+            ],
+            35
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheRead"
+            ],
+            693
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheWrite"
+            ],
+            728
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "totalTokens"
+            ],
+            2184
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 17,
+          "kind": "pi.user",
+          "model": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Run the failing command for this image"
+                },
+                {
+                  "type": "image",
+                  "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+                  "mimeType": "image/png"
+                }
+              ],
+              "timestamp": 1792039376109
+            }
+          ]
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "s",
+            [
+              "run"
+            ],
+            {
+              "taskId": 19,
+              "inputs": [
+                18
+              ]
+            }
+          ],
+          [
+            "s",
+            [
+              "generation"
+            ],
+            {
+              "attempt": 1
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 20,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-fail",
+                  "name": "bash",
+                  "arguments": {
+                    "command": "echo boom >&2; exit 3"
+                  }
+                }
+              ],
+              "api": "faux:1792039375460:85yagi1soct",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 30,
+                "output": 10,
+                "cacheRead": 728,
+                "cacheWrite": 30,
+                "totalTokens": 798,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1792039375483
+            }
+          ],
+          "toolCalls": {
+            "call-fail": {
+              "callSegments": [
+                {
+                  "text": "$ ",
+                  "style": "bold"
+                },
+                {
+                  "text": "echo boom >&2; exit 3",
+                  "style": "accent"
+                }
+              ],
+              "inputPresentation": {
+                "fields": {
+                  "command": {
+                    "role": "command",
+                    "language": "shell"
+                  }
+                }
+              },
+              "outputPresentation": {
+                "kind": "terminal"
+              }
+            }
+          }
+        },
+        {
+          "id": 22,
+          "kind": "pi.tool-result",
+          "toolResult": {
+            "resultSegments": [
+              {
+                "text": "exit ?",
+                "style": "error"
+              }
+            ],
+            "outputPresentation": {
+              "kind": "terminal"
+            },
+            "outputAvailability": {
+              "complete": true
+            }
+          },
+          "model": [
+            {
+              "role": "toolResult",
+              "toolCallId": "call-fail",
+              "toolName": "bash",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "boom\n"
+                },
+                {
+                  "type": "text",
+                  "text": "<harness>\n[error] Command exited with code 3\n</harness>"
+                }
+              ],
+              "isError": true,
+              "durationMs": 5,
+              "timestamp": 1792039376204
+            }
+          ],
+          "data": {
+            "diagnostics": [
+              {
+                "severity": "error",
+                "code": "exit_code",
+                "message": "Command exited with code 3"
+              }
+            ]
+          }
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "s",
+            [
+              "run",
+              "taskId"
+            ],
+            23
+          ]
+        ],
+        "pi.usage": [
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "input"
+            ],
+            758
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "output"
+            ],
+            45
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheRead"
+            ],
+            1421
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheWrite"
+            ],
+            758
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "totalTokens"
+            ],
+            2982
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 24,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The command failed with exit code 3."
+                }
+              ],
+              "api": "faux:1792039375460:85yagi1soct",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 32,
+                "output": 9,
+                "cacheRead": 758,
+                "cacheWrite": 33,
+                "totalTokens": 832,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1792039375483
+            }
+          ]
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "d",
+            [
+              "run"
+            ]
+          ],
+          [
+            "d",
+            [
+              "generation"
+            ]
+          ]
+        ],
+        "pi.usage": [
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "input"
+            ],
+            790
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "output"
+            ],
+            54
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheRead"
+            ],
+            2179
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheWrite"
+            ],
+            791
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "totalTokens"
+            ],
+            3814
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 25,
+          "kind": "oppi.notice",
+          "data": {
+            "card": {
+              "title": "Deploy finished",
+              "subtitle": "staging",
+              "status": "completed",
+              "body": "All checks passed.",
+              "fields": [
+                {
+                  "label": "Duration",
+                  "value": "42s"
+                }
+              ],
+              "accent": "success",
+              "at": 1791650000000
+            }
+          },
+          "card": {
+            "kind": "custom",
+            "title": "Deploy finished",
+            "at": 1791650000000,
+            "subtitle": "staging",
+            "status": "completed",
+            "body": "All checks passed.",
+            "fields": [
+              {
+                "label": "Duration",
+                "value": "42s"
+              }
+            ],
+            "accent": "success"
+          }
+        }
+      ]
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 27,
+          "kind": "pi.user",
+          "card": {
+            "kind": "custom",
+            "title": "Background job 1",
+            "at": 1791650001000,
+            "status": "completed",
+            "body": "make build",
+            "fields": [
+              {
+                "label": "Result",
+                "value": "Exit 0"
+              }
+            ],
+            "accent": "success",
+            "output": {
+              "kind": "terminal",
+              "offset": 0,
+              "length": 15,
+              "command": "make build"
+            }
+          },
+          "inputCard": true
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "s",
+            [
+              "run"
+            ],
+            {
+              "taskId": 29,
+              "inputs": [
+                28
+              ]
+            }
+          ],
+          [
+            "s",
+            [
+              "generation"
+            ],
+            {
+              "attempt": 1
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 30,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Thanks for the job report."
+                }
+              ],
+              "api": "faux:1792039375460:85yagi1soct",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 18,
+                "output": 7,
+                "cacheRead": 790,
+                "cacheWrite": 18,
+                "totalTokens": 833,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1792039375483
+            }
+          ]
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "d",
+            [
+              "run"
+            ]
+          ],
+          [
+            "d",
+            [
+              "generation"
+            ]
+          ]
+        ],
+        "pi.usage": [
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "input"
+            ],
+            808
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "output"
+            ],
+            61
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheRead"
+            ],
+            2969
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheWrite"
+            ],
+            809
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "totalTokens"
+            ],
+            4647
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "docs": {
+        "pi.live": [
+          [
+            "s",
+            [
+              "compactions"
+            ],
+            [
+              {
+                "taskId": 31,
+                "reason": "manual",
+                "blocking": false,
+                "attempt": 1
+              }
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "snapshot",
+      "conversationId": 2,
+      "head": 32,
+      "hasOlder": true,
+      "entries": [
+        {
+          "id": 32,
+          "kind": "pi.compaction",
+          "model": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The conversation history before this point was compacted into the following summary:\n\n<summary>\nSummary of the work so far: listed files, ran a failing command.\n</summary>"
+                }
+              ],
+              "timestamp": 1792039377405
+            }
+          ],
+          "data": {
+            "reason": "manual"
+          }
+        },
+        {
+          "id": 24,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The command failed with exit code 3."
+                }
+              ],
+              "api": "faux:1792039375460:85yagi1soct",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 32,
+                "output": 9,
+                "cacheRead": 758,
+                "cacheWrite": 33,
+                "totalTokens": 832,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1792039375483
+            }
+          ]
+        },
+        {
+          "id": 25,
+          "kind": "oppi.notice",
+          "data": {
+            "card": {
+              "title": "Deploy finished",
+              "subtitle": "staging",
+              "status": "completed",
+              "body": "All checks passed.",
+              "fields": [
+                {
+                  "label": "Duration",
+                  "value": "42s"
+                }
+              ],
+              "accent": "success",
+              "at": 1791650000000
+            }
+          },
+          "card": {
+            "kind": "custom",
+            "title": "Deploy finished",
+            "at": 1791650000000,
+            "subtitle": "staging",
+            "status": "completed",
+            "body": "All checks passed.",
+            "fields": [
+              {
+                "label": "Duration",
+                "value": "42s"
+              }
+            ],
+            "accent": "success"
+          }
+        },
+        {
+          "id": 27,
+          "kind": "pi.user",
+          "card": {
+            "kind": "custom",
+            "title": "Background job 1",
+            "at": 1791650001000,
+            "status": "completed",
+            "body": "make build",
+            "fields": [
+              {
+                "label": "Result",
+                "value": "Exit 0"
+              }
+            ],
+            "accent": "success",
+            "output": {
+              "kind": "terminal",
+              "offset": 0,
+              "length": 15,
+              "command": "make build"
+            }
+          },
+          "inputCard": true
+        },
+        {
+          "id": 30,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Thanks for the job report."
+                }
+              ],
+              "api": "faux:1792039375460:85yagi1soct",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 18,
+                "output": 7,
+                "cacheRead": 790,
+                "cacheWrite": 18,
+                "totalTokens": 833,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1792039375483
+            }
+          ]
+        }
+      ],
+      "docs": {
+        "pi.live": {},
+        "pi.inbox": {
+          "items": []
+        },
+        "pi.agent": {
+          "model": {
+            "provider": "faux",
+            "modelId": "faux-1"
+          },
+          "tools": [
+            "read",
+            "write",
+            "edit",
+            "bash"
+          ],
+          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-RqwwvL"
+        },
+        "pi.usage": {
+          "models": {
+            "faux/faux-1": {
+              "input": 1246,
+              "output": 77,
+              "cacheRead": 2969,
+              "cacheWrite": 809,
+              "totalTokens": 5101,
+              "cost": {
+                "input": 0,
+                "output": 0,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "total": 0
+              }
+            }
+          },
+          "tools": {}
+        }
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 34,
+          "kind": "pi.user",
+          "model": [
+            {
+              "role": "user",
+              "content": "Explain it at length",
+              "timestamp": 1792039377708
+            }
+          ]
+        },
+        {
+          "id": 37,
+          "kind": "pi.system",
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "sections": {},
+              "toolsAdded": [
+                {
+                  "name": "read",
+                  "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+                  "parameters": {
+                    "type": "object",
+                    "required": [
+                      "path"
+                    ],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "description": "Path to the file to read (relative or absolute)"
+                      },
+                      "offset": {
+                        "type": "number",
+                        "description": "Line number to start reading from (1-indexed)"
+                      },
+                      "limit": {
+                        "type": "number",
+                        "description": "Maximum number of lines to read"
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "write",
+                  "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
+                  "parameters": {
+                    "type": "object",
+                    "required": [
+                      "path",
+                      "content"
+                    ],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "description": "Path to the file to write (relative or absolute)"
+                      },
+                      "content": {
+                        "type": "string",
+                        "description": "Content to write to the file"
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "edit",
+                  "description": "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
+                  "parameters": {
+                    "type": "object",
+                    "required": [
+                      "path",
+                      "edits"
+                    ],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "description": "Path to the file to edit (relative or absolute)"
+                      },
+                      "edits": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "oldText",
+                            "newText"
+                          ],
+                          "properties": {
+                            "oldText": {
+                              "type": "string",
+                              "description": "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call."
+                            },
+                            "newText": {
+                              "type": "string",
+                              "description": "Replacement text for this targeted edit."
+                            }
+                          }
+                        },
+                        "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead."
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "bash",
+                  "description": "Execute a bash command in the current working directory. Returns combined stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.",
+                  "parameters": {
+                    "type": "object",
+                    "required": [
+                      "command"
+                    ],
+                    "properties": {
+                      "command": {
+                        "type": "string",
+                        "description": "Bash command to execute"
+                      },
+                      "timeout": {
+                        "type": "number",
+                        "description": "Timeout in seconds (optional, no default timeout)"
+                      }
+                    }
+                  }
+                }
+              ],
+              "timestamp": 1792039377710
+            }
+          ]
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "s",
+            [
+              "run"
+            ],
+            {
+              "taskId": 36,
+              "inputs": [
+                35
+              ]
+            }
+          ],
+          [
+            "s",
+            [
+              "generation"
+            ],
+            {
+              "attempt": 1
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "docs": {
+        "pi.live": [
+          [
+            "s",
+            [
+              "generation",
+              "message"
+            ],
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "partial0 partial1 partial2 parti"
+                }
+              ],
+              "api": "faux:1792039375460:85yagi1soct",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 766,
+                "output": 148,
+                "cacheRead": 0,
+                "cacheWrite": 766,
+                "totalTokens": 1680,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "pending",
+              "timestamp": 1792039375483
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 27,
+          "kind": "pi.user",
+          "card": {
+            "kind": "custom",
+            "title": "Background job 1",
+            "at": 1791650001000,
+            "status": "completed",
+            "body": "make build",
+            "fields": [
+              {
+                "label": "Result",
+                "value": "Exit 0"
+              }
+            ],
+            "accent": "success",
+            "output": {
+              "kind": "terminal",
+              "offset": 0,
+              "length": 15,
+              "command": "make build"
+            }
+          },
+          "inputCard": true
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "r",
+            {
+              "run": {
+                "taskId": 36,
+                "inputs": [
+                  35
+                ]
+              },
+              "generation": {
+                "attempt": 1,
+                "message": {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "partial0 partial1 partial2 parti"
+                    }
+                  ],
+                  "api": "faux:1792039375460:85yagi1soct",
+                  "provider": "faux",
+                  "model": "faux-1",
+                  "usage": {
+                    "input": 766,
+                    "output": 148,
+                    "cacheRead": 0,
+                    "cacheWrite": 766,
+                    "totalTokens": 1680,
+                    "cost": {
+                      "input": 0,
+                      "output": 0,
+                      "cacheRead": 0,
+                      "cacheWrite": 0,
+                      "total": 0
+                    }
+                  },
+                  "stopReason": "pending",
+                  "timestamp": 1792039375483
+                }
+              }
+            }
+          ]
+        ],
+        "pi.inbox": [
+          [
+            "r",
+            {
+              "items": []
+            }
+          ]
+        ],
+        "pi.agent": [
+          [
+            "r",
+            {
+              "model": {
+                "provider": "faux",
+                "modelId": "faux-1"
+              },
+              "tools": [
+                "read",
+                "write",
+                "edit",
+                "bash"
+              ],
+              "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-RqwwvL"
+            }
+          ]
+        ],
+        "pi.usage": [
+          [
+            "r",
+            {
+              "models": {
+                "faux/faux-1": {
+                  "input": 1246,
+                  "output": 77,
+                  "cacheRead": 2969,
+                  "cacheWrite": 809,
+                  "totalTokens": 5101,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                }
+              },
+              "tools": {}
+            }
+          ]
+        ],
+        "oppi.extension-ui": null
+      }
+    },
+    {
+      "type": "update",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 39,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "A complete answer after the restart."
+                }
+              ],
+              "api": "faux:1792039375460:85yagi1soct",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 0,
+                "output": 9,
+                "cacheRead": 766,
+                "cacheWrite": 0,
+                "totalTokens": 775,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1792039377853
+            }
+          ]
+        }
+      ],
+      "docs": {
+        "pi.live": [
+          [
+            "d",
+            [
+              "run"
+            ]
+          ],
+          [
+            "d",
+            [
+              "generation"
+            ]
+          ]
+        ],
+        "pi.usage": [
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "input"
+            ],
+            2012
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "output"
+            ],
+            234
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheRead"
+            ],
+            3735
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "cacheWrite"
+            ],
+            1575
+          ],
+          [
+            "s",
+            [
+              "models",
+              "faux/faux-1",
+              "totalTokens"
+            ],
+            7556
+          ]
+        ]
+      }
+    },
+    {
+      "type": "older",
+      "conversationId": 2,
+      "entries": [
+        {
+          "id": 8,
+          "kind": "pi.user",
+          "model": [
+            {
+              "role": "user",
+              "content": "List the files",
+              "timestamp": 1792039375483
+            }
+          ]
+        },
+        {
+          "id": 11,
+          "kind": "pi.system",
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "read",
+                  "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+                  "parameters": {
+                    "type": "object",
+                    "required": [
+                      "path"
+                    ],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "description": "Path to the file to read (relative or absolute)"
+                      },
+                      "offset": {
+                        "type": "number",
+                        "description": "Line number to start reading from (1-indexed)"
+                      },
+                      "limit": {
+                        "type": "number",
+                        "description": "Maximum number of lines to read"
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "write",
+                  "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
+                  "parameters": {
+                    "type": "object",
+                    "required": [
+                      "path",
+                      "content"
+                    ],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "description": "Path to the file to write (relative or absolute)"
+                      },
+                      "content": {
+                        "type": "string",
+                        "description": "Content to write to the file"
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "edit",
+                  "description": "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
+                  "parameters": {
+                    "type": "object",
+                    "required": [
+                      "path",
+                      "edits"
+                    ],
+                    "properties": {
+                      "path": {
+                        "type": "string",
+                        "description": "Path to the file to edit (relative or absolute)"
+                      },
+                      "edits": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "oldText",
+                            "newText"
+                          ],
+                          "properties": {
+                            "oldText": {
+                              "type": "string",
+                              "description": "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call."
+                            },
+                            "newText": {
+                              "type": "string",
+                              "description": "Replacement text for this targeted edit."
+                            }
+                          }
+                        },
+                        "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead."
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "bash",
+                  "description": "Execute a bash command in the current working directory. Returns combined stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.",
+                  "parameters": {
+                    "type": "object",
+                    "required": [
+                      "command"
+                    ],
+                    "properties": {
+                      "command": {
+                        "type": "string",
+                        "description": "Bash command to execute"
+                      },
+                      "timeout": {
+                        "type": "number",
+                        "description": "Timeout in seconds (optional, no default timeout)"
+                      }
+                    }
+                  }
+                }
+              ],
+              "timestamp": 1792039375486
+            }
+          ]
+        },
+        {
+          "id": 12,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "thinking",
+                  "thinking": "The user wants a file listing."
+                },
+                {
+                  "type": "text",
+                  "text": "Listing the files."
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call-list",
+                  "name": "bash",
+                  "arguments": {
+                    "command": "printf 'README.md\\nsrc\\n'"
+                  }
+                }
+              ],
+              "api": "faux:1792039375460:85yagi1soct",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 693,
+                "output": 24,
+                "cacheRead": 0,
+                "cacheWrite": 693,
+                "totalTokens": 1410,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1792039375483
+            }
+          ],
+          "toolCalls": {
+            "call-list": {
+              "callSegments": [
+                {
+                  "text": "$ ",
+                  "style": "bold"
+                },
+                {
+                  "text": "printf 'README.md\\nsrc\\n'",
+                  "style": "accent"
+                }
+              ],
+              "inputPresentation": {
+                "fields": {
+                  "command": {
+                    "role": "command",
+                    "language": "shell"
+                  }
+                }
+              },
+              "outputPresentation": {
+                "kind": "terminal"
+              }
+            }
+          }
+        },
+        {
+          "id": 14,
+          "kind": "pi.tool-result",
+          "toolResult": {
+            "outputPresentation": {
+              "kind": "terminal"
+            },
+            "outputAvailability": {
+              "complete": true
+            }
+          },
+          "model": [
+            {
+              "role": "toolResult",
+              "toolCallId": "call-list",
+              "toolName": "bash",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "README.md\nsrc\n"
+                }
+              ],
+              "isError": false,
+              "durationMs": 4,
+              "timestamp": 1792039375705
+            }
+          ],
+          "data": {
+            "diagnostics": []
+          }
+        },
+        {
+          "id": 16,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "There are two entries: README.md and src."
+                }
+              ],
+              "api": "faux:1792039375460:85yagi1soct",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 35,
+                "output": 11,
+                "cacheRead": 693,
+                "cacheWrite": 35,
+                "totalTokens": 774,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1792039375483
+            }
+          ]
+        },
+        {
+          "id": 17,
+          "kind": "pi.user",
+          "model": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Run the failing command for this image"
+                },
+                {
+                  "type": "image",
+                  "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+                  "mimeType": "image/png"
+                }
+              ],
+              "timestamp": 1792039376109
+            }
+          ]
+        },
+        {
+          "id": 20,
+          "kind": "pi.assistant",
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call-fail",
+                  "name": "bash",
+                  "arguments": {
+                    "command": "echo boom >&2; exit 3"
+                  }
+                }
+              ],
+              "api": "faux:1792039375460:85yagi1soct",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 30,
+                "output": 10,
+                "cacheRead": 728,
+                "cacheWrite": 30,
+                "totalTokens": 798,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1792039375483
+            }
+          ],
+          "toolCalls": {
+            "call-fail": {
+              "callSegments": [
+                {
+                  "text": "$ ",
+                  "style": "bold"
+                },
+                {
+                  "text": "echo boom >&2; exit 3",
+                  "style": "accent"
+                }
+              ],
+              "inputPresentation": {
+                "fields": {
+                  "command": {
+                    "role": "command",
+                    "language": "shell"
+                  }
+                }
+              },
+              "outputPresentation": {
+                "kind": "terminal"
+              }
+            }
+          }
+        },
+        {
+          "id": 22,
+          "kind": "pi.tool-result",
+          "toolResult": {
+            "resultSegments": [
+              {
+                "text": "exit ?",
+                "style": "error"
+              }
+            ],
+            "outputPresentation": {
+              "kind": "terminal"
+            },
+            "outputAvailability": {
+              "complete": true
+            }
+          },
+          "model": [
+            {
+              "role": "toolResult",
+              "toolCallId": "call-fail",
+              "toolName": "bash",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "boom\n"
+                },
+                {
+                  "type": "text",
+                  "text": "<harness>\n[error] Command exited with code 3\n</harness>"
+                }
+              ],
+              "isError": true,
+              "durationMs": 5,
+              "timestamp": 1792039376204
+            }
+          ],
+          "data": {
+            "diagnostics": [
+              {
+                "severity": "error",
+                "code": "exit_code",
+                "message": "Command exited with code 3"
+              }
+            ]
+          }
+        }
+      ],
+      "hasOlder": false
+    }
+  ],
+  "trace": [
+    {
+      "id": "8",
+      "type": "user",
+      "timestamp": "2026-10-15T04:42:55.483Z",
+      "text": "List the files"
+    },
+    {
+      "id": "12-think-0",
+      "type": "thinking",
+      "timestamp": "2026-10-15T04:42:55.483Z",
+      "thinking": "The user wants a file listing."
+    },
+    {
+      "id": "12-text-1",
+      "type": "assistant",
+      "timestamp": "2026-10-15T04:42:55.483Z",
+      "text": "Listing the files.",
+      "contentIndex": 1,
+      "runOrdinal": 0
+    },
+    {
+      "id": "call-list",
+      "type": "toolCall",
+      "timestamp": "2026-10-15T04:42:55.483Z",
+      "tool": "bash",
+      "args": {
+        "command": "printf 'README.md\\nsrc\\n'"
+      },
+      "callSegments": [
+        {
+          "text": "$ ",
+          "style": "bold"
+        },
+        {
+          "text": "printf 'README.md\\nsrc\\n'",
+          "style": "accent"
+        }
+      ],
+      "inputPresentation": {
+        "fields": {
+          "command": {
+            "role": "command",
+            "language": "shell"
+          }
+        }
+      },
+      "outputPresentation": {
+        "kind": "terminal"
+      }
+    },
+    {
+      "id": "result-14",
+      "type": "toolResult",
+      "timestamp": "2026-10-15T04:42:55.705Z",
+      "toolCallId": "call-list",
+      "toolName": "bash",
+      "output": "README.md\nsrc\n",
+      "isError": false,
+      "outputPresentation": {
+        "kind": "terminal"
+      },
+      "outputAvailability": {
+        "complete": true
+      }
+    },
+    {
+      "id": "16-text-0",
+      "type": "assistant",
+      "timestamp": "2026-10-15T04:42:55.483Z",
+      "text": "There are two entries: README.md and src.",
+      "contentIndex": 0,
+      "runOrdinal": 0
+    },
+    {
+      "id": "17",
+      "type": "user",
+      "timestamp": "2026-10-15T04:42:56.109Z",
+      "text": "Run the failing command for this image\ndata:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    },
+    {
+      "id": "call-fail",
+      "type": "toolCall",
+      "timestamp": "2026-10-15T04:42:55.483Z",
+      "tool": "bash",
+      "args": {
+        "command": "echo boom >&2; exit 3"
+      },
+      "callSegments": [
+        {
+          "text": "$ ",
+          "style": "bold"
+        },
+        {
+          "text": "echo boom >&2; exit 3",
+          "style": "accent"
+        }
+      ],
+      "inputPresentation": {
+        "fields": {
+          "command": {
+            "role": "command",
+            "language": "shell"
+          }
+        }
+      },
+      "outputPresentation": {
+        "kind": "terminal"
+      }
+    },
+    {
+      "id": "result-22",
+      "type": "toolResult",
+      "timestamp": "2026-10-15T04:42:56.204Z",
+      "toolCallId": "call-fail",
+      "toolName": "bash",
+      "output": "boom\n\n<harness>\n[error] Command exited with code 3\n</harness>",
+      "isError": true,
+      "resultSegments": [
+        {
+          "text": "exit ?",
+          "style": "error"
+        }
+      ],
+      "outputPresentation": {
+        "kind": "terminal"
+      },
+      "outputAvailability": {
+        "complete": true
+      }
+    },
+    {
+      "id": "24-text-0",
+      "type": "assistant",
+      "timestamp": "2026-10-15T04:42:55.483Z",
+      "text": "The command failed with exit code 3.",
+      "contentIndex": 0,
+      "runOrdinal": 0
+    },
+    {
+      "id": "25",
+      "type": "system",
+      "timestamp": "2026-10-10T16:33:20.000Z",
+      "text": "Deploy finished\nstaging\n\nAll checks passed.\nDuration: 42s",
+      "presentation": {
+        "kind": "custom",
+        "title": "Deploy finished",
+        "subtitle": "staging",
+        "status": "completed",
+        "body": "All checks passed.",
+        "fields": [
+          {
+            "label": "Duration",
+            "value": "42s"
+          }
+        ],
+        "accent": "success"
+      }
+    },
+    {
+      "id": "27",
+      "type": "system",
+      "timestamp": "2026-10-10T16:33:21.000Z",
+      "text": "Background job 1\n\nmake build\nResult: Exit 0",
+      "presentation": {
+        "kind": "custom",
+        "title": "Background job 1",
+        "status": "completed",
+        "body": "make build",
+        "fields": [
+          {
+            "label": "Result",
+            "value": "Exit 0"
+          }
+        ],
+        "accent": "success",
+        "output": {
+          "kind": "terminal",
+          "entryId": "27",
+          "command": "make build"
+        }
+      }
+    },
+    {
+      "id": "30-text-0",
+      "type": "assistant",
+      "timestamp": "2026-10-15T04:42:55.483Z",
+      "text": "Thanks for the job report.",
+      "contentIndex": 0,
+      "runOrdinal": 0
+    },
+    {
+      "id": "32",
+      "type": "compaction",
+      "timestamp": "2026-10-15T04:42:57.405Z",
+      "text": "Context compacted: Summary of the work so far: listed files, ran a failing command."
+    },
+    {
+      "id": "34",
+      "type": "user",
+      "timestamp": "2026-10-15T04:42:57.708Z",
+      "text": "Explain it at length"
+    },
+    {
+      "id": "39-text-0",
+      "type": "assistant",
+      "timestamp": "2026-10-15T04:42:57.853Z",
+      "text": "A complete answer after the restart.",
+      "contentIndex": 0,
+      "runOrdinal": 0
+    }
+  ]
+}

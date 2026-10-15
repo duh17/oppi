@@ -151,7 +151,7 @@ When changing protocol messages:
 3. Update protocol snapshots in `protocol/*.json` when the wire shape changes. Ordinary protocol tests compare deterministic canonical bytes with the committed fixtures without writing tracked files. Deliberate fixture changes use `cd server && npm run protocol:fixtures:update`.
 4. Run server protocol tests, followed by Apple Codable tests.
 
-The experimental durable conversation stream (`ConversationStreamServerMessage`, `ConversationStreamAttach`) is outside the `ServerMessage`/`ClientMessage` unions and has its own fixture, `protocol/conversation-stream.json`, until an Apple client models it. See [Durable conversation stream](architecture-server/durable-conversation-stream.md).
+The experimental durable conversation stream (`ConversationStreamServerMessage`, `ConversationStreamAttach`, `ConversationStreamOlder`) is outside the `ServerMessage`/`ClientMessage` unions. Its fixtures are `protocol/conversation-stream.json` and the golden `protocol/conversation-stream-golden.json`; its Apple models are `OppiCore/Models/ConversationStream.swift`, applied by `ConversationReplica`. See [Durable conversation stream](architecture-server/durable-conversation-stream.md).
 
 Tool presentation facts and full-output lifetime are documented in [Tool inspection](architecture-server/tool-inspection.md).
 
