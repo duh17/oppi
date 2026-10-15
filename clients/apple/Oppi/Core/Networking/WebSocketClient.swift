@@ -62,6 +62,9 @@ struct FocusedWebSocketTransport {
 /// session stream prepared by `ServerConnection`.
 @MainActor @Observable
 final class WebSocketClient {
+    /// Largest inbound frame: the server's `WS_MAX_PAYLOAD_BYTES` (16 MiB).
+    nonisolated static let maximumMessageSize = 16 * 1024 * 1024
+
     enum Status: Equatable {
         case disconnected
         case connecting
@@ -175,7 +178,13 @@ final class WebSocketClient {
         )
         self.urlSession = urlSession
         self.webSocketFactory = webSocketFactory ?? { request in
-            FocusedWebSocketTransport(task: urlSession.webSocketTask(with: request))
+            let task = urlSession.webSocketTask(with: request)
+            // URLSession's default is 1 MiB. A durable conversation snapshot carries the whole
+            // active context, inline images included, and is often larger; a frame over the
+            // limit closes the socket with 1009 and the reconnect gets the same snapshot again.
+            // Match the server's own payload limit (`WS_MAX_PAYLOAD_BYTES`).
+            task.maximumMessageSize = Self.maximumMessageSize
+            return FocusedWebSocketTransport(task: task)
         }
     }
 
