@@ -182,6 +182,7 @@ export const SOURCE_EXTRA_FILES = [
   // The only server/scripts the paired E2E wrapper (apple/e2e.sh) invokes.
   "server/scripts/e2e-clean.mjs",
   "server/scripts/e2e-gen-invite.mjs",
+  "server/scripts/e2e-pairing-approver.mjs",
   "server/scripts/e2e-precreate-pair.mjs",
 ] as const;
 
@@ -196,6 +197,7 @@ export const REQUIRED_SOURCE_FILES = [
   "server/tsconfig.json",
   "server/scripts/e2e-clean.mjs",
   "server/scripts/e2e-gen-invite.mjs",
+  "server/scripts/e2e-pairing-approver.mjs",
   "server/scripts/e2e-precreate-pair.mjs",
 ] as const;
 

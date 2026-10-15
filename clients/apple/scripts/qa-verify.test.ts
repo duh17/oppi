@@ -507,6 +507,7 @@ describe("qa-verify source bytes", () => {
       "server/tsconfig.json",
       "server/scripts/e2e-clean.mjs",
       "server/scripts/e2e-gen-invite.mjs",
+      "server/scripts/e2e-pairing-approver.mjs",
       "server/scripts/e2e-precreate-pair.mjs",
     ];
     for (const path of [...treeProbes, ...fileProbes]) {

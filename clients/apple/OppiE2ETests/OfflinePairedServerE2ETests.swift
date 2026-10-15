@@ -16,8 +16,8 @@ final class OfflinePairedServerE2ETests: E2ETestCase {
             XCTFail("Current two-server port fixture is unavailable to the UI runner")
             return
         }
-        let fileInvite = try? String(contentsOfFile: "/tmp/oppi-e2e-invite.txt", encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Same per-run (or legacy /tmp) invite handoff that E2ETestCase pairs with.
+        let fileInvite = try? E2ELabServerContext.readInviteURLWithSource().url
         let filePort = fileInvite.flatMap { try? E2ELabServerContext.baseURL(inviteURLString: $0).port }
         guard filePort == expectedPort, let fileInvite else {
             XCTFail("UI runner received a stale first-server invite file")

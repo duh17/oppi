@@ -258,6 +258,8 @@ install -m 755 .githooks/pre-push "$(git rev-parse --git-path hooks)/pre-push"
 
 Use the Oppi workflow wrapper. It starts a paired E2E server, writes invite/device-token files under `/tmp`, launches XCUITests, and cleans up the server.
 
+The wrapper pairs a bootstrap device for the lab API before the app, and the app's invite outlives the 90-second short-invite window so it survives a cold build. The server therefore holds the app's pairing for an approval. `server/scripts/e2e-pairing-approver.mjs` runs beside the tests as the bootstrap device and approves through `/auth/pairing-approvals`, so the approval policy stays as shipped. Its log is `pairing-approver.log` in the run artifact directory.
+
 Parent-facing strict UI verification with source-bound receipts is `bun clients/apple/scripts/qa-verify.ts`. See [qa-verification.md](qa-verification.md). That CLI always sets `OPPI_SIM_POOL_HANG_RETRIES=0` and does not claim Jev, speed, or terminal-mirror coverage.
 
 ```bash

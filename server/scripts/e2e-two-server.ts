@@ -19,6 +19,7 @@ const dataDir = await mkdtemp(join(tmpdir(), "oppi-e2e-second-"));
 const name = "Offline E2E";
 let second: ChildProcess | undefined;
 let first: ChildProcess | undefined;
+let approver: ChildProcess | undefined;
 let stoppedForTest = false;
 let failed = true;
 const controlPath = `/offline/${randomUUID()}`;
@@ -96,10 +97,18 @@ try {
   if (!healthy) throw Error(`Second E2E server unhealthy; log: ${logPath}`);
   // Seed a real workspace before issuing the app's single-use invite.
   const token = await run("node", ["--input-type=module", "-e", 'import { Storage } from "./dist/src/storage.js"; console.log(new Storage(process.env.OPPI_DATA_DIR).issuePairingToken(600000));'], env);
-  const access = await run("node", ["scripts/e2e-precreate-pair.mjs"], {
-    ...env, NODE_TLS_REJECT_UNAUTHORIZED: "0", PAIRING_TOKEN: token,
-    E2E_BASE_URL: `https://127.0.0.1:${secondPort}`,
+  const credentialFile = join(dataDir, "bootstrap-device.json");
+  const secondTLSEnv = {
+    ...env, NODE_TLS_REJECT_UNAUTHORIZED: "0", E2E_BASE_URL: `https://127.0.0.1:${secondPort}`,
+    E2E_BOOTSTRAP_CREDENTIAL_FILE: credentialFile,
+  };
+  const access = await run("node", ["scripts/e2e-precreate-pair.mjs"], { ...secondTLSEnv, PAIRING_TOKEN: token });
+  // The app's long invite to the second server needs the bootstrap device's approval.
+  const approverLogFD = openSync(join(dataDir, "pairing-approver.log"), "a");
+  approver = spawn("node", ["scripts/e2e-pairing-approver.mjs"], {
+    cwd: serverDir, env: secondTLSEnv, stdio: ["ignore", approverLogFD, approverLogFD],
   });
+  closeSync(approverLogFD);
   await run("node", ["--input-type=module", "-e", `
     const response = await fetch(process.env.E2E_BASE_URL + "/workspaces", {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + process.env.E2E_ACCESS_TOKEN },
@@ -139,6 +148,7 @@ try {
   console.error("[two-server]", error);
 } finally {
   control.close();
+  approver?.kill("SIGTERM");
   if (ownsFixture) await rm(fixturePath);
   await stopSecond();
   if (failed) console.error(`[two-server] preserving failure data: ${dataDir}`);
