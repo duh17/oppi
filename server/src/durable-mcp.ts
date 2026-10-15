@@ -160,7 +160,8 @@ export class DurableMcp {
 
   /** Undefined when no server is enabled, no config error needs reporting, or the policy allows no tools. */
   static async open(options: DurableMcpOptions): Promise<DurableMcp | undefined> {
-    if (options.policy?.noTools === "all") return undefined;
+    // An allow list overrides `noTools` (`toolAllowed`); `builtin` never covers MCP tools.
+    if (options.policy?.noTools === "all" && !options.policy.allowed) return undefined;
     const internals = await loadPiMcpInternals();
     const loaded = options.sandbox
       ? // The sandbox loader reads only `ctx.cwd` of Pi's extension context.

@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
-import type { Context } from "@earendil-works/chord";
+import type { Context, JsonValue } from "@earendil-works/chord";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import {
@@ -259,7 +260,7 @@ const GUIDANCE =
   "their latest answers, stop aborts a child's current work (it stays usable), list shows them. " +
   "A child can spawn its own children only when you pass allowNestedDelegation.";
 
-type ReplyDetails = Record<string, string | number | boolean>;
+type ReplyDetails = Record<string, JsonValue>;
 
 function reply(
   text: string,
@@ -324,8 +325,8 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
         Type.Boolean({ description: "spawn: let the child spawn children of its own." }),
       ),
     }),
-    // A rerun after a crash finds the same child, Session, and submissions; stop records that
-    // it ran, so a rerun does not stop newer work.
+    // A rerun after a crash finds the same child, Session, and submissions; stop records its
+    // decision before it aborts, so a rerun does not stop newer work.
     replay: "safe",
     async execute(args, api, context) {
       switch (args.action) {
@@ -361,25 +362,22 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
           });
           const missing = names.filter((name) => !known[name]);
           if (missing.length)
-            return reply(
-              `No subagent named ${missing.join(", ")}.`,
-              { names: names.join(",") },
-              true,
-            );
+            return reply(`No subagent named ${missing.join(", ")}.`, { missing }, true);
           const sessions = bound();
           const waited = await Promise.all(
             found.map(async ({ name, child }) => {
-              const error = await sessions.waitForIdle(await sessionIdOf(api, name, child));
-              if (error !== undefined) return { error };
-              return { text: `${name}: ${await latestAnswer(api, child.conversationId, context)}` };
+              const sessionId = await sessionIdOf(api, name, child);
+              const ids = { name, conversationId: child.conversationId, sessionId };
+              const error = await sessions.waitForIdle(sessionId);
+              if (error !== undefined) return { ids, error };
+              const answer = await latestAnswer(api, child.conversationId, context);
+              return { ids, text: `${name}: ${answer}` };
             }),
           );
+          const details = { children: waited.map((result) => result.ids) };
           const failed = waited.find((result) => result.error !== undefined);
-          if (failed?.error !== undefined)
-            return reply(failed.error, { names: names.join(",") }, true);
-          return reply(waited.map((result) => result.text).join("\n\n"), {
-            names: names.join(","),
-          });
+          if (failed?.error !== undefined) return reply(failed.error, details, true);
+          return reply(waited.map((result) => result.text).join("\n\n"), details);
         }
         case "stop": {
           const name = args.name?.trim() ?? "";
@@ -390,32 +388,42 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
             conversationId: child.conversationId,
             ...(child.sessionId ? { sessionId: child.sessionId } : {}),
           };
-          if ((await api.memo<boolean>("stopped", context)) === true)
-            return reply(`Stopped ${name}.`, details);
           const conversation = await api.conversation(child.conversationId, context);
           if (!conversation) return reply(`Subagent ${name} has no conversation.`, details, true);
-          await conversation.abort(context);
-          await api.memo("stopped", true, context);
+          // The commit that stores this call's token decides to abort; a rerun finds an earlier
+          // decision and skips the abort, which may already have reached newer work.
+          const decision = randomUUID();
+          if ((await api.memo<JsonValue>("stopped", decision, context)) === decision)
+            await conversation.abort(context);
           return reply(`Stopped ${name}.`, details);
         }
         case "list": {
           const known = Object.entries(await children(api, context));
-          if (known.length === 0) return reply("No subagents.", {});
-          const lines = await Promise.all(
+          if (known.length === 0) return reply("No subagents.", { children: [] });
+          const rows = await Promise.all(
             known.map(async ([name, child]) => {
               const busy =
                 (await api.snapshot(LiveDoc, child.conversationId, context))?.run !== undefined;
               const model = (await api.snapshot(AgentDoc, child.conversationId, context))?.model;
-              return [
-                name,
-                busy ? "working" : "idle",
-                `agent: ${child.agent ?? "none"}`,
-                `model: ${model ? `${model.provider}/${model.modelId}` : "default"}`,
-                `session: ${child.sessionId ?? "pending"}`,
-              ].join(" | ");
+              return {
+                line: [
+                  name,
+                  busy ? "working" : "idle",
+                  `agent: ${child.agent ?? "none"}`,
+                  `model: ${model ? `${model.provider}/${model.modelId}` : "default"}`,
+                  `session: ${child.sessionId ?? "pending"}`,
+                ].join(" | "),
+                ids: {
+                  name,
+                  conversationId: child.conversationId,
+                  ...(child.sessionId !== undefined ? { sessionId: child.sessionId } : {}),
+                },
+              };
             }),
           );
-          return reply(lines.join("\n"), {});
+          return reply(rows.map((row) => row.line).join("\n"), {
+            children: rows.map((row) => row.ids),
+          });
         }
       }
     },

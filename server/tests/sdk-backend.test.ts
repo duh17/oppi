@@ -395,7 +395,8 @@ describe("SdkBackend sandbox", () => {
   it("durable-first VM setup requests the same Skill mounts as SDK sandbox setup", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-selected-agent-skill-"));
     const agentDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-selected-agent-dir-"));
-    const selectedSkill = join(agentDir, "skills", "selected-sandbox-skill");
+    // Durable sandboxes present only Skills inside the workspace.
+    const selectedSkill = join(cwd, ".pi", "skills", "selected-sandbox-skill");
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     mkdirSync(selectedSkill, { recursive: true });
     writeFileSync(

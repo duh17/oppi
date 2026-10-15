@@ -96,12 +96,32 @@ function durableInstructions(options: {
     .join("\n\n");
 }
 
+/**
+ * Pi's built-in tool names (`allToolNames`, `pi-coding-agent` dist/core/tools/index.js). Durable
+ * offers them through CodingTools (read, bash, edit, write) and the sandbox tools (ls, find, grep).
+ */
+const PI_BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "read",
+  "bash",
+  "powershell",
+  "edit",
+  "write",
+  "grep",
+  "find",
+  "ls",
+]);
+
+/**
+ * Pi's tool policy (`createAgentSession` in `pi-coding-agent` dist/core/sdk.js): an allow list is
+ * the enabled set and overrides `noTools`; otherwise `noTools: "all"` enables nothing and
+ * `"builtin"` drops only Pi's built-in tools, keeping extension and MCP tools. `excluded` always
+ * applies.
+ */
 export function toolAllowed(policy: DurableToolPolicy | undefined, name: string): boolean {
-  return (
-    !policy?.noTools &&
-    (!policy?.allowed || policy.allowed.includes(name)) &&
-    !policy?.excluded?.includes(name)
-  );
+  if (policy?.excluded?.includes(name)) return false;
+  if (policy?.allowed) return policy.allowed.includes(name);
+  if (policy?.noTools === "all") return false;
+  return !(policy?.noTools === "builtin" && PI_BUILTIN_TOOL_NAMES.has(name));
 }
 
 /**

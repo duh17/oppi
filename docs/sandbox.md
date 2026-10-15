@@ -48,6 +48,7 @@ New sandbox sessions behave as follows:
 - Oppi/Pi provider API keys and per-command host environment variables are not forwarded into the VM by default. Pi may forward only non-secret session metadata (`PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`, and `PI_SESSION_ID`) per command. Workspace `sandboxConfig.env` is for non-secret guest config such as `PATH` and `LANG`, not provider credentials.
 - Network egress follows Gondolin's default: omitted `allowedHosts` means allow all. Set an explicit allowlist, or set `allowedHosts: []` to deny all. Guest WebSocket upgrades are off; Oppi session WSS is host-side and unchanged.
 - Selected skills are mounted read-only under `/workspace/<slug>/.pi/skills/<name>/`.
+- Durable sandbox sessions present only skills whose real path is inside the workspace. A saved Agent that selects a skill outside it (an absolute path, `../`, or a symlink out) fails to start with `agent_skills_unavailable`; discovered skills outside it, such as global ones, are left out. Saved Agent AGENTS files are rewritten and redacted like workspace-local ones.
 - Workspace-local `AGENTS.md` and `CLAUDE.md` are rewritten to sandbox paths before they are shown to the model.
 - Global host agent instructions are not exposed to sandbox sessions.
 - Sandbox Oppi does not expose hostMount or host session file paths.

@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { posix } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   DefaultResourceLoader,
   SettingsManager,
@@ -7,6 +7,7 @@ import {
   stripFrontmatter,
   type Skill,
 } from "@earendil-works/pi-coding-agent";
+import { AgentConfigurationError } from "./agent-launch-errors.js";
 import type { DurableAgentResources } from "./durable-agent.js";
 import type { ReadonlyMount } from "./gondolin-manager.js";
 import {
@@ -54,11 +55,35 @@ export async function loadDurableProjectResources(options: {
   const projectTrusted = sandboxGuestCwd !== undefined || options.projectTrusted;
   if (!projectTrusted)
     assertSelectedAgentSkillsOutsideUntrustedProject(selectedSkillPaths, hostCwd);
+  // A sandbox sees only its workspace. Skill directories are mounted into the guest and
+  // `/skill:` reads the host file, so every Skill must really live in the workspace.
+  const workspaceRoot = sandboxGuestCwd === undefined ? undefined : realPath(hostCwd);
+  const inWorkspace = (path: string): boolean =>
+    workspaceRoot === undefined || isWithin(workspaceRoot, realPath(path));
+  const escapedSkillPaths = (selectedSkillPaths ?? []).filter((path) => !inWorkspace(path));
+  if (escapedSkillPaths.length > 0) throw skillsOutsideWorkspace(escapedSkillPaths);
   assertSelectedAgentResourcesAvailable(selectedSkillPaths, undefined);
-  const savedAgentFiles = (resources?.agentsFiles ?? []).map((file) => ({
-    path: sandboxGuestCwd ? posix.join(sandboxGuestCwd, file.path) : file.path,
-    content: file.content,
-  }));
+  /** Sandbox AGENTS files: only those inside the workspace, at guest paths, redacted. */
+  const inGuest = (files: readonly ContextFile[], guestCwd: string): ContextFile[] =>
+    files.flatMap((file) => {
+      const path = inWorkspace(file.path)
+        ? hostWorkspacePathToGuest(hostCwd, guestCwd, file.path)
+        : null;
+      return path
+        ? [{ path, content: redactHostEnvironment(file.content, hostCwd, guestCwd) }]
+        : [];
+    });
+  // Saved files are virtual paths relative to the workspace.
+  const savedAgentFiles =
+    sandboxGuestCwd === undefined
+      ? (resources?.agentsFiles ?? [])
+      : inGuest(
+          (resources?.agentsFiles ?? []).map((file) => ({
+            path: resolve(hostCwd, file.path),
+            content: file.content,
+          })),
+          sandboxGuestCwd,
+        );
   const mounts = new Map<string, ReadonlyMount>();
   const hostSkillFiles = new Map<string, string>();
   const loader = new DefaultResourceLoader({
@@ -77,21 +102,26 @@ export async function loadDurableProjectResources(options: {
     skillsOverride: (base) => {
       // Validate the saved Agent selection against host paths, before the sandbox rewrite.
       assertSelectedAgentSkillsLoaded(selectedSkillPaths, base);
-      for (const skill of base.skills) hostSkillFiles.set(skill.name, skill.filePath);
-      return sandboxGuestCwd === undefined
-        ? base
-        : { ...base, skills: sandboxGuestSkills(base.skills, sandboxGuestCwd, mounts) };
+      if (sandboxGuestCwd === undefined) {
+        for (const skill of base.skills) hostSkillFiles.set(skill.name, skill.filePath);
+        return base;
+      }
+      // A selected path inside the workspace can still reach outside through a symlink:
+      // refuse the selection. Discovered Skills outside it are dropped, as AGENTS files are.
+      const escaped = base.skills.filter(
+        (skill) => !inWorkspace(skill.baseDir) || !inWorkspace(skill.filePath),
+      );
+      if (selectedSkillPaths !== undefined && escaped.length > 0)
+        throw skillsOutsideWorkspace(escaped.map((skill) => skill.name));
+      const skills = base.skills.filter((skill) => !escaped.includes(skill));
+      for (const skill of skills) hostSkillFiles.set(skill.name, skill.filePath);
+      return { ...base, skills: sandboxGuestSkills(skills, sandboxGuestCwd, mounts) };
     },
     agentsFilesOverride: (base) => ({
       agentsFiles: [
         ...(sandboxGuestCwd === undefined
           ? base.agentsFiles
-          : base.agentsFiles.flatMap((file) => {
-              const path = hostWorkspacePathToGuest(hostCwd, sandboxGuestCwd, file.path);
-              return path
-                ? [{ path, content: redactHostEnvironment(file.content, hostCwd, sandboxGuestCwd) }]
-                : [];
-            })),
+          : inGuest(base.agentsFiles, sandboxGuestCwd)),
         ...savedAgentFiles,
       ],
     }),
@@ -103,6 +133,30 @@ export async function loadDurableProjectResources(options: {
     hostSkillFiles,
     readonlyMounts: [...mounts.values()],
   };
+}
+
+function skillsOutsideWorkspace(unavailableSkills: string[]): AgentConfigurationError {
+  return new AgentConfigurationError(
+    "agent_skills_unavailable",
+    { unavailableSkills },
+    `Selected Agent Skill is outside the sandbox workspace: ${unavailableSkills.join(", ")}`,
+  );
+}
+
+/** The path with every symlink in its longest existing prefix followed. */
+function realPath(path: string): string {
+  const resolved = resolve(path);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    const parent = dirname(resolved);
+    return parent === resolved ? resolved : join(realPath(parent), basename(resolved));
+  }
+}
+
+function isWithin(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
 /** Pi's `project_context` section body. */

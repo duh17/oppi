@@ -20,7 +20,9 @@ import {
   LiveDoc,
   type ConversationId,
   type Harness,
+  type ToolExecutionApi,
 } from "@earendil-works/pi-durable";
+import { createDurableSessions } from "../extensions/durable/sessions/durable.js";
 import { OppiAgentDoc } from "../src/durable-agent.js";
 import {
   DurableHarness,
@@ -654,12 +656,18 @@ describe("durable-native threads", () => {
 
     // Stopped, not removed: its transcript stays and it takes new work.
     expect(await call("Ask again")).toMatchObject({ text: "Sent to Worker (steer)." });
-    expect(await call("Wait for it")).toMatchObject({ text: "Worker: SECOND_ANSWER" });
+    // The phone opens each child from the row's ids.
+    const ids = { name: "Worker", conversationId: childConversation, sessionId: child.id };
+    expect(await call("Wait for it")).toMatchObject({
+      text: "Worker: SECOND_ANSWER",
+      details: { children: [ids] },
+    });
     expect(await userTexts(harness, childConversation)).toEqual(["CHILD_TASK work", "SECOND_TASK"]);
     const listed = await call("List them");
     expect(listed.text).toBe(
       `Worker | idle | agent: none | model: faux/faux-1 | session: ${child.id}`,
     );
+    expect(listed.details).toEqual({ children: [ids] });
     // A stopped task has no report.
     expect(requestIds(f.storage, f.dir, f.parent.id, "oppi-report:")).toEqual([]);
   });
@@ -1554,5 +1562,37 @@ describe("durable engine on create requests", () => {
     const durableReplay = await create("classic-key", "durable");
     expect(durableReplay.status).toBe(409);
     expect(durableReplay.body.error).toContain("different engine");
+  });
+});
+
+describe("subagent stop replay", () => {
+  it("does not abort again when a crash came after the stop decided to abort", async () => {
+    const memos = new Map<string, unknown>();
+    let aborts = 0;
+    const child = { conversationId: 7 as ConversationId, sessionId: "child", background: true };
+    // The tool against a minimal call API whose memos survive a rerun, as the Harness keeps them.
+    const api = {
+      conversationId: 1 as ConversationId,
+      snapshot: async () => ({ children: { Worker: child }, calls: {} }),
+      conversation: async () => ({
+        abort: async () => {
+          aborts += 1;
+          // The process dies once the abort has reached the child, before the call returns.
+          if (aborts === 1) throw new Error("crash after abort");
+        },
+      }),
+      memo: async (name: string, ...rest: unknown[]) => {
+        if (rest.length === 1) return memos.get(name);
+        if (!memos.has(name)) memos.set(name, rest[0]);
+        return memos.get(name);
+      },
+    } as unknown as ToolExecutionApi;
+    const [subagent] = createDurableSessions(() => undefined).tools!;
+    const stop = () => subagent!.execute({ action: "stop", name: "Worker" }, api, context);
+
+    await expect(stop()).rejects.toThrow("crash after abort");
+    // The rerun reports the stop without aborting the child's newer work.
+    expect(await stop()).toMatchObject({ details: { name: "Worker", sessionId: "child" } });
+    expect(aborts).toBe(1);
   });
 });
