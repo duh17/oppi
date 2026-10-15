@@ -25,14 +25,23 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Record every handle `sendFileBytes` opens so a test can prove it was closed
 // (a closed FileHandle reports fd -1). Opens pass through unchanged.
-const openedHandles = vi.hoisted(() => [] as { path: string; handle: FileHandle }[]);
+const openedHandles = vi.hoisted(
+  () => [] as { path: string; handle: FileHandle; bytesRead: number }[],
+);
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...actual,
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args);
-      openedHandles.push({ path: String(args[0]), handle });
+      const entry = { path: String(args[0]), handle, bytesRead: 0 };
+      const read = handle.read.bind(handle) as (...readArgs: unknown[]) => Promise<unknown>;
+      (handle as { read: unknown }).read = async (...readArgs: unknown[]) => {
+        const result = (await read(...readArgs)) as { bytesRead: number };
+        entry.bytesRead += result.bytesRead;
+        return result;
+      };
+      openedHandles.push(entry);
       return handle;
     },
   };
@@ -581,6 +590,37 @@ describe("GET /files/current/media-info", () => {
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.text())).toEqual({});
     }
+  });
+
+  it("gives up on a file whose metadata chunks would need more than a bounded read", async () => {
+    const fixture = seed();
+    // Each LIST/INFO tag is under the per-chunk allocation limit, but the parser
+    // keeps every one until the parse ends: unbounded, a sandboxed session
+    // could use this to exhaust the server's heap.
+    const tagBytes = 3 * 1024 * 1024;
+    const list = Buffer.alloc(8 + 4 + 8 + tagBytes);
+    list.write("LIST", 0, "ascii");
+    list.writeUInt32LE(list.length - 8, 4);
+    list.write("INFOINAM", 8, "ascii");
+    list.writeUInt32LE(tagBytes, 16);
+    const lists = Array.from({ length: 6 }, () => list);
+    const header = wav(1);
+    const bloated = Buffer.concat([header.subarray(0, 36), ...lists, header.subarray(36)]);
+    bloated.writeUInt32LE(bloated.length - 8, 4);
+    const path = join(fixture.home, "bloated.wav");
+    writeFileSync(path, bloated);
+
+    const res = await request(
+      fixture,
+      "GET",
+      `/files/current/media-info?${query({ origin: "host", path: "~/bloated.wav" })}`,
+    );
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.text())).toEqual({});
+    const read = openedHandles
+      .filter((entry) => entry.path === path)
+      .reduce((total, entry) => total + entry.bytesRead, 0);
+    expect(read).toBeLessThanOrEqual(8 * 1024 * 1024);
   });
 
   it("keeps sandbox confinement and 404s a missing file", async () => {

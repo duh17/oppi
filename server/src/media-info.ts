@@ -21,6 +21,14 @@ export interface MediaInfo {
 const PARSE_DEADLINE_MS = 5_000;
 /** A single tag payload (lyrics, chapters) above this fails the parse. */
 const MAX_METADATA_PAYLOAD_BYTES = 4 * 1024 * 1024;
+/**
+ * Total bytes one parse may read. The parser keeps metadata chunks (WAV
+ * `LIST`, AIFF `ANNO`) in memory until it finishes, so the per-chunk limit
+ * alone lets a crafted file of many chunks exhaust the heap. 8 MiB is far above
+ * any real header scan and a small fraction of the heap; a file needing more
+ * (long Ogg, header-less VBR MP3) gets no label.
+ */
+const MAX_PARSE_READ_BYTES = 8 * 1024 * 1024;
 const MAX_CACHE_ENTRIES = 256;
 /**
  * About 115 days. A crafted Ogg/MP4 header (sample rate or timescale 1, huge
@@ -97,24 +105,32 @@ async function parseDuration(
 
 /**
  * strtok3's file tokenizer ignores abort signals, so the deadline is checked
- * on every read. The constructor is protected; this subclass is how a caller
- * hands it an already-verified handle instead of a path to reopen.
+ * on every read, together with the total-bytes budget. The constructor is
+ * protected; this subclass is how a caller hands it an already-verified handle
+ * instead of a path to reopen.
  */
 class DeadlineFileTokenizer extends FileTokenizer {
   private readonly deadline: AbortSignal;
+  private budgetLeft = MAX_PARSE_READ_BYTES;
 
   constructor(handle: FileHandle, size: number, mimeType: string, deadline: AbortSignal) {
     super(handle, { fileInfo: { size, mimeType } });
     this.deadline = deadline;
   }
 
-  override readBuffer(buffer: Uint8Array, options?: IReadChunkOptions): Promise<number> {
+  private charge(buffer: Uint8Array, options?: IReadChunkOptions): void {
     this.deadline.throwIfAborted();
+    this.budgetLeft -= options?.length ?? buffer.length;
+    if (this.budgetLeft < 0) throw new Error("audio parse exceeded its read budget");
+  }
+
+  override readBuffer(buffer: Uint8Array, options?: IReadChunkOptions): Promise<number> {
+    this.charge(buffer, options);
     return super.readBuffer(buffer, options);
   }
 
   override peekBuffer(buffer: Uint8Array, options?: IReadChunkOptions): Promise<number> {
-    this.deadline.throwIfAborted();
+    this.charge(buffer, options);
     return super.peekBuffer(buffer, options);
   }
 }
