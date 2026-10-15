@@ -388,6 +388,7 @@ final class UserTimelineRowContentView: UIView, UIContentView, TimelineRowIntera
         let applyStartNs = ChatTimelinePerf.timestampNs()
         let previousConfiguration = currentConfiguration
         currentConfiguration = configuration
+        accessibilityIdentifier = configuration.itemID.map { "chat.timeline.user.\($0)" }
 
         let palette = ThemeRuntimeState.currentPalette()
         iconLabel.textColor = bodyTextColor(palette)

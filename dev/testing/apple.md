@@ -326,6 +326,25 @@ Prerequisites:
 - mlx-serve OpenAI-compatible endpoint on `http://127.0.0.1:11234`
 - loaded chat model `ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit` (the harness fails instead of using another model)
 
+#### Durable sessions and the faux model
+
+Two opt-in `sim-test` switches, both native-only. Without them every E2E keeps classic sessions on mlx-serve.
+
+| Switch | Effect |
+| --- | --- |
+| `--durable` (`OPPI_E2E_DURABLE=1`) | Sets `experimental.serverDurable` on the E2E server and passes `TEST_RUNNER_OPPI_E2E_SESSION_ENGINE=durable`, so `E2ETestCase.createSession()` creates sessions with `engine: "durable"`. Sessions the app creates itself, such as the launch auto-create, stay classic. |
+| `--faux-model` (`OPPI_E2E_FAUX_MODEL=1`) | Needs `--durable`. Skips the mlx-serve probe, starts the server with `OPPI_E2E_FAUX_PROVIDER=1`, and writes Pi `settings.json` defaulting to `oppi-e2e-faux/oppi-e2e-faux-1`. |
+
+The faux model is pi-ai's faux provider with a fixed script (`server/src/e2e-faux-provider.ts`). Every request gets the same reply for the same prompt: it echoes the last user text and ends with `End of faux reply.`, streamed at 10 tokens per second (about 8 seconds), so a test can observe the live row before the reply lands. The server registers it only when both `OPPI_E2E_UI_HARNESS=1` and `OPPI_E2E_FAUX_PROVIDER=1` are in its environment. No config key, route, or app request turns it on. It is registered on the server-wide model runtime, which only durable sessions use; classic sessions cannot select it.
+
+```bash
+# Durable reply streams through the conversation stream replica, lands once, and survives reconnects
+~/.pi/agent/skills/oppi-dev/scripts/oppi-workflow.sh sim-test --native --durable --faux-model \
+  --only-testing OppiE2ETests/DurableSessionE2ETests
+```
+
+`DurableSessionE2ETests` skips without `--durable`. It asserts a `chat.timeline.assistant.pi.live-*` row while the reply streams, then exactly one committed `chat.timeline.assistant.<entry>-text-*` row with the full reply. After landing it backgrounds and foregrounds the app. An idle app closes its focused session socket on background, so foreground opens a new one (the server log shows `bound_session_stream_2`) and the replica re-attaches from its cursor. It then asserts there are still no duplicate assistant (`chat.timeline.assistant.*`) or user (`chat.timeline.user.*`) rows. `e2e.ws.connectionID` does not count that reconnect. A mid-stream cycle would not reconnect, because a busy app keeps its socket for the background keep-alive window.
+
 ### Paired-server simulator labs
 
 Use paired-server simulator labs when the UI depends on pairing, server toolbar state, workspace catalog refresh, session counts, auth, model-backed sessions, or any real server state. Use `IPhoneSessionsFirstScreenshotE2ETests` for the All Sessions root and workspace drawer. The existing `workspace-home/*` lab scenarios open one workspace's scoped detail. Use `--screenshot-preview` only for isolated mock component visuals.

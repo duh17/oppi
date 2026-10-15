@@ -1084,6 +1084,27 @@ class E2ETestCase: XCTestCase {
     /// Types a message, sends it, and waits for the full round-trip to complete
     /// (stop button appears then disappears, chat input reappears).
     func sendMessageAndWaitForResponse(_ message: String, timeout: TimeInterval = 300) {
+        sendMessage(message)
+
+        // Wait for streaming to start then finish
+        let stopButton = app.buttons["chat.stop"]
+        if waitForElementToExist(stopButton, timeout: 30) {
+            let predicate = NSPredicate(format: "exists == false")
+            let exp = XCTNSPredicateExpectation(predicate: predicate, object: stopButton)
+            XCTAssertEqual(
+                XCTWaiter.wait(for: [exp], timeout: timeout), .completed,
+                "Agent did not finish responding within \(Int(timeout))s"
+            )
+        }
+
+        XCTAssertTrue(
+            waitForElementToExist(app.textViews["chat.input"], timeout: 15),
+            "Chat input did not reappear after response"
+        )
+    }
+
+    /// Types a message and taps send without waiting for the turn.
+    func sendMessage(_ message: String) {
         let chatInput = app.textViews["chat.input"]
         XCTAssertTrue(
             waitForElementToExist(chatInput, timeout: 15),
@@ -1104,21 +1125,5 @@ class E2ETestCase: XCTestCase {
 
         let sendButton = app.buttons["chat.send"]
         tap(sendButton, named: "send button", timeout: 3)
-
-        // Wait for streaming to start then finish
-        let stopButton = app.buttons["chat.stop"]
-        if waitForElementToExist(stopButton, timeout: 30) {
-            let predicate = NSPredicate(format: "exists == false")
-            let exp = XCTNSPredicateExpectation(predicate: predicate, object: stopButton)
-            XCTAssertEqual(
-                XCTWaiter.wait(for: [exp], timeout: timeout), .completed,
-                "Agent did not finish responding within \(Int(timeout))s"
-            )
-        }
-
-        XCTAssertTrue(
-            waitForElementToExist(chatInput, timeout: 15),
-            "Chat input did not reappear after response"
-        )
     }
 }

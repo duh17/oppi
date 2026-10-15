@@ -161,10 +161,14 @@ extension E2ETestCase {
 
         var sessionIds: [String] = []
         for index in 0..<count {
+            var body: [String: Any] = ["name": "Screenshot Lab Session \(index + 1)"]
+            if E2ELabServerContext.durableSessions {
+                body["engine"] = "durable"
+            }
             let response = try e2eLabAPIJSON(
                 method: "POST",
                 path: "/workspaces/\(workspaceId)/sessions",
-                body: ["name": "Screenshot Lab Session \(index + 1)"]
+                body: body
             )
             let session = try XCTUnwrap(response["session"] as? [String: Any], "Session create response missing session")
             let sessionId = try XCTUnwrap(session["id"] as? String, "Session create response missing id")
@@ -561,6 +565,12 @@ enum E2ELabServerContext {
             throw E2ELabAPIError.invalidInvite
         }
         return payload
+    }
+
+    /// `e2e.sh --durable` (`TEST_RUNNER_OPPI_E2E_SESSION_ENGINE=durable`): sessions this
+    /// harness creates ask for the durable engine. Otherwise they stay classic.
+    static var durableSessions: Bool {
+        environmentValue(for: ["OPPI_E2E_SESSION_ENGINE"]) == "durable"
     }
 
     static func environmentValue(for keys: [String]) -> String? {

@@ -75,6 +75,7 @@ import type {
 } from "./types.js";
 import { ts, safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
+import { registerE2EFauxProvider } from "./e2e-faux-provider.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "./security.js";
 import { splitCanonicalModelId } from "./model-resolution.js";
 import {
@@ -800,6 +801,7 @@ export class Server {
       authPath: join(agentDir, "auth.json"),
       modelsPath: join(agentDir, "models.json"),
     });
+    await registerE2EFauxProvider(this.modelRuntime);
     this.modelRegistry = new ModelRegistry(this.modelRuntime);
     this.models = new ModelCatalog(
       this.modelRegistry,
