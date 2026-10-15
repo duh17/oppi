@@ -581,6 +581,12 @@ private struct SessionThreadDetailContentView: View {
         coordinator.connection(for: target.serverId)
     }
 
+    /// The installed API client. A cold launch shows this screen before the route commits;
+    /// keying the load on it fetches once the client arrives and again on a new route.
+    private var apiClientID: ObjectIdentifier? {
+        connection?.apiClient.map(ObjectIdentifier.init)
+    }
+
     /// Server snapshot with live status from the session store, so the view
     /// follows settles and launches without polling.
     private var liveSnapshot: SessionThreadSnapshot? {
@@ -652,7 +658,11 @@ private struct SessionThreadDetailContentView: View {
             } else {
                 HStack {
                     Spacer()
-                    ProgressView("Loading thread…")
+                    if apiClientID == nil {
+                        ProgressView("Connecting…")
+                    } else {
+                        ProgressView("Loading thread…")
+                    }
                     Spacer()
                 }
                 .frame(minHeight: 120)
@@ -672,7 +682,7 @@ private struct SessionThreadDetailContentView: View {
         .onChange(of: mode) { _, newMode in
             AppPreferences.SessionRows.setThreadDetailMode(newMode)
         }
-        .task { await load() }
+        .task(id: apiClientID) { await load() }
         .onChange(of: memberKey) { _, newKey in
             guard snapshot != nil, newKey != loadedMemberKey else { return }
             Task { await load() }
@@ -683,17 +693,8 @@ private struct SessionThreadDetailContentView: View {
     private func load() async {
         let startedAtMs = Date.nowMs()
         let phase = snapshot == nil ? "initial" : "refresh"
-        guard let api = connection?.apiClient else {
-            loadError = "Server connection is unavailable."
-            recordThreadLoad(
-                startedAtMs: startedAtMs,
-                phase: phase,
-                status: "error",
-                errorKind: "not_connected",
-                workspaceId: workspaceId(in: snapshot)
-            )
-            return
-        }
+        // No client yet: the screen shows Connecting, and the keyed task loads on install.
+        guard let api = connection?.apiClient else { return }
         loadGeneration += 1
         let generation = loadGeneration
         let rootSessionId = target.rootSessionId
