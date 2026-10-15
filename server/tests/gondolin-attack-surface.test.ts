@@ -12,12 +12,16 @@
  * Requires QEMU installed. Skipped automatically if not available.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { isQemuAvailable, GondolinManager } from "../src/gondolin-manager.js";
 import type { GondolinVm } from "../src/gondolin-ops.js";
 import { createGondolinBashOps } from "../src/gondolin-ops.js";
+import {
+  expandSkillCommand,
+  type DurableProjectResources,
+} from "../src/durable-project-resources.js";
 
 let qemuAvailable = false;
 
@@ -31,6 +35,9 @@ beforeAll(async () => {
 describe("Gondolin attack surface", { timeout: 120_000 }, () => {
   let hostDir: string;
   let fakeAgentDir: string;
+  let secretSkillDir: string;
+  const SECRET_SKILL_GUEST = "/skills-probe/secret-skill";
+  const LOCAL_SKILL_GUEST = "/skills-probe/local-skill";
   let manager: GondolinManager;
   let vm: GondolinVm;
 
@@ -67,7 +74,21 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
 
     // Mount only what production mounts: specific subdirs, NOT agentDir root.
     // This matches the fixed sdk-backend.ts: skillPaths + extensions/ only.
-    const readonlyMounts = [join(fakeAgentDir, "skills"), join(fakeAgentDir, "extensions")];
+    // A Skill directory holding secret-bearing names, and a Skill inside the writable
+    // workspace that the guest may later retarget (durable `/skill:` reads through the VM).
+    secretSkillDir = mkdtempSync(join(tmpdir(), "gondolin-secret-skill-"));
+    writeFileSync(join(secretSkillDir, "SKILL.md"), "# Secret Skill");
+    writeFileSync(join(secretSkillDir, ".env"), "SKILL_ENV_SECRET=1");
+    writeFileSync(join(secretSkillDir, "signing.pem"), "PEM-SKILL-SECRET");
+    mkdirSync(join(hostDir, "skills", "local-skill"), { recursive: true });
+    writeFileSync(join(hostDir, "skills", "local-skill", "SKILL.md"), "local skill body");
+
+    const readonlyMounts = [
+      join(fakeAgentDir, "skills"),
+      join(fakeAgentDir, "extensions"),
+      { hostPath: secretSkillDir, guestPath: SECRET_SKILL_GUEST },
+      { hostPath: join(hostDir, "skills", "local-skill"), guestPath: LOCAL_SKILL_GUEST },
+    ];
     vm = await manager.ensureWorkspaceVm(workspace, hostDir, undefined, readonlyMounts);
   }, 90_000);
 
@@ -75,7 +96,59 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
     if (manager) await manager.stopAll();
     if (hostDir) rmSync(hostDir, { recursive: true, force: true });
     if (fakeAgentDir) rmSync(fakeAgentDir, { recursive: true, force: true });
+    if (secretSkillDir) rmSync(secretSkillDir, { recursive: true, force: true });
   }, 30_000);
+
+  // ─── Skill mounts: shadowed like the workspace; `/skill:` reads through the VM ───
+
+  it("SAFE: a Skill mount hides secret-bearing names, like the workspace", async () => {
+    if (!qemuAvailable) return;
+
+    const listing = await vm.exec(`ls -A ${SECRET_SKILL_GUEST}`);
+    expect(listing.ok).toBe(true);
+    expect(listing.stdout).toContain("SKILL.md");
+    expect(listing.stdout).not.toContain(".env");
+    expect(listing.stdout).not.toContain("signing.pem");
+    const read = await vm.exec(
+      `cat ${SECRET_SKILL_GUEST}/.env ${SECRET_SKILL_GUEST}/signing.pem 2>&1 || true`,
+    );
+    expect(read.stdout).not.toContain("SKILL_ENV_SECRET");
+    expect(read.stdout).not.toContain("PEM-SKILL-SECRET");
+  });
+
+  it("SAFE: /skill: through the VM refuses a SKILL.md swapped for a host symlink", async () => {
+    if (!qemuAvailable) return;
+
+    const skillFile = `${LOCAL_SKILL_GUEST}/SKILL.md`;
+    const resources: DurableProjectResources = {
+      contextFiles: [],
+      skills: [
+        {
+          name: "local-skill",
+          description: "probe",
+          filePath: skillFile,
+          baseDir: LOCAL_SKILL_GUEST,
+          source: "path",
+          disableModelInvocation: false,
+        } as DurableProjectResources["skills"][number],
+      ],
+      readonlyMounts: [],
+    };
+    const vmRead = async (path: string) => Buffer.from(await vm.fs.readFile(path)).toString("utf8");
+    expect(await expandSkillCommand("/skill:local-skill go", resources, vmRead)).toContain(
+      "local skill body",
+    );
+
+    // The guest-writable workspace file now points at a host credential.
+    const hostFile = join(hostDir, "skills", "local-skill", "SKILL.md");
+    rmSync(hostFile);
+    symlinkSync(join(fakeAgentDir, "auth.json"), hostFile);
+    const expanded = expandSkillCommand("/skill:local-skill go", resources, vmRead);
+    await expect(expanded).rejects.toThrow();
+    await expanded.catch((error: unknown) => {
+      expect(String(error)).not.toContain("sk-ant-FAKE-TEST-KEY");
+    });
+  });
 
   // ─── Credential isolation: agentDir is NOT mounted ───
 

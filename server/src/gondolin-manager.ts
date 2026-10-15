@@ -304,7 +304,12 @@ export async function defaultVmFactory(
   for (const mount of readonlyMounts) {
     const hostPath = typeof mount === "string" ? mount : mount.hostPath;
     const guestPath = typeof mount === "string" ? mount : mount.guestPath;
-    mounts[guestPath] = new ReadonlyProvider(new RealFSProvider(hostPath));
+    // Skill and agent-config directories hide the same secret-bearing names the workspace
+    // does: a Skill folder can hold `.env` or a key, or be the workspace root itself.
+    mounts[guestPath] = new ShadowProvider(new ReadonlyProvider(new RealFSProvider(hostPath)), {
+      shouldShadow: shouldShadowSandboxWorkspacePath,
+      writeMode: "deny",
+    });
   }
 
   // Merge httpHooks env (secret placeholders) with workspace-level extra env.

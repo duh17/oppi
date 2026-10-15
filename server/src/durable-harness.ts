@@ -311,6 +311,15 @@ export class SessionHost {
     await mcp?.close();
   }
 
+  /** Read a text file through the conversation's sandbox VM; fails when none is bound. */
+  async readSandboxTextFile(id: ConversationId, path: string): Promise<string> {
+    const env = this.sandboxEnvs.get(id);
+    if (!env) throw new Error("The sandbox VM is not ready");
+    const result = await env.readTextFile(path, BACKGROUND_CONTEXT);
+    if (!result.ok) throw new Error(`Cannot read ${path}: ${result.error.message}`);
+    return result.value;
+  }
+
   bindSandboxEnv(id: ConversationId, env: ExecutionEnv): void {
     // A stopped projection can reattach while conversation-owned jobs still run.
     if (!this.sandboxEnvs.has(id)) this.sandboxEnvs.set(id, env);

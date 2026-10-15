@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { lstatSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHttpHooks, ReadonlyProvider, VM } from "@earendil-works/gondolin";
+import { createHttpHooks, VM } from "@earendil-works/gondolin";
 import {
   buildVmHttpHooks,
   defaultVmFactory,
@@ -181,8 +181,8 @@ describe("defaultVmFactory", () => {
       expect.arrayContaining([guestWorkspacePath, overlayGuestPath, skillMount.guestPath]),
     );
     expect(overlayGuestPath).toBe("/workspace/deep-research/.pi");
-    const overlay = mounts[overlayGuestPath] as InstanceType<typeof ReadonlyProvider>;
-    expect(overlay).toBeInstanceOf(ReadonlyProvider);
+    // Read-only, and shadowed like the workspace (the class is an implementation detail).
+    const overlay = mounts[overlayGuestPath] as { readonly: boolean };
     expect(overlay.readonly).toBe(true);
   });
 

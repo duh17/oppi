@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { AttachedReplicatedState } from "@earendil-works/chord";
 import {
@@ -297,6 +298,8 @@ export class DurableBackend implements AgentBackend {
     private resources: DurableProjectResources,
     private readonly loadResources: () => Promise<DurableProjectResources>,
     private readonly dataDir: string,
+    /** Reads a presented Skill file: the VM for a sandbox, the host otherwise. */
+    private readonly readSkillFile: (path: string) => Promise<string>,
   ) {
     this.registry = new ModelRegistry(models);
     this.projection = new DurableEventProjection(harness, () => host.runtime.retrySettings ?? {});
@@ -599,6 +602,9 @@ export class DurableBackend implements AgentBackend {
         resources,
         target.loadResources,
         options.dataDir,
+        sandbox
+          ? (path) => options.host.readSandboxTextFile(conversation.id, path)
+          : (path) => readFile(path, "utf-8"),
       );
       backend.ui = await DurableUIProjection.create(harness, conversation, options.onEvent);
       await backend.projection.refreshInputCards([
@@ -834,7 +840,7 @@ export class DurableBackend implements AgentBackend {
       throw new Error("clientTurnId uses a reserved durable requestId namespace");
     const requestId = clientTurnId ?? `${DURABLE_QUEUE_REQUEST_ID_PREFIX}${randomUUID()}`;
     // The model sees the expanded Skill; queue display keeps what the user typed.
-    const text = expandSkillCommand(message, this.resources);
+    const text = await expandSkillCommand(message, this.resources, this.readSkillFile);
     const content = options?.images?.length
       ? [{ type: "text" as const, text }, ...options.images]
       : text;

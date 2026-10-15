@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   DefaultResourceLoader,
@@ -26,10 +26,11 @@ type ContextFile = { path: string; content: string };
 export interface DurableProjectResources {
   /** As presented to the model: guest paths in a sandbox. */
   readonly contextFiles: readonly ContextFile[];
-  /** As presented to the model: guest paths in a sandbox. */
+  /**
+   * As presented to the model: guest paths in a sandbox. `/skill:` reads `filePath` through
+   * the session's own view (`expandSkillCommand`), never through a second host path.
+   */
   readonly skills: readonly Skill[];
-  /** Host `SKILL.md` per Skill name, for `/skill:` expansion on the server. */
-  readonly hostSkillFiles: ReadonlyMap<string, string>;
   /** Read-only VM mounts for the presented sandbox Skill directories. */
   readonly readonlyMounts: readonly ReadonlyMount[];
 }
@@ -85,7 +86,6 @@ export async function loadDurableProjectResources(options: {
           sandboxGuestCwd,
         );
   const mounts = new Map<string, ReadonlyMount>();
-  const hostSkillFiles = new Map<string, string>();
   const loader = new DefaultResourceLoader({
     cwd: hostCwd,
     agentDir,
@@ -102,10 +102,7 @@ export async function loadDurableProjectResources(options: {
     skillsOverride: (base) => {
       // Validate the saved Agent selection against host paths, before the sandbox rewrite.
       assertSelectedAgentSkillsLoaded(selectedSkillPaths, base);
-      if (sandboxGuestCwd === undefined) {
-        for (const skill of base.skills) hostSkillFiles.set(skill.name, skill.filePath);
-        return base;
-      }
+      if (sandboxGuestCwd === undefined) return base;
       // A selected path inside the workspace can still reach outside through a symlink:
       // refuse the selection. Discovered Skills outside it are dropped, as AGENTS files are.
       const escaped = base.skills.filter(
@@ -114,7 +111,6 @@ export async function loadDurableProjectResources(options: {
       if (selectedSkillPaths !== undefined && escaped.length > 0)
         throw skillsOutsideWorkspace(escaped.map((skill) => skill.name));
       const skills = base.skills.filter((skill) => !escaped.includes(skill));
-      for (const skill of skills) hostSkillFiles.set(skill.name, skill.filePath);
       return { ...base, skills: sandboxGuestSkills(skills, sandboxGuestCwd, mounts) };
     },
     agentsFilesOverride: (base) => ({
@@ -130,7 +126,6 @@ export async function loadDurableProjectResources(options: {
   return {
     contextFiles: options.projectContext === false ? [] : loader.getAgentsFiles().agentsFiles,
     skills: loader.getSkills().skills,
-    hostSkillFiles,
     readonlyMounts: [...mounts.values()],
   };
 }
@@ -184,16 +179,24 @@ export function renderSkills(
 /**
  * Pi's `/skill:name args` expansion. Unknown Skills pass through unchanged, as in Pi;
  * an unreadable Skill file fails the prompt instead of sending the raw command.
+ *
+ * `readFile` reads the presented `filePath` through the session's own view: the host for a
+ * host session, the VM for a sandbox. A sandbox Skill is never read from the host, because
+ * the guest can rewrite workspace files (a `SKILL.md` swapped for a symlink to a host
+ * secret); through the VM, the mount's real-path jail refuses that read.
  */
-export function expandSkillCommand(text: string, resources: DurableProjectResources): string {
+export async function expandSkillCommand(
+  text: string,
+  resources: DurableProjectResources,
+  readFile: (path: string) => Promise<string>,
+): Promise<string> {
   if (!text.startsWith("/skill:")) return text;
   const space = text.indexOf(" ");
   const name = space === -1 ? text.slice(7) : text.slice(7, space);
   const args = space === -1 ? "" : text.slice(space + 1).trim();
   const skill = resources.skills.find((candidate) => candidate.name === name);
-  const hostFile = resources.hostSkillFiles.get(name);
-  if (!skill || !hostFile) return text;
-  const body = stripFrontmatter(readFileSync(hostFile, "utf-8")).trim();
+  if (!skill) return text;
+  const body = stripFrontmatter(await readFile(skill.filePath)).trim();
   const block = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
   return args ? `${block}\n\n${args}` : block;
 }

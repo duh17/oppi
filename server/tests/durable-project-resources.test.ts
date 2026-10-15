@@ -95,11 +95,20 @@ describe("durable sandbox project resources", () => {
     expect(resources.readonlyMounts.map((mount) => mount.guestPath)).toEqual([
       `${GUEST}/.pi/skills/project-skill`,
     ]);
-    // `/skill:` cannot read the dropped Skill's host file either.
-    expect(expandSkillCommand("/skill:global-skill go", resources)).toBe("/skill:global-skill go");
-    expect(expandSkillCommand("/skill:project-skill go", resources)).toContain(
+    // `/skill:` reads through the session's view: a sandbox asks its VM for the guest path,
+    // never the host file. The dropped Skill is not expanded at all.
+    const reads: string[] = [];
+    const vmRead = async (path: string) => {
+      reads.push(path);
+      return "project-skill body.";
+    };
+    expect(await expandSkillCommand("/skill:global-skill go", resources, vmRead)).toBe(
+      "/skill:global-skill go",
+    );
+    expect(await expandSkillCommand("/skill:project-skill go", resources, vmRead)).toContain(
       "project-skill body.",
     );
+    expect(reads).toEqual([`${GUEST}/.pi/skills/project-skill/SKILL.md`]);
 
     // A host session still discovers the agent directory's Skills.
     const host = await loadDurableProjectResources({ hostCwd, agentDir, projectTrusted: true });
