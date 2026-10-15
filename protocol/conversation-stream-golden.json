@@ -25,7 +25,7 @@
             "edit",
             "bash"
           ],
-          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-h8xOdJ"
+          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-a2jVK1"
         },
         "pi.usage": {
           "models": {},
@@ -44,7 +44,7 @@
             {
               "role": "user",
               "content": "List the files",
-              "timestamp": 1792050076619
+              "timestamp": 1792089495810
             }
           ]
         },
@@ -54,113 +54,7 @@
           "model": [
             {
               "role": "system",
-              "content": "",
-              "toolsAdded": [
-                {
-                  "name": "read",
-                  "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
-                  "parameters": {
-                    "type": "object",
-                    "required": [
-                      "path"
-                    ],
-                    "properties": {
-                      "path": {
-                        "type": "string",
-                        "description": "Path to the file to read (relative or absolute)"
-                      },
-                      "offset": {
-                        "type": "number",
-                        "description": "Line number to start reading from (1-indexed)"
-                      },
-                      "limit": {
-                        "type": "number",
-                        "description": "Maximum number of lines to read"
-                      }
-                    }
-                  }
-                },
-                {
-                  "name": "write",
-                  "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
-                  "parameters": {
-                    "type": "object",
-                    "required": [
-                      "path",
-                      "content"
-                    ],
-                    "properties": {
-                      "path": {
-                        "type": "string",
-                        "description": "Path to the file to write (relative or absolute)"
-                      },
-                      "content": {
-                        "type": "string",
-                        "description": "Content to write to the file"
-                      }
-                    }
-                  }
-                },
-                {
-                  "name": "edit",
-                  "description": "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
-                  "parameters": {
-                    "type": "object",
-                    "required": [
-                      "path",
-                      "edits"
-                    ],
-                    "properties": {
-                      "path": {
-                        "type": "string",
-                        "description": "Path to the file to edit (relative or absolute)"
-                      },
-                      "edits": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "required": [
-                            "oldText",
-                            "newText"
-                          ],
-                          "properties": {
-                            "oldText": {
-                              "type": "string",
-                              "description": "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call."
-                            },
-                            "newText": {
-                              "type": "string",
-                              "description": "Replacement text for this targeted edit."
-                            }
-                          }
-                        },
-                        "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead."
-                      }
-                    }
-                  }
-                },
-                {
-                  "name": "bash",
-                  "description": "Execute a bash command in the current working directory. Returns combined stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.",
-                  "parameters": {
-                    "type": "object",
-                    "required": [
-                      "command"
-                    ],
-                    "properties": {
-                      "command": {
-                        "type": "string",
-                        "description": "Bash command to execute"
-                      },
-                      "timeout": {
-                        "type": "number",
-                        "description": "Timeout in seconds (optional, no default timeout)"
-                      }
-                    }
-                  }
-                }
-              ],
-              "timestamp": 1792050076622
+              "timestamp": 1792089495812
             }
           ]
         }
@@ -214,7 +108,7 @@
                   "text": ""
                 }
               ],
-              "api": "faux:1792050076598:jvn9p83b5ar",
+              "api": "faux:1792089495786:kko6k7hdyt",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -232,7 +126,7 @@
                 }
               },
               "stopReason": "pending",
-              "timestamp": 1792050076619
+              "timestamp": 1792089495810
             }
           ]
         ]
@@ -266,25 +160,8 @@
                   }
                 }
               ],
-              "api": "faux:1792050076598:jvn9p83b5ar",
-              "provider": "faux",
-              "model": "faux-1",
-              "usage": {
-                "input": 693,
-                "output": 24,
-                "cacheRead": 0,
-                "cacheWrite": 693,
-                "totalTokens": 1410,
-                "cost": {
-                  "input": 0,
-                  "output": 0,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0
-                }
-              },
-              "stopReason": "toolUse",
-              "timestamp": 1792050076619
+              "timestamp": 1792089495810,
+              "stopReason": "toolUse"
             }
           ],
           "toolCalls": {
@@ -327,17 +204,16 @@
           "model": [
             {
               "role": "toolResult",
-              "toolCallId": "call-list",
-              "toolName": "bash",
               "content": [
                 {
                   "type": "text",
                   "text": "README.md\nsrc\n"
                 }
               ],
-              "isError": false,
-              "durationMs": 7,
-              "timestamp": 1792050076848
+              "timestamp": 1792089496038,
+              "toolCallId": "call-list",
+              "toolName": "bash",
+              "isError": false
             }
           ]
         }
@@ -401,25 +277,8 @@
                   "text": "There are two entries: README.md and src."
                 }
               ],
-              "api": "faux:1792050076598:jvn9p83b5ar",
-              "provider": "faux",
-              "model": "faux-1",
-              "usage": {
-                "input": 35,
-                "output": 11,
-                "cacheRead": 693,
-                "cacheWrite": 35,
-                "totalTokens": 774,
-                "cost": {
-                  "input": 0,
-                  "output": 0,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0
-                }
-              },
-              "stopReason": "stop",
-              "timestamp": 1792050076619
+              "timestamp": 1792089495810,
+              "stopReason": "stop"
             }
           ]
         }
@@ -509,7 +368,7 @@
                   "mimeType": "image/png"
                 }
               ],
-              "timestamp": 1792050077253
+              "timestamp": 1792089496443
             }
           ]
         }
@@ -560,25 +419,8 @@
                   }
                 }
               ],
-              "api": "faux:1792050076598:jvn9p83b5ar",
-              "provider": "faux",
-              "model": "faux-1",
-              "usage": {
-                "input": 30,
-                "output": 10,
-                "cacheRead": 728,
-                "cacheWrite": 30,
-                "totalTokens": 798,
-                "cost": {
-                  "input": 0,
-                  "output": 0,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0
-                }
-              },
-              "stopReason": "toolUse",
-              "timestamp": 1792050076619
+              "timestamp": 1792089495810,
+              "stopReason": "toolUse"
             }
           ],
           "toolCalls": {
@@ -627,8 +469,6 @@
           "model": [
             {
               "role": "toolResult",
-              "toolCallId": "call-fail",
-              "toolName": "bash",
               "content": [
                 {
                   "type": "text",
@@ -639,9 +479,10 @@
                   "text": "<harness>\n[error] Command exited with code 3\n</harness>"
                 }
               ],
-              "isError": true,
-              "durationMs": 5,
-              "timestamp": 1792050077352
+              "timestamp": 1792089496548,
+              "toolCallId": "call-fail",
+              "toolName": "bash",
+              "isError": true
             }
           ]
         }
@@ -722,25 +563,8 @@
                   "text": "The command failed with exit code 3."
                 }
               ],
-              "api": "faux:1792050076598:jvn9p83b5ar",
-              "provider": "faux",
-              "model": "faux-1",
-              "usage": {
-                "input": 32,
-                "output": 9,
-                "cacheRead": 758,
-                "cacheWrite": 33,
-                "totalTokens": 832,
-                "cost": {
-                  "input": 0,
-                  "output": 0,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0
-                }
-              },
-              "stopReason": "stop",
-              "timestamp": 1792050076619
+              "timestamp": 1792089495810,
+              "stopReason": "stop"
             }
           ]
         }
@@ -906,25 +730,8 @@
                   "text": "Thanks for the job report."
                 }
               ],
-              "api": "faux:1792050076598:jvn9p83b5ar",
-              "provider": "faux",
-              "model": "faux-1",
-              "usage": {
-                "input": 18,
-                "output": 7,
-                "cacheRead": 790,
-                "cacheWrite": 18,
-                "totalTokens": 833,
-                "cost": {
-                  "input": 0,
-                  "output": 0,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0
-                }
-              },
-              "stopReason": "stop",
-              "timestamp": 1792050076619
+              "timestamp": 1792089495810,
+              "stopReason": "stop"
             }
           ]
         }
@@ -1004,7 +811,7 @@
             {
               "role": "user",
               "content": "[Report from session Child]\n\nChild finished: 3 files changed.",
-              "timestamp": 1792050078410
+              "timestamp": 1792089497614
             }
           ],
           "origin": {
@@ -1058,25 +865,8 @@
                   "text": "Noted the child's report."
                 }
               ],
-              "api": "faux:1792050076598:jvn9p83b5ar",
-              "provider": "faux",
-              "model": "faux-1",
-              "usage": {
-                "input": 26,
-                "output": 7,
-                "cacheRead": 808,
-                "cacheWrite": 27,
-                "totalTokens": 868,
-                "cost": {
-                  "input": 0,
-                  "output": 0,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0
-                }
-              },
-              "stopReason": "stop",
-              "timestamp": 1792050076619
+              "timestamp": 1792089495810,
+              "stopReason": "stop"
             }
           ]
         }
@@ -1185,7 +975,7 @@
                   "text": "The conversation history before this point was compacted into the following summary:\n\n<summary>\nSummary of the work so far: listed files, ran a failing command.\n</summary>"
                 }
               ],
-              "timestamp": 1792050078919
+              "timestamp": 1792089498131
             }
           ]
         },
@@ -1196,7 +986,7 @@
             {
               "role": "user",
               "content": "[Report from session Child]\n\nChild finished: 3 files changed.",
-              "timestamp": 1792050078410
+              "timestamp": 1792089497614
             }
           ],
           "origin": {
@@ -1219,25 +1009,8 @@
                   "text": "Noted the child's report."
                 }
               ],
-              "api": "faux:1792050076598:jvn9p83b5ar",
-              "provider": "faux",
-              "model": "faux-1",
-              "usage": {
-                "input": 26,
-                "output": 7,
-                "cacheRead": 808,
-                "cacheWrite": 27,
-                "totalTokens": 868,
-                "cost": {
-                  "input": 0,
-                  "output": 0,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0
-                }
-              },
-              "stopReason": "stop",
-              "timestamp": 1792050076619
+              "timestamp": 1792089495810,
+              "stopReason": "stop"
             }
           ]
         }
@@ -1258,7 +1031,7 @@
             "edit",
             "bash"
           ],
-          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-h8xOdJ"
+          "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-a2jVK1"
         },
         "pi.usage": {
           "models": {
@@ -1292,7 +1065,7 @@
             {
               "role": "user",
               "content": "Explain it at length",
-              "timestamp": 1792050079222
+              "timestamp": 1792089498434
             }
           ]
         },
@@ -1302,114 +1075,7 @@
           "model": [
             {
               "role": "system",
-              "content": "",
-              "sections": {},
-              "toolsAdded": [
-                {
-                  "name": "read",
-                  "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
-                  "parameters": {
-                    "type": "object",
-                    "required": [
-                      "path"
-                    ],
-                    "properties": {
-                      "path": {
-                        "type": "string",
-                        "description": "Path to the file to read (relative or absolute)"
-                      },
-                      "offset": {
-                        "type": "number",
-                        "description": "Line number to start reading from (1-indexed)"
-                      },
-                      "limit": {
-                        "type": "number",
-                        "description": "Maximum number of lines to read"
-                      }
-                    }
-                  }
-                },
-                {
-                  "name": "write",
-                  "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
-                  "parameters": {
-                    "type": "object",
-                    "required": [
-                      "path",
-                      "content"
-                    ],
-                    "properties": {
-                      "path": {
-                        "type": "string",
-                        "description": "Path to the file to write (relative or absolute)"
-                      },
-                      "content": {
-                        "type": "string",
-                        "description": "Content to write to the file"
-                      }
-                    }
-                  }
-                },
-                {
-                  "name": "edit",
-                  "description": "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
-                  "parameters": {
-                    "type": "object",
-                    "required": [
-                      "path",
-                      "edits"
-                    ],
-                    "properties": {
-                      "path": {
-                        "type": "string",
-                        "description": "Path to the file to edit (relative or absolute)"
-                      },
-                      "edits": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "required": [
-                            "oldText",
-                            "newText"
-                          ],
-                          "properties": {
-                            "oldText": {
-                              "type": "string",
-                              "description": "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call."
-                            },
-                            "newText": {
-                              "type": "string",
-                              "description": "Replacement text for this targeted edit."
-                            }
-                          }
-                        },
-                        "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead."
-                      }
-                    }
-                  }
-                },
-                {
-                  "name": "bash",
-                  "description": "Execute a bash command in the current working directory. Returns combined stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.",
-                  "parameters": {
-                    "type": "object",
-                    "required": [
-                      "command"
-                    ],
-                    "properties": {
-                      "command": {
-                        "type": "string",
-                        "description": "Bash command to execute"
-                      },
-                      "timeout": {
-                        "type": "number",
-                        "description": "Timeout in seconds (optional, no default timeout)"
-                      }
-                    }
-                  }
-                }
-              ],
-              "timestamp": 1792050079228
+              "timestamp": 1792089498439
             }
           ]
         }
@@ -1459,7 +1125,7 @@
                   "text": "partial0 partial1 partial2 parti"
                 }
               ],
-              "api": "faux:1792050076598:jvn9p83b5ar",
+              "api": "faux:1792089495786:kko6k7hdyt",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -1477,7 +1143,7 @@
                 }
               },
               "stopReason": "pending",
-              "timestamp": 1792050076619
+              "timestamp": 1792089495810
             }
           ]
         ]
@@ -1508,7 +1174,7 @@
                       "text": "partial0 partial1 partial2 parti"
                     }
                   ],
-                  "api": "faux:1792050076598:jvn9p83b5ar",
+                  "api": "faux:1792089495786:kko6k7hdyt",
                   "provider": "faux",
                   "model": "faux-1",
                   "usage": {
@@ -1526,7 +1192,7 @@
                     }
                   },
                   "stopReason": "pending",
-                  "timestamp": 1792050076619
+                  "timestamp": 1792089495810
                 }
               }
             }
@@ -1554,7 +1220,7 @@
                 "edit",
                 "bash"
               ],
-              "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-h8xOdJ"
+              "cwd": "/var/folders/24/dbkb0xbs75nc0tdl5r02x06c0000gn/T/oppi-conversation-golden-a2jVK1"
             }
           ]
         ],
@@ -1601,25 +1267,8 @@
                   "text": "A complete answer after the restart."
                 }
               ],
-              "api": "faux:1792050076598:jvn9p83b5ar",
-              "provider": "faux",
-              "model": "faux-1",
-              "usage": {
-                "input": 0,
-                "output": 9,
-                "cacheRead": 765,
-                "cacheWrite": 0,
-                "totalTokens": 774,
-                "cost": {
-                  "input": 0,
-                  "output": 0,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0
-                }
-              },
-              "stopReason": "stop",
-              "timestamp": 1792050079374
+              "timestamp": 1792089498582,
+              "stopReason": "stop"
             }
           ]
         }
@@ -1699,7 +1348,7 @@
             {
               "role": "user",
               "content": "List the files",
-              "timestamp": 1792050076619
+              "timestamp": 1792089495810
             }
           ]
         },
@@ -1709,113 +1358,7 @@
           "model": [
             {
               "role": "system",
-              "content": "",
-              "toolsAdded": [
-                {
-                  "name": "read",
-                  "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
-                  "parameters": {
-                    "type": "object",
-                    "required": [
-                      "path"
-                    ],
-                    "properties": {
-                      "path": {
-                        "type": "string",
-                        "description": "Path to the file to read (relative or absolute)"
-                      },
-                      "offset": {
-                        "type": "number",
-                        "description": "Line number to start reading from (1-indexed)"
-                      },
-                      "limit": {
-                        "type": "number",
-                        "description": "Maximum number of lines to read"
-                      }
-                    }
-                  }
-                },
-                {
-                  "name": "write",
-                  "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
-                  "parameters": {
-                    "type": "object",
-                    "required": [
-                      "path",
-                      "content"
-                    ],
-                    "properties": {
-                      "path": {
-                        "type": "string",
-                        "description": "Path to the file to write (relative or absolute)"
-                      },
-                      "content": {
-                        "type": "string",
-                        "description": "Content to write to the file"
-                      }
-                    }
-                  }
-                },
-                {
-                  "name": "edit",
-                  "description": "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
-                  "parameters": {
-                    "type": "object",
-                    "required": [
-                      "path",
-                      "edits"
-                    ],
-                    "properties": {
-                      "path": {
-                        "type": "string",
-                        "description": "Path to the file to edit (relative or absolute)"
-                      },
-                      "edits": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "required": [
-                            "oldText",
-                            "newText"
-                          ],
-                          "properties": {
-                            "oldText": {
-                              "type": "string",
-                              "description": "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call."
-                            },
-                            "newText": {
-                              "type": "string",
-                              "description": "Replacement text for this targeted edit."
-                            }
-                          }
-                        },
-                        "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead."
-                      }
-                    }
-                  }
-                },
-                {
-                  "name": "bash",
-                  "description": "Execute a bash command in the current working directory. Returns combined stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.",
-                  "parameters": {
-                    "type": "object",
-                    "required": [
-                      "command"
-                    ],
-                    "properties": {
-                      "command": {
-                        "type": "string",
-                        "description": "Bash command to execute"
-                      },
-                      "timeout": {
-                        "type": "number",
-                        "description": "Timeout in seconds (optional, no default timeout)"
-                      }
-                    }
-                  }
-                }
-              ],
-              "timestamp": 1792050076622
+              "timestamp": 1792089495812
             }
           ]
         },
@@ -1843,25 +1386,8 @@
                   }
                 }
               ],
-              "api": "faux:1792050076598:jvn9p83b5ar",
-              "provider": "faux",
-              "model": "faux-1",
-              "usage": {
-                "input": 693,
-                "output": 24,
-                "cacheRead": 0,
-                "cacheWrite": 693,
-                "totalTokens": 1410,
-                "cost": {
-                  "input": 0,
-                  "output": 0,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0
-                }
-              },
-              "stopReason": "toolUse",
-              "timestamp": 1792050076619
+              "timestamp": 1792089495810,
+              "stopReason": "toolUse"
             }
           ],
           "toolCalls": {
@@ -1904,17 +1430,16 @@
           "model": [
             {
               "role": "toolResult",
-              "toolCallId": "call-list",
-              "toolName": "bash",
               "content": [
                 {
                   "type": "text",
                   "text": "README.md\nsrc\n"
                 }
               ],
-              "isError": false,
-              "durationMs": 7,
-              "timestamp": 1792050076848
+              "timestamp": 1792089496038,
+              "toolCallId": "call-list",
+              "toolName": "bash",
+              "isError": false
             }
           ]
         },
@@ -1930,25 +1455,8 @@
                   "text": "There are two entries: README.md and src."
                 }
               ],
-              "api": "faux:1792050076598:jvn9p83b5ar",
-              "provider": "faux",
-              "model": "faux-1",
-              "usage": {
-                "input": 35,
-                "output": 11,
-                "cacheRead": 693,
-                "cacheWrite": 35,
-                "totalTokens": 774,
-                "cost": {
-                  "input": 0,
-                  "output": 0,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0
-                }
-              },
-              "stopReason": "stop",
-              "timestamp": 1792050076619
+              "timestamp": 1792089495810,
+              "stopReason": "stop"
             }
           ]
         },
@@ -1969,7 +1477,7 @@
                   "mimeType": "image/png"
                 }
               ],
-              "timestamp": 1792050077253
+              "timestamp": 1792089496443
             }
           ]
         },
@@ -1989,25 +1497,8 @@
                   }
                 }
               ],
-              "api": "faux:1792050076598:jvn9p83b5ar",
-              "provider": "faux",
-              "model": "faux-1",
-              "usage": {
-                "input": 30,
-                "output": 10,
-                "cacheRead": 728,
-                "cacheWrite": 30,
-                "totalTokens": 798,
-                "cost": {
-                  "input": 0,
-                  "output": 0,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0
-                }
-              },
-              "stopReason": "toolUse",
-              "timestamp": 1792050076619
+              "timestamp": 1792089495810,
+              "stopReason": "toolUse"
             }
           ],
           "toolCalls": {
@@ -2056,8 +1547,6 @@
           "model": [
             {
               "role": "toolResult",
-              "toolCallId": "call-fail",
-              "toolName": "bash",
               "content": [
                 {
                   "type": "text",
@@ -2068,9 +1557,10 @@
                   "text": "<harness>\n[error] Command exited with code 3\n</harness>"
                 }
               ],
-              "isError": true,
-              "durationMs": 5,
-              "timestamp": 1792050077352
+              "timestamp": 1792089496548,
+              "toolCallId": "call-fail",
+              "toolName": "bash",
+              "isError": true
             }
           ]
         },
@@ -2086,25 +1576,8 @@
                   "text": "The command failed with exit code 3."
                 }
               ],
-              "api": "faux:1792050076598:jvn9p83b5ar",
-              "provider": "faux",
-              "model": "faux-1",
-              "usage": {
-                "input": 32,
-                "output": 9,
-                "cacheRead": 758,
-                "cacheWrite": 33,
-                "totalTokens": 832,
-                "cost": {
-                  "input": 0,
-                  "output": 0,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0
-                }
-              },
-              "stopReason": "stop",
-              "timestamp": 1792050076619
+              "timestamp": 1792089495810,
+              "stopReason": "stop"
             }
           ]
         },
@@ -2164,25 +1637,8 @@
                   "text": "Thanks for the job report."
                 }
               ],
-              "api": "faux:1792050076598:jvn9p83b5ar",
-              "provider": "faux",
-              "model": "faux-1",
-              "usage": {
-                "input": 18,
-                "output": 7,
-                "cacheRead": 790,
-                "cacheWrite": 18,
-                "totalTokens": 833,
-                "cost": {
-                  "input": 0,
-                  "output": 0,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0
-                }
-              },
-              "stopReason": "stop",
-              "timestamp": 1792050076619
+              "timestamp": 1792089495810,
+              "stopReason": "stop"
             }
           ]
         }
@@ -2194,19 +1650,19 @@
     {
       "id": "8",
       "type": "user",
-      "timestamp": "2026-10-15T07:41:16.619Z",
+      "timestamp": "2026-10-15T18:38:15.810Z",
       "text": "List the files"
     },
     {
       "id": "12-think-0",
       "type": "thinking",
-      "timestamp": "2026-10-15T07:41:16.619Z",
+      "timestamp": "2026-10-15T18:38:15.810Z",
       "thinking": "The user wants a file listing."
     },
     {
       "id": "12-text-1",
       "type": "assistant",
-      "timestamp": "2026-10-15T07:41:16.619Z",
+      "timestamp": "2026-10-15T18:38:15.810Z",
       "text": "Listing the files.",
       "contentIndex": 1,
       "runOrdinal": 0
@@ -2214,7 +1670,7 @@
     {
       "id": "call-list",
       "type": "toolCall",
-      "timestamp": "2026-10-15T07:41:16.619Z",
+      "timestamp": "2026-10-15T18:38:15.810Z",
       "tool": "bash",
       "args": {
         "command": "printf 'README.md\\nsrc\\n'"
@@ -2244,7 +1700,7 @@
     {
       "id": "result-14",
       "type": "toolResult",
-      "timestamp": "2026-10-15T07:41:16.848Z",
+      "timestamp": "2026-10-15T18:38:16.038Z",
       "toolCallId": "call-list",
       "toolName": "bash",
       "output": "README.md\nsrc\n",
@@ -2259,7 +1715,7 @@
     {
       "id": "16-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-15T07:41:16.619Z",
+      "timestamp": "2026-10-15T18:38:15.810Z",
       "text": "There are two entries: README.md and src.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -2267,13 +1723,13 @@
     {
       "id": "17",
       "type": "user",
-      "timestamp": "2026-10-15T07:41:17.253Z",
+      "timestamp": "2026-10-15T18:38:16.443Z",
       "text": "Run the failing command for this image\ndata:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
     },
     {
       "id": "call-fail",
       "type": "toolCall",
-      "timestamp": "2026-10-15T07:41:16.619Z",
+      "timestamp": "2026-10-15T18:38:15.810Z",
       "tool": "bash",
       "args": {
         "command": "echo boom >&2; exit 3"
@@ -2303,7 +1759,7 @@
     {
       "id": "result-22",
       "type": "toolResult",
-      "timestamp": "2026-10-15T07:41:17.352Z",
+      "timestamp": "2026-10-15T18:38:16.548Z",
       "toolCallId": "call-fail",
       "toolName": "bash",
       "output": "boom\n\n<harness>\n[error] Command exited with code 3\n</harness>",
@@ -2324,7 +1780,7 @@
     {
       "id": "24-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-15T07:41:16.619Z",
+      "timestamp": "2026-10-15T18:38:15.810Z",
       "text": "The command failed with exit code 3.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -2376,7 +1832,7 @@
     {
       "id": "30-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-15T07:41:16.619Z",
+      "timestamp": "2026-10-15T18:38:15.810Z",
       "text": "Thanks for the job report.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -2384,7 +1840,7 @@
     {
       "id": "31",
       "type": "user",
-      "timestamp": "2026-10-15T07:41:18.410Z",
+      "timestamp": "2026-10-15T18:38:17.614Z",
       "text": "Child finished: 3 files changed.",
       "origin": {
         "kind": "session",
@@ -2396,7 +1852,7 @@
     {
       "id": "34-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-15T07:41:16.619Z",
+      "timestamp": "2026-10-15T18:38:15.810Z",
       "text": "Noted the child's report.",
       "contentIndex": 0,
       "runOrdinal": 0
@@ -2404,19 +1860,19 @@
     {
       "id": "36",
       "type": "compaction",
-      "timestamp": "2026-10-15T07:41:18.919Z",
+      "timestamp": "2026-10-15T18:38:18.131Z",
       "text": "Context compacted: Summary of the work so far: listed files, ran a failing command."
     },
     {
       "id": "38",
       "type": "user",
-      "timestamp": "2026-10-15T07:41:19.222Z",
+      "timestamp": "2026-10-15T18:38:18.434Z",
       "text": "Explain it at length"
     },
     {
       "id": "43-text-0",
       "type": "assistant",
-      "timestamp": "2026-10-15T07:41:19.374Z",
+      "timestamp": "2026-10-15T18:38:18.582Z",
       "text": "A complete answer after the restart.",
       "contentIndex": 0,
       "runOrdinal": 0

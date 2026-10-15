@@ -1,5 +1,4 @@
 import type {
-  Message as PiMessage,
   NestedToolCallRecord as PiNestedToolCallRecord,
   NestedToolCalls as PiNestedToolCalls,
 } from "@earendil-works/pi-ai";
@@ -794,11 +793,23 @@ export interface ConversationEntryCard {
  * hides (`hidden`) is sent again as `{ id, kind, hidden: true }`, and one that stops being
  * hidden is sent again whole.
  */
+/**
+ * A model message with only the fields clients read (`projectMessage` in
+ * `durable-conversation-view.ts`). Roles the projection does not list arrive whole.
+ */
+export interface ConversationMessageView {
+  role: string;
+  [field: string]: unknown;
+}
+
 export interface ConversationEntryView {
   id: number;
   kind: string;
-  /** Model messages; tool-result `details` are sanitized like trace history. Absent on input cards. */
-  model?: PiMessage[];
+  /**
+   * Model messages with the fields clients read; tool-result `details` are sanitized like
+   * trace history. Absent on input cards.
+   */
+  model?: ConversationMessageView[];
   /** Assistant entries: presentation by tool call id. */
   toolCalls?: Record<string, ConversationToolCallView>;
   /** Tool-result entries: presentation of the result. */

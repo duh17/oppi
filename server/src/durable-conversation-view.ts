@@ -24,6 +24,7 @@ import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-render
 import type {
   ConversationEntryCard,
   ConversationEntryView,
+  ConversationMessageView,
   ConversationToolCallView,
   ConversationToolResultView,
 } from "./types.js";
@@ -149,8 +150,59 @@ export interface EntryPresentation {
 }
 
 /**
+ * Message fields clients read, by role (`ConversationTraceProjector` and
+ * `ConversationLiveTail` in the Apple client). The rest stays on the server: provider
+ * replay state (request controls), provider diagnostics (input transformations), usage,
+ * timing, and system prompt sections. Providers may add any field, and some grow with
+ * the transcript; in one long session they were over a third of a snapshot. Roles not
+ * listed arrive whole.
+ */
+const CLIENT_MESSAGE_FIELDS = new Map<string, readonly string[]>([
+  ["user", ["role", "content", "timestamp"]],
+  // `stopReason` and `errorMessage` are small and say why an answer ended.
+  ["assistant", ["role", "content", "timestamp", "stopReason", "errorMessage"]],
+  ["toolResult", ["role", "content", "timestamp", "toolCallId", "toolName", "isError", "details"]],
+  // Clients show nothing for system messages; their sections are the whole system prompt.
+  ["system", ["role", "timestamp"]],
+]);
+
+/**
+ * Content block fields clients read, by block type. Thinking and text signatures are
+ * provider replay state. Block types not listed (audio) arrive whole.
+ */
+const CLIENT_BLOCK_FIELDS = new Map<string, readonly string[]>([
+  ["text", ["type", "text"]],
+  ["thinking", ["type", "thinking"]],
+  ["toolCall", ["type", "id", "name", "arguments", "partialJson"]],
+  ["image", ["type", "data", "mimeType"]],
+]);
+
+function pick(source: Record<string, unknown>, fields: readonly string[]): Record<string, unknown> {
+  const picked: Record<string, unknown> = {};
+  for (const field of fields) if (source[field] !== undefined) picked[field] = source[field];
+  return picked;
+}
+
+function projectBlock(block: unknown): unknown {
+  const record = asRecord(block);
+  const fields = typeof record?.type === "string" && CLIENT_BLOCK_FIELDS.get(record.type);
+  return record && fields ? pick(record, fields) : block;
+}
+
+/** `message` with only the fields clients read (`CLIENT_MESSAGE_FIELDS`). */
+function projectMessage(message: Message): ConversationMessageView {
+  const record = message as unknown as ConversationMessageView;
+  const fields = CLIENT_MESSAGE_FIELDS.get(record.role);
+  if (!fields) return record;
+  const view = pick(record, fields) as ConversationMessageView;
+  if (Array.isArray(view.content)) view.content = view.content.map(projectBlock);
+  return view;
+}
+
+/**
  * `EntryRecord` without storage internals, plus the presentation trace history gives it
- * (`projectEntries` in `durable-history.ts`): tool rendering, cards, and hiding.
+ * (`projectEntries` in `durable-history.ts`): tool rendering, cards, and hiding. Model
+ * messages carry only the fields clients read (`projectMessage`).
  */
 export function projectEntry(
   entry: EntryRecord,
@@ -163,12 +215,11 @@ export function projectEntry(
   // Like the trace, an extension-generated input shows only its card, never the raw input.
   if (presentation.inputCard) return { ...view, card: presentation.inputCard, inputCard: true };
   if (entry.model) {
-    const model: Message[] = [];
+    const model: ConversationMessageView[] = [];
     for (const message of entry.model) {
-      if (message.role !== "toolResult") {
-        model.push(message);
-        continue;
-      }
+      const projected = projectMessage(message);
+      model.push(projected);
+      if (message.role !== "toolResult") continue;
       // Trace history normalizes audio and strips server-private paths at the client
       // boundary; so does the stream.
       const raw =
@@ -176,9 +227,7 @@ export function projectEntry(
           ? undefined
           : normalizeAudioPresentationDetails(message.details);
       const details = raw === undefined ? undefined : sanitizeToolResultDetails(raw).details;
-      model.push(
-        details === message.details ? message : { ...message, details: details as JsonValue },
-      );
+      if (details !== undefined) projected.details = details;
       view.toolResult = renderToolResult(renderers, message, raw, details);
     }
     view.model = model;

@@ -41,10 +41,6 @@ const toolCallEntry: ConversationEntryView = {
     {
       role: "assistant",
       content: [{ type: "toolCall", id: "call-1", name: "bash", arguments: { command: "ls" } }],
-      api: "anthropic-messages",
-      provider: "anthropic",
-      model: "claude-sonnet-4-5",
-      usage,
       stopReason: "toolUse",
       timestamp: 1_791_650_001_000,
     },
@@ -88,10 +84,6 @@ const answerEntry: ConversationEntryView = {
     {
       role: "assistant",
       content: [{ type: "text", text: "There are two entries." }],
-      api: "anthropic-messages",
-      provider: "anthropic",
-      model: "claude-sonnet-4-5",
-      usage,
       stopReason: "stop",
       timestamp: 1_791_650_003_000,
     },
@@ -119,10 +111,6 @@ const partialEntry: ConversationEntryView = {
     {
       role: "assistant",
       content: [{ type: "text", text: "There are tw" }],
-      api: "anthropic-messages",
-      provider: "anthropic",
-      model: "claude-sonnet-4-5",
-      usage,
       stopReason: "aborted",
       timestamp: 1_791_650_003_500,
     },

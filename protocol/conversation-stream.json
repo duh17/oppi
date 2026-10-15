@@ -38,23 +38,6 @@
                   }
                 }
               ],
-              "api": "anthropic-messages",
-              "provider": "anthropic",
-              "model": "claude-sonnet-4-5",
-              "usage": {
-                "input": 668,
-                "output": 68,
-                "cacheRead": 0,
-                "cacheWrite": 668,
-                "totalTokens": 1404,
-                "cost": {
-                  "input": 0.002,
-                  "output": 0.001,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0.003
-                }
-              },
               "stopReason": "toolUse",
               "timestamp": 1791650001000
             }
@@ -248,23 +231,6 @@
                   "text": "There are two entries."
                 }
               ],
-              "api": "anthropic-messages",
-              "provider": "anthropic",
-              "model": "claude-sonnet-4-5",
-              "usage": {
-                "input": 668,
-                "output": 68,
-                "cacheRead": 0,
-                "cacheWrite": 668,
-                "totalTokens": 1404,
-                "cost": {
-                  "input": 0.002,
-                  "output": 0.001,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0.003
-                }
-              },
               "stopReason": "stop",
               "timestamp": 1791650003000
             }
@@ -447,23 +413,6 @@
                   "text": "There are tw"
                 }
               ],
-              "api": "anthropic-messages",
-              "provider": "anthropic",
-              "model": "claude-sonnet-4-5",
-              "usage": {
-                "input": 668,
-                "output": 68,
-                "cacheRead": 0,
-                "cacheWrite": 668,
-                "totalTokens": 1404,
-                "cost": {
-                  "input": 0.002,
-                  "output": 0.001,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0.003
-                }
-              },
               "stopReason": "aborted",
               "timestamp": 1791650003500
             }
@@ -564,23 +513,6 @@
                   "text": "There are two entries."
                 }
               ],
-              "api": "anthropic-messages",
-              "provider": "anthropic",
-              "model": "claude-sonnet-4-5",
-              "usage": {
-                "input": 668,
-                "output": 68,
-                "cacheRead": 0,
-                "cacheWrite": 668,
-                "totalTokens": 1404,
-                "cost": {
-                  "input": 0.002,
-                  "output": 0.001,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0.003
-                }
-              },
               "stopReason": "stop",
               "timestamp": 1791650003000
             }
@@ -664,23 +596,6 @@
                   }
                 }
               ],
-              "api": "anthropic-messages",
-              "provider": "anthropic",
-              "model": "claude-sonnet-4-5",
-              "usage": {
-                "input": 668,
-                "output": 68,
-                "cacheRead": 0,
-                "cacheWrite": 668,
-                "totalTokens": 1404,
-                "cost": {
-                  "input": 0.002,
-                  "output": 0.001,
-                  "cacheRead": 0,
-                  "cacheWrite": 0,
-                  "total": 0.003
-                }
-              },
               "stopReason": "toolUse",
               "timestamp": 1791650001000
             }
