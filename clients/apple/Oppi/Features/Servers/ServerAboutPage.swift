@@ -100,6 +100,12 @@ struct ServerAboutPage: View {
                             .accessibilityIdentifier("server.update.error")
                     }
 
+                    let settled = !update.isInstalling && !update.isRestarting
+                        && !update.isRestartNeeded && !updateInFlight
+                    if belowMinimum, settled {
+                        minimumVersionNotice(update: update)
+                    }
+
                     if update.available, update.isAppUpdatable, !update.isInstalling,
                        !update.isRestarting, !update.isRestartNeeded, !updateDidNotReturn {
                         if let latest = update.latestVersion {
@@ -115,8 +121,7 @@ struct ServerAboutPage: View {
                         manualCommand(update.manualCommand)
                     }
                 } else if belowMinimum {
-                    Text(ServerUpdatePresentation.minimumVersionNoticeTitle)
-                        .accessibilityIdentifier("server.update.available")
+                    minimumVersionNotice(update: nil)
                     manualCommand(ServerUpdatePresentation.fallbackManualCommand)
                 }
             } header: {
@@ -129,6 +134,26 @@ struct ServerAboutPage: View {
                 }
             }
         }
+    }
+
+    /// Below-minimum notice. When the server's npm lookup has no qualifying
+    /// version it says why, so the section is never an empty dead end. A server
+    /// without update info gets only the title; the manual command follows.
+    @ViewBuilder
+    private func minimumVersionNotice(update: ServerInfo.UpdateInfo?) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(ServerUpdatePresentation.minimumVersionNoticeTitle)
+            if let update, let detail = ServerUpdatePresentation.minimumVersionUnpublishedDetail(
+                latestVersion: update.latestVersion
+            ) {
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("server.update.minimumVersion")
     }
 
     @ViewBuilder

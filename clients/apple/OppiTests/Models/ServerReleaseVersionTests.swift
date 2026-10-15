@@ -18,4 +18,13 @@ struct ServerReleaseVersionTests {
         #expect(ServerReleaseVersion.isOlder("0.50.0", than: "1.0.0"))
         #expect(!ServerReleaseVersion.isOlder("0.50.0", than: "0.50.0"))
     }
+
+    /// The below-minimum notice explains itself only while npm cannot satisfy the floor.
+    @Test func explainsMinimumOnlyWhileNpmLacksAQualifyingVersion() {
+        let detail = ServerUpdatePresentation.minimumVersionUnpublishedDetail
+        #expect(detail("0.51.0", "0.52.0") != nil)
+        #expect(detail(nil, "0.52.0") != nil)
+        #expect(detail("0.52.0", "0.52.0") == nil)
+        #expect(detail("0.53.0", "0.52.0") == nil)
+    }
 }

@@ -59,6 +59,21 @@ enum ServerUpdatePresentation {
     }
 
     static let minimumVersionNoticeTitle = "This server is older than this app"
+
+    /// Why the update button cannot clear the notice: the newest version the
+    /// server found on npm is still below the app's floor, or it found none.
+    /// Nil when npm has a version that meets the floor.
+    static func minimumVersionUnpublishedDetail(
+        latestVersion: String?,
+        minimum: String = ServerReleaseVersion.minimumSupported
+    ) -> String? {
+        let needs = "This app needs oppi-server \(minimum) or later."
+        guard let latestVersion else {
+            return "\(needs) The server has not found it on npm yet."
+        }
+        guard ServerReleaseVersion.isOlder(latestVersion, than: minimum) else { return nil }
+        return "\(needs) The newest on npm is \(latestVersion)."
+    }
     static let minimumVersionNoticeMessage = "Open Server Settings to update it, then reconnect."
     static let minimumVersionNoticeAction = "Open Server Settings"
 
