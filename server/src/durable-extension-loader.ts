@@ -199,7 +199,15 @@ export async function discoverDurableExtensionPackages(agentDir: string): Promis
  * Oppi's own durable packages, in install order. Each is a directory under `extensions/durable`
  * (next to `src/`, also in the build) whose `package.json` declares its entry like any package.
  */
-const BUNDLED_PACKAGES = ["ask", "working-words", "background-jobs"] as const;
+const BUNDLED_PACKAGES = [
+  "sandbox-tools",
+  "ask",
+  "working-words",
+  "background-jobs",
+  "sessions",
+  "project-context",
+  "control",
+] as const;
 
 /** `extensions/durable` of this server: the source tree in development, the build when built. */
 export const BUNDLED_PACKAGES_DIR = fileURLToPath(

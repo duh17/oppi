@@ -1,4 +1,5 @@
-import { defineDoc, defineExtension, section } from "@earendil-works/pi-durable";
+import { defineExtension, section } from "@earendil-works/pi-durable";
+import { ProjectContextDoc } from "./contract.js";
 
 /**
  * Durable port of Pi's `project_context` and `skills` system prompt sections.
@@ -6,20 +7,6 @@ import { defineDoc, defineExtension, section } from "@earendil-works/pi-durable"
  * stores the rendered sections on the conversation, so a run that resumes while
  * no session is attached still sends the same prompt.
  */
-export const ProjectContextDoc = defineDoc<{
-  /** Body of the `project_context` section; unset without context files. */
-  projectContext?: string;
-  /** Body of the `skills` section; unset without model-visible Skills. */
-  skills?: string;
-}>({
-  kind: "oppi.project-context",
-  version: 1,
-  scope: "conversation",
-  history: "latest",
-  fork: "initial",
-  initial: () => ({}),
-});
-
 export const DurableProjectContext = defineExtension({
   name: "project-context",
   sections: [
@@ -36,3 +23,6 @@ export const DurableProjectContext = defineExtension({
     ),
   ],
 });
+
+/** The durable entry (`package.json` `oppi.durable`). */
+export default DurableProjectContext;

@@ -384,13 +384,13 @@ export default defineExtension({
 });
 ```
 
-An extension that shows Oppi UI imports it from `oppi/durable`: `requestUI` for dialogs, and the `DurableUI` and `DurableInputCards` documents for status, widgets, and transcript cards.
+An extension that shows Oppi UI imports it from `oppi/durable`: `requestUI` for dialogs, and the `DurableUI` and `DurableInputCards` documents for status, widgets, and transcript cards. Its `oppiHost()` serves Oppi's own bundled extensions (subagents, the control conversation, sandbox file tools), which load from packages the same way.
 
 - **Where Oppi looks:** enabled user-scope Pi packages, resolved as Pi resolves classic extensions (`~/.pi/agent/extensions/<name>/`, packages from `settings.json` and `pi install`, the same enable and disable settings). Project `.pi/extensions` packages and single-file extensions have no durable entry.
 - **Shared modules:** `@earendil-works/pi-durable`, `@earendil-works/chord`, `@earendil-works/pi-ai`, `typebox`, and `oppi/durable` resolve to the server's own copies, so the extension's documents and tasks belong to the server's durable store. Ship the entry and every file it imports in the package's `files`.
 - **Which sessions get it:** every durable session whose runtime the extension lists (host by default), next to the built-in tools. The durable control conversation selects none of them. A name or tool name that a built-in already uses is refused; a package that provides one of Oppi's own durable extensions (such as `ask`) is skipped.
 - **Loading:** when the server opens its durable store, and on `oppi extensions reload`. A package that fails to load is reported in the server log and in the reload output; the others load.
-- **Reload without a restart:** `oppi extensions reload` re-reads every durable entry and the files it imports. An extension already installed is replaced in place: a tool call that is running finishes on its old code, and the next request or call uses the new code. A package that fails to load keeps its previous code. A package that is gone is uninstalled, and sessions stop being offered its tools. A session picks up a newly added extension the next time it attaches (open, resume, or server restart).
+- **Reload without a restart:** `oppi extensions reload` re-reads every durable entry and the files it imports, Oppi's bundled ones included. An extension already installed is replaced in place: a tool call that is running finishes on its old code, and the next request or call uses the new code. A package that fails to load keeps its previous code. A package that is gone is uninstalled, and sessions stop being offered its tools. A session picks up a newly added extension the next time it attaches (open, resume, or server restart).
 - **Trust:** the code runs in the Oppi server process with your permissions, like a classic extension. It is not sandboxed, even for sandbox sessions.
 
 ## Pi resource toggle behavior

@@ -1,11 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { JsonValue } from "@earendil-works/chord";
-import type {
-  ControlJson,
-  ControlWrite,
-  DurableControlHost,
-} from "../extensions/durable/control/durable.js";
+import type { ControlJson, ControlWrite, DurableControlHost } from "./durable-extension-api.js";
 import { parseCliArgs } from "./cli/args.js";
 import { createCliConnectionConfig } from "./cli/connection-config.js";
 import {

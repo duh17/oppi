@@ -31,7 +31,7 @@ import {
   durableStoreDir,
   durableStoreSqlitePath,
 } from "../src/durable-harness.js";
-import { ProjectContextDoc } from "../extensions/durable/project-context/durable.js";
+import { ProjectContextDoc } from "../extensions/durable/project-context/contract.js";
 import { createAgentRoutes } from "../src/routes/agents.js";
 import { createAgentScheduleDispatchHooks } from "../src/agent-schedule-dispatch.js";
 import type { NewSessionDispatchInput } from "../src/agent-schedules.js";

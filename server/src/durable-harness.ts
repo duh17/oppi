@@ -31,19 +31,16 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
-import { DurableSandboxTools } from "./durable-sandbox-tools.js";
 import { DurableJobs } from "../extensions/durable/background-jobs/contract.js";
 import { controlConversationExtensions } from "./durable-control-conversation.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
-import { DurableProjectContext } from "../extensions/durable/project-context/durable.js";
 import {
   SESSION_REPORTER_TASK,
-  createDurableSessions,
-} from "../extensions/durable/sessions/durable.js";
-import {
-  createDurableControl,
+  bindOppiHost,
   type DurableControlHost,
-} from "../extensions/durable/control/durable.js";
+  type OppiDurableHost,
+} from "./durable-extension-api.js";
+import { sandboxHost } from "./durable-sandbox-host.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
 import {
   BUNDLED_PACKAGES_DIR,
@@ -183,8 +180,15 @@ const CONTROL_EXTENSION = "oppi.control";
 /** Offers `subagent`; a session selects it only when it may spawn. */
 const SESSIONS_EXTENSION = "oppi.sessions";
 
-/** A built-in extension and the runtimes whose sessions select it by default. */
-type BuiltIn = Pick<LoadedDurableExtension, "extension" | "runtimes">;
+/**
+ * What Oppi's built-ins get from `oppiHost()`: the subagent and control hosts of the session
+ * host whose Harness runs a tool call's env, and the Gondolin sandbox operations.
+ */
+const durableHost: OppiDurableHost = {
+  sessions: (env) => sessionHostOfEnv(env)?.runtime.boundThreads,
+  control: (env) => sessionHostOfEnv(env)?.runtime.boundControl,
+  sandbox: sandboxHost,
+};
 
 function readStoreMeta(directory: string): DurableStoreMeta | undefined {
   const path = join(directory, METADATA_FILE);
@@ -1126,10 +1130,6 @@ export class DurableHarness {
    * (`failure` is the last error). Re-attach or end the sessions of that tree.
    */
   onHostRecovered?: (host: SessionHost, failure: unknown) => Promise<void>;
-  /** The session tools; they reach Oppi through the host bound with `bindThreads`. */
-  private readonly sessions = createDurableSessions(() => this.threads);
-  /** The control conversation's tools; they reach Oppi through the host bound with `bindControl`. */
-  private readonly controlTools = createDurableControl(() => this.control);
   /**
    * Runs the control conversation's codemode scripts. A sandbox only holds defaults; each script
    * gets its own VM worker, limited so a runaway script fails inside it, not the server.
@@ -1155,19 +1155,8 @@ export class DurableHarness {
     private readonly bundledDir = BUNDLED_PACKAGES_DIR,
   ) {}
 
-  /** Oppi's built-in extensions, in install order. */
-  private get builtIns(): readonly BuiltIn[] {
-    return [
-      { extension: DurableSandboxTools, runtimes: ["sandbox"] },
-      ...this.bundled,
-      { extension: this.sessions, runtimes: ["host", "sandbox"] },
-      { extension: DurableProjectContext, runtimes: ["host", "sandbox"] },
-      { extension: this.controlTools, runtimes: ["host"] },
-    ];
-  }
-
   private builtIn(name: string): Extension {
-    const found = this.builtIns.find((builtIn) => builtIn.extension.name === name);
+    const found = this.bundled.find((builtIn) => builtIn.extension.name === name);
     if (!found) throw new Error(`Built-in durable extension ${name} is not loaded`);
     return found.extension;
   }
@@ -1190,7 +1179,7 @@ export class DurableHarness {
   get defaultExtensions(): Extension[] {
     return [
       CodingTools,
-      ...this.builtIns
+      ...this.bundled
         .filter((builtIn) => builtIn.extension.name !== CONTROL_EXTENSION)
         .map((builtIn) => builtIn.extension),
     ];
@@ -1200,7 +1189,7 @@ export class DurableHarness {
   builtInsFor(runtime: DurableExtensionRuntime): Extension[] {
     return [
       CodingTools,
-      ...this.builtIns
+      ...this.bundled
         .filter(
           (builtIn) =>
             builtIn.runtimes.includes(runtime) && builtIn.extension.name !== CONTROL_EXTENSION,
@@ -1214,7 +1203,7 @@ export class DurableHarness {
    * those every runtime allows, with `oppi.sessions` only when the session may spawn.
    */
   attachedBuiltIns(spawn: boolean): Extension[] {
-    return this.builtIns
+    return this.bundled
       .filter(
         (builtIn) =>
           builtIn.runtimes.includes("host") &&
@@ -1236,6 +1225,9 @@ export class DurableHarness {
   }
   get boundThreads(): DurableThreads | undefined {
     return this.threads;
+  }
+  get boundControl(): DurableControlHost | undefined {
+    return this.control;
   }
 
   get retrySettings(): HarnessSettings["retry"] {
@@ -1317,16 +1309,9 @@ export class DurableHarness {
   ): Promise<Pick<DurableExtensionReport, "loaded" | "kept" | "errors">> {
     const previous = this.bundled;
     const found = bundledDurableExtensionPackages(this.bundledDir);
-    const others = [
-      CodingTools,
-      this.controlCodemode,
-      ...this.builtIns
-        .map((builtIn) => builtIn.extension)
-        .filter((extension) => !previous.some((old) => old.extension === extension)),
-    ];
     // Names only: built-ins may offer a tool CodingTools has, as background-jobs does with `bash`.
     const result = await loadDurableExtensions(found.packages, {
-      names: reservedBy(others).names,
+      names: reservedBy([CodingTools, this.controlCodemode]).names,
       tools: new Set(),
     });
     const errors = [...found.errors, ...result.errors, ...result.skipped];
@@ -1344,8 +1329,7 @@ export class DurableHarness {
         (loaded) => !previous.some((old) => old.extension.name === loaded.extension.name),
       ),
     ];
-    if (first) for (const builtIn of this.builtIns) registry.install(builtIn.extension);
-    else for (const loaded of result.loaded) registry.install(loaded.extension);
+    for (const loaded of result.loaded) registry.install(loaded.extension);
     return {
       loaded: result.loaded.map((loaded) => summarize(loaded, true)),
       kept: kept.map((old) => summarize(old, true)),
@@ -1466,6 +1450,8 @@ export class DurableHarness {
     this.runPolicy = settings;
     const registry = createRegistry();
     registry.install(CodingTools);
+    // Before any package loads: built-ins read the host when their entry is evaluated.
+    bindOppiHost(durableHost);
     await this.loadExtensions(registry, true);
     this.registry = registry;
     this.runSettings = harnessSettings(settings, this.defaultExtensions);

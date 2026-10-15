@@ -101,7 +101,7 @@ import {
   renderSkills,
   type DurableProjectResources,
 } from "./durable-project-resources.js";
-import { ProjectContextDoc } from "../extensions/durable/project-context/durable.js";
+import { ProjectContextDoc } from "../extensions/durable/project-context/contract.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { managedProjectTrustContext, resolveManagedProjectTrust } from "./project-trust.js";

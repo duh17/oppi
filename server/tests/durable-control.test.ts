@@ -29,11 +29,8 @@ import { createAgentRoutes } from "../src/routes/agents.js";
 import { createRouteHelpers } from "../src/routes/http.js";
 import { createScheduleRoutes } from "../src/routes/schedules.js";
 import type { RouteContext } from "../src/routes/types.js";
-import {
-  CONTROL_SECTION,
-  createDurableControl,
-  type DurableControlHost,
-} from "../extensions/durable/control/durable.js";
+import { CONTROL_SECTION, createDurableControl } from "../extensions/durable/control/durable.js";
+import type { DurableControlHost } from "../src/durable-extension-api.js";
 import { DurableUI, type UIRequest } from "../extensions/durable/durable-ui.js";
 import { listenOnLocalApiFixture } from "./harness/local-api-socket.js";
 

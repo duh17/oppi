@@ -1,0 +1,15 @@
+{
+  "name": "oppi-sandbox-tools",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Oppi built-in: ls, find, grep, and image read over a sandbox session's Gondolin VM.",
+  "type": "module",
+  "oppi": {
+    "durable": {
+      "entry": "./durable.js",
+      "runtimes": [
+        "sandbox"
+      ]
+    }
+  }
+}

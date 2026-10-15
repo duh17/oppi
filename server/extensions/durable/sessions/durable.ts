@@ -12,19 +12,22 @@ import {
   defineTask,
   defineTool,
   section,
-  type Agent,
   type ConversationId,
   type EntryId,
   type Extension,
   type TaskId,
   type ToolExecutionApi,
   type ToolExecutionResult,
-  type Tx,
 } from "@earendil-works/pi-durable";
+import {
+  SESSION_REPORTER_TASK,
+  oppiHost,
+  type DurableSessionsHost,
+  type SessionSender,
+} from "oppi/durable";
 import { agentMessageEntry, type MessageOrigin } from "./agent-message.js";
 
-/** A session as the sender of an agent message. */
-type Sender = { sessionId: string; name?: string };
+type Sender = SessionSender;
 
 function sentBy(
   sender: Sender | undefined,
@@ -34,70 +37,6 @@ function sentBy(
   return sender
     ? { entry: agentMessageEntry({ kind: "session", ...sender, intent }, textOffset) }
     : {};
-}
-
-/** What `subagent spawn` asks for. */
-export type SubagentRequest = {
-  /** A saved Agent, by id or name. */
-  agent?: string;
-  /** provider/model; overrides the saved Agent's. */
-  model?: string;
-  /** Overrides the saved Agent's. */
-  thinking?: string;
-  allowNestedDelegation?: boolean;
-};
-
-/** A spawn the host resolved: how the child conversation is configured. */
-export interface ResolvedSubagent {
-  /** The saved Agent's name, for `list`. */
-  agent?: string;
-  /**
-   * Configure the new child inside its creating commit: its agent (`configure`), runtime, and
-   * `oppi.agent` documents, so it never exists unconfigured.
-   */
-  apply(tx: Tx, child: ConversationId): Promise<void>;
-}
-
-/**
- * What the subagent tool needs from Oppi. The extension is static harness code and cannot
- * import server modules, so the server hands these in when it binds the Harness (see
- * `DurableThreads`).
- */
-export interface DurableSessionsHost {
-  /**
-   * The Oppi Session bound to an owned child conversation, created and attached on
-   * first use. Idempotent: one Session per conversation id, however often this runs.
-   */
-  materialize(
-    child: { conversationId: ConversationId; name: string },
-    env?: ExecutionEnv,
-  ): Promise<string>;
-  /** The store of the calling conversation. */
-  storeIdOfEnv(env?: ExecutionEnv): string;
-  /** The Oppi session bound to a conversation of the calling store: who sent an agent message. */
-  sessionOf(conversationId: ConversationId, env?: ExecutionEnv): Sender | undefined;
-  /** Submit to a bound session's own store. Undefined on success, otherwise an error message. */
-  submit(
-    sessionId: string,
-    input: {
-      content: string;
-      whenBusy: "steer" | "followUp";
-      requestId: string;
-      entry?: ReturnType<typeof agentMessageEntry>;
-    },
-  ): Promise<string | undefined>;
-  /** Wait until a bound session's conversation is idle. */
-  waitForIdle(sessionId: string): Promise<string | undefined>;
-  /** Attach a stopped Session so a message to it makes progress. */
-  activate(sessionId: string): Promise<void>;
-  /**
-   * Resolve a spawn: the saved Agent, model, and thinking level, checked against the caller's
-   * delegation grant and workspace. Rejects with a message for the model.
-   */
-  resolveAgent(
-    request: SubagentRequest,
-    caller: { conversationId: ConversationId; env?: ExecutionEnv; agent: Agent },
-  ): Promise<ResolvedSubagent>;
 }
 
 type Child = {
@@ -172,9 +111,6 @@ function textOf(message: AssistantMessage | undefined): string {
     .flatMap((part) => (part.type === "text" ? [part.text] : []))
     .join("");
 }
-
-/** Registered name of the reporter task; Stop aborts tasks of this kind (see `DurableHarness`). */
-export const SESSION_REPORTER_TASK = "oppi.session-reporter";
 
 /**
  * Hands a background child its task and posts its answer back to the parent. Background
@@ -270,9 +206,15 @@ function reply(
   return { output: [{ type: "text" as const, text }], details, ...(isError ? { isError } : {}) };
 }
 
-export function createDurableSessions(host: () => DurableSessionsHost | undefined): Extension {
-  const bound = (): DurableSessionsHost => {
-    const current = host();
+/**
+ * The `oppi.sessions` extension over `host`, which finds Oppi's subagent host for a tool call's
+ * execution env. The package's entry binds it to `oppiHost()`; tests bind their own.
+ */
+export function createDurableSessions(
+  host: (env: ExecutionEnv | undefined) => DurableSessionsHost | undefined,
+): Extension {
+  const bound = (env: ExecutionEnv | undefined): DurableSessionsHost => {
+    const current = host(env);
     if (!current) throw new Error("subagent is not available: the Oppi host is not bound");
     return current;
   };
@@ -285,7 +227,7 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
   const sessionIdOf = (api: ToolExecutionApi, name: string, child: Child): Promise<string> =>
     child.sessionId !== undefined
       ? Promise.resolve(child.sessionId)
-      : bound().materialize({ conversationId: child.conversationId, name }, api.env);
+      : bound(api.env).materialize({ conversationId: child.conversationId, name }, api.env);
 
   const subagent = defineTool({
     name: "subagent",
@@ -337,7 +279,7 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
           const child = (await children(api, context))[name];
           if (!child) return reply(`No subagent named ${name}.`, { name }, true);
           if (!args.message) return reply("send needs a message.", { name }, true);
-          const sessions = bound();
+          const sessions = bound(api.env);
           const sessionId = await sessionIdOf(api, name, child);
           await sessions.activate(sessionId);
           const whenBusy = args.followUp === true ? "followUp" : "steer";
@@ -363,7 +305,7 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
           const missing = names.filter((name) => !known[name]);
           if (missing.length)
             return reply(`No subagent named ${missing.join(", ")}.`, { missing }, true);
-          const sessions = bound();
+          const sessions = bound(api.env);
           const waited = await Promise.all(
             found.map(async ({ name, child }) => {
               const sessionId = await sessionIdOf(api, name, child);
@@ -442,7 +384,7 @@ export function createDurableSessions(host: () => DurableSessionsHost | undefine
     api: ToolExecutionApi,
     context: Context,
   ): Promise<ToolExecutionResult<ReplyDetails>> {
-    const sessions = bound();
+    const sessions = bound(api.env);
     const name = args.name?.trim();
     const task = args.task?.trim();
     if (!name) return reply("spawn needs a name.", {}, true);
@@ -577,3 +519,6 @@ async function latestAnswer(
     return "(no answer yet)";
   }, context);
 }
+
+/** The durable entry (`package.json` `oppi.durable`): `subagent` over the server's threads. */
+export default createDurableSessions((env) => oppiHost().sessions(env));

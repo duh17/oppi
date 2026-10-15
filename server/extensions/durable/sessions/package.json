@@ -1,0 +1,16 @@
+{
+  "name": "oppi-sessions",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Oppi built-in: the subagent tool that manages child durable sessions.",
+  "type": "module",
+  "oppi": {
+    "durable": {
+      "entry": "./durable.js",
+      "runtimes": [
+        "host",
+        "sandbox"
+      ]
+    }
+  }
+}

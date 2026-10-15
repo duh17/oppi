@@ -5,51 +5,20 @@ import {
   defineExtension,
   defineTool,
   section,
-  type ConversationId,
   type Extension,
   type TaskId,
   type ToolRegistration,
   type ToolExecutionApi,
 } from "@earendil-works/pi-durable";
-import { DurableUI, requestUI } from "../durable-ui.js";
-
-/** A JSON object; the CLI envelope is one, and a stored document must be JSON. */
-export type ControlJson = { [key: string]: JsonValue };
-
-/** One write the CLI is about to send, as the owner must see it before it goes out. */
-export interface ControlWrite {
-  method: string;
-  /** Path and query, as sent. */
-  path: string;
-  body?: JsonValue;
-  /** For a PATCH: the record as it is now, fetched by the host; absent when it could not be read. */
-  current?: JsonValue;
-  currentError?: string;
-}
-
-/**
- * What the control tools need from Oppi. The extension is static harness code and cannot import
- * server modules, so the server hands this in when it binds the Harness (see `DurableControlCli`).
- */
-export interface DurableControlHost {
-  /**
-   * Run one `oppi` CLI invocation in this process and resolve its JSON envelope; never rejects
-   * for a failing command. `onWrite` is awaited before each non-GET request is sent and decides
-   * it by resolving or throwing (a thrown `code` becomes the envelope's error code); without
-   * `onWrite` every non-GET is refused. `key` is the tool call's task id, the same when a crashed
-   * call reruns: the host derives the one replay key a write carries from it, and replaces any
-   * key the caller passed. `wrote` is true once a write was approved.
-   */
-  run(
-    argv: readonly string[],
-    options: {
-      conversationId: ConversationId;
-      key: string;
-      signal: AbortSignal;
-      onWrite?: (write: ControlWrite) => Promise<void>;
-    },
-  ): Promise<{ envelope: ControlJson; wrote: boolean }>;
-}
+import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+import {
+  DurableUI,
+  oppiHost,
+  requestUI,
+  type ControlJson,
+  type ControlWrite,
+  type DurableControlHost,
+} from "oppi/durable";
 
 // ---------------------------------------------------------------------------------------------
 // The tools: ONE table. Every control tool, its argv, and its schemas live here. The schemas
@@ -538,7 +507,10 @@ async function confirm(
  * `tools.<name>`. A finished call keeps its result, and a write carries a replay key derived from
  * its task, so a rerun after a crash neither runs twice nor writes twice for keyed commands.
  */
-function controlTool(entry: Entry, host: () => DurableControlHost | undefined): ToolRegistration {
+function controlTool(
+  entry: Entry,
+  host: (env: ExecutionEnv | undefined) => DurableControlHost | undefined,
+): ToolRegistration {
   return defineTool({
     name: entry.name,
     description: entry.description,
@@ -547,7 +519,7 @@ function controlTool(entry: Entry, host: () => DurableControlHost | undefined): 
     structuredOutputSchema: entry.output as unknown as TSchema,
     replay: "safe",
     async execute(args, api, context) {
-      const bound = host();
+      const bound = host(api.env);
       if (!bound) throw new Error("Oppi control is not available: the Oppi host is not bound");
       const argv = argvOf(entry, args as { [key: string]: unknown });
       const script = entry.write ? await scriptOf(api, context) : undefined;
@@ -580,10 +552,19 @@ function controlTool(entry: Entry, host: () => DurableControlHost | undefined): 
   });
 }
 
-export function createDurableControl(host: () => DurableControlHost | undefined): Extension {
+/**
+ * The `oppi.control` extension over `host`, which finds the `oppi` CLI for a tool call's
+ * execution env. The package's entry binds it to `oppiHost()`; tests bind their own.
+ */
+export function createDurableControl(
+  host: (env: ExecutionEnv | undefined) => DurableControlHost | undefined,
+): Extension {
   return defineExtension({
     name: "oppi.control",
     tools: TABLE.map((entry) => controlTool(entry, host)),
     sections: [section("oppi-control", () => CONTROL_SECTION, { tag: false })],
   });
 }
+
+/** The durable entry (`package.json` `oppi.durable`): the control tools over the server's CLI. */
+export default createDurableControl((env) => oppiHost().control(env));

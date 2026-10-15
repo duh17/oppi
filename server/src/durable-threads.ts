@@ -13,7 +13,7 @@ import type {
   DurableSessionsHost,
   ResolvedSubagent,
   SubagentRequest,
-} from "../extensions/durable/sessions/durable.js";
+} from "./durable-extension-api.js";
 import { childDelegationGrant } from "./agent-launch-service.js";
 import { OppiAgentDoc, resolveDurableAgent, type SavedAgent } from "./durable-agent.js";
 import { DurableRuntime, hostOfEnv, type DurableHarness } from "./durable-harness.js";

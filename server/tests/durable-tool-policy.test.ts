@@ -6,9 +6,15 @@ import { defineExtension } from "@earendil-works/pi-durable";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { resolveDurableAgent } from "../src/durable-agent.js";
 import { DurableMcp } from "../src/durable-mcp.js";
-import { DurableSandboxTools } from "../src/durable-sandbox-tools.js";
+import { bindOppiHost } from "../src/durable-extension-api.js";
+import { sandboxHost } from "../src/durable-sandbox-host.js";
 import type { Session } from "../src/types.js";
 import { DurableAsk } from "../extensions/durable/ask/durable.js";
+
+// The sandbox tools' entry reads the host when it is evaluated, as the loader's import does.
+bindOppiHost({ sandbox: sandboxHost, sessions: () => undefined, control: () => undefined });
+const { default: DurableSandboxTools } =
+  await import("../extensions/durable/sandbox-tools/durable.js");
 
 type Policy = NonNullable<NonNullable<Session["launch"]>["tools"]>;
 
