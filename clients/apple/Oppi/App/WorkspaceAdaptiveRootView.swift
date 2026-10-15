@@ -354,7 +354,7 @@ private struct WorkspaceCreationIntakeModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .sheet(item: $createSheetContext, onDismiss: handleCreateSheetDismissed) { context in
+            .uiKitSheet(item: $createSheetContext, onDismiss: handleCreateSheetDismissed) { context in
                 WorkspaceCreateView(
                     server: context.server,
                     presentation: context.presentation,

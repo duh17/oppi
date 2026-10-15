@@ -88,7 +88,7 @@ struct SettingsView: View {
         .accessibilityIdentifier("settings.list")
         .onAppear { summary = Summary.current() }
         .task { cacheSizeText = await SettingsStoragePage.formattedCacheSize() }
-        .sheet(isPresented: $showAddServer) {
+        .uiKitSheet(isPresented: $showAddServer) {
             OnboardingView(mode: .addServer)
         }
     }

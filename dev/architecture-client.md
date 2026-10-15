@@ -107,6 +107,10 @@ graph TD
   Reducer --> UIKit
 ```
 
+## App root environment and UIKit sheets
+
+`OppiApp` publishes the app-scoped services (`ConnectionCoordinator`, `AppNavigation`, `ServerStore`, theme, the active server's scoped stores) through one `AppRootEnvironment` and `appRootEnvironment(_:)` in `Oppi/App/AppRootEnvironment.swift`. A sheet whose content reads those services through `@Environment` uses `uiKitSheet(item:)` or `uiKitSheet(isPresented:)` (`Oppi/App/UIKitSheetPresentation.swift`), not SwiftUI `.sheet`. UIKit presents a hosting controller and re-applies the root set explicitly. On the iOS app on Mac, SwiftUI's sheet environment bridge dropped `ConnectionCoordinator` and crashed build 54. The same contract as `.sheet` applies: the binding presents and dismisses, and `onDismiss` runs after swipe-down and after the content calls `dismiss()`. Sheets that need presenter-local stores, such as chat's reducer, still use SwiftUI `.sheet`.
+
 ## Terminal tool output
 
 Timeline rows paint terminal-kind tool output from `ToolOutputStore`. The server sends stripped text: a suffix under 8 KiB, or a throttled 16 KiB / 80-line tail replace after that. Opening the full log still uses the sidecar. SSH terminal sessions are a separate surface.

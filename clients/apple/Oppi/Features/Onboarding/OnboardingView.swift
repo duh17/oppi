@@ -235,7 +235,7 @@ struct OnboardingView: View {
                 startPairing(credentials)
             }
         }
-        .sheet(isPresented: $showTailscale) {
+        .uiKitSheet(isPresented: $showTailscale) {
             NavigationStack {
                 TailnetSettingsView(onPaired: completeTailscalePairing)
                     .toolbar {

@@ -132,6 +132,7 @@ Example:
 
 ### Fixed
 
+- **Client:** The iOS app on a Mac no longer crashes when it opens **New Workspace**, **Add Server**, or **Connect through Tailscale**. Those sheets are now presented by UIKit and given the app's connection services directly, without relying on SwiftUI to pass them into the sheet.
 - **Client:** Inline audio cards and voice message players keep their full height. A message with several audio files in a row could collapse some cards to zero height, drawing their controls on top of the neighboring card.
 - **Client:** About This Server explains when the server is older than the app but there is nothing newer to install, naming the version the app needs and the newest available, instead of showing an empty Update section. Its Server Settings row reads **Server Outdated** instead of **Update Available**.
 - **Client:** Opening a thread while Oppi is still connecting after launch no longer leaves a permanent "Server connection is unavailable" error. The thread shows Connecting and loads once the connection is ready.

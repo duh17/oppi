@@ -530,21 +530,18 @@ struct OppiApp: App {
 
     private var appRootView: some View {
         let root = ContentView()
-            .environment(coordinator)
-            .withServerScopedEnvironment(coordinator.activeConnection)
-            .environment(navigation)
-            .environment(\.chatReaderPayloadStore, chatReaderPayloadStore)
-            .environment(coordinator.serverStore)
-            .environment(themeStore)
-            .environment(quickCommentTemplateStore)
-            .environment(\.composerDraftStore, composerDraftStore)
-            .environment(\.theme, themeStore.appTheme)
-            .environment(\.themeID, themeStore.activeThemeID)
-            .environment(\.sessionRowDisplay, sessionRowDisplay)
+            .appRootEnvironment(AppRootEnvironment(
+                coordinator: coordinator,
+                navigation: navigation,
+                themeStore: themeStore,
+                quickCommentTemplateStore: quickCommentTemplateStore,
+                composerDraftStore: composerDraftStore,
+                chatReaderPayloadStore: chatReaderPayloadStore,
+                sessionRowDisplay: sessionRowDisplay
+            ))
             .onReceive(NotificationCenter.default.publisher(for: AppPreferences.SessionRows.didChangeNotification)) { _ in
                 sessionRowDisplay = AppPreferences.SessionRows.display
             }
-            .tint(.themeBlue)
             .background {
                 ThemeColorSchemeSyncView(themeStore: themeStore)
             }
