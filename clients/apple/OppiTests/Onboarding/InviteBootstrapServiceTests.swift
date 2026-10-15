@@ -267,6 +267,112 @@ struct InviteBootstrapServiceTests {
         #expect(await log.snapshot() == ["pair:one-time-token"])
     }
 
+    /// An older attempt is approved after a newer attempt paired the same server:
+    /// the newer device credential must stay.
+    @Test func supersededPairingCannotReplaceTheNewerCredential() async throws {
+        let id = "sha256:invite-superseded-same"
+        let invite = credentials(serverFingerprint: id)
+        let coordinator = makeCoordinator(clearing: [invite])
+        defer { coordinator.serverStore.remove(id: id) }
+        let log = InviteBootstrapCallLog()
+        let approval = InvitePollGate()
+        var staleAPIs = [
+            RecordingInviteBootstrapAPI(
+                log: log,
+                accessToken: "at_stale",
+                deviceId: "dev_stale",
+                approvalRequired: true,
+                pollGate: approval
+            ),
+            RecordingInviteBootstrapAPI(log: log),
+        ]
+        var newerAPIs = [
+            RecordingInviteBootstrapAPI(log: log, accessToken: "at_newer", deviceId: "dev_newer"),
+            RecordingInviteBootstrapAPI(log: log),
+        ]
+
+        let stale = Task { @MainActor in
+            try await InviteBootstrapService.enroll(
+                credentials: invite,
+                serverStore: coordinator.serverStore,
+                coordinator: coordinator,
+                confirmTrust: { _ in true },
+                apiFactory: { _, _, _ in staleAPIs.removeFirst() },
+                deviceKeyProvider: { InMemoryP256DeviceKey() }
+            )
+        }
+        await approval.waitUntilHeld()
+        let newer = try await InviteBootstrapService.enroll(
+            credentials: invite,
+            serverStore: coordinator.serverStore,
+            coordinator: coordinator,
+            confirmTrust: { _ in true },
+            apiFactory: { _, _, _ in newerAPIs.removeFirst() },
+            deviceKeyProvider: { InMemoryP256DeviceKey() }
+        )
+        #expect(newer.selected)
+        await approval.release()
+
+        #expect(try await stale.value.selected == false)
+        let saved = try #require(coordinator.serverStore.server(for: id))
+        #expect(saved.deviceCredential?.deviceId == "dev_newer")
+        #expect(saved.deviceCredential?.accessToken == "at_newer")
+    }
+
+    /// An older attempt approved after a newer attempt selected another server
+    /// still saves its own enrollment, but must not take the selection.
+    @Test func supersededPairingSavesWithoutTakingSelection() async throws {
+        let staleInvite = credentials(serverFingerprint: "sha256:invite-superseded-a")
+        let newerInvite = credentials(host: "newer.example.test", serverFingerprint: "sha256:invite-superseded-b")
+        let coordinator = makeCoordinator(clearing: [staleInvite, newerInvite])
+        defer {
+            coordinator.serverStore.remove(id: "sha256:invite-superseded-a")
+            coordinator.serverStore.remove(id: "sha256:invite-superseded-b")
+        }
+        let log = InviteBootstrapCallLog()
+        let approval = InvitePollGate()
+        var staleAPIs = [
+            RecordingInviteBootstrapAPI(
+                log: log,
+                accessToken: "at_stale",
+                approvalRequired: true,
+                pollGate: approval
+            ),
+            RecordingInviteBootstrapAPI(log: log),
+        ]
+        var newerAPIs = [
+            RecordingInviteBootstrapAPI(log: log, accessToken: "at_newer"),
+            RecordingInviteBootstrapAPI(log: log),
+        ]
+
+        let stale = Task { @MainActor in
+            try await InviteBootstrapService.enroll(
+                credentials: staleInvite,
+                serverStore: coordinator.serverStore,
+                coordinator: coordinator,
+                confirmTrust: { _ in true },
+                apiFactory: { _, _, _ in staleAPIs.removeFirst() },
+                deviceKeyProvider: { InMemoryP256DeviceKey() }
+            )
+        }
+        await approval.waitUntilHeld()
+        let newer = try await InviteBootstrapService.enroll(
+            credentials: newerInvite,
+            serverStore: coordinator.serverStore,
+            coordinator: coordinator,
+            confirmTrust: { _ in true },
+            apiFactory: { _, _, _ in newerAPIs.removeFirst() },
+            deviceKeyProvider: { InMemoryP256DeviceKey() }
+        )
+        #expect(newer.selected)
+        await approval.release()
+
+        #expect(try await stale.value.selected == false)
+        #expect(coordinator.activeServerId == "sha256:invite-superseded-b")
+        let staleSaved = try #require(coordinator.serverStore.server(for: "sha256:invite-superseded-a"))
+        #expect(staleSaved.deviceCredential?.accessToken == "at_stale")
+    }
+
     private func waitForCalls(_ log: InviteBootstrapCallLog, count: Int) async throws -> [String] {
         for _ in 0..<200 {
             let calls = await log.snapshot()
@@ -287,7 +393,11 @@ struct InviteBootstrapServiceTests {
         #expect(decoded?.token == "invite-token")
     }
 
-    private func credentials(host: String? = nil, tlsCertFingerprint: String? = nil) -> ServerCredentials {
+    private func credentials(
+        host: String? = nil,
+        serverFingerprint: String = "sha256:abcdef1234567890",
+        tlsCertFingerprint: String? = nil
+    ) -> ServerCredentials {
         ServerCredentials(
             host: host ?? self.host,
             port: 443,
@@ -295,9 +405,22 @@ struct InviteBootstrapServiceTests {
             name: "Pairing Server",
             scheme: .https,
             pairingToken: "one-time-token",
-            serverFingerprint: "sha256:abcdef1234567890",
+            serverFingerprint: serverFingerprint,
             tlsCertFingerprint: tlsCertFingerprint
         )
+    }
+
+    /// A coordinator over the real store, without the servers these invites pair.
+    private func makeCoordinator(clearing invites: [ServerCredentials]) -> ConnectionCoordinator {
+        let store = ServerStore()
+        for invite in invites {
+            if let id = invite.normalizedServerFingerprint { store.remove(id: id) }
+        }
+        let coordinator = ConnectionCoordinator(serverStore: store)
+        coordinator.networkPathType = { "wifi" }
+        coordinator._initialLANEndpointForTesting = { _ in nil }
+        coordinator._serverInfoBootstrapForTesting = { _, _ in pairingTestServerInfo() }
+        return coordinator
     }
 }
 
@@ -370,6 +493,33 @@ private func pairingTestServerInfo() -> ServerInfo {
     )
 }
 
+/// Holds an approval poll until the test releases it.
+private actor InvitePollGate {
+    private var heldWaiter: CheckedContinuation<Void, Never>?
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+    private var isHeld = false
+    private var isReleased = false
+
+    func waitUntilHeld() async {
+        guard !isHeld else { return }
+        await withCheckedContinuation { heldWaiter = $0 }
+    }
+
+    func hold() async {
+        isHeld = true
+        heldWaiter?.resume()
+        heldWaiter = nil
+        guard !isReleased else { return }
+        await withCheckedContinuation { releaseWaiter = $0 }
+    }
+
+    func release() {
+        isReleased = true
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+}
+
 private actor InviteBootstrapCallLog {
     private var calls: [String] = []
     func append(_ call: String) { calls.append(call) }
@@ -385,18 +535,24 @@ private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
     private let cancelOnPoll: Bool
     /// The bearer this client was created with.
     private let bearer: String
+    private let deviceId: String
+    private let pollGate: InvitePollGate?
     private var pairedDeviceName: String?
 
     init(
         log: InviteBootstrapCallLog,
         accessToken: String = "at_current",
+        deviceId: String = "dev_https",
         incompleteResponse: Bool = false,
         approvalRequired: Bool = false,
         cancelOnPoll: Bool = false,
-        bearer: String = ""
+        bearer: String = "",
+        pollGate: InvitePollGate? = nil
     ) {
         self.log = log
         self.accessToken = accessToken
+        self.deviceId = deviceId
+        self.pollGate = pollGate
         self.incompleteResponse = incompleteResponse
         self.approvalRequired = approvalRequired
         self.cancelOnPoll = cancelOnPoll
@@ -405,7 +561,7 @@ private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
 
     private func enrolledResponse() -> PairDeviceResponse {
         PairDeviceResponse(
-            deviceId: "dev_https",
+            deviceId: deviceId,
             accessToken: accessToken,
             expiresAt: 4_102_444_800_000,
             refreshChallenge: DeviceAuthChallenge(
@@ -447,6 +603,7 @@ private actor RecordingInviteBootstrapAPI: InviteBootstrapAPI {
     ) async throws -> PairingApprovalPoll {
         guard approvalRequired else { throw APIError.invalidResponse }
         await log.append("poll:\(approvalId)")
+        await pollGate?.hold()
         if cancelOnPoll { withUnsafeCurrentTask { $0?.cancel() } }
         return .enrolled(enrolledResponse())
     }

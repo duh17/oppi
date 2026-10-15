@@ -1590,6 +1590,7 @@ struct OppiApp: App {
         let isE2EInviteLaunch = ProcessInfo.processInfo.environment["PI_E2E_INVITE_URL"] != nil
             || ProcessInfo.processInfo.environment["OPPI_E2E_LAUNCH_INVITE"] != nil
 #endif
+        let attempt = coordinator.beginPairingAttempt()
         let existingCredentials = credentials.normalizedServerFingerprint
             .flatMap { serverStore.server(for: $0)?.credentials }
             ?? serverStore.server(forHost: credentials.host, port: credentials.port)?.credentials
@@ -1645,7 +1646,7 @@ struct OppiApp: App {
             }
             // Committed: the server enrolled this device and the wait (with its
             // Cancel) has ended. A newer invite only takes over the UI below.
-            let pairingOutcome = await coordinator.addServerReady(pairedServer, switchTo: true)
+            let pairingOutcome = await coordinator.addEnrolledServer(pairedServer, attempt: attempt)
             guard invitePairingGate.shouldRun(generation), !Task.isCancelled else { return }
             guard pairingOutcome != .failed else {
                 throw InviteBootstrapError.message("Connection blocked by server transport policy")

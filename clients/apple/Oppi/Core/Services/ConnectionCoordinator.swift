@@ -65,6 +65,11 @@ final class ConnectionCoordinator {
     /// is displayed in the main UI.
     private(set) var activeServerId: String?
     private var selectionRevision = 0
+    /// Pairing attempts in start order, across every pairing flow, so an older
+    /// approval cannot undo a newer one. See `addEnrolledServer`.
+    private var lastPairingAttempt: UInt64 = 0
+    /// The attempt whose enrollment each server's stored credential came from.
+    private var savedPairingAttempt: [String: UInt64] = [:]
 
     /// Per-server connections. Each has its own WS, stores, reducer.
     private(set) var connections: [String: ServerConnection] = [:]
@@ -1030,6 +1035,32 @@ final class ConnectionCoordinator {
             return .selected
         }
         return .pairedWithoutSelection
+    }
+
+    /// Starts a pairing attempt. Call before contacting the server and pass the
+    /// result to `addEnrolledServer`.
+    func beginPairingAttempt() -> UInt64 {
+        lastPairingAttempt &+= 1
+        return lastPairingAttempt
+    }
+
+    /// Saves a server this device enrolled with. An older attempt approved after a
+    /// newer one never replaces the credential the newer attempt saved for the same
+    /// server, and does not select the server once a newer attempt has saved. A newer
+    /// attempt still in flight, or one that was cancelled or failed, holds nothing:
+    /// it takes the selection when it saves. The checks and the claim run with no
+    /// suspension before the store write. A failed save releases the claim, so it
+    /// cannot block an older credential.
+    func addEnrolledServer(_ server: PairedServer, attempt: UInt64) async -> ServerPairingOutcome {
+        let priorClaim = savedPairingAttempt[server.id]
+        if let priorClaim, priorClaim > attempt { return .pairedWithoutSelection }
+        savedPairingAttempt[server.id] = attempt
+        let newerSaved = (savedPairingAttempt.values.max() ?? 0) > attempt
+        let outcome = await addServerReady(server, switchTo: !newerSaved)
+        if outcome == .failed, savedPairingAttempt[server.id] == attempt {
+            savedPairingAttempt[server.id] = priorClaim
+        }
+        return outcome
     }
 
     /// Remove a server. Cleans up all associated data.

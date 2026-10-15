@@ -287,6 +287,7 @@ struct OnboardingView: View {
         connectionTest = .testing
 
         do {
+            let attempt = coordinator.beginPairingAttempt()
             let bootstrap = try await InviteBootstrapService.validateAndBootstrap(
                 credentials: credentials,
                 existingCredentials: nil,
@@ -318,7 +319,7 @@ struct OnboardingView: View {
             // The server enrolled this device at the 200, and the wait (with its
             // Cancel) has ended, so the pairing is committed: save it. A newer
             // attempt only takes over the UI below.
-            let pairingOutcome = await coordinator.addServerReady(pairedServer, switchTo: true)
+            let pairingOutcome = await coordinator.addEnrolledServer(pairedServer, attempt: attempt)
             guard generation == pairingGeneration, !Task.isCancelled else { return }
             guard pairingOutcome != .failed else {
                 connectionTest = .failed("Connection blocked by server transport policy")
@@ -657,13 +658,40 @@ enum InviteBootstrapService {
                 "The pairing invite was not usable. Request a fresh one and try again."
             )
         }
+        return try await enroll(
+            credentials: credentials,
+            serverStore: serverStore,
+            coordinator: coordinator,
+            onWaitingForApproval: onWaitingForApproval,
+            confirmTrust: confirmTrust
+        )
+    }
+
+    /// Pairs with decoded invite credentials. The seams exist for tests.
+    @MainActor
+    static func enroll(
+        credentials: ServerCredentials,
+        serverStore: ServerStore,
+        coordinator: ConnectionCoordinator,
+        onWaitingForApproval: (@MainActor (Int64?) -> Void)? = nil,
+        confirmTrust: @MainActor (String) async -> Bool,
+        apiFactory: @MainActor (URL, String, String?) -> any InviteBootstrapAPI = { baseURL, token, tlsCertFingerprint in
+            APIClient(baseURL: baseURL, token: token, tlsCertFingerprint: tlsCertFingerprint)
+        },
+        deviceKeyProvider: @MainActor () throws -> any DeviceKey = {
+            try DeviceKeyProvider.shared.loadOrCreate()
+        }
+    ) async throws -> (name: String, selected: Bool) {
         let existing = credentials.normalizedServerFingerprint.flatMap {
             serverStore.server(for: $0)?.credentials
         } ?? serverStore.server(forHost: credentials.host, port: credentials.port)?.credentials
+        let attempt = coordinator.beginPairingAttempt()
         let bootstrap = try await validateAndBootstrap(
             credentials: credentials,
             existingCredentials: existing,
             confirmTrust: confirmTrust,
+            apiFactory: apiFactory,
+            deviceKeyProvider: deviceKeyProvider,
             onWaitingForApproval: onWaitingForApproval
         )
         if Task.isCancelled { throw PairingEnrollment.Failure.cancelled }
@@ -674,7 +702,7 @@ enum InviteBootstrapService {
             throw InviteBootstrapError.message("Missing server fingerprint")
         }
         // Committed: the server enrolled this device and the wait has ended.
-        let outcome = await coordinator.addServerReady(pairedServer, switchTo: true)
+        let outcome = await coordinator.addEnrolledServer(pairedServer, attempt: attempt)
         guard outcome != .failed else {
             throw InviteBootstrapError.message("Connection blocked by server transport policy")
         }

@@ -198,6 +198,35 @@ struct ConnectionCoordinatorTests {
         #expect(coordinator.serverStore.server(for: paired.id) != nil)
     }
 
+    /// A newer attempt that has not saved (still waiting, cancelled, or failed)
+    /// holds no selection, so it must not strand an older attempt approved first.
+    @Test func olderPairingSelectsWhenTheNewerAttemptHasNotSaved() async {
+        let (coordinator, _) = makeCoordinator()
+        let paired = makeServer(id: "sha256:pair-older-selects", name: "Older")
+        let older = coordinator.beginPairingAttempt()
+        _ = coordinator.beginPairingAttempt()
+
+        #expect(await coordinator.addEnrolledServer(paired, attempt: older) == .selected)
+        #expect(coordinator.activeServerId == paired.id)
+    }
+
+    /// A newer save that the transport policy rolled back left nothing stored, so it
+    /// must not make an older approval drop its credential.
+    @Test func failedNewerSaveDoesNotBlockTheOlderCredential() async {
+        let (coordinator, _) = makeCoordinator()
+        let id = "sha256:pair-newer-failed"
+        let blocked = makeServer(id: id, name: "Blocked", host: "plaintext.test", scheme: .http)
+        let older = coordinator.beginPairingAttempt()
+        let newer = coordinator.beginPairingAttempt()
+
+        #expect(await coordinator.addEnrolledServer(blocked, attempt: newer) == .failed)
+        #expect(coordinator.serverStore.server(for: id) == nil)
+
+        let paired = makeServer(id: id, name: "Older", host: "older.test")
+        #expect(await coordinator.addEnrolledServer(paired, attempt: older) == .selected)
+        #expect(coordinator.serverStore.server(for: id)?.credentials.host == "older.test")
+    }
+
     @Test func removedPendingPairDoesNotResurrectAfterFailure() async {
         let (coordinator, _) = makeCoordinator()
         let paired = makeServer(id: "sha256:pair-removed", name: "Removed")
