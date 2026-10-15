@@ -1200,6 +1200,52 @@ struct AssistantMarkdownLayoutTests {
         )
         #expect(stack.layoutMargins.top > AssistantTimelineRowContentView.avatarHangHeight)
     }
+
+    /// Consecutive audio embeds once collapsed to 0pt cards drawn on top of
+    /// each other: an autoresizing-mask label pinned the strip's center to y=0.
+    @Test func streamedConsecutiveAudioEmbedsKeepFullCardHeight() async throws {
+        let wh = makeWindowedTimelineHarness(sessionId: "audio-card-heights", useAnchoredCollectionView: true)
+        let itemID = "audio-card-heights"
+        let timestamp = Date(timeIntervalSince1970: 0)
+        let full = """
+        The model planned a key, tempo and form for each genre on its own. That's the speech recognizer, not the song.
+
+        ![Copper Line — jazz-funk](~/workspace/yuwp/.pi/music/set2/funk/take1/audio.wav)
+        ![Fica Comigo — bossa nova](~/workspace/yuwp/.pi/music/set2/bossa/take1/audio.wav)
+        ![Plastic Moon — city pop](~/workspace/yuwp/.pi/music/set2/citypop/take1/audio.wav)
+        ![Move Your Body — Afrobeat](~/workspace/yuwp/.pi/music/set2/afrobeat/take1/audio.wav)
+
+        I added these results to the skill's notes (`e59bdbe`).
+
+        Which ones should I try?
+        """
+        let chars = Array(full)
+        var end = 0
+        while end < chars.count {
+            end = min(chars.count, end + 23)
+            wh.applyItems(
+                [.assistantMessage(id: itemID, text: String(chars[0 ..< end]), timestamp: timestamp)],
+                isBusy: true,
+                streamingID: itemID
+            )
+        }
+        wh.applyItems([.assistantMessage(id: itemID, text: full, timestamp: timestamp)], isBusy: false)
+        let cell = try configuredTimelineCell(in: wh.collectionView, item: 0)
+        cell.layoutIfNeeded()
+
+        func audioViews(in view: UIView) -> [NativeMarkdownAudioView] {
+            ((view as? NativeMarkdownAudioView).map { [$0] } ?? []) + view.subviews.flatMap(audioViews)
+        }
+        let frames = audioViews(in: cell.contentView).map { $0.convert($0.bounds, to: cell.contentView) }
+        #expect(frames.count == 4)
+        #expect(
+            frames.allSatisfy { abs($0.height - MarkdownInlineAudioLayout.compactHeight) < 0.5 },
+            "every audio card keeps its compact height: \(frames)"
+        )
+        for (upper, lower) in zip(frames, frames.dropFirst()) {
+            #expect(upper.maxY <= lower.minY, "audio cards must not overlap: \(frames)")
+        }
+    }
 }
 
 @MainActor

@@ -131,6 +131,7 @@ Example:
 
 ### Fixed
 
+- **Client:** Inline audio cards and voice message players keep their full height. A message with several audio files in a row could collapse some cards to zero height, drawing their controls on top of the neighboring card.
 - **Client:** About This Server explains when the server is older than the app but there is nothing newer to install, naming the version the app needs and the newest available, instead of showing an empty Update section. Its Server Settings row reads **Server Outdated** instead of **Update Available**.
 - **Client:** Opening a thread while Oppi is still connecting after launch no longer leaves a permanent "Server connection is unavailable" error. The thread shows Connecting and loads once the connection is ready.
 - **Client:** Tapping the chat composer right after a back swipe no longer opens Quick Session. The interactive back gesture could leave the All Sessions message button under the chat composer.

@@ -121,6 +121,9 @@ final class NativeAudioPlayerStripView: UIView {
         expandButton.addTarget(self, action: #selector(handleExpand), for: .touchUpInside)
         expandButton.accessibilityLabel = "Expand player"
 
+        // Without this, the label's zero autoresizing frame pins the centered
+        // controls to y=0 and Auto Layout can break the 64pt height instead.
+        unavailableLabel.translatesAutoresizingMaskIntoConstraints = false
         unavailableLabel.font = .preferredFont(forTextStyle: .subheadline)
         unavailableLabel.adjustsFontForContentSizeCategory = true
         unavailableLabel.text = String(localized: "Audio unavailable")
