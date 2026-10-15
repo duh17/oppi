@@ -5,15 +5,29 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { DurableExtensionModule, DurableExtensionRuntime } from "./durable-extension-api.js";
 import { serverResourceId } from "./server-resource-id.js";
 
-/** A Pi package that has a durable entry next to (or instead of) its classic one. */
-export interface DurableExtensionPackage {
+/** Execution runtimes a durable extension may load in. */
+export type DurableExtensionRuntime = "host" | "sandbox";
+
+/**
+ * `package.json` `oppi.durable`: where a package's durable entry is and which runtimes may select
+ * it. The key stays under `oppi` until upstream names a plugin manifest; then only the key changes.
+ */
+export interface DurableExtensionManifest {
+  /** The entry file, resolved inside the package. */
+  readonly entry: string;
+  /**
+   * Runtimes whose sessions may select it. Default `["host"]`. Code always runs in the server
+   * process; only list `"sandbox"` when every command and file access goes through `api.env`.
+   */
+  readonly runtimes: readonly DurableExtensionRuntime[];
+}
+
+/** A package whose `package.json` declares a durable entry. */
+export interface DurableExtensionPackage extends DurableExtensionManifest {
   /** Package directory. */
   readonly root: string;
-  /** The `durable.ts` (or `package.json` `oppi.durable`) file, resolved through symlinks. */
-  readonly entry: string;
   /** Server resource IDs of the package's classic extensions, as saved Agents select them. */
   readonly extensionIds: readonly string[];
 }
@@ -21,14 +35,18 @@ export interface DurableExtensionPackage {
 export interface LoadedDurableExtension {
   readonly extension: Extension;
   readonly runtimes: readonly DurableExtensionRuntime[];
+  readonly root: string;
   readonly entry: string;
   /** The classic extension IDs this durable extension stands for in a saved Agent's selection. */
   readonly extensionIds: readonly string[];
 }
 
 export interface DurableExtensionIssue {
+  /** The file that failed: the manifest or the entry. */
   readonly entry: string;
   readonly message: string;
+  /** The package it belongs to; unset for a problem outside any package (Pi settings). */
+  readonly root?: string;
 }
 
 export interface DurableExtensionLoadResult {
@@ -44,8 +62,87 @@ export interface DurableExtensionReserved {
   readonly tools: ReadonlySet<string>;
 }
 
-const DURABLE_ENTRY_FILES = ["durable.ts", "durable.js"] as const;
+/** A `package.json` whose `oppi.durable` manifest is missing where required, or invalid. */
+export class DurableManifestError extends Error {
+  override readonly name = "DurableManifestError";
+  constructor(
+    readonly manifest: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 const RUNTIMES: readonly DurableExtensionRuntime[] = ["host", "sandbox"];
+const MANIFEST_KEYS = new Set(["entry", "runtimes"]);
+
+/**
+ * Read `package.json` `oppi.durable` in `root`. Undefined when the package declares no durable
+ * entry; throws `DurableManifestError` when the manifest is unreadable or invalid.
+ *
+ * ```json
+ * "oppi": { "durable": { "entry": "./src/durable.ts", "runtimes": ["host", "sandbox"] } }
+ * ```
+ *
+ * A `.js` entry whose file is missing names its `.ts` source, as relative imports do in
+ * TypeScript: a package that ships both its source and its build declares the `.js` path.
+ */
+export function readDurableManifest(root: string): DurableExtensionManifest | undefined {
+  const path = join(root, "package.json");
+  if (!existsSync(path)) return undefined;
+  let json: unknown;
+  try {
+    json = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    throw new DurableManifestError(path, `package.json is not valid JSON: ${messageOf(error)}`);
+  }
+  if (!isRecord(json) || json.oppi === undefined) return undefined;
+  if (!isRecord(json.oppi)) throw new DurableManifestError(path, "`oppi` must be an object");
+  const declared = json.oppi.durable;
+  if (declared === undefined) return undefined;
+  if (!isRecord(declared) || Array.isArray(declared))
+    throw new DurableManifestError(
+      path,
+      '`oppi.durable` must be an object: { "entry": "./durable.ts", "runtimes": ["host"] }',
+    );
+  const unknown = Object.keys(declared).filter((key) => !MANIFEST_KEYS.has(key));
+  if (unknown.length > 0)
+    throw new DurableManifestError(
+      path,
+      `\`oppi.durable\` has unknown keys: ${unknown.join(", ")} (allowed: entry, runtimes)`,
+    );
+  const { entry, runtimes = ["host"] } = declared;
+  if (typeof entry !== "string" || !entry.startsWith("./"))
+    throw new DurableManifestError(
+      path,
+      '`oppi.durable.entry` must be a path inside the package starting with "./"',
+    );
+  const file = resolve(root, entry);
+  const inside = relative(root, file);
+  if (!inside || inside.startsWith("..") || isAbsolute(inside))
+    throw new DurableManifestError(
+      path,
+      "`oppi.durable.entry` must name a file inside the package",
+    );
+  if (
+    !Array.isArray(runtimes) ||
+    runtimes.length === 0 ||
+    runtimes.some((runtime) => !RUNTIMES.includes(runtime as DurableExtensionRuntime)) ||
+    new Set(runtimes).size !== runtimes.length
+  )
+    throw new DurableManifestError(
+      path,
+      '`oppi.durable.runtimes` must list "host", "sandbox", or both, once each',
+    );
+  const source = file.endsWith(".js") ? `${file.slice(0, -3)}.ts` : undefined;
+  const found = existsSync(file) ? file : source && existsSync(source) ? source : undefined;
+  if (!found)
+    throw new DurableManifestError(
+      path,
+      `\`oppi.durable.entry\` points to a missing file: ${file}`,
+    );
+  return { entry: found, runtimes: runtimes as DurableExtensionRuntime[] };
+}
 
 /**
  * Find durable entries among the enabled user-scope Pi packages, resolved exactly as Pi
@@ -53,9 +150,8 @@ const RUNTIMES: readonly DurableExtensionRuntime[] = ["host", "sandbox"];
  * enable and disable settings). Project-scope packages are not read: they need the per-
  * workspace trust decision, and the registry is shared by every session.
  *
- * A package's durable entry is `package.json` `oppi.durable`, else `durable.ts` or
- * `durable.js` in the package directory. A single-file extension has no package directory
- * and so no durable entry.
+ * A package's durable entry is the one its `package.json` declares in `oppi.durable`; a package
+ * without one, or a single-file extension, has none.
  */
 export async function discoverDurableExtensionPackages(agentDir: string): Promise<{
   packages: DurableExtensionPackage[];
@@ -71,28 +167,73 @@ export async function discoverDurableExtensionPackages(agentDir: string): Promis
     entry: agentDir,
     message: `Pi settings (${entry.scope}): ${entry.error.message}`,
   }));
-  const packages: Array<{ root: string; entry: string; extensionIds: string[] }> = [];
+  const packages: Array<DurableExtensionPackage & { extensionIds: string[] }> = [];
+  const failed = new Set<string>();
   for (const resource of resolved.extensions) {
     if (!resource.enabled) continue;
     const root = packageRoot(resource.path, resource.metadata);
-    if (!root) continue;
-    let entry: string | undefined;
+    if (!root || failed.has(root)) continue;
+    let manifest: DurableExtensionManifest | undefined;
     try {
-      entry = durableEntry(root);
+      manifest = readDurableManifest(root);
     } catch (error) {
-      errors.push({ entry: join(root, "package.json"), message: messageOf(error) });
+      failed.add(root);
+      errors.push({ root, entry: join(root, "package.json"), message: messageOf(error) });
       continue;
     }
-    if (!entry) continue;
+    if (!manifest) continue;
     // The real path, so a symlinked package's relative imports resolve where its files are.
-    const real = realpathSync(entry);
+    const entry = realpathSync(manifest.entry);
     const id = serverResourceId("extension", resource.path);
-    const known = packages.find((candidate) => candidate.entry === real);
+    const known = packages.find((candidate) => candidate.entry === entry);
     if (known) {
       if (!known.extensionIds.includes(id)) known.extensionIds.push(id);
       continue;
     }
-    packages.push({ root, entry: real, extensionIds: [id] });
+    packages.push({ root, entry, runtimes: manifest.runtimes, extensionIds: [id] });
+  }
+  return { packages, errors };
+}
+
+/**
+ * Oppi's own durable packages, in install order. Each is a directory under `extensions/durable`
+ * (next to `src/`, also in the build) whose `package.json` declares its entry like any package.
+ */
+const BUNDLED_PACKAGES = ["ask", "working-words", "background-jobs"] as const;
+
+/** `extensions/durable` of this server: the source tree in development, the build when built. */
+export const BUNDLED_PACKAGES_DIR = fileURLToPath(
+  new URL("../extensions/durable/", import.meta.url),
+);
+
+/**
+ * Oppi's bundled durable packages in `dir`. Each must declare its entry: a bundled package
+ * without an `oppi.durable` manifest is an error, not a classic-only package.
+ */
+export function bundledDurableExtensionPackages(dir: string = BUNDLED_PACKAGES_DIR): {
+  packages: DurableExtensionPackage[];
+  errors: DurableExtensionIssue[];
+} {
+  const packages: DurableExtensionPackage[] = [];
+  const errors: DurableExtensionIssue[] = [];
+  for (const name of BUNDLED_PACKAGES) {
+    const root = join(dir, name);
+    try {
+      const manifest = readDurableManifest(root);
+      if (!manifest)
+        throw new DurableManifestError(
+          join(root, "package.json"),
+          `Bundled package ${name} has no \`oppi.durable\` manifest`,
+        );
+      packages.push({
+        root,
+        entry: realpathSync(manifest.entry),
+        runtimes: manifest.runtimes,
+        extensionIds: [],
+      });
+    } catch (error) {
+      errors.push({ root, entry: join(root, "package.json"), message: messageOf(error) });
+    }
   }
   return { packages, errors };
 }
@@ -111,28 +252,10 @@ function packageRoot(
   return first && rest.length > 0 ? join(extensionsDir, first) : undefined;
 }
 
-function durableEntry(root: string): string | undefined {
-  const manifestPath = join(root, "package.json");
-  if (existsSync(manifestPath)) {
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
-      oppi?: { durable?: unknown };
-    };
-    const declared = manifest.oppi?.durable;
-    if (declared !== undefined) {
-      if (typeof declared !== "string" || !declared.trim())
-        throw new Error("`oppi.durable` must be a relative path to the durable entry");
-      const entry = resolve(root, declared);
-      if (!existsSync(entry))
-        throw new Error(`\`oppi.durable\` points to a missing file: ${entry}`);
-      return entry;
-    }
-  }
-  return DURABLE_ENTRY_FILES.map((name) => join(root, name)).find((file) => existsSync(file));
-}
-
 /**
  * Import each package's durable entry with a fresh jiti instance (no module cache, so a
- * reload re-reads the entry and every file it imports) and validate its default export.
+ * reload re-reads the entry and every file it imports) and validate its default export: a
+ * pi-durable `Extension`, or an array of them, each selectable in the manifest's runtimes.
  * One broken package fails alone.
  */
 export async function loadDurableExtensions(
@@ -149,65 +272,75 @@ export async function loadDurableExtensions(
   const errors: DurableExtensionIssue[] = [];
   const names = new Set<string>();
   const tools = new Set<string>();
-  for (const { entry, extensionIds } of packages) {
+  for (const { root, entry, runtimes, extensionIds } of packages) {
     let module: unknown;
     try {
       module = await jiti.import(entry, { default: true });
     } catch (error) {
-      errors.push({ entry, message: `Import failed: ${messageOf(error)}` });
+      errors.push({ root, entry, message: `Import failed: ${messageOf(error)}` });
       continue;
     }
-    const checked = checkModule(module);
-    if (typeof checked === "string") {
-      errors.push({ entry, message: checked });
+    const extensions = extensionsOf(module);
+    if (typeof extensions === "string") {
+      errors.push({ root, entry, message: extensions });
       continue;
     }
-    const { extension, runtimes } = checked;
-    if (reserved.names.has(extension.name)) {
-      skipped.push({ entry, message: `"${extension.name}" is built into Oppi` });
+    // A package loads whole or not at all, so a reload never keeps half of its old code.
+    const problem = extensions
+      .map((extension): DurableExtensionIssue | undefined => {
+        if (reserved.names.has(extension.name))
+          return { root, entry, message: `"${extension.name}" is built into Oppi` };
+        if (names.has(extension.name))
+          return { root, entry, message: `Another package already loaded "${extension.name}"` };
+        const clash = (extension.tools ?? []).find(
+          (tool) => reserved.tools.has(tool.name) || tools.has(tool.name),
+        );
+        if (clash)
+          return {
+            root,
+            entry,
+            message: `Tool "${clash.name}" is already offered by another extension`,
+          };
+        return undefined;
+      })
+      .find((issue) => issue !== undefined);
+    if (problem) {
+      const builtIn = extensions.every((extension) => reserved.names.has(extension.name));
+      (builtIn ? skipped : errors).push(problem);
       continue;
     }
-    if (names.has(extension.name)) {
-      errors.push({ entry, message: `Another package already loaded "${extension.name}"` });
-      continue;
+    for (const extension of extensions) {
+      names.add(extension.name);
+      for (const tool of extension.tools ?? []) tools.add(tool.name);
+      loaded.push({ extension, runtimes, root, entry, extensionIds });
     }
-    const clash = (extension.tools ?? []).find(
-      (tool) => reserved.tools.has(tool.name) || tools.has(tool.name),
-    );
-    if (clash) {
-      errors.push({
-        entry,
-        message: `Tool "${clash.name}" is already offered by another extension`,
-      });
-      continue;
-    }
-    names.add(extension.name);
-    for (const tool of extension.tools ?? []) tools.add(tool.name);
-    loaded.push({ extension, runtimes, entry, extensionIds });
   }
   return { loaded, skipped, errors };
 }
 
-function checkModule(
-  value: unknown,
-): { extension: Extension; runtimes: readonly DurableExtensionRuntime[] } | string {
-  if (!isRecord(value) || !isRecord(value.extension))
-    return "The default export must be `defineDurableExtension({ extension, runtimes? })`";
-  const module = value as unknown as DurableExtensionModule;
-  const { extension } = module;
-  if (typeof extension.name !== "string" || !extension.name.trim())
-    return "The extension has no name";
+/** The extensions of a default export, or why it is not one. */
+function extensionsOf(value: unknown): Extension[] | string {
+  const list = Array.isArray(value) ? value : [value];
+  if (list.length === 0) return "The default export is an empty array of extensions";
+  const names = new Set<string>();
+  for (const candidate of list) {
+    const problem = notAnExtension(candidate);
+    if (problem)
+      return `The default export must be a pi-durable Extension (defineExtension) or an array of them: ${problem}`;
+    const { name } = candidate as Extension;
+    if (names.has(name)) return `The default export has two extensions named "${name}"`;
+    names.add(name);
+  }
+  return list as Extension[];
+}
+
+function notAnExtension(value: unknown): string | undefined {
+  if (!isRecord(value) || Array.isArray(value)) return "not an object";
+  if (typeof value.name !== "string" || !value.name.trim()) return "it has no name";
   for (const key of ["tools", "sections", "hooks", "wraps", "tasks"] as const)
-    if (extension[key] !== undefined && !Array.isArray(extension[key]))
-      return `The extension's \`${key}\` must be an array`;
-  const runtimes = module.runtimes ?? ["host"];
-  if (
-    !Array.isArray(runtimes) ||
-    runtimes.length === 0 ||
-    runtimes.some((runtime) => !RUNTIMES.includes(runtime))
-  )
-    return '`runtimes` must list "host", "sandbox", or both';
-  return { extension, runtimes: [...new Set(runtimes)] };
+    if (value[key] !== undefined && !Array.isArray(value[key]))
+      return `its \`${key}\` is not an array`;
+  return undefined;
 }
 
 let aliases: Record<string, string> | undefined;

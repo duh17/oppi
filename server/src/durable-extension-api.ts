@@ -1,27 +1,27 @@
-import type { Extension } from "@earendil-works/pi-durable";
-
-/** Execution runtimes a durable extension may load in. */
-export type DurableExtensionRuntime = "host" | "sandbox";
-
 /**
- * The default export of a package's `durable.ts`. Package code imports this module as
- * `oppi/durable`; the loader aliases it, and `@earendil-works/pi-durable`, to the server's
- * own copies so documents and tasks the extension defines are the Harness's own.
- */
-export interface DurableExtensionModule {
-  /** A plain pi-durable extension: tools, sections, hooks, wraps, tasks. */
-  readonly extension: Extension;
-  /**
-   * Runtimes whose sessions may select it. Default `["host"]`. Code always runs in the server
-   * process; only list `"sandbox"` when every command and file access goes through `api.env`.
-   */
-  readonly runtimes?: readonly DurableExtensionRuntime[];
-}
-
-/**
- * Imported by package code through the `oppi/durable` alias, never by the server itself.
+ * `oppi/durable`: the host API a durable extension imports for what only Oppi provides. The
+ * extension itself is plain pi-durable (`export default defineExtension(...)`), and its package
+ * declares the entry in `package.json` `oppi.durable`. The loader aliases this module, and
+ * pi-durable, chord, pi-ai, and typebox, to the server's own copies, as upstream's plugin loader
+ * resolved its plugin API.
+ *
+ * Every package entry gets its own evaluation of this module (the loader keeps no module cache,
+ * so a reload re-reads everything), so nothing here may keep state: documents are matched by
+ * kind, not by object.
  * @public
  */
-export function defineDurableExtension(module: DurableExtensionModule): DurableExtensionModule {
-  return module;
-}
+
+/**
+ * Oppi's extension UI: dialogs (`requestUI`), persistent notifications, and transcript cards,
+ * kept in the conversation's `oppi.extension-ui` and `oppi.input-cards` documents and shown by
+ * the server's generic projection.
+ */
+export {
+  DurableInputCards,
+  DurableUI,
+  requestUI,
+  type UINotification,
+  type UIRequest,
+  type UIResponse,
+  type UIState,
+} from "../extensions/durable/durable-ui.js";

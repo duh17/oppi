@@ -4,7 +4,7 @@ Use this convention when porting a Pi extension to the experimental server-durab
 
 ## Publish a request
 
-Native implementations live at `pi-extensions/<name>/durable.ts`. Import `requestUI` from `pi-extensions/durable-ui.ts` inside a replay-safe Durable tool:
+Native implementations live at `pi-extensions/<name>/durable.ts`, declared by the package's `package.json` `oppi.durable`. Import `requestUI` from `oppi/durable` (the host API module the extension loader resolves to `server/src/durable-extension-api.ts`, which re-exports `pi-extensions/durable-ui.ts`) inside a replay-safe Durable tool:
 
 ```typescript
 const response = await requestUI(
@@ -60,13 +60,13 @@ Append an entry with no `model` and a `data.card` object:
 }
 ```
 
-`TranscriptCard` and `sanitizeTranscriptCard` are available from `durable-ui.ts`. The pure helper lives in `transcript-card.ts` so classic trace reads do not load the Durable runtime. A card requires a non-empty title and a valid millisecond timestamp. Optional fields are `subtitle`, `status`, `body`, `fields`, and `accent` (`info`, `success`, `warning`, or `error`). Projection allows at most eight label/value fields, caps display fields at 500 characters and body text at 4096 UTF-8 bytes, and discards unknown properties. Keep full evidence in entry data.
+`TranscriptCard` and `sanitizeTranscriptCard` are available from `durable-ui.ts` (server code imports it directly; extensions use `oppi/durable`). The pure helper lives in `transcript-card.ts` so classic trace reads do not load the Durable runtime. A card requires a non-empty title and a valid millisecond timestamp. Optional fields are `subtitle`, `status`, `body`, `fields`, and `accent` (`info`, `success`, `warning`, or `error`). Projection allows at most eight label/value fields, caps display fields at 500 characters and body text at 4096 UTF-8 bytes, and discards unknown properties. Keep full evidence in entry data.
 
 History projects a valid card as the existing `system` event with `presentation.kind="custom"`, without a renderer or an extension-name check. Live append emits one ephemeral notice with ID `entry:<entry-id>`. Catch-up does not replay notices; trace reload restores the card. Cards do not appear in `get_messages` or model context. Classic entries without cards still require their live renderer.
 
 ## Build and loading
 
-`server/extensions/durable/` contains symlinks to the canonical native implementations, the shared document helper, and ask's existing pure result helper. TypeScript follows these source paths and emits ordinary JS under `dist/extensions/durable/`, which the npm package includes. The server imports only this compiled layout. No code depends on the excluded `dist/oppi-extensions/` tree, and no Pi factory is imported.
+`server/extensions/durable/<name>/` is a bundled package directory: symlinks to the canonical native implementation, its `package.json` (with the `oppi.durable` manifest), and the files it imports, plus the shared document helper. TypeScript follows these source paths and emits ordinary JS under `dist/extensions/durable/`, and `scripts/copy-durable-packages.mjs` copies each manifest beside it; the npm package includes both. The server loads each bundled entry through the same loader as a user's Pi package (`durable-extension-loader.ts`), never by a static import: an entry imports `oppi/durable`, which only the loader resolves. What the server itself reads of a built-in lives in the package's `contract.ts`, which imports nothing from `oppi/durable` (`DurableJobs`; working words' owner document and `ensureWorkingWords`). Manifests name `./durable.js`; from source the loader finds `durable.ts`. Tests import entries directly through the `oppi/durable` alias in `vitest.config.ts`. No code depends on the excluded `dist/oppi-extensions/` tree, and no Pi factory is imported.
 
 The Dockerfile copies the canonical native ports and their pure helpers into `/opt/pi-extensions/`, beside `/opt/server/`, to keep the same relative symlink targets inside the build image. This uses the existing compiler layout without a source-generation step. The runtime uses only the emitted JS.
 

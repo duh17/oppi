@@ -34,13 +34,19 @@ RUN npm ci --no-audit --no-fund --ignore-scripts
 
 COPY server/ ./
 # Match the canonical targets of server/extensions/durable source symlinks.
-# tsc emits ordinary JS into dist/extensions/durable; runtime needs no symlinks.
+# tsc emits ordinary JS into dist/extensions/durable, and the build copies each bundled
+# package.json beside it; runtime needs no symlinks.
 COPY pi-extensions/durable-ui.ts /opt/pi-extensions/durable-ui.ts
 COPY pi-extensions/transcript-card.ts /opt/pi-extensions/transcript-card.ts
 COPY pi-extensions/ask/durable.ts /opt/pi-extensions/ask/durable.ts
+COPY pi-extensions/ask/package.json /opt/pi-extensions/ask/package.json
 COPY pi-extensions/ask/extensions/ask-shared.ts /opt/pi-extensions/ask/extensions/ask-shared.ts
 COPY pi-extensions/working-words/durable.ts /opt/pi-extensions/working-words/durable.ts
+COPY pi-extensions/working-words/contract.ts /opt/pi-extensions/working-words/contract.ts
+COPY pi-extensions/working-words/package.json /opt/pi-extensions/working-words/package.json
 COPY pi-extensions/background-jobs/durable.ts /opt/pi-extensions/background-jobs/durable.ts
+COPY pi-extensions/background-jobs/contract.ts /opt/pi-extensions/background-jobs/contract.ts
+COPY pi-extensions/background-jobs/package.json /opt/pi-extensions/background-jobs/package.json
 COPY pi-extensions/background-jobs/jobs.ts /opt/pi-extensions/background-jobs/jobs.ts
 COPY pi-extensions/background-jobs/delivery.ts /opt/pi-extensions/background-jobs/delivery.ts
 RUN npm run build \

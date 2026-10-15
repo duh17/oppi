@@ -25,10 +25,8 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import {
-  DurableBackgroundJobs,
-  DurableJobs,
-} from "../extensions/durable/background-jobs/durable.js";
+import { DurableBackgroundJobs } from "../extensions/durable/background-jobs/durable.js";
+import { DurableJobs } from "../extensions/durable/background-jobs/contract.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
 import { DurableBackend } from "../src/durable-backend.js";
 import { Storage } from "../src/storage.js";
@@ -327,7 +325,7 @@ describe("native Durable background jobs", () => {
     const storage = new Storage(f.dir);
     const session = storage.createSession("Background display", "faux/faux-1");
     session.serverDurable = { storeId: session.id, conversationId: f.root.id };
-    const owner = new DurableHarness(f.dir).attachOpened(
+    const owner = await new DurableHarness(f.dir).attachOpened(
       session.id,
       { harness: f.harness, storage: f.durableStorage, models: f.models },
       { createdAt: Date.now(), cwd: f.dir },
@@ -401,7 +399,7 @@ describe("native Durable background jobs", () => {
       const storage = new Storage(f.dir);
       const session = storage.createSession("Report queue", "faux/faux-1");
       session.serverDurable = { storeId: session.id, conversationId: f.root.id };
-      const owner = new DurableHarness(f.dir).attachOpened(
+      const owner = await new DurableHarness(f.dir).attachOpened(
         session.id,
         { harness: f.harness, storage: f.durableStorage, models: f.models },
         { createdAt: Date.now(), cwd: f.dir },
@@ -483,7 +481,7 @@ describe("native Durable background jobs", () => {
     ]);
     await prompt(f.root);
     await f.entered.promise;
-    const owner = new DurableHarness(f.dir).attachOpened(
+    const owner = await new DurableHarness(f.dir).attachOpened(
       "jobs-host",
       { harness: f.harness, storage: f.durableStorage, models: f.models },
       { createdAt: Date.now(), cwd: f.dir },
@@ -875,7 +873,7 @@ describe("native Durable background jobs", () => {
     const env = new GondolinExecutionEnv(vm, "workspace", "/workspace/project");
     const harness = await f.open(env);
     const root = (await harness.conversation(f.root.id, context))!;
-    const owner = new DurableHarness(f.dir).attachOpened(
+    const owner = await new DurableHarness(f.dir).attachOpened(
       "jobs-host",
       { harness, storage: f.durableStorage, models: f.models },
       { createdAt: Date.now(), cwd: f.dir },
@@ -948,7 +946,7 @@ describe("native Durable background jobs", () => {
     const env = new GondolinExecutionEnv(vm, "workspace", "/workspace/project");
     const harness = await f.open(env);
     const root = (await harness.conversation(f.root.id, context))!;
-    const owner = new DurableHarness(f.dir).attachOpened(
+    const owner = await new DurableHarness(f.dir).attachOpened(
       "jobs-host",
       { harness, storage: f.durableStorage, models: f.models },
       { createdAt: Date.now(), cwd: f.dir },

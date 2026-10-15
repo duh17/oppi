@@ -13,7 +13,11 @@ import {
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationId, Harness } from "@earendil-works/pi-durable";
-import { DurableHarness, SessionHost, type DurableExtensionReport } from "../src/durable-harness.js";
+import {
+  DurableHarness,
+  SessionHost,
+  type DurableExtensionReport,
+} from "../src/durable-harness.js";
 import { SessionManager } from "../src/sessions.js";
 import { Storage } from "../src/storage.js";
 import { createRouteHelpers } from "../src/routes/http.js";
@@ -36,36 +40,54 @@ afterEach(async () => {
   else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 });
 
+/** `package.json` with a classic entry and the durable entry `./durable.ts`. */
+function writeManifest(root: string, name: string): void {
+  writeFileSync(
+    join(root, "package.json"),
+    JSON.stringify({
+      name,
+      pi: { extensions: ["./index.ts"] },
+      oppi: { durable: { entry: "./durable.ts" } },
+    }),
+  );
+}
+
 /** A Pi package with a classic entry and a durable entry whose tool reports `version.ts`. */
 function writePackage(name: string, extensionName = name): string {
   const root = join(agentDir, "extensions", name);
   mkdirSync(root, { recursive: true });
+  writeManifest(root, name);
   writeFileSync(join(root, "index.ts"), "export default function () {}\n");
   writeFileSync(
     join(root, "durable.ts"),
     [
       'import { Type } from "typebox";',
       'import { defineExtension, defineTool } from "@earendil-works/pi-durable";',
-      'import { defineDurableExtension } from "oppi/durable";',
       'import { VERSION } from "./version.js";',
-      "export default defineDurableExtension({",
-      "  extension: defineExtension({",
-      `    name: ${JSON.stringify(extensionName)},`,
-      "    tools: [defineTool({",
-      `      name: ${JSON.stringify(`${name}_version`)},`,
-      '      description: "Report the code version.",',
-      "      parameters: Type.Object({}),",
-      "      async execute() {",
-      '        return { output: [{ type: "text", text: VERSION }] };',
-      "      },",
-      "    })],",
-      "  }),",
+      "export default defineExtension({",
+      `  name: ${JSON.stringify(extensionName)},`,
+      "  tools: [defineTool({",
+      `    name: ${JSON.stringify(`${name}_version`)},`,
+      '    description: "Report the code version.",',
+      "    parameters: Type.Object({}),",
+      "    async execute() {",
+      '      return { output: [{ type: "text", text: VERSION }] };',
+      "    },",
+      "  })],",
       "});",
       "",
     ].join("\n"),
   );
   setVersion(name, "v1");
   return root;
+}
+
+/** The report's entries from the user's Pi packages, without Oppi's bundled ones. */
+function fromPackages(report: DurableExtensionReport) {
+  return {
+    loaded: report.loaded.filter((loaded) => !loaded.builtIn).map((loaded) => loaded.name),
+    kept: report.kept.filter((kept) => !kept.builtIn).map((kept) => kept.name),
+  };
 }
 
 function setVersion(name: string, version: string): void {
@@ -191,7 +213,7 @@ describe("durable extensions from Pi packages", () => {
     await prompt(f.manager, f.session.id, "Which version?");
     setVersion("probe", "v2");
     const report = await f.reload();
-    expect(report.loaded.map((loaded) => loaded.name)).toEqual(["probe"]);
+    expect(fromPackages(report).loaded).toEqual(["probe"]);
     expect(report.errors).toEqual([]);
     await prompt(f.manager, f.session.id, "Which version now?");
 
@@ -211,8 +233,7 @@ describe("durable extensions from Pi packages", () => {
 
     writeFileSync(join(root, "durable.ts"), "export default {\n");
     const broken = await f.reload();
-    expect(broken.loaded).toEqual([]);
-    expect(broken.kept.map((kept) => kept.name)).toEqual(["probe"]);
+    expect(fromPackages(broken)).toEqual({ loaded: [], kept: ["probe"] });
     expect(broken.errors).toEqual([
       expect.objectContaining({ entry: realpathSync(join(root, "durable.ts")) }),
     ]);
@@ -235,13 +256,14 @@ describe("durable extensions from Pi packages", () => {
     const source = mkdtempSync(join(tmpdir(), "oppi-durable-packages-source-"));
     mkdirSync(join(source, "linked"));
     writeFileSync(join(source, "shared.ts"), 'export const VERSION: string = "shared";\n');
+    writeManifest(join(source, "linked"), "linked");
     writeFileSync(join(source, "linked", "index.ts"), "export default function () {}\n");
     writeFileSync(
       join(source, "linked", "durable.ts"),
       [
         'import { defineExtension } from "@earendil-works/pi-durable";',
         'import { VERSION } from "../shared.js";',
-        "export default { extension: defineExtension({ name: `linked-${VERSION}` }) };",
+        "export default defineExtension({ name: `linked-${VERSION}` });",
         "",
       ].join("\n"),
     );
@@ -250,7 +272,7 @@ describe("durable extensions from Pi packages", () => {
     const f = await fixture(callsTool("unused"));
     const report = await f.reload();
     expect(report.errors).toEqual([]);
-    expect(report.loaded.map((loaded) => loaded.name)).toEqual(["linked-shared"]);
+    expect(fromPackages(report).loaded).toEqual(["linked-shared"]);
   });
 
   it("skips a package that provides a built-in extension and refuses a tool name a built-in owns", async () => {
@@ -261,14 +283,14 @@ describe("durable extensions from Pi packages", () => {
       [
         'import { defineExtension } from "@earendil-works/pi-durable";',
         'import { CodingTools } from "@earendil-works/pi-durable/tools";',
-        'export default { extension: defineExtension({ name: "shadow", tools: CodingTools.tools }) };',
+        'export default defineExtension({ name: "shadow", tools: CodingTools.tools });',
         "",
       ].join("\n"),
     );
     writePackage("probe");
     const f = await fixture(callsTool("probe_version"));
     const report = await f.reload();
-    expect(report.loaded.map((loaded) => loaded.name)).toEqual(["probe"]);
+    expect(fromPackages(report).loaded).toEqual(["probe"]);
     expect(report.skipped).toEqual([
       expect.objectContaining({ message: '"ask" is built into Oppi' }),
     ]);

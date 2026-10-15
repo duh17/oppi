@@ -12,6 +12,7 @@ import {
   SessionFailed,
   createRegistry,
   defineDoc,
+  type AnyTask,
   type Extension,
   type HarnessSettings,
   type Conversation,
@@ -31,14 +32,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { DurableSandboxTools } from "./durable-sandbox-tools.js";
-import { DurableAsk } from "../extensions/durable/ask/durable.js";
-import {
-  DurableBackgroundJobs,
-  DurableJobs,
-} from "../extensions/durable/background-jobs/durable.js";
+import { DurableJobs } from "../extensions/durable/background-jobs/contract.js";
 import { controlConversationExtensions } from "./durable-control-conversation.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
-import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
 import { DurableProjectContext } from "../extensions/durable/project-context/durable.js";
 import {
   SESSION_REPORTER_TASK,
@@ -49,11 +45,13 @@ import {
   type DurableControlHost,
 } from "../extensions/durable/control/durable.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
-import type { DurableExtensionRuntime } from "./durable-extension-api.js";
 import {
+  BUNDLED_PACKAGES_DIR,
+  bundledDurableExtensionPackages,
   discoverDurableExtensionPackages,
   loadDurableExtensions,
   type DurableExtensionIssue,
+  type DurableExtensionRuntime,
   type LoadedDurableExtension,
 } from "./durable-extension-loader.js";
 import type { DurableMcp } from "./durable-mcp.js";
@@ -154,9 +152,11 @@ export interface DurableExtensionSummary {
   entry: string;
   runtimes: readonly DurableExtensionRuntime[];
   tools: string[];
+  /** One of Oppi's bundled packages rather than a user's Pi package. */
+  builtIn: boolean;
 }
 
-/** What one load of the Pi packages' durable entries did to the registry. */
+/** What one load of the bundled and Pi packages' durable entries did to the registry. */
 export interface DurableExtensionReport {
   /** Installed from this load; a name that was already installed was replaced in place. */
   loaded: DurableExtensionSummary[];
@@ -168,14 +168,23 @@ export interface DurableExtensionReport {
   errors: DurableExtensionIssue[];
 }
 
-function summarize(loaded: LoadedDurableExtension): DurableExtensionSummary {
+function summarize(loaded: LoadedDurableExtension, builtIn: boolean): DurableExtensionSummary {
   return {
     name: loaded.extension.name,
     entry: loaded.entry,
     runtimes: loaded.runtimes,
     tools: (loaded.extension.tools ?? []).map((tool) => tool.name),
+    builtIn,
   };
 }
+
+/** Selected only by the control conversation, never by default. */
+const CONTROL_EXTENSION = "oppi.control";
+/** Offers `subagent`; a session selects it only when it may spawn. */
+const SESSIONS_EXTENSION = "oppi.sessions";
+
+/** A built-in extension and the runtimes whose sessions select it by default. */
+type BuiltIn = Pick<LoadedDurableExtension, "extension" | "runtimes">;
 
 function readStoreMeta(directory: string): DurableStoreMeta | undefined {
   const path = join(directory, METADATA_FILE);
@@ -1097,6 +1106,8 @@ export class DurableHarness {
   private registry?: Registry;
   private threads?: DurableThreads;
   private control?: DurableControlHost;
+  /** Extensions from Oppi's bundled packages, in install order. */
+  private bundled: readonly LoadedDurableExtension[] = [];
   /** Extensions from the durable entries of enabled Pi packages, in load order. */
   private packageExtensions: readonly LoadedDurableExtension[] = [];
   /** One load or reload at a time. */
@@ -1116,10 +1127,9 @@ export class DurableHarness {
    */
   onHostRecovered?: (host: SessionHost, failure: unknown) => Promise<void>;
   /** The session tools; they reach Oppi through the host bound with `bindThreads`. */
-  readonly sessionsExtension = createDurableSessions(() => this.threads);
+  private readonly sessions = createDurableSessions(() => this.threads);
   /** The control conversation's tools; they reach Oppi through the host bound with `bindControl`. */
-  readonly controlExtension = createDurableControl(() => this.control);
-  /** The control conversation's exact selection. Never part of `baseExtensions`. */
+  private readonly controlTools = createDurableControl(() => this.control);
   /**
    * Runs the control conversation's codemode scripts. A sandbox only holds defaults; each script
    * gets its own VM worker, limited so a runaway script fails inside it, not the server.
@@ -1136,26 +1146,83 @@ export class DurableHarness {
     sandbox: this.controlSandbox,
     models: false,
   });
-  readonly controlExtensions: readonly Extension[] = controlConversationExtensions(
-    this.controlExtension,
-    this.controlCodemode,
-  );
-  /**
-   * Extensions every process installs, in install order. They are also the Harness default
-   * selection, so a conversation whose stored selection is an `{ add }` edit never picks up
-   * another session's MCP extension from the registry.
-   */
-  readonly baseExtensions: Extension[] = [
-    CodingTools,
-    DurableSandboxTools,
-    DurableAsk,
-    DurableWorkingWords,
-    DurableBackgroundJobs,
-    this.sessionsExtension,
-    DurableProjectContext,
-  ];
 
-  constructor(readonly dataDir: string) {}
+  /**
+   * @param bundledDir Where Oppi's bundled packages are; a test points it at a copy to reload.
+   */
+  constructor(
+    readonly dataDir: string,
+    private readonly bundledDir = BUNDLED_PACKAGES_DIR,
+  ) {}
+
+  /** Oppi's built-in extensions, in install order. */
+  private get builtIns(): readonly BuiltIn[] {
+    return [
+      { extension: DurableSandboxTools, runtimes: ["sandbox"] },
+      ...this.bundled,
+      { extension: this.sessions, runtimes: ["host", "sandbox"] },
+      { extension: DurableProjectContext, runtimes: ["host", "sandbox"] },
+      { extension: this.controlTools, runtimes: ["host"] },
+    ];
+  }
+
+  private builtIn(name: string): Extension {
+    const found = this.builtIns.find((builtIn) => builtIn.extension.name === name);
+    if (!found) throw new Error(`Built-in durable extension ${name} is not loaded`);
+    return found.extension;
+  }
+
+  /** The installed `oppi.sessions`, which offers `subagent`. */
+  get sessionsExtension(): Extension {
+    return this.builtIn(SESSIONS_EXTENSION);
+  }
+
+  /** The control conversation's exact selection. Never part of `defaultExtensions`. */
+  get controlExtensions(): readonly Extension[] {
+    return controlConversationExtensions((name) => this.builtIn(name), this.controlCodemode);
+  }
+
+  /**
+   * The Harness default selection: CodingTools and every built-in but control, in install order.
+   * A conversation whose stored selection is an `{ add }` edit starts from it, so it never picks
+   * up another session's MCP extension from the registry.
+   */
+  get defaultExtensions(): Extension[] {
+    return [
+      CodingTools,
+      ...this.builtIns
+        .filter((builtIn) => builtIn.extension.name !== CONTROL_EXTENSION)
+        .map((builtIn) => builtIn.extension),
+    ];
+  }
+
+  /** What a new session of `runtime` starts from: CodingTools and the built-ins it allows. */
+  builtInsFor(runtime: DurableExtensionRuntime): Extension[] {
+    return [
+      CodingTools,
+      ...this.builtIns
+        .filter(
+          (builtIn) =>
+            builtIn.runtimes.includes(runtime) && builtIn.extension.name !== CONTROL_EXTENSION,
+        )
+        .map((builtIn) => builtIn.extension),
+    ];
+  }
+
+  /**
+   * The built-ins a bound conversation's `{ add }` edit enrolls on every attach, in install order:
+   * those every runtime allows, with `oppi.sessions` only when the session may spawn.
+   */
+  attachedBuiltIns(spawn: boolean): Extension[] {
+    return this.builtIns
+      .filter(
+        (builtIn) =>
+          builtIn.runtimes.includes("host") &&
+          builtIn.runtimes.includes("sandbox") &&
+          (spawn || builtIn.extension.name !== SESSIONS_EXTENSION),
+      )
+      .map((builtIn) => builtIn.extension);
+  }
 
   get isClosed(): boolean {
     return this.closed;
@@ -1201,53 +1268,117 @@ export class DurableHarness {
   }
 
   /**
-   * Re-read the durable entries of enabled Pi packages and install them in the open
-   * registry. Installing an extension under an installed name replaces it in place: running
-   * tool calls finish on their old code, and the next task phase, request, or call uses the
-   * new code. A package that fails to load keeps its previous code installed; a package that
-   * is gone is uninstalled, and conversations that selected it stop getting it.
+   * Re-read Oppi's bundled packages and the durable entries of enabled Pi packages, and install
+   * them in the open registry. Installing an extension under an installed name replaces it in
+   * place: running tool calls finish on their old code, and the next task phase, request, or
+   * call uses the new code. A package that fails to load, bundled or not, keeps its previous code
+   * installed; a Pi package that is gone is uninstalled, and conversations that selected it stop
+   * getting it.
    */
   async reloadExtensions(): Promise<DurableExtensionReport> {
     const { registry } = await this.ensureShared();
-    return this.loadPackageExtensions(registry);
+    return this.loadExtensions(registry, false);
   }
 
-  private loadPackageExtensions(registry: Registry): Promise<DurableExtensionReport> {
-    const run = this.extensionLoad.then(() => this.loadPackageExtensionsOnce(registry));
+  private loadExtensions(registry: Registry, first: boolean): Promise<DurableExtensionReport> {
+    const run = this.extensionLoad.then(() => this.loadExtensionsOnce(registry, first));
     this.extensionLoad = run.catch(() => undefined);
     return run;
   }
 
-  private async loadPackageExtensionsOnce(registry: Registry): Promise<DurableExtensionReport> {
+  private async loadExtensionsOnce(
+    registry: Registry,
+    first: boolean,
+  ): Promise<DurableExtensionReport> {
+    const builtIns = await this.loadBuiltIns(registry, first);
+    // Installed so the control conversation can select it by name. Installing is not
+    // selecting: only `defaultExtensions` is the default selection of other conversations.
+    if (first) registry.install(this.controlCodemode);
+    const packages = await this.loadPackages(registry);
+    const report: DurableExtensionReport = {
+      loaded: [...builtIns.loaded, ...packages.loaded],
+      kept: [...builtIns.kept, ...packages.kept],
+      removed: packages.removed,
+      skipped: packages.skipped,
+      errors: [...builtIns.errors, ...packages.errors],
+    };
+    this.logExtensionReport(report);
+    return report;
+  }
+
+  /**
+   * Load Oppi's bundled packages. The first load installs every built-in in order and fails the
+   * runtime when one is broken; a reload replaces the ones that load and keeps the previous code
+   * of the others. A built-in is never uninstalled.
+   */
+  private async loadBuiltIns(
+    registry: Registry,
+    first: boolean,
+  ): Promise<Pick<DurableExtensionReport, "loaded" | "kept" | "errors">> {
+    const previous = this.bundled;
+    const found = bundledDurableExtensionPackages(this.bundledDir);
+    const others = [
+      CodingTools,
+      this.controlCodemode,
+      ...this.builtIns
+        .map((builtIn) => builtIn.extension)
+        .filter((extension) => !previous.some((old) => old.extension === extension)),
+    ];
+    // Names only: built-ins may offer a tool CodingTools has, as background-jobs does with `bash`.
+    const result = await loadDurableExtensions(found.packages, {
+      names: reservedBy(others).names,
+      tools: new Set(),
+    });
+    const errors = [...found.errors, ...result.errors, ...result.skipped];
+    if (first && errors.length)
+      throw new Error(
+        `Oppi's bundled durable extensions failed to load: ${errors
+          .map((issue) => `${issue.entry}: ${issue.message}`)
+          .join("; ")}`,
+      );
+    const fresh = new Map(result.loaded.map((loaded) => [loaded.extension.name, loaded]));
+    const kept = previous.filter((old) => !fresh.has(old.extension.name));
+    this.bundled = [
+      ...previous.map((old) => fresh.get(old.extension.name) ?? old),
+      ...result.loaded.filter(
+        (loaded) => !previous.some((old) => old.extension.name === loaded.extension.name),
+      ),
+    ];
+    if (first) for (const builtIn of this.builtIns) registry.install(builtIn.extension);
+    else for (const loaded of result.loaded) registry.install(loaded.extension);
+    return {
+      loaded: result.loaded.map((loaded) => summarize(loaded, true)),
+      kept: kept.map((old) => summarize(old, true)),
+      errors,
+    };
+  }
+
+  private async loadPackages(registry: Registry): Promise<DurableExtensionReport> {
     const previous = this.packageExtensions;
-    const builtIns = [...this.baseExtensions, ...this.controlExtensions];
     let discovered: Awaited<ReturnType<typeof discoverDurableExtensionPackages>>;
     try {
       discovered = await discoverDurableExtensionPackages(getAgentDir());
     } catch (error) {
       // Discovery itself failed: change nothing, so a settings typo cannot unload everything.
-      const report: DurableExtensionReport = {
+      return {
         loaded: [],
-        kept: previous.map(summarize),
+        kept: previous.map((old) => summarize(old, false)),
         removed: [],
         skipped: [],
         errors: [
           { entry: getAgentDir(), message: `Package discovery failed: ${safeErrorMessage(error)}` },
         ],
       };
-      this.logExtensionReport(report);
-      return report;
     }
-    const result = await loadDurableExtensions(discovered.packages, {
-      names: new Set(builtIns.map((extension) => extension.name)),
-      tools: new Set(
-        builtIns.flatMap((extension) => extension.tools ?? []).map((tool) => tool.name),
-      ),
-    });
+    const result = await loadDurableExtensions(
+      discovered.packages,
+      reservedBy([...this.defaultExtensions, ...this.controlExtensions]),
+    );
     const loadedNames = new Set(result.loaded.map((loaded) => loaded.extension.name));
-    const failedEntries = new Set(result.errors.map((issue) => issue.entry));
+    const errors = [...discovered.errors, ...result.errors];
+    const failedRoots = new Set(errors.flatMap((issue) => (issue.root ? [issue.root] : [])));
     const kept = previous.filter(
-      (old) => failedEntries.has(old.entry) && !loadedNames.has(old.extension.name),
+      (old) => failedRoots.has(old.root) && !loadedNames.has(old.extension.name),
     );
     const next = [...result.loaded, ...kept];
     const nextNames = new Set(next.map((loaded) => loaded.extension.name));
@@ -1255,15 +1386,13 @@ export class DurableHarness {
     const removed = previous.filter((old) => !nextNames.has(old.extension.name));
     for (const old of removed) registry.uninstall(old.extension);
     this.packageExtensions = next;
-    const report: DurableExtensionReport = {
-      loaded: result.loaded.map(summarize),
-      kept: kept.map(summarize),
+    return {
+      loaded: result.loaded.map((loaded) => summarize(loaded, false)),
+      kept: kept.map((old) => summarize(old, false)),
       removed: removed.map((old) => old.extension.name),
       skipped: result.skipped,
-      errors: [...discovered.errors, ...result.errors],
+      errors,
     };
-    this.logExtensionReport(report);
-    return report;
   }
 
   private logExtensionReport(report: DurableExtensionReport): void {
@@ -1274,6 +1403,13 @@ export class DurableHarness {
       });
     for (const issue of report.errors)
       log.error("durable_extensions.load_failed", { entry: issue.entry, message: issue.message });
+  }
+
+  /** The installed definition of task `name`; pi-durable resolves tasks by name, so the current code. */
+  installedTask(name: string): AnyTask {
+    const task = this.registry?.snapshot().task(name);
+    if (!task) throw new Error(`Durable task ${name} is not installed`);
+    return task;
   }
 
   installExtension(extension: Extension): void {
@@ -1328,15 +1464,11 @@ export class DurableHarness {
       }));
     const settings = SettingsManager.create(homedir(), agentDir, { projectTrusted: false });
     this.runPolicy = settings;
-    this.runSettings = harnessSettings(settings, this.baseExtensions);
     const registry = createRegistry();
-    for (const extension of this.baseExtensions) registry.install(extension);
-    // Installed so the control conversation can select them by name. Installing is not
-    // selecting: only `baseExtensions` is the default selection of other conversations.
-    for (const extension of this.controlExtensions)
-      if (!this.baseExtensions.includes(extension)) registry.install(extension);
+    registry.install(CodingTools);
+    await this.loadExtensions(registry, true);
     this.registry = registry;
-    await this.loadPackageExtensions(registry);
+    this.runSettings = harnessSettings(settings, this.defaultExtensions);
     return { models, registry, settings: this.runSettings };
   }
 
@@ -1413,14 +1545,17 @@ export class DurableHarness {
   }
 
   /**
-   * Test seam: bind an already-open Harness as this store without the directory lock.
+   * Test seam: bind an already-open Harness as this store without the directory lock. Opens
+   * the runtime first, so the built-ins the session's backend selects are loaded.
    */
-  attachOpened(
+  async attachOpened(
     storeId: string,
     opened: { harness: Harness; storage: Storage; models: ModelRuntime },
     meta: DurableStoreMeta,
-  ): SessionHost {
+  ): Promise<SessionHost> {
     assertDurableStoreId(storeId);
+    if (!this.shared && !this.boundModels) this.boundModels = opened.models;
+    await this.ensureShared();
     const directory = durableStoreDir(this.dataDir, storeId);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     writeStoreMeta(directory, meta);
@@ -1442,6 +1577,19 @@ export class DurableHarness {
     await Promise.all(hosts.map((host) => host.close()));
     await this.controlSandbox.close();
   }
+}
+
+/** Names and tool names a loaded package must not take from `extensions`. */
+function reservedBy(extensions: readonly Extension[]): {
+  names: Set<string>;
+  tools: Set<string>;
+} {
+  return {
+    names: new Set(extensions.map((extension) => extension.name)),
+    tools: new Set(
+      extensions.flatMap((extension) => extension.tools ?? []).map((tool) => tool.name),
+    ),
+  };
 }
 
 // Pi v1 experimental/durable/harness-setup.ts: read policy at each use,

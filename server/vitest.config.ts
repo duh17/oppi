@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -34,6 +35,12 @@ export default defineConfig({
   },
   resolve: {
     alias: [
+      // Tests import durable package entries directly; production loads them only through
+      // the extension loader, which aliases `oppi/durable` the same way.
+      {
+        find: /^oppi\/durable$/,
+        replacement: fileURLToPath(new URL("./src/durable-extension-api.ts", import.meta.url)),
+      },
       // Resolve .js imports to .ts sources (NodeNext moduleResolution)
       { find: /^(\..+)\.js$/, replacement: "$1.ts" },
     ],

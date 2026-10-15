@@ -5,7 +5,15 @@
   "description": "Reference Pi extension: background a long shell command and deliver finished output in one batch.",
   "type": "module",
   "keywords": ["pi-package", "pi-extension", "oppi"],
-  "files": ["index.ts", "jobs.ts", "delivery.ts", "README.md", "package.json"],
+  "files": [
+    "index.ts",
+    "durable.ts",
+    "contract.ts",
+    "jobs.ts",
+    "delivery.ts",
+    "README.md",
+    "package.json"
+  ],
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
@@ -18,5 +26,11 @@
   },
   "pi": {
     "extensions": ["./index.ts"]
+  },
+  "oppi": {
+    "durable": {
+      "entry": "./durable.js",
+      "runtimes": ["host", "sandbox"]
+    }
   }
 }

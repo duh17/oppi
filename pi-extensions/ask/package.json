@@ -22,6 +22,7 @@
   "files": [
     "extensions/",
     "index.ts",
+    "durable.ts",
     "README.md",
     "package.json"
   ],
@@ -39,5 +40,11 @@
     "extensions": [
       "./extensions/ask.ts"
     ]
+  },
+  "oppi": {
+    "durable": {
+      "entry": "./durable.js",
+      "runtimes": ["host", "sandbox"]
+    }
   }
 }

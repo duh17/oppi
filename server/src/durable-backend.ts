@@ -28,7 +28,6 @@ import {
   CompactionEntry,
   ResetEntry,
 } from "@earendil-works/pi-durable";
-import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai/utils/transcript";
 import { computeCacheWaste } from "./cache-miss.js";
 import {
@@ -52,7 +51,6 @@ import { readRequestDisplay, type DurableAgentController } from "./durable-agent
 import { controlConversationTools } from "./durable-control-conversation.js";
 import { DurableRuntime, type SessionHost } from "./durable-harness.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
-import { DurableSandboxTools } from "./durable-sandbox-tools.js";
 import { readDurableInputCards } from "./durable-input-cards.js";
 import { DurableEventProjection } from "./durable-event-projection.js";
 import { exportDurableToHtml } from "./durable-export.js";
@@ -74,8 +72,6 @@ import {
 } from "./session-runtime-transaction.js";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
 import type { MessageQueueState, Session, Workspace } from "./types.js";
-import { DurableAsk } from "../extensions/durable/ask/durable.js";
-import { DurableBackgroundJobs } from "../extensions/durable/background-jobs/durable.js";
 import {
   DURABLE_QUEUE_REQUEST_ID_PREFIX,
   DURABLE_RESERVED_REQUEST_ID_PREFIXES,
@@ -89,9 +85,9 @@ import {
 } from "./durable-failure-cards.js";
 import { sanitizeTranscriptCard } from "../extensions/durable/durable-ui.js";
 import {
-  DurableWorkingWords,
+  WORKING_WORDS_TASK,
   ensureWorkingWords,
-} from "../extensions/durable/working-words/durable.js";
+} from "../extensions/durable/working-words/contract.js";
 import { DurableUIProjection } from "./durable-ui-projection.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { DurableMcp } from "./durable-mcp.js";
@@ -105,10 +101,7 @@ import {
   renderSkills,
   type DurableProjectResources,
 } from "./durable-project-resources.js";
-import {
-  ProjectContextDoc,
-  DurableProjectContext,
-} from "../extensions/durable/project-context/durable.js";
+import { ProjectContextDoc } from "../extensions/durable/project-context/durable.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { managedProjectTrustContext, resolveManagedProjectTrust } from "./project-trust.js";
@@ -420,15 +413,7 @@ export class DurableBackend implements AgentBackend {
       ...seedModel(options.models, target.hostCwd, session),
       ...(session.launch?.tools ? { policy: session.launch.tools } : {}),
       runtime,
-      base: [
-        CodingTools,
-        ...(target.sandbox ? [DurableSandboxTools] : []),
-        DurableAsk,
-        DurableWorkingWords,
-        DurableBackgroundJobs,
-        DurableProjectContext,
-        ...host.runtime.packageExtensionsFor(runtime),
-      ],
+      base: [...host.runtime.builtInsFor(runtime), ...host.runtime.packageExtensionsFor(runtime)],
       loaded: host.runtime.loadedPackages,
       sessions: host.runtime.sessionsExtension,
       spawn,
@@ -467,7 +452,8 @@ export class DurableBackend implements AgentBackend {
             .map((loaded) => loaded.extension)
         : host.runtime.packageExtensionsFor(sandbox ? "sandbox" : "host");
     // A child without the `allowNestedDelegation` grant has no `subagent` tool.
-    const sessionsExtension = launched?.spawn ? [host.runtime.sessionsExtension] : [];
+    const spawn = launched?.spawn === true;
+    const builtIns = host.runtime.attachedBuiltIns(spawn);
     let conversation: Conversation;
     if (id !== undefined) {
       const existing = await harness.conversation(id as ConversationId, BACKGROUND_CONTEXT);
@@ -493,17 +479,9 @@ export class DurableBackend implements AgentBackend {
             }
           : {
               extensions: {
-                add: [
-                  DurableAsk,
-                  DurableWorkingWords,
-                  DurableBackgroundJobs,
-                  ...sessionsExtension,
-                  DurableProjectContext,
-                  ...packageExtensions,
-                  ...(mcp ? [mcp.selection] : []),
-                ],
+                add: [...builtIns, ...packageExtensions, ...(mcp ? [mcp.selection] : [])],
                 // The host default selection includes it.
-                ...(sessionsExtension.length ? {} : { remove: [host.runtime.sessionsExtension] }),
+                ...(spawn ? {} : { remove: [host.runtime.sessionsExtension] }),
               },
             },
         BACKGROUND_CONTEXT,
@@ -511,17 +489,7 @@ export class DurableBackend implements AgentBackend {
       const agent = await conversation.agent(BACKGROUND_CONTEXT);
       const policy = session.launch?.tools;
       const selected = new Set(agent.tools.map((tool) => tool.name));
-      const additions = (
-        control
-          ? []
-          : [
-              DurableAsk,
-              DurableWorkingWords,
-              DurableBackgroundJobs,
-              ...sessionsExtension,
-              ...packageExtensions,
-            ]
-      )
+      const additions = (control ? [] : [...builtIns, ...packageExtensions])
         .flatMap((extension) => extension.tools ?? [])
         .filter((tool) => !selected.has(tool.name) && toolAllowed(policy, tool.name));
       // Append names instead of rewriting the list from resolved tools: MCP tools a
@@ -590,7 +558,11 @@ export class DurableBackend implements AgentBackend {
     // After the VM is bound: a sandbox's context files are read through it.
     const presented = await present(resources);
     await syncProjectContext(conversation, presented);
-    await conversation.commit((tx) => ensureWorkingWords(tx, conversation.id), BACKGROUND_CONTEXT);
+    const words = host.runtime.installedTask(WORKING_WORDS_TASK);
+    await conversation.commit(
+      (tx) => ensureWorkingWords(tx, conversation.id, words),
+      BACKGROUND_CONTEXT,
+    );
     mcp?.attach(conversation);
     const view = await conversation.viewState(BACKGROUND_CONTEXT);
     try {

@@ -346,36 +346,48 @@ Oppi loads Pi-resolved extensions without injecting an extra Ask tool. Install o
 
 ## Durable extensions
 
-Durable sessions (`experimental.serverDurable`) do not run a package's classic `index.ts`. A package can add a durable entry next to it: `durable.ts` (or `durable.js`) in the package directory, or the file named by `package.json` `"oppi": { "durable": "./src/durable.ts" }`. The entry exports a plain pi-durable extension:
+Durable sessions (`experimental.serverDurable`) do not run a package's classic `index.ts`. A package adds a durable entry and declares it in `package.json`:
+
+```json
+{
+  "name": "release-notes",
+  "pi": { "extensions": ["./index.ts"] },
+  "oppi": { "durable": { "entry": "./durable.ts", "runtimes": ["host"] } }
+}
+```
+
+- `entry` is a path inside the package starting with `./`. A `.js` path whose file is missing finds its `.ts` source, as TypeScript imports do, so a package that ships both its source and its build can name the `.js`.
+- `runtimes` lists `"host"`, `"sandbox"`, or both; it defaults to `["host"]`. Add `"sandbox"` only if every command and file access goes through `api.env`.
+- A package without `oppi.durable` has no durable entry, whatever files it contains. An invalid manifest (unknown keys, a missing file, an unknown runtime) is a load error.
+
+The entry's default export is a plain pi-durable extension, or an array of them:
 
 ```ts
 // ~/.pi/agent/extensions/release-notes/durable.ts
 import { Type } from "typebox";
 import { defineExtension, defineTool } from "@earendil-works/pi-durable";
-import { defineDurableExtension } from "oppi/durable";
 
-export default defineDurableExtension({
-  extension: defineExtension({
-    name: "release-notes",
-    tools: [
-      defineTool({
-        name: "release_notes",
-        description: "Read the latest release notes.",
-        parameters: Type.Object({}),
-        replay: "safe", // a read; rerun after a crash
-        async execute(_args, api, context) {
-          const result = await api.env!.exec("cat CHANGELOG.md", {}, context);
-          return { output: [{ type: "text", text: result.ok ? result.value.stdout : result.error.message }] };
-        },
-      }),
-    ],
-  }),
-  runtimes: ["host"], // default; add "sandbox" only if every command and file access goes through api.env
+export default defineExtension({
+  name: "release-notes",
+  tools: [
+    defineTool({
+      name: "release_notes",
+      description: "Read the latest release notes.",
+      parameters: Type.Object({}),
+      replay: "safe", // a read; rerun after a crash
+      async execute(_args, api, context) {
+        const result = await api.env!.exec("cat CHANGELOG.md", {}, context);
+        return { output: [{ type: "text", text: result.ok ? result.value.stdout : result.error.message }] };
+      },
+    }),
+  ],
 });
 ```
 
+An extension that shows Oppi UI imports it from `oppi/durable`: `requestUI` for dialogs, and the `DurableUI` and `DurableInputCards` documents for status, widgets, and transcript cards.
+
 - **Where Oppi looks:** enabled user-scope Pi packages, resolved as Pi resolves classic extensions (`~/.pi/agent/extensions/<name>/`, packages from `settings.json` and `pi install`, the same enable and disable settings). Project `.pi/extensions` packages and single-file extensions have no durable entry.
-- **Shared modules:** `@earendil-works/pi-durable`, `@earendil-works/chord`, `@earendil-works/pi-ai`, `typebox`, and `oppi/durable` resolve to the server's own copies, so the extension's documents and tasks belong to the server's durable store.
+- **Shared modules:** `@earendil-works/pi-durable`, `@earendil-works/chord`, `@earendil-works/pi-ai`, `typebox`, and `oppi/durable` resolve to the server's own copies, so the extension's documents and tasks belong to the server's durable store. Ship the entry and every file it imports in the package's `files`.
 - **Which sessions get it:** every durable session whose runtime the extension lists (host by default), next to the built-in tools. The durable control conversation selects none of them. A name or tool name that a built-in already uses is refused; a package that provides one of Oppi's own durable extensions (such as `ask`) is skipped.
 - **Loading:** when the server opens its durable store, and on `oppi extensions reload`. A package that fails to load is reported in the server log and in the reload output; the others load.
 - **Reload without a restart:** `oppi extensions reload` re-reads every durable entry and the files it imports. An extension already installed is replaced in place: a tool call that is running finishes on its old code, and the next request or call uses the new code. A package that fails to load keeps its previous code. A package that is gone is uninstalled, and sessions stop being offered its tools. A session picks up a newly added extension the next time it attaches (open, resume, or server restart).

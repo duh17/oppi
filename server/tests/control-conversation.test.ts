@@ -522,7 +522,7 @@ describe("control conversation lifecycle on the durable harness", () => {
       controlConversationTools((await owner).controlExtensions).map((tool) => tool.name),
     );
     expect(agent?.cwd).toBe(join(storage.getDataDir(), "control-conversation", "cwd"));
-    expect((await owner).baseExtensions.map((e) => e.name)).not.toContain("oppi.control");
+    expect((await owner).defaultExtensions.map((e) => e.name)).not.toContain("oppi.control");
 
     // On the phone's global list, with the role and without a workspace.
     const list = new SessionListService({

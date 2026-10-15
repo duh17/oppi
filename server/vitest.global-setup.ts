@@ -27,11 +27,12 @@ export default function buildCliOnce(): () => void {
         stdio: "inherit",
       },
     );
-    execFileSync(process.execPath, [join(serverRoot, "scripts", "copy-oppi-docs.mjs")], {
-      cwd: serverRoot,
-      env: { ...process.env, OPPI_BUILD_DIR: buildRoot },
-      stdio: "inherit",
-    });
+    for (const script of ["copy-oppi-docs.mjs", "copy-durable-packages.mjs"])
+      execFileSync(process.execPath, [join(serverRoot, "scripts", script)], {
+        cwd: serverRoot,
+        env: { ...process.env, OPPI_BUILD_DIR: buildRoot },
+        stdio: "inherit",
+      });
 
     symlinkSync(join(serverRoot, "node_modules"), join(buildRoot, "node_modules"), "dir");
 

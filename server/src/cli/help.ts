@@ -2005,7 +2005,7 @@ const HELP_TOPICS: HelpTopic[] = [
     summary: "Reload durable extensions from Pi packages into the running server.",
     usage: "oppi extensions reload [--json]",
     description: [
-      "Durable sessions load the durable entry of each enabled user-scope Pi package: package.json 'oppi.durable', else durable.ts or durable.js in the package directory. The server loads them when its durable store opens and again on reload, without a restart.",
+      "Durable sessions load Oppi's bundled durable packages and the durable entry of each enabled user-scope Pi package, declared in package.json 'oppi.durable' ({ entry, runtimes }). The server loads them when its durable store opens and again on reload, without a restart.",
     ],
     subcommands: [
       { name: "reload", summary: "re-read every durable entry and replace the installed code" },
@@ -2025,7 +2025,7 @@ const HELP_TOPICS: HelpTopic[] = [
       "A reloaded extension replaces the installed one with the same name: running tool calls finish on the old code, and the next request or call uses the new code.",
       "A package that fails to load keeps its previous code installed and is listed under errors and kept. A package that is gone is uninstalled.",
       "Sessions pick up a newly added extension the next time they attach (open, resume, or server restart).",
-      "JSON data: loaded, kept, removed, skipped, errors. loaded and kept items have name, entry, runtimes, tools; skipped and errors items have entry and message.",
+      "JSON data: loaded, kept, removed, skipped, errors. loaded and kept items have name, entry, runtimes, tools, builtIn (one of Oppi's bundled packages); skipped and errors items have entry and message.",
     ],
     examples: [{ command: "oppi extensions reload --json" }],
   },

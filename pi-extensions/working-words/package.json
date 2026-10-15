@@ -11,6 +11,8 @@
   ],
   "files": [
     "index.ts",
+    "durable.ts",
+    "contract.ts",
     "README.md",
     "package.json"
   ],
@@ -26,5 +28,11 @@
     "extensions": [
       "./index.ts"
     ]
+  },
+  "oppi": {
+    "durable": {
+      "entry": "./durable.js",
+      "runtimes": ["host", "sandbox"]
+    }
   }
 }

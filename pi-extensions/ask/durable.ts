@@ -5,7 +5,7 @@ import {
   defineTool,
   section,
 } from "@earendil-works/pi-durable";
-import { requestUI } from "../durable-ui.js";
+import { requestUI } from "oppi/durable";
 import { buildAskToolResult } from "./extensions/ask-shared.js";
 
 const AskTurn = defineDoc<{ assistant?: number; task?: number }>({
@@ -122,7 +122,7 @@ export const DurableAsk = defineExtension({
 });
 
 /**
- * The durable entry shape (`oppi/durable`). The server bundles this extension, so its
- * package loader skips this entry when the package is also installed in `~/.pi/agent`.
+ * The durable entry (`package.json` `oppi.durable`). The server bundles this package, so its
+ * loader skips this entry when the package is also installed in `~/.pi/agent`.
  */
-export default { extension: DurableAsk, runtimes: ["host", "sandbox"] };
+export default DurableAsk;

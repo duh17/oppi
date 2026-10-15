@@ -1,14 +1,11 @@
 import {
-  defineDoc,
   defineExtension,
   defineTask,
   LiveDoc,
-  type ConversationId,
   type LiveState,
-  type Tx,
-  type TaskId,
 } from "@earendil-works/pi-durable";
-import { DurableUI, type UINotification } from "../durable-ui.js";
+import { DurableUI, type UINotification } from "oppi/durable";
+import { WORKING_WORDS_TASK, WordsOwner } from "./contract.js";
 
 // Durable port of the global `working-message` Pi extension: an activity
 // phrase plus elapsed time while busy, chosen deterministically per run.
@@ -200,19 +197,6 @@ export function deriveView(live: Readonly<LiveState> | null | undefined): View {
   return { run: id, activity: "thinking" };
 }
 
-// `run` survives restart so elapsed time keeps counting from the real start.
-const WordsOwner = defineDoc<{
-  task?: TaskId;
-  run?: { id: string; startedAt: number };
-}>({
-  kind: "oppi.working-words-owner",
-  version: 1,
-  scope: "conversation",
-  history: "latest",
-  fork: "initial",
-  initial: () => ({}),
-});
-
 const PROVENANCE = {
   extensionScopeId: "repo:working-words",
   extensionDisplayName: "Working Words",
@@ -233,7 +217,7 @@ function sameNotification(
 }
 
 const Words = defineTask<null, { phase: "watch" }, null>({
-  name: "oppi.working-words",
+  name: WORKING_WORDS_TASK,
   version: 1,
   initial: () => ({ phase: "watch" }),
   abort: async (_task, runtime, context) => {
@@ -334,25 +318,7 @@ export const DurableWorkingWords = defineExtension({
 });
 
 /**
- * The durable entry shape (`oppi/durable`). The server bundles this extension, so its
- * package loader skips this entry when the package is also installed in `~/.pi/agent`.
+ * The durable entry (`package.json` `oppi.durable`). The server bundles this package, so its
+ * loader skips this entry when the package is also installed in `~/.pi/agent`.
  */
-export default {
-  extension: DurableWorkingWords,
-  runtimes: ["host", "sandbox"],
-};
-
-/** Called at conversation attachment, before scheduling. Also repairs a stopped owner. */
-export async function ensureWorkingWords(
-  tx: Tx,
-  id: ConversationId,
-): Promise<void> {
-  const state = await tx.doc(WordsOwner, id);
-  const task = state.task === undefined ? undefined : await tx.task(state.task);
-  if (!task || task.state.status === "terminal")
-    state.task = await tx.createTask(Words, null, {
-      conversationId: id,
-      ownership: { kind: "conversation" },
-      background: true,
-    });
-}
+export default DurableWorkingWords;

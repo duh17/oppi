@@ -63,10 +63,8 @@ import {
 import type { ChatAttachmentRef, ServerMessage, Session } from "../src/types.js";
 import { DurableAsk } from "../extensions/durable/ask/durable.js";
 import { DurableWorkingWords } from "../extensions/durable/working-words/durable.js";
-import {
-  DurableBackgroundJobs,
-  DurableJobs,
-} from "../extensions/durable/background-jobs/durable.js";
+import { DurableBackgroundJobs } from "../extensions/durable/background-jobs/durable.js";
+import { DurableJobs } from "../extensions/durable/background-jobs/contract.js";
 import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
 import {
@@ -222,7 +220,7 @@ function attachHost(
   harness: Harness,
   models: ModelRuntime,
   storeId: string,
-): SessionHost {
+): Promise<SessionHost> {
   const storage = harnessStorage.get(harness);
   if (!storage) throw new Error("test harness has no retained storage");
   return runtime.attachOpened(
@@ -244,7 +242,7 @@ function mockDurableOpen(harness: Harness, models: ModelRuntime) {
       await existing.open();
       return existing;
     }
-    const host = attachHost(this, current, models, storeId);
+    const host = await attachHost(this, current, models, storeId);
     await this.onHostOpened?.(host);
     return host;
   });
@@ -257,7 +255,12 @@ function mockDurableOpen(harness: Harness, models: ModelRuntime) {
 
 async function backend(harness: Harness, models: ModelRuntime, session: Session, dataDir: string) {
   const runtime = new DurableHarness(dataDir);
-  const host = attachHost(runtime, harness, models, session.serverDurable?.storeId ?? session.id);
+  const host = await attachHost(
+    runtime,
+    harness,
+    models,
+    session.serverDurable?.storeId ?? session.id,
+  );
   await host.releaseResume();
   const result = await DurableBackend.create({
     harness,
@@ -621,7 +624,7 @@ describe("server durable managed runtime", () => {
       );
       f.session.serverDurable = { storeId: f.session.id, conversationId: conversation.id };
       const runtime = new DurableHarness(f.dir);
-      const owner = attachHost(runtime, harness, f.models, f.session.id);
+      const owner = await attachHost(runtime, harness, f.models, f.session.id);
       await owner.releaseResume();
       let shown!: UIResponse;
       let show!: () => void;
@@ -2247,7 +2250,7 @@ describe("server durable managed runtime", () => {
     const f = await fixture([]);
     const harness = await openHarness(f.dir, f.models);
     const runtime = new DurableHarness(f.dir);
-    const owner = attachHost(runtime, harness, f.models, f.session.id);
+    const owner = await attachHost(runtime, harness, f.models, f.session.id);
     await owner.releaseResume();
     const conversation = await harness.createConversation(
       { ownership: { kind: "ownerless" } },
@@ -2288,7 +2291,7 @@ describe("server durable managed runtime", () => {
     const f = await fixture([]);
     const crashed = await crashedQueuedTools(f);
     const runtime = new DurableHarness(f.dir);
-    const owner = attachHost(
+    const owner = await attachHost(
       runtime,
       crashed.harness,
       f.models,
@@ -3140,7 +3143,7 @@ describe("server durable managed runtime", () => {
     const f = await fixture([]);
     const runtime = new DurableHarness(f.dir);
     const harness = await openHarness(f.dir, f.models);
-    const owner = attachHost(runtime, harness, f.models, f.session.id);
+    const owner = await attachHost(runtime, harness, f.models, f.session.id);
     const source = await harness.createConversation(
       {
         ownership: { kind: "ownerless" },
@@ -3194,7 +3197,7 @@ describe("server durable managed runtime", () => {
     const f = await fixture([]);
     const runtime = new DurableHarness(f.dir);
     const harness = await openHarness(f.dir, f.models);
-    const owner = attachHost(runtime, harness, f.models, f.session.id);
+    const owner = await attachHost(runtime, harness, f.models, f.session.id);
     const source = await harness.createConversation({ ownership: { kind: "ownerless" } }, context);
     const [first, second] = await source.commit(
       async (tx) => [
