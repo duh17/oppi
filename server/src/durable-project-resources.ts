@@ -24,8 +24,17 @@ type ContextFile = { path: string; content: string };
 
 /** The AGENTS files and Skills a durable session presents, as an SDK session loads them. */
 export interface DurableProjectResources {
-  /** As presented to the model: guest paths in a sandbox. */
+  /**
+   * As presented to the model: guest paths in a sandbox. A sandbox's discovered files carry
+   * no content until `readSandboxContextFiles` reads them through the VM.
+   */
   readonly contextFiles: readonly ContextFile[];
+  /**
+   * Sandbox only: guest paths of discovered context files. Their host read is discarded:
+   * the guest can make a context file a symlink to a file the VM shadow hides (`.env`), and
+   * the host follows it. Only the VM's own read counts.
+   */
+  readonly guestContextPaths?: ReadonlySet<string>;
   /**
    * As presented to the model: guest paths in a sandbox. `/skill:` reads `filePath` through
    * the session's own view (`expandSkillCommand`), never through a second host path.
@@ -74,6 +83,13 @@ export async function loadDurableProjectResources(options: {
         ? [{ path, content: redactHostEnvironment(file.content, hostCwd, guestCwd) }]
         : [];
     });
+  const guestContextPaths = new Set<string>();
+  /** Discovered sandbox files: the guest path only; the content comes through the VM. */
+  const discoveredInGuest = (files: readonly ContextFile[], guestCwd: string): ContextFile[] =>
+    inGuest(files, guestCwd).map(({ path }) => {
+      guestContextPaths.add(path);
+      return { path, content: "" };
+    });
   // Saved files are virtual paths relative to the workspace.
   const savedAgentFiles =
     sandboxGuestCwd === undefined
@@ -117,7 +133,7 @@ export async function loadDurableProjectResources(options: {
       agentsFiles: [
         ...(sandboxGuestCwd === undefined
           ? base.agentsFiles
-          : inGuest(base.agentsFiles, sandboxGuestCwd)),
+          : discoveredInGuest(base.agentsFiles, sandboxGuestCwd)),
         ...savedAgentFiles,
       ],
     }),
@@ -127,7 +143,37 @@ export async function loadDurableProjectResources(options: {
     contextFiles: options.projectContext === false ? [] : loader.getAgentsFiles().agentsFiles,
     skills: loader.getSkills().skills,
     readonlyMounts: [...mounts.values()],
+    ...(sandboxGuestCwd === undefined ? {} : { guestContextPaths }),
   };
+}
+
+/**
+ * A sandbox's discovered context files, read through the session's VM at their guest paths
+ * and redacted like the host loader's text. A file the VM refuses (shadowed, or a symlink
+ * out of its mount) is left out. Saved Agent files keep their definition text.
+ */
+export async function readSandboxContextFiles(
+  resources: DurableProjectResources,
+  readFile: (path: string) => Promise<string>,
+  hostCwd: string,
+  guestCwd: string,
+): Promise<DurableProjectResources> {
+  const guestPaths = resources.guestContextPaths;
+  if (!guestPaths?.size) return resources;
+  const contextFiles: ContextFile[] = [];
+  for (const file of resources.contextFiles) {
+    if (!guestPaths.has(file.path)) {
+      contextFiles.push(file);
+      continue;
+    }
+    const content = await readFile(file.path).catch(() => undefined);
+    if (content !== undefined)
+      contextFiles.push({
+        path: file.path,
+        content: redactHostEnvironment(content, hostCwd, guestCwd),
+      });
+  }
+  return { ...resources, contextFiles };
 }
 
 function skillsOutsideWorkspace(unavailableSkills: string[]): AgentConfigurationError {

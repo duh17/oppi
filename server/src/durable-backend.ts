@@ -99,6 +99,7 @@ import type { GondolinVm } from "./gondolin-ops.js";
 import { sandboxMcpForWorkspace } from "./sandbox-mcp.js";
 import {
   expandSkillCommand,
+  readSandboxContextFiles,
   loadDurableProjectResources,
   renderProjectContext,
   renderSkills,
@@ -568,7 +569,13 @@ export class DurableBackend implements AgentBackend {
       // only an empty unbound conversation, never a duplicated user turn.
       options.persistBinding();
     }
-    await syncProjectContext(conversation, resources);
+    // Skill and context-file bytes come through the session's own view: the VM for a
+    // sandbox, whose shadow and mount jails the host loader does not apply.
+    const readInView = sandbox
+      ? (path: string) => options.host.readSandboxTextFile(conversation.id, path)
+      : (path: string) => readFile(path, "utf-8");
+    const present = async (loaded: DurableProjectResources): Promise<DurableProjectResources> =>
+      sandbox ? readSandboxContextFiles(loaded, readInView, hostCwd, cwd) : loaded;
     if (sandbox) {
       const vm = await SdkBackend.ensureSandboxWorkspaceVm(workspace, hostCwd, [
         ...resources.readonlyMounts,
@@ -580,6 +587,9 @@ export class DurableBackend implements AgentBackend {
       // Stdio MCP servers run in this VM; they connect at `attach` below.
       target.onSandboxVm(vm);
     }
+    // After the VM is bound: a sandbox's context files are read through it.
+    const presented = await present(resources);
+    await syncProjectContext(conversation, presented);
     await conversation.commit((tx) => ensureWorkingWords(tx, conversation.id), BACKGROUND_CONTEXT);
     mcp?.attach(conversation);
     const view = await conversation.viewState(BACKGROUND_CONTEXT);
@@ -599,12 +609,10 @@ export class DurableBackend implements AgentBackend {
         events,
         options.onEvent,
         mcp,
-        resources,
-        target.loadResources,
+        presented,
+        async () => present(await target.loadResources()),
         options.dataDir,
-        sandbox
-          ? (path) => options.host.readSandboxTextFile(conversation.id, path)
-          : (path) => readFile(path, "utf-8"),
+        readInView,
       );
       backend.ui = await DurableUIProjection.create(harness, conversation, options.onEvent);
       await backend.projection.refreshInputCards([

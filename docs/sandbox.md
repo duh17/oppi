@@ -50,7 +50,7 @@ New sandbox sessions behave as follows:
 - Selected skills are mounted read-only under `/workspace/<slug>/.pi/skills/<name>/`. A skill mount hides the same secret-bearing files the workspace mount hides (`.env`, `.ssh`, keys, and the rest).
 - In a durable sandbox session, `/skill:name` reads the skill through the VM, at the path the model sees. A skill file that no longer resolves inside its mount (for example, one replaced with a symlink to a host file) fails the prompt.
 - Durable sandbox sessions present only skills whose real path is inside the workspace. A saved Agent that selects a skill outside it (an absolute path, `../`, or a symlink out) fails to start with `agent_skills_unavailable`; discovered skills outside it, such as global ones, are left out. Saved Agent AGENTS files are rewritten and redacted like workspace-local ones.
-- Workspace-local `AGENTS.md` and `CLAUDE.md` are rewritten to sandbox paths before they are shown to the model.
+- Workspace-local `AGENTS.md` and `CLAUDE.md` are rewritten to sandbox paths before they are shown to the model. A durable sandbox session reads their text through the VM, so a context file that is a symlink to a hidden file (such as `.env`) is left out.
 - Global host agent instructions are not exposed to sandbox sessions.
 - Sandbox Oppi does not expose hostMount or host session file paths.
 

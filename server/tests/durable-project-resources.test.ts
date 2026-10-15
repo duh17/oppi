@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   expandSkillCommand,
   loadDurableProjectResources,
+  readSandboxContextFiles,
 } from "../src/durable-project-resources.js";
 
 const GUEST = "/workspace/project";
@@ -141,6 +142,50 @@ describe("durable sandbox project resources", () => {
         path: `${GUEST}/docs/AGENTS.md`,
         content: `Build in ${GUEST}/src; notes in /workspace/.host-home/notes.`,
       },
+    ]);
+  });
+
+  it("takes a sandbox's discovered AGENTS text only from the VM's read", async () => {
+    const { hostCwd, agentDir } = layout();
+    // A guest-planted symlink: the host follows it to a file the VM shadow hides.
+    writeFileSync(join(hostCwd, ".env"), "HOST_ENV_SECRET=1");
+    symlinkSync(join(hostCwd, ".env"), join(hostCwd, "AGENTS.md"));
+
+    const loaded = await loadDurableProjectResources({
+      hostCwd,
+      agentDir,
+      sandboxGuestCwd: GUEST,
+      projectTrusted: true,
+    });
+    // The host loader's bytes are not kept.
+    expect(JSON.stringify(loaded.contextFiles)).not.toContain("HOST_ENV_SECRET");
+    expect([...(loaded.guestContextPaths ?? [])]).toEqual([`${GUEST}/AGENTS.md`]);
+
+    // The VM refuses the shadowed target: the file is left out.
+    const refused = await readSandboxContextFiles(
+      loaded,
+      async () => {
+        throw new Error("ENOENT");
+      },
+      hostCwd,
+      GUEST,
+    );
+    expect(refused.contextFiles).toEqual([]);
+
+    // A readable file is the VM's text, redacted like the host loader's.
+    const reads: string[] = [];
+    const presented = await readSandboxContextFiles(
+      loaded,
+      async (path) => {
+        reads.push(path);
+        return `Build in ${hostCwd}/src.`;
+      },
+      hostCwd,
+      GUEST,
+    );
+    expect(reads).toEqual([`${GUEST}/AGENTS.md`]);
+    expect(presented.contextFiles).toEqual([
+      { path: `${GUEST}/AGENTS.md`, content: `Build in ${GUEST}/src.` },
     ]);
   });
 });

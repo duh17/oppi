@@ -20,6 +20,7 @@ import type { GondolinVm } from "../src/gondolin-ops.js";
 import { createGondolinBashOps } from "../src/gondolin-ops.js";
 import {
   expandSkillCommand,
+  readSandboxContextFiles,
   type DurableProjectResources,
 } from "../src/durable-project-resources.js";
 
@@ -114,6 +115,23 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
     );
     expect(read.stdout).not.toContain("SKILL_ENV_SECRET");
     expect(read.stdout).not.toContain("PEM-SKILL-SECRET");
+  });
+
+  it("SAFE: a workspace AGENTS.md symlinked to .env reads as missing through the VM", async () => {
+    if (!qemuAvailable) return;
+
+    writeFileSync(join(hostDir, ".env"), "WORKSPACE_ENV_SECRET=1");
+    symlinkSync(".env", join(hostDir, "AGENTS.md"));
+    const resources: DurableProjectResources = {
+      contextFiles: [{ path: "/workspace/AGENTS.md", content: "" }],
+      guestContextPaths: new Set(["/workspace/AGENTS.md"]),
+      skills: [],
+      readonlyMounts: [],
+    };
+    const vmRead = async (path: string) => Buffer.from(await vm.fs.readFile(path)).toString("utf8");
+    const presented = await readSandboxContextFiles(resources, vmRead, hostDir, "/workspace");
+    expect(presented.contextFiles).toEqual([]);
+    expect(JSON.stringify(presented)).not.toContain("WORKSPACE_ENV_SECRET");
   });
 
   it("SAFE: /skill: through the VM refuses a SKILL.md swapped for a host symlink", async () => {
