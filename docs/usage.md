@@ -142,7 +142,11 @@ Below it: **Instructions** (its own editor with **Save**), **Skills** and **Exte
 
 When a newer `oppi-server` is on npm and this host is a global npm install, About This Server shows **Update available** and an **Update** button. Confirming names the version and warns that running sessions will be interrupted. Oppi installs that exact version, restarts the server, and reconnects. Interrupted sessions resume after the restart; see [Running sessions across a restart](server-configuration.md#running-sessions-across-a-restart).
 
-Git checkouts, Docker images, and other non-npm installs show a copyable `npm install -g oppi-server@…` command instead of a button. `oppi update` on the host uses the same install check.
+A server running from a checkout that is `npm link`ed as the global `oppi` (what `setup.sh --install` sets up) never installs from npm. Once the checkout has changes the running build lacks, About This Server shows **Rebuild & Restart**: Oppi runs `npm run build:in-place` in that checkout and restarts. A failed compile keeps the running build and shows the error. The confirmation names any sessions that will be interrupted.
+
+When the server is older than this app needs and there is nothing newer to install yet, About This Server says which version the app needs and which is available, and its row reads **Server Outdated**.
+
+Other git checkouts, Docker images, and other non-npm installs show a copyable `npm install -g oppi-server@…` command instead of a button. `oppi update` on the host uses the same install check.
 
 If this app build needs a newer server than the one you are connected to, All Sessions shows a single notice that opens Server Settings. That notice goes away after you update and reconnect.
 

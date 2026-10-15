@@ -1,14 +1,23 @@
 /**
- * In-app and CLI update of a global `oppi-server` npm install.
+ * In-app and CLI update of a global `oppi-server` npm install, and in-app
+ * rebuild of an `npm link`ed source checkout.
  *
  * Registry lookups never run on the request path. Install is one-at-a-time
- * and only to the last-discovered latest version.
+ * and only to the last-discovered latest version. A source-link rebuild is
+ * offered only when the checkout changed since this process started.
  */
 
 import { spawn } from "node:child_process";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 import { isNpmVersionNewer, isValidNpmVersion } from "./cli/npm-version.js";
-import { manualUpdateCommand, resolveInstallKindAsync } from "./install-kind.js";
+import {
+  type InstallKind,
+  manualUpdateCommand,
+  resolveInstallKindAsync,
+  SOURCE_BUILD_SCRIPT,
+} from "./install-kind.js";
 import { getServiceStatus } from "./launchd.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
@@ -19,13 +28,17 @@ import type {
   ServerUpdateStatus,
 } from "./types/server-update.js";
 import { SERVER_UPDATE_ERROR } from "./types/server-update.js";
-import { getPackageInfo } from "./version.js";
+import { getPackageInfo, packageRootDir } from "./version.js";
 
 const log = createLogger({ base: { component: "server_update" } });
 
 const REGISTRY_TIMEOUT_MS = 8_000;
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
 const REGISTRY_TTL_MS = 15 * 60_000;
+/** Bounds the checkout scan while the app polls /server/info during an update. */
+const SOURCE_SCAN_TTL_MS = 3_000;
+/** Checkout inputs the build compiles (tsconfig `include`). */
+const SOURCE_DIRS = ["src", "extensions"];
 const RESTART_FLUSH_MS = 400;
 const ERROR_TAIL_CHARS = 4_000;
 
@@ -59,6 +72,60 @@ export async function installGlobalPackage(
     inheritStdio: options?.inheritStdio === true,
   });
   return { ok: result.code === 0, output: result.output };
+}
+
+/** Rebuild an `npm link`ed checkout in place for the running server to re-exec. */
+export async function buildSourceCheckout(
+  packageDir: string,
+): Promise<{ ok: boolean; output: string }> {
+  const result = await runNpm(["run", SOURCE_BUILD_SCRIPT], {
+    timeoutMs: INSTALL_TIMEOUT_MS,
+    cwd: packageDir,
+  });
+  return { ok: result.code === 0, output: result.output };
+}
+
+function readPackageVersion(packageDir: string): string | null {
+  try {
+    const raw = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf-8")) as {
+      version?: unknown;
+    };
+    return typeof raw.version === "string" && isValidNpmVersion(raw.version) ? raw.version : null;
+  } catch {
+    return null;
+  }
+}
+
+function fileModifiedAt(path: string): number {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return Infinity;
+  }
+}
+
+/** True once any file under `dir` was modified after `sinceMs`; stops at the first. */
+function hasFileModifiedAfter(dir: string, sinceMs: number): boolean {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (hasFileModifiedAfter(path, sinceMs)) return true;
+    } else if (entry.isFile()) {
+      try {
+        if (statSync(path).mtimeMs > sinceMs) return true;
+      } catch {
+        // Deleted mid-scan.
+      }
+    }
+  }
+  return false;
 }
 
 export function resolveRestartMode(): ServerRestartMode {
@@ -102,7 +169,12 @@ export function restartUpdatedProcess(
       return false;
     }
     try {
-      execve(process.execPath, process.argv, env);
+      // Keep node flags (loaders, heap size): process.argv omits them.
+      execve(
+        process.execPath,
+        [process.argv[0] ?? process.execPath, ...process.execArgv, ...process.argv.slice(1)],
+        env,
+      );
     } catch (err: unknown) {
       log.error("server_update.reexec_failed", { error: safeErrorMessage(err) });
       if (isLaunchdJob()) process.exit(1);
@@ -130,12 +202,13 @@ export async function serveUpdatedProcess(
 
 function runNpm(
   args: string[],
-  options: { timeoutMs: number; inheritStdio?: boolean },
+  options: { timeoutMs: number; inheritStdio?: boolean; cwd?: string },
 ): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn("npm", args, {
       stdio: options.inheritStdio ? "inherit" : ["ignore", "pipe", "pipe"],
       timeout: options.timeoutMs,
+      cwd: options.cwd,
       env: process.env,
       shell: process.platform === "win32",
     });
@@ -165,16 +238,31 @@ export class ServerUpdateService {
   private latestInFlight: Promise<string | null> | null = null;
   private installInFlight: Promise<void> | null = null;
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
-  private installKindCache: Awaited<ReturnType<typeof resolveInstallKindAsync>> | null = null;
-  private installKindInFlight: Promise<Awaited<ReturnType<typeof resolveInstallKindAsync>>> | null =
+  private installKindCache: InstallKind | null = null;
+  private installKindInFlight: Promise<InstallKind> | null = null;
+  private sourceCache: { version: string | null; changed: boolean; checkedAt: number } | null =
     null;
   private readonly onRestart?: (mode: ServerRestartMode, targetVersion: string) => void;
+  private readonly packageDir: string | undefined;
+  /**
+   * Source edits after this count as not yet running: the earlier of process
+   * start and the running build, so edits made before a restart that skipped
+   * the build still count.
+   */
+  private readonly loadedSourceAt: number;
 
   constructor(options?: {
     onRestart?: (mode: ServerRestartMode, targetVersion: string) => void;
     restartNeededVersion?: string;
+    /** This install's package directory; defaults to the running package. */
+    packageDir?: string;
   }) {
     this.onRestart = options?.onRestart;
+    this.packageDir = options?.packageDir ?? packageRootDir();
+    this.loadedSourceAt = Math.min(
+      performance.timeOrigin,
+      this.packageDir ? fileModifiedAt(join(this.packageDir, "dist", "src", "cli.js")) : Infinity,
+    );
     if (options?.restartNeededVersion) {
       this.status = "restart-needed";
       this.targetVersion = options.restartNeededVersion;
@@ -272,6 +360,10 @@ export class ServerUpdateService {
       };
     }
 
+    if (install.kind === "source-link" && install.packageDir) {
+      return this.beginSourceBuild(version, install.packageDir);
+    }
+
     const latest = this.latestVersion;
     if (!latest) {
       return {
@@ -306,16 +398,66 @@ export class ServerUpdateService {
     this.status = "installing";
     this.targetVersion = version;
     this.error = undefined;
-    this.installInFlight = this.runInstall(packageInfo.name, version);
+    this.installInFlight = this.runInstall(
+      version,
+      () => installGlobalPackage(packageInfo.name, version),
+      "npm install -g failed",
+    );
     return { ok: true, update: this.buildSnapshot() };
   }
 
-  private async runInstall(packageName: string, version: string): Promise<void> {
+  /** The app's version must be the checkout's, and the checkout must have changed. */
+  private beginSourceBuild(version: string, packageDir: string): ServerUpdateBeginResult {
+    const source = this.sourceState(true);
+    if (!source.version) {
+      return {
+        ok: false,
+        status: 400,
+        code: SERVER_UPDATE_ERROR.latestUnknown,
+        message: `Cannot read a version from ${join(packageDir, "package.json")}`,
+        update: this.snapshot(),
+      };
+    }
+    if (version !== source.version) {
+      return {
+        ok: false,
+        status: 400,
+        code: SERVER_UPDATE_ERROR.versionNotLatest,
+        message: `Version must equal the checkout's version (${source.version})`,
+        update: this.snapshot(),
+      };
+    }
+    if (!source.changed) {
+      return {
+        ok: false,
+        status: 400,
+        code: SERVER_UPDATE_ERROR.alreadyCurrent,
+        message: "The checkout has not changed since this server started",
+        update: this.snapshot(),
+      };
+    }
+
+    this.status = "installing";
+    this.targetVersion = version;
+    this.error = undefined;
+    this.installInFlight = this.runInstall(
+      version,
+      () => buildSourceCheckout(packageDir),
+      `npm run ${SOURCE_BUILD_SCRIPT} failed`,
+    );
+    return { ok: true, update: this.buildSnapshot() };
+  }
+
+  private async runInstall(
+    version: string,
+    install: () => Promise<{ ok: boolean; output: string }>,
+    failureMessage: string,
+  ): Promise<void> {
     try {
-      const result = await installGlobalPackage(packageName, version);
+      const result = await install();
       if (!result.ok) {
         this.status = "failed";
-        this.error = result.output.trim() || "npm install -g failed";
+        this.error = result.output.trim() || failureMessage;
         log.warn("server_update.install_failed", { version, error: this.error });
         return;
       }
@@ -342,15 +484,37 @@ export class ServerUpdateService {
     }, RESTART_FLUSH_MS);
   }
 
-  private resolveInstall(): Promise<Awaited<ReturnType<typeof resolveInstallKindAsync>>> {
+  private resolveInstall(): Promise<InstallKind> {
     if (this.installKindCache) return Promise.resolve(this.installKindCache);
     if (!this.installKindInFlight) {
-      this.installKindInFlight = resolveInstallKindAsync(getPackageInfo().name).then((value) => {
+      this.installKindInFlight = resolveInstallKindAsync(
+        getPackageInfo().name,
+        this.packageDir,
+      ).then((value) => {
         this.installKindCache = value;
         return value;
       });
     }
     return this.installKindInFlight;
+  }
+
+  /**
+   * The checkout's version, and whether it differs from what this process
+   * loaded at start: a new package.json version or an edited source file.
+   */
+  private sourceState(force = false): { version: string | null; changed: boolean } {
+    const packageDir = this.installKindCache?.packageDir;
+    if (!packageDir) return { version: null, changed: false };
+    const now = Date.now();
+    if (!force && this.sourceCache && now - this.sourceCache.checkedAt < SOURCE_SCAN_TTL_MS) {
+      return this.sourceCache;
+    }
+    const version = readPackageVersion(packageDir);
+    const changed =
+      (version !== null && version !== getPackageInfo().version) ||
+      SOURCE_DIRS.some((dir) => hasFileModifiedAfter(join(packageDir, dir), this.loadedSourceAt));
+    this.sourceCache = { version, changed, checkedAt: now };
+    return this.sourceCache;
   }
 
   private buildSnapshot(): ServerUpdateInfo {
@@ -360,18 +524,25 @@ export class ServerUpdateService {
       updatable: false,
       manualCommand: manualUpdateCommand(packageInfo.name),
     };
-    const latest = this.latestVersion;
-    const available =
+    let latest = this.latestVersion;
+    let available =
       install.updatable && latest !== null && isNpmVersionNewer(latest, packageInfo.version);
+    let manualCommand =
+      latest && install.updatable
+        ? manualUpdateCommand(packageInfo.name, latest)
+        : install.manualCommand;
+    if (install.kind === "source-link") {
+      const source = this.sourceState();
+      latest = source.version;
+      available = source.changed && source.version !== null;
+      manualCommand = install.manualCommand;
+    }
     const restartMode = resolveRestartMode();
     const info: ServerUpdateInfo = {
       installKind: install.kind,
       latestVersion: latest,
       available,
-      manualCommand:
-        latest && install.updatable
-          ? manualUpdateCommand(packageInfo.name, latest)
-          : install.manualCommand,
+      manualCommand,
       status: this.status,
       restartMode,
     };

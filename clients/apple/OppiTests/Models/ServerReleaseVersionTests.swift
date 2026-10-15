@@ -22,9 +22,12 @@ struct ServerReleaseVersionTests {
     /// The below-minimum notice explains itself only while npm cannot satisfy the floor.
     @Test func explainsMinimumOnlyWhileNpmLacksAQualifyingVersion() {
         let detail = ServerUpdatePresentation.minimumVersionUnpublishedDetail
-        #expect(detail("0.51.0", "0.52.0") != nil)
-        #expect(detail(nil, "0.52.0") != nil)
-        #expect(detail("0.52.0", "0.52.0") == nil)
-        #expect(detail("0.53.0", "0.52.0") == nil)
+        #expect(detail("0.51.0", false, "0.52.0") != nil)
+        #expect(detail(nil, false, "0.52.0") != nil)
+        #expect(detail("0.52.0", false, "0.52.0") == nil)
+        #expect(detail("0.53.0", false, "0.52.0") == nil)
+        // A linked checkout at the floor clears it by rebuilding.
+        #expect(detail("0.52.0", true, "0.52.0") == nil)
+        #expect(detail("0.51.0", true, "0.52.0") != nil)
     }
 }

@@ -525,6 +525,8 @@ export class Server {
       desktopCompanionViewStreamClient?: DesktopCompanionViewStreamClient;
       onRestartAfterUpdate?: (mode: ServerRestartMode, targetVersion: string) => void;
       restartNeededVersion?: string;
+      /** Package directory the update service inspects; defaults to the running package. */
+      updatePackageDir?: string;
     },
   ) {
     this.storage = storage;
@@ -544,6 +546,7 @@ export class Server {
     this.serverUpdate = new ServerUpdateService({
       onRestart: options?.onRestartAfterUpdate,
       restartNeededVersion: options?.restartNeededVersion,
+      packageDir: options?.updatePackageDir,
     });
     this.piExecutable = resolvePiExecutable();
 

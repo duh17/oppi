@@ -1,6 +1,6 @@
 /* Detect whether this process is the globally installed npm package. */
 import { execFile, execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -9,51 +9,104 @@ import { getPackageInfo, packageRootDir } from "./version.js";
 
 const execFileAsync = promisify(execFile);
 
-function matchesGlobalRoot(packageName: string, globalRoot: string): boolean {
+/** Script the app's source-link update runs; it keeps dist on a failed compile. */
+export const SOURCE_BUILD_SCRIPT = "build:in-place";
+
+/** A git checkout the app can rebuild: sources plus the in-place build script. */
+function isBuildableCheckout(packageDir: string): boolean {
   try {
-    const packageDir = packageRootDir();
-    return Boolean(
-      packageDir && realpathSync(packageDir) === realpathSync(join(globalRoot, packageName)),
+    const raw = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf-8")) as {
+      scripts?: Record<string, unknown>;
+    };
+    return (
+      typeof raw.scripts?.[SOURCE_BUILD_SCRIPT] === "string" && existsSync(join(packageDir, "src"))
     );
   } catch {
     return false;
   }
 }
 
-/** CLI-only synchronous lookup; server requests use resolveInstallKindAsync. */
-export function isLikelyGlobalNpmInstall(packageName: string): boolean {
+/**
+ * `npm install -g` from the registry writes a directory into the global root;
+ * `npm link` writes a symlink to the checkout, and updating from npm would
+ * replace it. Other symlinks (a folder install of a packed package, a store
+ * link) cannot be rebuilt or safely replaced, so they are `other`.
+ */
+function classifyGlobalEntry(
+  packageName: string,
+  globalRoot: string,
+  packageDir: string | undefined,
+): ServerInstallKind {
   try {
-    const globalRoot = execFileSync("npm", ["root", "-g"], {
-      encoding: "utf-8",
-      timeout: 8_000,
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return matchesGlobalRoot(packageName, globalRoot);
+    const entry = join(globalRoot, packageName);
+    if (!packageDir || realpathSync(packageDir) !== realpathSync(entry)) return "other";
+    if (!lstatSync(entry).isSymbolicLink()) return "npm-global";
+    return isBuildableCheckout(packageDir) ? "source-link" : "other";
   } catch {
-    return false;
+    return "other";
   }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 export function manualUpdateCommand(packageName: string, version = "latest"): string {
   return `npm install -g ${packageName}@${version}`;
 }
 
-type InstallKind = { kind: ServerInstallKind; updatable: boolean; manualCommand: string };
+export type InstallKind = {
+  kind: ServerInstallKind;
+  /** The app can update this install: npm-global installs, source-link rebuilds. */
+  updatable: boolean;
+  manualCommand: string;
+  /** Install directory; source-link updates build here. */
+  packageDir?: string;
+};
 
-function installKind(packageName: string, updatable: boolean): InstallKind {
+function installKind(
+  packageName: string,
+  kind: ServerInstallKind,
+  packageDir: string | undefined,
+): InstallKind {
+  if (kind === "source-link" && packageDir) {
+    return {
+      kind,
+      updatable: true,
+      manualCommand: `cd ${shellQuote(packageDir)} && npm run ${SOURCE_BUILD_SCRIPT}`,
+      packageDir,
+    };
+  }
   return {
-    kind: updatable ? "npm-global" : "other",
-    updatable,
+    kind: kind === "npm-global" ? kind : "other",
+    updatable: kind === "npm-global",
     manualCommand: manualUpdateCommand(packageName),
+    packageDir,
   };
 }
 
+/** CLI-only synchronous lookup; server requests use resolveInstallKindAsync. */
 export function resolveInstallKind(packageName = getPackageInfo().name): InstallKind {
-  return installKind(packageName, isLikelyGlobalNpmInstall(packageName));
+  const packageDir = packageRootDir();
+  try {
+    const globalRoot = execFileSync("npm", ["root", "-g"], {
+      encoding: "utf-8",
+      timeout: 8_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return installKind(
+      packageName,
+      classifyGlobalEntry(packageName, globalRoot, packageDir),
+      packageDir,
+    );
+  } catch {
+    return installKind(packageName, "other", packageDir);
+  }
 }
 
 export async function resolveInstallKindAsync(
   packageName = getPackageInfo().name,
+  packageDir = packageRootDir(),
 ): Promise<InstallKind> {
   try {
     const { stdout } = await execFileAsync("npm", ["root", "-g"], {
@@ -61,8 +114,12 @@ export async function resolveInstallKindAsync(
       timeout: 8_000,
       maxBuffer: 64 * 1024,
     });
-    return installKind(packageName, matchesGlobalRoot(packageName, stdout.trim()));
+    return installKind(
+      packageName,
+      classifyGlobalEntry(packageName, stdout.trim(), packageDir),
+      packageDir,
+    );
   } catch {
-    return installKind(packageName, false);
+    return installKind(packageName, "other", packageDir);
   }
 }

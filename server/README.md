@@ -41,7 +41,7 @@ cd oppi/server
 bash setup.sh --install
 ```
 
-The global npm link points `oppi` to this checkout's `dist/src/cli.js`. Rebuilding the checkout therefore updates the terminal CLI, background server, and managed host-session CLI together. Run `setup.sh --install` again if another npm install replaces the link.
+The global npm link points `oppi` to this checkout's `dist/src/cli.js`. Rebuilding the checkout therefore updates the terminal CLI, background server, and managed host-session CLI together. Run `setup.sh --install` again if another npm install replaces the link. The server reports this install as `source-link`: the iPhone's About This Server offers **Rebuild & Restart** once the checkout has changes the running build lacks, running `npm run build:in-place` (which keeps the old build if the compile fails), and `oppi update` refuses rather than replace the link.
 
 If you prefer the repo bootstrapper from outside the repo, use:
 

@@ -32,7 +32,10 @@ struct ServerInfo: Codable, Sendable, Equatable {
         var error: String? = nil
         let restartMode: String
 
-        var isAppUpdatable: Bool { installKind == "npm-global" }
+        /// `npm-global` updates from the registry; `source-link` (an `npm link`ed
+        /// checkout) rebuilds in place, and `latestVersion` is the checkout's version.
+        var isAppUpdatable: Bool { installKind == "npm-global" || isSourceLink }
+        var isSourceLink: Bool { installKind == "source-link" }
         var isIdle: Bool { status == "idle" }
         var isInstalling: Bool { status == "installing" }
         var isRestarting: Bool { status == "restarting" }

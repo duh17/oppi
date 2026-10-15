@@ -166,7 +166,6 @@ final class SessionStore {
 
     // ── Cross-server queries ──
 
-    // periphery:ignore - used by SessionStoreTests via @testable import
     /// Sessions for a specific server (regardless of which is active).
     func sessions(forServer serverId: String) -> [Session] {
         serverSessions[serverId] ?? []

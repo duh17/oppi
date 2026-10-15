@@ -365,10 +365,15 @@ describe("GET /server/info", () => {
     expect(body.uptime).toBeTypeOf("number");
     expect(body.os).toBeTypeOf("string");
     expect(body.runtimeUpdate).toBeUndefined();
-    expect(body.update?.installKind).toMatch(/^(npm-global|other)$/);
+    // Depends on the host: a developer checkout linked with `npm link` is source-link.
+    expect(body.update?.installKind).toMatch(/^(npm-global|source-link|other)$/);
     expect(body.update?.status).toBe("idle");
     expect(body.update).toHaveProperty("latestVersion");
-    expect(body.update?.manualCommand).toMatch(/npm install -g oppi-server/);
+    expect(body.update?.manualCommand).toMatch(
+      body.update?.installKind === "source-link"
+        ? /npm run build:in-place/
+        : /npm install -g oppi-server/,
+    );
     expect(body.capabilities?.sessionStream?.version).toBe(1);
     expect(body.capabilities?.appEventStream?.version).toBe(1);
     expect(body.capabilities?.workspaceFileEditing).toEqual({

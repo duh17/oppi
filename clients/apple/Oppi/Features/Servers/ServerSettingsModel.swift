@@ -113,10 +113,12 @@ final class ServerSettingsModel {
     }
 
     /// Value beside About This Server: the update call to action when there is
-    /// one, otherwise the running server version.
+    /// one, otherwise the running server version. A linked checkout rebuilds; an
+    /// outdated server with nothing to install says so instead of offering one.
     var aboutSummary: String? {
-        if hasUpdateNotice { return "Update Available" }
-        return info?.version
+        guard hasUpdateNotice else { return info?.version }
+        guard let update = info?.update, update.available else { return "Server Outdated" }
+        return update.isSourceLink ? "Rebuild Available" : "Update Available"
     }
 
     func pairedDevicesState(currentDeviceId: String?) -> ServerDetailPairedDevicesState {

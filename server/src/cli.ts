@@ -1139,6 +1139,15 @@ async function cmdSelfUpdate(flags: Record<string, string>): Promise<void> {
   console.log("");
   console.log(`  Current: ${c.dim(`${info.name}@${info.version}`)}`);
 
+  if (install.kind === "source-link") {
+    // npm install -g would replace the npm link to this checkout.
+    console.log(c.yellow("  This Oppi CLI is linked to a source checkout; npm update refused."));
+    console.log(c.dim(`  Rebuild:  ${install.manualCommand}`));
+    console.log(c.dim("  Then restart the server, or use Rebuild & Restart in the app."));
+    console.log("");
+    process.exit(1);
+  }
+
   let latest: string | null;
   try {
     latest = await fetchLatestPublishedVersion(info.name);

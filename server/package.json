@@ -45,6 +45,7 @@
     "compile": "node node_modules/@typescript/native/bin/tsc",
     "typecheck": "node node_modules/@typescript/native/bin/tsc --noEmit",
     "build": "bash -c 'npm run clean && npm run compile && node scripts/copy-oppi-docs.mjs && chmod +x dist/src/cli.js'",
+    "build:in-place": "bash -c 'npm run compile -- --noEmitOnError && node scripts/copy-oppi-docs.mjs && chmod +x dist/src/cli.js'",
     "prepare": "bash -c 'npm run clean && npm run compile && node scripts/copy-oppi-docs.mjs && chmod +x dist/src/cli.js'",
     "dev": "tsx --preserve-symlinks watch src/cli.ts serve",
     "start": "node dist/src/cli.js serve",

@@ -9,6 +9,8 @@ struct ServerAboutPage: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
 
     @State private var showUpdateConfirmation = false
+    /// Captured when the confirmation opens, so its list cannot shift under the finger.
+    @State private var busySessionTitles: [String] = []
     @State private var copiedManualCommand = false
 
     var body: some View {
@@ -39,23 +41,25 @@ struct ServerAboutPage: View {
         .settingsPage("About This Server")
         .accessibilityIdentifier("server.about.list")
         .confirmationDialog(
-            updateConfirmationTitle,
+            ServerUpdatePresentation.confirmationTitle(model.info?.update),
             isPresented: $showUpdateConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Update") {
+            Button(model.info?.update.map(ServerUpdatePresentation.actionTitle) ?? "Update") {
                 Task { await model.startServerUpdate() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(ServerUpdatePresentation.confirmationMessage)
+            Text(ServerUpdatePresentation.confirmationMessage(busySessionTitles: busySessionTitles))
         }
     }
 
-    private var updateConfirmationTitle: String {
-        let update = model.info?.update
-        let version = update?.latestVersion ?? update?.targetVersion ?? "the latest version"
-        return ServerUpdatePresentation.confirmationTitle(version: version)
+    /// Sessions on this server that a restart would interrupt.
+    private func currentBusySessionTitles() -> [String] {
+        guard let store = coordinator.connection(for: server.id)?.sessionStore else { return [] }
+        return store.sessions(forServer: server.id)
+            .filter { $0.status == .starting || $0.status.isRunning }
+            .map(\.displayTitle)
     }
 
     @ViewBuilder
@@ -82,13 +86,14 @@ struct ServerAboutPage: View {
                             Text(
                                 ServerUpdatePresentation.progressLabel(
                                     status: update.status,
-                                    restartMode: update.restartMode
+                                    restartMode: update.restartMode,
+                                    isSourceLink: update.isSourceLink
                                 )
                             )
                         }
                         .accessibilityIdentifier("server.update.progress")
                     } else if update.isRestartNeeded {
-                        Label("Installed. Restart this Oppi server on the host to use the new version.",
+                        Label("\(update.isSourceLink ? "Built" : "Installed"). Restart this Oppi server on the host to use the new version.",
                               systemImage: "arrow.clockwise")
                             .accessibilityIdentifier("server.update.restartNeeded")
                     } else if update.isFailed, let message = update.error, !message.isEmpty {
@@ -108,11 +113,12 @@ struct ServerAboutPage: View {
 
                     if update.available, update.isAppUpdatable, !update.isInstalling,
                        !update.isRestarting, !update.isRestartNeeded, !updateDidNotReturn {
-                        if let latest = update.latestVersion {
-                            Text(ServerUpdatePresentation.availableTitle(latestVersion: latest))
+                        if let title = ServerUpdatePresentation.availableTitle(update) {
+                            Text(title)
                                 .accessibilityIdentifier("server.update.available")
                         }
-                        Button("Update") {
+                        Button(ServerUpdatePresentation.actionTitle(update)) {
+                            busySessionTitles = currentBusySessionTitles()
                             showUpdateConfirmation = true
                         }
                         .disabled(updateInFlight)
@@ -127,11 +133,7 @@ struct ServerAboutPage: View {
             } header: {
                 Text("Update")
             } footer: {
-                if update?.isAppUpdatable == true {
-                    Text("Updating installs a new oppi-server from npm and restarts this host. Running sessions are interrupted.")
-                } else {
-                    Text("This install cannot be updated from the app. Run the command on the host, then restart the server.")
-                }
+                Text(ServerUpdatePresentation.footer(update))
             }
         }
     }
@@ -144,11 +146,12 @@ struct ServerAboutPage: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(ServerUpdatePresentation.minimumVersionNoticeTitle)
             if let update, let detail = ServerUpdatePresentation.minimumVersionUnpublishedDetail(
-                latestVersion: update.latestVersion
+                latestVersion: update.latestVersion,
+                isSourceLink: update.isSourceLink
             ) {
                 Text(detail)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.themeFgDim)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

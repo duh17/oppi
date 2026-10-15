@@ -245,7 +245,7 @@ export async function approvePairing(req) {
 
 ## Updating the server
 
-A global npm install can be updated from iPhone **Server Settings** (About This Server) or with `oppi update`. See [Server settings](usage.md#server-settings). Git checkouts still use `git pull && npm install && npm run build`.
+A global npm install can be updated from iPhone **Server Settings** (About This Server) or with `oppi update`. See [Server settings](usage.md#server-settings). Git checkouts still use `git pull && npm install && npm run build`; a checkout linked with `setup.sh --install` can also be rebuilt and restarted from About This Server after it changes.
 
 ## What not to put in config
 
