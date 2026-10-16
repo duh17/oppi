@@ -14,7 +14,7 @@ import type { FileInfo } from "@earendil-works/pi-durable/env";
 import { AgentConfigurationError } from "./agent-launch-errors.js";
 import type { DurableAgentResources } from "./durable-agent.js";
 import type { GondolinExecutionEnv } from "./durable-gondolin-env.js";
-import { SANDBOX_RESOURCE_MAX_BYTES } from "./gondolin-ops.js";
+import { SANDBOX_CONTEXT_FILE_NAMES, SANDBOX_RESOURCE_MAX_BYTES } from "./gondolin-ops.js";
 import { createLogger } from "./logger.js";
 import {
   assertSelectedAgentResourcesAvailable,
@@ -28,15 +28,6 @@ import {
 type ContextFile = { path: string; content: string };
 
 const log = createLogger({ base: { component: "durable_project_resources" } });
-
-/** Pi's `loadContextFileFromDir` names, in its order: the first readable one is used. */
-const CONTEXT_FILE_NAMES = [
-  "AGENTS.override.md",
-  "AGENTS.md",
-  "AGENTS.MD",
-  "CLAUDE.md",
-  "CLAUDE.MD",
-];
 
 /** The AGENTS files and Skills a durable session presents, as an SDK session loads them. */
 export interface DurableProjectResources {
@@ -272,7 +263,7 @@ async function readGuestContextFile(
   env: GondolinExecutionEnv,
   hostCwd: string,
 ): Promise<ContextFile[]> {
-  for (const name of CONTEXT_FILE_NAMES) {
+  for (const name of SANDBOX_CONTEXT_FILE_NAMES) {
     const path = posix.join(env.workspaceRoot, name);
     const text = await readGuestResource(env, path);
     if (text !== undefined)

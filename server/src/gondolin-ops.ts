@@ -118,6 +118,15 @@ export const GUEST_WORKSPACE = "/workspace";
  */
 export const SANDBOX_RESOURCE_MAX_BYTES = 1024 * 1024;
 
+/** Pi's `loadContextFileFromDir` names, in its order: a sandbox uses the first one its VM reads. */
+export const SANDBOX_CONTEXT_FILE_NAMES = [
+  "AGENTS.override.md",
+  "AGENTS.md",
+  "AGENTS.MD",
+  "CLAUDE.md",
+  "CLAUDE.MD",
+] as const;
+
 /**
  * A regular file's text through the VM's own provider stack (shadow and mount jail), or
  * `tooLarge` past `maxBytes`. Reading stops at the bound, so a file the guest grows after the

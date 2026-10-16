@@ -52,7 +52,7 @@ New sandbox sessions behave as follows:
 - A durable sandbox session discovers its skills and reads every skill and context-file byte through the VM, never the host filesystem. An `.agents/skills` entry that links out of the workspace or to a hidden file (such as `.env`) yields no skill and no text. `/skill:name` reads the skill through the VM, at the path the model sees; a skill file that no longer resolves inside its mount (for example, one replaced with a symlink to a host file) fails the prompt.
 - A skill or context file over 1 MiB is skipped (logged), so a guest cannot stall a session start with a huge or sparse `AGENTS.md`.
 - In a sandbox, project `.pi/settings.json` skill filters and `.gitignore`/`.ignore` files in skill directories are not applied.
-- Workspace-local `AGENTS.md` and `CLAUDE.md` are rewritten to sandbox paths before they are shown to the model. Durable sandbox sessions read their text through the VM, so a context file that is a symlink to a hidden file (such as `.env`) is left out. Saved Agent AGENTS files are rewritten and redacted like workspace-local ones.
+- Workspace-local `AGENTS.md` and `CLAUDE.md` are rewritten to sandbox paths before they are shown to the model. Sandbox sessions, classic and durable, read their text through the VM, never the host, so a context file that is a symlink to a hidden file (such as `.env`) is left out. Saved Agent AGENTS files are rewritten and redacted like workspace-local ones.
 - Global host agent instructions are not exposed to sandbox sessions.
 - Sandbox Oppi does not expose hostMount or host session file paths.
 

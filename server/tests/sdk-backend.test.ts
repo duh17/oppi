@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
+import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as PiSdk from "@earendil-works/pi-coding-agent";
 
@@ -485,6 +486,71 @@ describe("SdkBackend sandbox", () => {
       rmSync(cwd, { recursive: true, force: true });
       rmSync(agentDir, { recursive: true, force: true });
       rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("takes a sandbox's context file text only from the VM's read", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-classic-context-"));
+    // A guest-planted link: the host would follow it to the file the VM shadow hides.
+    writeFileSync(join(cwd, ".env"), "HOST_ENV_SECRET=1");
+    symlinkSync(".env", join(cwd, "AGENTS.md"));
+    const guestCwd = "/workspace/sandbox-classic-context";
+    // The VM refuses AGENTS.md and serves CLAUDE.md, which the host does not have.
+    const guestFiles = new Map([[`${guestCwd}/CLAUDE.md`, Buffer.from(`Build in ${cwd}/src.`)]]);
+    const guestFile = (path: string): Buffer => {
+      const bytes = guestFiles.get(path);
+      if (!bytes) throw new Error(`ENOENT: ${path}`);
+      return bytes;
+    };
+    const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
+    const execResult = { exitCode: 0, stdout: "", stdoutBuffer: Buffer.alloc(0), ok: true };
+    const vm = {
+      fs: {
+        access: vi.fn(async () => undefined),
+        mkdir: vi.fn(async () => undefined),
+        readFile: vi.fn(async (path: string) => guestFile(path)),
+        readFileStream: vi.fn(async (path: string) => Readable.from([guestFile(path)])),
+        stat: vi.fn(async (path: string) => ({
+          isDirectory: () => false,
+          isFile: () => true,
+          size: guestFile(path).length,
+        })),
+        writeFile: vi.fn(async () => undefined),
+      },
+      exec: vi.fn(() =>
+        Object.assign(Promise.resolve(execResult), { output: async function* () {} }),
+      ),
+    };
+    const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
+    const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
+    const previousManager = sdkBackendType._gondolinManager;
+    sdkBackendType._gondolinManager = manager;
+    let backend: SdkBackend | undefined;
+
+    try {
+      backend = await SdkBackend.create({
+        session: makeSession({ ephemeral: true }),
+        workspace: {
+          id: "w1",
+          name: "Sandbox Classic Context",
+          runtime: "sandbox",
+          hostMount: cwd,
+          extensions: [],
+        } as Workspace,
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      expect(backend.session.resourceLoader.getAgentsFiles().agentsFiles).toEqual([
+        { path: `${guestCwd}/CLAUDE.md`, content: `Build in ${guestCwd}/src.` },
+      ]);
+      expect(backend.session.systemPrompt).toContain(`Build in ${guestCwd}/src.`);
+      expect(backend.session.systemPrompt).not.toContain("HOST_ENV_SECRET");
+    } finally {
+      await backend?.dispose();
+      sdkBackendType._gondolinManager = previousManager;
+      qemuSpy.mockRestore();
+      rmSync(cwd, { recursive: true, force: true });
     }
   });
 

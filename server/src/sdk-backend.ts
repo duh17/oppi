@@ -91,7 +91,13 @@ import { resolveSandboxGuestCwd } from "./workspace-folder.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
 import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "./oppi-docs.js";
 import type { VmSecretDefinition } from "./gondolin-manager.js";
-import type { GondolinVm, ReadonlyMount } from "./gondolin-ops.js";
+import {
+  readVmTextFileWithin,
+  SANDBOX_CONTEXT_FILE_NAMES,
+  SANDBOX_RESOURCE_MAX_BYTES,
+  type GondolinVm,
+  type ReadonlyMount,
+} from "./gondolin-ops.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import { callerSessionIdentityShellPrefix } from "./session-caller-identity.js";
 import {
@@ -526,6 +532,33 @@ function sandboxGuestSkills(
     const filePath = toGuest(skill.filePath);
     return baseDir && filePath ? [{ host: skill, guest: { ...skill, baseDir, filePath } }] : [];
   });
+}
+
+/**
+ * A classic sandbox's context file, read as a durable one is: the first of Pi's context-file
+ * names at the guest root that the VM serves (its shadow and mount jail apply) within
+ * `SANDBOX_RESOURCE_MAX_BYTES`, redacted. A refused or oversized file is left out.
+ */
+async function readSandboxContextFiles(
+  vm: GondolinVm,
+  hostCwd: string,
+  guestCwd: string,
+): Promise<AgentContextFile[]> {
+  for (const name of SANDBOX_CONTEXT_FILE_NAMES) {
+    const path = posix.join(guestCwd, name);
+    const read = await readVmTextFileWithin(vm, path, SANDBOX_RESOURCE_MAX_BYTES).catch(
+      () => undefined,
+    );
+    if (read && "tooLarge" in read) {
+      log.warn("sdk.sandbox_context_file_too_large", {
+        path,
+        maxBytes: SANDBOX_RESOURCE_MAX_BYTES,
+      });
+    } else if (read) {
+      return [{ path, content: redactHostEnvironment(read.text, hostCwd, guestCwd) }];
+    }
+  }
+  return [];
 }
 
 function replaceAllLiteral(value: string, search: string, replacement: string): string {
@@ -1148,6 +1181,8 @@ export class SdkBackend implements AgentBackend {
         selectedResourceReloadError = undefined;
         return error;
       };
+      // A sandbox's context file, as its VM last read it (`readSandboxContextFiles`).
+      let sandboxContextFiles: AgentContextFile[] = [];
       // The workspace VM comes before the loader: the `.pi/skills` entries it mounted decide
       // which Skills this session presents, whichever session booted it.
       if (sandboxMode && workspace) {
@@ -1199,20 +1234,12 @@ export class SdkBackend implements AgentBackend {
         ...(sandboxMode
           ? {
               systemPrompt: sandboxSystemPrompt(),
-              agentsFilesOverride: (base: { agentsFiles: AgentContextFile[] }) => ({
-                agentsFiles: [
-                  ...base.agentsFiles.flatMap((file) => {
-                    const guestPath = hostWorkspacePathToGuest(hostCwd, guestCwd, file.path);
-                    if (!guestPath) return [];
-                    return [
-                      {
-                        path: guestPath,
-                        content: redactHostEnvironment(file.content, hostCwd, guestCwd),
-                      },
-                    ];
-                  }),
-                  ...savedAgentFiles,
-                ],
+              // Pi reads no context file on the host: the guest can make the workspace's
+              // `AGENTS.md` a link to a file the VM hides (`.env`), or a huge one. The VM's
+              // read, taken before each load, is the only text the session presents.
+              noContextFiles: true,
+              agentsFilesOverride: () => ({
+                agentsFiles: [...sandboxContextFiles, ...savedAgentFiles],
               }),
               skillsOverride: (base: SkillLoadResult): SkillLoadResult => {
                 const visible = sandboxGuestSkills(
@@ -1249,6 +1276,8 @@ export class SdkBackend implements AgentBackend {
       loader.reload = async (options) => {
         selectedResourceReloadError = undefined;
         await resolveTrust();
+        if (sandboxVm && !agentDefinition?.resources?.noContextFiles)
+          sandboxContextFiles = await readSandboxContextFiles(sandboxVm, hostCwd, guestCwd);
         await reload(options);
         try {
           if (!sandboxMode) {
