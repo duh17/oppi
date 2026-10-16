@@ -669,7 +669,7 @@ export function buildSessionContext(
 
       case "custom_message": {
         const parent = entry.parentId ? visibleEntryById.get(entry.parentId) : undefined;
-        const projected = projectVisibleCustomMessage(entry, parent?.type);
+        const projected = projectVisibleCustomMessage(entry, parent);
         if (projected) {
           events.push({
             id: projected.id,
@@ -784,13 +784,20 @@ function formatCompactionEvent(entry: SessionEntry): TraceEvent {
   };
 }
 
-/** Same card history shows for a visible custom message. Live delivery uses this too. */
+/**
+ * Same card history shows for a visible custom message. Live delivery uses this too.
+ *
+ * A custom_message right after an extension's own `custom` entry is its raw duplicate (e.g. the
+ * subagents record already renders the same result), so it is hidden. oppi-lifecycle entries are
+ * structural metadata, not renderable records: a background-job result delivered to an idle
+ * session lands right after the lifecycle `agent_start` entry and must stay visible.
+ */
 export function projectVisibleCustomMessage(
   entry: SessionEntry,
-  parentType?: string,
+  parent?: Pick<SessionEntry, "type" | "customType">,
 ): { id: string; text: string; presentation: TraceEventPresentation } | null {
   if (entry.type !== "custom_message" || !entry.content || entry.display === false) return null;
-  if (parentType === "custom") return null;
+  if (parent?.type === "custom" && parent.customType !== OPPI_LIFECYCLE_CUSTOM_TYPE) return null;
   const text = extractText(entry.content);
   if (!text) return null;
   const presentation = customPresentationFromText(text);

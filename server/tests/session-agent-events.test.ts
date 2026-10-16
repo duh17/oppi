@@ -1,3 +1,4 @@
+import { OPPI_LIFECYCLE_CUSTOM_TYPE } from "../src/lifecycle-journal-extension.js";
 import { ToolOutputSnapshots } from "../src/tool-output-sidecar.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -294,6 +295,44 @@ describe("SessionAgentEventCoordinator", () => {
       },
     } as SessionBackendEvent);
     expect(broadcast).not.toHaveBeenCalled();
+  });
+
+  it("broadcasts a custom message after an oppi-lifecycle entry but not after another extension's entry", () => {
+    const active = makeActiveSession({ status: "idle" });
+    const entries = new Map<string, Record<string, unknown>>([
+      ["life", { type: "custom", id: "life", parentId: "turn", customType: OPPI_LIFECYCLE_CUSTOM_TYPE }],
+      ["record", { type: "custom", id: "record", parentId: "turn", customType: "subagents:record" }],
+    ]);
+    active.sdkBackend = {
+      sessionTree: () => ({
+        getLeafId: () => "life",
+        getLeafEntry: () => entries.get("life"),
+        getEntry: (id: string) => entries.get(id),
+      }),
+      toolDefinition: () => undefined,
+    } as never;
+    const { broadcast, coordinator } = makeCoordinator(active);
+    const append = (id: string, parentId: string) =>
+      coordinator.handlePiEvent(active.session.id, {
+        type: "entry_appended",
+        entry: {
+          type: "custom_message",
+          id,
+          parentId,
+          timestamp: "2026-01-01T00:00:00.000Z",
+          customType: "background-job",
+          display: true,
+          content: "Background job bash-108 finished",
+        },
+      } as SessionBackendEvent);
+
+    append("after-lifecycle", "life");
+    append("after-record", "record");
+
+    const cardIds = broadcast.mock.calls.flatMap(([, message]) =>
+      message.type === "custom_card" && typeof message.id === "string" ? [message.id] : [],
+    );
+    expect(cardIds).toEqual(["after-lifecycle"]);
   });
 
   it("broadcasts the new custom entry when an identical batch is still the leaf", async () => {

@@ -512,9 +512,12 @@ export class SessionAgentEventCoordinator {
     entry: SessionEntry,
   ): void {
     const tree = this.sessionTreeFor(active);
-    const parentType =
-      tree && typeof entry.parentId === "string" ? tree.getEntry(entry.parentId)?.type : undefined;
-    const projected = projectVisibleCustomMessage(entry as TraceSessionEntry, parentType);
+    const parent =
+      tree && typeof entry.parentId === "string" ? tree.getEntry(entry.parentId) : undefined;
+    const projected = projectVisibleCustomMessage(
+      entry as TraceSessionEntry,
+      parent as TraceSessionEntry | undefined,
+    );
     if (!projected) return;
     this.deps.broadcast(key, {
       type: "custom_card",

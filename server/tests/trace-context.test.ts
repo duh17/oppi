@@ -6,6 +6,7 @@ import {
   findLatestForkableUserEntryIdFromContent,
   findLatestForkableUserEntryIdFromFile,
 } from "../src/trace.js";
+import { OPPI_LIFECYCLE_CUSTOM_TYPE } from "../src/lifecycle-journal-extension.js";
 import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -377,6 +378,26 @@ describe("buildSessionContext", () => {
     expect(events.find((event) => event.id === "record-1")).toBeUndefined();
     expect(events.find((event) => event.id === "raw-xml")).toBeUndefined();
     expect(events.map((event) => event.text ?? "").join("\n")).not.toContain("<task-notification>");
+  });
+
+  it("keeps a background-job result visible when it follows the idle-wake lifecycle entry", () => {
+    const entries = [
+      msg("1", null, "user", "start a job"),
+      msg("2", "1", "assistant", "started"),
+      entry("custom", "life-1", "2", {
+        customType: OPPI_LIFECYCLE_CUSTOM_TYPE,
+        data: { version: 1, event: "agent_start" },
+      }),
+      entry("custom_message", "job-result", "life-1", {
+        customType: "background-job",
+        content: "Background job bash-108 finished\nexit 0",
+        display: true,
+      }),
+      msg("3", "job-result", "assistant", "job done"),
+    ];
+
+    const events = buildSessionContext(entries);
+    expect(events.find((event) => event.id === "job-result")?.text).toContain("bash-108");
   });
 
   it("skips custom records because appendEntry is extension persistence state", () => {
