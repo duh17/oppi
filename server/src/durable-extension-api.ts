@@ -19,7 +19,8 @@ import type { agentMessageEntry } from "../extensions/durable/sessions/agent-mes
  *
  * Every package entry gets its own evaluation of this module (the loader keeps no module cache,
  * so a reload re-reads everything), so nothing here may keep state: documents are matched by
- * kind, not by object, and the host the server binds lives in one process-wide slot.
+ * kind, not by object, and the host the server binds lives in one process-wide slot that is
+ * written once and never replaced.
  * @public
  */
 
@@ -43,14 +44,22 @@ export {
 // package; extension code reads it with `oppiHost()`.
 // ---------------------------------------------------------------------------------------------
 
-/** What Oppi's server offers durable extensions beyond pi-durable. */
+/**
+ * What Oppi's server offers durable extensions beyond pi-durable. `env` is a tool call's
+ * `api.env`; the server knows which conversation each env it made runs, and scopes what it
+ * returns to that conversation.
+ */
 export interface OppiDurableHost {
   /**
-   * `subagent`'s side of Oppi for the session host running `env` (a tool call's `api.env`);
-   * undefined until that server binds its threads.
+   * `subagent`'s side of Oppi for the conversation running `env`: it reaches only that
+   * conversation's own children. Undefined for an env the server did not make, or until the
+   * server binds its threads.
    */
   sessions(env: ExecutionEnv | undefined): DurableSessionsHost | undefined;
-  /** The `oppi` CLI for the control conversation running in `env`; undefined until bound. */
+  /**
+   * The `oppi` CLI, only when `env` runs the control conversation; undefined for every other
+   * conversation.
+   */
   control(env: ExecutionEnv | undefined): DurableControlHost | undefined;
   /** File tools over a sandbox session's Gondolin VM. */
   readonly sandbox: OppiSandboxHost;
@@ -66,9 +75,19 @@ export function oppiHost(): OppiDurableHost {
   return host;
 }
 
-/** Server only: bind the host before loading packages. */
+/**
+ * Server only: bind the host once, before any package loads. The slot cannot be written,
+ * deleted, or bound again, so package code cannot replace the host the built-ins use.
+ */
 export function bindOppiHost(host: OppiDurableHost): void {
-  (globalThis as HostSlot)[HOST] = host;
+  if (Object.hasOwn(globalThis, HOST))
+    throw new Error("oppi/durable: the Oppi durable host is already bound");
+  Object.defineProperty(globalThis, HOST, {
+    value: host,
+    writable: false,
+    configurable: false,
+    enumerable: false,
+  });
 }
 
 // --- sessions (`oppi.sessions`) --------------------------------------------------------------
@@ -101,21 +120,22 @@ export interface ResolvedSubagent {
   apply(tx: Tx, child: ConversationId): Promise<void>;
 }
 
-/** What the subagent tool needs from Oppi (see `DurableThreads`). */
+/**
+ * What the subagent tool needs from Oppi (see `DurableThreads.forCaller`), for one calling
+ * conversation. Every Session it takes must be bound to a child conversation that the caller
+ * owns; any other is refused.
+ */
 export interface DurableSessionsHost {
+  /** The store of the calling conversation. */
+  readonly storeId: string;
   /**
-   * The Oppi Session bound to an owned child conversation, created and attached on
+   * The Oppi Session bound to a child conversation the caller owns, created and attached on
    * first use. Idempotent: one Session per conversation id, however often this runs.
    */
-  materialize(
-    child: { conversationId: ConversationId; name: string },
-    env?: ExecutionEnv,
-  ): Promise<string>;
-  /** The store of the calling conversation. */
-  storeIdOfEnv(env?: ExecutionEnv): string;
-  /** The Oppi session bound to a conversation of the calling store: who sent an agent message. */
-  sessionOf(conversationId: ConversationId, env?: ExecutionEnv): SessionSender | undefined;
-  /** Submit to a bound session's own store. Undefined on success, otherwise an error message. */
+  materialize(child: { conversationId: ConversationId; name: string }): Promise<string>;
+  /** The calling conversation's own Oppi session: who sent an agent message. */
+  sender(): SessionSender | undefined;
+  /** Submit to a child's Session. Undefined on success, otherwise an error message. */
   submit(
     sessionId: string,
     input: {
@@ -125,18 +145,16 @@ export interface DurableSessionsHost {
       entry?: ReturnType<typeof agentMessageEntry>;
     },
   ): Promise<string | undefined>;
-  /** Wait until a bound session's conversation is idle. */
+  /** Wait until a child's conversation is idle. Undefined on success, otherwise an error message. */
   waitForIdle(sessionId: string): Promise<string | undefined>;
-  /** Attach a stopped Session so a message to it makes progress. */
+  /** Attach a child's stopped Session so a message to it makes progress. */
   activate(sessionId: string): Promise<void>;
   /**
    * Resolve a spawn: the saved Agent, model, and thinking level, checked against the caller's
-   * delegation grant and workspace. Rejects with a message for the model.
+   * delegation grant and workspace. `agent` is the caller's current agent. Rejects with a
+   * message for the model.
    */
-  resolveAgent(
-    request: SubagentRequest,
-    caller: { conversationId: ConversationId; env?: ExecutionEnv; agent: Agent },
-  ): Promise<ResolvedSubagent>;
+  resolveAgent(request: SubagentRequest, agent: Agent): Promise<ResolvedSubagent>;
 }
 
 // --- control (`oppi.control`) ----------------------------------------------------------------

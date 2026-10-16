@@ -37,9 +37,9 @@ import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
 import {
   SESSION_REPORTER_TASK,
   bindOppiHost,
-  type DurableControlHost,
   type OppiDurableHost,
 } from "./durable-extension-api.js";
+import type { DurableControlCli } from "./durable-control-cli.js";
 import { sandboxHost } from "./durable-sandbox-host.js";
 import { DurableUI } from "../extensions/durable/durable-ui.js";
 import {
@@ -91,16 +91,17 @@ const CONTROL_SCRIPT_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
 const METADATA_FILE = "meta.json";
 const STORAGE_FILE = "session.sqlite";
 
-const sessionHostsByEnv = new WeakMap<ExecutionEnv, SessionHost>();
+/** The store and conversation each execution env the server made runs; one env, one conversation. */
+const conversationsByEnv = new WeakMap<
+  ExecutionEnv,
+  { host: SessionHost; conversationId: ConversationId }
+>();
 
-export function sessionHostOfEnv(env: ExecutionEnv | undefined): SessionHost | undefined {
-  return env ? sessionHostsByEnv.get(env) : undefined;
-}
-
-export function hostOfEnv(env: ExecutionEnv | undefined): SessionHost {
-  const host = sessionHostOfEnv(env);
-  if (!host) throw new Error("Durable session host is missing");
-  return host;
+/** The session host and conversation `env` runs, when the server made it. */
+export function conversationOfEnv(
+  env: ExecutionEnv | undefined,
+): { host: SessionHost; conversationId: ConversationId } | undefined {
+  return env ? conversationsByEnv.get(env) : undefined;
 }
 
 export function durableSessionsRoot(dataDir: string): string {
@@ -181,14 +182,25 @@ const CONTROL_EXTENSION = "oppi.control";
 const SESSIONS_EXTENSION = "oppi.sessions";
 
 /**
- * What Oppi's built-ins get from `oppiHost()`: the subagent and control hosts of the session
- * host whose Harness runs a tool call's env, and the Gondolin sandbox operations.
+ * What Oppi's built-ins get from `oppiHost()`: the subagent and control hosts scoped to the
+ * conversation that runs a tool call's env, and the Gondolin sandbox operations. One object for
+ * every runtime of the process, bound once before the first package loads.
  */
 const durableHost: OppiDurableHost = {
-  sessions: (env) => sessionHostOfEnv(env)?.runtime.boundThreads,
-  control: (env) => sessionHostOfEnv(env)?.runtime.boundControl,
+  sessions: (env) => {
+    const caller = conversationOfEnv(env);
+    return caller?.host.runtime.boundThreads?.forCaller(caller.host, caller.conversationId);
+  },
+  control: (env) => {
+    const caller = conversationOfEnv(env);
+    return caller?.host.runtime.boundControl?.forConversation(
+      caller.host.storeId,
+      caller.conversationId,
+    );
+  },
   sandbox: sandboxHost,
 };
+let durableHostBound = false;
 
 function readStoreMeta(directory: string): DurableStoreMeta | undefined {
   const path = join(directory, METADATA_FILE);
@@ -336,7 +348,7 @@ export class SessionHost {
   bindSandboxEnv(id: ConversationId, env: ExecutionEnv): void {
     // A stopped projection can reattach while conversation-owned jobs still run.
     if (!this.sandboxEnvs.has(id)) this.sandboxEnvs.set(id, env);
-    sessionHostsByEnv.set(env, this);
+    conversationsByEnv.set(env, { host: this, conversationId: id });
   }
 
   async unbindSandboxEnv(id: ConversationId, force = false): Promise<void> {
@@ -665,13 +677,13 @@ export class SessionHost {
             const runtime = await read.snapshot(DurableRuntime, conversationId, context);
             if (runtime?.kind !== "sandbox") {
               const env = new NodeExecutionEnv({ cwd: cwd ?? homedir() });
-              sessionHostsByEnv.set(env, this);
+              conversationsByEnv.set(env, { host: this, conversationId });
               return env;
             }
             const env = this.sandboxEnvs.get(conversationId);
             if (!env)
               throw new Error("Durable sandbox workspace is not attached; refusing host execution");
-            sessionHostsByEnv.set(env, this);
+            conversationsByEnv.set(env, { host: this, conversationId });
             return env;
           },
         },
@@ -1109,7 +1121,7 @@ export class DurableHarness {
   private runPolicy?: SettingsManager;
   private registry?: Registry;
   private threads?: DurableThreads;
-  private control?: DurableControlHost;
+  private control?: DurableControlCli;
   /** Extensions from Oppi's bundled packages, in install order. */
   private bundled: readonly LoadedDurableExtension[] = [];
   /** Extensions from the durable entries of enabled Pi packages, in load order. */
@@ -1220,13 +1232,13 @@ export class DurableHarness {
   bindThreads(threads: DurableThreads): void {
     this.threads = threads;
   }
-  bindControl(control: DurableControlHost): void {
+  bindControl(control: DurableControlCli): void {
     this.control = control;
   }
   get boundThreads(): DurableThreads | undefined {
     return this.threads;
   }
-  get boundControl(): DurableControlHost | undefined {
+  get boundControl(): DurableControlCli | undefined {
     return this.control;
   }
 
@@ -1313,25 +1325,29 @@ export class DurableHarness {
     const result = await loadDurableExtensions(found.packages, {
       names: reservedBy([CodingTools, this.controlCodemode]).names,
       tools: new Set(),
+      tasks: installedTasks(registry),
     });
     const errors = [...found.errors, ...result.errors, ...result.skipped];
-    if (first && errors.length)
-      throw new Error(
+    const failed = (): Error =>
+      new Error(
         `Oppi's bundled durable extensions failed to load: ${errors
           .map((issue) => `${issue.entry}: ${issue.message}`)
           .join("; ")}`,
       );
-    const fresh = new Map(result.loaded.map((loaded) => [loaded.extension.name, loaded]));
+    if (first && errors.length) throw failed();
+    const installed = installPackages(registry, result.loaded, previous);
+    errors.push(...installed.errors);
+    if (first && errors.length) throw failed();
+    const fresh = new Map(installed.loaded.map((loaded) => [loaded.extension.name, loaded]));
     const kept = previous.filter((old) => !fresh.has(old.extension.name));
     this.bundled = [
       ...previous.map((old) => fresh.get(old.extension.name) ?? old),
-      ...result.loaded.filter(
+      ...installed.loaded.filter(
         (loaded) => !previous.some((old) => old.extension.name === loaded.extension.name),
       ),
     ];
-    for (const loaded of result.loaded) registry.install(loaded.extension);
     return {
-      loaded: result.loaded.map((loaded) => summarize(loaded, true)),
+      loaded: installed.loaded.map((loaded) => summarize(loaded, true)),
       kept: kept.map((old) => summarize(old, true)),
       errors,
     };
@@ -1354,24 +1370,25 @@ export class DurableHarness {
         ],
       };
     }
-    const result = await loadDurableExtensions(
-      discovered.packages,
-      reservedBy([...this.defaultExtensions, ...this.controlExtensions]),
-    );
-    const loadedNames = new Set(result.loaded.map((loaded) => loaded.extension.name));
-    const errors = [...discovered.errors, ...result.errors];
+    const result = await loadDurableExtensions(discovered.packages, {
+      ...reservedBy([...this.defaultExtensions, ...this.controlExtensions]),
+      // This load replaces or removes the previous packages' extensions, and their tasks with them.
+      tasks: installedTasks(registry, new Set(previous.map((old) => old.extension.name))),
+    });
+    const installed = installPackages(registry, result.loaded, previous);
+    const loadedNames = new Set(installed.loaded.map((loaded) => loaded.extension.name));
+    const errors = [...discovered.errors, ...result.errors, ...installed.errors];
     const failedRoots = new Set(errors.flatMap((issue) => (issue.root ? [issue.root] : [])));
     const kept = previous.filter(
       (old) => failedRoots.has(old.root) && !loadedNames.has(old.extension.name),
     );
-    const next = [...result.loaded, ...kept];
+    const next = [...installed.loaded, ...kept];
     const nextNames = new Set(next.map((loaded) => loaded.extension.name));
-    for (const loaded of result.loaded) registry.install(loaded.extension);
     const removed = previous.filter((old) => !nextNames.has(old.extension.name));
     for (const old of removed) registry.uninstall(old.extension);
     this.packageExtensions = next;
     return {
-      loaded: result.loaded.map((loaded) => summarize(loaded, false)),
+      loaded: installed.loaded.map((loaded) => summarize(loaded, false)),
       kept: kept.map((old) => summarize(old, false)),
       removed: removed.map((old) => old.extension.name),
       skipped: result.skipped,
@@ -1450,8 +1467,12 @@ export class DurableHarness {
     this.runPolicy = settings;
     const registry = createRegistry();
     registry.install(CodingTools);
-    // Before any package loads: built-ins read the host when their entry is evaluated.
-    bindOppiHost(durableHost);
+    // Once per process, before any package loads: built-ins read the host when their entry is
+    // evaluated, and the slot cannot be bound again, so no package can replace it.
+    if (!durableHostBound) {
+      bindOppiHost(durableHost);
+      durableHostBound = true;
+    }
     await this.loadExtensions(registry, true);
     this.registry = registry;
     this.runSettings = harnessSettings(settings, this.defaultExtensions);
@@ -1576,6 +1597,68 @@ function reservedBy(extensions: readonly Extension[]): {
       extensions.flatMap((extension) => extension.tools ?? []).map((tool) => tool.name),
     ),
   };
+}
+
+/**
+ * The task names `registry` holds, each with the extension holding it (undefined for
+ * pi-durable's own tasks), leaving out the tasks of the extensions named in `except`.
+ */
+function installedTasks(
+  registry: Registry,
+  except: ReadonlySet<string> = new Set(),
+): Map<string, string | undefined> {
+  const snapshot = registry.snapshot();
+  const tasks = new Map<string, string | undefined>(
+    snapshot.tasks().map((task) => [task.definition.name, undefined]),
+  );
+  for (const extension of snapshot.installed())
+    for (const task of extension.tasks ?? [])
+      if (except.has(extension.name)) tasks.delete(task.definition.name);
+      else tasks.set(task.definition.name, extension.name);
+  return tasks;
+}
+
+/**
+ * Install `loaded` package by package. The loader already refused what pi-durable's install
+ * rejects; should one still throw, its package keeps its `previous` code (or stays out) and is a
+ * load error, so a bad package never stops the load halfway or fails the runtime.
+ */
+function installPackages(
+  registry: Registry,
+  loaded: readonly LoadedDurableExtension[],
+  previous: readonly LoadedDurableExtension[],
+): { loaded: LoadedDurableExtension[]; errors: DurableExtensionIssue[] } {
+  const byRoot = new Map<string, { entry: string; extensions: LoadedDurableExtension[] }>();
+  for (const one of loaded) {
+    const known = byRoot.get(one.root);
+    if (known) known.extensions.push(one);
+    else byRoot.set(one.root, { entry: one.entry, extensions: [one] });
+  }
+  const installed: LoadedDurableExtension[] = [];
+  const errors: DurableExtensionIssue[] = [];
+  for (const [root, { entry, extensions }] of byRoot) {
+    const done: LoadedDurableExtension[] = [];
+    try {
+      for (const one of extensions) {
+        registry.install(one.extension);
+        done.push(one);
+      }
+      installed.push(...extensions);
+    } catch (error) {
+      // pi-durable's install publishes nothing when it throws; undo the ones before it.
+      for (const one of done.reverse()) {
+        const old = previous.find((before) => before.extension.name === one.extension.name);
+        if (old) registry.install(old.extension);
+        else registry.uninstall(one.extension);
+      }
+      errors.push({
+        root,
+        entry,
+        message: `Install failed: ${safeErrorMessage(error)}`,
+      });
+    }
+  }
+  return { loaded: installed, errors };
 }
 
 // Pi v1 experimental/durable/harness-setup.ts: read policy at each use,

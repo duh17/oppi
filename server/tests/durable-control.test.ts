@@ -159,7 +159,11 @@ async function fixture() {
   await models.setRuntimeApiKey("faux", "test-only-faux-credential");
   await models.refresh({ allowNetwork: false });
   const api = await ownerApi(dir);
-  const real = new DurableControlCli({ dataDir: dir, sessionIdOf: () => undefined });
+  // Every conversation these tests open stands for the control conversation.
+  const real = new DurableControlCli({
+    dataDir: dir,
+    sessionIdOf: () => "control-session",
+  }).forConversation("control", 1 as ConversationId)!;
   const run = vi.fn((...args: Parameters<DurableControlHost["run"]>) => real.run(...args));
   const host: DurableControlHost = { run };
   // The server's own codemode for control: its sandbox, memory limit, and options.

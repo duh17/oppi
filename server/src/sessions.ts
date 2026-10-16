@@ -165,14 +165,10 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         runtime.bindControl(
           new DurableControlCli({
             dataDir: storage.getDataDir(),
-            sessionIdOf: (conversationId) =>
-              storage
-                .listSessions()
-                .find(
-                  (session) =>
-                    isControlConversation(session) &&
-                    session.serverDurable?.conversationId === conversationId,
-                )?.id,
+            sessionIdOf: (storeId, conversationId) => {
+              const session = storage.findSessionByDurableConversation(storeId, conversationId);
+              return session && isControlConversation(session) ? session.id : undefined;
+            },
           }),
         );
         return runtime;

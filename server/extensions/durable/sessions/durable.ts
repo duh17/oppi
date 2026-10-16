@@ -227,7 +227,7 @@ export function createDurableSessions(
   const sessionIdOf = (api: ToolExecutionApi, name: string, child: Child): Promise<string> =>
     child.sessionId !== undefined
       ? Promise.resolve(child.sessionId)
-      : bound(api.env).materialize({ conversationId: child.conversationId, name }, api.env);
+      : bound(api.env).materialize({ conversationId: child.conversationId, name });
 
   const subagent = defineTool({
     name: "subagent",
@@ -283,12 +283,12 @@ export function createDurableSessions(
           const sessionId = await sessionIdOf(api, name, child);
           await sessions.activate(sessionId);
           const whenBusy = args.followUp === true ? "followUp" : "steer";
-          const requestId = `oppi-send:${sessions.storeIdOfEnv(api.env)}:${api.conversationId}:${api.taskId}`;
+          const requestId = `oppi-send:${sessions.storeId}:${api.conversationId}:${api.taskId}`;
           const submitError = await sessions.submit(sessionId, {
             content: args.message,
             whenBusy,
             requestId,
-            ...sentBy(sessions.sessionOf(api.conversationId, api.env), "message"),
+            ...sentBy(sessions.sender(), "message"),
           });
           const details = { name, conversationId: child.conversationId, sessionId, requestId };
           if (submitError !== undefined) return reply(submitError, details, true);
@@ -405,7 +405,7 @@ export function createDurableSessions(
             ...(args.thinking ? { thinking: args.thinking } : {}),
             ...(args.allowNestedDelegation ? { allowNestedDelegation: true } : {}),
           },
-          { conversationId: api.conversationId, env: api.env, agent: await api.agent(context) },
+          await api.agent(context),
         );
     const conversationId = await api.commit(async (tx) => {
       const state = await tx.doc(Subagents, api.conversationId);
@@ -432,13 +432,13 @@ export function createDurableSessions(
       state.calls[call] = name;
       return child.id;
     }, context);
-    const sessionId = await sessions.materialize({ conversationId, name }, api.env);
+    const sessionId = await sessions.materialize({ conversationId, name });
     await api.commit(async (tx) => {
       const child = (await tx.doc(Subagents, api.conversationId)).children[name];
       if (child && child.sessionId === undefined) child.sessionId = sessionId;
     }, context);
     await api.details({ name, conversationId, sessionId }, context);
-    const parent = sessions.sessionOf(api.conversationId, api.env);
+    const parent = sessions.sender();
 
     if (!foreground) {
       // The reporter is created after the Session is bound, so the child never runs unattached.

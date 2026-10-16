@@ -140,22 +140,44 @@ function failure(code: string, message: string): ControlJson {
 
 export interface DurableControlCliDeps {
   dataDir: string;
-  /** The Oppi Session a conversation is bound to, so child sessions are attributed to it. */
-  sessionIdOf(conversationId: ConversationId): string | undefined;
+  /**
+   * The control conversation's Session when `conversationId` of durable store `storeId` is the
+   * control conversation, undefined for any other conversation. Commands are attributed to it.
+   */
+  sessionIdOf(storeId: string, conversationId: ConversationId): string | undefined;
 }
 
 /** Runs the `oppi` CLI inside this server process for the control conversation's tools. */
-export class DurableControlCli implements DurableControlHost {
+export class DurableControlCli {
   constructor(private readonly deps: DurableControlCliDeps) {}
 
+  /**
+   * What `oppiHost().control(env)` gives the conversation `conversationId` of store `storeId`:
+   * the CLI when it is the control conversation, undefined for every other conversation.
+   */
+  forConversation(storeId: string, conversationId: ConversationId): DurableControlHost | undefined {
+    if (this.deps.sessionIdOf(storeId, conversationId) === undefined) return undefined;
+    return { run: (argv, options) => this.run(storeId, argv, options) };
+  }
+
+  /** Refuses a conversation of `storeId` that is not the control conversation. */
   async run(
+    storeId: string,
     argv: readonly string[],
     options: Parameters<DurableControlHost["run"]>[1],
   ): ReturnType<DurableControlHost["run"]> {
+    const callerSessionId = this.deps.sessionIdOf(storeId, options.conversationId);
+    if (callerSessionId === undefined)
+      return {
+        envelope: failure(
+          "refused",
+          "The oppi CLI runs only for the control conversation, and this is not it.",
+        ),
+        wrote: false,
+      };
     const refusal = refuseControlArgv(argv);
     if (refusal !== undefined) return { envelope: failure("refused", refusal), wrote: false };
 
-    const callerSessionId = this.deps.sessionIdOf(options.conversationId);
     // The refusal is recorded here, not read back from the CLI's error: some commands keep only
     // the message and status.
     const outcome: { wrote: boolean; blocked?: ControlJson } = { wrote: false };
@@ -185,7 +207,7 @@ export class DurableControlCli implements DurableControlHost {
         dataDir: this.deps.dataDir,
         forceJson: true,
         captureHuman: true,
-        ...(callerSessionId ? { callerSessionId } : {}),
+        callerSessionId,
         signal: options.signal,
       }),
     );
@@ -197,7 +219,7 @@ export class DurableControlCli implements DurableControlHost {
   /** The request as the confirm card shows it; a PATCH also carries the record it changes. */
   private async describe(
     request: LocalApiInterceptedRequest,
-    callerSessionId: string | undefined,
+    callerSessionId: string,
     signal: AbortSignal,
   ): Promise<ControlWrite> {
     const write: ControlWrite = {
@@ -210,7 +232,7 @@ export class DurableControlCli implements DurableControlHost {
       write.current = await localApiRequest<JsonValue>(
         createCliConnectionConfig(this.deps.dataDir),
         request.path.split("?")[0] ?? request.path,
-        { signal, ...(callerSessionId ? { callerSessionId } : {}) },
+        { signal, callerSessionId },
       );
     } catch (error) {
       write.currentError = safeErrorMessage(error);

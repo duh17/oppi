@@ -56,10 +56,15 @@ export interface DurableExtensionLoadResult {
   readonly errors: DurableExtensionIssue[];
 }
 
-/** Names and tool names a loaded extension must not take. */
+/** Names, tool names, and task names a loaded extension must not take. */
 export interface DurableExtensionReserved {
   readonly names: ReadonlySet<string>;
   readonly tools: ReadonlySet<string>;
+  /**
+   * Task names the registry already holds, each with the extension that holds it (undefined for
+   * pi-durable's own tasks). Only the extension of that name may bring the task again.
+   */
+  readonly tasks: ReadonlyMap<string, string | undefined>;
 }
 
 /** A `package.json` whose `oppi.durable` manifest is missing where required, or invalid. */
@@ -280,6 +285,7 @@ export async function loadDurableExtensions(
   const errors: DurableExtensionIssue[] = [];
   const names = new Set<string>();
   const tools = new Set<string>();
+  const tasks = new Set<string>();
   for (const { root, entry, runtimes, extensionIds } of packages) {
     let module: unknown;
     try {
@@ -288,42 +294,82 @@ export async function loadDurableExtensions(
       errors.push({ root, entry, message: `Import failed: ${messageOf(error)}` });
       continue;
     }
-    const extensions = extensionsOf(module);
-    if (typeof extensions === "string") {
-      errors.push({ root, entry, message: extensions });
+    // The export is package code: a getter that throws fails this package, not the load.
+    let extensions: Extension[] | string;
+    let problem: string | undefined;
+    try {
+      extensions = extensionsOf(module);
+      if (typeof extensions === "string") {
+        errors.push({ root, entry, message: extensions });
+        continue;
+      }
+      // A package loads whole or not at all, so a reload never keeps half of its old code.
+      problem = extensions
+        .map((extension) => clashOf(extension, reserved, { names, tools, tasks }))
+        .find((issue) => issue !== undefined);
+    } catch (error) {
+      errors.push({ root, entry, message: `Invalid extension: ${messageOf(error)}` });
       continue;
     }
-    // A package loads whole or not at all, so a reload never keeps half of its old code.
-    const problem = extensions
-      .map((extension): DurableExtensionIssue | undefined => {
-        if (reserved.names.has(extension.name))
-          return { root, entry, message: `"${extension.name}" is built into Oppi` };
-        if (names.has(extension.name))
-          return { root, entry, message: `Another package already loaded "${extension.name}"` };
-        const clash = (extension.tools ?? []).find(
-          (tool) => reserved.tools.has(tool.name) || tools.has(tool.name),
-        );
-        if (clash)
-          return {
-            root,
-            entry,
-            message: `Tool "${clash.name}" is already offered by another extension`,
-          };
-        return undefined;
-      })
-      .find((issue) => issue !== undefined);
     if (problem) {
       const builtIn = extensions.every((extension) => reserved.names.has(extension.name));
-      (builtIn ? skipped : errors).push(problem);
+      (builtIn ? skipped : errors).push({ root, entry, message: problem });
       continue;
     }
     for (const extension of extensions) {
       names.add(extension.name);
       for (const tool of extension.tools ?? []) tools.add(tool.name);
+      for (const task of extension.tasks ?? []) tasks.add(task.definition.name);
       loaded.push({ extension, runtimes, root, entry, extensionIds });
     }
   }
   return { loaded, skipped, errors };
+}
+
+/** pi-durable's rule for a section key (`registry.ts`), and the key it keeps for instructions. */
+const SECTION_KEY = /^[a-z][a-z0-9_-]*$/;
+const INSTRUCTIONS_KEY = "instructions";
+
+/**
+ * Why `extension` cannot be installed next to the registry (`reserved`) and the extensions
+ * already taken from this load (`taken`); undefined when it can. Checks what pi-durable's
+ * `registry.install` would throw on, so a bad package is a load error instead of a throw.
+ */
+function clashOf(
+  extension: Extension,
+  reserved: DurableExtensionReserved,
+  taken: { names: ReadonlySet<string>; tools: ReadonlySet<string>; tasks: ReadonlySet<string> },
+): string | undefined {
+  if (reserved.names.has(extension.name)) return `"${extension.name}" is built into Oppi`;
+  if (taken.names.has(extension.name)) return `Another package already loaded "${extension.name}"`;
+  const tools = new Set<string>();
+  for (const tool of extension.tools ?? []) {
+    if (reserved.tools.has(tool.name) || taken.tools.has(tool.name))
+      return `Tool "${tool.name}" is already offered by another extension`;
+    if (tools.has(tool.name))
+      return `Extension "${extension.name}" has two tools named "${tool.name}"`;
+    tools.add(tool.name);
+  }
+  const sections = new Set<string>();
+  for (const { key } of extension.sections ?? []) {
+    if (typeof key !== "string" || !SECTION_KEY.test(key))
+      return `Section key ${JSON.stringify(key)} must match ${SECTION_KEY}`;
+    if (key === INSTRUCTIONS_KEY)
+      return `Section key "${key}" is reserved for the agent's instructions`;
+    if (sections.has(key))
+      return `Extension "${extension.name}" has two sections with key "${key}"`;
+    sections.add(key);
+  }
+  const tasks = new Set<string>();
+  for (const task of extension.tasks ?? []) {
+    const name = task.definition.name;
+    const holder = reserved.tasks.get(name);
+    if ((reserved.tasks.has(name) && holder !== extension.name) || taken.tasks.has(name))
+      return `Task "${name}" is already installed${holder ? ` by "${holder}"` : ""}`;
+    if (tasks.has(name)) return `Extension "${extension.name}" has two tasks named "${name}"`;
+    tasks.add(name);
+  }
+  return undefined;
 }
 
 /** The extensions of a default export, or why it is not one. */

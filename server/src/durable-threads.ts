@@ -7,16 +7,16 @@ import {
   type Harness,
   type ModelRef,
 } from "@earendil-works/pi-durable";
-import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { homedir } from "node:os";
 import type {
   DurableSessionsHost,
   ResolvedSubagent,
+  SessionSender,
   SubagentRequest,
 } from "./durable-extension-api.js";
 import { childDelegationGrant } from "./agent-launch-service.js";
 import { OppiAgentDoc, resolveDurableAgent, type SavedAgent } from "./durable-agent.js";
-import { DurableRuntime, hostOfEnv, type DurableHarness } from "./durable-harness.js";
+import { DurableRuntime, type DurableHarness, type SessionHost } from "./durable-harness.js";
 import { durableStoreId } from "./session-runtime-capabilities.js";
 import { DURABLE_THREAD_KEY_PREFIX } from "./reserved-launch-keys.js";
 import { mintSessionId } from "./id.js";
@@ -49,24 +49,53 @@ export interface DurableThreadsDeps {
  * spawned whom. This class gives each owned child its Oppi Session, bound by conversation
  * id, and reads the thread tree back from the ownership edges.
  */
-export class DurableThreads implements DurableSessionsHost {
+export class DurableThreads {
   /** Concurrent materializations of one child (tool rerun, reporter) share one result. */
   private readonly materializing = new Map<string, Promise<string>>();
 
   constructor(private readonly deps: DurableThreadsDeps) {}
 
-  storeIdOfEnv(env?: ExecutionEnv): string {
-    return hostOfEnv(env).storeId;
+  /**
+   * What `oppiHost().sessions(env)` gives the conversation `caller` of `host`'s store. It takes
+   * only Sessions bound to conversations the caller owns, its own children, as `subagent`
+   * addresses them by name; any other Session, of this store or another, is refused.
+   */
+  forCaller(host: SessionHost, caller: ConversationId): DurableSessionsHost {
+    /** Undefined when `sessionId` is bound to a child of the caller, otherwise why not. */
+    const refuse = async (sessionId: string): Promise<string | undefined> => {
+      const session = this.deps.storage.getSession(sessionId);
+      const conversationId = session?.serverDurable?.conversationId as ConversationId | undefined;
+      if (
+        session &&
+        conversationId !== undefined &&
+        durableStoreId(session) === host.storeId &&
+        (await ownerOf(host, conversationId)) === caller
+      )
+        return undefined;
+      return `Session ${sessionId} is not a child of this session.`;
+    };
+    return {
+      storeId: host.storeId,
+      sender: () => this.sessionOf(host.storeId, caller),
+      materialize: async (child) => {
+        if ((await ownerOf(host, child.conversationId)) !== caller)
+          throw new Error(`Conversation ${child.conversationId} is not a child of this session`);
+        return this.materialize(child, host.storeId);
+      },
+      submit: async (sessionId, input) =>
+        (await refuse(sessionId)) ?? this.submit(sessionId, input),
+      waitForIdle: async (sessionId) => (await refuse(sessionId)) ?? this.waitForIdle(sessionId),
+      activate: async (sessionId) => {
+        const refused = await refuse(sessionId);
+        if (refused !== undefined) throw new Error(refused);
+        await this.activate(sessionId);
+      },
+      resolveAgent: (request, agent) => this.resolveAgent(request, host, caller, agent),
+    };
   }
 
-  sessionOf(
-    conversationId: ConversationId,
-    env?: ExecutionEnv,
-  ): { sessionId: string; name?: string } | undefined {
-    const session = this.deps.storage.findSessionByDurableConversation(
-      hostOfEnv(env).storeId,
-      conversationId,
-    );
+  private sessionOf(storeId: string, conversationId: ConversationId): SessionSender | undefined {
+    const session = this.deps.storage.findSessionByDurableConversation(storeId, conversationId);
     return session
       ? { sessionId: session.id, ...(session.name ? { name: session.name } : {}) }
       : undefined;
@@ -87,13 +116,13 @@ export class DurableThreads implements DurableSessionsHost {
    * grant and runtime from its documents, the saved Agent and its launch constraints, and the
    * model. The child is configured in its creating commit through `apply`.
    */
-  async resolveAgent(
+  private async resolveAgent(
     request: SubagentRequest,
-    caller: { conversationId: ConversationId; env?: ExecutionEnv; agent: Agent },
+    host: SessionHost,
+    parentId: ConversationId,
+    agent: Agent,
   ): Promise<ResolvedSubagent> {
-    const host = hostOfEnv(caller.env);
     const { harness } = await host.open();
-    const parentId = caller.conversationId;
     const owned =
       (await harness.commit((tx) => tx.conversation(parentId), BACKGROUND_CONTEXT))?.owner !==
       undefined;
@@ -147,7 +176,7 @@ export class DurableThreads implements DurableSessionsHost {
       ...choice,
       ...(parentDoc ? { inherited: parentDoc } : {}),
       runtime,
-      base: caller.agent.extensions,
+      base: agent.extensions,
       loaded: this.deps.runtime.loadedPackages,
       sessions: this.deps.runtime.sessionsExtension,
       spawn: grant,
@@ -155,7 +184,7 @@ export class DurableThreads implements DurableSessionsHost {
       ...(saved
         ? {
             instructions: {
-              cwd: caller.agent.cwd ?? "",
+              cwd: agent.cwd ?? "",
               ...(workspace.systemPrompt ? { workspacePrompt: workspace.systemPrompt } : {}),
             },
           }
@@ -198,11 +227,11 @@ export class DurableThreads implements DurableSessionsHost {
     };
   }
 
+  /** The Session bound to `child`, a conversation of `storeId`; created and attached on first use. */
   async materialize(
     child: { conversationId: ConversationId; name: string },
-    env?: ExecutionEnv,
+    storeId: string,
   ): Promise<string> {
-    const storeId = hostOfEnv(env).storeId;
     const key = `${storeId}:${child.conversationId}`;
     const pending = this.materializing.get(key);
     if (pending) return pending;
@@ -213,6 +242,7 @@ export class DurableThreads implements DurableSessionsHost {
     return created;
   }
 
+  /** Submit to a bound session's own store. Undefined on success, otherwise an error message. */
   async submit(
     sessionId: string,
     input: Parameters<DurableSessionsHost["submit"]>[1],
@@ -389,6 +419,13 @@ export class DurableThreads implements DurableSessionsHost {
       return { rootSessionId, sessionIds };
     });
   }
+}
+
+/** The conversation whose task owns `id` in `host`'s store; undefined for an ownerless one. */
+async function ownerOf(host: SessionHost, id: ConversationId): Promise<ConversationId | undefined> {
+  const { harness } = await host.open();
+  const record = await harness.commit((tx) => tx.conversation(id), BACKGROUND_CONTEXT);
+  return record?.owner?.conversationId;
 }
 
 /**

@@ -15,8 +15,16 @@ afterEach(() => {
   runner.mockClear();
 });
 
+/** Conversation 1 of store `control` is the control conversation, bound to Session s1. */
+function cli() {
+  return new DurableControlCli({
+    dataDir: "/tmp/oppi-control-cli-test",
+    sessionIdOf: (storeId, conversationId) =>
+      storeId === "control" && conversationId === 1 ? "s1" : undefined,
+  });
+}
 function host() {
-  return new DurableControlCli({ dataDir: "/tmp/oppi-control-cli-test", sessionIdOf: () => "s1" });
+  return cli().forConversation("control", 1 as ConversationId)!;
 }
 const options = () => ({
   conversationId: 1 as ConversationId,
@@ -139,6 +147,23 @@ describe("control host replay keys", () => {
     );
     expect(result.envelope).not.toMatchObject({ error: { code: "refused" } });
     expect(runner.mock.calls[0]![0].slice(-2)).toEqual(["--", "--turn-id=literal"]);
+  });
+});
+
+describe("control host scope", () => {
+  it("is only the control conversation's, and runs nothing for another conversation", async () => {
+    // Conversation ids are per store: conversation 1 of a workspace store is not control.
+    expect(cli().forConversation("workspace", 1 as ConversationId)).toBeUndefined();
+    expect(cli().forConversation("control", 2 as ConversationId)).toBeUndefined();
+    for (const run of [
+      () => host().run(["agent", "list"], { ...options(), conversationId: 2 as ConversationId }),
+      () => cli().run("workspace", ["agent", "list"], options()),
+    ])
+      expect(await run()).toMatchObject({
+        wrote: false,
+        envelope: { ok: false, error: { code: "refused" } },
+      });
+    expect(runner).not.toHaveBeenCalled();
   });
 });
 
