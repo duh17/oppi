@@ -294,17 +294,24 @@ extension ChatTimelineCollectionHost.Controller {
         let details = toolDetailsStore?.details(for: itemID)
         let isExpanded = reducer?.expandedItemIDs.contains(itemID) == true
         let outputBytes = toolOutputStore?.outputByteCount(for: itemID) ?? 0
-        let inspection = ToolContentDescriptorBuilder.inspect(tool: tool, argsSummary: argsSummary,
+        let inspectContext = ToolContentDescriptorBuilder.Context(
+            args: toolArgsStore?.args(for: itemID), details: details,
+            fullOutput: toolOutputStore?.fullOutput(for: itemID) ?? "",
+            isLoadingOutput: toolOutputLoader.isLoading(itemID), inputPresentation: toolArgsStore?.inputPresentation(for: itemID),
+            nestedCalls: toolDetailsStore?.nestedCalls(for: itemID),
+            previewOnly: toolOutputStore?.hasCompleteOutput(for: itemID) != true,
+            totalBytes: outputBytes > 0 ? outputBytes : nil, display: toolArgsStore?.display(for: itemID),
+            outputPresentation: toolArgsStore?.outputPresentation(for: itemID), outputAvailability: toolArgsStore?.outputAvailability(for: itemID),
+            terminalResolved: false)
+        var inspection = ToolContentDescriptorBuilder.inspect(tool: tool, argsSummary: argsSummary,
             outputPreview: outputPreview, isError: isError, isDone: isDone,
-            context: .init(args: toolArgsStore?.args(for: itemID), details: details,
-                fullOutput: toolOutputStore?.fullOutput(for: itemID) ?? "",
-                isLoadingOutput: toolOutputLoader.isLoading(itemID), inputPresentation: toolArgsStore?.inputPresentation(for: itemID),
-                nestedCalls: toolDetailsStore?.nestedCalls(for: itemID),
-                previewOnly: toolOutputStore?.hasCompleteOutput(for: itemID) != true,
-                totalBytes: outputBytes > 0 ? outputBytes : nil, display: toolArgsStore?.display(for: itemID),
-                outputPresentation: toolArgsStore?.outputPresentation(for: itemID), outputAvailability: toolArgsStore?.outputAvailability(for: itemID),
-                terminalResolved: false),
-            includeOutput: isExpanded)
+            context: inspectContext, includeOutput: false)
+        if isExpanded,
+           ToolPresentationBuilder.notebookCell(from: inspection, details: details, isDone: isDone, isError: isError) == nil {
+            inspection = ToolContentDescriptorBuilder.inspect(tool: tool, argsSummary: argsSummary,
+                outputPreview: outputPreview, isError: isError, isDone: isDone,
+                context: inspectContext, includeOutput: true)
+        }
         let hasCanonicalAudioDetails = inspection.audioOutput
         let hasLifecycleVoicePresentation = audioLifecycleCoordinator.map {
             $0.presentation.timelinePresentation(for: itemID) != .hidden

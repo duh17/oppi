@@ -241,8 +241,8 @@ struct ToolCallDocumentTests {
         #expect(!printed.contains("Output preview only"), "The note is a caption, not output")
     }
 
-    /// The generic document's Raw reader still pages a sidecar. iOS opens
-    /// generic calls as notebook cells, so this drives the document reader directly.
+    /// The generic document's Raw reader still pages a sidecar. iOS notebook
+    /// rows never build that document, so this drives the document reader directly.
     @Test(arguments: [false, true]) @MainActor func rawReaderLoadsAllSidecarWindowsAndKeepsPreviewWhenUnavailable(_ embeddedBoundary: Bool) async throws {
         let output = String(repeating: "match\n", count: 30000) + "LAST MATCH\n"
         let split = 128 * 1024

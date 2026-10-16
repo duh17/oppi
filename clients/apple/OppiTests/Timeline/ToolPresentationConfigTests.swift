@@ -770,10 +770,9 @@ struct ToolPresentationConfigTests {
             Issue.record("Expected generic tool cell")
             return
         }
-        #expect(config.rawMarkdownText?.contains("EXT-a27df231") == true)
+        #expect(config.rawMarkdownText == nil)
         guard case .rich(let formatted) = cell.output else { Issue.record("A JSON result is formatted"); return }
         #expect(formatted.contains("Control tower Live Activity"))
-        #expect(config.rawMarkdownText?.contains("in_progress") == true)
         #expect(config.trailing == nil)
     }
 
@@ -809,7 +808,7 @@ struct ToolPresentationConfigTests {
         }
         #expect(cell.output == .stdout("Updated EXT-463187a1 body with 2 lines"))
         #expect(cell.sources.first?.code.contains("body: |\n  Investigate smooth scroll follow\n  Add regression tests") == true)
-        #expect(config.rawMarkdownText?.contains("Investigate smooth scroll follow") == true)
+        #expect(config.rawMarkdownText == nil)
         #expect(config.copyOutputText?.contains("EXT-463187a1") == true)
     }
 
@@ -847,7 +846,7 @@ struct ToolPresentationConfigTests {
         }
         #expect(cell.output == .stdout("Updated EXT-463187a1 (status: closed)"))
         #expect(cell.sources.first?.code.contains("status: closed") == true)
-        #expect(config.rawMarkdownText?.contains("Refine auto-follow scrolling") == true)
+        #expect(config.rawMarkdownText == nil)
         #expect(config.copyOutputText?.contains("status: closed") == true)
     }
 

@@ -4,8 +4,8 @@ import Foundation
 ///
 /// Code-role fields fill the cell's source; any other tool shows its
 /// arguments there instead. Selected from input roles and inspection facts,
-/// never from a tool name. iOS paints this; the markdown document remains the
-/// descriptor leaf for raw text, copy, and Mac.
+/// never from a tool name. iOS paints this and copies the plan's own reader
+/// text. Mac and iOS Markdown rows keep the generic document.
 struct NotebookCellPlan: Equatable, Hashable, Sendable {
     struct Source: Equatable, Hashable, Sendable {
         var label: String?

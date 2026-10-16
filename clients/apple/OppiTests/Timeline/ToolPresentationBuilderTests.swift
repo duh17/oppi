@@ -2590,8 +2590,8 @@ struct ToolPresentationBuilderTests {
     }
 }
 
-/// The generic Input/Calls/Output document behind Raw, copy, and Mac. iOS
-/// paints generic calls as notebook cells, so document-format tests swap the
+/// The generic Input/Calls/Output document behind Mac and iOS Markdown rows.
+/// iOS paints generic calls as notebook cells, so document-format tests swap the
 /// cell for the descriptor's document and keep every other row fact.
 private func genericDocument(
     itemID: String,

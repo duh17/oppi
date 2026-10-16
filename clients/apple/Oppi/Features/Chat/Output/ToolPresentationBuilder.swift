@@ -66,17 +66,15 @@ enum ToolPresentationBuilder {
         context: Context
     ) -> ToolTimelineRowConfiguration {
         let isExpanded = context.expandedItemIDs.contains(itemID)
-        let args = context.args
 
-        let inspection = context.inspection ?? ToolContentDescriptorBuilder.inspect(
-            tool: tool, argsSummary: argsSummary, outputPreview: outputPreview,
-            isError: isError, isDone: isDone,
-            context: .init(args: args, details: context.details, fullOutput: context.fullOutput,
-                           isLoadingOutput: context.isLoadingOutput, inputPresentation: context.inputPresentation,
-                           nestedCalls: context.nestedCalls, previewOnly: context.previewOnly,
-                           totalBytes: context.totalBytes, display: context.display,
-                           outputPresentation: context.outputPresentation, outputAvailability: context.outputAvailability),
-            includeOutput: isExpanded
+        let inspection = context.inspection ?? resolvedInspection(
+            tool: tool,
+            argsSummary: argsSummary,
+            outputPreview: outputPreview,
+            isError: isError,
+            isDone: isDone,
+            isExpanded: isExpanded,
+            context: context
         )
         let isInteractive = inspection.isInteractive
         let isTerminal = inspection.terminalOutput
@@ -402,7 +400,8 @@ enum ToolPresentationBuilder {
         /// Code viewer with line numbers, syntax highlighting, horizontal scroll
         case code(text: String, language: SyntaxLanguage?, startLine: Int?, filePath: String?)
         /// Generic tool call painted as a notebook cell (code or arguments, calls,
-        /// output). The markdown document remains the descriptor leaf for raw text and copy.
+        /// output). Copy and the reader use the plan; Mac and iOS Markdown rows
+        /// keep the generic document.
         case notebook(NotebookCellPlan)
         /// Rendered markdown (read .md)
         case markdown(text: String, filePath: String? = nil)
@@ -428,30 +427,108 @@ enum ToolPresentationBuilder {
         var rawMarkdownOutputPrefix: String?
     }
 
+    /// One owner of "does this inspection paint as an iOS notebook cell".
+    /// Terminal, file, media, and interactive inspections stay on their native
+    /// surfaces; `NotebookCellPlan.make` is the empty-cell rule.
+    static func notebookCell(
+        from inspection: ToolInspection,
+        details: JSONValue?,
+        isDone: Bool,
+        isError: Bool
+    ) -> NotebookCellPlan? {
+        guard !inspection.terminalOutput,
+              !inspection.isInteractive,
+              inspection.file == nil,
+              !inspection.mediaOutput else { return nil }
+        return NotebookCellPlan.make(
+            input: inspection.input,
+            calls: inspection.calls,
+            output: inspection.raw,
+            details: details,
+            outputPresentation: inspection.outputPresentation,
+            isDone: isDone,
+            isError: isError,
+            previewOnly: inspection.previewOnly,
+            totalBytes: inspection.totalBytes
+        )
+    }
+
+    private static func resolvedInspection(
+        tool: String,
+        argsSummary: String,
+        outputPreview: String,
+        isError: Bool,
+        isDone: Bool,
+        isExpanded: Bool,
+        context: Context
+    ) -> ToolInspection {
+        let summary = inspect(
+            tool: tool,
+            argsSummary: argsSummary,
+            outputPreview: outputPreview,
+            isError: isError,
+            isDone: isDone,
+            context: context,
+            includeOutput: false
+        )
+        if isExpanded, notebookCell(from: summary, details: context.details, isDone: isDone, isError: isError) == nil {
+            return inspect(
+                tool: tool,
+                argsSummary: argsSummary,
+                outputPreview: outputPreview,
+                isError: isError,
+                isDone: isDone,
+                context: context,
+                includeOutput: true
+            )
+        }
+        return summary
+    }
+
+    private static func inspect(
+        tool: String,
+        argsSummary: String,
+        outputPreview: String,
+        isError: Bool,
+        isDone: Bool,
+        context: Context,
+        includeOutput: Bool
+    ) -> ToolInspection {
+        ToolContentDescriptorBuilder.inspect(
+            tool: tool, argsSummary: argsSummary, outputPreview: outputPreview,
+            isError: isError, isDone: isDone,
+            context: .init(
+                args: context.args, details: context.details, fullOutput: context.fullOutput,
+                isLoadingOutput: context.isLoadingOutput, inputPresentation: context.inputPresentation,
+                nestedCalls: context.nestedCalls, previewOnly: context.previewOnly,
+                totalBytes: context.totalBytes, display: context.display,
+                outputPresentation: context.outputPresentation, outputAvailability: context.outputAvailability
+            ),
+            includeOutput: includeOutput
+        )
+    }
+
     private static func buildExpanded(
         _ inspection: ToolInspection,
         isDone: Bool,
         isError: Bool,
         details: JSONValue?
     ) -> ExpandedPresentation {
+        if let notebook = notebookCell(
+            from: inspection, details: details, isDone: isDone, isError: isError
+        ) {
+            return ExpandedPresentation(
+                content: .notebook(notebook),
+                copyCommandText: inspection.copyCommandText,
+                copyOutputText: inspection.copyOutputText ?? (inspection.raw.isEmpty ? nil : inspection.raw),
+                rawMarkdownText: nil,
+                rawMarkdownOutputPrefix: nil
+            )
+        }
         return ExpandedPresentation(
             content: inspection.output.first.map { descriptor in
                 if inspection.terminalOutput, case .terminal(let terminal) = descriptor {
                     return .bash(command: inspection.commandText, output: terminal.output, unwrapped: true)
-                }
-                if !inspection.isInteractive, inspection.file == nil, !inspection.mediaOutput,
-                   let notebook = NotebookCellPlan.make(
-                    input: inspection.input,
-                    calls: inspection.calls,
-                    output: inspection.raw,
-                    details: details,
-                    outputPresentation: inspection.outputPresentation,
-                    isDone: isDone,
-                    isError: isError,
-                    previewOnly: inspection.previewOnly,
-                    totalBytes: inspection.totalBytes
-                   ) {
-                    return .notebook(notebook)
                 }
                 return expandedContent(from: descriptor)
             },
