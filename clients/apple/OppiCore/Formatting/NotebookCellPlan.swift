@@ -12,12 +12,6 @@ struct NotebookCellPlan: Equatable, Hashable, Sendable {
         var language: String?
         var code: String
 
-        var languageName: String? {
-            guard let language, !language.isEmpty else { return nil }
-            let detected = SyntaxLanguage.detect(language)
-            return detected == .unknown ? language : detected.displayName
-        }
-
         var syntaxLanguage: SyntaxLanguage {
             SyntaxLanguage.detect(language ?? "")
         }

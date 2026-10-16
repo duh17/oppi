@@ -61,7 +61,7 @@ struct NotebookCellPresentationTests {
             return
         }
         #expect(plan.sources.first?.code == "const hits = await lookup()\nreturn hits[0]")
-        #expect(plan.sources.first?.languageName == "JavaScript")
+        #expect(plan.sources.first?.syntaxLanguage.displayName == "JavaScript")
         #expect(plan.metadata == ["limit 20"])
         #expect(plan.calls.first?.name == "lookup")
         #expect(plan.calls.first?.duration == "84 ms")
@@ -176,7 +176,7 @@ struct NotebookCellPresentationTests {
             Issue.record("Any code-role field paints the cell")
             return
         }
-        #expect(plan.sources.first?.languageName == "Python")
+        #expect(plan.sources.first?.syntaxLanguage.displayName == "Python")
     }
 
     @Test func argumentCellFormatsAWholeJSONResultAndPrintsText() throws {

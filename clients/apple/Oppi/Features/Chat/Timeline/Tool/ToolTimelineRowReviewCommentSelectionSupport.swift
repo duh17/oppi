@@ -102,9 +102,9 @@ enum ToolTimelineRowReviewCommentSelectionSupport {
             && spec.commandSelectionEnabled
             && hasCommandContext
 
-        let outputSelectable = showOutput
-            && spec.outputSelectionEnabled
-            && hasOutputContext
+        // Bash output never qualifies: full-screen is on whenever that output
+        // exists, so inline review-comment selection stays off.
+        let outputSelectable = showOutput && false && hasOutputContext
 
         let expandedLabelSelectable = showExpanded
             && !isReadMediaLayout

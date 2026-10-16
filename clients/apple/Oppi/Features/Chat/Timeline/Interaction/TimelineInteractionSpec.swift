@@ -5,7 +5,6 @@ struct TimelineInteractionSpec: Equatable {
     let enablesPinchGesture: Bool
     let allowsHorizontalScroll: Bool
     let commandSelectionEnabled: Bool
-    let outputSelectionEnabled: Bool
     let expandedLabelSelectionEnabled: Bool
     let markdownSelectionEnabled: Bool
 
@@ -14,7 +13,6 @@ struct TimelineInteractionSpec: Equatable {
         enablesPinchGesture: true,
         allowsHorizontalScroll: false,
         commandSelectionEnabled: false,
-        outputSelectionEnabled: false,
         expandedLabelSelectionEnabled: false,
         markdownSelectionEnabled: false
     )

@@ -24,9 +24,7 @@ enum ToolRowPlanBuilder {
             supportsFullScreenPreview: supportsFullScreen
         )
 
-        let isBashMode = if case .bash = expandedContent { true } else { false }
         let commandTextPresent = commandTextPresent(for: expandedContent)
-        let outputTextPresent = outputTextPresent(for: expandedContent)
         let expandedLabelSelectionEligible = switch expandedContent {
         case .code, .diff, .text:
             true
@@ -36,10 +34,6 @@ enum ToolRowPlanBuilder {
         let markdownSelectionEligible = if case .markdown = expandedContent { true } else { false }
 
         let commandSelectionEnabled = hasReviewCommentContext && commandTextPresent
-        let outputSelectionEnabled = hasReviewCommentContext
-            && isBashMode
-            && expandedSurfaceInteraction.inlineSelectionEnabled
-            && outputTextPresent
         let expandedLabelSelectionEnabled = expandedSurfaceInteraction.inlineSelectionEnabled
             && expandedLabelSelectionEligible
         let markdownSelectionEnabled = expandedSurfaceInteraction.inlineSelectionEnabled
@@ -53,7 +47,6 @@ enum ToolRowPlanBuilder {
                 || (interactionPolicy.enablesPinchGesture && expandedSurfaceInteraction.enablesPinchActivation),
             allowsHorizontalScroll: interactionPolicy.allowsHorizontalScroll,
             commandSelectionEnabled: commandSelectionEnabled,
-            outputSelectionEnabled: outputSelectionEnabled,
             expandedLabelSelectionEnabled: expandedLabelSelectionEnabled,
             markdownSelectionEnabled: markdownSelectionEnabled
         )
@@ -71,27 +64,6 @@ enum ToolRowPlanBuilder {
             return false
         }
         return !(command?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-    }
-
-    private static func outputTextPresent(
-        for content: ToolPresentationBuilder.ToolExpandedContent
-    ) -> Bool {
-        switch content {
-        case .bash(_, let output, _):
-            return !(output?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-        case .diff(let lines, _):
-            return !lines.isEmpty
-        case .code(let text, _, _, _), .markdown(let text, _), .text(let text, _), .audioMessage(let text, _, _, _, _):
-            return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .notebook(let plan):
-            return !plan.readerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .document(let family):
-            return !family.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .readMedia(let text, _, _, let attachments, _):
-            return !attachments.isEmpty || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .status:
-            return false
-        }
     }
 
     private static func supportsFullScreenPreview(
@@ -114,9 +86,8 @@ enum ToolRowPlanBuilder {
         case .document(let family):
             return !family.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
-        case .notebook(let plan):
-            // A call without arguments still opens for its calls or output.
-            return !plan.sources.isEmpty || plan.hasOutputWell
+        case .notebook:
+            return true
 
         case .code(let text, _, _, _), .text(let text, _):
             let copyText = configuration.copyOutputText ?? text
