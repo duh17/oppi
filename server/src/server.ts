@@ -36,7 +36,8 @@ import { ExtensionProviderCatalog } from "./extension-model-discovery.js";
 import type { ProgramStatusSync } from "./program-status.js";
 import { SessionPushNotifier } from "./session-push-notifier.js";
 import { AgentScheduleRunner } from "./agent-schedule-runner.js";
-import { ServerResourceSampler } from "./server-resource-sampler.js";
+import { intervalFromEnv, ServerResourceSampler } from "./server-resource-sampler.js";
+import { HostResourceProbe } from "./host-resource-probe.js";
 import { ServerMetricCollector } from "./server-metric-collector.js";
 import { SearchIndex } from "./search-index.js";
 import { JsonlMetricWriter } from "./server-metric-writer.js";
@@ -476,6 +477,13 @@ export class Server {
 
   // Server resource utilization sampler (CPU, memory, sessions)
   private resourceSampler: ServerResourceSampler;
+  /**
+   * Whether this process samples. Read from config once at construction and
+   * changed only by the Server Metrics switch: a later config reload (a CLI
+   * edit picked up by any config write) must not report a state the sampler
+   * is not in. A CLI change applies at restart.
+   */
+  private serverMetricsEnabled: boolean;
 
   // Server operational metrics (latencies, counts, errors)
   private opsMetrics: ServerMetricCollector;
@@ -664,6 +672,7 @@ export class Server {
     });
 
     // Server resource utilization sampler
+    this.serverMetricsEnabled = storage.getConfig().serverMetrics?.enabled === true;
     this.resourceSampler = new ServerResourceSampler({
       telemetryDir: join(dataDir, "diagnostics", "telemetry"),
       getSessionCounts: () => {
@@ -694,6 +703,7 @@ export class Server {
         }
         return snapshots;
       },
+      hostProbe: new HostResourceProbe({ diskPath: dataDir }),
     });
 
     const handleSessionEvent = (payload: SessionBroadcastEvent): void => {
@@ -940,6 +950,18 @@ export class Server {
       desktopCompanionStillClient: this.desktopCompanionStillClient,
       desktopCompanionViewSessionClient: this.desktopCompanionViewSessionClient,
       metrics: this.opsMetrics,
+      serverMetrics: {
+        telemetryDir: join(this.storage.getDataDir(), "diagnostics", "telemetry"),
+        intervalMs: intervalFromEnv(),
+        isEnabled: () => this.serverMetricsEnabled,
+        setEnabled: (enabled) => {
+          this.storage.updateConfig({ serverMetrics: { enabled } });
+          this.serverMetricsEnabled = enabled;
+          if (enabled) this.resourceSampler.start();
+          else this.resourceSampler.stop();
+        },
+        latestSample: () => this.resourceSampler.latestSample,
+      },
     });
   }
 
@@ -983,7 +1005,11 @@ export class Server {
         }
       }
 
-      this.resourceSampler.start();
+      if (this.serverMetricsEnabled) {
+        this.resourceSampler.start();
+      } else {
+        this.resourceSampler.pruneOldFiles();
+      }
       this.opsMetrics.start();
       this.startUploadGcLoop();
       this.scheduleRunner.start();

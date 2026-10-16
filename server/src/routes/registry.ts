@@ -232,6 +232,27 @@ const rawApiRouteSpecs = [
   },
   {
     method: "GET",
+    path: "/server/metrics",
+    operationId: "getServerMetrics",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "GET",
+    path: "/server/metrics/settings",
+    operationId: "getServerMetricsSettings",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "PUT",
+    path: "/server/metrics/settings",
+    operationId: "setServerMetricsSettings",
+    surface: "admin",
+    auth: "owner",
+  },
+  {
+    method: "GET",
     path: "/server/auto-title",
     operationId: "getAutoTitleConfig",
     surface: "admin",

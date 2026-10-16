@@ -1,19 +1,18 @@
 import SwiftUI
 
-/// Today's cost dashboard for the selected host.
+/// Token and cost usage for the selected host.
 ///
 /// Data flow:
 /// - Stats from `GET /server/stats?range=N` via per-server `APIClient`
-/// - Server info from `GET /server/info` via per-server `APIClient`
-/// - Reloads follow the pill's active host and the 7d / 30d / 90d range
+/// - Reloads follow the pill's active host and the 7d / 30d / 90d / 1y / All range
+/// - Server process and host resources live on Server Metrics, not here
 struct ServerView: View {
     @Environment(ServerStore.self) private var serverStore
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
 
     @State private var stats: ServerStats?
-    @State private var serverInfo: ServerInfo?
-    @State private var selectedRange: Int = 7
+    @State private var selectedRange: UsageRange = .week
     @State private var isLoading = true
     @State private var error: String?
     @State private var dailyDetail: DailyDetail?
@@ -56,7 +55,7 @@ struct ServerView: View {
     }
 
     /// Build task identity string from server ID and range.
-    static func taskIdentity(selectedId: String?, range: Int) -> String {
+    static func taskIdentity(selectedId: String?, range: UsageRange) -> String {
         ServerSelection.taskIdentity(selectedId: selectedId, range: range)
     }
 
@@ -136,10 +135,8 @@ struct ServerView: View {
         }
         .themedScrollSurface()
         .task(id: metadataTaskIdentity) {
-            clearServerState()
-            async let i: () = loadServerInfo()
-            async let p: () = loadProviderStatus()
-            _ = await (i, p)
+            providerStatuses = []
+            await loadProviderStatus()
         }
         .task(id: taskIdentity) {
             clearStatsState()
@@ -149,9 +146,8 @@ struct ServerView: View {
             dailyDetailCache = [:]
             dailyDetail = nil
             async let s: () = loadStats()
-            async let i: () = loadServerInfo()
             async let p: () = loadProviderStatus()
-            _ = await (s, i, p)
+            _ = await (s, p)
         }
     }
 
@@ -174,9 +170,9 @@ struct ServerView: View {
 
     private var rangePicker: some View {
         Picker("Range", selection: $selectedRange) {
-            Text("7d").tag(7)
-            Text("30d").tag(30)
-            Text("90d").tag(90)
+            ForEach(UsageRange.allCases, id: \.self) { range in
+                Text(range.label).tag(range)
+            }
         }
         .pickerStyle(.segmented)
         .labelsHidden()
@@ -242,23 +238,9 @@ struct ServerView: View {
         ModelBreakdownSection(breakdown: stats.modelBreakdown, metric: selectedMetric)
 
         WorkspaceBreakdownSection(workspaces: stats.workspaceBreakdown)
-
-        if let serverInfo {
-            ServerHealthSection(
-                memory: stats.memory,
-                uptime: serverInfo.uptimeLabel,
-                platform: serverInfo.platformLabel,
-                activeSessionCount: serverInfo.stats.activeSessionCount
-            )
-        }
     }
 
     // MARK: - State Management
-
-    private func clearServerState() {
-        serverInfo = nil
-        providerStatuses = []
-    }
 
     private func clearStatsState() {
         dailyDetail = nil
@@ -306,20 +288,6 @@ struct ServerView: View {
         }
 
         isLoading = false
-    }
-
-    private func loadServerInfo() async {
-        guard let server = selectedServer else { return }
-        let requestedId = server.id
-        guard let client = await apiClient(for: server) else { return }
-
-        do {
-            let info = try await client.serverInfo()
-            guard shouldApplyHostResult(requestedId: requestedId) else { return }
-            serverInfo = info
-        } catch {
-            // Non-fatal — stats still show without server info. Ignore cancellation.
-        }
     }
 
     private func loadProviderStatus() async {
@@ -372,6 +340,53 @@ struct ServerView: View {
     }
 }
 
+/// Server Metrics: the SwiftUI shell (title, host pill) around the UIKit page,
+/// `ServerMetricsViewController`. Follows the pill's active host like Usage.
+struct ServerMetricsScreen: View {
+    @Environment(ServerStore.self) private var serverStore
+    @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(\.themeID) private var themeID
+
+    private var selectedServer: PairedServer? {
+        ServerSelection.resolve(selectedId: coordinator.activeServerId, from: serverStore.servers)
+    }
+
+    var body: some View {
+        if let server = selectedServer {
+            ServerMetricsControllerHost(
+                source: ServerMetricsSource(serverId: server.id) { [coordinator] in
+                    await coordinator.apiClientReady(for: server.id)
+                },
+                themeID: themeID
+            )
+            .ignoresSafeArea(.container, edges: .vertical)
+            .navigationTitle(HostSwitcherDestination.serverMetrics.title)
+            .hostSwitcherRailToolbar(server: server, destination: .serverMetrics)
+        } else {
+            ContentUnavailableView(
+                "No Servers",
+                systemImage: "server.rack",
+                description: Text("Pair a server to view its metrics.")
+            )
+            .navigationTitle(HostSwitcherDestination.serverMetrics.title)
+        }
+    }
+}
+
+private struct ServerMetricsControllerHost: UIViewControllerRepresentable {
+    let source: ServerMetricsSource
+    let themeID: ThemeID
+
+    func makeUIViewController(context: Context) -> ServerMetricsViewController {
+        ServerMetricsViewController(source: source, themeID: themeID)
+    }
+
+    func updateUIViewController(_ controller: ServerMetricsViewController, context: Context) {
+        controller.applyThemeIfNeeded(themeID)
+        controller.setSource(source)
+    }
+}
+
 #if DEBUG
 struct UsageChromePreview: View {
     private let themeID: ThemeID
@@ -391,10 +406,10 @@ struct UsageChromePreview: View {
         let joinsRail = railEdge != nil
         return NavigationStack {
             VStack(spacing: 16) {
-                Picker("Range", selection: .constant(7)) {
-                    Text("7d").tag(7)
-                    Text("30d").tag(30)
-                    Text("90d").tag(90)
+                Picker("Range", selection: .constant(UsageRange.week)) {
+                    ForEach(UsageRange.allCases, id: \.self) { range in
+                        Text(range.label).tag(range)
+                    }
                 }
                 .pickerStyle(.segmented)
                 Spacer()

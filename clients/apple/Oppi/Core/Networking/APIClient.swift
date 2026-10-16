@@ -645,10 +645,10 @@ actor APIClient: ClientLogUploading {
         TimeZone.current.secondsFromGMT() / 60
     }
 
-    /// Fetch server stats for the given number of days.
-    func fetchStats(range: Int = 7) async throws -> ServerStats {
+    /// Fetch server stats for the given range.
+    func fetchStats(range: UsageRange = .week) async throws -> ServerStats {
         let tz = Self.tzOffsetMinutes
-        let data = try await get("/server/stats?range=\(range)&tz=\(tz)")
+        let data = try await get("/server/stats?range=\(range.rawValue)&tz=\(tz)")
         return try JSONDecoder().decode(ServerStats.self, from: data)
     }
 

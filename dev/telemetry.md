@@ -88,7 +88,7 @@ Allowed diagnostic data:
 | Chat metrics            | `POST /telemetry/chat-metrics` | `<OPPI_DATA_DIR>/diagnostics/telemetry/chat-metrics-YYYY-MM-DD.jsonl`       | Client UX, rendering, queueing, dictation, and device metrics.                                      |
 | MetricKit               | `POST /telemetry/metrickit`    | `<OPPI_DATA_DIR>/diagnostics/telemetry/metrickit-YYYY-MM-DD.jsonl`          | Apple crash, hang, CPU, disk, battery, and app-launch diagnostics with bounded correlation context. |
 | Client logs             | `POST /telemetry/client-logs`  | `<OPPI_DATA_DIR>/diagnostics/telemetry/client-logs-YYYY-MM-DD.jsonl`        | Redacted warning/error events plus selected lifecycle, recovery, network, memory, and navigation info logs. |
-| Server resource metrics | local JSONL writer             | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-metrics-YYYY-MM-DD.jsonl`     | Server CPU, memory, event loop, sessions, and WebSocket counts.                                     |
+| Server resource metrics | local JSONL writer             | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-metrics-YYYY-MM-DD.jsonl`     | Server CPU, memory, event loop, sessions, and WebSocket counts, plus host or container CPU, memory, and disk. |
 | Server ops metrics      | local JSONL writer             | `<OPPI_DATA_DIR>/diagnostics/telemetry/server-ops-metrics-YYYY-MM-DD.jsonl` | Server WebSocket, session, turn, extension UI, dictation, retry, and compaction metrics.            |
 | Server log              | local JSONL/text log           | `<OPPI_DATA_DIR>/server.log`                                                | Structured server events and warnings.                                                              |
 
@@ -101,6 +101,14 @@ Retention defaults:
 | Client logs             |           14 days | `OPPI_CHAT_METRICS_RETENTION_DAYS`       |
 | Server resource metrics |           30 days | `OPPI_SERVER_METRICS_RETENTION_DAYS`     |
 | Server ops metrics      |           30 days | `OPPI_SERVER_OPS_METRICS_RETENTION_DAYS` |
+
+## Server resource sampling and the Server Metrics page
+
+`ServerResourceSampler` runs only while server config `serverMetrics.enabled` is true. It is opt-in (default false): off runs no timer, no event-loop histogram, no host reads, and writes no files, so Server Health's resource panels and the `server.event_loop_max_ms` release-gate input are empty until an operator turns it on. On, one sample costs about 1 ms (0.7 ms Node CPU on mac-studio including the `vm_stat` spawn wait, 0.4 ms in a Docker container). The process latches the switch at startup; a later config reload does not change it. The app's Server Settings toggle (`PUT /server/metrics/settings`) persists the switch and starts or stops sampling live; `oppi config set serverMetrics.enabled` needs a restart. Off also stops the `server.event_ring_utilization` ops samples the sampler emits.
+
+Each sample adds a `host` block (`host-resource-probe.ts`) in MB and percent: `scope` (`host` or `container`), `cpu` (busy share of `cpuCores`, 0–100), `cpuCores`, `load1` (hosts only), `memUsed`/`memTotal`, `diskUsed`/`diskTotal`. A host reads macOS memory from `vm_stat` (anonymous − purgeable + wired + compressed pages, Activity Monitor's Memory Used) and Linux memory as `MemTotal − MemAvailable`; CPU comes from `os.cpus()` times. A Linux process is a container when `/.dockerenv`, `/run/.containerenv`, `$container`, or `$KUBERNETES_SERVICE_HOST` exists; it then reads its cgroup (v2, else v1) like `docker stats`: memory is usage minus inactive file cache against `memory.max` (machine memory when unlimited), CPU is usage against the `cpu.max` quota (else `availableParallelism()`). A container whose cgroup cannot be read omits CPU and memory rather than reporting the machine. Disk is `statfs` on the data directory, used = total − available to the user. A failed read is omitted, never estimated. Process `cpu.total` stays a share of one core and can exceed 100.
+
+`GET /server/metrics?range=1h|24h|7d|30d` returns the latest sample and columnar avg/max series bucketed from the raw daily files (`server-metrics-history.ts`): 1-minute, 5-minute, 30-minute, and 2-hour buckets. There are no derived files. Measured on mac-studio: ~420 B per sample (~1.2 MB/day); 30 days is ~86k samples and parses in ~90 ms, one day file at a time. The app refreshes 1h and 24h every 30 s and the longer ranges on pull. Grafana's importer ignores the `host` block.
 
 ## Metric taxonomy
 

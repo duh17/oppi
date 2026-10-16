@@ -81,6 +81,42 @@ struct ServerSettingsRootView: View {
                 Text("Appends Oppi's link and rich-content rendering guide to new and explicitly reloaded managed Pi sessions, including Pi Control. Terminal-owned Mirror sessions are unchanged.")
             }
 
+            Section {
+                if let enabled = model.serverMetricsEnabled {
+                    Toggle(
+                        HostSwitcherDestination.serverMetrics.title,
+                        isOn: Binding(
+                            get: { enabled },
+                            set: { newValue in
+                                Task { await model.setServerMetrics(newValue) }
+                            }
+                        )
+                    )
+                    .disabled(model.isSavingServerMetrics)
+                    .accessibilityIdentifier("server.serverMetrics.enabled")
+                } else {
+                    HStack {
+                        Text(HostSwitcherDestination.serverMetrics.title)
+                        Spacer()
+                        if model.serverMetricsError == nil {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Text("Unavailable")
+                                .foregroundStyle(.themeOrange)
+                        }
+                    }
+                }
+                if let error = model.serverMetricsError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                        .foregroundStyle(.themeOrange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } footer: {
+                Text("Off by default. When on, samples this server's CPU, memory, and disk every 30 seconds for Server Metrics and Grafana, kept 30 days on the server.")
+            }
+
             if ReleaseFeatures.pushNotificationsEnabled {
                 ServerPushNotificationsSection(
                     serverId: pairedServer.id,

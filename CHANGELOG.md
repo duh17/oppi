@@ -53,6 +53,8 @@ Example:
 
 ### Added
 
+- **Client/Server:** **Server Metrics** in the host pill menu shows the server's CPU, memory, and disk and the Oppi server process's CPU, memory, event loop, and sessions over the last 30 days. On macOS and Linux it reads the machine; in Docker or another container it reads the container's own usage against its limits. The Server section moved there from Usage, and **Server Settings → Server Metrics** turns sampling on. It is off until you turn it on, and off costs nothing. See [Server configuration](docs/server-configuration.md#server-metrics).
+- **Client:** Usage adds 1y and All ranges for token and cost history.
 - **Client:** App Lock (Settings → Privacy & Security) locks Oppi after a chosen time in the background and unlocks with Face ID, Touch ID, or the passcode. While it is on, the app-switcher snapshot and ask notifications hide session text, and destructive or credential actions ask for authentication first. Audio and video keep playing.
 - **Client:** Lock a server, workspace, or session on this device from Server Settings, Workspace Settings, or the session's long-press menu. Opening a locked item from anywhere asks for authentication, and lists, search, and notifications show only its name, time, and status. Incognito sessions are always locked while App Lock is on.
 - **Client/Server:** A new device that pairs through Tailscale, an invite longer than 90 seconds, or `auth.module` must be approved within 2 minutes on a device you already paired, with Oppi open. The host's `oppi` CLI cannot approve. A default 90-second invite and the first device pair as before. See [Onboarding](docs/onboarding.md#approving-a-new-device).
@@ -139,6 +141,7 @@ Example:
 - **Server:** Durable extension tools must return `output` instead of `content`; otherwise the model gets an empty result.
 - **Server:** Durable sessions now store data per session tree under `durable/sessions/`. The old `durable/harness.sqlite` is no longer read and stays on disk.
 - **Build:** Building the Apple apps needs Xcode 27.1; building TailscaleKit needs Go 1.27.1.
+- **Server:** Server resource sampling (`server-metrics-*.jsonl`) is now opt-in with `serverMetrics.enabled`, default off. The Grafana Server Health resource panels and the release gate's event-loop stall check have no new data until you turn it on in Server Settings or with `oppi config set serverMetrics.enabled true`.
 
 ## [0.51.0] - 2026-10-05
 

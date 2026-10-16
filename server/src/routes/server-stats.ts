@@ -99,10 +99,12 @@ export interface DailyDetailResult {
 
 // ─── Helpers ───
 
-const VALID_RANGES = new Set([7, 30, 90]);
+const VALID_RANGES = new Set([7, 30, 90, 365]);
 
+/** Range in days; `all` is every stored session (infinite days). */
 export function parseRange(raw: string | null): number {
   if (!raw) return 7;
+  if (raw === "all") return Number.POSITIVE_INFINITY;
   const n = Number(raw);
   return VALID_RANGES.has(n) ? n : 7;
 }

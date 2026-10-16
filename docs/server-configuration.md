@@ -182,6 +182,7 @@ Pi's host MCP commands (`pi mcp list`, `login`, `logout`), which the MCP Servers
 | `auth.tailscalePairing`                 | Same-user Tailscale pairing (`POST /pair/tailscale`); `false` turns it off (default `true`; restart; see [onboarding](onboarding.md#turn-off-tailscale-pairing)) |
 | `auth.module`                           | Absolute path to an owner auth module (restart; see [Auth module](#auth-module)) |
 | `autoTitle.enabled` / `autoTitle.model` | Automatic session titles                                            |
+| `serverMetrics.enabled`                 | Server and host CPU, memory, and disk samples behind **Server Metrics** (opt-in, default `false`; restart; the Server Settings toggle applies immediately; see [Server Metrics](#server-metrics)) |
 
 After config changes that need a restart:
 
@@ -191,6 +192,26 @@ oppi server restart
 ```
 
 `oppi server restart` is operator-only. A Pi Control session runs with host-user authority, so inspect the current state before changing configuration and tell the user when a restart is required.
+
+### Server Metrics
+
+The host pill's **Server Metrics** page shows the selected server's CPU, memory, and disk (the volume that holds the Oppi data directory), and the Oppi server process's CPU, memory, event-loop delay, sessions, and connections, over the last hour, 24 hours, 7 days, or 30 days. Press and drag on a chart to read a past value.
+
+What the first section measures depends on where the server runs:
+
+| Server runs on | Section | CPU | Memory |
+| --- | --- | --- | --- |
+| macOS | Host | All cores, with load average | Activity Monitor's Memory Used (app, wired, and compressed) |
+| Linux | Host | All cores, with load average | Total minus available, like `free` |
+| Linux container (Docker, Podman, Kubernetes) | Container | The container's CPU limit, or every CPU when it has none | The container's usage minus file cache against its memory limit, like `docker stats` |
+
+In a container, disk is the volume mounted at the data directory. Docker Desktop's bind mounts from a Mac can report the shared folder's size wrongly; a named volume reports the VM disk.
+
+Sampling is opt-in and off by default. Off runs nothing: no timer, no reads, no files. Turn it on with the **Server Metrics** switch in Server Settings, the page's **Turn On** button, or `oppi config set serverMetrics.enabled true` (CLI changes apply at restart).
+
+When on, the server takes one sample every 30 seconds, about 1 ms of work (measured on a Mac Studio and in a Docker container), and keeps 30 days of samples, about 1.2 MB a day (`OPPI_SERVER_METRICS_RETENTION_DAYS` changes it). Opening the page reads those files only while it is open: the 1-hour and 24-hour views refresh every 30 seconds, and the 7-day and 30-day views load once (about 0.1 s of server time for 30 days) and refresh when pulled. Samples stay in the server's `diagnostics/telemetry/` directory and also feed the optional Grafana dashboards.
+
+Turn it off the same way. Off stops new samples. Files already written stay until they pass retention; while sampling is off, expired files are removed when you turn it off and at each server start.
 
 ### Running sessions across a restart
 

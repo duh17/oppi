@@ -180,6 +180,10 @@ function createDefaultConfig(dataDir: string): ServerConfig {
     oppiCliPrompt: {
       enabled: true,
     },
+    // Explicit opt-in: off means no sampler timer, no host reads, no files.
+    serverMetrics: {
+      enabled: false,
+    },
     // New hosts leave TLS undecided; the first `oppi init`, `oppi serve`, or
     // `oppi pair` picks Tailscale when a certificate is available, else self-signed.
     tls: { mode: "disabled" },
@@ -234,6 +238,7 @@ function normalizeConfig(
     "runtimeEnv",
     "oppiDocsPrompt",
     "oppiCliPrompt",
+    "serverMetrics",
     "experimental",
     "tls",
     "publicUrl",
@@ -474,6 +479,32 @@ function normalizeConfig(
     }
   } else {
     errors.push("config.oppiCliPrompt: expected object");
+    changed = true;
+  }
+
+  if (!("serverMetrics" in obj)) {
+    changed = true;
+  } else if (isRecord(obj.serverMetrics)) {
+    const serverMetrics = obj.serverMetrics;
+
+    if (strictUnknown) {
+      for (const key of Object.keys(serverMetrics)) {
+        if (key !== "enabled") {
+          errors.push(`config.serverMetrics.${key}: unknown key`);
+        }
+      }
+    }
+
+    if ("enabled" in serverMetrics) {
+      if (typeof serverMetrics.enabled === "boolean") {
+        config.serverMetrics = { enabled: serverMetrics.enabled };
+      } else {
+        errors.push("config.serverMetrics.enabled: expected boolean");
+        changed = true;
+      }
+    }
+  } else {
+    errors.push("config.serverMetrics: expected object");
     changed = true;
   }
 

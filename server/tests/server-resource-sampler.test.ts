@@ -21,7 +21,7 @@ describe("ServerResourceSampler", () => {
     rmSync(telemetryDir, { recursive: true, force: true });
   });
 
-  it("writes a deterministic sample record and emits drill-down ops metrics", () => {
+  it("writes a deterministic sample record and emits drill-down ops metrics", async () => {
     const opsMetrics: Array<{ metric: string; value: number; tags?: Record<string, string> }> = [];
     const deps: ServerMetricsDeps = {
       telemetryDir,
@@ -32,6 +32,16 @@ describe("ServerResourceSampler", () => {
         { ring: "timeline", length: 3, capacity: 4 },
         { ring: "empty", length: 1, capacity: 0 },
       ],
+      hostProbe: {
+        sample: async () => ({
+          scope: "host" as const,
+          cpu: 12.5,
+          load1: 2,
+          memUsed: 1000,
+          memTotal: 4000,
+        }),
+        reset: () => {},
+      },
     };
 
     vi.spyOn(Date, "now").mockReturnValue(2_000);
@@ -70,13 +80,7 @@ describe("ServerResourceSampler", () => {
       timestamp: 1_000,
     };
 
-    expect(() => {
-      (
-        sampler as unknown as {
-          sample: () => void;
-        }
-      ).sample();
-    }).not.toThrow();
+    await (sampler as unknown as { sample: () => Promise<void> }).sample();
 
     expect(opsMetrics).toEqual([
       { metric: "server.event_ring_utilization", value: 0.75, tags: { ring: "timeline" } },
@@ -96,6 +100,7 @@ describe("ServerResourceSampler", () => {
       sessions: { busy: 1, ready: 2, starting: 0, total: 3, peak: 5 },
       wsConnections: 7,
       eventLoop: { p50: 50, p95: 95, p99: 99, max: 200 },
+      host: { scope: "host", cpu: 12.5, load1: 2, memUsed: 1000, memTotal: 4000 },
     });
     expect(eventLoopResetCalled).toBe(true);
     expect((sampler as unknown as { activeSessionPeak: number }).activeSessionPeak).toBe(3);
@@ -126,7 +131,7 @@ describe("ServerResourceSampler", () => {
     expect((fakeTimer.unref as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
   });
 
-  it("drops samples that would exceed the daily JSONL byte cap", () => {
+  it("drops samples that would exceed the daily JSONL byte cap", async () => {
     process.env.OPPI_SERVER_METRICS_DAILY_FILE_MAX_BYTES = "32";
     vi.spyOn(process.stderr, "write").mockReturnValue(true);
     vi.spyOn(Date, "now").mockReturnValue(2_000);
@@ -149,17 +154,56 @@ describe("ServerResourceSampler", () => {
       getWebSocketCount: () => 0,
     });
 
-    (
-      sampler as unknown as {
-        sample: () => void;
-      }
-    ).sample();
+    await (sampler as unknown as { sample: () => Promise<void> }).sample();
 
     expect(statSync(existingFile).size).toBe(before);
     expect(readFileSync(existingFile, "utf8")).toBe('{"existing":true}\n');
   });
 
-  it("swallows sampling errors without writing a record", () => {
+  it("drops a sample whose host read was still in flight when sampling stopped", async () => {
+    vi.spyOn(globalThis, "setInterval").mockReturnValue({
+      unref: vi.fn(),
+    } as unknown as NodeJS.Timeout);
+    vi.spyOn(globalThis, "clearInterval").mockImplementation(() => {});
+    let finishHostRead: (value: { scope: "host"; cpu: number }) => void = () => {};
+    const sampler = new ServerResourceSampler({
+      telemetryDir,
+      getSessionCounts: () => ({ busy: 0, ready: 0, starting: 0, total: 0 }),
+      getWebSocketCount: () => 0,
+      hostProbe: {
+        sample: () =>
+          new Promise((resolve) => {
+            finishHostRead = resolve;
+          }),
+        reset: () => {},
+      },
+    });
+
+    sampler.start();
+    const inFlight = (sampler as unknown as { sample: () => Promise<void> }).sample();
+    sampler.stop();
+    finishHostRead({ scope: "host", cpu: 50 });
+    await inFlight;
+
+    expect(readdirSync(telemetryDir).filter((f) => f.startsWith("server-metrics-"))).toEqual([]);
+    expect(sampler.latestSample).toBeNull();
+  });
+
+  it("expires old samples when sampling is turned off, without sampling again", () => {
+    const expired = join(telemetryDir, "server-metrics-1970-01-01.jsonl");
+    writeFileSync(expired, '{"ts":1}\n');
+    const sampler = new ServerResourceSampler({
+      telemetryDir,
+      getSessionCounts: () => ({ busy: 0, ready: 0, starting: 0, total: 0 }),
+      getWebSocketCount: () => 0,
+    });
+
+    sampler.stop();
+
+    expect(readdirSync(telemetryDir)).toEqual([]);
+  });
+
+  it("swallows sampling errors without writing a record", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     const sampler = new ServerResourceSampler({
       telemetryDir,
@@ -169,13 +213,7 @@ describe("ServerResourceSampler", () => {
       getWebSocketCount: () => 0,
     });
 
-    expect(() => {
-      (
-        sampler as unknown as {
-          sample: () => void;
-        }
-      ).sample();
-    }).not.toThrow();
+    await (sampler as unknown as { sample: () => Promise<void> }).sample();
     expect(readdirSync(telemetryDir)).toEqual([]);
     expect(stderr).toHaveBeenCalled();
   });

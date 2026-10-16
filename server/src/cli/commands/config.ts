@@ -36,6 +36,10 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
     type: "boolean",
     desc: "Append a concise Oppi CLI management hint to Oppi sessions",
   },
+  "serverMetrics.enabled": {
+    type: "boolean",
+    desc: "Sample server and host CPU, memory, and disk every 30s for the Server Metrics page and Grafana (opt-in, default false; restart, or toggle live in the app)",
+  },
   "experimental.serverDurable": {
     type: "boolean",
     desc: "Make durable sessions available; only creates that ask for engine durable use it (experimental; default false; restart). Existing durable sessions keep working when off",

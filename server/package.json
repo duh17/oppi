@@ -149,6 +149,7 @@
       "mkfifo",
       "openssl",
       "scutil",
+      "vm_stat",
       "xdg-open",
       "zbarimg"
     ],

@@ -52,6 +52,11 @@ final class ServerSettingsModel {
     private(set) var isSavingMobileOutputGuide = false
     private(set) var mobileOutputGuideError: String?
 
+    /// `serverMetrics.enabled`; nil until loaded or when the load failed (`serverMetricsError`).
+    private(set) var serverMetricsEnabled: Bool?
+    private(set) var isSavingServerMetrics = false
+    private(set) var serverMetricsError: String?
+
     private(set) var pairedDevices: [AuthDevice]?
     private(set) var isLoadingPairedDevices = false
     private(set) var pairedDevicesError: String?
@@ -90,6 +95,9 @@ final class ServerSettingsModel {
         mobileOutputGuideError = nil
         isLoadingMobileOutputGuide = false
         isSavingMobileOutputGuide = false
+        serverMetricsEnabled = nil
+        isSavingServerMetrics = false
+        serverMetricsError = nil
         pairedDevices = nil
         pairedDevicesError = nil
         isLoadingPairedDevices = false
@@ -180,8 +188,9 @@ final class ServerSettingsModel {
 
         async let providers: () = loadProviderSummary(client)
         async let guide: () = loadMobileOutputGuide(client)
+        async let metrics: () = loadServerMetricsSetting(client)
         async let devices: () = loadPairedDevices(client)
-        _ = await (providers, guide, devices)
+        _ = await (providers, guide, metrics, devices)
         guard shouldApply(client.serverId) else { return }
         isLoading = false
     }
@@ -300,6 +309,38 @@ final class ServerSettingsModel {
         } catch {
             guard shouldApply(client.serverId, error: error) else { return }
             mobileOutputGuideError = error.localizedDescription
+        }
+    }
+
+    // MARK: - Server Metrics
+
+    private func loadServerMetricsSetting(_ client: Client) async {
+        do {
+            let enabled = try await client.api.serverMetricsEnabled()
+            guard shouldApply(client.serverId) else { return }
+            serverMetricsEnabled = enabled
+            serverMetricsError = nil
+        } catch {
+            guard shouldApply(client.serverId, error: error) else { return }
+            serverMetricsEnabled = nil
+            serverMetricsError = error.localizedDescription
+        }
+    }
+
+    func setServerMetrics(_ enabled: Bool) async {
+        guard serverMetricsEnabled != nil,
+              let client = await prepareClient(),
+              shouldApply(client.serverId) else { return }
+        isSavingServerMetrics = true
+        defer { if shouldApply(client.serverId) { isSavingServerMetrics = false } }
+        do {
+            let saved = try await client.api.setServerMetricsEnabled(enabled)
+            guard shouldApply(client.serverId) else { return }
+            serverMetricsEnabled = saved
+            serverMetricsError = nil
+        } catch {
+            guard shouldApply(client.serverId, error: error) else { return }
+            serverMetricsError = error.localizedDescription
         }
     }
 
@@ -471,6 +512,7 @@ extension ServerSettingsModel {
         model.providerSetupState = .configured
         model.connectedProviderCount = 2
         model.mobileOutputGuide = MobileOutputGuideConfiguration(enabled: true, revision: 3)
+        model.serverMetricsEnabled = true
         let now = Int64(Date().timeIntervalSince1970 * 1_000)
         model.pairedDevices = [
             AuthDevice(

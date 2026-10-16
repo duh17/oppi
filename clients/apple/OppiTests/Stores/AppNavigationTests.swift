@@ -1760,6 +1760,25 @@ struct AppNavigationShellRoutingTests {
         #expect(navigation.workspaceStackDiagnosticContext.screen == "model_providers")
     }
 
+    @Test func hostSwitcherServerMetricsReplacesUsageInBothShells() {
+        let stack = readyNavigation()
+        stack.openHostSwitcherDestination(.usage, serverId: "server-a")
+        stack.openHostSwitcherDestination(.serverMetrics, serverId: "server-a")
+
+        #expect(stack.workspacePath.count == 1)
+        #expect(stack.visibleHostSwitcherDestination == .serverMetrics)
+        #expect(stack.workspaceStackDiagnosticContext.screen == "utility_server_metrics")
+
+        let split = readyNavigation()
+        split.setWorkspaceNavigationPresentation(.split)
+        split.openHostSwitcherDestination(.usage, serverId: "server-a")
+        split.openHostSwitcherDestination(.serverMetrics, serverId: "server-a")
+
+        #expect(split.visibleHostSwitcherDestination == .serverMetrics)
+        #expect(split.splitDetailTarget == .utility(.serverMetrics))
+        #expect(split.splitDetailPath.isEmpty)
+    }
+
     @Test func hostSwitcherUsageInSplitReplacesInboxWithoutPath() {
         let navigation = readyNavigation()
         navigation.setWorkspaceNavigationPresentation(.split)

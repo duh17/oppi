@@ -80,6 +80,12 @@ struct StatsDailyChart: View {
         return f
     }()
 
+    private static let monthAxisFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM yy"
+        return f
+    }()
+
     private static let dateStringFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
@@ -104,6 +110,26 @@ struct StatsDailyChart: View {
         if count <= 14 { return 2 }
         if count <= 30 { return 7 }
         return 14
+    }
+
+    /// Days from the first to the last charted day. Past ~4 months (the 1y and
+    /// All usage ranges) the axis labels months instead of days.
+    private var spanDays: Int {
+        let dates = chartData.map(\.date)
+        guard let first = dates.min(), let last = dates.max() else { return 0 }
+        return Calendar.current.dateComponents([.day], from: first, to: last).day ?? 0
+    }
+
+    private var xAxisValues: AxisMarkValues {
+        let span = spanDays
+        guard span > 120 else { return .stride(by: .day, count: axisStride) }
+        return .stride(by: .month, count: span > 540 ? 3 : span > 240 ? 2 : 1)
+    }
+
+    private func xAxisLabel(_ date: Date) -> String {
+        spanDays > 120
+            ? Self.monthAxisFormatter.string(from: date)
+            : Self.axisFormatter.string(from: date)
     }
 
     var body: some View {
@@ -174,11 +200,11 @@ struct StatsDailyChart: View {
         .animation(.easeInOut(duration: 0.15), value: selectedDate)
         .chartLegend(.hidden)
         .chartXAxis {
-            AxisMarks(values: .stride(by: .day, count: axisStride)) { value in
+            AxisMarks(values: xAxisValues) { value in
                 AxisGridLine()
                 AxisValueLabel {
                     if let date = value.as(Date.self) {
-                        Text(Self.axisFormatter.string(from: date))
+                        Text(xAxisLabel(date))
                             .font(style.axisLabelFont)
                             .foregroundStyle(style.axisLabelColor)
                     }

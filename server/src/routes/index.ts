@@ -5,6 +5,7 @@ import { createRouteHelpers } from "./http.js";
 import type { RouteContext, RouteDispatcher } from "./types.js";
 import { createIdentityRoutes } from "./identity.js";
 import { createServerUpdateRoutes } from "./server-update.js";
+import { createServerMetricsRoutes } from "./server-metrics.js";
 import { createDictationDictionaryRoutes } from "./dictation-dictionary.js";
 import { createSkillRoutes } from "./skills.js";
 import { createWorkspaceRoutes } from "./workspaces.js";
@@ -36,6 +37,7 @@ export class RouteHandler {
     this.dispatchers = [
       createIdentityRoutes(this.ctx, this.helpers),
       createServerUpdateRoutes(this.ctx, this.helpers),
+      createServerMetricsRoutes(this.ctx, this.helpers),
       createDictationDictionaryRoutes(this.ctx, this.helpers),
       createServerResourceRoutes(this.ctx, this.helpers),
       createSkillRoutes(this.ctx, this.helpers),

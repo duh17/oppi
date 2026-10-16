@@ -278,7 +278,7 @@ struct DeviceAuthAPIClientTests {
         }
 
         let info = try await client.serverInfo()
-        let stats = try await client.fetchStats(range: 7)
+        let stats = try await client.fetchStats(range: .week)
 
         #expect(info.name == "Test")
         #expect(stats.totals.sessions == 0)

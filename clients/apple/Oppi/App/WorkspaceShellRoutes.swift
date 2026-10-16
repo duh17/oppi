@@ -275,6 +275,8 @@ private struct WorkspaceUtilityDestinationView: View {
                 desktopViewer
             case .manageServers:
                 ServerView()
+            case .serverMetrics:
+                ServerMetricsScreen()
             case .appSettings:
                 SettingsView()
             }

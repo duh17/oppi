@@ -109,6 +109,15 @@ export interface ServerConfig {
     enabled: boolean;
   };
 
+  /**
+   * Server and host resource sampling (CPU, memory, disk, event loop) behind the
+   * app's Server Metrics page and the Grafana Server Health dashboard. Opt-in:
+   * off (the default) runs no sampler at all.
+   */
+  serverMetrics?: {
+    enabled: boolean;
+  };
+
   /** Opt-in runtime experiments. Requires a server restart. */
   experimental?: {
     serverDurable?: boolean;

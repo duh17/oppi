@@ -4,16 +4,12 @@ import Testing
 
 @Suite("Host switcher destinations")
 struct HostSwitcherDestinationTests {
-    @Test func menuListsModelProvidersUsageAndServerSettings() {
+    @Test func menuListsServerJobsWithMetricsAfterUsage() {
         #expect(HostSwitcherDestination.menuItems == [
             .modelProviders,
             .usage,
+            .serverMetrics,
             .serverSettings,
-        ])
-        #expect(HostSwitcherDestination.menuItems.map(\.menuTitle) == [
-            "Model Providers",
-            "Usage",
-            "Server Settings",
         ])
     }
 

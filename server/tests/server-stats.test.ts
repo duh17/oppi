@@ -52,16 +52,19 @@ describe("parseRange", () => {
     expect(parseRange("")).toBe(7);
   });
 
-  test("accepts 7, 30, 90", () => {
+  test("accepts 7, 30, 90, 365, and all", () => {
     expect(parseRange("7")).toBe(7);
     expect(parseRange("30")).toBe(30);
     expect(parseRange("90")).toBe(90);
+    expect(parseRange("365")).toBe(365);
+    expect(parseRange("all")).toBe(Number.POSITIVE_INFINITY);
   });
 
   test("rejects invalid values", () => {
     expect(parseRange("14")).toBe(7);
     expect(parseRange("0")).toBe(7);
-    expect(parseRange("365")).toBe(7);
+    expect(parseRange("180")).toBe(7);
+    expect(parseRange("ALL")).toBe(7);
     expect(parseRange("abc")).toBe(7);
     expect(parseRange("7abc")).toBe(7);
     expect(parseRange("-1")).toBe(7);
@@ -204,6 +207,17 @@ describe("aggregateStats", () => {
     const result = aggregate({ sessions });
     expect(result.totals.sessions).toBe(1);
     expect(result.totals.cost).toBe(1);
+  });
+
+  test("the all range keeps every session, however old", () => {
+    const sessions = [
+      makeSession({ id: "recent", createdAt: now - 1 * DAY_MS, cost: 1 }),
+      makeSession({ id: "ancient", createdAt: now - 3000 * DAY_MS, cost: 5 }),
+    ];
+
+    const result = aggregate({ sessions, rangeDays: parseRange("all") });
+    expect(result.totals.sessions).toBe(2);
+    expect(result.daily).toHaveLength(2);
   });
 
   test("includes sessions exactly at cutoff and excludes sessions just before it", () => {

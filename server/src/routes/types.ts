@@ -19,6 +19,17 @@ import type { McpService } from "../mcp-service.js";
 import type { ServerMetricCollector } from "../server-metric-collector.js";
 import type { PushSender } from "../push/push-sender.js";
 import type { DevicePairing } from "../device-pairing.js";
+import type { ServerResourceRecord } from "../server-metrics-history.js";
+
+/** The resource sampler behind the Server Metrics page. */
+export interface ServerMetricsControl {
+  telemetryDir: string;
+  intervalMs: number;
+  isEnabled(): boolean;
+  /** Persists `serverMetrics.enabled` and starts or stops the sampler. */
+  setEnabled(enabled: boolean): void;
+  latestSample(): ServerResourceRecord | null;
+}
 
 /** Services needed by route handlers — injected by Server. */
 export interface RouteContext {
@@ -71,6 +82,8 @@ export interface RouteContext {
   };
   /** Server operational metrics. Optional so route tests can omit it. */
   metrics?: ServerMetricCollector;
+  /** Resource sampler control. Optional so route tests can omit it. */
+  serverMetrics?: ServerMetricsControl;
   /** Companion view-session metadata. JSON only. Never starts a capture. */
   desktopCompanionViewSessionClient?: {
     fetchViewSession: (input: {

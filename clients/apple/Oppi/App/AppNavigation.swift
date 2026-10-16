@@ -1025,10 +1025,11 @@ final class AppNavigation {
                let destination = Self.hostSwitcherDestination(from: last) {
                 return destination
             }
-            if case .utility(.manageServers) = splitDetailTarget {
-                return .usage
+            switch splitDetailTarget {
+            case .utility(.manageServers): return .usage
+            case .utility(.serverMetrics): return .serverMetrics
+            default: return .inbox
             }
-            return .inbox
         }
     }
 
@@ -1065,6 +1066,12 @@ final class AppNavigation {
                 diagnosticContext: Self.utilityDiagnosticContext(.manageServers),
                 routeElement: .utility(.manageServers)
             )
+        case .serverMetrics:
+            appendWorkspaceStack(
+                WorkspaceUtilityNavTarget.serverMetrics,
+                diagnosticContext: Self.utilityDiagnosticContext(.serverMetrics),
+                routeElement: .utility(.serverMetrics)
+            )
         case .serverSettings:
             let target = ServerDetailsNavTarget(serverId: serverId)
             appendWorkspaceStack(
@@ -1096,6 +1103,9 @@ final class AppNavigation {
         case .usage:
             splitDetailTarget = .utility(.manageServers)
             resetSplitDetailPath()
+        case .serverMetrics:
+            splitDetailTarget = .utility(.serverMetrics)
+            resetSplitDetailPath()
         case .serverSettings:
             splitDetailTarget = nil
             installSplitDetailPath([.serverDetails(ServerDetailsNavTarget(serverId: serverId))])
@@ -1110,6 +1120,7 @@ final class AppNavigation {
     ) -> HostSwitcherDestination? {
         switch element {
         case .utility(.manageServers): .usage
+        case .utility(.serverMetrics): .serverMetrics
         case .serverDetails: .serverSettings
         case .modelProviders: .modelProviders
         default: nil
@@ -1578,6 +1589,7 @@ final class AppNavigation {
         case .sshTerminal: "ssh_terminal"
         case .desktopStill: "desktop_still"
         case .manageServers: "manage_servers"
+        case .serverMetrics: "server_metrics"
         case .appSettings: "app_settings"
         }
         return WorkspaceStackDiagnosticContext(

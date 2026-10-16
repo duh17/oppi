@@ -72,25 +72,14 @@ struct ServerSelectionTests {
         #expect(id.isEmpty)
     }
 
-    @Test func taskIdentityIncludesServerAndRange() {
-        let id = ServerSelection.taskIdentity(selectedId: "sha256:aaa", range: 7)
-        #expect(id == "sha256:aaa-7")
-    }
-
-    @Test func taskIdentityNilServerUsesEmpty() {
-        let id = ServerSelection.taskIdentity(selectedId: nil, range: 30)
-        #expect(id == "-30")
-    }
-
     @Test func taskIdentityDiffersAcrossRanges() {
-        let a = ServerSelection.taskIdentity(selectedId: "sha256:x", range: 7)
-        let b = ServerSelection.taskIdentity(selectedId: "sha256:x", range: 30)
-        #expect(a != b)
+        let ids = Set(UsageRange.allCases.map { ServerSelection.taskIdentity(selectedId: "sha256:x", range: $0) })
+        #expect(ids.count == UsageRange.allCases.count)
     }
 
     @Test func taskIdentityDiffersAcrossServers() {
-        let a = ServerSelection.taskIdentity(selectedId: "sha256:aaa", range: 7)
-        let b = ServerSelection.taskIdentity(selectedId: "sha256:bbb", range: 7)
+        let a = ServerSelection.taskIdentity(selectedId: "sha256:aaa", range: .week)
+        let b = ServerSelection.taskIdentity(selectedId: "sha256:bbb", range: .week)
         #expect(a != b)
     }
 

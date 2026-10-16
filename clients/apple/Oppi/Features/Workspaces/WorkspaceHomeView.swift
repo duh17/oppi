@@ -226,6 +226,8 @@ enum WorkspaceUtilityNavTarget: Hashable {
     /// iPhone-only remote screen. Hidden until the still viewer is released or Live Remote Screen is on.
     case desktopStill
     case manageServers
+    /// The active host's CPU, memory, disk, and Oppi process over time.
+    case serverMetrics
     case appSettings
 
     var isReleaseEnabled: Bool {
@@ -236,7 +238,7 @@ enum WorkspaceUtilityNavTarget: Hashable {
             ReleaseFeatures.desktopStillEnabled || AppPreferences.Experiments.desktopLiveViewEnabled
         case .sshTerminal:
             AppPreferences.Experiments.sshTerminalEnabled && SSHTerminalProfileStore().hasConfiguredHost
-        case .skills, .extensions, .mcpServers, .manageServers, .appSettings:
+        case .skills, .extensions, .mcpServers, .manageServers, .serverMetrics, .appSettings:
             true
         }
     }
@@ -597,12 +599,14 @@ extension View {
 enum HostSwitcherDestination: Hashable {
     case inbox
     case usage
+    case serverMetrics
     case modelProviders
     case serverSettings
 
     static let menuItems: [Self] = [
         .modelProviders,
         .usage,
+        .serverMetrics,
         .serverSettings,
     ]
 
@@ -610,6 +614,7 @@ enum HostSwitcherDestination: Hashable {
         switch self {
         case .inbox: "All Sessions"
         case .usage: "Usage"
+        case .serverMetrics: "Server Metrics"
         case .modelProviders: "Model Providers"
         case .serverSettings: "Server Settings"
         }
@@ -619,6 +624,7 @@ enum HostSwitcherDestination: Hashable {
         switch self {
         case .inbox: title
         case .usage: "Usage"
+        case .serverMetrics: "Server Metrics"
         case .modelProviders: "Model Providers"
         case .serverSettings: "Server Settings"
         }
@@ -628,6 +634,7 @@ enum HostSwitcherDestination: Hashable {
         switch self {
         case .inbox: "tray.full"
         case .usage: "chart.bar"
+        case .serverMetrics: "gauge.with.dots.needle.50percent"
         case .modelProviders: "cpu"
         case .serverSettings: "gearshape"
         }
@@ -637,6 +644,7 @@ enum HostSwitcherDestination: Hashable {
         switch self {
         case .inbox: "hostSwitcher.inbox"
         case .usage: "hostSwitcher.usage"
+        case .serverMetrics: "hostSwitcher.serverMetrics"
         case .modelProviders: "workspace.modelProviders.open"
         case .serverSettings: "hostSwitcher.serverSettings"
         }

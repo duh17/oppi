@@ -471,6 +471,24 @@ describe("Storage config validation", () => {
     expect(invalid.errors).toContain("config.oppiCliPrompt.unknownField: unknown key");
   });
 
+  it("keeps server metrics sampling opt-in: off without the key, on only when set", () => {
+    const { serverMetrics: _omitted, ...withoutKey } = Storage.getDefaultConfig(dir);
+    expect(Storage.validateConfig(withoutKey, dir, false).config?.serverMetrics?.enabled).toBe(
+      false,
+    );
+    expect(
+      Storage.validateConfig({ ...withoutKey, serverMetrics: { enabled: true } }, dir, true).config
+        ?.serverMetrics?.enabled,
+    ).toBe(true);
+    const invalid = Storage.validateConfig(
+      { ...withoutKey, serverMetrics: { enabled: "yes" } },
+      dir,
+      true,
+    );
+    expect(invalid.errors).toContain("config.serverMetrics.enabled: expected boolean");
+    expect(invalid.config?.serverMetrics?.enabled).toBe(false);
+  });
+
   it("defaults the OpenAI Codex plan quota opt-in off and validates it", () => {
     const defaults = Storage.validateConfig(Storage.getDefaultConfig(dir), dir, true);
     expect(defaults.valid).toBe(true);

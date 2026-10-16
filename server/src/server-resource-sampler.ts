@@ -1,9 +1,11 @@
 /**
  * Server resource utilization metrics collector.
  *
- * Periodically samples CPU, memory, event loop lag, active sessions, and
- * WebSocket connections. Writes samples to daily JSONL files following the
- * same pattern as chat-metrics for the SQLite importer pipeline.
+ * Periodically samples the server process (CPU, memory, event loop lag, active
+ * sessions, WebSocket connections) and the host or container it runs in (CPU,
+ * memory, disk). Writes samples to daily JSONL files following the same pattern
+ * as chat-metrics for the SQLite importer pipeline; the Server Metrics page
+ * reads them back through `server-metrics-history.ts`.
  *
  * File pattern: server-metrics-YYYY-MM-DD.jsonl
  */
@@ -20,8 +22,13 @@ import {
   round2,
 } from "./metric-utils.js";
 import { createLogger } from "./logger.js";
+import {
+  RAW_FILE_PREFIX,
+  type HostRecord,
+  type ServerResourceRecord,
+} from "./server-metrics-history.js";
 
-const FILE_PREFIX = "server-metrics-";
+const FILE_PREFIX = RAW_FILE_PREFIX;
 const FILE_SUFFIX = ".jsonl";
 const DEFAULT_INTERVAL_MS = 30_000; // 30s
 const DEFAULT_RETENTION_DAYS = 30;
@@ -46,6 +53,12 @@ export interface ServerMetricsDeps {
   recordOpsMetric?: (metric: string, value: number, tags?: Record<string, string>) => void;
   /** Returns event ring snapshots for utilization sampling. */
   getEventRingSnapshots?: () => EventRingSnapshot[];
+  /** Host-wide readings. Omitted: samples carry no `host` block. */
+  hostProbe?: {
+    sample(): Promise<HostRecord>;
+    /** Restart CPU deltas, so a sample after a stop does not average the gap. */
+    reset(): void;
+  };
 }
 
 interface CpuSnapshot {
@@ -54,7 +67,7 @@ interface CpuSnapshot {
   timestamp: number; // Date.now()
 }
 
-function intervalFromEnv(): number {
+export function intervalFromEnv(): number {
   const raw = process.env.OPPI_SERVER_METRICS_INTERVAL_MS?.trim() ?? "";
   const parsed = Number.parseInt(raw, 10);
   if (Number.isFinite(parsed) && parsed >= 5000) return parsed;
@@ -69,8 +82,17 @@ export class ServerResourceSampler {
   private readonly cappedFiles = new Set<string>();
   /** Peak active session count since last sample — reset each interval. */
   private activeSessionPeak = 0;
+  private sampling = false;
+  /** Bumped by stop(), so a sample whose host read straddled it is dropped. */
+  private stops = 0;
+  private latest: ServerResourceRecord | null = null;
 
   constructor(private readonly deps: ServerMetricsDeps) {}
+
+  /** Most recent sample while running; null once stopped. */
+  get latestSample(): ServerResourceRecord | null {
+    return this.latest;
+  }
 
   /** Update the high-water mark. Called externally when sessions start/stop. */
   recordActiveSessionCount(count: number): void {
@@ -82,6 +104,7 @@ export class ServerResourceSampler {
   start(): void {
     if (this.timer) return;
 
+    this.deps.hostProbe?.reset();
     // Take initial CPU snapshot for delta calculation
     const usage = process.cpuUsage();
     this.lastCpu = { user: usage.user, system: usage.system, timestamp: Date.now() };
@@ -96,7 +119,7 @@ export class ServerResourceSampler {
     }
 
     const intervalMs = intervalFromEnv();
-    this.timer = setInterval(() => this.sample(), intervalMs);
+    this.timer = setInterval(() => void this.sample(), intervalMs);
     // Don't block process exit
     this.timer.unref();
 
@@ -104,12 +127,16 @@ export class ServerResourceSampler {
   }
 
   stop(): void {
+    this.stops++;
+    this.latest = null;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+      log.info("server_metrics.sampler.stopped");
     }
     this.eventLoopDelay?.disable();
     this.eventLoopDelay = null;
+    this.pruneOldFiles();
   }
 
   private captureEventLoopDelay(): { p50: number; p95: number; p99: number; max: number } {
@@ -128,7 +155,29 @@ export class ServerResourceSampler {
     return snapshot;
   }
 
-  private sample(): void {
+  private async sample(): Promise<void> {
+    // A slow host read (vm_stat) must not stack samples.
+    if (this.sampling) return;
+    this.sampling = true;
+    try {
+      await this.writeSample();
+    } finally {
+      this.sampling = false;
+    }
+  }
+
+  private async writeSample(): Promise<void> {
+    const stopsBefore = this.stops;
+    let host: HostRecord | undefined;
+    try {
+      host = await this.deps.hostProbe?.sample();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.warn("server_metrics.host_sample.failed", { error: message });
+    }
+    // Sampling was turned off while the host read was in flight.
+    if (this.stops !== stopsBefore) return;
+
     try {
       const now = Date.now();
       const mem = process.memoryUsage();
@@ -192,7 +241,7 @@ export class ServerResourceSampler {
         }
       }
 
-      const record = {
+      const record: ServerResourceRecord = {
         ts: now,
         cpu: {
           user: cpuUser,
@@ -212,8 +261,10 @@ export class ServerResourceSampler {
         wsConnections: wsCount,
         eventLoop,
       };
+      if (host) record.host = host;
 
       this.appendToFile(now, record);
+      this.latest = record;
       this.pruneOldFiles();
     } catch (err) {
       // Best effort — don't crash the server
@@ -248,7 +299,12 @@ export class ServerResourceSampler {
     });
   }
 
-  private pruneOldFiles(): void {
+  /**
+   * Remove samples past retention. Runs after each sample, at stop(), and at
+   * startup while sampling is off (one directory listing, no timer), so files
+   * left by an earlier run expire without turning sampling on.
+   */
+  pruneOldFiles(): void {
     pruneOldJsonlFiles(
       this.deps.telemetryDir,
       FILE_PREFIX,
