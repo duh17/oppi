@@ -116,7 +116,7 @@ struct ServerExtensionsView: View {
             }
         }
         .settingsPage("Extensions")
-        .searchable(text: $searchText, prompt: "Search extensions")
+        .routerSearchable(text: $searchText, prompt: "Search extensions")
         .refreshable {
             if let activeServerId { await refresh(serverId: activeServerId) }
         }

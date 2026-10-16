@@ -212,6 +212,7 @@ struct WorkspaceContextBar: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(AppNavigation.self) private var appNavigation
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.screenNavigator) private var navigator
 
     @State private var isExpanded = false
     @State private var reviewPresentation: WorkspaceContextBarReviewPresentation
@@ -219,7 +220,8 @@ struct WorkspaceContextBar: View {
     @State private var selectedPaths: Set<String> = []
     @State private var launchActionInFlightTitle: String?
     @State private var launchError: String?
-    @State private var navigateToQuickAction: QuickActionSessionNavDestination?
+    /// A quick-action chat opened inside a SwiftUI stack (see `openQuickActionSession`).
+    @State private var stackedQuickAction: QuickActionSessionNavDestination?
     @State private var quickActionOptions: [WorkspaceQuickActionOption] = []
     @State private var quickActionOptionsContextKey: String?
     @State private var isLoadingQuickActions = false
@@ -446,14 +448,39 @@ struct WorkspaceContextBar: View {
             guard isSelecting else { return }
             Task { await loadQuickActionsIfNeeded() }
         }
-        .navigationDestination(item: $navigateToQuickAction) { dest in
+        .navigationDestination(item: $stackedQuickAction) { destination in
             ChatView(
-                sessionId: dest.id,
+                sessionId: destination.id,
                 workspaceIdHint: workspaceId,
-                initialInputText: dest.inputText,
-                initialPendingFiles: dest.pendingFileReferences
+                initialInputText: destination.inputText,
+                initialPendingFiles: destination.pendingFileReferences
             )
-            .id(dest.id)
+            .id(destination.id)
+        }
+    }
+
+    /// Pushes the new session's chat above the screen that shows this bar,
+    /// with this bar's server and navigation. A bar in a chat inside a
+    /// SwiftUI stack whose screen has no UIKit navigation controller (a file
+    /// review in the Files panel or the git bar's sheet) pushes in that stack.
+    private func openQuickActionSession(_ destination: QuickActionSessionNavDestination) {
+        guard navigator.canPush else {
+            stackedQuickAction = destination
+            return
+        }
+        let workspaceId = workspaceId
+        let connection = connection
+        let apiClient = apiClient
+        let appNavigation = appNavigation
+        navigator.push {
+            ChatView(
+                sessionId: destination.id,
+                workspaceIdHint: workspaceId,
+                initialInputText: destination.inputText,
+                initialPendingFiles: destination.pendingFileReferences
+            )
+            .id(destination.id)
+            .presenterScope(connection: connection, apiClient: apiClient, navigation: appNavigation)
         }
     }
 
@@ -1165,10 +1192,10 @@ struct WorkspaceContextBar: View {
             sessionStore.upsert(response.session)
             selectedPaths.removeAll()
             isSelecting = false
-            navigateToQuickAction = QuickActionSessionNavDestination.attaching(
+            openQuickActionSession(QuickActionSessionNavDestination.attaching(
                 sessionId: response.session.id,
                 filePaths: paths
-            )
+            ))
         } catch {
             launchError = error.localizedDescription
         }
@@ -1200,12 +1227,12 @@ struct WorkspaceContextBar: View {
             sessionStore.upsert(response.session)
             selectedPaths.removeAll()
             isSelecting = false
-            navigateToQuickAction = QuickActionSessionNavDestination(
+            openQuickActionSession(QuickActionSessionNavDestination(
                 id: response.session.id,
                 inputText: response.visiblePrompt,
                 filePaths: response.filePaths,
                 fileDisplayPrefix: option.title
-            )
+            ))
         } catch {
             launchError = error.localizedDescription
         }

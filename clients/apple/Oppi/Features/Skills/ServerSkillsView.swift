@@ -122,7 +122,7 @@ struct ServerSkillsView: View {
             }
         }
         .settingsPage("Skills")
-        .searchable(text: $searchText, prompt: "Search skills")
+        .routerSearchable(text: $searchText, prompt: "Search skills")
         .refreshable {
             if let activeServerId {
                 await refresh(serverId: activeServerId)

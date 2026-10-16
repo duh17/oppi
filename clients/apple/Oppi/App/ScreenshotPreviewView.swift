@@ -422,7 +422,7 @@ private struct RouterRoutesPreview: View {
             quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
             composerDraftStore: ComposerDraftStore(),
             chatReaderPayloadStore: ChatReaderPayloadStore(),
-            sessionRowDisplay: SessionRowDisplay()
+            sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
         )
     }
 
@@ -849,7 +849,7 @@ private struct RouterModalSitesPreview: View {
             quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
             composerDraftStore: ComposerDraftStore(),
             chatReaderPayloadStore: ChatReaderPayloadStore(),
-            sessionRowDisplay: SessionRowDisplay()
+            sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
         ))
     }
 
@@ -861,16 +861,16 @@ private struct RouterModalSitesPreview: View {
     private var page: some View {
         switch site {
         case "root":
-            RouterModalSitesRootPage()
+            RouterModalSitesRootPage(root: root)
         case "document":
             RouterModalSitesDocumentPage()
         case "stash":
             RouterModalSitesStashPage()
         case "inbox-now-playing":
-            RouterModalSitesStack(root: root) { SessionInboxView() }
+            RouterPreviewStack(root: root) { SessionInboxView() }
                 .ignoresSafeArea()
         case "workspace-now-playing":
-            RouterModalSitesStack(root: root) { WorkspaceDetailView(workspace: RouterModalSitesFixtures.workspaces[0]) }
+            RouterPreviewStack(root: root) { WorkspaceDetailView(workspace: RouterModalSitesFixtures.workspaces[0]) }
                 .ignoresSafeArea()
         default:
             QuickSessionOverlay {}
@@ -878,9 +878,10 @@ private struct RouterModalSitesPreview: View {
     }
 }
 
-/// A session list as the root of a router navigation controller, with its
-/// toolbar shown so the Now Playing pill appears.
-private struct RouterModalSitesStack<Content: View>: UIViewControllerRepresentable {
+/// A screen as the root of a router navigation controller, the way the shell
+/// hosts it: for previews of screens that search through the host, push
+/// through the navigator, or show bottom-bar items.
+struct RouterPreviewStack<Content: View>: UIViewControllerRepresentable {
     let root: AppRootEnvironment
     @ViewBuilder let content: () -> Content
 
@@ -895,14 +896,47 @@ private struct RouterModalSitesStack<Content: View>: UIViewControllerRepresentab
     func updateUIViewController(_ navigation: RouterNavigationController, context: Context) {}
 }
 
-/// `ContentView` over a fixture connection. The dialog's responses go to the
-/// connection's send hook, and the page shows the last one.
+/// The real workspace shell over fixture services: the stack or split
+/// layout the window size picks, its drawer, and every route.
+struct WorkspaceShellPreview: UIViewControllerRepresentable {
+    let root: AppRootEnvironment
+
+    func makeUIViewController(context: Context) -> WorkspaceShellController {
+        WorkspaceShellController(root: root)
+    }
+
+    func updateUIViewController(_ shell: WorkspaceShellController, context: Context) {}
+}
+
+extension AppRootEnvironment {
+    /// A preview's own services; the rest fresh.
+    static func preview(
+        coordinator: ConnectionCoordinator,
+        navigation: AppNavigation = AppNavigation(),
+        themeStore: ThemeStore = ThemeStore()
+    ) -> Self {
+        AppRootEnvironment(
+            coordinator: coordinator,
+            navigation: navigation,
+            themeStore: themeStore,
+            quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
+            composerDraftStore: ComposerDraftStore(),
+            chatReaderPayloadStore: ChatReaderPayloadStore(),
+            sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
+        )
+    }
+}
+
+/// The app root layer over a fixture connection. The dialog's responses go
+/// to the connection's send hook, and the page shows the last one.
 private struct RouterModalSitesRootPage: View {
+    let root: AppRootEnvironment
     @State private var connection: ServerConnection
     @State private var navigation = AppNavigation()
     @State private var lastResponse = RouterModalSitesResponse()
 
-    init() {
+    init(root: AppRootEnvironment) {
+        self.root = root
         let connection = ServerConnection()
         connection.setPreviewServerId("router-modal-sites")
         _ = connection.focusedSessionStore.focus(sessionId: "router-modal-sites-session")
@@ -910,7 +944,7 @@ private struct RouterModalSitesRootPage: View {
     }
 
     var body: some View {
-        ContentView()
+        AppRootLayer(root: root)
             .overlay(alignment: .top) {
                 VStack(spacing: 12) {
                     Button("Extension Dialog") { showDialog(method: "custom", title: "Pick a Plan") }

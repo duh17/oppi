@@ -148,83 +148,14 @@ struct SessionListSearchNavigationPersistenceTests {
     }
 
     @Test func workspaceListIsCoveredByADeeperSession() {
-        #expect(
-            SessionListSearchNavigationPersistence.isWorkspaceListCovered(
-                stackDepth: 2,
-                hasSessionDestination: false
-            )
-        )
+        #expect(SessionListSearchNavigationPersistence.isWorkspaceListCovered(stackDepth: 2))
+        #expect(!SessionListSearchNavigationPersistence.isWorkspaceListCovered(stackDepth: 1))
         #expect(
             SessionListSearchNavigationPersistence.isWorkspaceListCovered(
                 stackDepth: 1,
-                hasSessionDestination: true
-            )
-        )
-        #expect(
-            !SessionListSearchNavigationPersistence.isWorkspaceListCovered(
-                stackDepth: 1,
-                hasSessionDestination: false
-            )
-        )
-        #expect(
-            SessionListSearchNavigationPersistence.isWorkspaceListCovered(
-                stackDepth: 1,
-                hasSessionDestination: false,
                 splitDetailReplacesList: true
             )
         )
-    }
-
-    @Test func inboxAndWorkspaceListWireSearchPersistence() throws {
-        let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
-        let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
-
-        #expect(inbox.contains("SessionListSearchNavigationPersistence"))
-        #expect(workspace.contains("SessionListSearchNavigationPersistence"))
-        #expect(inbox.contains(".willOpenDestination"))
-        #expect(workspace.contains(".willOpenDestination"))
-        #expect(inbox.contains(".searchFocused($isSearchFieldFocused)"))
-        #expect(workspace.contains(".searchFocused($isSearchFieldFocused)"))
-        #expect(inbox.contains("isInboxCovered("))
-        #expect(workspace.contains("isWorkspaceListCovered("))
-        #expect(inbox.contains("inboxSessionSearch"))
-        #expect(workspace.contains("workspaceSessionSearchByID"))
-        #expect(inbox.contains(".onChange(of: activeServerId)"))
-        #expect(inbox.contains("applySearchNavigation(.searchTextChanged"))
-        #expect(inbox.contains("applySearchNavigation(.searchPresentationChanged"))
-        #expect(inbox.contains("restoreSearchAfterCoverageChange()"))
-        #expect(inbox.contains("applySearchNavigation(.reset)"))
-        #expect(workspace.contains("applySearchNavigation(.searchTextChanged"))
-        #expect(workspace.contains("applySearchNavigation(.searchPresentationChanged"))
-        #expect(workspace.contains("restoreSearchAfterCoverageChange()"))
-        #expect(workspace.contains("importAndResumeLocal"))
-
-        let inboxOpen = try sourceSlice(
-            inbox,
-            start: "private func openSession(_ item: SessionInboxItem)",
-            end: "private func stopSession"
-        )
-        let routeGuardIndex = try #require(inboxOpen.range(of: "Session route is unavailable")?.upperBound)
-        let willOpenIndex = try #require(inboxOpen.range(of: "willOpenDestination")?.lowerBound)
-        let navigateIndex = try #require(inboxOpen.range(of: "openWorkspaceSession")?.lowerBound)
-        #expect(routeGuardIndex < willOpenIndex)
-        #expect(willOpenIndex < navigateIndex)
-
-        let workspaceOpen = try sourceSlice(
-            workspace,
-            start: "private func openSession(_ session: Session)",
-            end: "private func routeToSession"
-        )
-        #expect(workspaceOpen.contains("willOpenDestination"))
-
-        let localImport = try sourceSlice(
-            workspace,
-            start: "private func importAndResumeLocal",
-            end: "private func isArchiveBucketGroupID"
-        )
-        let localArmIndex = try #require(localImport.range(of: "willOpenDestination")?.lowerBound)
-        let localRouteIndex = try #require(localImport.range(of: "routeToSession")?.lowerBound)
-        #expect(localArmIndex < localRouteIndex)
     }
 
     private func searching(_ query: String) -> SessionListSearchNavigationPersistence.State {
@@ -244,26 +175,5 @@ struct SessionListSearchNavigationPersistenceTests {
             event: event,
             isCoveredByDestination: covered
         )
-    }
-
-    private func appleSource(_ relativePath: String) throws -> String {
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        return try String(contentsOf: root.appendingPathComponent(relativePath), encoding: .utf8)
-    }
-
-    private func sourceSlice(_ source: String, start: String, end: String) throws -> String {
-        guard let startRange = source.range(of: start),
-              let endRange = source.range(of: end, range: startRange.upperBound..<source.endIndex)
-        else {
-            throw SourceSliceError.missing(start: start, end: end)
-        }
-        return String(source[startRange.lowerBound..<endRange.lowerBound])
-    }
-
-    private enum SourceSliceError: Error {
-        case missing(start: String, end: String)
     }
 }

@@ -88,6 +88,7 @@ Example:
 - **Client:** The SSH terminal no longer runs `ps` on the host every two seconds. The chat bar appears when an agent reports itself (OSC 7501) or Run on Connect starts `herdr`; otherwise use **Use Chat Bar**.
 - **Client:** Layout follows the window instead of the device. Any regular-width window, including the iPhone Duo inner display, gets the workspace sidebar, readable widths, and side-by-side file lists, and folding or rotating keeps your place and draft. On iOS 27.1, iPhones with a side rail put toolbar controls on it.
 - **Client:** Sheets follow your light, dark, or system theme, and a sheet opened from a navigation page shows its own title and buttons.
+- **Client:** Back on a pushed screen is a chevron only, so titles and bar buttons keep their room, and search in All Sessions, a workspace, Files, Skills, and Extensions uses the system search bar.
 - **Server:** Embedded Pi runtime 1.0.4 → 1.3.0. Durable sessions keep their system prompt and tools after compaction, Claude Opus 5 and Haiku 5.5 can run with thinking off, more provider outages retry, and a tool call with malformed JSON fails instead of running with partial arguments.
 - **Server:** `npm i -g oppi-server` installs the exact dependency tree Oppi was tested with, so a later Pi release cannot break a fresh install as it did for 0.51.0.
 - **Server:** Sandbox runtime Gondolin 0.13.0: long-running sandbox VMs no longer leak file descriptors, and sandboxes no longer need Node.js 23.6.

@@ -199,7 +199,6 @@ struct SessionInboxView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation
-    @Environment(\.chatReaderPayloadStore) private var chatReaderPayloadStore
     @Environment(\.composerDraftStore) private var composerDraftStore
     @Environment(\.theme) private var theme
 
@@ -215,7 +214,6 @@ struct SessionInboxView: View {
     @State private var hasAutoOpenedE2ESession = false
     @State private var hasAutoOpenedRemoteScreen = false
     @State private var providerSetupState: ProviderSetupState = .unknown
-    @FocusState private var isSearchFieldFocused: Bool
     @State private var presentsNowPlayingPlayer = false
     @State private var composeBarColumnWidth: CGFloat = 0
 
@@ -477,15 +475,11 @@ struct SessionInboxView: View {
         .themedListSurface()
         .navigationTitle("All Sessions")
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(
+        .routerSearchable(
             text: searchTextBinding,
             isPresented: searchPresentedBinding,
-            placement: .navigationBarDrawer(displayMode: .automatic),
-            prompt: "Search sessions"
-        )
-        .searchFocused($isSearchFieldFocused)
-        .searchPresentationToolbarBehavior(
-            sessionListToolbar.avoidsHidingContentWhileSearching ? .avoidHidingContent : .automatic
+            prompt: "Search sessions",
+            hidesNavigationBarDuringPresentation: !sessionListToolbar.avoidsHidingContentWhileSearching
         )
         .routerModal(isPresented: $presentsNowPlayingPlayer, presentation: .fullScreen) {
             if let player = sessionListAudioPlayer {
@@ -498,9 +492,6 @@ struct SessionInboxView: View {
         }
         .onChange(of: searchNavigation.isSearchPresented) { _, presented in
             applySearchNavigation(.searchPresentationChanged(presented))
-            if !presented {
-                isSearchFieldFocused = false
-            }
         }
         .onChange(of: searchCoverageSignature) { _, _ in
             restoreSearchAfterCoverageChange()
@@ -563,72 +554,6 @@ struct SessionInboxView: View {
             if let pendingDelete {
                 Text(SessionDeleteConfirmationPolicy.deleteMessage(for: pendingDelete.session))
             }
-        }
-        .navigationDestination(for: WorkspaceSessionNavTarget.self) { target in
-            WorkspaceSessionScopedDestinationView(target: target)
-        }
-        .navigationDestination(for: WorkspaceLinkedFileNavTarget.self) { target in
-            WorkspaceLinkedFileDestinationView(target: target)
-        }
-        .navigationDestination(for: ChatReaderNavTarget.self) { target in
-            if let store = chatReaderPayloadStore {
-                ChatReaderDestinationView(target: target, store: store)
-            }
-        }
-        .navigationDestination(for: FileBrowserNavTarget.self) { target in
-            WorkspaceFileBrowserDestinationView(target: target)
-        }
-        .navigationDestination(for: WorkspaceConfigurationNavTarget.self) { target in
-            WorkspaceConfigurationScopedDestinationView(target: target.workspaceTarget)
-        }
-        .navigationDestination(for: WorkspaceUtilityNavTarget.self) { target in
-            if target.isReleaseEnabled {
-                switch target {
-                case .schedules:
-                    ScheduleManagementView()
-                case .agents:
-                    AgentManagementView()
-                case .skills:
-                    ServerSkillsView()
-                case .extensions:
-                    ServerExtensionsView()
-                case .mcpServers:
-                    McpServersView(scopeId: McpScopeSnapshot.globalId)
-                case .sshTerminal:
-                    SSHTerminalHostListView()
-                case .desktopStill:
-                    if AppPreferences.Experiments.desktopLiveViewEnabled,
-                       activeConnection?.desktopLiveViewAvailable == true {
-                        DesktopLiveViewerView(connection: activeConnection)
-                    } else {
-                        DesktopCurrentStillViewerView()
-                    }
-                case .manageServers:
-                    ServerView()
-                case .appSettings:
-                    SettingsView()
-                }
-            } else {
-                EmptyView()
-            }
-        }
-        .navigationDestination(for: ServerResourceDetailNavTarget.self) { target in
-            ServerResourceDetailDestinationView(target: target)
-        }
-        .navigationDestination(for: ServerSkillBrowserNavTarget.self) { target in
-            ServerSkillBrowserScopedDestinationView(target: target)
-        }
-        .navigationDestination(for: ServerSkillFileNavTarget.self) { target in
-            ServerSkillFileScopedDestinationView(target: target)
-        }
-        .navigationDestination(for: ServerDetailsNavTarget.self) { target in
-            ServerDetailsScopedDestinationView(target: target)
-        }
-        .navigationDestination(for: ModelProvidersNavTarget.self) { target in
-            ModelProvidersScopedDestinationView(target: target)
-        }
-        .navigationDestination(for: SessionThreadNavTarget.self) { target in
-            SessionThreadDetailView(target: target)
         }
     }
 
@@ -796,7 +721,6 @@ struct SessionInboxView: View {
     private func resetLocalHostState() {
         applySearchNavigation(.reset)
         navigation.workspaceSessionSearchByID = [:]
-        isSearchFieldFocused = false
         let reset = SessionInboxHostChange.reset(
             searchText: searchText,
             expandedStoppedGroupIDs: expandedStoppedGroupIDs,
@@ -817,9 +741,6 @@ struct SessionInboxView: View {
 
     private func restoreSearchAfterCoverageChange() {
         applySearchNavigation(.coverageChanged(isCovered: isSearchListCoveredByDestination))
-        if !isSearchListCoveredByDestination {
-            isSearchFieldFocused = false
-        }
     }
 
     private func switchVisibleServer() {
@@ -1264,285 +1185,6 @@ struct SessionInboxView: View {
     private func openInboxFiles() {
         guard let activeServerId else { return }
         navigation.openWorkspaceFileBrowser(FileBrowserNavTarget.hostHome(serverId: activeServerId))
-    }
-}
-
-private struct WorkspaceConfigurationScopedDestinationView: View {
-    @Environment(ConnectionCoordinator.self) private var coordinator
-    let target: WorkspaceNavTarget
-
-    @State private var scopedConnection: ServerConnection?
-
-    private var resolvedConnection: ServerConnection? {
-        scopedConnection
-    }
-
-    var body: some View {
-        ScopedLockGate(
-            target: .workspace(serverId: target.serverId, workspaceId: target.workspace.id),
-            title: target.workspace.name
-        ) {
-            unlockedBody
-        }
-    }
-
-    private var unlockedBody: some View {
-        Group {
-            if let connection = resolvedConnection {
-                WorkspaceSettingsRootView(workspace: target.workspace)
-                    .withServerScopedEnvironment(connection)
-            } else {
-                ProgressView("Connecting…")
-            }
-        }
-        .task(id: target.serverId) {
-            guard await coordinator.switchToServerReady(target.serverId) else { return }
-            scopedConnection = coordinator.connection(for: target.serverId)
-        }
-    }
-}
-
-private struct WorkspaceSidebarDragState {
-    enum Axis {
-        case horizontal
-        case vertical
-    }
-
-    var axis: Axis?
-    var horizontalTranslation: CGFloat = 0
-}
-
-/// Compact-drawer scroll ownership for the inbox `List`.
-///
-/// The leading-edge reveal is a `simultaneousGesture`, so the inbox collection
-/// view stays tracking unless we disable it after horizontal intent. UIKit then
-/// draws the trailing indicator on the peeking sliver. Hide that indicator for
-/// the whole `progress > 0` window, including the settled peek.
-enum WorkspaceInboxSidebarScrollPolicy {
-    static func shouldDisableInboxScrolling(
-        isHorizontalReveal: Bool,
-        sidebarProgress: CGFloat
-    ) -> Bool {
-        isHorizontalReveal || sidebarProgress > 0
-    }
-
-    static func shouldHideInboxScrollIndicators(sidebarProgress: CGFloat) -> Bool {
-        sidebarProgress > 0
-    }
-}
-
-/// Sessions-first home surface for compact widths.
-///
-/// Layout: the workspace sidebar sits *beneath* the session layer. The session
-/// layer — a `NavigationStack` wrapping `SessionInboxView` — slides right to
-/// reveal the sidebar, tracks the drag 1:1, and settles with a spring. Because
-/// the nav bar, search, and bottom toolbar all live inside that sliding
-/// `NavigationStack`, they travel as one surface with the list (no detached
-/// "card" sliding under static bars). The sidebar layer itself owns no bars.
-///
-/// Edge reveal: instead of a full-height `Color.clear` strip (which covers the
-/// leading toolbar toggle and steals its taps), the reveal drag is a
-/// `simultaneousGesture` on the foreground layer that only engages for drags
-/// starting within ~32pt of the leading edge. It is disabled entirely once a
-/// destination is pushed so it never fights the interactive back-swipe.
-struct WorkspaceSessionInboxStackRootView: View {
-    @Environment(AppNavigation.self) private var navigation
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.theme) private var theme
-    @State private var sidebarRestingProgress: CGFloat = 0
-    @State private var isSidebarPresented = false
-    @GestureState private var sidebarDrag = WorkspaceSidebarDragState()
-
-    private static let edgePanWidth: CGFloat = 32
-    private static let foregroundCornerRadius: CGFloat = 40
-    private static let foregroundShadowOpacity = 0.14
-    private static let foregroundShadowRadius: CGFloat = 22
-    private static let foregroundShadowOffsetX: CGFloat = -5
-
-    var body: some View {
-        @Bindable var nav = navigation
-
-        GeometryReader { proxy in
-            let sidebarWidth = min(proxy.size.width * 0.80, 320)
-            let dragProgress = sidebarDrag.horizontalTranslation / sidebarWidth
-            let sidebarProgress = min(1, max(0, sidebarRestingProgress + dragProgress))
-            let sidebarOffset = sidebarWidth * sidebarProgress
-            let interceptsForegroundTouches = isSidebarPresented || sidebarRestingProgress > 0
-            // The edge-pan fights the interactive back-swipe once a destination
-            // is pushed, so only arm it at the stack root.
-            let edgePanEnabled = nav.workspacePath.isEmpty && !isSidebarPresented
-            let disableInboxScrolling = WorkspaceInboxSidebarScrollPolicy.shouldDisableInboxScrolling(
-                isHorizontalReveal: sidebarDrag.axis == .horizontal,
-                sidebarProgress: sidebarProgress
-            )
-            let hideInboxIndicators = WorkspaceInboxSidebarScrollPolicy.shouldHideInboxScrollIndicators(
-                sidebarProgress: sidebarProgress
-            )
-
-            ZStack(alignment: .topLeading) {
-                // Base backdrop: the corner cutouts and safe-area strips revealed
-                // by the foreground mask must show theme color, never the bare
-                // white window background.
-                theme.bg.primary
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-
-                WorkspaceSidebarView(
-                    onSelect: { settleSidebar(open: false) }
-                )
-                .frame(width: sidebarWidth, alignment: .topLeading)
-                .frame(maxHeight: .infinity, alignment: .top)
-                .allowsHitTesting(isSidebarPresented)
-                .accessibilityHidden(!isSidebarPresented)
-                .accessibilityAddTraits(.isModal)
-                .accessibilityAction(.escape) { settleSidebar(open: false) }
-                .accessibilityAction(named: "Close workspaces") { settleSidebar(open: false) }
-                .zIndex(0)
-
-                NavigationStack(path: $nav.workspacePath) {
-                    SessionInboxView(
-                        onOpenSidebar: { settleSidebar(open: true) }
-                    )
-                    // Keep these on the inbox root only. Applying them to the
-                    // NavigationStack would leak into pushed chat.
-                    .scrollDisabled(disableInboxScrolling)
-                    .scrollIndicators(hideInboxIndicators ? .hidden : .automatic, axes: .vertical)
-                    .navigationDestination(for: WorkspaceNavTarget.self) { target in
-                        WorkspaceScopedDestinationView(target: target)
-                    }
-                }
-                .background(theme.bg.primary)
-                // Mask in screen space, not the safe-area frame: `.clipShape`
-                // sizes to the layout bounds, which puts the rounded corners
-                // under the status bar / home indicator and amputates the nav
-                // bar's safe-area bleed. `ignoresSafeArea` extends the mask to
-                // the device corners so the rounding is concentric with the
-                // bezel, like the system drawer look this mimics.
-                .mask {
-                    RoundedRectangle(
-                        cornerRadius: Self.foregroundCornerRadius * sidebarProgress,
-                        style: .continuous
-                    )
-                    .ignoresSafeArea()
-                }
-                .shadow(
-                    color: .black.opacity(Self.foregroundShadowOpacity * Double(sidebarProgress)),
-                    radius: Self.foregroundShadowRadius * sidebarProgress,
-                    x: Self.foregroundShadowOffsetX * sidebarProgress
-                )
-                .offset(x: sidebarOffset)
-                .accessibilityHidden(isSidebarPresented)
-                .simultaneousGesture(
-                    edgePanEnabled ? sidebarRevealGesture(sidebarWidth: sidebarWidth) : nil
-                )
-                .zIndex(1)
-
-                // Scrim over the revealed foreground: only present while the
-                // sidebar is intercepting (open or mid-drag). When closed it is
-                // absent so it never steals taps from the session surface.
-                if interceptsForegroundTouches {
-                    Color.clear
-                        .frame(maxWidth: .infinity)
-                        .frame(maxHeight: .infinity)
-                        .contentShape(Rectangle())
-                        .offset(x: sidebarOffset)
-                        .gesture(sidebarDragGesture(sidebarWidth: sidebarWidth, minimumDistance: 0, tapCloses: true))
-                        .accessibilityHidden(true)
-                        .accessibilityIdentifier("workspace.sidebar.scrim")
-                        .zIndex(2)
-                }
-            }
-        }
-    }
-
-    /// Edge-originated reveal drag attached as a `simultaneousGesture` on the
-    /// foreground. No covering view, so the leading toolbar toggle and list
-    /// rows keep working. Only drags beginning within `edgePanWidth` of the
-    /// leading edge actually move the sidebar.
-    private func sidebarRevealGesture(sidebarWidth: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 10, coordinateSpace: .local)
-            .updating($sidebarDrag) { value, state, transaction in
-                transaction.animation = nil
-                transaction.disablesAnimations = true
-
-                if state.axis == nil {
-                    guard value.startLocation.x <= Self.edgePanWidth else { return }
-                    let horizontal = abs(value.translation.width)
-                    let vertical = abs(value.translation.height)
-                    guard max(horizontal, vertical) >= 2 else { return }
-                    state.axis = horizontal >= vertical ? .horizontal : .vertical
-                }
-
-                guard state.axis == .horizontal else { return }
-                state.horizontalTranslation = value.translation.width
-            }
-            .onEnded { value in
-                guard value.startLocation.x <= Self.edgePanWidth else { return }
-                let horizontal = abs(value.translation.width)
-                let vertical = abs(value.translation.height)
-                guard max(horizontal, vertical) >= 2 else { return }
-                guard horizontal >= vertical else { return }
-
-                let projectedProgress = sidebarRestingProgress
-                    + value.predictedEndTranslation.width / sidebarWidth
-                settleSidebar(open: projectedProgress >= 0.5)
-            }
-    }
-
-    private func sidebarDragGesture(
-        sidebarWidth: CGFloat,
-        minimumDistance: CGFloat,
-        tapCloses: Bool = false
-    ) -> some Gesture {
-        DragGesture(minimumDistance: minimumDistance, coordinateSpace: .local)
-            .updating($sidebarDrag) { value, state, transaction in
-                transaction.animation = nil
-                transaction.disablesAnimations = true
-
-                if state.axis == nil {
-                    let horizontal = abs(value.translation.width)
-                    let vertical = abs(value.translation.height)
-                    guard max(horizontal, vertical) >= 2 else { return }
-                    state.axis = horizontal >= vertical ? .horizontal : .vertical
-                }
-
-                guard state.axis == .horizontal else { return }
-                state.horizontalTranslation = value.translation.width
-            }
-            .onEnded { value in
-                let horizontal = abs(value.translation.width)
-                let vertical = abs(value.translation.height)
-                guard max(horizontal, vertical) >= 2 else {
-                    if tapCloses {
-                        settleSidebar(open: false)
-                    }
-                    return
-                }
-                guard horizontal >= vertical else { return }
-
-                let projectedProgress = sidebarRestingProgress
-                    + value.predictedEndTranslation.width / sidebarWidth
-                settleSidebar(open: projectedProgress >= 0.5)
-            }
-    }
-
-    private func settleSidebar(open: Bool) {
-        // One light open tap when the drawer lands open — edge swipe and the
-        // toolbar toggle both settle here. A couple notches above toolbarExpansion
-        // so the drawer open is easier to feel without a heavier style.
-        if open && !isSidebarPresented {
-            AppHaptics.impact(style: .light, intensity: 0.65)
-        }
-        isSidebarPresented = open
-        withAnimation(
-            ThemeMotion.animation(
-                .spring(duration: 0.28, bounce: 0.06),
-                reduceMotion: reduceMotion
-            )
-        ) {
-            sidebarRestingProgress = open ? 1 : 0
-        }
     }
 }
 

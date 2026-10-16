@@ -142,7 +142,7 @@ struct SettingsSweepScreenshotPreview: View {
             quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
             composerDraftStore: ComposerDraftStore(),
             chatReaderPayloadStore: ChatReaderPayloadStore(),
-            sessionRowDisplay: SessionRowDisplay()
+            sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
         )
 
         switch page {
@@ -192,6 +192,13 @@ struct SettingsSweepScreenshotPreview: View {
         case "pairing-approval":
             Text("Pairing approval host")
                 .modifier(PairingApprovalPromptHost(root: root, controller: PairingApprovalController()))
+        // Shell routes the router hosts directly: search lives in its bar.
+        case "skills":
+            RouterPreviewStack(root: root) { ServerSkillsView() }
+                .ignoresSafeArea()
+        case "extensions":
+            RouterPreviewStack(root: root) { ServerExtensionsView() }
+                .ignoresSafeArea()
         default:
             NavigationStack {
                 pushedPage
@@ -232,10 +239,8 @@ struct SettingsSweepScreenshotPreview: View {
         case "theme-import": ThemeImportView()
         case "dictionary": DictationDictionaryView(workspaceId: nil)
         case "dictionary-workspace": DictationDictionaryView(workspaceId: "preview-ws")
-        case "skills": ServerSkillsView()
         case "skill-detail":
             ServerSkillDetailView(target: .init(serverId: server.id, kind: .skill, resourceId: "release"))
-        case "extensions": ServerExtensionsView()
         case "extension-detail":
             ServerExtensionDetailView(target: .init(serverId: server.id, kind: .extension, resourceId: "workflow"))
         case "agents-pi", "agents-pi-file": PiAgentDetailView()

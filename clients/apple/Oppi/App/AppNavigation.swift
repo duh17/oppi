@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Launch resolution phase — gates UI until credentials + cache are checked.
 ///
@@ -42,8 +43,8 @@ enum WorkspaceNavigationPresentation: Sendable, Equatable {
     /// taller-than-wide windows keep the stack. No point threshold: the old
     /// 980pt floor was a device-size guess that excluded the Duo.
     static func resolve(
-        horizontalSizeClass: UserInterfaceSizeClass?,
-        verticalSizeClass: UserInterfaceSizeClass?,
+        horizontalSizeClass: UIUserInterfaceSizeClass,
+        verticalSizeClass: UIUserInterfaceSizeClass,
         size: CGSize
     ) -> Self {
         guard horizontalSizeClass == .regular, verticalSizeClass == .regular else { return .stack }
@@ -56,6 +57,16 @@ enum WorkspaceNavigationPresentation: Sendable, Equatable {
         case .split: "split"
         }
     }
+}
+
+/// Which columns the split shell shows.
+enum SplitColumnVisibility: Sendable, Equatable {
+    /// UIKit decides from the window.
+    case automatic
+    /// The workspace sidebar beside the detail.
+    case all
+    /// The detail alone; the sidebar is hidden.
+    case detailOnly
 }
 
 enum SessionNavigationSource: Sendable, Equatable {
@@ -211,9 +222,9 @@ final class AppNavigation {
     private(set) var splitDetailPathElements: [WorkspaceSplitDetailPathElement] = []
 
     /// Column visibility backing the regular-width split shell. The system
-    /// sidebar affordance and edge gestures update this binding, so iPad users
-    /// can reveal or hide workspace/session columns without custom chrome.
-    var splitColumnVisibility: NavigationSplitViewVisibility = .automatic
+    /// sidebar gestures update it too, so iPad users can reveal or hide the
+    /// workspace column either way.
+    var splitColumnVisibility: SplitColumnVisibility = .automatic
 
     /// Session-list search lives on navigation so it survives compact inbox
     /// remount after Back and split detail replacement on iPad.
@@ -225,7 +236,7 @@ final class AppNavigation {
     }
     var workspaceSessionSearchByID: [String: SessionListSearchNavigationPersistence.State] = [:]
 
-    /// Launch phase gate. While `.resolving`, ContentView shows a blank
+    /// Launch phase gate. While `.resolving`, the app root shows a blank
     /// canvas until local pairing and cache state are known.
     var launchPhase: AppLaunchPhase = .resolving
 
@@ -1291,12 +1302,12 @@ final class AppNavigation {
     // MARK: - Quick Session Handoff
     //
     // These properties form a produce-once / consume-once handoff between
-    // QuickSessionSheet (producer) and ContentView + ChatView (consumers).
+    // QuickSessionSheet (producer) and AppRootLayer + ChatView (consumers).
     //
     // Flow:
     // 1. QuickSessionSheet sets `pendingQuickSessionNav` (atomic intent)
     // 2. QuickSessionSheet calls dismiss()
-    // 3. ContentView.onDismiss reads nav, extracts message/images, builds path
+    // 3. AppRootLayer's dismiss reads nav, extracts message/images, opens the session
     // 4. ChatView.task(id: sessionId) reads message/images, auto-sends
 
     /// One-shot source context for opening Quick Session from an Agent detail.
@@ -1305,16 +1316,16 @@ final class AppNavigation {
 
     /// Atomic navigation intent from QuickSessionSheet.
     /// Bundles target workspace, session ID, and optional auto-send data.
-    /// Set before dismiss; consumed in ContentView.onDismiss.
+    /// Set before dismiss; consumed when AppRootLayer dismisses Quick Session.
     var pendingQuickSessionNav: QuickSessionNav?
 
     /// Message to auto-send when the quick session's ChatView opens.
-    /// Extracted from `pendingQuickSessionNav` by ContentView.onDismiss.
+    /// Extracted from `pendingQuickSessionNav` when Quick Session dismisses.
     /// Consumed once by ChatView, then cleared.
     var pendingQuickSessionMessage: String?
 
     /// Attachments to auto-send when the quick session message opens.
-    /// Extracted from `pendingQuickSessionNav` by ContentView.onDismiss.
+    /// Extracted from `pendingQuickSessionNav` when Quick Session dismisses.
     var pendingQuickSessionAttachments: [PendingAttachment]?
 
     // MARK: - Legacy Shell Routing
@@ -1373,6 +1384,17 @@ final class AppNavigation {
         guard count > 0 else { return }
         splitDetailPath.removeLast(count)
         trimSplitDetailElementsToPathCount()
+    }
+
+    /// The user popped the compact stack back to `depth` pushed screens.
+    func popWorkspaceStack(toDepth depth: Int) {
+        guard workspacePath.count > depth else { return }
+        workspacePath.removeLast(workspacePath.count - depth)
+    }
+
+    /// The user popped the split detail column back to `depth` pushed screens.
+    func popSplitDetail(toDepth depth: Int) {
+        removeLastSplitDetailPath(splitDetailPath.count - depth)
     }
 
     private func pushSplitDetailLinkedFile(_ target: WorkspaceLinkedFileNavTarget) {
@@ -1757,7 +1779,7 @@ final class AppNavigation {
 
     private func splitVisibility(
         for detail: WorkspaceSplitDetailTarget?
-    ) -> NavigationSplitViewVisibility {
+    ) -> SplitColumnVisibility {
         switch detail {
         case .session, .fileBrowser, .linkedFile:
             .detailOnly
@@ -1808,7 +1830,7 @@ final class AppNavigation {
         let splitDetailTarget: WorkspaceSplitDetailTarget?
         let splitDetailPath: NavigationPath
         let splitDetailPathElements: [WorkspaceSplitDetailPathElement]
-        let splitColumnVisibility: NavigationSplitViewVisibility
+        let splitColumnVisibility: SplitColumnVisibility
         let activeServerId: String?
     }
 }
@@ -1852,7 +1874,7 @@ struct QuickSessionThreadParent: Equatable, Sendable {
 ///
 /// Bundles everything needed to navigate to a session and optionally
 /// auto-send a message. Set as a single write by QuickSessionSheet,
-/// consumed as a single read by ContentView.onDismiss.
+/// consumed as a single read when Quick Session dismisses.
 struct QuickSessionNav {
     let target: WorkspaceNavTarget
     let sessionId: String

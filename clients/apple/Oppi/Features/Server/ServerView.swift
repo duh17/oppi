@@ -91,12 +91,6 @@ struct ServerView: View {
                 }
             }
         }
-        .navigationDestination(for: ServerDetailsNavTarget.self) { target in
-            ServerDetailsScopedDestinationView(target: target)
-        }
-        .navigationDestination(for: ModelProvidersNavTarget.self) { target in
-            ModelProvidersScopedDestinationView(target: target)
-        }
         .routerModal(isPresented: $showAddServer) {
             OnboardingView(mode: .addServer)
         }

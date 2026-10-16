@@ -166,6 +166,14 @@ targets:
             CFBundleURLSchemes:
               - oppi
         UILaunchScreen: {}
+        # One UIKit window scene (`SceneDelegate`). One window, as before:
+        # the app's navigation state is app-wide.
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default Configuration
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).SceneDelegate
         UIBackgroundModes:
           - remote-notification
           - audio

@@ -66,6 +66,48 @@ struct RouterHostFactoryTests {
         #expect(dismissals == 1)
     }
 
+    @Test("the shell's stack follows AppNavigation, and Back keeps AppNavigation in step")
+    func shellStackFollowsNavigationAndReportsPops() async throws {
+        let root = makeTestAppRoot()
+        let navigation = root.navigation
+        let window = try showInWindow(WorkspaceShellController(root: root))
+        defer { hide(window) }
+        var stack: ShellNavigationController?
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            stack = shellStack(in: window.rootViewController)
+            return stack?.viewControllers.count == 1
+        })
+        let shellStack = try #require(stack)
+
+        navigation.openWorkspaceUtility(.skills)
+        navigation.openWorkspaceUtility(.extensions)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 3
+        })
+
+        // A page a screen pushes itself sits above its route, outside AppNavigation.
+        let extensions = try #require(shellStack.topViewController as? HostedScreenController)
+        extensions.navigator.push { Text("Extension detail") }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 4
+        })
+        shellStack.popViewController(animated: false)
+        #expect(navigation.workspaceStackRouteElements == [.utility(.skills), .utility(.extensions)])
+
+        // Back from a route pops it from AppNavigation too.
+        shellStack.popViewController(animated: false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            navigation.workspaceStackRouteElements == [.utility(.skills)]
+        })
+
+        // Replacing the stack in AppNavigation replaces the UIKit stack.
+        navigation.showAllWorkspaceSessions()
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 1
+        })
+        #expect(navigation.workspacePath.isEmpty)
+    }
+
     @Test("bar policy applies per screen each time it appears, so popping restores the previous screen's bars")
     func barPolicyFollowsTheVisibleScreen() async throws {
         let rootScreen = HostFactory.screen(
@@ -74,6 +116,9 @@ struct RouterHostFactoryTests {
         ) {
             Text("Root")
                 .navigationTitle("Root")
+                .toolbar {
+                    ToolbarItem(placement: .bottomBar) { Text("Bottom") }
+                }
         }
         let navigation = RouterNavigationController(rootViewController: rootScreen)
         let window = try showInWindow(navigation)
@@ -81,7 +126,7 @@ struct RouterHostFactoryTests {
 
         // `.bottomBar` items need the toolbar shown; large titles need the bar to prefer them.
         #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
-            rootScreen.viewIfLoaded?.window != nil
+            rootScreen.viewIfLoaded?.window != nil && !navigation.isToolbarHidden
         })
         #expect(navigation.navigationBar.prefersLargeTitles)
         #expect(rootScreen.navigationItem.largeTitleDisplayMode == .always)
@@ -772,6 +817,16 @@ private func hasColumnPanel(in controller: UIViewController) -> Bool {
         return !controller.children.isEmpty
     }
     return controller.children.contains(where: hasColumnPanel)
+}
+
+/// The workspace shell's UIKit stack under `controller`.
+@MainActor
+private func shellStack(in controller: UIViewController?) -> ShellNavigationController? {
+    guard let controller else { return nil }
+    if let stack = controller as? ShellNavigationController {
+        return stack
+    }
+    return controller.children.lazy.compactMap(shellStack(in:)).first
 }
 
 /// Animated pushes only finish in a window on the test host's scene.

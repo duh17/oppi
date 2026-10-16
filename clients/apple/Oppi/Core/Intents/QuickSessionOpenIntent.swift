@@ -1,4 +1,5 @@
 import AppIntents
+import UIKit
 
 /// Destination opened from Oppi's system control.
 enum QuickSessionOpenTarget: String, AppEnum {
@@ -13,9 +14,9 @@ enum QuickSessionOpenTarget: String, AppEnum {
 /// Opens Oppi and routes the receiving scene to the Quick Session composer.
 ///
 /// Apple requires an `OpenIntent` used by a control to belong to both the main
-/// app and WidgetKit extension targets. `TargetContentProvidingIntent` lets the
-/// app receive the resolved target with SwiftUI's `onAppIntentExecution`.
-struct QuickSessionOpenIntent: OpenIntent, TargetContentProvidingIntent {
+/// app and WidgetKit extension targets. As a `UISceneAppIntent` it reaches the
+/// app's UIKit scene (`SceneDelegate`), which presents Quick Session.
+struct QuickSessionOpenIntent: OpenIntent, UISceneAppIntent {
     static let title: LocalizedStringResource = "New Session"
     static let description: IntentDescription = "Open Oppi to start a new agent session"
 

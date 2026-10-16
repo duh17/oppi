@@ -15,9 +15,12 @@ import UIKit
 struct ScreenBars: Equatable {
     /// Large title. Inline otherwise. SwiftUI's `navigationBarTitleDisplayMode`
     /// is ignored in a UIKit navigation bar until the bar prefers large titles.
+    /// On a vertical toolbar rail (iPhone Duo) the title stays inline: a large
+    /// title there showed no title at all.
     var largeTitle = false
-    /// Shows the navigation controller's toolbar, so SwiftUI `.bottomBar`
-    /// toolbar items appear. A hidden toolbar drops them silently.
+    /// Shows the navigation controller's toolbar while the screen has SwiftUI
+    /// `.bottomBar` items. A hidden toolbar drops them silently; an empty one
+    /// still takes the bottom inset.
     var showsToolbar = false
 }
 
@@ -92,6 +95,13 @@ struct ModalPresentation {
         copy.adaptsPopoverToSheetInCompactWidth = false
         return copy
     }
+}
+
+/// A navigation controller whose root screen can close without being popped
+/// or dismissed: the split shell's detail column shows its list instead.
+@MainActor
+protocol RouterRootClosing: UINavigationController {
+    func closeRoot()
 }
 
 /// A controller the router presents. It reports once UIKit has finished
@@ -228,15 +238,20 @@ enum Router {
     /// Closes `screen` deterministically, where SwiftUI `dismiss()` is not:
     /// pops it (and anything above it) when it was pushed, otherwise dismisses
     /// the modal it is the root of, including a presented navigation
-    /// controller's root, where `dismiss()` does nothing.
+    /// controller's root, where `dismiss()` does nothing. The root of a shell
+    /// stack closes the way its stack defines (`RouterRootClosing`).
     static func finish(_ screen: UIViewController) {
         if pop(screen) { return }
         let container = screen.navigationController ?? screen
-        guard container.presentingViewController != nil else {
+        if container.presentingViewController != nil {
+            dismiss(container)
+            return
+        }
+        guard let stack = screen.navigationController as? RouterRootClosing else {
             assertionFailure("Router.finish on \(type(of: screen)), which is neither pushed nor presented")
             return
         }
-        dismiss(container)
+        stack.closeRoot()
     }
 
     /// Dismisses the presented `container` and everything above it, ending
@@ -306,13 +321,17 @@ private final class PopoverInCompactWidth: NSObject, UIPopoverPresentationContro
 /// `routerSearchable` installs this on the hosting controller's navigation
 /// item and keeps the screen's search text and the bar in sync both ways.
 @MainActor
-final class ScreenSearchController: NSObject, UISearchResultsUpdating {
+final class ScreenSearchController: NSObject, UISearchResultsUpdating, UISearchControllerDelegate {
     let searchController = UISearchController(searchResultsController: nil)
     var onTextChange: (String) -> Void = { _ in }
+    private var hidesWhenScrolling = true
+    /// The search became active or ended, by the user or by `setPresented`.
+    var onPresentationChange: (Bool) -> Void = { _ in }
 
     init(prompt: String) {
         super.init()
         searchController.searchResultsUpdater = self
+        searchController.delegate = self
         searchController.obscuresBackgroundDuringPresentation = false
         searchController.searchBar.placeholder = prompt
     }
@@ -324,8 +343,25 @@ final class ScreenSearchController: NSObject, UISearchResultsUpdating {
     func install(on host: UIViewController, alwaysVisible: Bool) {
         host.navigationItem.searchController = searchController
         host.navigationItem.preferredSearchBarPlacement = .stacked
-        host.navigationItem.hidesSearchBarWhenScrolling = !alwaysVisible
+        // A bar that hides when scrolling starts hidden in UIKit; SwiftUI's
+        // drawer started shown. Shown until the screen appears.
+        hidesWhenScrolling = !alwaysVisible
+        host.navigationItem.hidesSearchBarWhenScrolling = false
         host.definesPresentationContext = true
+    }
+
+    /// The screen appeared with the bar shown; from now on it hides as the
+    /// content scrolls, if asked to.
+    func hostDidAppear(_ host: UIViewController) {
+        guard host.navigationItem.searchController === searchController else { return }
+        host.navigationItem.hidesSearchBarWhenScrolling = hidesWhenScrolling
+    }
+
+    /// Takes the bar off `host` again (the screen stopped asking for search).
+    func uninstall(from host: UIViewController) {
+        guard host.navigationItem.searchController === searchController else { return }
+        searchController.isActive = false
+        host.navigationItem.searchController = nil
     }
 
     /// Screen state to bar. Does not echo back through `onTextChange`.
@@ -334,7 +370,23 @@ final class ScreenSearchController: NSObject, UISearchResultsUpdating {
         searchController.searchBar.text = text
     }
 
+    /// Screen state to bar: starts or ends the search. Activating needs the
+    /// bar on screen; a screen that is covered applies it when it returns.
+    func setPresented(_ presented: Bool) {
+        guard searchController.isActive != presented else { return }
+        if presented, searchController.searchBar.window == nil { return }
+        searchController.isActive = presented
+    }
+
     func updateSearchResults(for searchController: UISearchController) {
         onTextChange(text)
+    }
+
+    func didPresentSearchController(_ searchController: UISearchController) {
+        onPresentationChange(true)
+    }
+
+    func didDismissSearchController(_ searchController: UISearchController) {
+        onPresentationChange(false)
     }
 }

@@ -18,46 +18,64 @@ struct SidePanelScreenshotPreview: View {
     @State private var fileIndexStore = FileIndexStore()
 
     private let apiClient = SidePanelScreenshotAPI.makeClient()
+    @Environment(\.appRootEnvironment) private var appRoot
 
     var body: some View {
-        NavigationStack {
-            switch surface {
-            case .files:
-                FileBrowserView(
-                    serverId: "preview-server",
-                    workspaceId: SidePanelScreenshotAPI.workspaceId,
-                    initialPath: "",
-                    opensFirstFileForPreview: true
-                )
-            case .commit:
-                CommitDetailView(
-                    workspaceId: SidePanelScreenshotAPI.workspaceId,
-                    commit: GitCommitSummary(
-                        sha: SidePanelScreenshotAPI.sha,
-                        message: "feat: open side content from the trailing edge",
-                        date: "2026-10-08T18:00:00Z"
-                    ),
-                    opensFirstFileForPreview: true
-                )
-            case .review:
-                WorkspaceReviewFileDetailView(
-                    workspaceId: SidePanelScreenshotAPI.workspaceId,
-                    selectedSessionId: nil,
-                    file: SidePanelScreenshotAPI.reviewFiles[0],
-                    navigationFiles: SidePanelScreenshotAPI.reviewFiles
-                )
+        Group {
+            if surface == .files, let appRoot {
+                // A workspace shell route: the router hosts it and its search.
+                RouterPreviewStack(root: appRoot) {
+                    withFixtures(FileBrowserView(
+                        serverId: "preview-server",
+                        workspaceId: SidePanelScreenshotAPI.workspaceId,
+                        initialPath: "",
+                        opensFirstFileForPreview: true
+                    ))
+                }
+                .ignoresSafeArea()
+            } else {
+                withFixtures(NavigationStack { stackContent })
             }
         }
-        .environment(navigation)
-        .environment(sessionStore)
-        .environment(fileIndexStore)
-        .environment(WorkspaceStore())
-        .environment(\.apiClient, apiClient)
         .preferredColorScheme(.dark)
         .task {
             ScreenshotPreviewOrientation.applyRequested()
         }
         .accessibilityIdentifier("screenshot.ready")
+    }
+
+    private func withFixtures<Content: View>(_ content: Content) -> some View {
+        content
+            .environment(navigation)
+            .environment(sessionStore)
+            .environment(fileIndexStore)
+            .environment(WorkspaceStore())
+            .environment(\.apiClient, apiClient)
+    }
+
+    @ViewBuilder
+    private var stackContent: some View {
+        switch surface {
+        case .files:
+            EmptyView()
+        case .commit:
+            CommitDetailView(
+                workspaceId: SidePanelScreenshotAPI.workspaceId,
+                commit: GitCommitSummary(
+                    sha: SidePanelScreenshotAPI.sha,
+                    message: "feat: open side content from the trailing edge",
+                    date: "2026-10-08T18:00:00Z"
+                ),
+                opensFirstFileForPreview: true
+            )
+        case .review:
+            WorkspaceReviewFileDetailView(
+                workspaceId: SidePanelScreenshotAPI.workspaceId,
+                selectedSessionId: nil,
+                file: SidePanelScreenshotAPI.reviewFiles[0],
+                navigationFiles: SidePanelScreenshotAPI.reviewFiles
+            )
+        }
     }
 }
 

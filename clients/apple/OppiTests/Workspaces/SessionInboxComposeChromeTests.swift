@@ -91,8 +91,6 @@ struct SessionInboxComposeChromeTests {
         let pendingRange = try #require(sheet.range(of: "let pendingDictation = navigation.pendingQuickSessionStartDictation"))
         let loadRange = try #require(sheet.range(of: "await composerDraftStore.load()"))
         #expect(pendingRange.lowerBound < loadRange.lowerBound)
-        let dismiss = try appleSource("Oppi/App/ContentView.swift")
-        #expect(dismiss.contains("pendingQuickSessionStartDictation = false"))
         let bar = try appleSource("Oppi/Features/Chat/Composer/ChatInputBar.swift")
         #expect(bar.contains(".task(id: externalDictationRequestID)"))
         #expect(bar.contains("startExternalDictationIfRequested"))
@@ -128,34 +126,6 @@ struct SessionInboxComposeChromeTests {
         #expect(context.contains("worktreeId: selectedWorktreeId"))
         #expect(!context.contains("worktreeId: nil"))
         #expect(!start.contains("worktreeId: nil"))
-    }
-
-    @Test func sessionListsKeepFolderOnlyTrailingCapsuleWithoutBottomSearch() throws {
-        let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
-        let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
-        let chrome = try appleSource("Oppi/Features/Workspaces/SessionInboxComposeChrome.swift")
-        let preview = try appleSource("Oppi/App/ScreenshotPreviews/InboxProviderSetupPreview.swift")
-        let nowPlaying = try appleSource("Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift")
-        let drawer = "placement: .navigationBarDrawer(displayMode: .automatic)"
-        let bottomSearch = "DefaultToolbarItem(kind: .search, placement: .bottomBar)"
-
-        #expect(inbox.contains("inboxFolderButton"))
-        #expect(inbox.contains("SessionInboxFolderToolbarButton"))
-        #expect(workspace.contains("SessionInboxFolderToolbarButton"))
-        #expect(preview.contains("SessionInboxFolderToolbarButton"))
-        #expect(chrome.contains("workspace.files.open"))
-
-        for source in [inbox, workspace, preview] {
-            #expect(source.contains(drawer))
-            #expect(!source.contains(".searchToolbarBehavior(.minimize)"))
-            #expect(!source.contains(bottomSearch))
-            #expect(!source.contains("keepsSystemSearchToolbarItem"))
-        }
-
-        #expect(!chrome.contains("grouped with"))
-        #expect(!chrome.contains("system search toolbar item"))
-        #expect(!nowPlaying.contains("keepsSystemSearchToolbarItem"))
-        #expect(!nowPlaying.contains("Search stays a leading"))
     }
 
     @Test func disabledFolderUsesUnavailableForegroundInTheSameCapsule() throws {

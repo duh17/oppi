@@ -10,11 +10,15 @@ import UIKit
 /// type ConnectionCoordinator".
 ///
 /// UIKit code finds the same root as a trait (`UITraitCollection.appRootEnvironment`)
-/// with `HostFactory.root(near:)`. The app root publishes it on its window
-/// (`publishesAppRootToWindow`), so every controller in the window inherits
-/// it: presented ones and SwiftUI's own navigation hosts included.
+/// with `HostFactory.root(near:)`. The app's scene publishes it on its window,
+/// so every controller in the window inherits it: presented ones included.
 /// The SwiftUI value is a plain environment value, not bridged to the trait:
 /// a bridged value read nil in `NavigationStack` destinations.
+///
+/// Every member is a store, so the root never changes for the app's
+/// lifetime: a screen that captured it when it was pushed reads the same live
+/// state as the window. A value member (the saved row appearance once was)
+/// went stale in pushed screens until they were rebuilt.
 @MainActor
 struct AppRootEnvironment {
     let coordinator: ConnectionCoordinator
@@ -23,11 +27,10 @@ struct AppRootEnvironment {
     let quickCommentTemplateStore: QuickCommentTemplateStore
     let composerDraftStore: ComposerDraftStore
     let chatReaderPayloadStore: ChatReaderPayloadStore
-    let sessionRowDisplay: SessionRowDisplay
+    let sessionRows: SessionRowDisplayStore
 }
 
-/// Same services, same row appearance. Lets UIKit skip trait updates when the
-/// root view re-renders with an unchanged set.
+/// The same services. Lets UIKit skip trait updates for an unchanged set.
 extension AppRootEnvironment: Equatable {
     nonisolated static func == (lhs: AppRootEnvironment, rhs: AppRootEnvironment) -> Bool {
         lhs.coordinator === rhs.coordinator
@@ -36,7 +39,42 @@ extension AppRootEnvironment: Equatable {
             && lhs.quickCommentTemplateStore === rhs.quickCommentTemplateStore
             && lhs.composerDraftStore === rhs.composerDraftStore
             && lhs.chatReaderPayloadStore === rhs.chatReaderPayloadStore
-            && lhs.sessionRowDisplay == rhs.sessionRowDisplay
+            && lhs.sessionRows === rhs.sessionRows
+    }
+}
+
+/// The app scene's phase for SwiftUI screens UIKit hosts. SwiftUI's own
+/// `scenePhase` stays `.background` in a UIKit scene's hosting controllers,
+/// which would pause everything that waits for `.active` (the chat
+/// timeline, the SSH terminal); `appRootEnvironment(_:)` applies this one.
+@MainActor @Observable
+final class AppScenePhase {
+    static let shared = AppScenePhase()
+
+    private(set) var phase: ScenePhase
+    @ObservationIgnored private var observers: [NSObjectProtocol] = []
+
+    private init() {
+        phase = switch UIApplication.shared.applicationState {
+        case .active: .active
+        case .background: .background
+        default: .inactive
+        }
+        let transitions: [(Notification.Name, ScenePhase)] = [
+            (UIScene.willEnterForegroundNotification, .inactive),
+            (UIScene.didActivateNotification, .active),
+            (UIScene.willDeactivateNotification, .inactive),
+            (UIScene.didEnterBackgroundNotification, .background),
+        ]
+        for (name, phase) in transitions {
+            observers.append(NotificationCenter.default.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.phase = phase }
+            })
+        }
     }
 }
 
@@ -78,7 +116,8 @@ extension View {
     }
 
     /// Publishes `root` as the trait of this view's window, for UIKit code
-    /// anywhere in the window. Apply once, where the window's content starts.
+    /// anywhere in the window: a preview or test whose fixture root differs
+    /// from the one the app's scene publishes.
     func publishesAppRootToWindow(_ root: AppRootEnvironment) -> some View {
         background {
             AppRootWindowPublisher(root: root)
@@ -145,7 +184,8 @@ private struct AppRootEnvironmentModifier: ViewModifier {
             .environment(\.composerDraftStore, root.composerDraftStore)
             .environment(\.theme, root.themeStore.appTheme)
             .environment(\.themeID, root.themeStore.activeThemeID)
-            .environment(\.sessionRowDisplay, root.sessionRowDisplay)
+            .environment(\.sessionRowDisplay, root.sessionRows.display)
+            .environment(\.scenePhase, AppScenePhase.shared.phase)
             .environment(\.appRootEnvironment, root)
             .tint(.themeBlue)
     }

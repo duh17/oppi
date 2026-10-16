@@ -11,11 +11,16 @@ import SwiftUI
 /// `session-cover` (a locked session's destination before unlock).
 struct ScopedLocksScreenshotPreview: View {
     @State private var coordinator: ConnectionCoordinator
-    @State private var navigation = AppNavigation()
+    @State private var navigation: AppNavigation
+    @State private var root: AppRootEnvironment
     private let surface = ProcessInfo.processInfo.environment["SCOPED_LOCK_SURFACE"] ?? "inbox"
 
     init() {
-        _coordinator = State(initialValue: Self.makeCoordinator())
+        let coordinator = Self.makeCoordinator()
+        let navigation = AppNavigation()
+        _coordinator = State(initialValue: coordinator)
+        _navigation = State(initialValue: navigation)
+        _root = State(initialValue: .preview(coordinator: coordinator, navigation: navigation))
         _ = Self.fixtureLocks
     }
 
@@ -53,7 +58,8 @@ struct ScopedLocksScreenshotPreview: View {
                 ))
             }
         default:
-            NavigationStack(path: $navigation.workspacePath) { SessionInboxView() }
+            RouterPreviewStack(root: root) { SessionInboxView() }
+                .ignoresSafeArea()
         }
     }
 

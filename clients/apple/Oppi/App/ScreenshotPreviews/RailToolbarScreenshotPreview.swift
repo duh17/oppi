@@ -16,6 +16,8 @@ enum RailToolbarScreenshotPreview {
         "rail-roles",
         "rail-session-inbox",
         "rail-workspace-detail",
+        // The same shell, for the router's navigation smoke test.
+        "workspace-shell",
     ]
 }
 
@@ -88,7 +90,7 @@ struct RailToolbarScreenshotPreviewView: View {
             NavigationStack { SSHTerminalHostListView() }
         case "rail-onboarding-manual":
             ManualEntryView { _ in }
-        case "rail-session-inbox":
+        case "rail-session-inbox", "workspace-shell":
             RailSessionListScreenshotPreview(surface: .inbox)
         case "rail-workspace-detail":
             RailSessionListScreenshotPreview(surface: .workspaceDetail)
@@ -132,58 +134,28 @@ struct RailToolbarScreenshotPreviewView: View {
     )
 }
 
-/// Production All Sessions and workspace-detail chrome, with in-memory
-/// sessions so the rail can be captured without a paired server.
+/// Production All Sessions and workspace-detail chrome in the real shell,
+/// with in-memory sessions so the rail can be captured without a paired server.
 private struct RailSessionListScreenshotPreview: View {
     enum Surface {
         case inbox
         case workspaceDetail
     }
 
-    let surface: Surface
-    @State private var coordinator: ConnectionCoordinator
-    @State private var navigation = AppNavigation()
-    @State private var path = NavigationPath()
-    @State private var themeStore = ThemeStore()
+    @State private var root: AppRootEnvironment
 
     init(surface: Surface) {
-        self.surface = surface
-        _coordinator = State(initialValue: Self.makeCoordinator())
+        let navigation = AppNavigation()
         if surface == .workspaceDetail {
-            var path = NavigationPath()
-            path.append("detail")
-            _path = State(initialValue: path)
+            navigation.openWorkspace(WorkspaceNavTarget(serverId: Self.server.id, workspace: Self.workspace))
         }
+        _root = State(initialValue: .preview(coordinator: Self.makeCoordinator(), navigation: navigation))
     }
 
     var body: some View {
-        content
-            .environment(coordinator)
-            .environment(coordinator.serverStore)
-            .withServerScopedEnvironment(coordinator.activeConnection)
-            .environment(navigation)
-            .environment(themeStore)
-            .environment(\.theme, themeStore.appTheme)
-            .preferredColorScheme(themeStore.preferredColorScheme)
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch surface {
-        case .inbox:
-            NavigationStack {
-                SessionInboxView(onOpenSidebar: {})
-            }
-        case .workspaceDetail:
-            NavigationStack(path: $path) {
-                Color.clear
-                    .navigationTitle("All Sessions")
-                    .navigationDestination(for: String.self) { _ in
-                        WorkspaceDetailView(workspace: Self.workspace)
-                            .withServerScopedEnvironment(coordinator.activeConnection)
-                    }
-            }
-        }
+        WorkspaceShellPreview(root: root)
+            .ignoresSafeArea()
+            .preferredColorScheme(root.themeStore.preferredColorScheme)
     }
 
     private static let server = pairedServer()

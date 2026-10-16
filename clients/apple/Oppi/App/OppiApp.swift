@@ -78,25 +78,6 @@ struct ForegroundReconnectGate {
     }
 }
 
-private struct ThemeColorSchemeSyncView: View {
-    @Environment(\.colorScheme) private var colorScheme
-    let themeStore: ThemeStore
-
-    var body: some View {
-        Color.clear
-            .allowsHitTesting(false)
-            .onAppear(perform: syncIfSystemMode)
-            .onChange(of: colorScheme) { _, _ in
-                syncIfSystemMode()
-            }
-    }
-
-    private func syncIfSystemMode() {
-        guard themeStore.mode == .system else { return }
-        themeStore.updateSystemColorScheme(colorScheme)
-    }
-}
-
 struct InAppDeepLinkIntent: Equatable, Sendable {
     let url: URL
     let sourceServerID: String?
@@ -337,7 +318,8 @@ enum WorkspaceDeepLink {
     }
 }
 
-private struct PendingResourceReferenceChoice {
+/// A `[[link]]` that matched more than one resource; the user picks one.
+struct PendingResourceReferenceChoice {
     let reference: ResourceReference
     let matches: [ResourceReferenceMatch]
 }
@@ -421,49 +403,40 @@ enum FileLinkOpenPolicy {
     }
 }
 
-@main
-struct OppiApp: App {
-    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var coordinator = ConnectionCoordinator(
-        serverStore: ServerStore(),
-        seenStorage: SessionSeenLedgerStorage(defaults: .standard)
-    )
-    @State private var navigation = AppNavigation()
-    @State private var navigationRouteTelemetry = NavigationRouteTelemetryCoalescer()
-    @State private var themeStore = ThemeStore()
-    @State private var quickCommentTemplateStore = QuickCommentTemplateStore()
-    @State private var composerDraftStore = ComposerDraftStore()
-    @State private var chatReaderPayloadStore = ChatReaderPayloadStore()
-    /// Saved session row appearance, refreshed when Customize Rows saves.
-    @State private var sessionRowDisplay = AppPreferences.SessionRows.display
+/// The app: its scoped services and the handlers that span every screen (deep
+/// links, notifications, resource links, scene phases, launch). The UIKit
+/// scene (`SceneDelegate`) owns the window and forwards URLs and phases;
+/// `AppRootViewController` owns what the window shows.
+@MainActor @Observable
+final class OppiApp {
+    let root: AppRootEnvironment
+    private var coordinator: ConnectionCoordinator { root.coordinator }
+    private var navigation: AppNavigation { root.navigation }
+    private var composerDraftStore: ComposerDraftStore { root.composerDraftStore }
 
     /// Convenience accessor — most lifecycle code targets the active connection.
     private var connection: ServerConnection { coordinator.activeConnection }
     private var serverStore: ServerStore { coordinator.serverStore }
-    @State private var mainThreadLagWatchdog = MainThreadLagWatchdog()
 
-    @State private var invitePairingGate = InvitePairingGate()
-    @State private var invitePairingWaitExpiresAt: Int64?
-    @State private var invitePairingTask: Task<Void, Never>?
-    @State private var appStartupComplete = false
-    @State private var intentSessionOpenTrigger = IntentSessionOpenTrigger.shared
-    @State private var pendingSessionDeepLinkId: String?
-    @State private var pendingResourceReferenceChoice: PendingResourceReferenceChoice?
-    @State private var resourceReferenceRequestCoordinator = ResourceReferenceRequestCoordinator()
-    @State private var foregroundReconnectGate = ForegroundReconnectGate()
-    @State private var backgroundKeepAlive = BackgroundKeepAlive()
-    @Environment(\.scenePhase) private var scenePhase
+    /// An invite waiting for approval on the user's other device. The root
+    /// covers the app until it resolves or the user cancels.
+    private(set) var invitePairingWaitExpiresAt: Int64?
+    /// A `[[link]]` that matched more than one resource. The root asks which.
+    private(set) var pendingResourceReferenceChoice: PendingResourceReferenceChoice?
 
-    private var resourceReferenceChoiceIsPresented: Binding<Bool> {
-        Binding(
-            get: { pendingResourceReferenceChoice != nil },
-            set: { isPresented in
-                if !isPresented, pendingResourceReferenceChoice != nil {
-                    cancelResourceReferenceRequest()
-                }
-            }
-        )
-    }
+    @ObservationIgnored private let navigationRouteTelemetry = NavigationRouteTelemetryCoalescer()
+    @ObservationIgnored private let mainThreadLagWatchdog = MainThreadLagWatchdog()
+    @ObservationIgnored private var invitePairingGate = InvitePairingGate()
+    @ObservationIgnored private var invitePairingTask: Task<Void, Never>?
+    @ObservationIgnored private var appStartupComplete = false
+    @ObservationIgnored private let intentSessionOpenTrigger = IntentSessionOpenTrigger.shared
+    @ObservationIgnored private var pendingSessionDeepLinkId: String?
+    @ObservationIgnored private let resourceReferenceRequestCoordinator = ResourceReferenceRequestCoordinator()
+    @ObservationIgnored private var foregroundReconnectGate = ForegroundReconnectGate()
+    @ObservationIgnored private var backgroundKeepAlive = BackgroundKeepAlive()
+    @ObservationIgnored private var scenePhase: ScenePhase = .inactive
+    @ObservationIgnored private var appEventObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var hasConnectedScene = false
 
     init() {
 #if DEBUG
@@ -473,33 +446,205 @@ struct OppiApp: App {
 #endif
         FeatureEducationTips.configure()
         LocalHTTPCache.disableDiskCacheAndPurgeLeftovers()
+        root = AppRootEnvironment(
+            coordinator: ConnectionCoordinator(
+                serverStore: ServerStore(),
+                seenStorage: SessionSeenLedgerStorage(defaults: .standard)
+            ),
+            navigation: AppNavigation(),
+            themeStore: ThemeStore(),
+            quickCommentTemplateStore: QuickCommentTemplateStore(),
+            composerDraftStore: ComposerDraftStore(),
+            chatReaderPayloadStore: ChatReaderPayloadStore(),
+            sessionRows: SessionRowDisplayStore()
+        )
     }
 
-    var body: some Scene {
-        WindowGroup {
-            Group {
-                windowContent
-            }
-            .modifier(AppLockAccessibilityHidden())
-        }
-    }
-
-    @ViewBuilder
-    private var windowContent: some View {
+    /// The window's root: a debug harness chosen by launch arguments, else the app.
+    func makeRootViewController() -> UIViewController {
 #if DEBUG
         if let debugHarness {
             // Harnesses and previews render app screens, the timeline, and
-            // UIKit-hosted SwiftUI outside ContentView. The router and
-            // HostFactory need the app root above them there too.
-            debugHarness
-                .appRootEnvironment(appRoot)
-                .publishesAppRootToWindow(appRoot)
-        } else {
-            appRootView
+            // UIKit-hosted SwiftUI without the app's root controller. The
+            // router and HostFactory need the app root above them there too.
+            return HostFactory.content(debugHarness.modifier(AppLockAccessibilityHidden()), root: root)
         }
-#else
-        appRootView
 #endif
+        return AppRootViewController(app: self)
+    }
+
+    // MARK: - Scene
+
+    /// The scene's window is up: wire the app-wide handlers and launch.
+    func sceneDidConnect() {
+        guard !hasConnectedScene else { return }
+        hasConnectedScene = true
+        observeAppEvents()
+        observeNavigation()
+        recordDiagnosticContext(lifecycleEvent: "root", lifecycleStep: "appear")
+        Task {
+            await startApp()
+            OppiShortcutsProvider.updateAppShortcutParameters()
+            await consumePendingSessionDeepLinkIfNeeded()
+            await consumeIntentSessionOpenIfNeeded()
+        }
+    }
+
+    /// An `oppi://` URL from outside the app. App Lock: links (pairing,
+    /// sessions, workspaces) wait for unlock so nothing pairs or navigates
+    /// behind the cover.
+    func open(_ url: URL) {
+        AppLockService.shared.performWhenUnlocked { [self] in
+            Task { await handleIncomingURL(url) }
+        }
+    }
+
+    func sceneWillEnterForeground() { changeScenePhase(to: .inactive) }
+    func sceneDidBecomeActive() { changeScenePhase(to: .active) }
+    func sceneWillResignActive() { changeScenePhase(to: .inactive) }
+    func sceneDidEnterBackground() { changeScenePhase(to: .background) }
+
+    private func changeScenePhase(to phase: ScenePhase) {
+        guard phase != scenePhase else { return }
+        scenePhase = phase
+        handleScenePhase(phase)
+    }
+
+    // MARK: - Root prompts
+
+    func cancelInvitePairing() {
+        invitePairingGate.cancel()
+        invitePairingTask?.cancel()
+        invitePairingTask = nil
+        invitePairingWaitExpiresAt = nil
+    }
+
+    func startOpeningResourceReferenceMatch(_ match: ResourceReferenceMatch) {
+        guard let reference = pendingResourceReferenceChoice?.reference else { return }
+        pendingResourceReferenceChoice = nil
+        resourceReferenceRequestCoordinator.perform { [self] token in
+            await openResourceReferenceMatch(match, reference: reference, token: token)
+        }
+    }
+
+    func cancelResourceReferenceRequest() {
+        pendingResourceReferenceChoice = nil
+        resourceReferenceRequestCoordinator.cancel()
+    }
+
+    // MARK: - App-wide events
+
+    private func observeAppEvents() {
+        observeAppEvent(UIApplication.didReceiveMemoryWarningNotification) { app, _ in
+            app.handleMemoryWarning()
+        }
+        observeAppEvent(FontPreferences.didChangeNotification) { _, _ in
+            MarkdownSegmentCache.shared.clearAll()
+            ToolRowRenderCache.evictAll()
+        }
+        observeAppEvent(.inviteDeepLinkTapped) { app, notification in
+            guard let url = notification.object as? URL else { return }
+            app.open(url)
+        }
+        observeAppEvent(.inAppDeepLinkTapped) { app, notification in
+            guard let url = notification.object as? URL else { return }
+            let sourceServerID = notification.userInfo?[
+                Notification.Name.inAppDeepLinkSourceServerIDKey
+            ] as? String
+            AppLockService.shared.performWhenUnlocked {
+                Task {
+                    await app.handleInAppURL(InAppDeepLinkIntent(
+                        url: url,
+                        sourceServerID: sourceServerID
+                    ))
+                }
+            }
+        }
+        observeAppEvent(.webLinkTapped) { _, notification in
+            guard let url = notification.object as? URL else { return }
+            guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+                return
+            }
+            switch AppPreferences.Browser.linkOpeningMode {
+            case .inApp:
+                InAppBrowserPresenter.present(url: url)
+            case .external:
+                UIApplication.shared.open(url)
+            }
+        }
+        observeAppEvent(.resourceReferenceTapped) { app, notification in
+            guard let reference = notification.object as? ResourceReference else { return }
+            app.startResourceReferenceRequest(reference)
+        }
+        observeAppEvent(.sessionFileReferenceTapped) { app, notification in
+            guard let reference = notification.object as? ResourceReference else { return }
+            Task { await app.openSessionFileReference(reference) }
+        }
+        observeAppEvent(.fileLinkTapped) { app, notification in
+            guard let payload = notification.object as? FileLinkPayload else { return }
+            Task { _ = await app.handleIncomingFileLink(payload) }
+        }
+    }
+
+    private func observeAppEvent(
+        _ name: Notification.Name,
+        perform: @escaping @MainActor (OppiApp, Notification) -> Void
+    ) {
+        appEventObservers.append(NotificationCenter.default.addObserver(
+            forName: name,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            // Delivered on the main queue, where it stays.
+            nonisolated(unsafe) let notification = notification
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                perform(self, notification)
+            }
+        })
+    }
+
+    /// Navigation changes feed the crash context and route telemetry, and a
+    /// Siri session open waits for launch.
+    private func observeNavigation() {
+        let navigation = navigation
+        recordNavigationChanges("launch_phase") { navigation.launchPhase }
+        recordNavigationChanges("onboarding") { navigation.showOnboarding }
+        recordNavigationChanges("quick_session") { navigation.showQuickSession }
+        recordNavigationChanges("workspace_filter") { navigation.selectedWorkspaceFilter }
+        recordNavigationChanges("workspace_path") { navigation.workspacePath.count }
+        recordNavigationChanges("stack_destination") { navigation.workspaceStackDiagnosticContext }
+        recordNavigationChanges("split_destination") { navigation.visibleSplitDiagnosticContext }
+        recordNavigationChanges("split_detail_path") { navigation.splitDetailPath.count }
+        let trigger = intentSessionOpenTrigger
+        onChange(of: { trigger.requestID }) { app in
+            Task { await app.consumeIntentSessionOpenIfNeeded() }
+        }
+    }
+
+    private func recordNavigationChanges<Value: Equatable & Sendable>(
+        _ step: String,
+        of value: @escaping @MainActor @Sendable () -> Value
+    ) {
+        onChange(of: value) { app in
+            app.recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: step)
+        }
+    }
+
+    /// Runs `perform` each time `value` changes, not for its first value.
+    private func onChange<Value: Equatable & Sendable>(
+        of value: @escaping @MainActor @Sendable () -> Value,
+        perform: @escaping @MainActor (OppiApp) -> Void
+    ) {
+        Task { [weak self] in
+            var previous: Value?
+            for await current in Observations(value) {
+                defer { previous = current }
+                guard let previous, previous != current else { continue }
+                guard let self else { return }
+                perform(self)
+            }
+        }
     }
 
 #if DEBUG
@@ -545,168 +690,6 @@ struct OppiApp: App {
         return nil
     }
 #endif
-
-    private var appRoot: AppRootEnvironment {
-        AppRootEnvironment(
-            coordinator: coordinator,
-            navigation: navigation,
-            themeStore: themeStore,
-            quickCommentTemplateStore: quickCommentTemplateStore,
-            composerDraftStore: composerDraftStore,
-            chatReaderPayloadStore: chatReaderPayloadStore,
-            sessionRowDisplay: sessionRowDisplay
-        )
-    }
-
-    private var appRootView: some View {
-        let root = ContentView()
-            .appRootEnvironment(appRoot)
-            .publishesAppRootToWindow(appRoot)
-            .onReceive(NotificationCenter.default.publisher(for: AppPreferences.SessionRows.didChangeNotification)) { _ in
-                sessionRowDisplay = AppPreferences.SessionRows.display
-            }
-            .background {
-                ThemeColorSchemeSyncView(themeStore: themeStore)
-            }
-            .preferredColorScheme(themeStore.preferredColorScheme)
-            .onAppear {
-                recordDiagnosticContext(lifecycleEvent: "root", lifecycleStep: "appear")
-            }
-            .onChange(of: scenePhase) { _, phase in
-                handleScenePhase(phase)
-            }
-            .onChange(of: navigation.launchPhase) { _, _ in
-                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "launch_phase")
-            }
-            .onChange(of: navigation.showOnboarding) { _, _ in
-                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "onboarding")
-            }
-            .onChange(of: navigation.showQuickSession) { _, _ in
-                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "quick_session")
-            }
-            .onChange(of: navigation.selectedWorkspaceFilter) { _, _ in
-                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "workspace_filter")
-            }
-            .onChange(of: navigation.workspacePath.count) { _, _ in
-                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "workspace_path")
-            }
-            .onChange(of: navigation.workspaceStackDiagnosticContext) { _, _ in
-                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "stack_destination")
-            }
-            .onChange(of: navigation.visibleSplitDiagnosticContext) { _, _ in
-                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "split_destination")
-            }
-            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
-                handleMemoryWarning()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: FontPreferences.didChangeNotification)) { _ in
-                MarkdownSegmentCache.shared.clearAll()
-                ToolRowRenderCache.evictAll()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .inviteDeepLinkTapped)) { notification in
-                guard let url = notification.object as? URL else { return }
-                AppLockService.shared.performWhenUnlocked {
-                    Task { @MainActor in await handleIncomingURL(url) }
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .inAppDeepLinkTapped)) { notification in
-                guard let url = notification.object as? URL else { return }
-                let sourceServerID = notification.userInfo?[
-                    Notification.Name.inAppDeepLinkSourceServerIDKey
-                ] as? String
-                AppLockService.shared.performWhenUnlocked {
-                    Task { @MainActor in
-                        await handleInAppURL(InAppDeepLinkIntent(
-                            url: url,
-                            sourceServerID: sourceServerID
-                        ))
-                    }
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .webLinkTapped)) { notification in
-                guard let url = notification.object as? URL else { return }
-                guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
-                    return
-                }
-                switch AppPreferences.Browser.linkOpeningMode {
-                case .inApp:
-                    InAppBrowserPresenter.present(url: url)
-                case .external:
-                    UIApplication.shared.open(url)
-                }
-            }
-
-        return root
-            .onChange(of: navigation.splitDetailPath.count) { _, _ in
-                recordDiagnosticContext(lifecycleEvent: "navigation", lifecycleStep: "split_detail_path")
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .resourceReferenceTapped)) { notification in
-                guard let reference = notification.object as? ResourceReference else { return }
-                startResourceReferenceRequest(reference)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .sessionFileReferenceTapped)) { notification in
-                guard let reference = notification.object as? ResourceReference else { return }
-                Task { @MainActor in
-                    await openSessionFileReference(reference)
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .fileLinkTapped)) { notification in
-                guard let payload = notification.object as? FileLinkPayload else { return }
-                Task { @MainActor in
-                    _ = await handleIncomingFileLink(payload)
-                }
-            }
-            .modifier(PairingApprovalPromptHost(root: appRoot))
-            .overlay {
-                if let expiresAt = invitePairingWaitExpiresAt {
-                    WaitingForPairingApprovalView(
-                        expiresAt: expiresAt,
-                        onCancel: cancelInvitePairing
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(.themeBg)
-                }
-            }
-            .confirmationDialog(
-                "Choose a resource",
-                isPresented: resourceReferenceChoiceIsPresented,
-                titleVisibility: .visible
-            ) {
-                if let choice = pendingResourceReferenceChoice {
-                    ForEach(choice.matches, id: \.id) { match in
-                        Button(match.choiceLabel) {
-                            startOpeningResourceReferenceMatch(match)
-                        }
-                        .accessibilityLabel(match.accessibilityLabel)
-                    }
-                }
-                Button("Cancel", role: .cancel) {
-                    cancelResourceReferenceRequest()
-                }
-            } message: {
-                if let choice = pendingResourceReferenceChoice {
-                    Text("[[\(choice.reference.target)]] matches more than one resource.")
-                }
-            }
-            // App Lock: oppi:// links (pairing, sessions, workspaces) wait for
-            // unlock so nothing pairs or navigates behind the cover.
-            .onOpenURL { url in
-                AppLockService.shared.performWhenUnlocked {
-                    Task { @MainActor in await handleIncomingURL(url) }
-                }
-            }
-            .onChange(of: intentSessionOpenTrigger.requestID) { _, _ in
-                Task { @MainActor in
-                    await consumeIntentSessionOpenIfNeeded()
-                }
-            }
-            .task {
-                await startApp()
-                OppiShortcutsProvider.updateAppShortcutParameters()
-                await consumePendingSessionDeepLinkIfNeeded()
-                await consumeIntentSessionOpenIfNeeded()
-            }
-    }
 
     @MainActor
     private func startApp() async {
@@ -862,7 +845,7 @@ struct OppiApp: App {
         await handleIncomingInviteURL(url)
     }
 
-    static func sessionFileTarget(
+    nonisolated static func sessionFileTarget(
         for reference: ResourceReference
     ) -> WorkspaceLinkedFileNavTarget? {
         guard let serverID = reference.sourceServerID,
@@ -917,27 +900,11 @@ struct OppiApp: App {
         }
     }
 
-    @MainActor
     private func startResourceReferenceRequest(_ reference: ResourceReference) {
         pendingResourceReferenceChoice = nil
-        resourceReferenceRequestCoordinator.perform { token in
+        resourceReferenceRequestCoordinator.perform { [self] token in
             await handleResourceReference(reference, token: token)
         }
-    }
-
-    @MainActor
-    private func startOpeningResourceReferenceMatch(_ match: ResourceReferenceMatch) {
-        guard let reference = pendingResourceReferenceChoice?.reference else { return }
-        pendingResourceReferenceChoice = nil
-        resourceReferenceRequestCoordinator.perform { token in
-            await openResourceReferenceMatch(match, reference: reference, token: token)
-        }
-    }
-
-    @MainActor
-    private func cancelResourceReferenceRequest() {
-        pendingResourceReferenceChoice = nil
-        resourceReferenceRequestCoordinator.cancel()
     }
 
     @MainActor
@@ -1222,7 +1189,7 @@ struct OppiApp: App {
             guard await ScopedLockService.shared.authorize(
                 ScopedLockService.shared.sessionTarget(serverId: session.serverID, sessionId: session.sessionID)
             ), resourceReferenceRequestCoordinator.isCurrent(token) else { return }
-            guard await coordinator.switchToServerReady(session.serverID, shouldActivate: {
+            guard await coordinator.switchToServerReady(session.serverID, shouldActivate: { [self] in
                 resourceReferenceRequestCoordinator.isCurrent(token)
             }), resourceReferenceRequestCoordinator.isCurrent(token) else {
                 return
@@ -1250,7 +1217,7 @@ struct OppiApp: App {
             guard await ScopedLockService.shared.authorize(
                 .workspace(serverId: file.serverID, workspaceId: file.workspaceID)
             ), resourceReferenceRequestCoordinator.isCurrent(token) else { return }
-            guard await coordinator.switchToServerReady(file.serverID, shouldActivate: {
+            guard await coordinator.switchToServerReady(file.serverID, shouldActivate: { [self] in
                 resourceReferenceRequestCoordinator.isCurrent(token)
             }), resourceReferenceRequestCoordinator.isCurrent(token) else {
                 return
@@ -1297,7 +1264,7 @@ struct OppiApp: App {
             }
             guard await ScopedLockService.shared.authorize(.server(file.serverID)),
                   resourceReferenceRequestCoordinator.isCurrent(token) else { return }
-            guard await coordinator.switchToServerReady(file.serverID, shouldActivate: {
+            guard await coordinator.switchToServerReady(file.serverID, shouldActivate: { [self] in
                 resourceReferenceRequestCoordinator.isCurrent(token)
             }), resourceReferenceRequestCoordinator.isCurrent(token) else {
                 return
@@ -1575,13 +1542,6 @@ struct OppiApp: App {
         )
     }
 
-    private func cancelInvitePairing() {
-        invitePairingGate.cancel()
-        invitePairingTask?.cancel()
-        invitePairingTask = nil
-        invitePairingWaitExpiresAt = nil
-    }
-
     @MainActor
     private func handleIncomingInviteURL(_ url: URL) async {
         invitePairingTask?.cancel()
@@ -1639,7 +1599,7 @@ struct OppiApp: App {
                     confirmTrust: { reason in
                         return await BiometricService.shared.authenticate(reason: reason)
                     },
-                    onWaitingForApproval: { expiresAt in
+                    onWaitingForApproval: { [self] expiresAt in
                         guard invitePairingGate.shouldRun(generation) else { return }
                         invitePairingWaitExpiresAt = expiresAt
                     }
@@ -1652,7 +1612,7 @@ struct OppiApp: App {
                 confirmTrust: { reason in
                     return await BiometricService.shared.authenticate(reason: reason)
                 },
-                onWaitingForApproval: { expiresAt in
+                onWaitingForApproval: { [self] expiresAt in
                     guard invitePairingGate.shouldRun(generation) else { return }
                     invitePairingWaitExpiresAt = expiresAt
                 }
@@ -2024,9 +1984,9 @@ struct OppiApp: App {
 
         // Navigate to session when user taps an attention notification body.
         // The service may deliver a tap latched before this handler was wired.
-        notificationService.onNavigateToSession = { sessionId in
+        notificationService.onNavigateToSession = { [self] sessionId in
             guard !sessionId.isEmpty else { return }
-            AppLockService.shared.performWhenUnlocked {
+            AppLockService.shared.performWhenUnlocked { [self] in
                 Task { @MainActor in
                     await navigateToSessionFromDeepLink(
                         sessionId,
@@ -2036,7 +1996,7 @@ struct OppiApp: App {
                 }
             }
         }
-        notificationService.onPairingDeny = { payload in
+        notificationService.onPairingDeny = { [coordinator] payload in
             guard let approvalId = payload.approvalId else { return }
             await PairingApprovalController.shared.performNotificationDeny(
                 serverId: payload.serverId,
@@ -2044,7 +2004,7 @@ struct OppiApp: App {
                 coordinator: coordinator
             )
         }
-        notificationService.onPairingNotification = { payload in
+        notificationService.onPairingNotification = { [coordinator] payload in
             AppLockService.shared.performWhenUnlocked {
                 PairingApprovalController.shared.handleNotification(
                     serverId: payload.serverId,

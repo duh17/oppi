@@ -1,5 +1,5 @@
 import Foundation
-import SwiftUI
+import UIKit
 
 /// Where a user or system action set `showQuickSession`.
 enum QuickSessionPresentationSource: String, Sendable {
@@ -7,7 +7,7 @@ enum QuickSessionPresentationSource: String, Sendable {
     case workspaceBar = "workspace_bar"
     case threadBar = "thread_bar"
     case agents = "agents"
-    /// App Intent / control widget, presented by ContentView.
+    /// App Intent / control widget, presented by the app root.
     case intent = "intent"
 }
 
@@ -19,8 +19,8 @@ struct WorkspaceNavigationMeasurement: Equatable, Sendable {
     var windowHeight: Int
 
     init(
-        horizontalSizeClass: UserInterfaceSizeClass?,
-        verticalSizeClass: UserInterfaceSizeClass?,
+        horizontalSizeClass: UIUserInterfaceSizeClass,
+        verticalSizeClass: UIUserInterfaceSizeClass,
         windowSize: CGSize
     ) {
         self.horizontalSizeClass = Self.label(horizontalSizeClass)
@@ -36,11 +36,11 @@ struct WorkspaceNavigationMeasurement: Equatable, Sendable {
         self.windowHeight = windowHeight
     }
 
-    private static func label(_ sizeClass: UserInterfaceSizeClass?) -> String {
+    private static func label(_ sizeClass: UIUserInterfaceSizeClass) -> String {
         switch sizeClass {
         case .compact: "compact"
         case .regular: "regular"
-        case nil: "unspecified"
+        case .unspecified: "unspecified"
         @unknown default: "unknown"
         }
     }

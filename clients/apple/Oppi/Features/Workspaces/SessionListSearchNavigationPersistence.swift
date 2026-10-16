@@ -2,8 +2,8 @@ import Foundation
 
 /// Keeps session-list search across a push/pop of a result.
 ///
-/// SwiftUI's searchable control dismisses — and often clears the query — when
-/// a destination covers the list. Opening a result is still the same search
+/// The search bar can end, and clear its query, while a destination covers
+/// the list. Opening a result is still the same search
 /// job, so Back should return to the flattened Results list. Explicit cancel
 /// (the search X) and host reset still clear.
 enum SessionListSearchNavigationPersistence {
@@ -41,13 +41,12 @@ enum SessionListSearchNavigationPersistence {
 
     static func isWorkspaceListCovered(
         stackDepth: Int,
-        hasSessionDestination: Bool,
         splitDetailReplacesList: Bool = false
     ) -> Bool {
         if splitDetailReplacesList {
             return true
         }
-        return stackDepth > 1 || hasSessionDestination
+        return stackDepth > 1
     }
 
     static func reduce(

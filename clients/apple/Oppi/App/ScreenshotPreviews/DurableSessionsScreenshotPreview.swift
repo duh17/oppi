@@ -19,19 +19,24 @@ struct DurableSessionsScreenshotPreview: View {
     let surface: Surface
     let experimentEnabled: Bool
     @State private var coordinator: ConnectionCoordinator
-    @State private var navigation = AppNavigation()
+    @State private var navigation: AppNavigation
+    @State private var root: AppRootEnvironment
 
     init(surface: Surface, experimentEnabled: Bool = true) {
         self.surface = surface
         self.experimentEnabled = experimentEnabled
         Self.applyPreviewDefaults(experimentEnabled: experimentEnabled)
-        _coordinator = State(initialValue: Self.makeCoordinator())
+        let coordinator = Self.makeCoordinator()
+        let navigation = AppNavigation()
+        _coordinator = State(initialValue: coordinator)
+        _navigation = State(initialValue: navigation)
+        _root = State(initialValue: .preview(coordinator: coordinator, navigation: navigation))
     }
 
     var body: some View {
         content
             .accessibilityIdentifier("screenshot.ready")
-            // The same overlay ContentView hosts, so Start opens the real sheet.
+            // The same overlay the app root hosts, so Start opens the real sheet.
             .overlay {
                 if navigation.showQuickSession {
                     QuickSessionOverlay { navigation.showQuickSession = false }
@@ -58,7 +63,8 @@ struct DurableSessionsScreenshotPreview: View {
         case .sidebar:
             WorkspaceSidebarView()
         case .list, .quickSession:
-            NavigationStack { SessionInboxView() }
+            RouterPreviewStack(root: root) { SessionInboxView() }
+                .ignoresSafeArea()
         }
     }
 

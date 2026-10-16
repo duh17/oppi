@@ -195,9 +195,9 @@ final class ThemeStore {
     private static func currentSystemColorScheme(fallback: ColorScheme = .dark) -> ColorScheme {
         #if canImport(UIKit)
         // Deliberately the display's system appearance, not a window's: this runs from
-        // `App.init` before any view or window exists, and Light/Dark is a device
-        // setting, not a size or layout value. `ThemeColorSchemeSyncView` replaces it
-        // with the SwiftUI environment scheme once a view is on screen.
+        // app launch before any view or window exists, and Light/Dark is a device
+        // setting, not a size or layout value. On iOS the app root replaces it with
+        // its window's appearance once the window is up.
         guard let userInterfaceStyle = currentForegroundWindowScene()?.screen.traitCollection.userInterfaceStyle else {
             return fallback
         }

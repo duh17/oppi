@@ -1,96 +1,150 @@
 import SwiftUI
 
-struct WorkspaceAdaptiveRootView: View {
-    @Environment(AppNavigation.self) private var navigation
-    @Environment(ConnectionCoordinator.self) private var coordinator
-    @Environment(ServerStore.self) private var serverStore
-    @Environment(\.chatReaderPayloadStore) private var chatReaderPayloadStore
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
+// The SwiftUI content of the workspace shell's routes. UIKit owns the stacks
+// (`ShellRouter.swift`, `WorkspaceShellController.swift`); every route's
+// screen is a `ShellRouteView` hosted through `HostFactory`.
 
-    /// Window size without the keyboard. Nil until first measured, so launch
-    /// never mounts the wrong shell for one frame.
-    @State private var windowSize: CGSize?
-    /// False until the first measured presentation has been applied.
-    @State private var hasAppliedPresentation = false
-
-    private var measured: WorkspaceNavigationPresentation? {
-        windowSize.map {
-            WorkspaceNavigationPresentation.resolve(
-                horizontalSizeClass: horizontalSizeClass,
-                verticalSizeClass: verticalSizeClass,
-                size: $0
-            )
+/// Hosted screens for the shell's UIKit controllers.
+@MainActor
+enum ShellRouteScreens {
+    static func make(
+        _ route: ShellRoute,
+        placement: ShellRoutePlacement,
+        root: AppRootEnvironment,
+        openSidebar: (() -> Void)?
+    ) -> HostedScreenController {
+        HostFactory.screen(root: root, bars: route.bars) {
+            ShellRouteView(route: route, placement: placement, openSidebar: openSidebar)
         }
     }
+
+    /// Newer content for the same screen (a refreshed workspace).
+    static func update(
+        _ screen: HostedScreenController,
+        route: ShellRoute,
+        placement: ShellRoutePlacement,
+        openSidebar: (() -> Void)?
+    ) {
+        screen.setContent {
+            ShellRouteView(route: route, placement: placement, openSidebar: openSidebar)
+        }
+    }
+
+    /// The workspace list beneath the compact stack.
+    static func drawerSidebar(root: AppRootEnvironment, onSelect: @escaping () -> Void) -> UIViewController {
+        HostFactory.content(WorkspaceSidebarView(onSelect: onSelect), root: root)
+    }
+
+    static func serverLockCover(serverId: String, root: AppRootEnvironment) -> UIViewController {
+        HostFactory.content(ShellServerLockCover(serverId: serverId), root: root)
+    }
+}
+
+/// One route's screen, with the chrome its place in the shell adds: the
+/// sidebar toggle at the split detail root, and for a screen in its own
+/// SwiftUI stack (`ShellRoute.hostsOwnNavigationStack`) that stack and a
+/// Back button, since its UIKit bar is hidden.
+struct ShellRouteView: View {
+    let route: ShellRoute
+    let placement: ShellRoutePlacement
+    let openSidebar: (() -> Void)?
+
+    @Environment(\.chatReaderPayloadStore) private var chatReaderPayloadStore
+    @Environment(\.screenNavigator) private var navigator
 
     var body: some View {
-        // A locked active server covers everything under it: lists,
-        // sidebar, pushed pages, and settings that follow the active host.
-        ScopedLockGate(
-            target: coordinator.activeServerId.map(ScopedLockTarget.server),
-            title: activeServer?.name ?? String(localized: "Server")
-        ) {
-            LockedServerSwitchMenu()
-        } content: {
-            // Render the shell AppNavigation already converted its routes for,
-            // never the raw measurement. A fold or rotation first converts the
-            // stack path into split selection (or back) in one mutation, then the
-            // new shell mounts once with matching state. Rendering the raw
-            // measurement mounted the new shell against the old shell's routes for
-            // a frame, then remounted the split detail when its
-            // `.id(splitDetailTarget)` changed. AVKit fullscreen freezes the
-            // presentation inside AppNavigation, so it needs no check here.
-            if hasAppliedPresentation {
-                switch navigation.workspaceNavigationPresentation {
-                case .stack:
-                    WorkspaceStackRootView()
-                case .split:
-                    WorkspaceSplitRootView()
+        if route.hostsOwnNavigationStack {
+            NavigationStack {
+                content
+                    .toolbar { ownStackLeadingItem }
+            }
+        } else if placement == .splitDetailRoot {
+            content
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        WorkspaceSplitSidebarToggleButton()
+                    }
                 }
-            } else {
-                Color.clear
+        } else {
+            content
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var ownStackLeadingItem: some ToolbarContent {
+        if placement == .splitDetailRoot {
+            ToolbarItem(placement: .topBarLeading) {
+                WorkspaceSplitSidebarToggleButton()
+            }
+        } else if placement == .pushed {
+            ToolbarItem(placement: .topBarLeading) {
+                Button(action: navigator.finish) {
+                    Label("Back", systemImage: "chevron.backward")
+                }
+                // UIKit's own back button carries this identifier.
+                .accessibilityIdentifier("BackButton")
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // The shells stay inside the keyboard safe area so fields move up; only
-        // this measurement ignores it. A docked keyboard on a portrait window
-        // (the Duo inner display, iPad) would otherwise make it wider than tall,
-        // swap to split, destroy the focused field, drop the keyboard, and
-        // swap back.
-        // The observer sits inside `ignoresSafeArea`, which extends its child
-        // but keeps its own frame; observing outside it reads the shrunk frame.
-        .background {
-            Color.clear
-                .onGeometryChange(for: CGSize.self) { $0.size } action: { windowSize = $0 }
-                .ignoresSafeArea(.keyboard)
-        }
-        .modifier(WorkspaceCreationIntakeModifier())
-        .onChange(of: measured, initial: true) { _, newValue in
-            guard let newValue else { return }
-            applyPresentation(newValue)
-            hasAppliedPresentation = true
-        }
-        .onChange(of: navigation.isMediaOverlayActive) { wasActive, isActive in
-            guard wasActive, !isActive, let measured else { return }
-            applyPresentation(measured)
-        }
     }
 
-    private var activeServer: PairedServer? {
-        coordinator.activeServerId.flatMap { serverStore.server(for: $0) }
-    }
-
-    private func applyPresentation(_ presentation: WorkspaceNavigationPresentation) {
-        let measurement = windowSize.map {
-            WorkspaceNavigationMeasurement(
-                horizontalSizeClass: horizontalSizeClass,
-                verticalSizeClass: verticalSizeClass,
-                windowSize: $0
+    @ViewBuilder
+    private var content: some View {
+        switch route {
+        case .inbox:
+            SessionInboxView(onOpenSidebar: openSidebar)
+        case .sidebar:
+            WorkspaceSidebarView()
+        case .workspace(let target):
+            WorkspaceScopedDestinationView(target: target)
+        case .session(let target):
+            WorkspaceSessionScopedDestinationView(target: target)
+        case .fileBrowser(let target):
+            WorkspaceFileBrowserDestinationView(target: target)
+        case .linkedFile(let target):
+            WorkspaceLinkedFileDestinationView(target: target)
+        case .chatReader(let target):
+            if let chatReaderPayloadStore {
+                ChatReaderDestinationView(target: target, store: chatReaderPayloadStore)
+            }
+        case .workspaceConfiguration(let target):
+            WorkspaceConfigurationDestinationView(
+                target: target,
+                completesSplitDetail: placement == .splitDetailRoot
             )
+        case .utility(let target):
+            WorkspaceUtilityDestinationView(target: target)
+        case .serverDetails(let target):
+            ServerDetailsScopedDestinationView(target: target)
+        case .modelProviders(let target):
+            ModelProvidersScopedDestinationView(target: target)
+        case .serverResourceDetail(let target):
+            ServerResourceDetailDestinationView(target: target)
+        case .serverSkillBrowser(let target):
+            ServerSkillBrowserScopedDestinationView(target: target)
+        case .serverSkillFile(let target):
+            ServerSkillFileScopedDestinationView(target: target)
+        case .sessionThread(let target):
+            SessionThreadDetailView(target: target)
         }
-        navigation.setWorkspaceNavigationPresentation(presentation, measurement: measurement)
-        navigation.routeLegacySelectedTabIfNeeded()
+    }
+}
+
+/// The active server's lock cover over the whole shell.
+private struct ShellServerLockCover: View {
+    let serverId: String
+
+    @Environment(ServerStore.self) private var serverStore
+    @State private var locks = ScopedLockService.shared
+
+    var body: some View {
+        ScopedLockCoverView(
+            title: serverStore.server(for: serverId)?.name ?? String(localized: "Server"),
+            isAuthenticating: locks.isAuthenticating
+        ) {
+            Task { _ = await locks.authorize(.server(serverId)) }
+        } accessory: {
+            LockedServerSwitchMenu()
+        }
     }
 }
 
@@ -133,75 +187,6 @@ private struct LockedServerSwitchMenu: View {
     }
 }
 
-private struct WorkspaceStackRootView: View {
-    var body: some View {
-        // The NavigationStack lives inside WorkspaceSessionInboxStackRootView's
-        // sliding foreground layer so the nav bar, search, and bottom toolbar
-        // travel as one surface with the session list when the sidebar reveals.
-        WorkspaceSessionInboxStackRootView()
-    }
-}
-
-private struct WorkspaceSplitRootView: View {
-    @Environment(AppNavigation.self) private var navigation
-    @Environment(\.chatReaderPayloadStore) private var chatReaderPayloadStore
-
-    var body: some View {
-        @Bindable var nav = navigation
-
-        NavigationSplitView(columnVisibility: $nav.splitColumnVisibility) {
-            NavigationStack(path: $nav.workspacePath) {
-                WorkspaceSplitSidebarView()
-            }
-            .toolbar(removing: .sidebarToggle)
-            .navigationSplitViewColumnWidth(min: 320, ideal: 380, max: 460)
-        } detail: {
-            NavigationStack(path: $nav.splitDetailPath) {
-                WorkspaceSplitDetailDestinationView(target: navigation.splitDetailTarget)
-                    .navigationDestination(for: FileBrowserNavTarget.self) { target in
-                        WorkspaceFileBrowserDestinationView(target: target)
-                    }
-                    .navigationDestination(for: WorkspaceSessionNavTarget.self) { target in
-                        WorkspaceSessionScopedDestinationView(target: target)
-                    }
-                    .navigationDestination(for: WorkspaceLinkedFileNavTarget.self) { target in
-                        WorkspaceLinkedFileDestinationView(target: target)
-                    }
-                    .navigationDestination(for: ChatReaderNavTarget.self) { target in
-                        if let store = chatReaderPayloadStore {
-                            ChatReaderDestinationView(target: target, store: store)
-                        }
-                    }
-                    .navigationDestination(for: ServerResourceDetailNavTarget.self) { target in
-                        ServerResourceDetailDestinationView(target: target)
-                    }
-                    .navigationDestination(for: ServerSkillBrowserNavTarget.self) { target in
-                        ServerSkillBrowserScopedDestinationView(target: target)
-                    }
-                    .navigationDestination(for: ServerSkillFileNavTarget.self) { target in
-                        ServerSkillFileScopedDestinationView(target: target)
-                    }
-                    .navigationDestination(for: ServerDetailsNavTarget.self) { target in
-                        ServerDetailsScopedDestinationView(target: target)
-                    }
-                    .navigationDestination(for: ModelProvidersNavTarget.self) { target in
-                        ModelProvidersScopedDestinationView(target: target)
-                    }
-                    .navigationDestination(for: SessionThreadNavTarget.self) { target in
-                        SessionThreadDetailView(target: target)
-                    }
-            }
-            .id(navigation.splitDetailTarget)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    WorkspaceSplitSidebarToggleButton()
-                }
-            }
-        }
-        .navigationSplitViewStyle(.balanced)
-    }
-}
-
 private struct WorkspaceSplitSidebarToggleButton: View {
     @Environment(AppNavigation.self) private var navigation
 
@@ -222,46 +207,15 @@ private struct WorkspaceSplitSidebarToggleButton: View {
     }
 }
 
-private struct WorkspaceSplitSidebarView: View {
-    var body: some View {
-        WorkspaceSidebarView()
-    }
-}
-
-private struct WorkspaceSplitDetailDestinationView: View {
-    @Environment(AppNavigation.self) private var navigation
-    let target: WorkspaceSplitDetailTarget?
-
-    var body: some View {
-        switch target {
-        case .session(let target):
-            WorkspaceSessionScopedDestinationView(target: target)
-        case .fileBrowser(let target):
-            WorkspaceFileBrowserDestinationView(target: target)
-        case .linkedFile(let target):
-            WorkspaceLinkedFileDestinationView(target: target)
-        case .workspaceConfiguration(let target):
-            WorkspaceSplitWorkspaceConfigurationDestinationView(target: target)
-        case .utility(let target):
-            WorkspaceUtilityDestinationView(target: target)
-        case nil:
-            if let workspace = navigation.splitSelectedWorkspace {
-                WorkspaceScopedDestinationView(target: workspace)
-            } else {
-                SessionInboxView()
-            }
-        }
-    }
-}
-
-private struct WorkspaceSplitWorkspaceConfigurationDestinationView: View {
+/// Workspace settings for one workspace, on its server. As the split detail
+/// root, Done returns the column to the workspace's sessions.
+private struct WorkspaceConfigurationDestinationView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
     let target: WorkspaceNavTarget
+    let completesSplitDetail: Bool
 
     @State private var scopedConnection: ServerConnection?
-
-    private var resolvedConnection: ServerConnection? { scopedConnection }
 
     var body: some View {
         ScopedLockGate(
@@ -274,15 +228,17 @@ private struct WorkspaceSplitWorkspaceConfigurationDestinationView: View {
 
     private var unlockedBody: some View {
         Group {
-            if let connection = resolvedConnection {
+            if let connection = scopedConnection {
                 WorkspaceSettingsRootView(workspace: target.workspace)
                     .withServerScopedEnvironment(connection)
                     .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Done") {
-                                navigation.completeWorkspaceConfiguration(target)
+                        if completesSplitDetail {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") {
+                                    navigation.completeWorkspaceConfiguration(target)
+                                }
+                                .accessibilityIdentifier("workspace.edit.done")
                             }
-                            .accessibilityIdentifier("workspace.edit.done")
                         }
                     }
             } else {
@@ -297,6 +253,7 @@ private struct WorkspaceSplitWorkspaceConfigurationDestinationView: View {
 }
 
 private struct WorkspaceUtilityDestinationView: View {
+    @Environment(ConnectionCoordinator.self) private var coordinator
     let target: WorkspaceUtilityNavTarget
 
     var body: some View {
@@ -315,7 +272,7 @@ private struct WorkspaceUtilityDestinationView: View {
             case .sshTerminal:
                 SSHTerminalHostListView()
             case .desktopStill:
-                DesktopCurrentStillViewerView()
+                desktopViewer
             case .manageServers:
                 ServerView()
             case .appSettings:
@@ -329,9 +286,21 @@ private struct WorkspaceUtilityDestinationView: View {
             )
         }
     }
+
+    @ViewBuilder
+    private var desktopViewer: some View {
+        let connection = coordinator.activeServerId.flatMap { coordinator.connection(for: $0) }
+        if AppPreferences.Experiments.desktopLiveViewEnabled, connection?.desktopLiveViewAvailable == true {
+            DesktopLiveViewerView(connection: connection)
+        } else {
+            DesktopCurrentStillViewerView()
+        }
+    }
 }
 
-private struct WorkspaceCreationIntakeModifier: ViewModifier {
+/// Workspace creation the shell starts by itself: an `oppi://workspace` link,
+/// or the guided first workspace after pairing a server that has none.
+struct WorkspaceCreationIntakeModifier: ViewModifier {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
     @Environment(AppNavigation.self) private var navigation

@@ -1,8 +1,14 @@
-import AppIntents
 import SwiftUI
 import UIKit
 
-struct ContentView: View {
+/// The app root's SwiftUI layer, under the UIKit content
+/// (`AppRootViewController`): app-wide modals (extension dialogs and notices,
+/// What's New, pairing approvals, workspace creation the shell starts),
+/// app-wide event handlers, and the Quick Session overlay. While Quick
+/// Session is up the root brings this layer to the front.
+struct AppRootLayer: View {
+    let root: AppRootEnvironment
+
     @Environment(ServerConnection.self) private var connection
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
@@ -14,94 +20,93 @@ struct ContentView: View {
         @Bindable var nav = navigation
         @Bindable var liveConnection = connection
 
-        Group {
-            switch navigation.launchPhase {
-            case .resolving:
-                // Brief local-only gate while pairing identity and cache load.
-                // Network transport preparation begins after the paired shell appears.
-                Color.themeBg
-                    .ignoresSafeArea()
-
-            case .ready:
-                if navigation.showOnboarding {
-                    OnboardingView()
-                } else {
-                    WorkspaceAdaptiveRootView()
+        Color.clear
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                // Only the shell starts workspace creation by itself.
+                if navigation.launchPhase == .ready, !navigation.showOnboarding {
+                    Color.clear.modifier(WorkspaceCreationIntakeModifier())
                 }
             }
-        }
-        .disabled(nav.showQuickSession)
-        .allowsHitTesting(!nav.showQuickSession)
-        .accessibilityHidden(nav.showQuickSession)
-        .routerModal(
-            item: Binding<ExtensionUIRequest?>(
-                get: { ExtensionSheetLayout.sheetRequest(liveConnection.activeExtensionDialog) },
-                set: { value in
-                    liveConnection.activeExtensionDialog = value
-                }
-            ),
-            presentation: ExtensionSheetLayout.presentation(
-                for: ExtensionSheetLayout.sheetRequest(liveConnection.activeExtensionDialog)
-            )
-        ) { request in
-            ExtensionDialogSheet(request: request)
-                .interactiveDismissDisabled()
-                .withServerScopedEnvironment(liveConnection)
-        }
-        .routerModal(
-            isPresented: Binding(
-                get: { connection.extensionToast != nil },
-                set: { showing in
-                    if !showing {
-                        connection.extensionToast = nil
+            .modifier(PairingApprovalPromptHost(root: root))
+            .routerModal(
+                item: Binding<ExtensionUIRequest?>(
+                    get: { ExtensionSheetLayout.sheetRequest(liveConnection.activeExtensionDialog) },
+                    set: { value in
+                        liveConnection.activeExtensionDialog = value
                     }
+                ),
+                presentation: ExtensionSheetLayout.presentation(
+                    for: ExtensionSheetLayout.sheetRequest(liveConnection.activeExtensionDialog)
+                )
+            ) { request in
+                ExtensionDialogSheet(request: request)
+                    .interactiveDismissDisabled()
+                    .withServerScopedEnvironment(liveConnection)
+            }
+            .routerModal(
+                isPresented: Binding(
+                    get: { connection.extensionToast != nil },
+                    set: { showing in
+                        if !showing {
+                            connection.extensionToast = nil
+                        }
+                    }
+                ),
+                presentation: ExtensionToastSheet.presentation
+            ) {
+                if let toast = connection.extensionToast {
+                    ExtensionToastSheet(message: toast)
                 }
-            ),
-            presentation: ExtensionToastSheet.presentation
-        ) {
-            if let toast = connection.extensionToast {
-                ExtensionToastSheet(message: toast)
             }
-        }
-        // Full screen covers this view, which then stops updating, so the
-        // screen closes itself instead of waiting for the cleared flag.
-        .routerModal(isPresented: $nav.showWhatsNew, presentation: .fullScreen) {
-            WhatsNewScreen()
-        }
-        .overlay {
-            if nav.showQuickSession {
-                QuickSessionOverlay(onDismiss: dismissQuickSession)
-                    .zIndex(100)
+            // Full screen covers this view, which then stops updating, so the
+            // screen closes itself instead of waiting for the cleared flag.
+            .routerModal(isPresented: $nav.showWhatsNew, presentation: .fullScreen) {
+                WhatsNewScreen()
             }
-        }
-        .onAppIntentExecution(QuickSessionOpenIntent.self) { intent in
-            quickSessionTrigger.requestPresentation(for: intent)
-        }
-        .onChange(of: quickSessionTrigger.presentationRequestID) { _, newValue in
-            presentQuickSessionIfPossible(requestID: newValue)
-        }
-        .onChange(of: nav.showQuickSession) { wasShowing, isShowing in
-            guard !wasShowing, isShowing else { return }
-            captureQuickSessionLaunchAccessibilityElement()
-        }
-        .onChange(of: navigation.launchPhase) { _, _ in
-            presentQuickSessionIfPossible(requestID: quickSessionTrigger.presentationRequestID)
-        }
-        .onChange(of: navigation.showOnboarding) { _, _ in
-            presentQuickSessionIfPossible(requestID: quickSessionTrigger.presentationRequestID)
-        }
-        .onChange(of: navigation.selectedTab) { _, _ in
-            navigation.routeLegacySelectedTabIfNeeded()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .workspaceMediaOverlayDidBegin)) { _ in
-            navigation.beginMediaOverlay(activeServerId: coordinator.activeServerId)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .workspaceMediaOverlayDidEnd)) { _ in
-            restoreWorkspaceAfterMediaOverlay()
-        }
-        .overlay(alignment: .topLeading) {
-            e2eDiagnosticsOverlay
-        }
+            .overlay {
+                if nav.showQuickSession {
+                    QuickSessionOverlay(onDismiss: dismissQuickSession)
+                }
+            }
+            .onChange(of: quickSessionTrigger.presentationRequestID) { _, newValue in
+                presentQuickSessionIfPossible(requestID: newValue)
+            }
+            .onChange(of: nav.showQuickSession) { wasShowing, isShowing in
+                guard !wasShowing, isShowing else { return }
+                captureQuickSessionLaunchAccessibilityElement()
+            }
+            .onChange(of: navigation.launchPhase) { _, _ in
+                presentQuickSessionIfPossible(requestID: quickSessionTrigger.presentationRequestID)
+            }
+            .onChange(of: navigation.showOnboarding) { _, _ in
+                presentQuickSessionIfPossible(requestID: quickSessionTrigger.presentationRequestID)
+            }
+            .onChange(of: navigation.selectedTab) { _, _ in
+                navigation.routeLegacySelectedTabIfNeeded()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .workspaceMediaOverlayDidBegin)) { _ in
+                navigation.beginMediaOverlay(activeServerId: coordinator.activeServerId)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .workspaceMediaOverlayDidEnd)) { _ in
+                restoreWorkspaceAfterMediaOverlay()
+            }
+            .overlay(alignment: .topLeading) {
+                e2eDiagnosticsOverlay
+            }
+    }
+
+    /// Brief local-only gate while pairing identity and cache load. Network
+    /// transport preparation begins after the paired shell appears.
+    static var launchBackdrop: some View {
+        Color.themeBg.ignoresSafeArea()
+    }
+
+    /// An invite waiting for approval on the user's other device covers the app.
+    static func pairingWaitCover(expiresAt: Int64, onCancel: @escaping () -> Void) -> some View {
+        WaitingForPairingApprovalView(expiresAt: expiresAt, onCancel: onCancel)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.themeBg)
     }
 
     @ViewBuilder

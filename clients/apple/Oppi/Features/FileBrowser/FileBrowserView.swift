@@ -245,7 +245,7 @@ enum FileBrowserTreeNavigationReducer {
         return parts.joined(separator: "/") + "/"
     }
 
-    /// Workspace-linked file destinations are registered only on the workspace stack.
+    /// Workspace-linked file routes exist only on the workspace shell's stacks.
     /// Compact chat/tree-pane browsers must fall back to an in-sheet NavigationLink.
     static func shouldUseWorkspaceLinkedFileDestination(
         usesInlineCompactNavigation: Bool,
@@ -282,8 +282,8 @@ enum FileBrowserColumnPolicy {
 /// Shows directory contents with navigation into subdirectories,
 /// search, and tap-to-view for text/code files.
 ///
-/// Each directory level is a value-based push on the workspace
-/// NavigationPath, preserving swipe-back. A breadcrumb bar shows
+/// Each directory level is its own route on the workspace stack,
+/// preserving swipe-back. A breadcrumb bar shows
 /// the full path and supports jumping to any ancestor directory.
 ///
 /// Search uses a shared file index cached in `FileIndexStore`.
@@ -379,6 +379,7 @@ struct FileBrowserView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(AppNavigation.self) private var navigation
     @Environment(FileIndexStore.self) private var fileIndexStore
+    @Environment(\.screenNavigator) private var navigator
     @State private var listing: DirectoryListingResponse?
     @State private var error: String?
     @State private var searchText = ""
@@ -407,6 +408,16 @@ struct FileBrowserView: View {
 
     private var usesInlineCompactDirectoryNavigation: Bool {
         layoutMode == .compactOnly
+    }
+
+    /// A workspace shell route: hosted in a UIKit stack, so directories and
+    /// files push through `AppNavigation` or the screen navigator. In the chat
+    /// file panel the browser sits in a SwiftUI stack and keeps its links.
+    private var isShellRoute: Bool {
+        FileBrowserTreeNavigationReducer.shouldUseWorkspaceLinkedFileDestination(
+            usesInlineCompactNavigation: usesInlineCompactDirectoryNavigation,
+            serverId: serverId
+        )
     }
 
     private var shouldShowInlineDirectoryBackButton: Bool {
@@ -455,7 +466,11 @@ struct FileBrowserView: View {
                 compactBrowserContent
             }
         }
-        .fileBrowserSearchable(isEnabled: !showsFileColumn && selectedFile == nil && !isHostHome, text: $searchText)
+        .fileBrowserSearchable(
+            isEnabled: !showsFileColumn && selectedFile == nil && !isHostHome,
+            hostedByRouter: isShellRoute,
+            text: $searchText
+        )
         .navigationTitle(destinationNavigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(replacesStackBackButton)
@@ -977,10 +992,8 @@ struct FileBrowserView: View {
                     compactListRowContent { label }
                 }
                 .buttonStyle(.plain)
-            } else if let serverId {
-                NavigationLink(value: navTarget(path: dirPath)) {
-                    compactListRowContent { label }
-                }
+            } else if isShellRoute {
+                routedRow(action: { pushDirectory(path: dirPath) }) { label }
             } else {
                 NavigationLink {
                     Self(
@@ -1033,9 +1046,12 @@ struct FileBrowserView: View {
         @ViewBuilder label: () -> Label
     ) -> some View {
         if let target = linkedFileTarget(path: path, name: name, navigationContext: navigationContext) {
-            NavigationLink(value: target) {
-                compactListRowContent { label() }
-            }
+            routedRow(action: { navigation.openWorkspaceLinkedFile(target) }) { label() }
+        } else if isShellRoute {
+            // Host files have no workspace route; the reader pushes as a screen.
+            routedRow(action: {
+                pushFileContent(path: path, name: name, size: size, navigationContext: navigationContext)
+            }) { label() }
         } else {
             NavigationLink {
                 compactNavigationFileContent(
@@ -1055,6 +1071,40 @@ struct FileBrowserView: View {
         content()
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
+    }
+
+    /// A row whose push goes through the router, drawn like a `NavigationLink` row.
+    private func routedRow<Label: View>(
+        action: @escaping () -> Void,
+        @ViewBuilder label: () -> Label
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                compactListRowContent { label() }
+                SettingsDisclosureChevron()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func pushFileContent(
+        path: String,
+        name: String,
+        size: Int?,
+        navigationContext: FileBrowserNavigationContext?
+    ) {
+        let apiClient = apiClient
+        let content = compactNavigationFileContent(
+            path: path,
+            name: name,
+            size: size,
+            navigationContext: navigationContext,
+            store: $markdownViewportRestore
+        )
+        navigator.push {
+            content.environment(\.apiClient, apiClient)
+        }
     }
 
     private func linkedFileTarget(
@@ -1195,6 +1245,11 @@ struct FileBrowserView: View {
             listing = nil
             return
         }
+        pushDirectory(path: path)
+    }
+
+    /// The directory as its own file-browser route above this one.
+    private func pushDirectory(path: String) {
         let target = navTarget(path: path)
         switch navigation.workspaceNavigationPresentation {
         case .stack:
@@ -1346,25 +1401,29 @@ struct FileBrowserView: View {
 
 private struct FileBrowserSearchableModifier: ViewModifier {
     let isEnabled: Bool
+    /// In a UIKit stack the host owns the search bar.
+    let hostedByRouter: Bool
     @Binding var text: String
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if isEnabled {
+        if !isEnabled {
+            content
+        } else if hostedByRouter {
+            content.routerSearchable(text: $text, prompt: "Search files", alwaysVisible: true)
+        } else {
             content.searchable(
                 text: $text,
                 placement: .navigationBarDrawer(displayMode: .always),
                 prompt: "Search files"
             )
-        } else {
-            content
         }
     }
 }
 
 private extension View {
-    func fileBrowserSearchable(isEnabled: Bool, text: Binding<String>) -> some View {
-        modifier(FileBrowserSearchableModifier(isEnabled: isEnabled, text: text))
+    func fileBrowserSearchable(isEnabled: Bool, hostedByRouter: Bool, text: Binding<String>) -> some View {
+        modifier(FileBrowserSearchableModifier(isEnabled: isEnabled, hostedByRouter: hostedByRouter, text: text))
     }
 }
 

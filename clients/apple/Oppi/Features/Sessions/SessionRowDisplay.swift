@@ -40,6 +40,34 @@ struct SessionRowDisplay: Equatable, Codable, Sendable {
     var isCompact: Bool { density == .compact }
 }
 
+/// The saved row appearance, live. The app root injects `display` into every
+/// screen's environment, so a Customize Rows save reaches screens that are
+/// already up, pushed ones included.
+@MainActor @Observable
+final class SessionRowDisplayStore {
+    private(set) var display: SessionRowDisplay
+    @ObservationIgnored private var observer: NSObjectProtocol?
+
+    /// Follows `AppPreferences.SessionRows` as saves land.
+    init() {
+        display = AppPreferences.SessionRows.display
+        observer = NotificationCenter.default.addObserver(
+            forName: AppPreferences.SessionRows.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.display = AppPreferences.SessionRows.display
+            }
+        }
+    }
+
+    /// A fixed appearance, for previews and tests.
+    init(fixed display: SessionRowDisplay) {
+        self.display = display
+    }
+}
+
 private struct SessionRowDisplayKey: EnvironmentKey {
     static let defaultValue = SessionRowDisplay.standard
 }

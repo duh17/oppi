@@ -61,7 +61,7 @@ func makeTestAppRoot(
             saveDelay: .seconds(60)
         ),
         chatReaderPayloadStore: ChatReaderPayloadStore(),
-        sessionRowDisplay: SessionRowDisplay()
+        sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
     )
 }
 

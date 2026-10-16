@@ -105,7 +105,7 @@ struct WorkspaceNavigationServerScopeTests {
         }
         requestLog.reset()
 
-        navigation.workspacePath.append(
+        navigation.openWorkspace(
             WorkspaceNavTarget(
                 serverId: serverB.id,
                 workspace: makeTestWorkspace(id: "ws-b", name: "Target Workspace", gitStatusEnabled: true)
@@ -267,121 +267,42 @@ struct WorkspaceNavigationServerScopeTests {
         return (data, response)
     }
 
+    /// The workspace screen hosted the way the shell hosts it.
     private func makeDetailHost(
         model: WorkspaceSelectionModel,
         connection: ServerConnection,
         navigation: AppNavigation
     ) -> WorkspaceNavigationHostHarness {
-        let root = AnyView(
-            NavigationStack {
-                WorkspaceDetailSwapHost(model: model)
-            }
-            .environment(connection)
-            .environment(\.apiClient, connection.apiClient)
-            .environment(connection.chatState)
-            .environment(connection.sessionStore)
-            .environment(connection.workspaceStore)
-            .environment(connection.askRequestStore)
-            .environment(connection.audioPlayer)
-            .environment(connection.gitStatusStore)
-            .environment(connection.fileIndexStore)
-            .environment(connection.messageQueueStore)
-            .environment(navigation)
+        let screen = HostFactory.screen(root: makeTestAppRoot()) {
+            WorkspaceDetailSwapHost(model: model)
+                .withServerScopedEnvironment(connection)
+                .environment(navigation)
+        }
+        return WorkspaceNavigationHostHarness(
+            controller: RouterNavigationController(rootViewController: screen)
         )
-
-        let controller = UIHostingController(rootView: root)
-        controller.loadViewIfNeeded()
-        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-
-        let window = UIWindow(frame: controller.view.frame)
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-
-        controller.view.setNeedsLayout()
-        controller.view.layoutIfNeeded()
-        return WorkspaceNavigationHostHarness(controller: controller, window: window)
     }
 
-    private func makeEditScopedHost(
-        coordinator: ConnectionCoordinator,
-        serverStore: ServerStore,
-        server: PairedServer,
-        workspace: Workspace
-    ) -> WorkspaceNavigationHostHarness {
-        let activeConnection = coordinator.activeConnection
-        let root = AnyView(
-            NavigationStack {
-                WorkspaceEditScopedDestinationView(server: server, workspace: workspace)
-            }
-            .environment(coordinator)
-            .environment(activeConnection)
-            .environment(\.apiClient, activeConnection.apiClient)
-            .environment(activeConnection.chatState)
-            .environment(activeConnection.sessionStore)
-            .environment(activeConnection.workspaceStore)
-            .environment(activeConnection.askRequestStore)
-            .environment(activeConnection.audioPlayer)
-            .environment(activeConnection.gitStatusStore)
-            .environment(activeConnection.fileIndexStore)
-            .environment(activeConnection.messageQueueStore)
-            .environment(AppNavigation())
-            .environment(serverStore)
-        )
-
-        let controller = UIHostingController(rootView: root)
-        controller.loadViewIfNeeded()
-        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-
-        let window = UIWindow(frame: controller.view.frame)
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-        controller.view.setNeedsLayout()
-        controller.view.layoutIfNeeded()
-        return WorkspaceNavigationHostHarness(controller: controller, window: window)
-    }
-
+    /// The real workspace shell over this coordinator and navigation.
     private func makeHost(
         coordinator: ConnectionCoordinator,
         serverStore: ServerStore,
         navigation: AppNavigation
     ) -> WorkspaceNavigationHostHarness {
-        let connection = coordinator.activeConnection
-        let root = AnyView(
-            NavigationStack(path: Binding(
-                get: { navigation.workspacePath },
-                set: { navigation.workspacePath = $0 }
-            )) {
-                SessionInboxView()
-                    .navigationDestination(for: WorkspaceNavTarget.self) { target in
-                        WorkspaceScopedDestinationView(target: target)
-                    }
-            }
-            .environment(coordinator)
-            .environment(connection)
-            .environment(\.apiClient, connection.apiClient)
-            .environment(connection.chatState)
-            .environment(connection.sessionStore)
-            .environment(connection.workspaceStore)
-            .environment(connection.askRequestStore)
-            .environment(connection.audioPlayer)
-            .environment(connection.gitStatusStore)
-            .environment(connection.fileIndexStore)
-            .environment(connection.messageQueueStore)
-            .environment(navigation)
-            .environment(serverStore)
+        let root = AppRootEnvironment(
+            coordinator: coordinator,
+            navigation: navigation,
+            themeStore: ThemeStore(),
+            quickCommentTemplateStore: QuickCommentTemplateStore(templates: []),
+            composerDraftStore: ComposerDraftStore(
+                fileURL: FileManager.default.temporaryDirectory
+                    .appending(path: "workspace-shell-drafts-\(UUID().uuidString).json", directoryHint: .notDirectory),
+                saveDelay: .seconds(60)
+            ),
+            chatReaderPayloadStore: ChatReaderPayloadStore(),
+            sessionRows: SessionRowDisplayStore(fixed: SessionRowDisplay())
         )
-
-        let controller = UIHostingController(rootView: root)
-        controller.loadViewIfNeeded()
-        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-
-        let window = UIWindow(frame: controller.view.frame)
-        window.rootViewController = controller
-        window.makeKeyAndVisible()
-
-        controller.view.setNeedsLayout()
-        controller.view.layoutIfNeeded()
-        return WorkspaceNavigationHostHarness(controller: controller, window: window)
+        return WorkspaceNavigationHostHarness(controller: WorkspaceShellController(root: root))
     }
 
     private func makeServer(id: String, name: String, host: String) -> PairedServer {
@@ -402,8 +323,19 @@ struct WorkspaceNavigationServerScopeTests {
 
 @MainActor
 private struct WorkspaceNavigationHostHarness {
-    let controller: UIHostingController<AnyView>
+    let controller: UIViewController
     let window: UIWindow
+
+    init(controller: UIViewController) {
+        controller.loadViewIfNeeded()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.view.setNeedsLayout()
+        controller.view.layoutIfNeeded()
+        self.controller = controller
+        self.window = window
+    }
 
     func pump() {
         controller.view.setNeedsLayout()
@@ -432,8 +364,6 @@ private struct WorkspaceNavigationHostHarness {
     }
 
     func teardown() {
-        controller.rootView = AnyView(EmptyView())
-        pump()
         window.isHidden = true
         window.rootViewController = nil
     }

@@ -97,6 +97,7 @@ struct ChatView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
 
     @State private var sessionManager: ChatSessionManager
     @State private var sessionRuntimeLease: ChatSessionManagerLease
@@ -122,10 +123,10 @@ struct ChatView: View {
     @State private var selectedFilePanelTab: ChatFileBrowserPanelTab
     @State private var showModelPicker = false
     @State private var showComposer = false
-    @State private var sessionRouteToOpen: SessionRoute?
+    /// A chat opened above this one inside a SwiftUI stack (see `pushChat`).
+    @State private var stackedChatRoute: StackedChatRoute?
     @State private var showRenameAlert = false
     @State private var renameText = ""
-    @State private var forkedSessionToOpen: ForkRoute?
     @State private var showShareRedactionSheet = false
     @State private var shareReview = ShareSessionRedactionReview()
 
@@ -180,12 +181,7 @@ struct ChatView: View {
         _selectedFilePanelTab = State(initialValue: ChatFileBrowserPanelTabStore.shared.tab(for: sessionId))
     }
 
-    private struct ForkRoute: Identifiable, Hashable {
-        let id: String
-        let workspaceId: String?
-    }
-
-    private struct SessionRoute: Identifiable, Hashable {
+    private struct StackedChatRoute: Identifiable, Hashable {
         let id: String
         let workspaceId: String?
     }
@@ -1282,10 +1278,7 @@ struct ChatView: View {
             .navigationTitle(railEdge == nil ? sessionDisplayName : "")
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarBackButtonHidden(usesCustomChatBackButton)
-            .navigationDestination(item: $forkedSessionToOpen) { route in
-                Self(sessionId: route.id, workspaceIdHint: route.workspaceId)
-            }
-            .navigationDestination(item: $sessionRouteToOpen) { route in
+            .navigationDestination(item: $stackedChatRoute) { route in
                 Self(sessionId: route.id, workspaceIdHint: route.workspaceId)
             }
             .environment(\.openChatReader, ChatReaderOpenAction(handler: openTimelineReader))
@@ -1631,24 +1624,34 @@ struct ChatView: View {
         .accessibilityIdentifier("chat.toolbar.back")
     }
 
+    /// A shell route closes through the router: pushed, it pops; as the split
+    /// detail root, the column shows its list. A chat pushed inside another
+    /// screen (a quick action, a fork) leaves the way it came.
     private func navigateBackFromChat() {
-        if ownsWorkspacePathBackNavigation,
-           appNavigation.workspaceNavigationPresentation == .stack {
-            // Let SwiftUI coordinate the pop with its hosting-controller cache.
-            // Mutating NavigationPath directly during toolbar layout can force a
-            // synchronous NavigationStack reconciliation on the main thread.
+        if ownsWorkspacePathBackNavigation {
+            navigator.finish()
+        } else {
             dismiss()
+        }
+    }
+
+    /// Opens another session above this chat, on this chat's server and
+    /// navigation (a fork, or a session link from an extension surface).
+    /// A chat inside a SwiftUI stack whose screen has no UIKit navigation
+    /// controller (a file review in the Files panel or the git bar's sheet)
+    /// pushes in that stack.
+    private func pushChat(sessionId: String, workspaceId: String?) {
+        guard navigator.canPush else {
+            stackedChatRoute = StackedChatRoute(id: sessionId, workspaceId: workspaceId)
             return
         }
-        if appNavigation.workspaceNavigationPresentation == .split {
-            if !appNavigation.splitDetailPath.isEmpty {
-                dismiss()
-                return
-            }
-            appNavigation.showSessionInboxInSplit()
-            return
+        let connection = connection
+        let appNavigation = appNavigation
+        navigator.push {
+            ChatView(sessionId: sessionId, workspaceIdHint: workspaceId)
+                .id(sessionId)
+                .presenterScope(connection: connection, apiClient: connection.apiClient, navigation: appNavigation)
         }
-        dismiss()
     }
 
     @ViewBuilder
@@ -1983,7 +1986,7 @@ struct ChatView: View {
         ) {
         case .pushSession(let link):
             connection.prepareForSessionReentry(link.sessionId, workspaceIdHint: link.workspaceId)
-            sessionRouteToOpen = SessionRoute(id: link.sessionId, workspaceId: link.workspaceId)
+            pushChat(sessionId: link.sessionId, workspaceId: link.workspaceId)
             return true
         case .ignore:
             return true
@@ -3069,7 +3072,7 @@ struct ChatView: View {
                 let displayName = title.flatMap { $0.isEmpty ? nil : $0 } ?? "Session \(forked.id.prefix(8))"
                 reducer.appendSystemEvent("Fork created as new session: \(displayName)")
 
-                forkedSessionToOpen = ForkRoute(id: forked.id, workspaceId: forked.workspaceId ?? workspaceId)
+                pushChat(sessionId: forked.id, workspaceId: forked.workspaceId ?? workspaceId)
             } catch {
                 reducer.process(.error(sessionId: sessionId, message: "Fork failed: \(error.localizedDescription)"))
             }

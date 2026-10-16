@@ -105,7 +105,7 @@ struct WorkspaceDetailView: View {
     @State private var isCreating = false
     @State private var error: String?
 
-    @FocusState private var isSearchFieldFocused: Bool
+    @Environment(\.screenNavigator) private var navigator
     @State private var presentsNowPlayingPlayer = false
     @State private var composeBarColumnWidth: CGFloat = 0
     @State private var searchStore = SessionSearchStore()
@@ -116,7 +116,6 @@ struct WorkspaceDetailView: View {
     @State private var selectedWorktreeId = WorkspaceWorktree.mainId
     @State private var isLoadingWorktrees = false
     @State private var isImportingLocal = false
-    @State private var navigateToSessionId: String?
     @State private var pendingDeleteSession: Session?
     @State private var contextBarCollapseToken = 0
     @State private var contextBarExpanded = false
@@ -144,13 +143,12 @@ struct WorkspaceDetailView: View {
     /// HTTP polling pauses behind focused chat. Do not attach tap gestures to
     /// `NavigationLink` rows for this; that can consume the row activation.
     private var isNavigatingDeeperInWorkspaceStack: Bool {
-        navigation.workspacePath.count > 1 || navigateToSessionId != nil
+        navigation.workspacePath.count > 1
     }
 
     private var isSearchListCoveredByDestination: Bool {
         SessionListSearchNavigationPersistence.isWorkspaceListCovered(
             stackDepth: navigation.workspacePath.count,
-            hasSessionDestination: navigateToSessionId != nil,
             splitDetailReplacesList: navigation.splitDetailTarget != nil
         )
     }
@@ -631,15 +629,11 @@ struct WorkspaceDetailView: View {
         .onChange(of: workspace.id) { _, _ in
             handleWorkspaceIdentityChanged()
         }
-        .searchable(
+        .routerSearchable(
             text: searchTextBinding,
             isPresented: searchPresentedBinding,
-            placement: .navigationBarDrawer(displayMode: .automatic),
-            prompt: "Search sessions"
-        )
-        .searchFocused($isSearchFieldFocused)
-        .searchPresentationToolbarBehavior(
-            sessionListToolbar.avoidsHidingContentWhileSearching ? .avoidHidingContent : .automatic
+            prompt: "Search sessions",
+            hidesNavigationBarDuringPresentation: !sessionListToolbar.avoidsHidingContentWhileSearching
         )
         .routerModal(isPresented: $presentsNowPlayingPlayer, presentation: .fullScreen) {
             InAppNowPlayingPlayerScreen(audioPlayer: connection.audioPlayer)
@@ -654,28 +648,12 @@ struct WorkspaceDetailView: View {
         }
         .onChange(of: searchNavigation.isSearchPresented) { _, presented in
             applySearchNavigation(.searchPresentationChanged(presented))
-            if !presented {
-                isSearchFieldFocused = false
-            }
         }
         .onChange(of: navigation.workspacePath.count) { _, _ in
             restoreSearchAfterCoverageChange()
         }
-        .onChange(of: navigateToSessionId) { _, _ in
-            restoreSearchAfterCoverageChange()
-        }
         .onChange(of: navigation.splitDetailTarget) { _, _ in
             restoreSearchAfterCoverageChange()
-        }
-        .navigationDestination(for: String.self) { sessionId in
-            ChatView(sessionId: sessionId, workspaceIdHint: workspace.id)
-                .id(sessionId)
-        }
-        .navigationDestination(
-            item: $navigateToSessionId
-        ) { sessionId in
-            ChatView(sessionId: sessionId, workspaceIdHint: workspace.id)
-                .id(sessionId)
         }
         .toolbar {
             workspaceDetailToolbar(railEdge: railEdge)
@@ -1187,9 +1165,6 @@ struct WorkspaceDetailView: View {
 
     private func restoreSearchAfterCoverageChange() {
         applySearchNavigation(.coverageChanged(isCovered: isSearchListCoveredByDestination))
-        if !isSearchListCoveredByDestination {
-            isSearchFieldFocused = false
-        }
     }
 
     private func openSession(_ session: Session) {
@@ -1207,7 +1182,16 @@ struct WorkspaceDetailView: View {
 
     private func routeToSession(_ sessionId: String) {
         guard let currentServerId else {
-            navigateToSessionId = sessionId
+            // No server to route through: push the chat on this connection.
+            let workspaceId = workspace.id
+            let connection = connection
+            let apiClient = apiClient
+            let navigation = navigation
+            navigator.push {
+                ChatView(sessionId: sessionId, workspaceIdHint: workspaceId)
+                    .id(sessionId)
+                    .presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
+            }
             return
         }
 

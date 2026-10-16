@@ -125,6 +125,17 @@ extension ThemeStore {
     var userInterfaceStyle: UIUserInterfaceStyle {
         preferredColorScheme.map(UIUserInterfaceStyle.init) ?? .unspecified
     }
+
+    /// The theme's page background, for UIKit containers around hosted screens.
+    var backgroundColor: UIColor {
+        UIColor(activeThemeID.palette.bg)
+    }
+
+    /// System mode follows the window's appearance; other modes ignore it.
+    func followSystemAppearance(_ style: UIUserInterfaceStyle) {
+        guard mode == .system, let scheme = ColorScheme(style) else { return }
+        updateSystemColorScheme(scheme)
+    }
 }
 
 // MARK: - Hosting controllers
@@ -137,6 +148,15 @@ final class HostedScreenController: UIHostingController<AnyView>, RouterModalCon
     private let content: ScreenContent
     var onDismissed: (() -> Void)?
 
+    /// On a vertical toolbar rail (iPhone Duo), where a large title showed
+    /// nothing; reported by the screen's content.
+    fileprivate var isOnVerticalRail = false {
+        didSet {
+            guard isOnVerticalRail != oldValue else { return }
+            applyTitleDisplayMode()
+        }
+    }
+
     fileprivate init<Content: View>(
         root: AppRootEnvironment,
         bars: ScreenBars,
@@ -144,16 +164,18 @@ final class HostedScreenController: UIHostingController<AnyView>, RouterModalCon
     ) {
         let content = ScreenContent { AnyView(make()) }
         let navigator = ScreenNavigator(root: root)
+        let railReport = ScreenRailReport()
         self.root = root
         self.bars = bars
         self.content = content
         self.navigator = navigator
         super.init(rootView: AnyView(
-            ScreenContentView(content: content)
+            ScreenContentView(content: content, railReport: bars.largeTitle ? railReport : nil)
                 .environment(\.screenNavigator, navigator)
                 .appRootEnvironment(root)
         ))
         navigator.controller = self
+        railReport.controller = self
         // UIKit content inside the screen, and controllers it presents, find
         // the root through the trait bridge.
         traitOverrides.appRootEnvironment = root
@@ -186,11 +208,44 @@ final class HostedScreenController: UIHostingController<AnyView>, RouterModalCon
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         guard let navigation = navigationController else { return }
-        navigationItem.largeTitleDisplayMode = bars.largeTitle ? .always : .never
-        if bars.largeTitle {
-            navigation.navigationBar.prefersLargeTitles = true
+        applyTitleDisplayMode()
+        navigation.setToolbarHidden(!showsToolbarNow, animated: animated)
+    }
+
+    // SwiftUI sets the screen's `.bottomBar` items here, after it appears and
+    // whenever they change (the inbox drops them on the Duo rail).
+    override var toolbarItems: [UIBarButtonItem]? {
+        didSet { updateToolbarVisibility(animated: false) }
+    }
+
+    override func setToolbarItems(_ toolbarItems: [UIBarButtonItem]?, animated: Bool) {
+        super.setToolbarItems(toolbarItems, animated: animated)
+        updateToolbarVisibility(animated: animated)
+    }
+
+    private var showsToolbarNow: Bool {
+        bars.showsToolbar && !(toolbarItems?.isEmpty ?? true)
+    }
+
+    private func updateToolbarVisibility(animated: Bool) {
+        guard bars.showsToolbar,
+              let navigation = navigationController,
+              navigation.topViewController === self,
+              navigation.isToolbarHidden == showsToolbarNow else { return }
+        navigation.setToolbarHidden(!showsToolbarNow, animated: animated)
+    }
+
+    private func applyTitleDisplayMode() {
+        let large = bars.largeTitle && !isOnVerticalRail
+        navigationItem.largeTitleDisplayMode = large ? .always : .never
+        if large {
+            navigationController?.navigationBar.prefersLargeTitles = true
         }
-        navigation.setToolbarHidden(!bars.showsToolbar, animated: animated)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        navigator.screenDidAppear()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -213,12 +268,28 @@ private final class ScreenContent {
     }
 }
 
+/// Tells a large-title screen whether it sits on a vertical toolbar rail.
+@MainActor
+private final class ScreenRailReport {
+    weak var controller: HostedScreenController?
+}
+
 /// Evaluates the content closure inside the hosted screen's own graph.
 private struct ScreenContentView: View {
     let content: ScreenContent
+    let railReport: ScreenRailReport?
 
     var body: some View {
-        content.make()
+        if let railReport {
+            readingToolbarVerticalEdge { edge in
+                content.make()
+                    .onChange(of: edge != nil, initial: true) { _, onRail in
+                        railReport.controller?.isOnVerticalRail = onRail
+                    }
+            }
+        } else {
+            content.make()
+        }
     }
 }
 
@@ -285,6 +356,13 @@ final class ScreenNavigator {
         )
     }
 
+    /// Whether this screen sits in a UIKit navigation controller that `push`
+    /// can push onto. False outside a hosted screen, and for a modal hosted
+    /// without `inNavigation()` whose content brings its own SwiftUI stack.
+    var canPush: Bool {
+        controller?.navigationController != nil
+    }
+
     /// Pushes a screen onto the navigation controller that holds this one.
     /// Replaces `NavigationLink { destination }` and `navigationDestination`,
     /// whose pages lose the app environment in a UIKit stack. `content` runs
@@ -327,6 +405,19 @@ final class ScreenNavigator {
         search.install(on: controller, alwaysVisible: alwaysVisible)
         self.search = search
         return search
+    }
+
+    fileprivate func screenDidAppear() {
+        guard let controller else { return }
+        search?.hostDidAppear(controller)
+    }
+
+    fileprivate func removeSearchController() {
+        guard let search else { return }
+        self.search = nil
+        if let controller {
+            search.uninstall(from: controller)
+        }
     }
 
     private func unattached(_ operation: String) {
@@ -399,16 +490,28 @@ extension View {
     /// A search bar the host owns (`UISearchController`), bound to `text`
     /// both ways. Replaces `.searchable`, which does not reach a UIKit
     /// navigation bar. The screen must sit in a navigation controller: pushed,
-    /// or presented with `ModalPresentation.inNavigation()`.
+    /// or presented with `ModalPresentation.inNavigation()`. `isPresented`
+    /// follows the search becoming active and ends or starts it; set
+    /// `hidesNavigationBarDuringPresentation` false to keep the title and
+    /// toolbar items while searching (`.searchPresentationToolbarBehavior`).
+    /// Removing the modifier takes the bar away.
     func routerSearchable(
         text: Binding<String>,
+        isPresented: Binding<Bool>? = nil,
         prompt: String,
-        alwaysVisible: Bool = false
+        alwaysVisible: Bool = false,
+        hidesNavigationBarDuringPresentation: Bool = true
     ) -> some View {
         background {
-            RouterSearchAnchor(text: text, prompt: prompt, alwaysVisible: alwaysVisible)
-                .frame(width: 0, height: 0)
-                .accessibilityHidden(true)
+            RouterSearchAnchor(
+                text: text,
+                isPresented: isPresented,
+                prompt: prompt,
+                alwaysVisible: alwaysVisible,
+                hidesNavigationBarDuringPresentation: hidesNavigationBarDuringPresentation
+            )
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
         }
     }
 }
@@ -651,12 +754,15 @@ final class RouterModalPresenter {
 
 private struct RouterSearchAnchor: UIViewControllerRepresentable {
     @Binding var text: String
+    let isPresented: Binding<Bool>?
     let prompt: String
     let alwaysVisible: Bool
+    let hidesNavigationBarDuringPresentation: Bool
     @Environment(\.screenNavigator) private var navigator
 
     final class Coordinator {
         var search: ScreenSearchController?
+        var navigator: ScreenNavigator?
     }
 
     func makeCoordinator() -> Coordinator {
@@ -664,19 +770,39 @@ private struct RouterSearchAnchor: UIViewControllerRepresentable {
     }
 
     func makeUIViewController(context: Context) -> RouterAnchorController {
-        RouterAnchorController()
+        let anchor = RouterAnchorController()
+        // A screen that asked for search while covered starts it on return.
+        anchor.onAttach = { [weak coordinator = context.coordinator, isPresented] in
+            guard let presented = isPresented?.wrappedValue else { return }
+            coordinator?.search?.setPresented(presented)
+        }
+        return anchor
     }
 
     func updateUIViewController(_ anchor: RouterAnchorController, context: Context) {
         let search = context.coordinator.search
             ?? navigator.searchController(prompt: prompt, alwaysVisible: alwaysVisible)
         context.coordinator.search = search
+        context.coordinator.navigator = navigator
         let binding = $text
         search?.onTextChange = { text in
             if binding.wrappedValue != text {
                 binding.wrappedValue = text
             }
         }
+        search?.searchController.hidesNavigationBarDuringPresentation = hidesNavigationBarDuringPresentation
         search?.setText(text)
+        if let isPresented {
+            search?.onPresentationChange = { presented in
+                if isPresented.wrappedValue != presented {
+                    isPresented.wrappedValue = presented
+                }
+            }
+            search?.setPresented(isPresented.wrappedValue)
+        }
+    }
+
+    static func dismantleUIViewController(_ anchor: RouterAnchorController, coordinator: Coordinator) {
+        coordinator.navigator?.removeSearchController()
     }
 }

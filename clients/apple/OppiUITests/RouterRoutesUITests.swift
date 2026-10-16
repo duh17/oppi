@@ -213,6 +213,133 @@ final class RouterRoutesUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["routerRoutes.dismissedModals"].label, "Dismissed 2")
     }
 
+    /// The real workspace shell over fixture services
+    /// (`SCREENSHOT_SCREEN=workspace-shell`), whose UIKit stacks follow
+    /// `AppNavigation`: the sidebar opens a workspace, its list opens a chat,
+    /// and Back pops each; Skills searches in the host's bar; Settings, still
+    /// in its own SwiftUI stack, pushes a page that reads app services and
+    /// comes back. iPhone and the Duo's outer display use the drawer, iPad in
+    /// landscape the split view.
+    func testWorkspaceShellOpensAndPopsRoutes() {
+        launchShell()
+        let drawerButton = app.buttons["workspace.sidebar.open"]
+        let isSplit = !drawerButton.waitForExistence(timeout: 3)
+        XCTAssertTrue(
+            app.searchFields["Search sessions"].waitForExistence(timeout: 5),
+            "All Sessions must search in the host's bar"
+        )
+        attachScreenshot("shell-inbox")
+
+        revealSidebar(isSplit: isSplit)
+        app.buttons["workspace.open.oppi"].tap()
+        let session = app.buttons["session.nav.rail-2"]
+        XCTAssertTrue(session.waitForExistence(timeout: 10), "The workspace's sessions did not show")
+        attachScreenshot("shell-workspace")
+        assertRunning()
+
+        session.tap()
+        let chatBack = app.buttons["chat.toolbar.back"]
+        XCTAssertTrue(chatBack.waitForExistence(timeout: 10), "The chat did not open")
+        attachScreenshot("shell-chat")
+        assertRunning()
+        chatBack.tap()
+        XCTAssertTrue(session.waitForExistence(timeout: 5), "Back from the chat must return to the workspace")
+        assertRunning()
+        if !isSplit {
+            app.buttons["BackButton"].tap()
+            XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop to All Sessions")
+        }
+
+        revealSidebar(isSplit: isSplit)
+        app.buttons["workspace.skills.open"].tap()
+        XCTAssertTrue(app.searchFields["Search skills"].waitForExistence(timeout: 5), "Skills must search in the host's bar")
+        assertRunning()
+        if !isSplit {
+            app.buttons["BackButton"].tap()
+            XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop Skills")
+        }
+
+        revealSidebar(isSplit: isSplit)
+        app.buttons["App Settings"].tap()
+        let settings = app.navigationBars["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5), "Settings did not open")
+        app.buttons["settings.row.appearance"].tap()
+        let appearance = app.navigationBars["Appearance"]
+        XCTAssertTrue(appearance.waitForExistence(timeout: 5), "Settings did not push Appearance")
+        attachScreenshot("shell-settings-page")
+        assertRunning()
+        // On the Duo the back control sits on the vertical rail, outside the bar.
+        app.buttons["BackButton"].firstMatch.tap()
+        XCTAssertTrue(settings.waitForExistence(timeout: 5), "Back must return to Settings")
+        if !isSplit {
+            app.buttons["BackButton"].tap()
+            XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop Settings")
+        }
+        assertRunning()
+    }
+
+    /// iPad: the split view turns into the drawer stack in portrait and back
+    /// in landscape, rebuilt from `AppNavigation`, so the open chat and its
+    /// workspace survive both changes.
+    func testWorkspaceShellKeepsTheRouteAcrossLayoutChanges() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Layout changes need an iPad window")
+        launchShell()
+        revealSidebar(isSplit: true)
+        app.buttons["workspace.open.oppi"].tap()
+        let session = app.buttons["session.nav.rail-2"]
+        XCTAssertTrue(session.waitForExistence(timeout: 10), "The workspace's sessions did not show")
+        session.tap()
+        let chatBack = app.buttons["chat.toolbar.back"]
+        XCTAssertTrue(chatBack.waitForExistence(timeout: 10), "The chat did not open")
+
+        let splitToggle = app.buttons["workspace.split.sidebarToggle"]
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(waitForDisappearance(of: splitToggle, timeout: 10), "Portrait must leave the split view")
+        XCTAssertTrue(chatBack.waitForExistence(timeout: 5), "The chat must stay open in the stack")
+        attachScreenshot("shell-ipad-portrait-chat")
+        assertRunning()
+        chatBack.tap()
+        XCTAssertTrue(session.waitForExistence(timeout: 5), "Back must return to the workspace under the chat")
+        XCTAssertTrue(app.buttons["BackButton"].exists, "The workspace must sit above All Sessions")
+
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(splitToggle.waitForExistence(timeout: 10), "Landscape must split again")
+        XCTAssertTrue(session.waitForExistence(timeout: 5), "The split detail must keep the workspace")
+        attachScreenshot("shell-ipad-landscape-workspace")
+        assertRunning()
+    }
+
+    private func launchShell() {
+        // iPad splits in landscape; iPhone and the Duo outer display stay compact.
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            XCUIDevice.shared.orientation = .landscapeLeft
+        }
+        app = XCUIApplication()
+        app.launchArguments += ["--screenshot-preview", "-ApplePersistenceIgnoreState", "YES"]
+        app.launchEnvironment["SCREENSHOT_SCREEN"] = "workspace-shell"
+        app.launch()
+        XCTAssertTrue(
+            app.collectionViews["workspace.sessionList"].waitForExistence(timeout: 10),
+            "The workspace shell did not appear"
+        )
+    }
+
+    /// Compact: the drawer. Split: the sidebar column, when hidden.
+    private func revealSidebar(isSplit: Bool) {
+        if isSplit {
+            let toggle = app.buttons["workspace.split.sidebarToggle"]
+            if toggle.exists, toggle.label.localizedCaseInsensitiveContains("show") {
+                toggle.tap()
+            }
+        } else {
+            app.buttons["workspace.sidebar.open"].tap()
+        }
+        XCTAssertTrue(
+            app.buttons["workspace.open.oppi"].waitForExistence(timeout: 5),
+            "The workspace sidebar did not show"
+        )
+    }
+
     private func launch(colorScheme: String) {
         app = XCUIApplication()
         app.launchArguments += ["--screenshot-preview", "-ApplePersistenceIgnoreState", "YES"]

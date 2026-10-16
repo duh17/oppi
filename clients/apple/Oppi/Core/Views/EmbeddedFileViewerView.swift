@@ -709,7 +709,7 @@ extension Binding where Value == FullScreenMarkdownViewportRestoreState {
 /// Review comment selection routing: reads from `\.reviewCommentSelectionScope`
 /// in the SwiftUI environment when no explicit router is provided. This means new
 /// callers get comment routing for free as long as the environment is set by an
-/// ancestor (which `ContentView` does at the root level).
+/// ancestor.
 ///
 /// Usage:
 /// ```swift

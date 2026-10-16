@@ -148,20 +148,6 @@ struct SessionInboxHostChangeTests {
         #expect(store.completedServerQuery == nil)
     }
 
-    @Test func sessionListsRevealSearchFromNavigationBarDrawer() throws {
-        let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
-        let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
-        let drawer = "placement: .navigationBarDrawer(displayMode: .automatic)"
-        #expect(inbox.contains(drawer))
-        #expect(workspace.contains(drawer))
-        #expect(!inbox.contains(".searchToolbarBehavior(.minimize)"))
-        #expect(!workspace.contains(".searchToolbarBehavior(.minimize)"))
-        #expect(!inbox.contains("usesMinimizedSearch ? .minimize : .automatic"))
-        #expect(!workspace.contains("usesMinimizedSearch ? .minimize : .automatic"))
-        #expect(!inbox.contains("DefaultToolbarItem(kind: .search, placement: .bottomBar)"))
-        #expect(!workspace.contains("DefaultToolbarItem(kind: .search, placement: .bottomBar)"))
-    }
-
     @Test func inboxOnSwitchStillPopsToAllSessions() throws {
         let source = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
         let slice = try sourceSlice(

@@ -13,10 +13,11 @@ struct ContentViewNoticeTests {
             serverStore: ServerStore(), lanDiscovery: LANDiscovery(browsesBonjour: false)
         )
         let navigation = AppNavigation()
+        let root = makeTestAppRoot()
         // The router hosts the notice with the app root, as the app does.
-        let host = UIHostingController(rootView: ContentView()
+        let host = UIHostingController(rootView: AppRootLayer(root: root)
             .environment(connection).environment(coordinator).environment(navigation)
-            .appRootEnvironment(makeTestAppRoot()))
+            .appRootEnvironment(root))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()
@@ -34,7 +35,7 @@ struct ContentViewNoticeTests {
             try await Task.sleep(for: .milliseconds(20))
         }
         let labels = labelTexts(in: window)
-        try #require(host.presentedViewController != nil, "ContentView did not present its notice")
+        try #require(host.presentedViewController != nil, "The app root layer did not present its notice")
         #expect(labels.contains("Notice"), "File-resolution sheet has no neutral title: \(labels)")
         #expect(!labels.contains("Extension"))
     }

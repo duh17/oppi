@@ -1810,8 +1810,8 @@ struct AppNavigationShellRoutingTests {
 @Suite("Workspace stack/split presentation")
 struct WorkspaceNavigationPresentationResolveTests {
     private func resolve(
-        _ horizontal: UserInterfaceSizeClass?,
-        _ vertical: UserInterfaceSizeClass?,
+        _ horizontal: UIUserInterfaceSizeClass,
+        _ vertical: UIUserInterfaceSizeClass,
         _ width: CGFloat,
         _ height: CGFloat
     ) -> WorkspaceNavigationPresentation {
@@ -1835,8 +1835,8 @@ struct WorkspaceNavigationPresentationResolveTests {
     @Test func anyCompactOrMissingSizeClassKeepsTheStack() {
         #expect(resolve(.compact, .regular, 1366, 1024) == .stack)
         #expect(resolve(.regular, .compact, 956, 440) == .stack)
-        #expect(resolve(nil, .regular, 1366, 1024) == .stack)
-        #expect(resolve(.regular, nil, 1366, 1024) == .stack)
+        #expect(resolve(.unspecified, .regular, 1366, 1024) == .stack)
+        #expect(resolve(.regular, .unspecified, 1366, 1024) == .stack)
     }
 }
 

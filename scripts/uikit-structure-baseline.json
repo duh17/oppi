@@ -14,6 +14,9 @@
     "clients/apple/Oppi/App/AppRootEnvironment.swift": {
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/App/AppRootLayer.swift": {
+      "import SwiftUI": 1
+    },
     "clients/apple/Oppi/App/AskCardIntentRegressionPreview.swift": {
       "import SwiftUI": 1
     },
@@ -26,9 +29,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/CodeGutterAlignmentHarnessView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/ContentView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/ExtensionDockStressPreview.swift": {
@@ -50,9 +50,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/HostFactory.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/App/NavigationBreadcrumb.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/NavigationChromeProfileHarnessView.swift": {
@@ -105,7 +102,7 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/ScreenshotPreviews/DurableSessionsScreenshotPreview.swift": {
-      "NavigationStack": 2,
+      "NavigationStack": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/ScreenshotPreviews/ExtensionSurfacePreview.swift": {
@@ -141,8 +138,7 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/ScreenshotPreviews/RailToolbarScreenshotPreview.swift": {
-      "NavigationStack": 7,
-      ".navigationDestination(": 1,
+      "NavigationStack": 5,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/ScreenshotPreviews/SSHTerminalScreenshotPreview.swift": {
@@ -150,7 +146,7 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/ScreenshotPreviews/ScopedLocksScreenshotPreview.swift": {
-      "NavigationStack": 6,
+      "NavigationStack": 5,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/ScreenshotPreviews/SessionStatusScreenshotPreview.swift": {
@@ -211,10 +207,8 @@
       ".navigationDestination(": 1,
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/App/WorkspaceAdaptiveRootView.swift": {
-      "NavigationStack": 2,
-      "NavigationSplitView": 1,
-      ".navigationDestination(": 10,
+    "clients/apple/Oppi/App/WorkspaceShellRoutes.swift": {
+      "NavigationStack": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/WorkspaceSidebarGitStatusPreview.swift": {
@@ -378,7 +372,7 @@
     },
     "clients/apple/Oppi/Features/Chat/ChatView.swift": {
       "NavigationStack": 2,
-      ".navigationDestination(": 2,
+      ".navigationDestination(": 1,
       ".inspector(": 1,
       "import SwiftUI": 1
     },
@@ -615,7 +609,7 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/FileBrowser/FileBrowserView.swift": {
-      "NavigationLink": 4,
+      "NavigationLink": 2,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Icons/IconPickerView.swift": {
@@ -726,7 +720,6 @@
     },
     "clients/apple/Oppi/Features/Server/ServerView.swift": {
       "NavigationStack": 1,
-      ".navigationDestination(": 2,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Server/StatsHeroRow.swift": {
@@ -876,8 +869,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/SessionInboxView.swift": {
-      "NavigationStack": 1,
-      ".navigationDestination(": 13,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceComponents.swift": {
@@ -888,7 +879,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceDetailView.swift": {
-      ".navigationDestination(": 2,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceDetailsPage.swift": {
