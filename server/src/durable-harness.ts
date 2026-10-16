@@ -1378,7 +1378,11 @@ export class DurableHarness {
     // Packages no longer discovered go first, so a new package may take over a name or task
     // they held in this same reload. A package still discovered stays installed until its new
     // code installs, so a broken update of it rolls back to its previous code.
-    const discoveredRoots = new Set(discovered.packages.map((found) => found.root));
+    // A package whose manifest failed is still on disk: it keeps its code, as an import failure does.
+    const discoveredRoots = new Set([
+      ...discovered.packages.map((found) => found.root),
+      ...discovered.errors.flatMap((issue) => (issue.root ? [issue.root] : [])),
+    ]);
     const gone = previous.filter((old) => !discoveredRoots.has(old.root));
     for (const old of gone) registry.uninstall(old.extension);
     const remaining = previous.filter((old) => discoveredRoots.has(old.root));

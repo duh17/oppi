@@ -354,6 +354,31 @@ describe("durable extensions from Pi packages", () => {
     expect(report.removed).toEqual(["task-owner-a"]);
   });
 
+  it("keeps a package with a broken manifest installed, and its task out of other hands", async () => {
+    const task = (extension: string) => [
+      'import { defineExtension, defineTask } from "@earendil-works/pi-durable";',
+      "const Shared = defineTask({",
+      '  name: "probe.kept-task",',
+      "  version: 1,",
+      '  initial: () => ({ phase: "done" }),',
+      "  phases: { done: async () => undefined },",
+      "});",
+      `export default defineExtension({ name: ${JSON.stringify(extension)}, tasks: [Shared] });`,
+    ];
+    const owner = writeEntry("task-keeper", task("task-keeper"));
+    const f = await fixture(callsTool("none"));
+    await f.manager.startSession(f.session.id, f.workspace);
+
+    writeFileSync(join(owner, "package.json"), "{ not json");
+    writeEntry("task-taker", task("task-taker"));
+    const report = await f.reload();
+    expect(fromPackages(report)).toEqual({ loaded: [], kept: ["task-keeper"] });
+    expect(report.removed).toEqual([]);
+    expect(report.errors.map((issue) => issue.root)).toEqual(
+      expect.arrayContaining([owner, join(agentDir, "extensions", "task-taker")]),
+    );
+  });
+
   it("keeps a package's running code when its reload breaks pi-durable's rules", async () => {
     const root = writePackage("probe");
     writePackage("other");
