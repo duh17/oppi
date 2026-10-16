@@ -216,7 +216,7 @@ our supplement becomes a no-op (duplicate patterns are harmless in tree-sitter).
 
 ## Performance Budget
 
-Small content colors on the main thread. Larger content moves off it (`Task.detached`). Export paints synchronously on the caller. Targets:
+Tool rows and markdown fences color small content on the main thread and move larger content off it (`Task.detached`). The full-screen file reader highlights off the main thread. Export paints synchronously on the caller. Targets:
 
 | Input size | Target per-call | Notes |
 |---|---|---|

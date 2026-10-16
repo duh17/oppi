@@ -416,8 +416,8 @@ enum ToolPresentationBuilder {
         /// Code viewer with line numbers, syntax highlighting, horizontal scroll
         case code(text: String, language: SyntaxLanguage?, startLine: Int?, filePath: String?)
         /// Generic tool call painted as a notebook cell (code or arguments, calls,
-        /// output). Copy and the reader use the plan; Mac and iOS Markdown rows
-        /// keep the generic document.
+        /// output). Row copy uses the raw output; the full-screen reader shows and
+        /// copies the plan. Mac and iOS Markdown rows keep the generic document.
         case notebook(NotebookCellPlan)
         /// Rendered markdown (read .md)
         case markdown(text: String, filePath: String? = nil)
