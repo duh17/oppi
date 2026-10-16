@@ -8,19 +8,62 @@ struct PairingApprovalPrompt: View {
     let onDeny: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        ScrollView {
+            VStack(spacing: 16) {
+                header
+                factsCard
+            }
+            .padding(.horizontal)
+            .padding(.top, 4)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        // The theme surface, so every theme color is drawn on the background
+        // it was designed for, not the system sheet material.
+        .themedScrollSurface()
+        // Actions stay pinned under the scrolling body, so they are reachable
+        // whatever the detent or text size.
+        .safeAreaInset(edge: .bottom, spacing: 0) { actions }
+        .navigationTitle("Approve New Device?")
+        .navigationBarTitleDisplayMode(.inline)
+        // A container element, so the identifier does not replace the rows'.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("pairing.approval.prompt")
+    }
+
+    private var header: some View {
+        VStack(spacing: 2) {
+            Image(systemName: PairingApprovalPromptFormatting.deviceSymbol(presented.approval.deviceName))
+                .font(.system(size: 32))
+                .foregroundStyle(.themeBlue)
+                .padding(.bottom, 2)
+                .accessibilityHidden(true)
             Text(presented.approval.deviceName)
                 .font(.title2.bold())
+                .foregroundStyle(.themeFg)
+                .multilineTextAlignment(.center)
                 .accessibilityIdentifier("pairing.approval.deviceName")
+            Text("wants to pair with \(presented.serverName)")
+                .font(.subheadline)
+                .foregroundStyle(.themeFgDim)
+                .multilineTextAlignment(.center)
+                .accessibilityIdentifier("pairing.approval.server")
+        }
+        .frame(maxWidth: .infinity)
+    }
 
+    private var factsCard: some View {
+        VStack(spacing: 0) {
             factRow("Method", PairingApprovalPromptFormatting.method(presented.approval.method))
                 .accessibilityIdentifier("pairing.approval.method")
             if let source = PairingApprovalPromptFormatting.source(presented.approval.source) {
+                Divider()
                 factRow("Source", source)
                     .accessibilityIdentifier("pairing.approval.source")
             }
+            Divider()
             factRow("Requested", PairingApprovalPromptFormatting.timestamp(presented.approval.requestedAt))
                 .accessibilityIdentifier("pairing.approval.requested")
+            Divider()
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 factRow(
                     "Expires",
@@ -29,53 +72,97 @@ struct PairingApprovalPrompt: View {
                         now: context.date
                     )
                 )
+                .monospacedDigit()
                 .accessibilityIdentifier("pairing.approval.expiry")
             }
+        }
+        .padding(.horizontal)
+        .themedSurface(.opaqueCard, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
 
-            Text(presented.serverName)
-                .font(.footnote)
-                .foregroundStyle(.themeComment)
-
+    private var actions: some View {
+        VStack(spacing: 10) {
+            // Pinned with the buttons: in the medium detent the body can
+            // scroll, and a failure must not sit below the fold.
             if let errorMessage = presented.errorMessage, !errorMessage.isEmpty {
                 Text(errorMessage)
                     .font(.footnote)
                     .foregroundStyle(.themeRed)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
                     .accessibilityIdentifier("pairing.approval.error")
             }
+            Button {
+                onApprove()
+            } label: {
+                HStack(spacing: 8) {
+                    if presented.isBusy {
+                        ProgressView()
+                    }
+                    Text("Approve")
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.themeBlue)
+            .controlSize(.large)
+            .disabled(presented.isBusy)
+            .accessibilityIdentifier("pairing.approval.approve")
 
-            Spacer(minLength: 8)
-
-            Button("Approve") { onApprove() }
-                .buttonStyle(.borderedProminent)
-                .disabled(presented.isBusy)
-                .accessibilityIdentifier("pairing.approval.approve")
-            Button("Deny", role: .destructive) { onDeny() }
-                .disabled(presented.isBusy)
-                .accessibilityIdentifier("pairing.approval.deny")
+            Button(role: .destructive) {
+                onDeny()
+            } label: {
+                Text("Deny")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(.themeRed)
+            .controlSize(.large)
+            .disabled(presented.isBusy)
+            .accessibilityIdentifier("pairing.approval.deny")
         }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .navigationTitle("Approve New Device?")
-        .navigationBarTitleDisplayMode(.inline)
-        // A container element, so the identifier does not replace the rows'.
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("pairing.approval.prompt")
+        .padding(.horizontal)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+        // Opaque, so the body scrolls under the pinned actions instead of
+        // showing through the error text.
+        .background(.themeBg)
     }
 
     private func factRow(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.themeComment)
+        LabeledContent {
             Text(value)
-                .font(.body)
                 .foregroundStyle(.themeFg)
+        } label: {
+            Text(label)
+                .foregroundStyle(.themeComment)
         }
+        .padding(.vertical, 10)
     }
 }
 
 enum PairingApprovalPromptFormatting {
+    static func deviceSymbol(_ deviceName: String) -> String {
+        // Whole words only: "Camacho" and "Machine" are not Macs.
+        let words = deviceName.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+        if words.contains("ipad") { return "ipad" }
+        if words.contains("iphone") { return "iphone" }
+        if words.contains("macbook") { return "laptopcomputer" }
+        if words.contains("imac") { return "desktopcomputer" }
+        if let mac = words.firstIndex(of: "mac"), mac + 1 < words.count {
+            switch words[mac + 1] {
+            case "mini": return "macmini"
+            case "studio": return "macstudio"
+            case "pro": return "macpro.gen3"
+            default: break
+            }
+        }
+        return "ipad.and.iphone"
+    }
+
     static func method(_ raw: String) -> String {
         switch raw.lowercased() {
         case "invite": "Invite"
