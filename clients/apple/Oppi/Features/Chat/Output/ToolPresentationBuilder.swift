@@ -484,7 +484,8 @@ enum ToolPresentationBuilder {
             tool: tool, argsSummary: argsSummary, outputPreview: outputPreview,
             isError: isError, isDone: isDone, context: context, includeOutput: false
         )
-        guard isExpanded else { return (summary, nil) }
+        // The terminal branch ignores includeOutput, so the summary is already complete.
+        guard isExpanded, !summary.terminalOutput else { return (summary, nil) }
         if let plan = notebookCell(from: summary, details: context.details, isDone: isDone, isError: isError) {
             return (summary, plan)
         }
