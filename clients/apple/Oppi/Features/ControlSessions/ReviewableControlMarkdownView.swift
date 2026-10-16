@@ -352,7 +352,11 @@ struct ReviewableControlMarkdownView: View {
                 sessionId: draftSessionId
             )
         }
-        .sheet(isPresented: $showGuidedRevision, onDismiss: completeGuidedSessionHandoff) {
+        .routerModal(
+            isPresented: $showGuidedRevision,
+            presentation: .sheet.inNavigation(),
+            onDismiss: completeGuidedSessionHandoff
+        ) {
             GuidedControlSessionSheet(
                 domain: domain,
                 intent: .revise,
@@ -366,6 +370,9 @@ struct ReviewableControlMarkdownView: View {
                     showGuidedRevision = false
                 }
             )
+            // A skill file opens under its own server's scope, not
+            // necessarily the active one.
+            .withServerScopedEnvironment(connection)
         }
         .alert("Unable to Edit", isPresented: Binding(
             get: { error != nil },

@@ -112,16 +112,14 @@ struct McpServersView: View {
         }
         .refreshable { await refresh() }
         .task(id: coordinator.activeServerId) { await refresh() }
-        .sheet(isPresented: Binding(get: { model.signIn.showingSheet }, set: { model.signIn.showingSheet = $0 }), onDismiss: { signIn.sheetDismissed() }, content: {
-            if let attempt = signIn.attempt { McpSignInSheet(attempt: attempt, owner: signIn) }
-        })
+        .mcpSignInModal(signIn)
         .onChange(of: signIn.attempt?.flow.status) { _, status in
             if status?.isTerminal == true { Task { await refresh() } }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { signIn.attempt?.startPolling() } else { signIn.attempt?.stopPolling() }
         }
-        .sheet(item: $addContext) { context in
+        .routerModal(item: $addContext, presentation: .sheet.inNavigation()) { context in
             McpAddServerView(client: context.client, scope: context.scope, serverName: context.serverName) {
                 Task { await refresh() }
             }

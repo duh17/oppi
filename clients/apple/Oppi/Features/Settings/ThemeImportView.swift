@@ -66,7 +66,7 @@ struct ThemeImportView: View {
         }
         .refreshable { await loadThemes() }
         .task { await loadThemes() }
-        .sheet(item: $revisingTheme) { summary in
+        .routerModal(item: $revisingTheme, presentation: .sheet.inNavigation()) { summary in
             GuidedControlSessionSheet(
                 domain: .themes,
                 intent: .revise,

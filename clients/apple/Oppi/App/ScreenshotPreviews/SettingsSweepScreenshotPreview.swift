@@ -10,15 +10,23 @@ import SwiftUI
 /// `auto-title`, `theme-import`, `dictionary`, `dictionary-workspace`,
 /// `skills`, `skill-detail`, `extensions`, `extension-detail`,
 /// `agents-pi`, `workspace-create`, `workspace-create-configure`.
+/// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
+/// `agents-pi-file`, `schedules`, `skill-file-review`,
+/// `pairing-approval`, `onboarding-add-server`; `mcp`, `theme-import`, and
+/// `agents-pi` serve them too. `SCREENSHOT_SWEEP_SHOWS_WRITES=1` shows the
+/// last write the fixture server received (`settingsSweep.lastWrite`);
+/// `SCREENSHOT_SWEEP_WRITE_DELAY=<seconds>` holds each write's answer that long.
 /// `SCREENSHOT_COLOR_SCHEME=dark` selects the dark theme.
 struct SettingsSweepScreenshotPreview: View {
     private let coordinator: ConnectionCoordinator
     private let connection: ServerConnection
     private let server: PairedServer
     private let client: APIClient
-    @State private var navigation = AppNavigation()
     private let themeStore: ThemeStore
+    private let root: AppRootEnvironment
     private let page: String
+    private let showsWrites: Bool
+    @State private var writes = SettingsSweepWrites.shared
 
     private static let skills: [ServerSkillSummary] = [
         ServerSkillSummary(
@@ -88,6 +96,8 @@ struct SettingsSweepScreenshotPreview: View {
         ScreenshotVolatileDefaults.applyDarkTheme(environment["SCREENSHOT_COLOR_SCHEME"] == "dark")
         themeStore = ThemeStore()
         page = environment["SCREENSHOT_SWEEP_PAGE"] ?? "tailscale"
+        showsWrites = environment["SCREENSHOT_SWEEP_SHOWS_WRITES"] == "1"
+        SettingsSweepFixtureURLProtocol.writeDelay = environment["SCREENSHOT_SWEEP_WRITE_DELAY"].flatMap(Double.init) ?? 0
 
         let credentials = ServerCredentials(
             host: "mac-studio.tail1234.ts.net",
@@ -101,7 +111,7 @@ struct SettingsSweepScreenshotPreview: View {
         }
         self.server = server
 
-        Self.installFixtureRoutes()
+        Self.installFixtureRoutes(page: page)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [SettingsSweepFixtureURLProtocol.self]
         let client = APIClient(
@@ -124,11 +134,27 @@ struct SettingsSweepScreenshotPreview: View {
         coordinator.installPreviewConnection(connection, serverId: server.id)
         self.coordinator = coordinator
 
+        // The app root: router modals present with these services.
+        root = AppRootEnvironment(
+            coordinator: coordinator,
+            navigation: AppNavigation(),
+            themeStore: themeStore,
+            quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
+            composerDraftStore: ComposerDraftStore(),
+            chatReaderPayloadStore: ChatReaderPayloadStore(),
+            sessionRowDisplay: SessionRowDisplay()
+        )
+
         switch page {
         case "tailscale":
             Self.applyTailnetFixture()
         case "ssh-hosts":
             Self.seedSSHHosts()
+        case "agents":
+            // Enables Schedule Recurring Run on the agent detail.
+            connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace]
+        case "pairing-approval":
+            connection.pendingPairingApprovals = [Self.pendingApproval]
         default:
             break
         }
@@ -136,17 +162,20 @@ struct SettingsSweepScreenshotPreview: View {
 
     var body: some View {
         content
-            .environment(coordinator)
-            .environment(coordinator.serverStore)
-            .withServerScopedEnvironment(connection)
-            .environment(QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults))
-            .environment(navigation)
-            .environment(themeStore)
-            .environment(\.theme, themeStore.appTheme)
-            .environment(\.themeID, themeStore.activeThemeID)
-            .tint(.themeBlue)
+            .appRootEnvironment(root)
+            .publishesAppRootToWindow(root)
             .preferredColorScheme(themeStore.preferredColorScheme)
             .accessibilityIdentifier("screenshot.ready")
+            // After the ready identifier, which would replace this one.
+            .overlay(alignment: .bottomLeading) {
+                if showsWrites {
+                    Text(writes.lastWrite)
+                        .font(.caption2)
+                        .padding(4)
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("settingsSweep.lastWrite")
+                }
+            }
     }
 
     @ViewBuilder
@@ -158,6 +187,11 @@ struct SettingsSweepScreenshotPreview: View {
             WorkspaceCreateView(server: server)
         case "workspace-create-configure":
             WorkspaceCreateView(server: server, prefillName: "oppi", prefillPath: "~/workspace/oppi")
+        case "onboarding-add-server":
+            OnboardingView(mode: .addServer, previewCanScan: true)
+        case "pairing-approval":
+            Text("Pairing approval host")
+                .modifier(PairingApprovalPromptHost(root: root, controller: PairingApprovalController()))
         default:
             NavigationStack {
                 pushedPage
@@ -204,7 +238,19 @@ struct SettingsSweepScreenshotPreview: View {
         case "extensions": ServerExtensionsView()
         case "extension-detail":
             ServerExtensionDetailView(target: .init(serverId: server.id, kind: .extension, resourceId: "workflow"))
-        case "agents-pi": PiAgentDetailView()
+        case "agents-pi", "agents-pi-file": PiAgentDetailView()
+        case "agents": AgentManagementView()
+        case "schedules": ScheduleManagementView()
+        case "skill-file-review":
+            ReviewableControlMarkdownView(
+                fileContent: "# Release\n\nReview release readiness.",
+                domain: .skills,
+                targetId: "release",
+                targetName: "release",
+                sourceLabel: "release / SKILL.md",
+                sourcePath: "~/.pi/agent/skills/release/SKILL.md",
+                editFlow: .guidedRevision
+            )
         default: TailnetSettingsView(previewProbes: Self.tailnetProbes)
         }
     }
@@ -256,12 +302,75 @@ struct SettingsSweepScreenshotPreview: View {
         ScreenshotVolatileDefaults.apply(values)
     }
 
-    private static func installFixtureRoutes() {
+    private static let workspace = Workspace(
+        id: "preview-ws", name: "oppi-dev", createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1)
+    )
+
+    private static let pendingApproval = PendingPairingApproval(
+        id: "pa-preview", deviceName: "Chen's iPad", method: "invite", source: nil,
+        requestedAt: Int64(Date().timeIntervalSince1970 * 1_000),
+        expiresAt: Int64(Date().addingTimeInterval(600).timeIntervalSince1970 * 1_000),
+        keyThumbprint: "thumb"
+    )
+
+    private static let agent = StoredAgentDefinition(
+        id: "agent-design", name: "Design Reviewer", icon: .defaultValue, description: "Reviews UI changes.",
+        status: .active, version: 2,
+        definition: AgentDefinition(
+            name: "Design Reviewer",
+            instructions: AgentInstructions(text: "Review the change against the HIG.")
+        ),
+        createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1), archivedAt: nil
+    )
+
+    private static let schedule = AgentSchedule(
+        id: "schedule-nightly", name: "Nightly digest", status: .active,
+        trigger: .every(intervalMs: 3_600_000, timeZone: "America/Los_Angeles"),
+        action: .newSession(
+            workspaceId: "preview-ws", prompt: "Summarize yesterday's sessions.", agentId: nil,
+            model: nil, thinkingLevel: nil, worktreeId: nil, name: nil
+        ),
+        createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1), archivedAt: nil
+    )
+
+    private static func installFixtureRoutes(page: String) {
         let encoder = JSONEncoder()
         func json(_ value: some Encodable) -> Data { (try? encoder.encode(value)) ?? Data() }
 
         struct Themes: Encodable { let themes: [RemoteThemeSummary] }
         struct Models: Encodable { let models: [ModelInfo] }
+        struct Agents: Encodable { let agents: [AgentDefinitionSummary] }
+        struct AgentBody: Encodable { let agent: StoredAgentDefinition }
+        struct Schedules: Encodable { let schedules: [AgentScheduleSummary] }
+        struct ScheduleBody: Encodable { let schedule: AgentSchedule }
+        struct McpFlowBody: Encodable { let flow: McpAuthFlowSnapshot }
+
+        let agentSummary = AgentDefinitionSummary(
+            id: agent.id, name: agent.name, icon: agent.icon, description: agent.description,
+            status: agent.status, version: agent.version, createdAt: agent.createdAt,
+            updatedAt: agent.updatedAt, archivedAt: nil
+        )
+        let scheduleSummary = AgentScheduleSummary(
+            id: schedule.id, name: schedule.name, status: .active, trigger: schedule.trigger,
+            action: AgentScheduleActionSummary(
+                type: .newSession, workspaceId: "preview-ws", sessionId: nil, agentId: nil, promptChars: 31
+            ),
+            createdAt: schedule.createdAt, updatedAt: schedule.updatedAt, archivedAt: nil
+        )
+        let mcpFlow = McpAuthFlowSnapshot(
+            flowId: "mcp-flow", scopeId: McpScopeSnapshot.globalId, serverName: "github",
+            launchMode: .phoneBrowser, status: .awaitingManualCode,
+            auth: .init(url: "https://github.com/login/oauth", instructions: nil), error: nil,
+            createdAt: 1, updatedAt: 1, expiresAt: 9_999_999_999_999
+        )
+        let systemPrompt = page == "agents-pi-file"
+            ? PiSystemPromptSnapshot(
+                source: .file, path: "~/.pi/agent/SYSTEM.md",
+                resolvedPath: "/Users/preview/.pi/agent/SYSTEM.md", content: "# System\n\nYou are a coding agent."
+            )
+            : PiSystemPromptSnapshot(
+                source: .default, path: "~/.pi/agent/SYSTEM.md", resolvedPath: nil, content: "You are a coding agent."
+            )
 
         SettingsSweepFixtureURLProtocol.routes = [
             "/themes": json(Themes(themes: [
@@ -278,9 +387,7 @@ struct SettingsSweepScreenshotPreview: View {
             "/dictation/dictionary/global": Data(#"{"revision":3,"phrases":["Oppi","Tailscale","Herdr","Kypu","SwiftUI","Nerd Font Symbols Mono Extended Family Name That Is Long Enough To Wrap Past The Row"],"provider":"xai"}"#.utf8),
             "/dictation/dictionary/workspaces/preview-ws": Data(#"{"revision":1,"phrases":["oppi-dev","WorkspaceStore"],"provider":null}"#.utf8),
             "/mcp/scopes/global/servers": json(McpServersResponse(scope: mcpGlobal, activeSignIn: nil)),
-            "/server/resources/pi/system-prompt": json(PiSystemPromptSnapshot(
-                source: .default, path: "~/.pi/agent/SYSTEM.md", resolvedPath: nil, content: "You are a coding agent."
-            )),
+            "/server/resources/pi/system-prompt": json(systemPrompt),
             "/server/resources/pi/default-tools": json(PiDefaultToolsSnapshot(defaultTools: ["+codemode"])),
             "/server/resources/extensions": json(ServerExtensionCatalog(
                 extensions: extensions,
@@ -297,20 +404,64 @@ struct SettingsSweepScreenshotPreview: View {
                 contributedTools: ["workflow_run", "workflow_status"],
                 contributedCommands: ["/workflow"]
             )),
+            "/agents": json(Agents(agents: [agentSummary])),
+            "/agents/\(agent.id)": json(AgentBody(agent: agent)),
+            // The saved icon comes back different from the fixture's, so the
+            // detail visibly takes the server's answer.
+            "PATCH /agents/\(agent.id)": json(AgentBody(agent: {
+                var saved = agent
+                saved.icon = .emoji("🦊")
+                saved.definition.icon = .emoji("🦊")
+                return saved
+            }())),
+            "/schedules": json(Schedules(schedules: [scheduleSummary])),
+            "/schedules/\(schedule.id)": json(ScheduleBody(schedule: schedule)),
+            "/schedules/\(schedule.id)/runs": Data(#"{"runs":[]}"#.utf8),
+            "/servers/github/login": json(McpFlowBody(flow: mcpFlow)),
+            "/mcp/auth/flows/mcp-flow": json(McpFlowBody(flow: mcpFlow)),
+            "/mcp/auth/flows/mcp-flow/cancel": Data(#"{"flow":{"flowId":"mcp-flow","scopeId":"global","serverName":"github","launchMode":"phone_browser","status":"cancelled","createdAt":1,"updatedAt":2,"expiresAt":9999999999999}}"#.utf8),
         ]
     }
 }
 
-/// Answers `APIClient` requests from a fixed path → JSON table. Anything else is a 404.
+/// The last write (`POST`, `PUT`, `PATCH`, `DELETE`) the fixture server
+/// received, as `METHOD path {sorted JSON body}`.
+@MainActor @Observable
+final class SettingsSweepWrites {
+    static let shared = SettingsSweepWrites()
+    var lastWrite = "none"
+}
+
+/// Answers `APIClient` requests from a fixed path → JSON table, where a
+/// `"METHOD /path"` key answers that method first. Anything else is a 404.
 final class SettingsSweepFixtureURLProtocol: URLProtocol {
     nonisolated(unsafe) static var routes: [String: Data] = [:]
+    nonisolated(unsafe) static var writeDelay: TimeInterval = 0
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
+        guard let method = request.httpMethod, method != "GET" else {
+            answer()
+            return
+        }
+        let summary = "\(method) \(request.url?.path ?? "") \(Self.sortedJSONBody(of: request))"
+        Task { @MainActor in SettingsSweepWrites.shared.lastWrite = summary }
+        guard Self.writeDelay > 0 else {
+            answer()
+            return
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + Self.writeDelay) { [self] in
+            answer()
+        }
+    }
+
+    private func answer() {
         let path = request.url?.path ?? ""
-        let body = Self.routes.first { path.hasSuffix($0.key) }?.value
+        let methodPrefix = "\(request.httpMethod ?? "GET") "
+        let body = Self.routes.first { $0.key.hasPrefix(methodPrefix) && path.hasSuffix($0.key.dropFirst(methodPrefix.count)) }?.value
+            ?? Self.routes.first { $0.key.hasPrefix("/") && path.hasSuffix($0.key) }?.value
         let response = HTTPURLResponse(
             url: request.url ?? URL(fileURLWithPath: "/"),
             statusCode: body == nil ? 404 : 200,
@@ -325,5 +476,25 @@ final class SettingsSweepFixtureURLProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+
+    /// URLSession hands a protocol its body as a stream.
+    private static func sortedJSONBody(of request: URLRequest) -> String {
+        var data = request.httpBody ?? Data()
+        if data.isEmpty, let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                guard count > 0 else { break }
+                data.append(buffer, count: count)
+            }
+        }
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let sorted = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
+            return ""
+        }
+        return String(decoding: sorted, as: UTF8.self)
+    }
 }
 #endif

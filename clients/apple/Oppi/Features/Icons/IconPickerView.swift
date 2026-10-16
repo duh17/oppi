@@ -348,6 +348,30 @@ private struct SymbolSearchField: UIViewRepresentable {
     }
 }
 
+extension ModalPresentation {
+    /// How the router presents `UnifiedIconPickerView`, which keeps its own
+    /// navigation stack: full screen in compact width (iPhone), a large sheet
+    /// in compact height, otherwise a medium and large sheet with a grabber.
+    /// Same as the picker's own SwiftUI sheet modifiers, which a router
+    /// presentation does not read. Pass the presenting view's size classes.
+    ///
+    /// Full screen is `.overFullScreen`: the picker saves into its presenter,
+    /// and a presenter covered by `.fullScreen` left the window and dropped
+    /// the saved icon.
+    static func iconPicker(
+        horizontalSizeClass: UserInterfaceSizeClass?,
+        verticalSizeClass: UserInterfaceSizeClass?
+    ) -> ModalPresentation {
+        if horizontalSizeClass == .compact {
+            return ModalPresentation(style: .overFullScreen)
+        }
+        if verticalSizeClass == .compact {
+            return .sheet.detents([.large()], grabber: true)
+        }
+        return .sheet.detents([.medium(), .large()], grabber: true)
+    }
+}
+
 struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
     typealias ValuePreview = (Value, CGFloat) -> AnyView
     typealias GenmojiPreview = (Data, String, CGFloat) -> AnyView
@@ -491,6 +515,8 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
             }
             .interactiveDismissDisabled(model.isSaving)
         }
+        // SwiftUI sheet presenters only; router presenters use
+        // `ModalPresentation.iconPicker(horizontalSizeClass:verticalSizeClass:)`.
         .presentationDetents(usesExpandedPresentation ? [.large] : [.medium, .large])
         .presentationCompactAdaptation(.fullScreenCover)
         .presentationDragIndicator(.visible)

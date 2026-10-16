@@ -546,7 +546,7 @@ struct PiAgentDetailView: View {
                 selectionChangedAfterLoad: true
             )
         }
-        .sheet(isPresented: $isShowingSystemPromptSession) {
+        .routerModal(isPresented: $isShowingSystemPromptSession, presentation: .sheet.inNavigation()) {
             GuidedControlSessionSheet(
                 domain: .agents,
                 intent: .revise,
@@ -556,7 +556,7 @@ struct PiAgentDetailView: View {
                 placeholder: "Describe how Pi's global system prompt should change…"
             )
         }
-        .sheet(isPresented: $isShowingFilePromptReview) {
+        .routerModal(isPresented: $isShowingFilePromptReview) {
             if let prompt, let resolvedPath = prompt.resolvedPath {
                 ReviewableControlMarkdownView(
                     content: prompt.content,
@@ -568,7 +568,7 @@ struct PiAgentDetailView: View {
                 )
             }
         }
-        .fullScreenCover(isPresented: $isShowingDefaultPrompt) {
+        .routerModal(isPresented: $isShowingDefaultPrompt, presentation: .fullScreen) {
             EmbeddedFileViewerView(
                 content: .fromText(
                     prompt?.content ?? "",
@@ -779,6 +779,8 @@ private struct AgentDetailView: View {
     @Environment(ServerConnection.self) private var connection
     @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(AppNavigation.self) private var navigation
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     let agentId: String
     let onUpdated: (StoredAgentDefinition) -> Void
@@ -997,7 +999,15 @@ private struct AgentDetailView: View {
                 }
             }
         }
-        .sheet(isPresented: $isShowingIconPicker) {
+        .routerModal(
+            isPresented: $isShowingIconPicker,
+            presentation: .iconPicker(
+                horizontalSizeClass: horizontalSizeClass,
+                verticalSizeClass: verticalSizeClass
+            )
+        ) {
+            // The shared picker keeps its own navigation stack and dismiss()
+            // until the workspace icon pickers move to the router too.
             if let agent {
                 AgentIconPickerView(agent: agent) { updated in
                     self.agent = updated
@@ -1005,7 +1015,7 @@ private struct AgentDetailView: View {
                 }
             }
         }
-        .sheet(isPresented: $isShowingRevision) {
+        .routerModal(isPresented: $isShowingRevision, presentation: .sheet.inNavigation()) {
             if let agent {
                 GuidedControlSessionSheet(
                     domain: .agents,
@@ -1016,7 +1026,7 @@ private struct AgentDetailView: View {
                 )
             }
         }
-        .sheet(isPresented: $isShowingDefinitionReview) {
+        .routerModal(isPresented: $isShowingDefinitionReview) {
             if let agent {
                 ReviewableControlMarkdownView(
                     content: definitionMarkdown(agent),
@@ -1028,8 +1038,7 @@ private struct AgentDetailView: View {
                 )
             }
         }
-
-        .sheet(isPresented: $isShowingSchedule) {
+        .routerModal(isPresented: $isShowingSchedule, presentation: .sheet.inNavigation()) {
             if let agent {
                 GuidedControlSessionSheet(
                     domain: .schedules,

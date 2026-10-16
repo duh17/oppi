@@ -223,19 +223,21 @@ struct OnboardingView: View {
             Spacer()
         }
         .padding()
-        .sheet(isPresented: $showScanner) {
+        .routerModal(isPresented: $showScanner) {
             QRScannerView { credentials in
                 showScanner = false
                 startPairing(credentials)
             }
         }
-        .sheet(isPresented: $showManualEntry) {
+        .routerModal(isPresented: $showManualEntry, presentation: .sheet.inNavigation()) {
             ManualEntryView { credentials in
                 showManualEntry = false
                 startPairing(credentials)
             }
         }
         .routerModal(isPresented: $showTailscale) {
+            // Keeps its own stack until Tailscale settings push through the
+            // router: its peer rows are navigation links.
             NavigationStack {
                 TailnetSettingsView(onPaired: completeTailscalePairing)
                     .toolbar {
@@ -365,56 +367,55 @@ private enum ConnectionTestState {
 
 // MARK: - Manual Entry
 
+/// Presented by the router in a navigation controller.
 struct ManualEntryView: View {
     let onConnect: (ServerCredentials) -> Void
 
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
     @State private var host = ""
     @State private var port = "7749"
     @State private var token = ""
     @State private var name = ""
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("Server") {
-                    LabeledContent("Scheme", value: "HTTPS")
-                    TextField("Host (e.g. my-mac.local)", text: $host)
-                        .textContentType(.URL)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                    TextField("Port", text: $port)
-                        .keyboardType(.numberPad)
-                }
-                Section("Authentication") {
-                    SecureField("Token", text: $token)
-                        .textContentType(.password)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    TextField("Name", text: $name)
-                }
+        Form {
+            Section("Server") {
+                LabeledContent("Scheme", value: "HTTPS")
+                TextField("Host (e.g. my-mac.local)", text: $host)
+                    .textContentType(.URL)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                TextField("Port", text: $port)
+                    .keyboardType(.numberPad)
             }
-            .themedListSurface()
-            .navigationTitle("Connect Manually")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(role: .cancel) { dismiss() }
+            Section("Authentication") {
+                SecureField("Token", text: $token)
+                    .textContentType(.password)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                TextField("Name", text: $name)
+            }
+        }
+        .themedListSurface()
+        .navigationTitle("Connect Manually")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(role: .cancel) { navigator.finish() }
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(role: .confirm) {
+                    let creds = ServerCredentials(
+                        host: host,
+                        port: Int(port) ?? 7749,
+                        token: token,
+                        name: name,
+                        scheme: .https
+                    )
+                    onConnect(creds)
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(role: .confirm) {
-                        let creds = ServerCredentials(
-                            host: host,
-                            port: Int(port) ?? 7749,
-                            token: token,
-                            name: name,
-                            scheme: .https
-                        )
-                        onConnect(creds)
-                    }
-                    .disabled(host.isEmpty || token.isEmpty)
-                    .accessibilityLabel("Connect")
-                }
+                .disabled(host.isEmpty || token.isEmpty)
+                .accessibilityLabel("Connect")
             }
         }
     }

@@ -1,64 +1,65 @@
 import SwiftUI
 
 /// Native prompt for a pending pairing approval on an already-paired device.
+/// Presented by the router in a navigation controller.
 struct PairingApprovalPrompt: View {
     let presented: PairingApprovalController.Presented
     let onApprove: () -> Void
     let onDeny: () -> Void
 
     var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 16) {
-                Text(presented.approval.deviceName)
-                    .font(.title2.bold())
-                    .accessibilityIdentifier("pairing.approval.deviceName")
+        VStack(alignment: .leading, spacing: 16) {
+            Text(presented.approval.deviceName)
+                .font(.title2.bold())
+                .accessibilityIdentifier("pairing.approval.deviceName")
 
-                factRow("Method", PairingApprovalPromptFormatting.method(presented.approval.method))
-                    .accessibilityIdentifier("pairing.approval.method")
-                if let source = PairingApprovalPromptFormatting.source(presented.approval.source) {
-                    factRow("Source", source)
-                        .accessibilityIdentifier("pairing.approval.source")
-                }
-                factRow("Requested", PairingApprovalPromptFormatting.timestamp(presented.approval.requestedAt))
-                    .accessibilityIdentifier("pairing.approval.requested")
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    factRow(
-                        "Expires",
-                        PairingApprovalPromptFormatting.expiry(
-                            presented.approval.expiresAt,
-                            now: context.date
-                        )
-                    )
-                    .accessibilityIdentifier("pairing.approval.expiry")
-                }
-
-                Text(presented.serverName)
-                    .font(.footnote)
-                    .foregroundStyle(.themeComment)
-
-                if let errorMessage = presented.errorMessage, !errorMessage.isEmpty {
-                    Text(errorMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.themeRed)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier("pairing.approval.error")
-                }
-
-                Spacer(minLength: 8)
-
-                Button("Approve") { onApprove() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(presented.isBusy)
-                    .accessibilityIdentifier("pairing.approval.approve")
-                Button("Deny", role: .destructive) { onDeny() }
-                    .disabled(presented.isBusy)
-                    .accessibilityIdentifier("pairing.approval.deny")
+            factRow("Method", PairingApprovalPromptFormatting.method(presented.approval.method))
+                .accessibilityIdentifier("pairing.approval.method")
+            if let source = PairingApprovalPromptFormatting.source(presented.approval.source) {
+                factRow("Source", source)
+                    .accessibilityIdentifier("pairing.approval.source")
             }
-            .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .navigationTitle("Approve New Device?")
-            .navigationBarTitleDisplayMode(.inline)
+            factRow("Requested", PairingApprovalPromptFormatting.timestamp(presented.approval.requestedAt))
+                .accessibilityIdentifier("pairing.approval.requested")
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                factRow(
+                    "Expires",
+                    PairingApprovalPromptFormatting.expiry(
+                        presented.approval.expiresAt,
+                        now: context.date
+                    )
+                )
+                .accessibilityIdentifier("pairing.approval.expiry")
+            }
+
+            Text(presented.serverName)
+                .font(.footnote)
+                .foregroundStyle(.themeComment)
+
+            if let errorMessage = presented.errorMessage, !errorMessage.isEmpty {
+                Text(errorMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.themeRed)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("pairing.approval.error")
+            }
+
+            Spacer(minLength: 8)
+
+            Button("Approve") { onApprove() }
+                .buttonStyle(.borderedProminent)
+                .disabled(presented.isBusy)
+                .accessibilityIdentifier("pairing.approval.approve")
+            Button("Deny", role: .destructive) { onDeny() }
+                .disabled(presented.isBusy)
+                .accessibilityIdentifier("pairing.approval.deny")
         }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .navigationTitle("Approve New Device?")
+        .navigationBarTitleDisplayMode(.inline)
+        // A container element, so the identifier does not replace the rows'.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("pairing.approval.prompt")
     }
 
@@ -107,20 +108,27 @@ enum PairingApprovalPromptFormatting {
 }
 
 struct PairingApprovalPromptHost: ViewModifier {
-    let coordinator: ConnectionCoordinator
+    /// The host sits outside the root view that applies the app root, so it
+    /// takes the root itself for the router.
+    let root: AppRootEnvironment
     @Environment(\.scenePhase) private var scenePhase
     var controller: PairingApprovalController = .shared
 
+    private var coordinator: ConnectionCoordinator { root.coordinator }
+
     func body(content: Content) -> some View {
         content
-            .sheet(isPresented: Binding(
-                get: { controller.presented != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        controller.dismiss(snooze: true)
+            .routerModal(
+                isPresented: Binding(
+                    get: { controller.presented != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            controller.dismiss(snooze: true)
+                        }
                     }
-                }
-            )) {
+                ),
+                presentation: .sheet.detents([.medium(), .large()]).inNavigation()
+            ) {
                 if let presented = controller.presented {
                     PairingApprovalPrompt(
                         presented: presented,
@@ -138,10 +146,10 @@ struct PairingApprovalPromptHost: ViewModifier {
                             Task { await controller.deny(coordinator: coordinator) }
                         }
                     )
-                    .presentationDetents([.medium, .large])
                     .interactiveDismissDisabled(presented.isBusy)
                 }
             }
+            .environment(\.appRootEnvironment, root)
             .onAppear {
                 controller.sync(coordinator: coordinator)
             }

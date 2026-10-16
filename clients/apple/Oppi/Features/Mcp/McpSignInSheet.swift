@@ -12,57 +12,73 @@ struct McpSignInSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section(attempt.providerName) {
-                    LabeledContent("Host", value: attempt.serverName)
-                    LabeledContent("Status", value: ProviderAuthFlowPresentation.statusText(attempt.flow.status))
-                }
-                if !attempt.isSettled, owner.callbackAccepted || attempt.isSubmitting {
-                    Section { ProgressView("Finishing sign-in on the host…") }
-                } else if !attempt.isSettled, let auth = attempt.flow.auth {
-                    Section {
-                        if let url = ProviderAuthFlowPresentation.signInURL(auth.url) {
-                            Link("Open Sign-In Page in Safari", destination: url)
-                                .accessibilityIdentifier("mcp.auth.open")
-                        }
-                        TextField("Paste full callback URL", text: $attempt.input)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            .keyboardType(.URL).submitLabel(.go)
-                            .focused($callbackFocused)
-                            .onSubmit(submit)
-                            .accessibilityIdentifier("mcp.auth.callback")
-                        Button("Submit Callback", action: submit)
-                            .disabled(!owner.canSubmitCallback)
-                            .accessibilityIdentifier("mcp.auth.submit")
-                    } header: {
-                        Text("Sign In")
-                    } footer: {
-                        Text("After approval, Safari may fail to load 127.0.0.1. Copy its full callback URL and paste it below. You can also complete sign-in using a browser on the host.")
-                    }
-                } else if !attempt.isSettled { ProgressView("Preparing sign-in…") }
-                if let error = attempt.flow.error { Text(error).foregroundStyle(.themeRed) }
-                if let error = attempt.actionError { Text(error).foregroundStyle(.themeRed) }
-                if let error = attempt.refreshError { Text(error).foregroundStyle(.themeOrange) }
-                if attempt.isGone { Text("The host no longer has this flow. Start a new sign-in.") }
-                Section {
-                    if attempt.isSettled { Button("Done") { owner.showingSheet = false } } else {
-                        Button("Cancel Sign-In", role: .destructive) { Task { await owner.cancel() } }
-                            .disabled(attempt.isCancelling)
-                    }
-                }
+        List {
+            Section(attempt.providerName) {
+                LabeledContent("Host", value: attempt.serverName)
+                LabeledContent("Status", value: ProviderAuthFlowPresentation.statusText(attempt.flow.status))
             }
-            .settingsPage("Sign In")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button(role: .close) { owner.showingSheet = false } }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
+            if !attempt.isSettled, owner.callbackAccepted || attempt.isSubmitting {
+                Section { ProgressView("Finishing sign-in on the host…") }
+            } else if !attempt.isSettled, let auth = attempt.flow.auth {
+                Section {
+                    if let url = ProviderAuthFlowPresentation.signInURL(auth.url) {
+                        Link("Open Sign-In Page in Safari", destination: url)
+                            .accessibilityIdentifier("mcp.auth.open")
+                    }
+                    TextField("Paste full callback URL", text: $attempt.input)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .keyboardType(.URL).submitLabel(.go)
+                        .focused($callbackFocused)
+                        .onSubmit(submit)
+                        .accessibilityIdentifier("mcp.auth.callback")
                     Button("Submit Callback", action: submit)
                         .disabled(!owner.canSubmitCallback)
-                        .accessibilityIdentifier("mcp.auth.submit.keyboard")
+                        .accessibilityIdentifier("mcp.auth.submit")
+                } header: {
+                    Text("Sign In")
+                } footer: {
+                    Text("After approval, Safari may fail to load 127.0.0.1. Copy its full callback URL and paste it below. You can also complete sign-in using a browser on the host.")
+                }
+            } else if !attempt.isSettled { ProgressView("Preparing sign-in…") }
+            if let error = attempt.flow.error { Text(error).foregroundStyle(.themeRed) }
+            if let error = attempt.actionError { Text(error).foregroundStyle(.themeRed) }
+            if let error = attempt.refreshError { Text(error).foregroundStyle(.themeOrange) }
+            if attempt.isGone { Text("The host no longer has this flow. Start a new sign-in.") }
+            Section {
+                if attempt.isSettled { Button("Done") { owner.showingSheet = false } } else {
+                    Button("Cancel Sign-In", role: .destructive) { Task { await owner.cancel() } }
+                        .disabled(attempt.isCancelling)
                 }
             }
         }
+        .settingsPage("Sign In")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button(role: .close) { owner.showingSheet = false } }
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Submit Callback", action: submit)
+                    .disabled(!owner.canSubmitCallback)
+                    .accessibilityIdentifier("mcp.auth.submit.keyboard")
+            }
+        }
         .interactiveDismissDisabled(attempt.isCancelling)
+    }
+}
+
+extension View {
+    /// The sign-in sheet for `owner`'s attempt, in a router navigation
+    /// controller. The list and each server detail it pushes both declare it:
+    /// a router modal presents only from a view in the window, and sign-in
+    /// starts on the detail, which covers the list.
+    func mcpSignInModal(_ owner: McpSignInOwner) -> some View {
+        routerModal(
+            isPresented: Binding(get: { owner.showingSheet }, set: { owner.showingSheet = $0 }),
+            presentation: .sheet.inNavigation(),
+            onDismiss: { owner.sheetDismissed() }
+        ) {
+            if let attempt = owner.attempt {
+                McpSignInSheet(attempt: attempt, owner: owner)
+            }
+        }
     }
 }

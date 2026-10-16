@@ -113,6 +113,7 @@ struct McpServerDetailView: View {
         }
         .settingsPage(entry.name)
         .refreshable { await refresh() }
+        .mcpSignInModal(signIn)
         .confirmationDialog("Remove \(entry.name) from \(scope.title)?", isPresented: $confirmingRemove, titleVisibility: .visible) {
             Button("Remove Server", role: .destructive) {
                 busy = true

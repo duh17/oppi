@@ -7,7 +7,7 @@ struct McpAddServerView: View {
     let scope: McpScopeSnapshot
     let serverName: String
     let onAdded: () -> Void
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
     @State private var mode = "url"
     @State private var name = ""
     @State private var url = ""
@@ -26,88 +26,86 @@ struct McpAddServerView: View {
         "Use ${NAME} references instead of literal secrets. For example: API_KEY=${TOOLS_KEY}, or Authorization=Bearer ${TOKEN}. Values are resolved on the host; literal values are redacted when read back."
 
     var body: some View {
-        NavigationStack {
-            List {
+        List {
+            Section {
+                LabeledContent("Host", value: serverName)
+                TextField("Server name", text: $name)
+                    .accessibilityIdentifier("mcp.add.name")
+                LabeledContent("Scope", value: scope.title)
+                    .accessibilityIdentifier("mcp.add.scope")
+                Picker("Transport", selection: $mode) {
+                    Text("HTTP").tag("url")
+                    Text("stdio").tag("command")
+                }.pickerStyle(.segmented)
+                    .accessibilityIdentifier("mcp.add.transport")
+                Picker("Exposure", selection: $exposure) {
+                    ForEach(McpExposure.allCases, id: \.self) { option in
+                        Text(option.title).tag(option)
+                    }
+                }.pickerStyle(.menu)
+            } header: {
+                Text("Configuration")
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(exposure.explanation)
+                    if let trust = scope.projectTrust {
+                        Text("Saved to this workspace\u{2019}s .pi/mcp.json. Project trust: \(trust.title.lowercased()).")
+                    }
+                }
+            }
+            if mode == "url" {
                 Section {
-                    LabeledContent("Host", value: serverName)
-                    TextField("Server name", text: $name)
-                        .accessibilityIdentifier("mcp.add.name")
-                    LabeledContent("Scope", value: scope.title)
-                        .accessibilityIdentifier("mcp.add.scope")
-                    Picker("Transport", selection: $mode) {
-                        Text("HTTP").tag("url")
-                        Text("stdio").tag("command")
-                    }.pickerStyle(.segmented)
-                        .accessibilityIdentifier("mcp.add.transport")
-                    Picker("Exposure", selection: $exposure) {
-                        ForEach(McpExposure.allCases, id: \.self) { option in
-                            Text(option.title).tag(option)
-                        }
-                    }.pickerStyle(.menu)
+                    TextField("https://example.com/mcp", text: $url).keyboardType(.URL)
+                        .accessibilityIdentifier("mcp.add.url")
+                    TextField("Headers: one KEY=VALUE per line", text: $pairs, axis: .vertical)
+                        .lineLimit(3...8)
                 } header: {
-                    Text("Configuration")
+                    Text("Streamable HTTP")
+                } footer: {
+                    Text(Self.secretReferenceFooter)
+                }
+                Section("Optional OAuth Client") {
+                    TextField("Client ID", text: $clientId)
+                    TextField("Client secret reference: ${NAME}", text: $clientSecret)
+                    TextField("Callback port (automatic if empty)", text: $callbackPort)
+                        .keyboardType(.numberPad)
+                }
+            } else {
+                Section {
+                    TextField("Executable (not a shell command)", text: $command)
+                        .accessibilityIdentifier("mcp.add.command")
+                    TextField("Arguments: one per line (no secrets)", text: $arguments, axis: .vertical)
+                        .lineLimit(3...8)
+                    TextField("Working directory (optional)", text: $cwd)
+                    TextField("Environment: one KEY=VALUE per line", text: $pairs, axis: .vertical)
+                        .lineLimit(3...8)
+                } header: {
+                    Text("Standard Input / Output")
                 } footer: {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(exposure.explanation)
-                        if let trust = scope.projectTrust {
-                            Text("Saved to this workspace\u{2019}s .pi/mcp.json. Project trust: \(trust.title.lowercased()).")
-                        }
-                    }
-                }
-                if mode == "url" {
-                    Section {
-                        TextField("https://example.com/mcp", text: $url).keyboardType(.URL)
-                            .accessibilityIdentifier("mcp.add.url")
-                        TextField("Headers: one KEY=VALUE per line", text: $pairs, axis: .vertical)
-                            .lineLimit(3...8)
-                    } header: {
-                        Text("Streamable HTTP")
-                    } footer: {
                         Text(Self.secretReferenceFooter)
-                    }
-                    Section("Optional OAuth Client") {
-                        TextField("Client ID", text: $clientId)
-                        TextField("Client secret reference: ${NAME}", text: $clientSecret)
-                        TextField("Callback port (automatic if empty)", text: $callbackPort)
-                            .keyboardType(.numberPad)
-                    }
-                } else {
-                    Section {
-                        TextField("Executable (not a shell command)", text: $command)
-                            .accessibilityIdentifier("mcp.add.command")
-                        TextField("Arguments: one per line (no secrets)", text: $arguments, axis: .vertical)
-                            .lineLimit(3...8)
-                        TextField("Working directory (optional)", text: $cwd)
-                        TextField("Environment: one KEY=VALUE per line", text: $pairs, axis: .vertical)
-                            .lineLimit(3...8)
-                    } header: {
-                        Text("Standard Input / Output")
-                    } footer: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(Self.secretReferenceFooter)
-                            Text("Adding a command authorizes Pi to run it on the host when the scope is trusted and the server is enabled.")
-                                .foregroundStyle(.themeOrange)
-                        }
+                        Text("Adding a command authorizes Pi to run it on the host when the scope is trusted and the server is enabled.")
+                            .foregroundStyle(.themeOrange)
                     }
                 }
-                if let error { Section { Text(error).foregroundStyle(.themeRed) } }
-                if saving { Section { ProgressView("Adding server…") } }
             }
-            .textInputAutocapitalization(.never).autocorrectionDisabled()
-            .disabled(saving)
-            .settingsPage("Add MCP Server")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button(role: .cancel) { dismiss() }.disabled(saving) }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(role: .confirm) { add() }
-                        .disabled(saving || name.isEmpty || (mode == "url" ? url.isEmpty : command.isEmpty))
-                        .accessibilityLabel("Add")
-                        .accessibilityIdentifier("mcp.add.save")
-                }
-            }
-            .interactiveDismissDisabled(saving)
-            .onChange(of: mode) { _, _ in pairs = "" }
+            if let error { Section { Text(error).foregroundStyle(.themeRed) } }
+            if saving { Section { ProgressView("Adding server…") } }
         }
+        .textInputAutocapitalization(.never).autocorrectionDisabled()
+        .disabled(saving)
+        .settingsPage("Add MCP Server")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button(role: .cancel) { navigator.finish() }.disabled(saving) }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(role: .confirm) { add() }
+                    .disabled(saving || name.isEmpty || (mode == "url" ? url.isEmpty : command.isEmpty))
+                    .accessibilityLabel("Add")
+                    .accessibilityIdentifier("mcp.add.save")
+            }
+        }
+        .interactiveDismissDisabled(saving)
+        .onChange(of: mode) { _, _ in pairs = "" }
     }
 
     private func add() {
@@ -142,7 +140,7 @@ struct McpAddServerView: View {
             saving = true; error = nil
             Task {
                 defer { saving = false }
-                do { try await client.addMcpServer(scopeId: scope.id, input); onAdded(); dismiss() } catch { self.error = error.localizedDescription }
+                do { try await client.addMcpServer(scopeId: scope.id, input); onAdded(); navigator.finish() } catch { self.error = error.localizedDescription }
             }
         }
     }

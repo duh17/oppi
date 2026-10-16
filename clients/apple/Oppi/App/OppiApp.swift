@@ -656,7 +656,7 @@ struct OppiApp: App {
                     _ = await handleIncomingFileLink(payload)
                 }
             }
-            .modifier(PairingApprovalPromptHost(coordinator: coordinator))
+            .modifier(PairingApprovalPromptHost(root: appRoot))
             .overlay {
                 if let expiresAt = invitePairingWaitExpiresAt {
                     WaitingForPairingApprovalView(

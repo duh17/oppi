@@ -494,6 +494,7 @@ final class RouterModalPresenter {
     private var screen: HostedScreenController?
     private var presentedID: AnyHashable?
     private var presentationCount = 0
+    private var presentationScheduled = false
 
     func sync() {
         if let screen {
@@ -510,8 +511,21 @@ final class RouterModalPresenter {
             Router.dismiss(container)
             return
         }
-        guard let request, let anchor, anchor.viewIfLoaded?.window != nil else { return }
+        guard request != nil, anchor?.viewIfLoaded?.window != nil, !presentationScheduled else { return }
+        // Present after the presenter's SwiftUI update, not inside it. A
+        // hosting controller created during that update joined the
+        // presenter's graph: its title and bar items moved into the
+        // presenter's `NavigationStack` bar and its own bar stayed empty.
+        presentationScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.presentationScheduled = false
+            self.presentRequest()
+        }
+    }
 
+    private func presentRequest() {
+        guard screen == nil, let request, let anchor, anchor.viewIfLoaded?.window != nil else { return }
         presentationCount += 1
         let count = presentationCount
         screen = Router.present(

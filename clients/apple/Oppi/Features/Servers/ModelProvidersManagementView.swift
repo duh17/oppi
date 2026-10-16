@@ -356,10 +356,14 @@ struct ModelProvidersManagementView: View {
         } message: { provider in
             Text("This removes the server's saved key or sign-in for \(provider.name). You will need to sign in again to use it.")
         }
-        .sheet(isPresented: $isFlowSheetPresented, onDismiss: handleFlowSheetDismissed) {
+        .routerModal(
+            isPresented: $isFlowSheetPresented,
+            presentation: .sheet.inNavigation(),
+            onDismiss: handleFlowSheetDismissed
+        ) {
             providerFlowSheet
         }
-        .sheet(item: $apiKeyEditorProvider) { provider in
+        .routerModal(item: $apiKeyEditorProvider, presentation: .sheet.inNavigation()) { provider in
             apiKeyEditorSheet(provider: provider)
         }
     }
@@ -611,191 +615,187 @@ struct ModelProvidersManagementView: View {
 
     @ViewBuilder
     private var providerFlowSheet: some View {
-        NavigationStack {
-            List {
-                if let attempt = flowAttempt {
-                    let flow = attempt.flow
-                    let isBusy = attempt.isCancelling || attempt.isSubmitting
-                    Section("Provider") {
-                        LabeledContent("Provider", value: attempt.providerName)
-                        LabeledContent(
-                            "Status",
-                            value: attempt.isGone
-                                ? "No longer on the server"
-                                : ProviderAuthFlowPresentation.statusText(flow.status)
-                        )
-                        if attempt.serverId != pairedServer.id {
-                            LabeledContent("Server", value: attempt.serverName)
+        List {
+            if let attempt = flowAttempt {
+                let flow = attempt.flow
+                let isBusy = attempt.isCancelling || attempt.isSubmitting
+                Section("Provider") {
+                    LabeledContent("Provider", value: attempt.providerName)
+                    LabeledContent(
+                        "Status",
+                        value: attempt.isGone
+                            ? "No longer on the server"
+                            : ProviderAuthFlowPresentation.statusText(flow.status)
+                    )
+                    if attempt.serverId != pairedServer.id {
+                        LabeledContent("Server", value: attempt.serverName)
+                    }
+                }
+
+                if let auth = flow.auth {
+                    Section("Sign In") {
+                        if let url = ProviderAuthFlowPresentation.signInURL(auth.url) {
+                            Link(destination: url) {
+                                Label("Open sign-in page on iPhone", systemImage: "safari")
+                            }
+                        } else {
+                            Text("This sign-in link cannot be opened on iPhone.")
+                                .font(.footnote)
+                                .foregroundStyle(.themeComment)
+                        }
+
+                        if let instructions = auth.instructions, !instructions.isEmpty {
+                            Text(instructions)
+                                .font(.footnote)
                         }
                     }
+                }
 
-                    if let auth = flow.auth {
-                        Section("Sign In") {
-                            if let url = ProviderAuthFlowPresentation.signInURL(auth.url) {
-                                Link(destination: url) {
-                                    Label("Open sign-in page on iPhone", systemImage: "safari")
+                if flow.status == .awaitingPrompt, let prompt = flow.prompt {
+                    Section(prompt.message) {
+                        if let options = prompt.options, !options.isEmpty {
+                            ForEach(options) { option in
+                                Button(option.label) {
+                                    Task { await attempt.submitPromptResponse(option.id) }
                                 }
-                            } else {
-                                Text("This sign-in link cannot be opened on iPhone.")
-                                    .font(.footnote)
-                                    .foregroundStyle(.themeComment)
+                                .disabled(isBusy)
                             }
-
-                            if let instructions = auth.instructions, !instructions.isEmpty {
-                                Text(instructions)
-                                    .font(.footnote)
-                            }
-                        }
-                    }
-
-                    if flow.status == .awaitingPrompt, let prompt = flow.prompt {
-                        Section(prompt.message) {
-                            if let options = prompt.options, !options.isEmpty {
-                                ForEach(options) { option in
-                                    Button(option.label) {
-                                        Task { await attempt.submitPromptResponse(option.id) }
-                                    }
-                                    .disabled(isBusy)
-                                }
-                            } else {
-                                TextField(prompt.placeholder ?? "Enter response", text: Bindable(attempt).input)
-                                    .textInputAutocapitalization(.never)
-                                    .autocorrectionDisabled()
-                                    .disabled(isBusy)
-
-                                Button("Submit") {
-                                    let value = attempt.input
-                                    Task { await attempt.submitPromptResponse(value) }
-                                }
-                                .disabled(isBusy || (attempt.input.isEmpty && prompt.allowEmpty != true))
-                            }
-                        }
-                    }
-
-                    if flow.status == .awaitingManualCode {
-                        Section("Manual Code Input") {
-                            TextField("Paste authorization code or redirect URL", text: Bindable(attempt).input)
+                        } else {
+                            TextField(prompt.placeholder ?? "Enter response", text: Bindable(attempt).input)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                                 .disabled(isBusy)
 
                             Button("Submit") {
-                                Task { await attempt.submitManualCode() }
+                                let value = attempt.input
+                                Task { await attempt.submitPromptResponse(value) }
                             }
-                            .disabled(
-                                isBusy ||
-                                    attempt.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            )
-                        }
-                    }
-
-                    if let progress = flow.lastProgress, !progress.isEmpty {
-                        Section("Progress") {
-                            Text(progress)
-                                .font(.footnote)
-                        }
-                    }
-
-                    if let error = flow.error, !error.isEmpty {
-                        Section {
-                            Text(error)
-                                .foregroundStyle(.themeRed)
-                        } header: {
-                            Text("Error")
-                        }
-                    }
-
-                    if attempt.isGone {
-                        Section {
-                            Text("The server no longer has this sign-in attempt. It may have expired or the server restarted.")
-                                .font(.footnote)
-                        }
-                    }
-
-                    if let refreshError = attempt.refreshError, !attempt.isSettled {
-                        Section {
-                            Text(refreshError)
-                                .font(.footnote)
-                                .foregroundStyle(.themeOrange)
-                        }
-                    }
-
-                    if let actionError = attempt.actionError, !actionError.isEmpty {
-                        Section {
-                            Text(actionError)
-                                .foregroundStyle(.themeRed)
-                        }
-                    }
-
-                    Section {
-                        if attempt.isSettled {
-                            Button("Done") {
-                                closeFlowSheet()
-                            }
-                        } else {
-                            Button(role: .destructive) {
-                                cancelFlowAttempt(attempt)
-                            } label: {
-                                if attempt.isCancelling {
-                                    HStack(spacing: 8) {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                        Text("Cancelling…")
-                                    }
-                                } else {
-                                    Text("Cancel Sign-In")
-                                }
-                            }
-                            .disabled(attempt.isCancelling)
+                            .disabled(isBusy || (attempt.input.isEmpty && prompt.allowEmpty != true))
                         }
                     }
                 }
+
+                if flow.status == .awaitingManualCode {
+                    Section("Manual Code Input") {
+                        TextField("Paste authorization code or redirect URL", text: Bindable(attempt).input)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .disabled(isBusy)
+
+                        Button("Submit") {
+                            Task { await attempt.submitManualCode() }
+                        }
+                        .disabled(
+                            isBusy ||
+                                attempt.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        )
+                    }
+                }
+
+                if let progress = flow.lastProgress, !progress.isEmpty {
+                    Section("Progress") {
+                        Text(progress)
+                            .font(.footnote)
+                    }
+                }
+
+                if let error = flow.error, !error.isEmpty {
+                    Section {
+                        Text(error)
+                            .foregroundStyle(.themeRed)
+                    } header: {
+                        Text("Error")
+                    }
+                }
+
+                if attempt.isGone {
+                    Section {
+                        Text("The server no longer has this sign-in attempt. It may have expired or the server restarted.")
+                            .font(.footnote)
+                    }
+                }
+
+                if let refreshError = attempt.refreshError, !attempt.isSettled {
+                    Section {
+                        Text(refreshError)
+                            .font(.footnote)
+                            .foregroundStyle(.themeOrange)
+                    }
+                }
+
+                if let actionError = attempt.actionError, !actionError.isEmpty {
+                    Section {
+                        Text(actionError)
+                            .foregroundStyle(.themeRed)
+                    }
+                }
+
+                Section {
+                    if attempt.isSettled {
+                        Button("Done") {
+                            closeFlowSheet()
+                        }
+                    } else {
+                        Button(role: .destructive) {
+                            cancelFlowAttempt(attempt)
+                        } label: {
+                            if attempt.isCancelling {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("Cancelling…")
+                                }
+                            } else {
+                                Text("Cancel Sign-In")
+                            }
+                        }
+                        .disabled(attempt.isCancelling)
+                    }
+                }
             }
-            .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
-            .themedListSurface()
-            .navigationTitle(flowAttempt.map { "Sign in to \($0.providerName)" } ?? "Provider Sign In")
-            .navigationBarTitleDisplayMode(.inline)
         }
+        .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
+        .themedListSurface()
+        .navigationTitle(flowAttempt.map { "Sign in to \($0.providerName)" } ?? "Provider Sign In")
+        .navigationBarTitleDisplayMode(.inline)
         .interactiveDismissDisabled(flowAttempt?.isCancelling ?? false)
     }
 
     @ViewBuilder
     private func apiKeyEditorSheet(provider: ProviderAuthProviderStatus) -> some View {
-        NavigationStack {
-            Form {
-                Section("Provider") {
-                    HStack(spacing: 12) {
-                        ProviderIcon(provider: provider.id, size: 16)
-                        Text(provider.name)
-                    }
-                }
-
-                Section("API Key") {
-                    SecureField("Paste API key", text: $apiKeyDraft)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-
-                    Text("The key is sent directly to your server over the existing Oppi connection and saved there.")
-                        .font(.footnote)
-                        .foregroundStyle(.themeComment)
+        Form {
+            Section("Provider") {
+                HStack(spacing: 12) {
+                    ProviderIcon(provider: provider.id, size: 16)
+                    Text(provider.name)
                 }
             }
-            .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
-            .navigationTitle("Set API Key")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        apiKeyEditorProvider = nil
-                    }
-                }
 
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        saveAPIKey(provider: provider)
-                    }
-                    .disabled(apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Section("API Key") {
+                SecureField("Paste API key", text: $apiKeyDraft)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                Text("The key is sent directly to your server over the existing Oppi connection and saved there.")
+                    .font(.footnote)
+                    .foregroundStyle(.themeComment)
+            }
+        }
+        .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
+        .navigationTitle("Set API Key")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") {
+                    apiKeyEditorProvider = nil
                 }
+            }
+
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") {
+                    saveAPIKey(provider: provider)
+                }
+                .disabled(apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
     }

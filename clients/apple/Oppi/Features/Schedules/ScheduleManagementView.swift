@@ -427,7 +427,7 @@ private struct ScheduleDetailView: View {
                 }
             }
         }
-        .sheet(isPresented: $showRevision) {
+        .routerModal(isPresented: $showRevision, presentation: .sheet.inNavigation()) {
             if let schedule {
                 GuidedControlSessionSheet(
                     domain: .schedules,
@@ -438,7 +438,7 @@ private struct ScheduleDetailView: View {
                 )
             }
         }
-        .sheet(isPresented: $showPromptReader) {
+        .routerModal(isPresented: $showPromptReader) {
             if let schedule {
                 ReviewableControlMarkdownView(
                     content: prompt(in: schedule.action),

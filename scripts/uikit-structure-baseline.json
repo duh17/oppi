@@ -374,8 +374,6 @@
     "clients/apple/Oppi/Features/Agents/AgentManagementView.swift": {
       "NavigationLink": 2,
       ".navigationDestination(": 1,
-      ".sheet(": 6,
-      ".fullScreenCover(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Agents/AgentNativeEditView.swift": {
@@ -603,12 +601,9 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/ControlSessions/GuidedControlSessionComposer.swift": {
-      "NavigationStack": 1,
-      ".sheet(": 2,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/ControlSessions/ReviewableControlMarkdownView.swift": {
-      ".sheet(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Extensions/ServerExtensionDetailView.swift": {
@@ -647,7 +642,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Mcp/McpAddServerView.swift": {
-      "NavigationStack": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Mcp/McpServerDetailView.swift": {
@@ -655,19 +649,16 @@
     },
     "clients/apple/Oppi/Features/Mcp/McpServersView.swift": {
       "NavigationLink": 1,
-      ".sheet(": 2,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Mcp/McpSignInOwner.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Mcp/McpSignInSheet.swift": {
-      "NavigationStack": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Onboarding/OnboardingView.swift": {
-      "NavigationStack": 2,
-      ".sheet(": 2,
+      "NavigationStack": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Onboarding/QRScannerView.swift": {
@@ -749,7 +740,6 @@
     },
     "clients/apple/Oppi/Features/Schedules/ScheduleManagementView.swift": {
       ".navigationDestination(": 1,
-      ".sheet(": 2,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Schedules/ScheduleNativeEditView.swift": {
@@ -782,17 +772,14 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Servers/ModelProvidersManagementView.swift": {
-      "NavigationStack": 4,
+      "NavigationStack": 2,
       ".navigationDestination(": 1,
-      ".sheet(": 2,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Servers/ModelProvidersView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Servers/PairingApprovalPrompt.swift": {
-      "NavigationStack": 1,
-      ".sheet(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Servers/ServerAboutPage.swift": {
@@ -885,7 +872,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/ThemeImportView.swift": {
-      ".sheet(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Skills/ServerCatalogServerRow.swift": {

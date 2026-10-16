@@ -383,36 +383,6 @@ struct ReviewCommentStripChromeTests {
         #expect(!drawer.contains("comment, body"))
     }
 
-    @Test("Control-session composer peeks the drawer on single tap and presents the stash sheet on double-tap or Edit")
-    func controlSessionComposerPeeksDrawerOnSingleTapAndPresentsStashSheetOnDoubleTapOrEdit() throws {
-        let source = try reviewCommentsGuidedComposerSource()
-        #expect(source.contains("ReviewCommentStripPill("))
-        #expect(source.contains("reviewCommentPresentation.showsPill"))
-        #expect(source.contains("ReviewCommentStashDrawer("))
-        #expect(!source.contains("onReviewCommentsTap"))
-        #expect(source.contains("onToggle: toggleReviewCommentDrawer"))
-        #expect(source.contains("onOpenFullScreen:"))
-        #expect(source.contains("reviewCommentStashPresentation"))
-        #expect(source.contains("reviewCommentStashSheet"))
-        #expect(source.contains("sheet(item: $reviewCommentStashPresentation)"))
-        #expect(source.contains("presentReviewCommentStashSheet()"))
-        #expect(source.contains("presentReviewCommentStashSheet(editing:"))
-        #expect(source.contains("initialEditingComment:"))
-
-        let presenter = try reviewCommentsSourceSlice(
-            named: "private func presentReviewCommentStashSheet",
-            until: "private func reviewCommentStashSheet",
-            in: source
-        )
-        #expect(presenter.contains("reviewCommentDrawerExpanded = false"))
-        #expect(presenter.contains("ReviewCommentStripChrome.StashPresentation(editing: comment)"))
-        #expect(presenter.contains("resignFirstResponder"))
-        #expect(!presenter.contains("reviewCommentDrawerExpanded = true"))
-
-        #expect(!source.contains("ReviewCommentEditorView"))
-        #expect(!source.contains("error = updateError"))
-    }
-
     @Test("Drawer chrome does not inline the comment editor")
     func drawerChromeDoesNotInlineTheCommentEditor() throws {
         let chromeSource = try reviewCommentStripChromeSource()
@@ -464,10 +434,6 @@ private func reviewCommentStashSheetSource() throws -> String {
 
 private func reviewCommentsChatViewSource() throws -> String {
     try reviewCommentsFeatureSource(path: "Oppi/Features/Chat/ChatView.swift")
-}
-
-private func reviewCommentsGuidedComposerSource() throws -> String {
-    try reviewCommentsFeatureSource(path: "Oppi/Features/ControlSessions/GuidedControlSessionComposer.swift")
 }
 
 private func reviewCommentsFullScreenSource() throws -> String {

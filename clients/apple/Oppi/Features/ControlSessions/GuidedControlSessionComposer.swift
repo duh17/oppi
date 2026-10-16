@@ -325,10 +325,14 @@ struct GuidedControlSessionComposer: View {
             }
         }
         .padding(.top, 8)
-        .sheet(isPresented: $showModelPicker) {
+        .routerModal(isPresented: $showModelPicker) {
+            // The picker keeps its own navigation stack; it gets this
+            // composer's server explicitly.
             ModelPickerSheet(currentModel: effectiveModelId, onSelect: selectModel)
+                .environment(\.apiClient, apiClient)
+                .environment(chatState)
         }
-        .sheet(item: $reviewCommentStashPresentation) { presentation in
+        .routerModal(item: $reviewCommentStashPresentation) { presentation in
             reviewCommentStashSheet(presentation)
         }
         .onChange(of: reviewCommentPresentation.showsPill) { _, visible in
@@ -622,8 +626,10 @@ struct GuidedControlSessionComposer: View {
     }
 }
 
+/// Presented by the router in a navigation controller
+/// (`ModalPresentation.inNavigation()`).
 struct GuidedControlSessionSheet: View {
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
     @Environment(AppNavigation.self) private var navigation
 
     let domain: ControlSessionDomain
@@ -638,44 +644,42 @@ struct GuidedControlSessionSheet: View {
     var onSessionPrepared: ((WorkspaceSessionNavTarget) -> Void)?
 
     var body: some View {
-        NavigationStack {
-            ContentUnavailableView(
-                title,
-                systemImage: domainSystemImage,
-                description: Text("Describe the outcome you want. Oppi will inspect the current definition and clarify anything ambiguous before changing it.")
-            )
-            .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
-            .themedListSurface()
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(role: .cancel) { dismiss() }
-                }
+        ContentUnavailableView(
+            title,
+            systemImage: domainSystemImage,
+            description: Text("Describe the outcome you want. Oppi will inspect the current definition and clarify anything ambiguous before changing it.")
+        )
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .themedListSurface()
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(role: .cancel) { navigator.finish() }
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                GuidedControlSessionComposer(
-                    domain: domain,
-                    intent: intent,
-                    targetId: targetId,
-                    targetName: targetName,
-                    targetPath: targetPath,
-                    initialRequest: initialRequest,
-                    allowsEmptyRequest: allowsEmptyRequest,
-                    placeholder: placeholder,
-                    stagedComments: stagedComments,
-                    onSessionPrepared: { target in
-                        if let onSessionPrepared {
-                            onSessionPrepared(target)
-                        } else {
-                            dismiss()
-                            Task { @MainActor in
-                                await Task.yield()
-                                navigation.openWorkspaceSession(target)
-                            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            GuidedControlSessionComposer(
+                domain: domain,
+                intent: intent,
+                targetId: targetId,
+                targetName: targetName,
+                targetPath: targetPath,
+                initialRequest: initialRequest,
+                allowsEmptyRequest: allowsEmptyRequest,
+                placeholder: placeholder,
+                stagedComments: stagedComments,
+                onSessionPrepared: { target in
+                    if let onSessionPrepared {
+                        onSessionPrepared(target)
+                    } else {
+                        navigator.finish()
+                        Task { @MainActor in
+                            await Task.yield()
+                            navigation.openWorkspaceSession(target)
                         }
                     }
-                )
-            }
+                }
+            )
         }
     }
 

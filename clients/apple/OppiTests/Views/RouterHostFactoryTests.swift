@@ -160,6 +160,62 @@ struct RouterHostFactoryTests {
         })
     }
 
+    /// Every presenter sits in a SwiftUI `NavigationStack` until the app shell
+    /// moves to UIKit. A modal presented during that stack's update put its
+    /// title and Cancel into the stack's bar and left its own bar empty.
+    @Test("a routerModal declared in a SwiftUI NavigationStack keeps its title and bar items in its own bar")
+    func routerModalFromNavigationStackKeepsItsBar() async throws {
+        let state = RouteState()
+        let presenter = HostFactory.screen(root: makeTestAppRoot()) {
+            NavigationStack { StackPresenterScreen(state: state) }
+        }
+        let window = try showInWindow(presenter)
+        defer { hide(window) }
+
+        state.showsSheet = true
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            isSettled(presenter.presentedViewController)
+        })
+        let navigation = try #require(presenter.presentedViewController as? RouterNavigationController)
+        let modal = try #require(navigation.topViewController)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            modal.navigationItem.title == "Modal Title"
+        })
+        let item = modal.navigationItem
+        let barItems = (item.leftBarButtonItems ?? []) + (item.rightBarButtonItems ?? [])
+            + (item.leadingItemGroups + item.trailingItemGroups).flatMap(\.barButtonItems)
+        #expect(!barItems.isEmpty, "The modal's Cancel belongs in its own bar")
+        #expect(stackItemTitles(in: presenter.view.window).allSatisfy { $0 != "Modal Title" })
+    }
+
+    /// UIKit reads the lock from the presented controller, which is the
+    /// navigation container, not the hosted screen that asked for it.
+    @Test("interactiveDismissDisabled locks a sheet in a navigation controller only while it is set")
+    func interactiveDismissDisabledLocksNavigationSheet() async throws {
+        let state = RouteState()
+        let presenter = HostFactory.screen(root: makeTestAppRoot()) {
+            LockingSheetScreen(state: state)
+        }
+        let window = try showInWindow(presenter)
+        defer { hide(window) }
+
+        state.showsSheet = true
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            isSettled(presenter.presentedViewController)
+        })
+        let navigation = try #require(presenter.presentedViewController as? RouterNavigationController)
+        #expect(!navigation.isModalInPresentation)
+
+        state.locked = true
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            navigation.isModalInPresentation
+        })
+        state.locked = false
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            !navigation.isModalInPresentation
+        })
+    }
+
     @Test("a repeated disappearance runs onDismiss once and leaves a newer presentation alone")
     func repeatedDisappearanceRunsOnDismissOnce() async throws {
         let state = RouteState()
@@ -338,6 +394,8 @@ private struct RouteItem: Identifiable {
 @MainActor @Observable
 private final class RouteState {
     var showsPopover = false
+    var showsSheet = false
+    var locked = false
     var item: RouteItem?
     var query = ""
 }
@@ -390,6 +448,47 @@ private struct ModalScreen: View {
                 Text("Modal \(item.id)")
             }
     }
+}
+
+private struct StackPresenterScreen: View {
+    @Bindable var state: RouteState
+
+    var body: some View {
+        Text("Presenter")
+            .navigationTitle("Presenter Title")
+            .routerModal(isPresented: $state.showsSheet, presentation: .sheet.inNavigation()) {
+                Text("Modal")
+                    .navigationTitle("Modal Title")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel") {}
+                        }
+                    }
+            }
+    }
+}
+
+private struct LockingSheetScreen: View {
+    @Bindable var state: RouteState
+
+    var body: some View {
+        Text("Presenter")
+            .routerModal(isPresented: $state.showsSheet, presentation: .sheet.inNavigation()) {
+                Text("Saving")
+                    .interactiveDismissDisabled(state.locked)
+            }
+    }
+}
+
+/// Titles of every navigation item shown by the window's navigation bars,
+/// outside presented controllers.
+@MainActor
+private func stackItemTitles(in window: UIWindow?) -> [String] {
+    func bars(in view: UIView) -> [UINavigationBar] {
+        view.subviews.flatMap { ($0 as? UINavigationBar).map { [$0] } ?? bars(in: $0) }
+    }
+    guard let root = window?.rootViewController?.view else { return [] }
+    return bars(in: root).flatMap { $0.items ?? [] }.compactMap(\.title)
 }
 
 private struct SearchingScreen: View {
