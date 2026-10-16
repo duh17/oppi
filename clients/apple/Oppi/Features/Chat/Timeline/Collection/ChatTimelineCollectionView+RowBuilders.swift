@@ -303,15 +303,11 @@ extension ChatTimelineCollectionHost.Controller {
             totalBytes: outputBytes > 0 ? outputBytes : nil, display: toolArgsStore?.display(for: itemID),
             outputPresentation: toolArgsStore?.outputPresentation(for: itemID), outputAvailability: toolArgsStore?.outputAvailability(for: itemID),
             terminalResolved: false)
-        var inspection = ToolContentDescriptorBuilder.inspect(tool: tool, argsSummary: argsSummary,
-            outputPreview: outputPreview, isError: isError, isDone: isDone,
-            context: inspectContext, includeOutput: false)
-        if isExpanded,
-           ToolPresentationBuilder.notebookCell(from: inspection, details: details, isDone: isDone, isError: isError) == nil {
-            inspection = ToolContentDescriptorBuilder.inspect(tool: tool, argsSummary: argsSummary,
-                outputPreview: outputPreview, isError: isError, isDone: isDone,
-                context: inspectContext, includeOutput: true)
-        }
+        let resolved = ToolPresentationBuilder.resolveInspection(
+            tool: tool, argsSummary: argsSummary, outputPreview: outputPreview,
+            isError: isError, isDone: isDone, isExpanded: isExpanded, context: inspectContext
+        )
+        let inspection = resolved.inspection
         let hasCanonicalAudioDetails = inspection.audioOutput
         let hasLifecycleVoicePresentation = audioLifecycleCoordinator.map {
             $0.presentation.timelinePresentation(for: itemID) != .hidden
@@ -343,7 +339,8 @@ extension ChatTimelineCollectionHost.Controller {
             isError: isError,
             isDone: isDone,
             details: details,
-            inspection: inspection
+            inspection: inspection,
+            notebook: resolved.notebook
         )
     }
 
@@ -400,6 +397,7 @@ extension ChatTimelineCollectionHost.Controller {
         isDone: Bool,
         details: JSONValue?,
         inspection: ToolInspection,
+        notebook: NotebookCellPlan? = nil,
         card: TraceEventPresentation? = nil
     ) -> ToolTimelineRowConfiguration {
         var context = ToolPresentationBuilder.Context(
@@ -422,6 +420,7 @@ extension ChatTimelineCollectionHost.Controller {
         )
 
         context.inspection = inspection
+        context.notebook = notebook
         context.display = inspection.display
         context.outputAvailability = inspection.availability
         let interactionCtx = self.interactionContext

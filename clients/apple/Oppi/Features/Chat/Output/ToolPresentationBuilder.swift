@@ -22,6 +22,9 @@ enum ToolPresentationBuilder {
         var outputPresentation: ToolOutputPresentation? = nil
         var outputAvailability: ToolOutputAvailability? = nil
         var inspection: ToolInspection? = nil
+        /// Carried from `resolveInspection` so an expanded notebook redraw
+        /// does not run `NotebookCellPlan.make` a second time.
+        var notebook: NotebookCellPlan? = nil
         let expandedItemIDs: Set<String>
         let fullOutput: String
         let isLoadingOutput: Bool
@@ -67,15 +70,23 @@ enum ToolPresentationBuilder {
     ) -> ToolTimelineRowConfiguration {
         let isExpanded = context.expandedItemIDs.contains(itemID)
 
-        let inspection = context.inspection ?? resolvedInspection(
-            tool: tool,
-            argsSummary: argsSummary,
-            outputPreview: outputPreview,
-            isError: isError,
-            isDone: isDone,
-            isExpanded: isExpanded,
-            context: context
-        )
+        let inspection: ToolInspection
+        var notebook = context.notebook
+        if let provided = context.inspection {
+            inspection = provided
+        } else {
+            let resolved = resolveInspection(
+                tool: tool,
+                argsSummary: argsSummary,
+                outputPreview: outputPreview,
+                isError: isError,
+                isDone: isDone,
+                isExpanded: isExpanded,
+                context: descriptorContext(from: context)
+            )
+            inspection = resolved.inspection
+            notebook = resolved.notebook
+        }
         let isInteractive = inspection.isInteractive
         let isTerminal = inspection.terminalOutput
         let file = inspection.file
@@ -103,7 +114,12 @@ enum ToolPresentationBuilder {
         // Expanded presentation
         let expanded: ExpandedPresentation
         if isExpanded || isVoicePresentationResult {
-            expanded = buildExpanded(inspection, isDone: isDone, isError: isError, details: context.details)
+            expanded = buildExpanded(
+                inspection,
+                notebook: notebook ?? notebookCell(
+                    from: inspection, details: context.details, isDone: isDone, isError: isError
+                )
+            )
         } else {
             expanded = ExpandedPresentation()
         }
@@ -453,70 +469,47 @@ enum ToolPresentationBuilder {
         )
     }
 
-    private static func resolvedInspection(
+    /// Inspect without output first; build the generic document only when no
+    /// notebook cell applies. Returns the cell plan so `make` runs once.
+    static func resolveInspection(
         tool: String,
         argsSummary: String,
         outputPreview: String,
         isError: Bool,
         isDone: Bool,
         isExpanded: Bool,
-        context: Context
-    ) -> ToolInspection {
-        let summary = inspect(
-            tool: tool,
-            argsSummary: argsSummary,
-            outputPreview: outputPreview,
-            isError: isError,
-            isDone: isDone,
-            context: context,
-            includeOutput: false
+        context: ToolContentDescriptorBuilder.Context
+    ) -> (inspection: ToolInspection, notebook: NotebookCellPlan?) {
+        let summary = ToolContentDescriptorBuilder.inspect(
+            tool: tool, argsSummary: argsSummary, outputPreview: outputPreview,
+            isError: isError, isDone: isDone, context: context, includeOutput: false
         )
-        if isExpanded, notebookCell(from: summary, details: context.details, isDone: isDone, isError: isError) == nil {
-            return inspect(
-                tool: tool,
-                argsSummary: argsSummary,
-                outputPreview: outputPreview,
-                isError: isError,
-                isDone: isDone,
-                context: context,
-                includeOutput: true
-            )
+        guard isExpanded else { return (summary, nil) }
+        if let plan = notebookCell(from: summary, details: context.details, isDone: isDone, isError: isError) {
+            return (summary, plan)
         }
-        return summary
+        let full = ToolContentDescriptorBuilder.inspect(
+            tool: tool, argsSummary: argsSummary, outputPreview: outputPreview,
+            isError: isError, isDone: isDone, context: context, includeOutput: true
+        )
+        return (full, nil)
     }
 
-    private static func inspect(
-        tool: String,
-        argsSummary: String,
-        outputPreview: String,
-        isError: Bool,
-        isDone: Bool,
-        context: Context,
-        includeOutput: Bool
-    ) -> ToolInspection {
-        ToolContentDescriptorBuilder.inspect(
-            tool: tool, argsSummary: argsSummary, outputPreview: outputPreview,
-            isError: isError, isDone: isDone,
-            context: .init(
-                args: context.args, details: context.details, fullOutput: context.fullOutput,
-                isLoadingOutput: context.isLoadingOutput, inputPresentation: context.inputPresentation,
-                nestedCalls: context.nestedCalls, previewOnly: context.previewOnly,
-                totalBytes: context.totalBytes, display: context.display,
-                outputPresentation: context.outputPresentation, outputAvailability: context.outputAvailability
-            ),
-            includeOutput: includeOutput
+    private static func descriptorContext(from context: Context) -> ToolContentDescriptorBuilder.Context {
+        .init(
+            args: context.args, details: context.details, fullOutput: context.fullOutput,
+            isLoadingOutput: context.isLoadingOutput, inputPresentation: context.inputPresentation,
+            nestedCalls: context.nestedCalls, previewOnly: context.previewOnly,
+            totalBytes: context.totalBytes, display: context.display,
+            outputPresentation: context.outputPresentation, outputAvailability: context.outputAvailability
         )
     }
 
     private static func buildExpanded(
         _ inspection: ToolInspection,
-        isDone: Bool,
-        isError: Bool,
-        details: JSONValue?
+        notebook: NotebookCellPlan?
     ) -> ExpandedPresentation {
-        if let notebook = notebookCell(
-            from: inspection, details: details, isDone: isDone, isError: isError
-        ) {
+        if let notebook {
             return ExpandedPresentation(
                 content: .notebook(notebook),
                 copyCommandText: inspection.copyCommandText,
