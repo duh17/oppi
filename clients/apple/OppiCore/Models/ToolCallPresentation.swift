@@ -128,6 +128,11 @@ struct NestedToolCalls: Codable, Equatable, Sendable {
     var calls: [NestedToolCallRecord]
     var complete: Bool
 
+    /// Document and cell both paint this many recorded calls.
+    static let displayLimit = 256
+    /// Shown when the producer marked the list incomplete.
+    static let incompleteNote = "Some calls not recorded."
+
     /// "3 calls · 1 failed · 1 running": one line for the collapsed row and the Calls section.
     /// Statuses are open strings; anything but ok/error/running is only counted as a call.
     var summary: String {
@@ -137,5 +142,32 @@ struct NestedToolCalls: Codable, Equatable, Sendable {
         if failed > 0 { parts.append("\(failed) failed") }
         if running > 0 { parts.append("\(running) running") }
         return parts.joined(separator: " · ")
+    }
+}
+
+extension NestedToolCallRecord {
+    var displayName: String {
+        display?.label(fallback: name) ?? name
+    }
+
+    var durationText: String? {
+        durationMs.map { milliseconds in
+            milliseconds < 1000
+                ? "\(Int(milliseconds)) ms"
+                : String(format: "%.1f s", locale: Locale(identifier: "en_US_POSIX"), milliseconds / 1000)
+        }
+    }
+
+    /// Failure line shared by the markdown document and the notebook cell.
+    /// A non-empty error (whitespace-only included) is shown so Mac document
+    /// bytes stay identical to the previous `!error.isEmpty` rule. Newlines
+    /// become spaces; length is capped at 240.
+    var errorLine: String? {
+        guard status == "error", let error, !error.isEmpty else { return nil }
+        return Self.clip(error.replacingOccurrences(of: "\n", with: " "), 240)
+    }
+
+    private static func clip(_ text: String, _ cap: Int) -> String {
+        text.count > cap ? String(text.prefix(cap - 1)) + "…" : text
     }
 }

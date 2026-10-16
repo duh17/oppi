@@ -11,9 +11,8 @@ enum ToolCallDocumentBuilder {
         let input = (toolName.map { "**Tool**\n\n" + inlineCode($0) + "\n\n" } ?? "") + input(args ?? [:], hints: hints)
         if !input.isEmpty { sections.append(("Input", input)) }
         if let nestedCalls { sections.append(("Calls", calls(nestedCalls))) }
-        let availability = previewOnly && !rawOutput.isEmpty
-            ? "Output preview only" + (totalBytes.map { " (\(rawOutput.utf8.count) of \($0) bytes)" } ?? "") + ". Full output may be unavailable for a stopped session.\n\n"
-            : ""
+        let availability = previewNote(output: rawOutput, previewOnly: previewOnly, totalBytes: totalBytes)
+            .map { $0 + "\n\n" } ?? ""
         let body = availability + outputBody(output, details: details)
         if !body.isEmpty { sections.append(("Output", body)) }
         else if !isDone && !sections.isEmpty { sections.append(("Output", "Waiting for output…")) }
@@ -64,30 +63,30 @@ enum ToolCallDocumentBuilder {
         return blocks.joined(separator: "\n\n")
     }
 
-    private static let callLimit = 256
-
     /// A summary line, then one tight list item per call: status glyph, title, duration, with
     /// arguments and a failure's error on following lines of the same paragraph (hard breaks),
     /// so a phone-width title never wraps around inline code and the error stays under its call.
     private static func calls(_ nested: NestedToolCalls) -> String {
-        let items = nested.calls.prefix(callLimit).map { call in
+        let items = nested.calls.prefix(NestedToolCalls.displayLimit).map { call in
             let mark = call.status == "ok" ? "✓" : call.status == "error" ? "✗" : "…"
             let args = call.arguments.map { OrderedJSON.from(.object($0)).json() }
                 ?? call.argumentsBytes.map { "[\($0) bytes]" } ?? ""
-            var head = "- \(mark) **\(inline(call.display?.label(fallback: call.name) ?? call.name))**"
-            if let ms = call.durationMs {
-                head += " · " + (ms < 1000 ? "\(Int(ms)) ms" : String(format: "%.1f s", locale: Locale(identifier: "en_US_POSIX"), ms / 1000))
+            var head = "- \(mark) **\(inline(call.displayName))**"
+            if let duration = call.durationText {
+                head += " · " + duration
             }
             var item = head
             if !args.isEmpty { item += "  \n  " + inlineCode(clipped(args, cap: 120)) }
-            if call.status == "error", let error = call.error, !error.isEmpty {
-                item += "  \n  ✗ " + inline(clipped(error.replacingOccurrences(of: "\n", with: " "), cap: 240))
+            if let error = call.errorLine {
+                item += "  \n  ✗ " + inline(error)
             }
             return item
         }
         var blocks = ["**" + nested.summary + "**", items.joined(separator: "\n")]
-        if nested.calls.count > callLimit { blocks.append("\(nested.calls.count - callLimit) more calls. See Raw for all of them.") }
-        if !nested.complete { blocks.append("Some calls not recorded.") }
+        if nested.calls.count > NestedToolCalls.displayLimit {
+            blocks.append("\(nested.calls.count - NestedToolCalls.displayLimit) more calls. See Raw for all of them.")
+        }
+        if !nested.complete { blocks.append(NestedToolCalls.incompleteNote) }
         return blocks.joined(separator: "\n\n")
     }
 

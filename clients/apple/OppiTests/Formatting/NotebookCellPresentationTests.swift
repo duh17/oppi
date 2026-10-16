@@ -134,6 +134,45 @@ struct NotebookCellPresentationTests {
         #expect(unchanged.output == .stdout("Script completed early"))
     }
 
+    @Test func previewCaptionCountsRawBytesIncludingTheStatusHeader() {
+        let header = ToolOutputPresentation(
+            kind: "structured",
+            statusHeader: "Script (completed|failed)\\nWall time [0-9.]+ seconds\\nOutput:\\n\\n?"
+        )
+        let raw = "Script completed\nWall time 1.6 seconds\nOutput:\n\ntags: 14"
+        let config = expanded(
+            tool: "script",
+            args: ["code": .string("text(1)")],
+            output: raw,
+            hints: codeHints(),
+            previewOnly: true,
+            totalBytes: 10_000,
+            outputPresentation: header
+        )
+        guard case .notebook(let plan) = config.expandedContent else {
+            Issue.record("Code-role input paints a notebook cell")
+            return
+        }
+        #expect(plan.availabilityNote == "Output preview only (\(raw.utf8.count) of 10000 bytes). Full output may be unavailable for a stopped session.")
+        #expect(plan.output == .stdout("tags: 14"))
+
+        let headerOnly = expanded(
+            tool: "script",
+            args: ["code": .string("text(1)")],
+            output: "Script completed\nWall time 1.6 seconds\nOutput:\n\n",
+            hints: codeHints(),
+            previewOnly: true,
+            totalBytes: 500,
+            outputPresentation: header
+        )
+        guard case .notebook(let captioned) = headerOnly.expandedContent else {
+            Issue.record("A header-only preview still captions")
+            return
+        }
+        #expect(captioned.availabilityNote?.contains("Output preview only") == true)
+        #expect(captioned.output == .none)
+    }
+
     @Test func callArgumentsReadAsValuesNotJSON() throws {
         let config = expanded(
             tool: "script",

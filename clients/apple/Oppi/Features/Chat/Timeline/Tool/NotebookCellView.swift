@@ -349,7 +349,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
         let profile = StreamingRenderPolicy.ContentProfile.from(text: code)
         let tier = StreamingRenderPolicy.tier(
             isStreaming: false,
-            contentKind: .code(language: .known),
+            contentKind: .code(language: ToolRowCodeRenderStrategy.languageCategory(for: language)),
             byteCount: profile.byteCount,
             lineCount: profile.lineCount,
             maxLineByteCount: profile.maxLineByteCount,
@@ -522,7 +522,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
             section.addArrangedSubview(caption("+\(hidden) more \(hidden == 1 ? "call" : "calls")", color: palette.fgDim))
         }
         if plan.callsIncomplete {
-            section.addArrangedSubview(caption("Some calls not recorded.", color: palette.fgDim))
+            section.addArrangedSubview(caption(NestedToolCalls.incompleteNote, color: palette.fgDim))
         }
         return section
     }

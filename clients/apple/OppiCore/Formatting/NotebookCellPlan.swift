@@ -86,7 +86,7 @@ struct NotebookCellPlan: Equatable, Hashable, Sendable {
         // The status preamble repeats the row's status and duration.
         let body = outputPresentation?.hidingStatusHeader(in: output) ?? output
         let recorded = calls?.calls ?? []
-        let shown = recorded.prefix(256)
+        let shown = recorded.prefix(NestedToolCalls.displayLimit)
         let plan = NotebookCellPlan(
             sources: sources.map {
                 Source(label: labeled ? $0.label : nil, language: $0.language, code: $0.code)
@@ -101,7 +101,7 @@ struct NotebookCellPlan: Equatable, Hashable, Sendable {
                 detailsAreRedundant: !isDone || !recorded.isEmpty
             ),
             availabilityNote: ToolCallDocumentBuilder.previewNote(
-                output: body, previewOnly: previewOnly, totalBytes: totalBytes
+                output: output, previewOnly: previewOnly, totalBytes: totalBytes
             ),
             running: !isDone,
             failed: isError
@@ -198,16 +198,12 @@ struct NotebookCellPlan: Equatable, Hashable, Sendable {
         } else {
             arguments = nil
         }
-        let error = record.status == "error" ? record.error.flatMap { error in
-            let trimmed = error.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : clip(trimmed.replacingOccurrences(of: "\n", with: " "), 240)
-        } : nil
         return Call(
-            name: record.display?.label(fallback: record.name) ?? record.name,
+            name: record.displayName,
             status: record.status,
-            duration: record.durationMs.map(duration),
+            duration: record.durationText,
             arguments: arguments,
-            error: error
+            error: record.errorLine
         )
     }
 
@@ -224,10 +220,6 @@ struct NotebookCellPlan: Equatable, Hashable, Sendable {
         }
         let text = present.map { $0.key + ": " + flat($0.value) }.joined(separator: "  ")
         return text.isEmpty ? nil : text
-    }
-
-    private static func duration(_ ms: Double) -> String {
-        ms < 1000 ? "\(Int(ms)) ms" : String(format: "%.1f s", locale: Locale(identifier: "en_US_POSIX"), ms / 1000)
     }
 
     /// Printed text stays printed, the way a notebook shows stdout. Only a
