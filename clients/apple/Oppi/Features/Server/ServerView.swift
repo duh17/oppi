@@ -397,6 +397,7 @@ private struct ServerMetricsControllerHost: UIViewControllerRepresentable {
 #if DEBUG
 struct UsageChromePreview: View {
     private let themeID: ThemeID
+    @Environment(\.appRootEnvironment) private var root
 
     init() {
         themeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light" ? .light : .dark
@@ -404,39 +405,42 @@ struct UsageChromePreview: View {
     }
 
     var body: some View {
-        readingToolbarVerticalEdge { edge in
-            usagePreview(railEdge: edge)
+        if let root {
+            RouterPreviewStack(root: root) {
+                readingToolbarVerticalEdge { edge in
+                    usagePreview(railEdge: edge)
+                }
+            }
+            .ignoresSafeArea()
         }
     }
 
     private func usagePreview(railEdge: HorizontalEdge?) -> some View {
         let joinsRail = railEdge != nil
-        return NavigationStack {
-            VStack(spacing: 16) {
-                Picker("Range", selection: .constant(UsageRange.week)) {
-                    ForEach(UsageRange.allCases, id: \.self) { range in
-                        Text(range.label).tag(range)
-                    }
+        return VStack(spacing: 16) {
+            Picker("Range", selection: .constant(UsageRange.week)) {
+                ForEach(UsageRange.allCases, id: \.self) { range in
+                    Text(range.label).tag(range)
                 }
-                .pickerStyle(.segmented)
-                Spacer()
             }
-            .padding()
-            .navigationTitle(HostSwitcherDestination.usage.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                verticalRailToolbarItem(joinsVerticalRail: joinsRail) {
-                    Menu {
-                        Button(HostSwitcherPreviewData.server.name, systemImage: "checkmark.circle.fill") {}
-                    } label: {
-                        ServerSwitcherPill(
-                            server: HostSwitcherPreviewData.server,
-                            connectionState: .connected,
-                            fitsVerticalRail: joinsRail
-                        )
-                    }
-                    .accessibilityLabel("Current server: \(HostSwitcherPreviewData.server.name)")
+            .pickerStyle(.segmented)
+            Spacer()
+        }
+        .padding()
+        .navigationTitle(HostSwitcherDestination.usage.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            verticalRailToolbarItem(joinsVerticalRail: joinsRail) {
+                Menu {
+                    Button(HostSwitcherPreviewData.server.name, systemImage: "checkmark.circle.fill") {}
+                } label: {
+                    ServerSwitcherPill(
+                        server: HostSwitcherPreviewData.server,
+                        connectionState: .connected,
+                        fitsVerticalRail: joinsRail
+                    )
                 }
+                .accessibilityLabel("Current server: \(HostSwitcherPreviewData.server.name)")
             }
         }
         .environment(\.theme, themeID.appTheme)

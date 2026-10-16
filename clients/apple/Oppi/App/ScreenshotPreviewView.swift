@@ -124,8 +124,6 @@ struct ScreenshotPreviewView: View {
             ServerResourcesScreenshotPreview(screen: .extensions)
         case "server-resources-cached-offline":
             ServerResourcesScreenshotPreview(screen: .cachedOffline)
-        case "server-provider-navigation-regression":
-            ServerProviderNavigationRegressionPreview()
         case "router-routes":
             RouterRoutesPreview()
         case "router-modal-sites":

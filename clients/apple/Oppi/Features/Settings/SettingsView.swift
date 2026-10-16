@@ -84,7 +84,8 @@ struct SettingsView: View {
                 .accessibilityIdentifier("settings.row.storage")
             }
         }
-        .settingsPage("Settings", titleDisplayMode: .large)
+        // Large through the shell route's bars (`ShellRoute.bars`).
+        .settingsPage("Settings", titleDisplayMode: nil)
         .accessibilityIdentifier("settings.list")
         .onAppear { summary = Summary.current() }
         .task { cacheSizeText = await SettingsStoragePage.formattedCacheSize() }

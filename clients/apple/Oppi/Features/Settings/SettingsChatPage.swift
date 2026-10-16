@@ -4,6 +4,7 @@ struct SettingsChatPage: View {
     @State private var spinnerStyle = AppPreferences.Appearance.spinnerStyle
     @State private var chatStyle = AppPreferences.ChatDisplay.style
     @State private var workStripStyle = AppPreferences.ChatDisplay.workStripStyle
+    @Environment(\.screenNavigator) private var navigator
 
     var body: some View {
         List {
@@ -63,9 +64,12 @@ struct SettingsChatPage: View {
             }
 
             Section {
-                NavigationLink("Quick Comments") {
-                    QuickCommentsSettingsView()
+                SettingsIndexActionRow {
+                    navigator.push { QuickCommentsSettingsView() }
+                } label: {
+                    Text("Quick Comments")
                 }
+                .accessibilityLabel("Quick Comments")
             } footer: {
                 Text("Edit the quick comments shown after selecting text and choosing Comment.")
             }

@@ -39,21 +39,22 @@ enum ShellRoute: Hashable {
     /// screen navigator; every other route is hosted directly in the stack.
     var hostsOwnNavigationStack: Bool {
         switch self {
-        case .utility(.appSettings), .utility(.agents), .utility(.schedules),
+        case .utility(.agents), .utility(.schedules),
              .utility(.mcpServers), .utility(.sshTerminal),
-             .workspaceConfiguration, .serverDetails:
+             .workspaceConfiguration:
             true
         case .inbox, .sidebar, .workspace, .session, .fileBrowser, .linkedFile, .chatReader,
-             .utility, .modelProviders, .serverResourceDetail, .serverSkillBrowser,
+             .utility, .serverDetails, .modelProviders, .serverResourceDetail, .serverSkillBrowser,
              .serverSkillFile, .sessionThread:
             false
         }
     }
 
     /// Bars the router applies. A screen in its own SwiftUI stack shows its
-    /// bottom-bar items there.
+    /// bottom-bar items there. App Settings, the root of its pages, has a
+    /// large title.
     var bars: ScreenBars {
-        ScreenBars(showsToolbar: !hostsOwnNavigationStack)
+        ScreenBars(largeTitle: self == .utility(.appSettings), showsToolbar: !hostsOwnNavigationStack)
     }
 
     /// The screen a route shows. A workspace route whose workspace was

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsAppearancePage: View {
     @Environment(ThemeStore.self) private var themeStore
+    @Environment(\.screenNavigator) private var navigator
 
     var body: some View {
         List {
@@ -46,9 +47,12 @@ struct SettingsAppearancePage: View {
             }
 
             Section {
-                NavigationLink("Custom Themes") {
-                    ThemeImportView()
+                SettingsIndexActionRow {
+                    navigator.push { ThemeImportView() }
+                } label: {
+                    Text("Custom Themes")
                 }
+                .accessibilityLabel("Custom Themes")
                 .accessibilityIdentifier("settings.appearance.customThemes")
             } footer: {
                 Text(

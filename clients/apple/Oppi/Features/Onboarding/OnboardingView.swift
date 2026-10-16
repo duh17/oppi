@@ -235,17 +235,14 @@ struct OnboardingView: View {
                 startPairing(credentials)
             }
         }
-        .routerModal(isPresented: $showTailscale) {
-            // Keeps its own stack until Tailscale settings push through the
-            // router: its peer rows are navigation links.
-            NavigationStack {
-                TailnetSettingsView(onPaired: completeTailscalePairing)
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button(role: .cancel) { showTailscale = false }
-                        }
+        // Its machine rows and Check a Machine push through the navigator.
+        .routerModal(isPresented: $showTailscale, presentation: .sheet.inNavigation()) {
+            TailnetSettingsView(onPaired: completeTailscalePairing)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button(role: .cancel) { showTailscale = false }
                     }
-            }
+                }
         }
     }
 

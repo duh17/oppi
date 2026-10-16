@@ -12,6 +12,7 @@ struct TailnetSettingsView: View {
 
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(ServerStore.self) private var serverStore
+    @Environment(\.screenNavigator) private var navigator
 
     private var tailnet: TailnetNodeController { .shared }
 
@@ -210,8 +211,8 @@ struct TailnetSettingsView: View {
         switch status(of: peer) {
         case .paired:
             if let server = serverStore.servers.first(where: { peer.hasHost($0.host) }) {
-                NavigationLink {
-                    ServerSettingsRootView(server: server)
+                SettingsIndexActionRow {
+                    navigator.push { ServerSettingsRootView(server: server) }
                 } label: {
                     HStack {
                         peerTitle(peer)
@@ -297,8 +298,8 @@ struct TailnetSettingsView: View {
         _ peer: TailnetPeer,
         @ViewBuilder status: () -> some View
     ) -> some View {
-        NavigationLink {
-            SSHPreflightView(initialPeer: peer, onPaired: onPaired)
+        SettingsIndexActionRow {
+            navigator.push { SSHPreflightView(initialPeer: peer, onPaired: onPaired) }
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 peerTitle(peer)

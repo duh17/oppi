@@ -11,7 +11,7 @@ struct ServerSettingsRootView: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
     @Environment(ServerStore.self) private var serverStore
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
 
     @State private var model = ServerSettingsModel()
     @State private var showRemoveConfirmation = false
@@ -319,7 +319,7 @@ struct ServerSettingsRootView: View {
                 return
             }
 
-            dismiss()
+            navigator.finish()
         }
     }
 }
@@ -327,9 +327,8 @@ struct ServerSettingsRootView: View {
 /// Settings drill-in for this server's model providers.
 ///
 /// The push goes through `AppNavigation` so the host switcher tracks the
-/// route, which a plain `NavigationLink` would not do, so this is the
-/// `SettingsIndexActionRow` variant of a level-1 row. Keeps setup/status words
-/// and color.
+/// route, which a `SettingsIndexRow` navigator push would not do. Keeps
+/// setup/status words and color.
 struct ServerModelProvidersNavigationRow: View {
     let summary: String
     let summaryStyle: ThemeShapeStyle

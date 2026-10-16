@@ -338,7 +338,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/SettingsKit.swift": {
-      "NavigationLink": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/StatusPill.swift": {
@@ -627,7 +626,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Onboarding/OnboardingView.swift": {
-      "NavigationStack": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Onboarding/QRScannerView.swift": {
@@ -710,7 +708,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Server/ServerView.swift": {
-      "NavigationStack": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Server/StatsHeroRow.swift": {
@@ -723,8 +720,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Servers/ModelProvidersManagementView.swift": {
-      "NavigationStack": 2,
-      ".navigationDestination(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Servers/ModelProvidersView.swift": {
@@ -785,11 +780,9 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsAppearancePage.swift": {
-      "NavigationLink": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsChatPage.swift": {
-      "NavigationLink": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsExperimentsPage.swift": {
@@ -802,7 +795,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsSessionsPage.swift": {
-      "NavigationLink": 2,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsStoragePage.swift": {
@@ -815,11 +807,9 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/SettingsVoicePage.swift": {
-      "NavigationLink": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/TailnetSettingsView.swift": {
-      "NavigationLink": 2,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/ThemeImportView.swift": {

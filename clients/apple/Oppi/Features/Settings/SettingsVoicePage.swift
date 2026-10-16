@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsVoicePage: View {
     @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(\.screenNavigator) private var navigator
 
     @State private var voiceReplyMode = AppPreferences.Voice.replyMode
     @State private var voiceEngineMode = AppPreferences.Voice.engineMode
@@ -66,9 +67,12 @@ struct SettingsVoicePage: View {
             // Edits the active server's list, the same one Server Settings opens.
             if coordinator.activeServerId != nil {
                 Section {
-                    NavigationLink("Dictionary") {
-                        DictationDictionaryView(workspaceId: nil)
+                    SettingsIndexActionRow {
+                        navigator.push { DictationDictionaryView(workspaceId: nil) }
+                    } label: {
+                        Text("Dictionary")
                     }
+                    .accessibilityLabel("Dictionary")
                     .accessibilityIdentifier("settings.dictationDictionary")
                 } footer: {
                     Text("Names and terms that help dictation recognize what you say. Kept on your server.")

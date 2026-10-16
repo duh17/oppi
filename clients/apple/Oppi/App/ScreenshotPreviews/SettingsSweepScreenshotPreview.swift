@@ -12,7 +12,8 @@ import SwiftUI
 /// `agents-pi`, `workspace-create`, `workspace-create-configure`.
 /// Router modal pages (`RouterSettingsModalsUITests`): `agents`,
 /// `agents-pi-file`, `schedules`, `skill-file-review`,
-/// `pairing-approval`, `onboarding-add-server`; `mcp`, `theme-import`, and
+/// `pairing-approval`, `onboarding-add-server`, `onboarding-tailscale` (the
+/// same onboarding over a running tailnet); `mcp`, `theme-import`, and
 /// `agents-pi` serve them too. `SCREENSHOT_SWEEP_SHOWS_WRITES=1` shows the
 /// last write the fixture server received (`settingsSweep.lastWrite`);
 /// `SCREENSHOT_SWEEP_WRITE_DELAY=<seconds>` holds each write's answer that long.
@@ -146,7 +147,7 @@ struct SettingsSweepScreenshotPreview: View {
         )
 
         switch page {
-        case "tailscale":
+        case "tailscale", "onboarding-tailscale":
             Self.applyTailnetFixture()
         case "ssh-hosts":
             Self.seedSSHHosts()
@@ -187,7 +188,7 @@ struct SettingsSweepScreenshotPreview: View {
             WorkspaceCreateView(server: server)
         case "workspace-create-configure":
             WorkspaceCreateView(server: server, prefillName: "oppi", prefillPath: "~/workspace/oppi")
-        case "onboarding-add-server":
+        case "onboarding-add-server", "onboarding-tailscale":
             OnboardingView(mode: .addServer, previewCanScan: true)
         case "pairing-approval":
             Text("Pairing approval host")

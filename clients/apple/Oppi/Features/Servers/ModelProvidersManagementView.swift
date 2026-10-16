@@ -1145,6 +1145,8 @@ private struct ProviderQuotaDetails: View {
 struct ModelProvidersQuotaPreview: View {
     private static let sampleNow = Date()
 
+    @Environment(\.appRootEnvironment) private var root
+
     private static let codexQuota = ProviderQuota(
         providerId: "openai-codex",
         displayName: "Codex",
@@ -1235,55 +1237,59 @@ struct ModelProvidersQuotaPreview: View {
     )
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section("Connected") {
-                    connectedProviderRow(
-                        providerID: "openai-codex",
-                        name: "OpenAI Codex",
-                        status: "OAuth connected",
-                        quota: Self.codexQuota
-                    )
-                    connectedProviderRow(
-                        providerID: "xai",
-                        name: "xAI",
-                        status: "OAuth connected",
-                        quota: Self.xaiQuota
-                    )
-                    connectedProviderRow(
-                        providerID: "deepseek",
-                        name: "DeepSeek",
-                        status: "API key connected"
-                    )
-                }
+        if let root {
+            RouterPreviewStack(root: root) { providers }
+                .ignoresSafeArea()
+        }
+    }
 
-                Section("Available") {
-                    HStack(alignment: .top, spacing: 12) {
-                        ProviderIcon(provider: "anthropic", size: 16)
-                            .padding(.top, 3)
+    private var providers: some View {
+        List {
+            Section("Connected") {
+                connectedProviderRow(
+                    providerID: "openai-codex",
+                    name: "OpenAI Codex",
+                    status: "OAuth connected",
+                    quota: Self.codexQuota
+                )
+                connectedProviderRow(
+                    providerID: "xai",
+                    name: "xAI",
+                    status: "OAuth connected",
+                    quota: Self.xaiQuota
+                )
+                connectedProviderRow(
+                    providerID: "deepseek",
+                    name: "DeepSeek",
+                    status: "API key connected"
+                )
+            }
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Anthropic")
-                            Text("Not connected")
-                                .font(.caption)
-                                .foregroundStyle(.themeComment)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            Section("Available") {
+                HStack(alignment: .top, spacing: 12) {
+                    ProviderIcon(provider: "anthropic", size: 16)
+                        .padding(.top, 3)
 
-                        Text("Connect")
-                            .font(.subheadline)
-                            .foregroundStyle(.themeBlue)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(.themeBlue.opacity(0.14), in: Capsule())
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Anthropic")
+                        Text("Not connected")
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text("Connect")
+                        .font(.subheadline)
+                        .foregroundStyle(.themeBlue)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.themeBlue.opacity(0.14), in: Capsule())
                 }
             }
-            .iPadReadableContent(maxWidth: IPadReadableContentWidth.detail)
-            .themedListSurface()
-            .navigationTitle("Model Providers")
-            .navigationBarTitleDisplayMode(.inline)
         }
+        .iPadReadableContent(maxWidth: IPadReadableContentWidth.detail)
+        .themedListSurface()
+        .navigationTitle("Model Providers")
         .preferredColorScheme(.light)
         .accessibilityIdentifier("screenshot.ready")
     }
@@ -1319,120 +1325,6 @@ struct ModelProvidersQuotaPreview: View {
             }
         }
         .padding(.vertical, 4)
-    }
-}
-
-/// Isolated 320pt Server Settings row that uses the production providers row
-/// and `ServerDetailModelProvidersNavigation` / `AppNavigation` owner.
-///
-/// Does not mount `ServerDetailView`: `ServerStore.init()` always loads the
-/// Keychain index, so a real settings view would resolve against whatever the
-/// pool simulator already has instead of the fixture hosts.
-struct ServerProviderNavigationRegressionPreview: View {
-    static let proofWidth: CGFloat = 320
-    static let sourceServerID = "sha256:source-server"
-    static let otherServerID = "sha256:other-server"
-
-    @State private var navigation: AppNavigation
-
-    private let sourceServer: PairedServer
-    private let otherServer: PairedServer
-    private let servers: [PairedServer]
-    private let themeID: ThemeID = .light
-
-    init() {
-        ThemeRuntimeState.setThemeID(.light)
-        let other = Self.makeServer(id: Self.otherServerID, name: "Other Host", host: "other.local")
-        let source = Self.makeServer(id: Self.sourceServerID, name: "Source Host", host: "source.local")
-        otherServer = other
-        sourceServer = source
-        servers = [other, source]
-        let navigation = AppNavigation()
-        navigation.launchPhase = .ready
-        navigation.showOnboarding = false
-        _navigation = State(initialValue: navigation)
-    }
-
-    var body: some View {
-        @Bindable var navigation = navigation
-        NavigationStack(path: $navigation.workspacePath) {
-            settingsList
-                .navigationTitle(HostSwitcherDestination.serverSettings.title)
-                .navigationBarTitleDisplayMode(.inline)
-                .navigationDestination(for: ModelProvidersNavTarget.self) { target in
-                    openedProviders(target)
-                }
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        ServerSwitcherPill(
-                            server: sourceServer,
-                            connectionState: .connected
-                        )
-                        .accessibilityLabel("Current server: \(sourceServer.name)")
-                    }
-                }
-        }
-        .preferredColorScheme(.light)
-        .environment(\.theme, themeID.appTheme)
-        .environment(\.themeID, themeID)
-        .accessibilityIdentifier(
-            ProcessInfo.processInfo.environment["SCREENSHOT_READY_ID"] ?? "screenshot.ready"
-        )
-    }
-
-    private var settingsList: some View {
-        List {
-            Section {
-                LabeledContent("Connection", value: "Connected via paired HTTPS")
-                LabeledContent("Uptime", value: "2d 4h")
-            } header: {
-                Text("Status")
-            } footer: {
-                Text("Also paired: \(otherServer.name)")
-                    .accessibilityIdentifier("server.modelProviders.otherServer")
-            }
-
-            Section {
-                ServerModelProvidersNavigationRow(
-                    summary: "Needs setup",
-                    summaryStyle: .themeOrange
-                ) {
-                    ServerDetailModelProvidersNavigation.open(
-                        navigation: navigation,
-                        activeServerId: sourceServer.id,
-                        frozenServer: sourceServer,
-                        servers: servers
-                    )
-                }
-            }
-        }
-        .frame(width: Self.proofWidth)
-        .accessibilityIdentifier("server.details.list")
-    }
-
-    @ViewBuilder
-    private func openedProviders(_ target: ModelProvidersNavTarget) -> some View {
-        List {
-            LabeledContent("Opened server", value: target.serverId)
-                .accessibilityIdentifier("server.modelProviders.openedServerId")
-        }
-        .navigationTitle(HostSwitcherDestination.modelProviders.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .accessibilityIdentifier("server.modelProviders.list")
-    }
-
-    private static func makeServer(id: String, name: String, host: String) -> PairedServer {
-        let credentials = ServerCredentials(
-            host: host,
-            port: 7749,
-            token: "sk_preview",
-            name: name,
-            serverFingerprint: id
-        )
-        guard let server = PairedServer(from: credentials, sortOrder: 0) else {
-            preconditionFailure("ServerProviderNavigationRegressionPreview requires a server fingerprint")
-        }
-        return server
     }
 }
 #endif

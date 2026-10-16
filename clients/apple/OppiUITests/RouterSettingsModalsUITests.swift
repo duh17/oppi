@@ -319,6 +319,32 @@ final class RouterSettingsModalsUITests: XCTestCase {
         assertRunning()
     }
 
+    /// Connect through Tailscale is a sheet in a navigation controller: its
+    /// Check a Machine row pushes inside the sheet, and Cancel closes it.
+    func testOnboardingTailscaleSheetPushesCheckAMachine() {
+        launch(page: "onboarding-tailscale")
+        let connect = app.buttons["Connect through Tailscale"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 10), "Onboarding did not load")
+        connect.tap()
+        let tailscale = app.navigationBars["Tailscale"]
+        XCTAssertTrue(tailscale.waitForExistence(timeout: 5), "Tailscale did not open in a navigation bar")
+        assertRunning()
+
+        let check = app.buttons["Check a Machine for Oppi"]
+        for _ in 0..<6 where !check.isHittable { app.swipeUp() }
+        check.tap()
+        XCTAssertTrue(app.navigationBars["Check a Machine"].waitForExistence(timeout: 5), "Check a Machine was not pushed")
+        attachScreenshot("onboarding-check-a-machine")
+        assertRunning()
+        app.buttons["BackButton"].firstMatch.tap()
+        XCTAssertTrue(tailscale.waitForExistence(timeout: 5), "Back must return to Tailscale")
+
+        tapBarButton(cancelButton)
+        XCTAssertTrue(waitForDisappearance(of: tailscale), "Cancel must close the Tailscale sheet")
+        XCTAssertTrue(connect.waitForExistence(timeout: 5))
+        assertRunning()
+    }
+
     // MARK: Shared checks
 
     /// A guided control-session sheet: Cancel (`finish()` at the root of the

@@ -3,29 +3,28 @@ import SwiftUI
 struct SettingsSessionsPage: View {
     @State private var autoTitleProvider = AppPreferences.Session.autoTitleProvider
     @State private var rowDensity = AppPreferences.SessionRows.display.density
+    @Environment(\.screenNavigator) private var navigator
 
     var body: some View {
         List {
             Section {
-                NavigationLink {
-                    AutoTitleSettingsView()
+                SettingsIndexActionRow(value: autoTitleProviderLabel) {
+                    navigator.push { AutoTitleSettingsView() }
                 } label: {
-                    LabeledContent("Auto-Name") {
-                        Text(autoTitleProviderLabel)
-                            .foregroundStyle(.themeComment)
-                    }
+                    Text("Auto-Name")
                 }
+                .accessibilityLabel("Auto-Name")
+                .accessibilityValue(autoTitleProviderLabel)
             }
 
             Section {
-                NavigationLink {
-                    SessionRowDisplayEditor()
+                SettingsIndexActionRow(value: rowDensity.label) {
+                    navigator.push { SessionRowDisplayEditor() }
                 } label: {
-                    LabeledContent("Session Rows") {
-                        Text(rowDensity.label)
-                            .foregroundStyle(.themeComment)
-                    }
+                    Text("Session Rows")
                 }
+                .accessibilityLabel("Session Rows")
+                .accessibilityValue(rowDensity.label)
                 .accessibilityIdentifier("settings.sessionRows")
             } footer: {
                 Text("Choose the details shown on session rows in every session list.")

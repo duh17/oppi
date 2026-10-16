@@ -216,10 +216,8 @@ final class RouterRoutesUITests: XCTestCase {
     /// The real workspace shell over fixture services
     /// (`SCREENSHOT_SCREEN=workspace-shell`), whose UIKit stacks follow
     /// `AppNavigation`: the sidebar opens a workspace, its list opens a chat,
-    /// and Back pops each; Skills searches in the host's bar; Settings, still
-    /// in its own SwiftUI stack, pushes a page that reads app services and
-    /// comes back. iPhone and the Duo's outer display use the drawer, iPad in
-    /// landscape the split view.
+    /// and Back pops each; Skills searches in the host's bar. iPhone and the
+    /// Duo's outer display use the drawer, iPad in landscape the split view.
     func testWorkspaceShellOpensAndPopsRoutes() {
         launchShell()
         let drawerButton = app.buttons["workspace.sidebar.open"]
@@ -258,21 +256,70 @@ final class RouterRoutesUITests: XCTestCase {
             app.buttons["BackButton"].tap()
             XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop Skills")
         }
+        assertRunning()
+    }
 
+    /// App Settings and Server Settings in the shell, hosted directly under
+    /// UIKit bars. The Servers row opens Server Settings as its route; each of
+    /// its rows pushes a page and Model Providers opens as a route. Every
+    /// Settings row, and every link on those pages, pushes a page that reads
+    /// app services (Appearance once crashed without its theme store), and
+    /// Back returns to where it was.
+    func testShellSettingsPushesEveryPageAndBack() {
+        launchShell()
+        let drawerButton = app.buttons["workspace.sidebar.open"]
+        let isSplit = !drawerButton.waitForExistence(timeout: 3)
         revealSidebar(isSplit: isSplit)
         app.buttons["App Settings"].tap()
         let settings = app.navigationBars["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5), "Settings did not open")
-        app.buttons["settings.row.appearance"].tap()
-        let appearance = app.navigationBars["Appearance"]
-        XCTAssertTrue(appearance.waitForExistence(timeout: 5), "Settings did not push Appearance")
-        attachScreenshot("shell-settings-page")
+        attachScreenshot("shell-settings")
         assertRunning()
-        // On the Duo the back control sits on the vertical rail, outside the bar.
-        app.buttons["BackButton"].firstMatch.tap()
-        XCTAssertTrue(settings.waitForExistence(timeout: 5), "Back must return to Settings")
+
+        app.buttons["settings.server.sha256:rail-inbox-preview"].tap()
+        let serverSettings = app.navigationBars["Server Settings"]
+        XCTAssertTrue(serverSettings.waitForExistence(timeout: 5), "The Servers row did not open Server Settings")
+        assertRunning()
+        for (row, title) in [
+            ("server.manageWorkspaces", "Workspaces"),
+            ("server.dictationDictionary", "Dictionary"),
+            ("server.row.pairedDevices", "Paired Devices"),
+            ("server.row.about", "About This Server"),
+            ("server.row.badge", "Badge Icon"),
+            ("server.modelProviders.open", "Model Providers"),
+        ] {
+            pushAndReturn(row: row, title: title, to: serverSettings)
+        }
+        goBack()
+        XCTAssertTrue(settings.waitForExistence(timeout: 5), "Back must return from Server Settings to Settings")
+
+        let pages: [(row: String, title: String, links: [(row: String, title: String)])] = [
+            ("settings.row.general", "General", []),
+            ("settings.row.appearance", "Appearance", [("settings.appearance.customThemes", "Custom Themes")]),
+            ("settings.row.text", "Text", []),
+            ("settings.row.chat", "Chat", [("Quick Comments", "Quick Comments")]),
+            ("settings.row.sessions", "Sessions", [("Auto-Name", "Auto-Name"), ("settings.sessionRows", "Session Rows")]),
+            ("settings.row.voice", "Voice & Dictation", [("settings.dictationDictionary", "Dictionary")]),
+            ("settings.tailscale", "Tailscale", []),
+            ("settings.row.privacy", "Privacy & Security", []),
+            ("settings.row.experiments", "Experiments", []),
+            ("settings.row.storage", "Storage & About", []),
+        ]
+        for page in pages {
+            reveal(app.buttons[page.row]).tap()
+            let bar = app.navigationBars[page.title]
+            XCTAssertTrue(bar.waitForExistence(timeout: 5), "\(page.row) did not push \(page.title)")
+            assertRunning()
+            for link in page.links {
+                pushAndReturn(row: link.row, title: link.title, to: bar)
+            }
+            goBack()
+            XCTAssertTrue(settings.waitForExistence(timeout: 5), "Back from \(page.title) must return to Settings")
+        }
+        attachScreenshot("shell-settings-after-pages")
+
         if !isSplit {
-            app.buttons["BackButton"].tap()
+            goBack()
             XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop Settings")
         }
         assertRunning()
@@ -307,6 +354,31 @@ final class RouterRoutesUITests: XCTestCase {
         XCTAssertTrue(session.waitForExistence(timeout: 5), "The split detail must keep the workspace")
         attachScreenshot("shell-ipad-landscape-workspace")
         assertRunning()
+    }
+
+    /// Taps `row`, expects the page titled `title`, then goes back to `bar`.
+    private func pushAndReturn(row: String, title: String, to bar: XCUIElement) {
+        reveal(app.buttons[row]).tap()
+        XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5), "\(row) did not push \(title)")
+        assertRunning()
+        goBack()
+        XCTAssertTrue(bar.waitForExistence(timeout: 5), "Back from \(title) must return")
+        assertRunning()
+    }
+
+    /// UIKit's back button. On the Duo it sits on the vertical rail, outside the bar.
+    private func goBack() {
+        app.buttons["BackButton"].firstMatch.tap()
+    }
+
+    /// Scrolls the list until `element` can take a tap.
+    private func reveal(_ element: XCUIElement) -> XCUIElement {
+        _ = element.waitForExistence(timeout: 5)
+        for _ in 0..<8 where !element.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(element.isHittable, "\(element) is not reachable")
+        return element
     }
 
     private func launchShell() {

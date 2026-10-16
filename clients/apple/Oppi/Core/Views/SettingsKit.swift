@@ -6,53 +6,62 @@ import SwiftUI
 
 extension View {
     /// Container for every settings page: inset-grouped list on the themed
-    /// surface, readable width on iPad, and a navigation title. The root of a
-    /// settings area uses `.large`; pushed section pages use `.inline`.
+    /// surface, readable width on iPad, and a navigation title. Pushed section
+    /// pages use `.inline`. Nil leaves the title size to the screen's host: the
+    /// Settings root the router hosts with a large title (`ScreenBars.largeTitle`),
+    /// which stays inline on the Duo's vertical rail, where SwiftUI's `.large`
+    /// would show no title.
+    @ViewBuilder
     func settingsPage(
         _ title: String,
-        titleDisplayMode: NavigationBarItem.TitleDisplayMode = .inline
+        titleDisplayMode: NavigationBarItem.TitleDisplayMode? = .inline
     ) -> some View {
-        listStyle(.insetGrouped)
+        let page = listStyle(.insetGrouped)
             .themedListSurface()
             .iPadReadableContent(maxWidth: IPadReadableContentWidth.form)
             .navigationTitle(title)
-            .navigationBarTitleDisplayMode(titleDisplayMode)
+        if let titleDisplayMode {
+            page.navigationBarTitleDisplayMode(titleDisplayMode)
+        } else {
+            page
+        }
     }
 }
 
-/// A level-1 settings row: a real `NavigationLink` with a plain theme-colored
-/// symbol, a Title Case title, and an optional secondary current-value summary.
+/// A level-1 settings row: a plain theme-colored symbol, a Title Case title,
+/// and an optional secondary current-value summary. Tapping pushes
+/// `destination` through the screen navigator. The page is its own hosted
+/// screen with the app root's services; a presenter-local value it needs
+/// (a server scope, a model) goes on the destination explicitly. The closure
+/// runs in the pushed screen, so `@Observable` reads in it stay live.
 struct SettingsIndexRow<Destination: View>: View {
     private let title: String
     private let systemImage: String
     private let value: String?
-    private let destination: Destination
+    private let destination: () -> Destination
+
+    @Environment(\.screenNavigator) private var navigator
 
     init(
         _ title: String,
         systemImage: String,
         value: String? = nil,
-        @ViewBuilder destination: () -> Destination
+        @ViewBuilder destination: @escaping () -> Destination
     ) {
         self.title = title
         self.systemImage = systemImage
         self.value = value
-        self.destination = destination()
+        self.destination = destination
     }
 
     var body: some View {
-        NavigationLink {
-            destination
+        SettingsIndexActionRow(value: value) {
+            navigator.push(content: destination)
         } label: {
-            LabeledContent {
-                if let value {
-                    Text(value)
-                        .foregroundStyle(.themeComment)
-                }
-            } label: {
-                SettingsRowLabel(title, systemImage: systemImage)
-            }
+            SettingsRowLabel(title, systemImage: systemImage)
         }
+        .accessibilityLabel(title)
+        .accessibilityValue(value ?? "")
     }
 }
 
@@ -77,8 +86,7 @@ struct SettingsRowLabel: View {
 }
 
 /// The system-style disclosure chevron for a row whose push goes through
-/// app-owned navigation. A `NavigationLink` draws its own; use this only when a
-/// `Button` must stand in for one.
+/// app-owned navigation, drawn by `SettingsIndexActionRow`.
 struct SettingsDisclosureChevron: View {
     var body: some View {
         Image(systemName: "chevron.forward")
@@ -88,10 +96,10 @@ struct SettingsDisclosureChevron: View {
     }
 }
 
-/// A level-1 row whose push must go through app-owned navigation (a tracked
-/// route) instead of a `NavigationLink`. It is a plain `Button` laid out like
-/// `SettingsIndexRow`: same label and value placement, with the system
-/// chevron drawn in the value column.
+/// A row that pushes through app-owned navigation: a screen navigator push
+/// (`SettingsIndexRow`) or a tracked `AppNavigation` route. It is a plain
+/// `Button` laid out like a list disclosure row: label leading, value and the
+/// system chevron in the value column.
 ///
 /// Callers set the accessibility label, value, and identifier.
 struct SettingsIndexActionRow<Label: View>: View {
