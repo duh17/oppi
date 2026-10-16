@@ -337,52 +337,6 @@ struct ReviewCommentStripChromeTests {
         #expect(scrollView.accessibilityIdentifier == ReviewCommentStripChrome.drawerAccessibilityIdentifier)
     }
 
-    @Test("Chat footer peeks the drawer on single tap and presents the stash sheet on double-tap or Edit")
-    func chatFooterPeeksDrawerOnSingleTapAndPresentsStashSheetOnDoubleTapOrEdit() throws {
-        let source = try reviewCommentsChatViewSource()
-        #expect(source.contains("ReviewCommentStripPill("))
-        #expect(source.contains("showsReviewCommentPill"))
-        #expect(source.contains("ReviewCommentStashDrawer("))
-        #expect(!source.contains("onReviewCommentsTap"))
-        #expect(source.contains("onToggle: toggleReviewCommentDrawer"))
-        #expect(source.contains("onOpenFullScreen:"))
-        #expect(source.contains("reviewCommentStashPresentation"))
-        #expect(source.contains("reviewCommentStashSheet"))
-        #expect(source.contains("sheet(item: $reviewCommentStashPresentation)"))
-        #expect(source.contains("presentReviewCommentStashSheet()"))
-        #expect(source.contains("presentReviewCommentStashSheet(editing:"))
-        #expect(source.contains("initialEditingComment:"))
-
-        let presenter = try reviewCommentsSourceSlice(
-            named: "private func presentReviewCommentStashSheet",
-            until: "private func reviewCommentStashSheet",
-            in: source
-        )
-        #expect(presenter.contains("reviewCommentDrawerExpanded = false"))
-        #expect(presenter.contains("ReviewCommentStripChrome.StashPresentation(editing: comment)"))
-        #expect(presenter.contains("dismissKeyboard()"))
-        #expect(!presenter.contains("reviewCommentDrawerExpanded = true"))
-
-        let sheet = try reviewCommentsSourceSlice(
-            named: "private func reviewCommentStashSheet",
-            until: "private var reviewCommentStashDrawer",
-            in: source
-        )
-        #expect(sheet.contains("ReviewCommentStashSheet("))
-        #expect(sheet.contains("initialEditingComment: presentation.initialEditingComment"))
-        #expect(!sheet.contains("extensionToast"))
-        #expect(!sheet.contains("reviewCommentDrawerExpanded = true"))
-
-        let drawer = try reviewCommentsSourceSlice(
-            named: "private var reviewCommentStashDrawer",
-            until: "private var shareRedactionSheet",
-            in: source
-        )
-        #expect(drawer.contains("presentReviewCommentStashSheet(editing:"))
-        #expect(!drawer.contains("ReviewCommentEditorView"))
-        #expect(!drawer.contains("comment, body"))
-    }
-
     @Test("Drawer chrome does not inline the comment editor")
     func drawerChromeDoesNotInlineTheCommentEditor() throws {
         let chromeSource = try reviewCommentStripChromeSource()

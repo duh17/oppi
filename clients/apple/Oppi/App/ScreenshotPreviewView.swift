@@ -130,6 +130,8 @@ struct ScreenshotPreviewView: View {
             RouterRoutesPreview()
         case "router-modal-sites":
             RouterModalSitesPreview()
+        case "chat-routes":
+            ChatRoutesHarnessView()
         case "model-providers-quota-inline":
             ModelProvidersQuotaPreview()
         case "inbox-provider-setup-empty":

@@ -28,7 +28,7 @@ struct ChatTimelineDestinationPresenter {
         .environment(\.reviewCommentSelectionScope, request.reviewCommentSelectionScope)
 
         Router.present(
-            presentation: .largeViewer(for: request.sourceView.traitCollection),
+            presentation: .largeViewer(for: request.sourceView.traitCollection).inNavigation(),
             from: request.presenter
         ) { view }
     }
@@ -36,7 +36,7 @@ struct ChatTimelineDestinationPresenter {
     private func presentWorkspaceFile(for pill: UserMessagePathPill, request: ChatTimelineDestinationRequest) {
         guard connection.apiClient != nil else { return }
 
-        let view = fileContent(for: pill, request: request)
+        let view = TimelineFileViewerHost(content: fileContent(for: pill, request: request))
             .withServerScopedEnvironment(connection)
             .environment(\.reviewCommentSelectionScope, request.reviewCommentSelectionScope)
 
@@ -76,6 +76,21 @@ struct ChatTimelineDestinationPresenter {
     }
 }
 
+/// The path-pill file viewer at the root of its router navigation controller.
+/// Back closes the viewer: `dismiss()` does nothing at a navigation root.
+private struct TimelineFileViewerHost: View {
+    let content: FileBrowserContentView
+    @Environment(\.screenNavigator) private var navigator
+
+    var body: some View {
+        var content = content
+        content.onBackNavigation = navigator.finish
+        return content
+    }
+}
+
+/// The commit viewer at the root of its router navigation controller
+/// (`.inNavigation()`); a chat started from it pushes onto the same stack.
 struct TimelineCommitDetailHost: View {
     let workspaceId: String
     let commit: GitCommitSummary
@@ -88,22 +103,20 @@ struct TimelineCommitDetailHost: View {
     @State private var modalNavigation = AppNavigation()
 
     var body: some View {
-        NavigationStack {
-            CommitDetailView(
-                workspaceId: workspaceId,
-                commit: commit,
-                testingQuickActionDestination: testingQuickActionDestination
-            )
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(action: navigator.finish) {
-                        Label(
-                            FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel,
-                            systemImage: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName
-                        )
-                    }
-                    .accessibilityIdentifier("chat.commit-detail.dismiss")
+        CommitDetailView(
+            workspaceId: workspaceId,
+            commit: commit,
+            testingQuickActionDestination: testingQuickActionDestination
+        )
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(action: navigator.finish) {
+                    Label(
+                        FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel,
+                        systemImage: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName
+                    )
                 }
+                .accessibilityIdentifier("chat.commit-detail.dismiss")
             }
         }
         .environment(modalNavigation)

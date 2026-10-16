@@ -724,19 +724,22 @@ struct ChatInputBar<ActionRow: View>: View {
             .glassEffect(.regular, in: Capsule())
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $isBusyModePickerPresented, arrowEdge: .bottom) {
+        .accessibilityIdentifier("chat.busyMode")
+        .accessibilityLabel("Busy send mode")
+        .accessibilityValue(busyStreamingBehavior == .steer ? "Steering" : "Follow-up")
+        .routerModal(
+            isPresented: $isBusyModePickerPresented,
+            presentation: .popover
+                .arrowDirections(.down)
+                .keepsPopoverInCompactWidth()
+        ) {
             VStack(spacing: 0) {
                 busyModeOption(.steer, title: "Steering")
                 busyModeOption(.followUp, title: "Follow-up")
             }
             .padding(.vertical, 6)
             .frame(width: 190)
-            .presentationCompactAdaptation(.popover)
-            .presentationBackground(Color.themeSurfaceFill(.popover))
         }
-        .accessibilityIdentifier("chat.busyMode")
-        .accessibilityLabel("Busy send mode")
-        .accessibilityValue(busyStreamingBehavior == .steer ? "Steering" : "Follow-up")
     }
 
     private func busyModeOption(_ behavior: StreamingBehavior, title: String) -> some View {

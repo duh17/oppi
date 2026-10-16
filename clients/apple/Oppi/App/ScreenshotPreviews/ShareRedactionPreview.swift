@@ -1,5 +1,30 @@
 #if DEBUG
 import SwiftUI
+import UIKit
+
+/// A router screen at the root of a `RouterNavigationController`, the way the
+/// router presents a modal with `.inNavigation()`. Previews and harnesses of
+/// screens that rely on UIKit bars and the navigator host them here.
+/// `content` runs in the screen's own graph: put its fixture environment on
+/// it, not on this view.
+struct RouterPreviewNavigation<Content: View>: UIViewControllerRepresentable {
+    @ViewBuilder let content: () -> Content
+    @Environment(\.appRootEnvironment) private var root
+
+    func makeUIViewController(context: Context) -> RouterNavigationController {
+        guard let root else {
+            preconditionFailure("RouterPreviewNavigation needs appRootEnvironment(_:) above it")
+        }
+        let navigation = RouterNavigationController(
+            rootViewController: HostFactory.screen(root: root, content: content)
+        )
+        let themeStore = root.themeStore
+        navigation.interfaceStyle = { themeStore.userInterfaceStyle }
+        return navigation
+    }
+
+    func updateUIViewController(_ navigation: RouterNavigationController, context: Context) {}
+}
 
 // MARK: - Share Redaction Report Preview
 
@@ -123,17 +148,21 @@ struct ShareRedactionSettingsPreview: View {
         )
     )
 
+    /// The sheet as chat presents it: a router screen in a navigation controller.
     var body: some View {
-        ShareSessionRedactionSheet(
-            policy: $policy,
-            preflight: preflight,
-            isAnalyzing: false,
-            errorMessage: nil,
-            isSharing: false,
-            onRefresh: {},
-            onShare: {},
-            onCancel: {}
-        )
+        RouterPreviewNavigation {
+            ShareSessionRedactionSheet(
+                policy: $policy,
+                preflight: preflight,
+                isAnalyzing: false,
+                errorMessage: nil,
+                isSharing: false,
+                onRefresh: {},
+                onShare: {},
+                onCancel: {}
+            )
+        }
+        .ignoresSafeArea()
         .accessibilityIdentifier("screenshot.ready")
     }
 }

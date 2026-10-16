@@ -113,6 +113,8 @@ struct SessionTimelinePreview: View {
             initialTreeSnapshot: Self.previewTreeSnapshot,
             toolDetails: { inspectionFixture.toolDetailsStore.details(for: $0) }
         )
+        // Before the overlay, which keeps its own identifier.
+        .accessibilityIdentifier("screenshot.ready")
         .overlay(alignment: .bottomLeading) {
             Text("Last tree navigate: \(lastTreeNavigationCapture)")
                 .font(.caption2.monospaced())
@@ -125,7 +127,6 @@ struct SessionTimelinePreview: View {
         }
         .environment(inspectionFixture.toolArgsStore)
         .environment(gitStatusStore)
-        .accessibilityIdentifier("screenshot.ready")
     }
 }
 

@@ -776,7 +776,10 @@ private struct ExtensionSurfaceDrawer: View {
         .padding(.vertical, 12)
         .extensionGlassPanel(cornerRadius: 18)
         .accessibilityIdentifier("extension-strip-\(placement.accessibilityIdentifierComponent)-drawer-\(identifierSuffix)")
-        .fullScreenCover(isPresented: $nativeDetailPresented) {
+        // Covers the chat without taking it out of the window (`.overFullScreen`),
+        // so the chat keeps its appearance state. The detail is the presented
+        // screen itself, so its own dismiss() closes it.
+        .routerModal(isPresented: $nativeDetailPresented, presentation: ModalPresentation(style: .overFullScreen)) {
             if case .native(let nativeSurface, let statusText) = entry {
                 ExtensionNativeSurfaceDetailSheet(
                     surface: nativeSurface.surface,

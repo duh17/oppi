@@ -309,7 +309,11 @@ struct WorkspaceReviewFileDetailView: View {
                 }
             }
         }
-        .inspector(isPresented: reviewFileListPresented) {
+        .routerTrailingColumn(
+            item: showsReviewFileList ? ReviewFileListColumn() : nil,
+            minWidth: 240,
+            idealWidth: 300
+        ) { _ in
             reviewFileListColumn
         }
         .alert(
@@ -328,21 +332,25 @@ struct WorkspaceReviewFileDetailView: View {
             && WorkspaceReviewFileNavigationPolicy.navigationFiles(navigationFiles).count > 1
     }
 
-    private var reviewFileListPresented: Binding<Bool> {
-        Binding(
-            get: { usesReviewFileColumn && showsFileListColumn && !isEditingCurrentFile },
-            set: { presented in
-                if usesReviewFileColumn { showsFileListColumn = presented }
-            }
-        )
+    private struct ReviewFileListColumn: Identifiable {
+        var id: Int { 0 }
     }
 
+    private var showsReviewFileList: Bool {
+        usesReviewFileColumn && showsFileListColumn && !isEditingCurrentFile
+    }
+
+    /// The column runs in its own screen; its rows and Hide act on this view's state.
     private var reviewFileListColumn: some View {
-        let files = WorkspaceReviewFileNavigationPolicy.navigationFiles(navigationFiles)
-        return NavigationStack {
-            reviewFileList(files)
-        }
-        .inspectorColumnWidth(min: 240, ideal: 300, max: 420)
+        reviewFileList(WorkspaceReviewFileNavigationPolicy.navigationFiles(navigationFiles))
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Hide Files", systemImage: "sidebar.trailing") {
+                        showsFileListColumn = false
+                    }
+                    .accessibilityIdentifier("review-file.list.hide")
+                }
+            }
     }
 
     private func reviewFileList(_ files: [WorkspaceReviewFile]) -> some View {

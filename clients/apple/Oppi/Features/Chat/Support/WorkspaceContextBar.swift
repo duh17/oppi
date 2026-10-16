@@ -209,6 +209,8 @@ struct WorkspaceContextBar: View {
 
     @Environment(\.apiClient) private var apiClient
     @Environment(SessionStore.self) private var sessionStore
+    @Environment(ServerConnection.self) private var connection
+    @Environment(AppNavigation.self) private var appNavigation
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var isExpanded = false
@@ -400,8 +402,12 @@ struct WorkspaceContextBar: View {
         }
         // Keep review presenters on the stable outer view. A transient loss of
         // session-scoped Git content must not unmount an active sheet.
-        .sheet(item: $reviewPresentation.selectedReviewItem) { item in
+        .routerModal(
+            item: $reviewPresentation.selectedReviewItem,
+            presentation: Self.reviewSheetPresentation(for: reviewPresentation.selectedReviewItem)
+        ) { item in
             reviewSheet(item: item)
+                .presenterScope(connection: connection, apiClient: apiClient, navigation: appNavigation)
         }
         .alert(
             "Unable to start action",
@@ -451,30 +457,40 @@ struct WorkspaceContextBar: View {
         }
     }
 
+    /// A commit pushes its new-session chat through the router, so its sheet
+    /// gets a router navigation controller. The file review keeps its own
+    /// `NavigationStack`: the same review screen is pushed by a SwiftUI link
+    /// inside the chat file panel, whose "All" browser still navigates with
+    /// SwiftUI links.
+    static func reviewSheetPresentation(for item: WorkspaceContextBarReviewItem?) -> ModalPresentation {
+        switch item {
+        case .commit: .sheet.inNavigation()
+        case .file, nil: .sheet
+        }
+    }
+
     @ViewBuilder
     private func reviewSheet(item: WorkspaceContextBarReviewItem) -> some View {
         switch item {
         case .file(let file):
             fileDetailSheet(file: file, navigationFiles: reviewPresentation.navigationFiles)
         case .commit(let commit):
-            NavigationStack {
-                CommitDetailView(workspaceId: workspaceId ?? "", commit: commit)
-                    .environment(\.reviewCommentSelectionScope, Self.makeFileDetailReviewCommentScope(
-                        parentScope: fileDetailReviewCommentScope,
-                        fallbackScope: nil,
-                        dismissFileDetail: { reviewPresentation.dismiss() }
-                    ))
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button {
-                                reviewPresentation.dismiss()
-                            } label: {
-                                Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
-                            }
-                            .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
+            CommitDetailView(workspaceId: workspaceId ?? "", commit: commit)
+                .environment(\.reviewCommentSelectionScope, Self.makeFileDetailReviewCommentScope(
+                    parentScope: fileDetailReviewCommentScope,
+                    fallbackScope: nil,
+                    dismissFileDetail: { reviewPresentation.dismiss() }
+                ))
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button {
+                            reviewPresentation.dismiss()
+                        } label: {
+                            Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
                         }
+                        .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
                     }
-            }
+                }
         }
     }
 

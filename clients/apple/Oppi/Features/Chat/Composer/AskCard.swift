@@ -113,7 +113,6 @@ struct AskCard: View {
     @Environment(\.theme) private var theme
 
     @State private var isExpanded: Bool = false
-    @State private var expandedSheetDetent: PresentationDetent = .large
     @State private var presentedAtNs: UInt64 = 0
     @State private var didRecordResponseMetric = false
     @State private var submission = AskResponseSubmission()
@@ -215,20 +214,24 @@ struct AskCard: View {
                 pageAdvance.invalidate()
             }
         }
-        .sheet(isPresented: $isExpanded) {
-            AskCardExpanded(
+        .routerModal(
+            isPresented: $isExpanded,
+            presentation: .sheet.detents(
+                [.medium(), .large()],
+                grabber: true,
+                selected: .large,
+                cornerRadius: 28
+            )
+        ) {
+            AskCardExpandedRouterSheet(
                 request: request,
                 currentPage: $currentPage,
                 answers: $answers,
                 isExpanded: $isExpanded,
                 voiceInputManager: voiceInputManager,
-                sheetDetent: $expandedSheetDetent,
                 onSubmit: { submitAnswers($0, surface: "expanded") },
                 onIgnoreAll: { ignoreAll(surface: "expanded") }
             )
-            .presentationDetents([.medium, .large], selection: $expandedSheetDetent)
-            .presentationDragIndicator(.visible)
-            .presentationCornerRadius(28)
         }
     }
 
@@ -593,6 +596,66 @@ struct AskCard: View {
 ///
 /// A newer selection, Ignore, explicit page change, submit, expansion, or
 /// request replacement must cancel and invalidate any pending follow-through.
+/// `AskCardExpanded` in the card's router sheet. The sheet runs in its own
+/// graph, so it pages and drafts on local state (its page transition animates
+/// there) and mirrors both to the card both ways. Focusing a custom answer
+/// lifts the sheet to its large detent through the navigator.
+private struct AskCardExpandedRouterSheet: View {
+    let request: AskRequest
+    @Binding var currentPage: Int
+    @Binding var answers: [String: AskAnswer]
+    @Binding var isExpanded: Bool
+    let voiceInputManager: VoiceInputManager?
+    let onSubmit: ([String: AskAnswer]) -> Void
+    let onIgnoreAll: () -> Void
+
+    @Environment(\.screenNavigator) private var navigator
+    @State private var page: Int
+    @State private var draft: [String: AskAnswer]
+
+    init(
+        request: AskRequest,
+        currentPage: Binding<Int>,
+        answers: Binding<[String: AskAnswer]>,
+        isExpanded: Binding<Bool>,
+        voiceInputManager: VoiceInputManager?,
+        onSubmit: @escaping ([String: AskAnswer]) -> Void,
+        onIgnoreAll: @escaping () -> Void
+    ) {
+        self.request = request
+        _currentPage = currentPage
+        _answers = answers
+        _isExpanded = isExpanded
+        self.voiceInputManager = voiceInputManager
+        self.onSubmit = onSubmit
+        self.onIgnoreAll = onIgnoreAll
+        _page = State(initialValue: currentPage.wrappedValue)
+        _draft = State(initialValue: answers.wrappedValue)
+    }
+
+    var body: some View {
+        AskCardExpanded(
+            request: request,
+            currentPage: $page,
+            answers: $draft,
+            isExpanded: $isExpanded,
+            voiceInputManager: voiceInputManager,
+            sheetDetent: Binding(
+                get: { .large },
+                set: { detent in
+                    if detent == .large { navigator.selectSheetDetent(.large) }
+                }
+            ),
+            onSubmit: onSubmit,
+            onIgnoreAll: onIgnoreAll
+        )
+        .onChange(of: page) { _, page in currentPage = page }
+        .onChange(of: draft) { _, draft in answers = draft }
+        .onChange(of: currentPage) { _, currentPage in page = currentPage }
+        .onChange(of: answers) { _, answers in draft = answers }
+    }
+}
+
 @MainActor
 final class AskInlineAutoAdvanceController {
     struct Identity: Equatable {

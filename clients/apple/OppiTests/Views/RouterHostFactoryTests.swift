@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import Testing
 import UIKit
@@ -216,6 +217,32 @@ struct RouterHostFactoryTests {
         })
     }
 
+    /// The flag form derived its item binding in the presenter's body, and
+    /// `Binding(get:set:)` reads its getter when created: every open and close
+    /// re-rendered the presenter (a chat re-rendered its whole timeline).
+    @Test("opening and closing a boolean routerModal leaves the presenter's body alone")
+    func flagModalDoesNotRerenderPresenter() async throws {
+        let opens = PassthroughSubject<Bool, Never>()
+        let renders = RenderCount()
+        let presenter = HostFactory.screen(root: makeTestAppRoot()) {
+            FlagModalScreen(opens: opens, renders: renders)
+        }
+        let window = try showInWindow(presenter)
+        defer { hide(window) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { renders.value > 0 })
+        let rendersBeforeOpening = renders.value
+
+        opens.send(true)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            isSettled(presenter.presentedViewController)
+        })
+        opens.send(false)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            presenter.presentedViewController == nil
+        })
+        #expect(renders.value == rendersBeforeOpening)
+    }
+
     @Test("a repeated disappearance runs onDismiss once and leaves a newer presentation alone")
     func repeatedDisappearanceRunsOnDismissOnce() async throws {
         let state = RouteState()
@@ -430,6 +457,51 @@ struct RouterHostFactoryTests {
             presenter.presentedViewController == nil
         })
     }
+
+    /// A screen the router created inside SwiftUI's update pass was tied to
+    /// the presenter's graph: a modal with its own `NavigationStack`, opened
+    /// from a SwiftUI stack's destination, reset that stack to its root, and
+    /// the modal went with it (a chat in the workspace stack popped).
+    @Test(
+        "a modal with its own NavigationStack keeps the SwiftUI stack destination it opened from",
+        arguments: [false, true]
+    )
+    func modalWithOwnStackKeepsPresentersStack(overFullScreen: Bool) async throws {
+        let state = StackState()
+        let host = HostFactory.screen(root: makeTestAppRoot()) {
+            StackShell(state: state, opens: overFullScreen ? .overFullScreen : .sheet)
+        }
+        let window = try showInWindow(host)
+        defer { hide(window) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { stackDepth(in: host) == 2 })
+
+        state.opensPanel = true
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { isSettled(host.presentedViewController) })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(800)) {
+            stackDepth(in: host) == 2 && host.presentedViewController != nil
+        })
+
+        // The presenter re-renders under the open modal and refreshes it.
+        state.revision += 1
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(800)) {
+            stackDepth(in: host) == 2 && host.presentedViewController != nil
+        })
+    }
+
+    @Test("a trailing column beside a SwiftUI stack destination shows its panel and keeps the destination")
+    func trailingColumnKeepsEnclosingStack() async throws {
+        let state = StackState()
+        let host = HostFactory.screen(root: makeTestAppRoot()) { StackShell(state: state, opens: .column) }
+        let window = try showInWindow(host)
+        defer { hide(window) }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { stackDepth(in: host) == 2 })
+
+        state.opensPanel = true
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) { hasColumnPanel(in: host) })
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(800)) {
+            stackDepth(in: host) == 2 && hasColumnPanel(in: host)
+        })
+    }
 }
 
 // MARK: - Fixtures
@@ -445,6 +517,76 @@ private final class RouteState {
     var locked = false
     var item: RouteItem?
     var query = ""
+}
+
+/// Counts body evaluations; not observed, so counting re-renders nothing.
+@MainActor
+private final class RenderCount {
+    var value = 0
+}
+
+/// Owns its flag in `@State`, as chat does; the test sets it through `opens`
+/// (`onReceive` adds no dependency of its own).
+private struct FlagModalScreen: View {
+    let opens: PassthroughSubject<Bool, Never>
+    let renders: RenderCount
+    @State private var isPresented = false
+
+    var body: some View {
+        let _ = renders.value += 1
+        Text("Presenter")
+            .routerModal(isPresented: $isPresented) {
+                Text("Modal")
+            }
+            .onReceive(opens) { isPresented = $0 }
+    }
+}
+
+@MainActor @Observable
+private final class StackState {
+    var path = [1]
+    var opensPanel = false
+    var revision = 0
+}
+
+/// A SwiftUI `NavigationStack` showing a pushed destination, which opens a
+/// router modal with a stack of its own, or a trailing column.
+private struct StackShell: View {
+    enum Panel { case sheet, overFullScreen, column }
+
+    @Bindable var state: StackState
+    let opens: Panel
+
+    var body: some View {
+        NavigationStack(path: $state.path) {
+            Text("Root")
+                .navigationDestination(for: Int.self) { _ in destination }
+        }
+    }
+
+    @ViewBuilder
+    private var destination: some View {
+        switch opens {
+        case .sheet, .overFullScreen:
+            let revision = state.revision
+            Text("Destination \(revision)")
+                .routerModal(
+                    isPresented: $state.opensPanel,
+                    presentation: opens == .sheet ? .sheet : ModalPresentation(style: .overFullScreen)
+                ) {
+                    NavigationStack { Text("Panel \(revision)") }
+                }
+        case .column:
+            Text("Destination")
+                .routerTrailingColumn(
+                    item: state.opensPanel ? RouteItem(id: "panel") : nil,
+                    minWidth: 100,
+                    idealWidth: 150
+                ) { _ in
+                    Text("Panel")
+                }
+        }
+    }
 }
 
 @MainActor
@@ -609,6 +751,28 @@ private struct CapturedController: UIViewControllerRepresentable {
 }
 
 // MARK: - Helpers
+
+/// The depth of the first navigation controller under `controller`.
+@MainActor
+private func stackDepth(in controller: UIViewController) -> Int {
+    if let navigation = controller as? UINavigationController {
+        return navigation.viewControllers.count
+    }
+    for child in controller.children {
+        let depth = stackDepth(in: child)
+        if depth >= 0 { return depth }
+    }
+    return -1
+}
+
+/// Whether a trailing column under `controller` shows a panel.
+@MainActor
+private func hasColumnPanel(in controller: UIViewController) -> Bool {
+    if controller is TrailingColumnController {
+        return !controller.children.isEmpty
+    }
+    return controller.children.contains(where: hasColumnPanel)
+}
 
 /// Animated pushes only finish in a window on the test host's scene.
 @MainActor

@@ -310,6 +310,13 @@ final class ScreenNavigator {
         Router.finish(controller)
     }
 
+    /// Moves the sheet this screen sits in to `detent` (the selection half of
+    /// SwiftUI `presentationDetents(_:selection:)`).
+    func selectSheetDetent(_ detent: UISheetPresentationController.Detent.Identifier) {
+        guard let controller else { return unattached("selectSheetDetent") }
+        Router.selectSheetDetent(detent, of: controller)
+    }
+
     fileprivate func searchController(prompt: String, alwaysVisible: Bool) -> ScreenSearchController? {
         if let search { return search }
         guard let controller else {
@@ -350,6 +357,10 @@ extension View {
     /// `onDismiss` runs after every dismissal, including swipe-down and the
     /// content's `ScreenNavigator.finish()` (or `dismiss()` when the content is
     /// the presented controller itself). A popover anchors to this view.
+    ///
+    /// Pass a stored binding (`$state`). A `Binding(get:set:)` built in the
+    /// presenter's body reads its getter there, so the whole presenter
+    /// re-renders on every open and close; derive it in a small view instead.
     func routerModal<Item: Identifiable, ModalContent: View>(
         item: Binding<Item?>,
         presentation: ModalPresentation = .sheet,
@@ -374,12 +385,14 @@ extension View {
         onDismiss: (() -> Void)? = nil,
         @ViewBuilder content: @escaping () -> ModalContent
     ) -> some View {
-        routerModal(
-            item: isPresented.routerPresentedFlag,
-            presentation: presentation,
-            onDismiss: onDismiss
-        ) { _ in
-            content()
+        background {
+            RouterModalFlagAnchor(
+                isPresented: isPresented,
+                presentation: presentation,
+                onDismiss: onDismiss,
+                modalContent: content
+            )
+            .accessibilityHidden(true)
         }
     }
 
@@ -402,6 +415,27 @@ extension View {
 
 private struct RouterPresentedFlag: Identifiable {
     var id: Int { 0 }
+}
+
+/// Derives the item binding in its own body. `Binding(get:set:)` calls its
+/// getter when created: created in the presenter's body, that read made the
+/// whole presenter re-render on every open and close.
+private struct RouterModalFlagAnchor<ModalContent: View>: View {
+    @Binding var isPresented: Bool
+    let presentation: ModalPresentation
+    let onDismiss: (() -> Void)?
+    let modalContent: () -> ModalContent
+
+    var body: some View {
+        let modalContent = modalContent
+        RouterModalAnchor(
+            item: $isPresented.routerPresentedFlag,
+            presentation: presentation,
+            onDismiss: onDismiss
+        ) { _ in
+            modalContent()
+        }
+    }
 }
 
 private extension Binding where Value == Bool {
@@ -558,10 +592,13 @@ final class RouterModalPresenter {
             return
         }
         guard request != nil, anchor?.viewIfLoaded?.window != nil, !presentationScheduled else { return }
-        // Present after the presenter's SwiftUI update, not inside it. A
+        // Present after the presenter's SwiftUI update, not inside it:
+        // `sync()` runs from the anchor's `updateUIViewController`, and a
         // hosting controller created during that update joined the
-        // presenter's graph: its title and bar items moved into the
-        // presenter's `NavigationStack` bar and its own bar stayed empty.
+        // presenter's graph. Its title and bar items moved into the
+        // presenter's `NavigationStack` bar and its own bar stayed empty, and
+        // a `NavigationStack` in it reset the presenter's own SwiftUI stack
+        // to its root (a chat in the workspace stack popped).
         presentationScheduled = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }

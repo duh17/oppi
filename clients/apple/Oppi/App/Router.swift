@@ -28,6 +28,11 @@ struct ModalPresentation {
     /// Sheet detents. Empty keeps UIKit's default (large).
     var detents: [UISheetPresentationController.Detent] = []
     var prefersGrabberVisible = false
+    /// The detent the sheet opens at. Nil opens at the smallest detent.
+    /// The screen moves it later with `ScreenNavigator.selectSheetDetent`.
+    var selectedDetent: UISheetPresentationController.Detent.Identifier?
+    /// Sheet corner radius (SwiftUI `presentationCornerRadius`). Nil keeps UIKit's.
+    var sheetCornerRadius: CGFloat?
     /// Non-nil wraps the screen in a `RouterNavigationController` with these
     /// bars for the root screen. The screen then gets a UIKit navigation bar
     /// for its title and toolbar items, pushes with `ScreenNavigator.push`,
@@ -56,10 +61,17 @@ struct ModalPresentation {
         return Self(style: .pageSheet, detents: [.large()], prefersGrabberVisible: true)
     }
 
-    func detents(_ detents: [UISheetPresentationController.Detent], grabber: Bool = false) -> Self {
+    func detents(
+        _ detents: [UISheetPresentationController.Detent],
+        grabber: Bool = false,
+        selected: UISheetPresentationController.Detent.Identifier? = nil,
+        cornerRadius: CGFloat? = nil
+    ) -> Self {
         var copy = self
         copy.detents = detents
         copy.prefersGrabberVisible = grabber
+        copy.selectedDetent = selected
+        copy.sheetCornerRadius = cornerRadius
         return copy
     }
 
@@ -173,12 +185,35 @@ enum Router {
                     sheet.detents = presentation.detents
                 }
                 sheet.prefersGrabberVisible = presentation.prefersGrabberVisible
+                sheet.selectedDetentIdentifier = presentation.selectedDetent
+                if let cornerRadius = presentation.sheetCornerRadius {
+                    sheet.preferredCornerRadius = cornerRadius
+                }
             }
         default:
             break
         }
         container.onDismissed = onDismiss
+        if presentation.style == .overFullScreen {
+            // A window-covering modal that keeps the presenter in the window:
+            // drop the presenter's keyboard, as `.fullScreen` does by taking
+            // the presenter out of the window. It would float over the modal.
+            presenter.view.window?.endEditing(true)
+        }
         topPresenter(from: presenter).present(container, animated: true)
+    }
+
+    /// Moves the sheet `screen` is the root of to `detent`, animated.
+    static func selectSheetDetent(
+        _ detent: UISheetPresentationController.Detent.Identifier,
+        of screen: UIViewController
+    ) {
+        let container = screen.navigationController ?? screen
+        guard let sheet = container.sheetPresentationController,
+              sheet.selectedDetentIdentifier != detent else { return }
+        sheet.animateChanges {
+            sheet.selectedDetentIdentifier = detent
+        }
     }
 
     /// Pushes `screen` onto the navigation controller that holds `host`.

@@ -497,8 +497,11 @@ struct UserTimelineRowContentTests {
             )
         )
 
-        let presented = try #require(host.presentedViewController)
-        #expect(presented is HostedScreenController, "Commit viewer must be a hosted screen")
+        let presented = try #require(host.presentedViewController as? RouterNavigationController)
+        #expect(
+            presented.viewControllers.first is HostedScreenController,
+            "Commit viewer must be a hosted screen in a router navigation controller, where its New Session chat pushes"
+        )
         #expect(presented.modalPresentationStyle == .pageSheet)
         #expect(presented.sheetPresentationController?.prefersGrabberVisible == true)
     }
@@ -552,8 +555,8 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
-    @Test("commit quick-action destination pushes inside the SwiftUI navigation stack")
-    func commitQuickActionDestinationPushesInsideNavigationStack() async throws {
+    @Test("commit quick-action destination pushes onto the viewer's router navigation controller")
+    func commitQuickActionDestinationPushesOntoViewerNavigation() async throws {
         let connection = ServerConnection()
         let destination = QuickActionSessionNavDestination.empty(sessionId: "session-from-commit")
         let host = makeTimelineCommitHostController(
@@ -571,14 +574,14 @@ struct UserTimelineRowContentTests {
         let pushed = await waitForTimelineCondition(timeoutMs: 1_200) {
             await MainActor.run {
                 host.view.layoutIfNeeded()
-                return nestedNavigationController(in: host)?.viewControllers.count ?? 0 >= 2
-                    || timelineFirstView(ofType: UICollectionView.self, in: host.view)?
+                return host.viewControllers.count >= 2
+                    && timelineFirstView(ofType: UICollectionView.self, in: host.view)?
                         .accessibilityIdentifier == "chat.timeline"
             }
         }
         #expect(
             pushed,
-            "New Session destination must push inside NavigationStack; navCount=\(nestedNavigationController(in: host)?.viewControllers.count ?? -1)"
+            "New Session destination must push its chat onto the viewer's stack; navCount=\(host.viewControllers.count)"
         )
     }
 
@@ -2022,8 +2025,9 @@ private func makeTimelineCommitHostController(
     destination: QuickActionSessionNavDestination?,
     composerDraftStore: ComposerDraftStore? = nil,
     root: AppRootEnvironment? = nil
-) -> HostedScreenController {
-    HostFactory.screen(root: root ?? makeTestAppRoot(composerDraftStore: composerDraftStore)) {
+) -> RouterNavigationController {
+    // As `ChatTimelineDestinationPresenter` presents it: `.inNavigation()`.
+    let screen = HostFactory.screen(root: root ?? makeTestAppRoot(composerDraftStore: composerDraftStore)) {
         TimelineCommitDetailHost(
             workspaceId: "ws-test",
             commit: GitCommitSummary(sha: "0486bc75", message: "", date: ""),
@@ -2031,6 +2035,7 @@ private func makeTimelineCommitHostController(
         )
         .withServerScopedEnvironment(connection)
     }
+    return RouterNavigationController(rootViewController: screen)
 }
 
 @MainActor
@@ -2086,34 +2091,4 @@ private func commitViewerForThemeTest() -> some View {
 @MainActor
 private func commitViewerThemeBackground(in root: UIView) -> UIColor? {
     firstSubview(withAccessibilityIdentifier: "commit.viewer.theme-bg", in: root)?.backgroundColor
-}
-
-@MainActor
-private func nestedNavigationController(in root: UIViewController) -> UINavigationController? {
-    if let navigation = root as? UINavigationController {
-        return navigation
-    }
-    for child in root.children {
-        if let navigation = nestedNavigationController(in: child) {
-            return navigation
-        }
-    }
-    return firstNavigationController(in: root.view)
-}
-
-@MainActor
-private func firstNavigationController(in root: UIView) -> UINavigationController? {
-    var responder: UIResponder? = root
-    while let current = responder {
-        if let navigation = current as? UINavigationController {
-            return navigation
-        }
-        responder = current.next
-    }
-    for child in root.subviews {
-        if let navigation = firstNavigationController(in: child) {
-            return navigation
-        }
-    }
-    return nil
 }

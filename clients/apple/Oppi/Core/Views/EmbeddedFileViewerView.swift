@@ -755,11 +755,13 @@ struct EmbeddedFileViewerView: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> FullScreenCodeViewController {
         let dismissAction = dismiss
+        let backSwipeAction = backSwipeAction
         let presentationMode: FullScreenCodeViewController.PresentationMode
         if showsNavigationChrome {
-            presentationMode = .embedded(onDismiss: { dismissAction() })
+            // Back goes through the host's back action when it gives one: at
+            // the root of a router navigation controller, dismiss() does nothing.
+            presentationMode = .embedded(onDismiss: { backSwipeAction?() ?? dismissAction() })
         } else {
-            let backSwipeAction = backSwipeAction
             presentationMode = .contentOnly(onBackSwipe: { backSwipeAction?() ?? dismissAction() })
         }
         let viewportBinding = markdownViewportIntent

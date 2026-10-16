@@ -16,7 +16,23 @@ struct CommitDetailActionMenuState: Equatable {
     }
 }
 
-/// Sheet view showing commit metadata and a tappable file list.
+extension View {
+    /// Presenter-local services for a screen pushed or presented from a review
+    /// or chat screen. A hosted screen starts from the app root (the active
+    /// server), so the presenter's own server, API client, and `AppNavigation`
+    /// go on explicitly. The API client wins over the server's for fixtures.
+    func presenterScope(
+        connection: ServerConnection,
+        apiClient: APIClient?,
+        navigation: AppNavigation
+    ) -> some View {
+        environment(\.apiClient, apiClient)
+            .withServerScopedEnvironment(connection)
+            .environment(navigation)
+    }
+}
+
+/// Router screen showing commit metadata and a tappable file list.
 /// Tapping a file opens a diff view for that file in that commit.
 struct CommitDetailView: View {
     let workspaceId: String
@@ -28,13 +44,16 @@ struct CommitDetailView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
+    @Environment(\.screenNavigator) private var navigator
+    @Environment(ServerConnection.self) private var connection
+    @Environment(AppNavigation.self) private var appNavigation
     @Environment(SessionStore.self) private var sessionStore
     @State private var detail: GitCommitDetail?
     @State private var error: String?
     @State private var selectedFile: GitCommitFileInfo?
     @State private var launchActionInFlightTitle: String?
     @State private var launchError: String?
-    @State private var navigateToQuickAction: QuickActionSessionNavDestination?
+    @State private var didOpenTestingQuickAction = false
     @State private var quickActionOptions: [WorkspaceQuickActionOption] = []
     @State private var isLoadingQuickActions = false
 
@@ -81,18 +100,10 @@ struct CommitDetailView: View {
             await loadQuickActionsIfNeeded()
         }
         .onAppear {
-            if let testingQuickActionDestination {
-                navigateToQuickAction = testingQuickActionDestination
+            if let testingQuickActionDestination, !didOpenTestingQuickAction {
+                didOpenTestingQuickAction = true
+                openQuickActionSession(testingQuickActionDestination)
             }
-        }
-        .navigationDestination(item: $navigateToQuickAction) { dest in
-            ChatView(
-                sessionId: dest.id,
-                workspaceIdHint: workspaceId,
-                initialInputText: dest.inputText,
-                initialPendingFiles: dest.pendingFileReferences
-            )
-            .id(dest.id)
         }
         .overlay {
             if let launchActionInFlightTitle {
@@ -102,6 +113,13 @@ struct CommitDetailView: View {
                     .padding()
                     .themedFloatingPanel()
             }
+        }
+        .routerTrailingColumn(
+            item: usesTrailingColumn ? selectedFile : nil,
+            minWidth: 320,
+            idealWidth: 440
+        ) { file in
+            commitDiffPanel(file)
         }
         .toolbar {
             // System overflow on iOS 27 (vertical rail aware); labeled Menu before that.
@@ -129,13 +147,28 @@ struct CommitDetailView: View {
         } message: {
             Text(launchError ?? "")
         }
-        .inspector(isPresented: commitDiffPresented) {
-            commitDiffColumn
+        .routerModal(item: commitDiffSheetFile, presentation: .sheet.inNavigation()) { file in
+            commitDiffPanel(file)
         }
-        .sheet(item: commitDiffSheetFile) { file in
-            NavigationStack {
-                commitDiffContent(file)
-            }
+    }
+
+    /// Pushes the new session's chat with this viewer's server and navigation.
+    /// The commit viewer opened from a chat keeps an `AppNavigation` of its own
+    /// (`TimelineCommitDetailHost`), so its chat leaves the app's alone.
+    private func openQuickActionSession(_ destination: QuickActionSessionNavDestination) {
+        let workspaceId = workspaceId
+        let connection = connection
+        let apiClient = apiClient
+        let appNavigation = appNavigation
+        navigator.push {
+            ChatView(
+                sessionId: destination.id,
+                workspaceIdHint: workspaceId,
+                initialInputText: destination.inputText,
+                initialPendingFiles: destination.pendingFileReferences
+            )
+            .id(destination.id)
+            .presenterScope(connection: connection, apiClient: apiClient, navigation: appNavigation)
         }
     }
 
@@ -152,19 +185,9 @@ struct CommitDetailView: View {
         TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: horizontalSizeClass)
     }
 
-    /// The open diff follows the selection. Dismissing the column clears it,
-    /// the same way the sheet's close button did.
-    private var commitDiffPresented: Binding<Bool> {
-        Binding(
-            get: { usesTrailingColumn && selectedFile != nil },
-            set: { presented in
-                // Ignore a compact transition. SwiftUI may report the column
-                // dismissed as the width changes; the open file has to survive.
-                if !presented, usesTrailingColumn { selectedFile = nil }
-            }
-        )
-    }
-
+    /// The open diff follows the selection: the column in regular width, a
+    /// sheet in compact. A width change moves it between the two; the open
+    /// file survives. Swipe-down clears it like the close button.
     private var commitDiffSheetFile: Binding<GitCommitFileInfo?> {
         Binding(
             get: { usesTrailingColumn ? nil : selectedFile },
@@ -172,19 +195,12 @@ struct CommitDetailView: View {
         )
     }
 
-    @ViewBuilder
-    private var commitDiffColumn: some View {
-        if let file = selectedFile {
-            NavigationStack {
-                commitDiffContent(file)
-            }
-            .inspectorColumnWidth(min: 320, ideal: 440, max: 640)
-        }
-    }
-
-    private func commitDiffContent(_ file: GitCommitFileInfo) -> some View {
+    /// The diff panel for the column and the sheet. It runs in its own screen,
+    /// so this viewer's server, API client, and review scope go on explicitly.
+    private func commitDiffPanel(_ file: GitCommitFileInfo) -> some View {
         CommitFileDiffView(workspaceId: workspaceId, sha: commit.sha, file: file)
             .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
+            .presenterScope(connection: connection, apiClient: apiClient, navigation: appNavigation)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
@@ -195,6 +211,7 @@ struct CommitDetailView: View {
                             systemImage: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName
                         )
                     }
+                    .accessibilityIdentifier("commit-detail.diff.close")
                 }
             }
     }
@@ -360,6 +377,7 @@ struct CommitDetailView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("commit-detail.file")
     }
 
     private func statusBadge(_ status: String) -> some View {
@@ -434,11 +452,11 @@ struct CommitDetailView: View {
             let response = try await api.createWorkspaceSession(workspaceId: workspaceId)
             sessionStore.upsert(response.session)
             launchError = nil
-            navigateToQuickAction = QuickActionSessionNavDestination.attachingCommit(
+            openQuickActionSession(QuickActionSessionNavDestination.attachingCommit(
                 sessionId: response.session.id,
                 sha: detail?.sha ?? commit.sha,
                 message: detail?.message ?? commit.message
-            )
+            ))
         } catch {
             launchError = error.localizedDescription
         }
@@ -473,12 +491,12 @@ struct CommitDetailView: View {
             )
             sessionStore.upsert(response.session)
             launchError = nil
-            navigateToQuickAction = QuickActionSessionNavDestination(
+            openQuickActionSession(QuickActionSessionNavDestination(
                 id: response.session.id,
                 inputText: response.visiblePrompt,
                 filePaths: response.filePaths,
                 fileDisplayPrefix: option.title
-            )
+            ))
         } catch {
             launchError = error.localizedDescription
         }

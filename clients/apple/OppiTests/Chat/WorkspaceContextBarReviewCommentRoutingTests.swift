@@ -71,13 +71,13 @@ struct WorkspaceContextBarReviewCommentRoutingTests {
         let navigationFiles = reviewStatus.files.map { $0.toReviewFile() }
         let reviewItem = WorkspaceContextBarReviewItem.file(selectedFile)
         let model = WorkspaceContextBarReviewTestModel(gitStatus: reviewStatus)
-        let controller = UIHostingController(
-            rootView: WorkspaceContextBarReviewTestHost(
+        let controller = HostFactory.screen(root: makeTestAppRoot()) {
+            WorkspaceContextBarReviewTestHost(
                 model: model,
                 sessionStore: sessionStore,
                 reviewPresentation: presentation
             )
-        )
+        }
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         controller.view.frame = window.bounds
         window.rootViewController = controller
@@ -86,12 +86,14 @@ struct WorkspaceContextBarReviewCommentRoutingTests {
         controller.view.setNeedsLayout()
         controller.view.layoutIfNeeded()
         defer {
-            controller.rootView = WorkspaceContextBarReviewTestHost(
-                model: model,
-                sessionStore: sessionStore,
-                reviewPresentation: presentation,
-                isVisible: false
-            )
+            controller.setContent {
+                WorkspaceContextBarReviewTestHost(
+                    model: model,
+                    sessionStore: sessionStore,
+                    reviewPresentation: presentation,
+                    isVisible: false
+                )
+            }
             window.isHidden = true
             window.rootViewController = nil
         }
@@ -130,13 +132,13 @@ struct WorkspaceContextBarReviewCommentRoutingTests {
             GitCommitSummary(sha: "abc1234", message: "Review", date: "2026-08-03")
         )
         let model = WorkspaceContextBarReviewTestModel(gitStatus: makeReviewGitStatus())
-        let controller = UIHostingController(
-            rootView: WorkspaceContextBarReviewTestHost(
+        let controller = HostFactory.screen(root: makeTestAppRoot()) {
+            WorkspaceContextBarReviewTestHost(
                 model: model,
                 sessionStore: sessionStore,
                 reviewPresentation: presentation
             )
-        )
+        }
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         controller.view.frame = window.bounds
         window.rootViewController = controller
@@ -145,12 +147,14 @@ struct WorkspaceContextBarReviewCommentRoutingTests {
         controller.view.setNeedsLayout()
         controller.view.layoutIfNeeded()
         defer {
-            controller.rootView = WorkspaceContextBarReviewTestHost(
-                model: model,
-                sessionStore: sessionStore,
-                reviewPresentation: presentation,
-                isVisible: false
-            )
+            controller.setContent {
+                WorkspaceContextBarReviewTestHost(
+                    model: model,
+                    sessionStore: sessionStore,
+                    reviewPresentation: presentation,
+                    isVisible: false
+                )
+            }
             window.isHidden = true
             window.rootViewController = nil
         }

@@ -127,11 +127,7 @@ struct ChatView: View {
     @State private var renameText = ""
     @State private var forkedSessionToOpen: ForkRoute?
     @State private var showShareRedactionSheet = false
-    @State private var shareRedactionPolicy = AppPreferences.Share.redactionPolicy
-    @State private var sharePreflightResult: ShareSessionPrepareResult?
-    @State private var sharePreflightError: String?
-    @State private var isSharePreflightRunning = false
-    @State private var sharePreflightTask: Task<Void, Never>?
+    @State private var shareReview = ShareSessionRedactionReview()
 
     @State private var showContextInspector = false
     @State private var isKeyboardVisible = false
@@ -882,32 +878,66 @@ struct ChatView: View {
         }
     }
 
+    /// Every chat modal is a router modal. Its content runs in its own graph
+    /// (`chatModalScope`). The expanded composer covers the chat with
+    /// `.overFullScreen`, which keeps the chat in the window: the chat keeps
+    /// rendering under it, so the composer's model picker, which the chat
+    /// presents, and the values the composer reads stay live. Outline, Files,
+    /// and Context bring their own `NavigationStack`s, because they also fill
+    /// the SwiftUI side-panel inspector (`ChatSidePanelInspector`).
     @ViewBuilder
     private func chatPresentation(railEdge: HorizontalEdge?) -> some View {
         let joinsRail = railEdge != nil
         configuredChatContent(railEdge: railEdge)
             .chatAuxiliaryPresentation(
                 isPresented: joinsRail && horizontalSizeClass == .regular ? .constant(false) : $showOutline,
-                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
-            ) { outlineSheet }
+                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation,
+                navigation: nil
+            ) { chatModalScope(outlineSheet) }
             .chatAuxiliaryPresentation(
                 isPresented: joinsRail && horizontalSizeClass == .regular ? .constant(false) : $isFilePanelVisible,
-                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
-            ) { filePanelSheet }
-            .sheet(isPresented: $showModelPicker) { modelPickerSheet }
-            .sheet(item: $reviewCommentStashPresentation) { presentation in
-                reviewCommentStashSheet(presentation)
+                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation,
+                navigation: nil
+            ) { chatModalScope(filePanelSheet) }
+            .routerModal(
+                isPresented: $showModelPicker,
+                presentation: .sheet.detents([.medium(), .large()], selected: .large)
+            ) { chatModalScope(modelPickerSheet) }
+            .routerModal(item: $reviewCommentStashPresentation) { presentation in
+                chatModalScope(reviewCommentStashSheet(presentation))
             }
             .chatAuxiliaryPresentation(
                 isPresented: joinsRail && horizontalSizeClass == .regular ? .constant(false) : $showContextInspector,
-                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
-            ) { contextInspectorSheet }
+                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation,
+                navigation: nil
+            ) { chatModalScope(contextInspectorSheet) }
             .chatAuxiliaryPresentation(
                 isPresented: $showShareRedactionSheet,
-                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
-            ) { shareRedactionSheet }
-            .fullScreenCover(isPresented: $showComposer) { composerSheet }
+                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation,
+                navigation: ScreenBars(),
+                onDismiss: cancelSharePreflight
+            ) { chatModalScope(shareRedactionSheet) }
+            .routerModal(
+                isPresented: $showComposer,
+                presentation: ModalPresentation(style: .overFullScreen)
+            ) { chatModalScope(composerSheet) }
             .alert("Rename Session", isPresented: $showRenameAlert) { renameAlert }
+    }
+
+    /// Presenter-local values for a chat modal. It runs in its own graph with
+    /// the app root services, so this chat's server, reducer stores,
+    /// navigation, and composer stores go on explicitly.
+    private func chatModalScope<Content: View>(_ content: Content) -> some View {
+        content
+            .withServerScopedEnvironment(connection)
+            .environment(sessionManager.reducer)
+            .environment(sessionManager.reducer.toolOutputStore)
+            .environment(sessionManager.reducer.toolArgsStore)
+            .environment(appNavigation)
+            .environment(quickCommentTemplateStore)
+            .environment(\.composerDraftStore, composerDraftStore)
+            .environment(\.chatReaderPayloadStore, chatReaderPayloadStore)
+            .environment(\.composerMediaImportGate, composerDraftController.mediaImportGate)
     }
 
     private var chatSessionTaskContent: some View {
@@ -2725,9 +2755,7 @@ struct ChatView: View {
             return
         }
 
-        shareRedactionPolicy = AppPreferences.Share.redactionPolicy
-        sharePreflightResult = nil
-        sharePreflightError = nil
+        shareReview.reset()
         showShareRedactionSheet = true
     }
 
@@ -2787,39 +2815,19 @@ struct ChatView: View {
     }
 
     private func scheduleSharePreflight() {
-        sharePreflightTask?.cancel()
-        isSharePreflightRunning = true
-        sharePreflightError = nil
-
-        let policy = shareRedactionPolicy.normalized
-
-        sharePreflightTask = Task { @MainActor in
-            defer { isSharePreflightRunning = false }
-
-            do {
-                try await Task.sleep(for: .milliseconds(150))
-                guard !Task.isCancelled, showShareRedactionSheet else { return }
-                let prepared = try await connection.prepareShareSession(redactionPolicy: policy)
-                guard !Task.isCancelled else { return }
-                sharePreflightResult = prepared
-                sharePreflightError = nil
-            } catch {
-                guard !Task.isCancelled else { return }
-                sharePreflightResult = nil
-                sharePreflightError = error.localizedDescription
-            }
+        let connection = connection
+        shareReview.schedulePreflight { policy in
+            try await connection.prepareShareSession(redactionPolicy: policy)
         }
     }
 
     private func cancelSharePreflight() {
-        sharePreflightTask?.cancel()
-        sharePreflightTask = nil
-        isSharePreflightRunning = false
+        shareReview.cancelPreflight()
     }
 
     private func publishSessionWithCurrentRedactionPolicy() {
         let sessionManagerRef = sessionManager
-        let policy = shareRedactionPolicy.normalized
+        let policy = shareReview.policy.normalized
 
         AppPreferences.Share.setRedactionPolicy(policy)
         cancelSharePreflight()
@@ -2896,6 +2904,9 @@ struct ChatView: View {
         }
     }
 
+    /// Keeps its own `NavigationStack`: the panel's "All" tab is the shared
+    /// `FileBrowserView`, which still navigates with SwiftUI links, and its
+    /// review pushes reach `WorkspaceReviewFileDetailView` the same way.
     private var filePanelSheet: some View {
         NavigationStack {
             ChatFileBrowserPanel(
@@ -2955,12 +2966,15 @@ struct ChatView: View {
         )
     }
 
+    /// Reads `shareReview` in the sheet's own graph, so the preview updates
+    /// while the sheet is up.
     private var shareRedactionSheet: some View {
-        ShareSessionRedactionSheet(
-            policy: $shareRedactionPolicy,
-            preflight: sharePreflightResult,
-            isAnalyzing: isSharePreflightRunning,
-            errorMessage: sharePreflightError,
+        let review = shareReview
+        return ShareSessionRedactionSheet(
+            policy: Bindable(review).policy,
+            preflight: review.preflight,
+            isAnalyzing: review.isAnalyzing,
+            errorMessage: review.errorMessage,
             isSharing: actionHandler.isSending,
             onRefresh: {
                 scheduleSharePreflight()
@@ -2974,18 +2988,13 @@ struct ChatView: View {
             }
         )
         .onAppear {
-            shareRedactionPolicy = AppPreferences.Share.redactionPolicy
-            sharePreflightResult = nil
-            sharePreflightError = nil
+            review.reset()
             scheduleSharePreflight()
         }
-        .onDisappear {
-            cancelSharePreflight()
-        }
-        .onChange(of: shareRedactionPolicy) { _, newPolicy in
+        .onChange(of: review.policy) { _, newPolicy in
             let normalized = newPolicy.normalized
-            if normalized != shareRedactionPolicy {
-                shareRedactionPolicy = normalized
+            if normalized != review.policy {
+                review.policy = normalized
                 return
             }
             AppPreferences.Share.setRedactionPolicy(normalized)
@@ -3072,6 +3081,8 @@ struct ChatView: View {
         return connection.workspaceStore.workspaces.first { $0.id == wsId }
     }
 
+    /// Keeps its own `NavigationStack`: a loaded skill opens the shared
+    /// `SkillDetailView`, whose file rows are SwiftUI value links.
     private var contextInspectorSheet: some View {
         NavigationStack {
             ContextInspectorView(
@@ -3111,7 +3122,6 @@ struct ChatView: View {
             } : nil,
             defaultAgentId: session?.launch?.agentId
         )
-        .presentationDetents([.medium, .large])
     }
 
     private var composerSheet: some View {
@@ -3267,6 +3277,11 @@ struct ChatSessionTitleView: View {
 /// even unpresented, kept the chat's own sheets (Context, Outline, Files) from
 /// presenting on iPhone. A size-class change swaps this branch, which rebuilds
 /// the timeline view under it; the chat's state above it survives.
+///
+/// Still SwiftUI: Files and Context need their own `NavigationStack`s (the
+/// shared `FileBrowserView` and `SkillDetailView` navigate with SwiftUI links),
+/// and a UIKit-hosted column with a stack inside reset the chat's enclosing
+/// SwiftUI `NavigationStack` to its root. It moves with the UIKit shell.
 private struct ChatSidePanelInspector<Panel: View>: ViewModifier {
     let isAvailable: Bool
     let isPresented: Binding<Bool>
@@ -3292,20 +3307,65 @@ private extension ToolbarContent {
     }
 }
 
+/// A chat panel modal; the id is whether it is full screen, so a new style
+/// is a new modal.
+private struct ChatAuxiliaryModal: Identifiable {
+    let id: Bool
+}
+
 private extension View {
+    /// A chat panel as a router modal: a sheet with medium and large detents
+    /// in compact width, full screen in regular width. `navigation` wraps it
+    /// in a router navigation controller; nil for panels with their own
+    /// `NavigationStack`.
     func chatAuxiliaryPresentation<PresentedContent: View>(
         isPresented: Binding<Bool>,
         prefersFullScreen: Bool,
+        navigation: ScreenBars?,
+        onDismiss: (() -> Void)? = nil,
         @ViewBuilder content: @escaping () -> PresentedContent
     ) -> some View {
-        // Both presenters stay attached so a size-class change (rotation, a
-        // fold, iPad multitasking) moves the panel instead of swapping this
-        // view's identity, which would rebuild the chat timeline underneath.
-        sheet(isPresented: prefersFullScreen ? .constant(false) : isPresented) {
-            content()
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+        modifier(ChatAuxiliaryPresentation(
+            isPresented: isPresented,
+            prefersFullScreen: prefersFullScreen,
+            navigation: navigation,
+            onDismiss: onDismiss,
+            panel: content
+        ))
+    }
+}
+
+/// Builds the item binding in its own body: `Binding(get:set:)` calls its
+/// getter when created, and created in the chat's body that read re-rendered
+/// the whole chat (its timeline included) on every panel open and close.
+private struct ChatAuxiliaryPresentation<Panel: View>: ViewModifier {
+    @Binding var isPresented: Bool
+    let prefersFullScreen: Bool
+    let navigation: ScreenBars?
+    let onDismiss: (() -> Void)?
+    let panel: () -> Panel
+
+    func body(content: Content) -> some View {
+        // The style is part of the id, so a size-class change (rotation, a
+        // fold, iPad multitasking) replaces an open sheet with the full-screen
+        // modal and back. Full screen is `.overFullScreen`: the chat stays in
+        // the window and keeps rendering, so the panel's chat values stay live.
+        var presentation = prefersFullScreen
+            ? ModalPresentation(style: .overFullScreen)
+            : .sheet.detents([.medium(), .large()], grabber: true, selected: .large)
+        presentation.navigation = navigation
+        let isPresented = $isPresented
+        let prefersFullScreen = prefersFullScreen
+        let panel = panel
+        return content.routerModal(
+            item: Binding(
+                get: { isPresented.wrappedValue ? ChatAuxiliaryModal(id: prefersFullScreen) : nil },
+                set: { isPresented.wrappedValue = $0 != nil }
+            ),
+            presentation: presentation,
+            onDismiss: onDismiss
+        ) { _ in
+            panel()
         }
-        .fullScreenCover(isPresented: prefersFullScreen ? isPresented : .constant(false), content: content)
     }
 }

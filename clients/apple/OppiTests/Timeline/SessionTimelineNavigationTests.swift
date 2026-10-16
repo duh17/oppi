@@ -86,7 +86,10 @@ struct SessionTimelineNavigationTests {
                 }
             }
         )
-        let sheet = UIHostingController(rootView: outline.environment(reducer.toolArgsStore))
+        // Hosted the way the router presents it (`.inNavigation()`), unanimated.
+        let sheet = RouterNavigationController(rootViewController: HostFactory.screen(root: makeTestAppRoot()) {
+            outline.environment(reducer.toolArgsStore)
+        })
         sheet.modalPresentationStyle = .pageSheet
         host.present(sheet, animated: false)
         #expect(host.presentedViewController === sheet)

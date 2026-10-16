@@ -1099,6 +1099,13 @@ struct ComposerCanvasDestinationAnchor: UIViewControllerRepresentable {
     }
 }
 
+extension ModalPresentation {
+    /// The composers' full-screen pickers and canvas. `.overFullScreen` keeps
+    /// the composer in the window, so it keeps rendering and the picker's
+    /// writes to the composer's bindings land while it is up.
+    static var composerCover: Self { Self(style: .overFullScreen) }
+}
+
 extension View {
     /// Full-screen PaperKit canvas shared by inline and expanded composers.
     func composerCanvasCover(
@@ -1108,7 +1115,7 @@ extension View {
         backgroundImage: UIImage? = nil,
         replacingAttachmentID: String? = nil
     ) -> some View {
-        fullScreenCover(isPresented: isPresented) {
+        routerModal(isPresented: isPresented, presentation: .composerCover) {
             PaperMarkupCanvasHostView(
                 background: backgroundImage.map { .image($0) } ?? .blank,
                 onAddToChat: { attachment, recognizedText in
@@ -1172,7 +1179,7 @@ extension View {
         isPresented: Binding<Bool>,
         pendingAttachments: Binding<[PendingAttachment]>
     ) -> some View {
-        fullScreenCover(isPresented: isPresented) {
+        routerModal(isPresented: isPresented, presentation: .composerCover) {
             CameraPicker(
                 onCapture: { image in
                     ComposerShared.addCapturedImage(image, to: pendingAttachments)
@@ -1227,7 +1234,7 @@ private struct ComposerPhotoLibraryCoverModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .fullScreenCover(isPresented: $isPresented) {
+            .routerModal(isPresented: $isPresented, presentation: .composerCover) {
                 PhotoLibraryPicker(
                     selectionLimit: ComposerShared.maxPhotoSelectionCount,
                     onPick: { providers in

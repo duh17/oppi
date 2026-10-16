@@ -160,6 +160,7 @@ struct AskCardExpanded: View {
                     .padding(8)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("ask.expanded.collapse")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

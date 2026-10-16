@@ -374,19 +374,15 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/ChatTimelineDestinationPresenter.swift": {
-      "NavigationStack": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/ChatView.swift": {
       "NavigationStack": 2,
       ".navigationDestination(": 2,
-      ".sheet(": 2,
-      ".fullScreenCover(": 2,
       ".inspector(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Composer/AskCard.swift": {
-      ".sheet(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Composer/AskCardExpanded.swift": {
@@ -396,11 +392,9 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Composer/ChatInputBar.swift": {
-      ".popover(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Composer/ComposerShared.swift": {
-      ".fullScreenCover(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Composer/ExpandedComposerView.swift": {
@@ -462,7 +456,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift": {
-      ".fullScreenCover(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift": {
@@ -483,22 +476,18 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/SessionOutlineView.swift": {
-      "NavigationStack": 2,
-      ".sheet(": 1,
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Support/SessionToolbar.swift": {
-      ".popover(": 1,
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/Chat/Support/Sharing/ShareSessionRedactionSheet.swift": {
       "NavigationStack": 1,
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/Features/Chat/Support/SessionToolbar.swift": {
+      "import SwiftUI": 1
+    },
+    "clients/apple/Oppi/Features/Chat/Support/Sharing/ShareSessionRedactionSheet.swift": {
+      "import SwiftUI": 1
+    },
     "clients/apple/Oppi/Features/Chat/Support/WorkspaceContextBar.swift": {
-      "NavigationStack": 2,
+      "NavigationStack": 1,
       ".navigationDestination(": 1,
-      ".sheet(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownAudioView.swift": {
@@ -666,10 +655,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Review/CommitDetailView.swift": {
-      "NavigationStack": 2,
-      ".navigationDestination(": 1,
-      ".sheet(": 1,
-      ".inspector(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Review/GitStatusColor.swift": {
@@ -682,9 +667,7 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Review/WorkspaceReviewFileDetailView.swift": {
-      "NavigationStack": 1,
       ".navigationDestination(": 1,
-      ".inspector(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/HerdrAgentsView.swift": {

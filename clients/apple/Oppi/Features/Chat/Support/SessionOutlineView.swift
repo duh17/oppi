@@ -63,7 +63,6 @@ struct SessionOutlineView: View {
     @State private var pendingTreeNavigationTargetId: String?
     @State private var showTreeNavigationOptions = false
     @State private var showCustomSummaryInstructionsSheet = false
-    @State private var customSummaryInstructions = ""
 
     private static let initialRenderWindow = 200
     private static let renderWindowStep = 200
@@ -204,7 +203,6 @@ struct SessionOutlineView: View {
                 }
 
                 Button("Summarize with custom instructions") {
-                    customSummaryInstructions = ""
                     showCustomSummaryInstructionsSheet = true
                 }
 
@@ -214,8 +212,15 @@ struct SessionOutlineView: View {
             } message: {
                 Text("Choose how to handle the branch you leave behind.")
             }
-            .sheet(isPresented: $showCustomSummaryInstructionsSheet) {
-                customSummaryInstructionsSheet
+            .routerModal(
+                isPresented: $showCustomSummaryInstructionsSheet,
+                presentation: .sheet.inNavigation()
+            ) {
+                TreeSummaryInstructionsSheet(
+                    isNavigating: navigatingTreeNodeId != nil,
+                    onCancel: clearPendingTreeNavigationSelection,
+                    onNavigate: beginTreeNavigationWithCustomSummary
+                )
             }
         }
     }
@@ -625,11 +630,10 @@ struct SessionOutlineView: View {
         ))
     }
 
-    private func beginTreeNavigationWithCustomSummary() {
+    private func beginTreeNavigationWithCustomSummary(_ text: String) {
         guard let targetId = pendingTreeNavigationTargetId else { return }
 
-        let instructions = customSummaryInstructions
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let instructions = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !instructions.isEmpty else { return }
 
@@ -675,49 +679,6 @@ struct SessionOutlineView: View {
         pendingTreeNavigationTargetId = nil
         showTreeNavigationOptions = false
         showCustomSummaryInstructionsSheet = false
-        customSummaryInstructions = ""
-    }
-
-    private var hasCustomSummaryInstructions: Bool {
-        !customSummaryInstructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var customSummaryInstructionsSheet: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Add extra guidance for what to preserve in the branch summary.")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-
-                TextEditor(text: $customSummaryInstructions)
-                    .font(.body)
-                    .scrollContentBackground(.hidden)
-                    .accessibilityIdentifier("tree-summary-instructions")
-                    .frame(minHeight: 160)
-                    .themedTextInputCard(cornerRadius: 12, contentPadding: 8)
-
-                Spacer(minLength: 0)
-            }
-            .padding(16)
-            .background(.themeBg)
-            .navigationTitle("Summary Instructions")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(role: .cancel) {
-                        clearPendingTreeNavigationSelection()
-                    }
-                }
-
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Navigate", systemImage: "arrow.turn.down.right") {
-                        beginTreeNavigationWithCustomSummary()
-                    }
-                    .disabled(!hasCustomSummaryInstructions || navigatingTreeNodeId != nil)
-                    .accessibilityIdentifier("tree-summary-navigate")
-                }
-            }
-        }
     }
 
     // MARK: - Outline Pane
@@ -1086,6 +1047,56 @@ struct SessionOutlineView: View {
 }
 
 // MARK: - Pre-computed Outline Entry
+
+/// Custom summary guidance before a tree switch. A router sheet above the
+/// outline; the text is this sheet's own state and goes out with Navigate.
+private struct TreeSummaryInstructionsSheet: View {
+    let isNavigating: Bool
+    let onCancel: () -> Void
+    let onNavigate: (String) -> Void
+
+    @State private var instructions = ""
+
+    private var hasInstructions: Bool {
+        !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Add extra guidance for what to preserve in the branch summary.")
+                .font(.caption)
+                .foregroundStyle(.themeComment)
+
+            TextEditor(text: $instructions)
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .accessibilityIdentifier("tree-summary-instructions")
+                .frame(minHeight: 160)
+                .themedTextInputCard(cornerRadius: 12, contentPadding: 8)
+
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .background(.themeBg)
+        .navigationTitle("Summary Instructions")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(role: .cancel) {
+                    onCancel()
+                }
+            }
+
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Navigate", systemImage: "arrow.turn.down.right") {
+                    onNavigate(instructions)
+                }
+                .disabled(!hasInstructions || isNavigating)
+                .accessibilityIdentifier("tree-summary-navigate")
+            }
+        }
+    }
+}
 
 private enum OutlineEntryKind: String {
     case user

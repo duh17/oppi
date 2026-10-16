@@ -74,7 +74,15 @@ struct SessionToolbar: View {
             }
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $isThinkingPickerPresented, arrowEdge: .bottom) {
+        .accessibilityLabel("Thinking level")
+        .accessibilityValue(thinkingLevel.displayTitle)
+        .accessibilityIdentifier("session.toolbar.thinking")
+        .routerModal(
+            isPresented: $isThinkingPickerPresented,
+            presentation: .popover
+                .arrowDirections(.down)
+                .keepsPopoverInCompactWidth()
+        ) {
             VStack(spacing: 0) {
                 ForEach(supportedThinkingLevels.reversed(), id: \.rawValue) { level in
                     Button {
@@ -124,12 +132,7 @@ struct SessionToolbar: View {
             }
             .padding(.vertical, 6)
             .frame(width: 220)
-            .presentationCompactAdaptation(.popover)
-            .presentationBackground(Color.themeSurfaceFill(.popover))
         }
-        .accessibilityLabel("Thinking level")
-        .accessibilityValue(thinkingLevel.displayTitle)
-        .accessibilityIdentifier("session.toolbar.thinking")
     }
 }
 
