@@ -89,9 +89,9 @@ struct WorkspaceReviewFileDetailView: View {
     var reviewCommentSelectionScopeOverride: ReviewCommentSelectionScope? = nil
     var navigationFiles: [WorkspaceReviewFile] = []
     var allowsHorizontalBackSwipe = true
-    /// Session-file pushes already sit in chat's trailing inspector. The list
-    /// stays on the adjacent-file controls there. Sheets and the screenshot
-    /// host keep the column.
+    /// Session-file pushes already sit in chat's Files panel. The list stays
+    /// on the adjacent-file controls there. Sheets and the screenshot host
+    /// keep the column.
     var showsFileListInspector = true
 
     @Environment(\.apiClient) private var apiClient
@@ -112,8 +112,6 @@ struct WorkspaceReviewFileDetailView: View {
     @State private var isLoading = false
     @State private var launchActionInFlightTitle: String?
     @State private var launchError: String?
-    /// A quick-action chat opened inside a SwiftUI stack (see `openQuickActionSession`).
-    @State private var stackedQuickAction: QuickActionSessionNavDestination?
     @State private var quickActionOptions: [WorkspaceQuickActionOption] = []
     @State private var isLoadingQuickActions = false
     /// The current-bytes reader has its text editor open.
@@ -253,15 +251,6 @@ struct WorkspaceReviewFileDetailView: View {
             activeFile = nil
             diff = nil
             error = nil
-        }
-        .navigationDestination(item: $stackedQuickAction) { destination in
-            ChatView(
-                sessionId: destination.id,
-                workspaceIdHint: workspaceId,
-                initialInputText: destination.inputText,
-                initialPendingFiles: destination.pendingFileReferences
-            )
-            .id(destination.id)
         }
         .task(id: quickActionTaskID) {
             await loadQuickActionsIfNeeded()
@@ -643,13 +632,7 @@ struct WorkspaceReviewFileDetailView: View {
     }
 
     /// Pushes the new session's chat with this review's server and navigation.
-    /// A review inside a SwiftUI stack whose screen has no UIKit navigation
-    /// controller (chat's Files panel, the git bar's sheet) pushes in that stack.
     private func openQuickActionSession(_ destination: QuickActionSessionNavDestination) {
-        guard navigator.canPush else {
-            stackedQuickAction = destination
-            return
-        }
         let workspaceId = workspaceId
         let connection = connection
         let apiClient = apiClient

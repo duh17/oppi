@@ -7,7 +7,7 @@ import UIKit
 
 struct ChatFileBrowserPanelPreview: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @State private var selectedTab = ScreenshotPreviewConfig.panelTab
+    @Environment(\.appRootEnvironment) private var appRoot
     @State private var navigation = AppNavigation()
     @State private var gitStatusStore = GitStatusStore()
     @State private var fileIndexStore = FileIndexStore()
@@ -24,19 +24,43 @@ struct ChatFileBrowserPanelPreview: View {
         "clients/apple/OppiTests/FileBrowser/ChatFileBrowserPanelTests.swift",
     ]
 
+    /// The panel at the root of a router navigation controller, as chat
+    /// shows it: the trailing column in regular width, the screen otherwise.
     var body: some View {
         Group {
-            if TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: horizontalSizeClass) {
-                previewSessionColumn
-                    .inspector(isPresented: .constant(true)) {
-                        panel
-                            .inspectorColumnWidth(min: 320, ideal: 400, max: 520)
+            if let appRoot {
+                if TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: horizontalSizeClass) {
+                    RouterPreviewStack(root: appRoot) {
+                        previewSessionColumn
+                            .routerTrailingColumn(item: PreviewPanelColumn(), minWidth: 320, idealWidth: 400) { _ in
+                                panel
+                            }
                     }
-            } else {
-                panel
+                    .ignoresSafeArea()
+                } else {
+                    RouterPreviewStack(root: appRoot) { panel }
+                        .ignoresSafeArea()
+                }
             }
         }
         .background(Color.themeBg.ignoresSafeArea())
+        .preferredColorScheme(.dark)
+        .accessibilityIdentifier("screenshot.ready")
+    }
+
+    private struct PreviewPanelColumn: Identifiable {
+        var id: Int { 0 }
+    }
+
+    /// Runs in its own hosted screen, so the fixtures go on here.
+    private var panel: some View {
+        ChatFileBrowserPanelPreviewContent(
+            sessionId: Self.sessionId,
+            workspaceId: Self.workspaceId,
+            changedFiles: Self.changedFiles
+        )
+        .navigationTitle("Files")
+        .navigationBarTitleDisplayMode(.inline)
         .environment(navigation)
         .environment(gitStatusStore)
         .environment(fileIndexStore)
@@ -47,21 +71,6 @@ struct ChatFileBrowserPanelPreview: View {
         .environment(AskRequestStore())
         .environment(MessageQueueStore())
         .environment(\.apiClient, apiClient)
-        .preferredColorScheme(.dark)
-        .accessibilityIdentifier("screenshot.ready")
-    }
-
-    private var panel: some View {
-        NavigationStack {
-            ChatFileBrowserPanel(
-                sessionId: Self.sessionId,
-                workspaceId: Self.workspaceId,
-                changedFiles: Self.changedFiles,
-                selectedTab: $selectedTab
-            )
-            .navigationTitle("Files")
-            .navigationBarTitleDisplayMode(.inline)
-        }
         .accessibilityIdentifier("chat-file-panel.preview")
     }
 
@@ -168,6 +177,25 @@ struct ChatFileBrowserPanelPreview: View {
         .padding(.horizontal, 14)
         .frame(height: 58)
         .background(Color.themeBg)
+    }
+}
+
+/// The panel with its tab in the hosted screen's own state.
+private struct ChatFileBrowserPanelPreviewContent: View {
+    let sessionId: String
+    let workspaceId: String
+    let changedFiles: [String]
+
+    @State private var selectedTab = ScreenshotPreviewConfig.panelTab
+
+    var body: some View {
+        ChatFileBrowserPanel(
+            sessionId: sessionId,
+            workspaceId: workspaceId,
+            changedFiles: changedFiles,
+            selectedTab: $selectedTab,
+            onClose: {}
+        )
     }
 }
 

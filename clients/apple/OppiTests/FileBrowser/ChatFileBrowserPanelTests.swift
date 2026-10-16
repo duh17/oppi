@@ -83,7 +83,8 @@ struct ChatFileBrowserPanelTests {
             changedFiles: ["docs/notes.md"],
             selectedTab: .constant(.all),
             serverId: "server-1",
-            worktreeId: "wt-agent"
+            worktreeId: "wt-agent",
+            onClose: {}
         )
 
         // All: a tapped file pushes the full reader (own chrome and Edit) on the session checkout.

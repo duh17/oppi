@@ -83,8 +83,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/ScreenshotPreviews/ChatFileBrowserPanelPreview.swift": {
-      "NavigationStack": 1,
-      ".inspector(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/ScreenshotPreviews/ChatSpeakerContrastPreview.swift": {
@@ -361,9 +359,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/ChatView.swift": {
-      "NavigationStack": 2,
-      ".navigationDestination(": 1,
-      ".inspector(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Composer/AskCard.swift": {
@@ -426,8 +421,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/ContextInspectorView.swift": {
-      "NavigationLink": 1,
-      ".navigationDestination(": 2,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/ContextUsageViews.swift": {
@@ -453,14 +446,12 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/SessionFiles/SessionFilesListView.swift": {
-      "NavigationLink": 2,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/SessionFiles/SessionTouchedFileContentView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/SessionOutlineView.swift": {
-      "NavigationStack": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/SessionToolbar.swift": {
@@ -470,8 +461,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/WorkspaceContextBar.swift": {
-      "NavigationStack": 1,
-      ".navigationDestination(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownAudioView.swift": {
@@ -599,7 +588,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/FileBrowser/FileBrowserView.swift": {
-      "NavigationLink": 2,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Icons/IconPickerView.swift": {
@@ -649,7 +637,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Review/WorkspaceReviewFileDetailView.swift": {
-      ".navigationDestination(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/HerdrAgentsView.swift": {
@@ -824,7 +811,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Skills/SkillDetailView.swift": {
-      "NavigationLink": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Skills/SkillFileView.swift": {

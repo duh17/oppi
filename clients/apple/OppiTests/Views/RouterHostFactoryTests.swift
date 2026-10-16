@@ -810,13 +810,13 @@ private func stackDepth(in controller: UIViewController) -> Int {
     return -1
 }
 
-/// Whether a trailing column under `controller` shows a panel.
+/// Whether a trailing column shows a panel in `controller`'s view.
 @MainActor
 private func hasColumnPanel(in controller: UIViewController) -> Bool {
-    if controller is TrailingColumnController {
-        return !controller.children.isEmpty
+    func showsColumn(_ view: UIView) -> Bool {
+        view is TrailingColumnOverlayView || view.subviews.contains(where: showsColumn)
     }
-    return controller.children.contains(where: hasColumnPanel)
+    return showsColumn(controller.view)
 }
 
 /// The workspace shell's UIKit stack under `controller`.

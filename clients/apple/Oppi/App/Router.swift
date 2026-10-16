@@ -115,10 +115,37 @@ protocol RouterModalContainer: UIViewController {
 /// The navigation controller the router presents modally around a screen.
 /// It follows the app theme's color scheme, so the bar and the sheet chrome
 /// match the hosted content in light, dark, and system themes.
-final class RouterNavigationController: UINavigationController, RouterModalContainer {
+final class RouterNavigationController: UINavigationController, RouterModalContainer,
+    UINavigationControllerDelegate {
     var onDismissed: (() -> Void)?
     var interfaceStyle: (() -> UIUserInterfaceStyle)? {
         didSet { setNeedsUpdateProperties() }
+    }
+    /// Runs after UIKit recomputes this controller's safe area. A trailing
+    /// column uses it to keep its own insets in step with its host.
+    var onSafeAreaInsetsChange: (() -> Void)?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        delegate = self
+    }
+
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        onSafeAreaInsetsChange?()
+    }
+
+    func navigationController(
+        _ navigationController: UINavigationController,
+        willShow viewController: UIViewController,
+        animated: Bool
+    ) {
+        // A pushed file reader hides this bar for its own chrome
+        // (`toolbarVisibility(.hidden, for: .navigationBar)`), and nothing
+        // shows it again when the reader pops: the screen below lost its
+        // title, items, and search bar. Every screen starts with the bar;
+        // content that hides it hides it again.
+        setNavigationBarHidden(false, animated: animated)
     }
 
     override func updateProperties() {

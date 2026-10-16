@@ -28,11 +28,12 @@ struct SessionOutlineView: View {
     var initialOutlineSnapshot: SessionOutlineSnapshot? = nil
     var loadOutline: (() async throws -> SessionOutlineSnapshot)? = nil
     var toolDetails: (String) -> JSONValue? = { _ in nil }
-    /// Side-panel hosts close through state. `dismiss` there would pop the chat.
-    var onClose: (() -> Void)?
+    /// Closes the outline through its host's state: it sits at the root of a
+    /// router navigation controller (a modal or the chat's trailing column),
+    /// where `dismiss` does nothing.
+    let onClose: () -> Void
 
     @Environment(ToolArgsStore.self) private var toolArgsStore
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.themeID) private var themeID
 
@@ -70,14 +71,6 @@ struct SessionOutlineView: View {
 
     @State private var searchDebounceTask: Task<Void, Never>?
 
-    private func close() {
-        if let onClose {
-            onClose()
-        } else {
-            dismiss()
-        }
-    }
-
     enum OutlineLayout: String, CaseIterable {
         case timeline = "Timeline"
         case tree = "Tree"
@@ -102,17 +95,24 @@ struct SessionOutlineView: View {
         }
     }
 
+    /// Hosted in a router navigation controller (a chat side panel, as a
+    /// modal or the trailing column), which owns its bar and search.
     var body: some View {
-        NavigationStack {
-            outlinePane
+        outlinePane
             .background(.themeBg)
             .id(themeID)
-            .searchable(text: $searchText, prompt: searchPrompt)
+            // iPad keeps the title and Close while searching, as SwiftUI's
+            // search did: its search bar has no Cancel to end the search.
+            .routerSearchable(
+                text: $searchText,
+                prompt: searchPrompt,
+                hidesNavigationBarDuringPresentation: UIDevice.current.userInterfaceIdiom != .pad
+            )
             .navigationTitle("Session Outline")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(role: .close) { close() }
+                    Button(role: .close, action: onClose)
                         .accessibilityIdentifier("chat.outline.close")
                 }
             }
@@ -222,7 +222,6 @@ struct SessionOutlineView: View {
                     onNavigate: beginTreeNavigationWithCustomSummary
                 )
             }
-        }
     }
 
     // MARK: - Index Building
@@ -601,7 +600,7 @@ struct SessionOutlineView: View {
 
         guard onNavigateTreeNode != nil else {
             onSelect(nodeId)
-            close()
+            onClose()
             return
         }
 
@@ -654,7 +653,7 @@ struct SessionOutlineView: View {
 
         guard let onNavigateTreeNode else {
             onSelect(request.targetId)
-            close()
+            onClose()
             return
         }
 
@@ -667,7 +666,7 @@ struct SessionOutlineView: View {
             do {
                 try await onNavigateTreeNode(request)
                 guard !Task.isCancelled else { return }
-                close()
+                onClose()
             } catch {
                 guard !Task.isCancelled else { return }
                 treeNavigateErrorMessage = error.localizedDescription
@@ -798,7 +797,7 @@ struct SessionOutlineView: View {
                         let entry = displayedEntries[index]
                         Button {
                             onSelect(entry.id)
-                            close()
+                            onClose()
                         } label: {
                             OutlineRow(
                                 item: entry.item,
@@ -821,7 +820,7 @@ struct SessionOutlineView: View {
                             if let onFork, entry.isForkable {
                                 Button("Fork from here", systemImage: "arrow.triangle.branch") {
                                     onFork(entry.id)
-                                    close()
+                                    onClose()
                                 }
                             }
                         }
@@ -967,7 +966,7 @@ struct SessionOutlineView: View {
                                    UUID(uuidString: node.id) == nil {
                                     Button("Fork from here", systemImage: "arrow.triangle.branch") {
                                         onFork(node.id)
-                                        close()
+                                        onClose()
                                     }
                                 }
                             }

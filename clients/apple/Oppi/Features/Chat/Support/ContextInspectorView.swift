@@ -8,6 +8,9 @@ struct ContextInspectorView: View {
     @State private var loadedStats: SessionStatsSnapshot?
     @State private var statsLoading = false
     @State private var statsError: String?
+    @Environment(ServerConnection.self) private var connection
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
+    @Environment(\.screenNavigator) private var navigator
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.themeID) private var themeID
 
@@ -182,9 +185,16 @@ struct ContextInspectorView: View {
                         .foregroundStyle(.themeComment)
                 } else {
                     ForEach(sessionSkillEstimates) { skill in
-                        NavigationLink(value: SkillDetailDestination(skillName: skill.name, cwd: skillDetailCwd)) {
-                            skillEstimateRow(skill)
+                        Button {
+                            openSkill(skill)
+                        } label: {
+                            HStack(spacing: 8) {
+                                skillEstimateRow(skill)
+                                SettingsDisclosureChevron()
+                            }
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                     }
 
                     Text("Tap a skill to read SKILL.md and files.")
@@ -221,11 +231,20 @@ struct ContextInspectorView: View {
         .task(id: session?.id) {
             await refreshSessionStats()
         }
-        .navigationDestination(for: SkillDetailDestination.self) { dest in
-            SkillDetailView(skillName: dest.skillName, cwd: dest.cwd)
-        }
-        .navigationDestination(for: SkillFileDestination.self) { dest in
-            SkillFileView(skillName: dest.skillName, filePath: dest.filePath, cwd: dest.cwd)
+    }
+
+    /// Pushes the skill's SKILL.md and files above the panel. The page runs
+    /// in its own screen, so the chat's server and review scope go on
+    /// explicitly.
+    private func openSkill(_ skill: SkillEstimate) {
+        let skillName = skill.name
+        let cwd = skillDetailCwd
+        let connection = connection
+        let reviewCommentSelectionScope = reviewCommentSelectionScope
+        navigator.push {
+            SkillDetailView(skillName: skillName, cwd: cwd)
+                .withServerScopedEnvironment(connection)
+                .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
         }
     }
 

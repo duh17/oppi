@@ -84,7 +84,8 @@ struct SessionTimelineNavigationTests {
                     await Task.yield()
                     #expect(reducer.prependTracePage(Array(events.prefix(201))))
                 }
-            }
+            },
+            onClose: {}
         )
         // Hosted the way the router presents it (`.inNavigation()`), unanimated.
         let sheet = RouterNavigationController(rootViewController: HostFactory.screen(root: makeTestAppRoot()) {

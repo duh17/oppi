@@ -19,6 +19,8 @@ struct SkillDetailView: View {
 
     @Environment(\.apiClient) private var apiClient
     @Environment(ServerConnection.self) private var connection
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
+    @Environment(\.screenNavigator) private var navigator
     @State private var detail: SkillDetail?
     @State private var isLoading = true
     @State private var error: String?
@@ -98,7 +100,9 @@ struct SkillDetailView: View {
                 .padding(.bottom, 4)
 
             ForEach(files, id: \.self) { file in
-                NavigationLink(value: SkillFileDestination(skillName: skillName, filePath: file, cwd: cwd)) {
+                Button {
+                    openFile(file)
+                } label: {
                     HStack(spacing: 6) {
                         Image(systemName: fileIcon(for: file))
                             .font(.caption)
@@ -114,6 +118,22 @@ struct SkillDetailView: View {
                     .padding(.vertical, 2)
                 }
             }
+        }
+    }
+
+    /// Pushes the file's reader. It runs in its own screen, so this page's
+    /// server, API client, and review scope go on explicitly.
+    private func openFile(_ file: String) {
+        let skillName = skillName
+        let cwd = cwd
+        let connection = connection
+        let apiClient = apiClient
+        let reviewCommentSelectionScope = reviewCommentSelectionScope
+        navigator.push {
+            SkillFileView(skillName: skillName, filePath: file, cwd: cwd)
+                .environment(\.apiClient, apiClient)
+                .withServerScopedEnvironment(connection)
+                .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
         }
     }
 
@@ -173,31 +193,5 @@ struct SkillDetailView: View {
         if path.hasSuffix(".ts") || path.hasSuffix(".js") { return "chevron.left.forwardslash.chevron.right" }
         if path.hasSuffix(".json") || path.hasSuffix(".yml") || path.hasSuffix(".yaml") { return "curlybraces" }
         return "doc"
-    }
-}
-
-/// Navigation destination for viewing a skill's detail page.
-struct SkillDetailDestination: Hashable, Identifiable {
-    let skillName: String
-    let cwd: String?
-
-    init(skillName: String, cwd: String? = nil) {
-        self.skillName = skillName
-        self.cwd = cwd
-    }
-
-    var id: String { [skillName, cwd ?? ""].joined(separator: "|") }
-}
-
-/// Navigation destination for viewing a file inside a skill.
-struct SkillFileDestination: Hashable {
-    let skillName: String
-    let filePath: String
-    let cwd: String?
-
-    init(skillName: String, filePath: String, cwd: String? = nil) {
-        self.skillName = skillName
-        self.filePath = filePath
-        self.cwd = cwd
     }
 }

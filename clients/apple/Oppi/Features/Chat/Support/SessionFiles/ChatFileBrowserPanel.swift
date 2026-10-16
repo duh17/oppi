@@ -58,8 +58,9 @@ struct ChatFileBrowserPanelTabStore {
     }
 }
 
-/// Reusable chat file surface. Chat presents it in a trailing inspector when
-/// the width is regular, and in a sheet when the width is compact.
+/// Reusable chat file surface. Chat shows it at the root of a router
+/// navigation controller: its trailing column in regular width, a sheet in
+/// compact width. Files push through the screen navigator.
 struct ChatFileBrowserPanel: View {
     let sessionId: String
     let workspaceId: String?
@@ -69,6 +70,9 @@ struct ChatFileBrowserPanel: View {
     var serverId: String? = nil
     /// The session's checkout. Every reader and editor opened here uses it.
     var worktreeId: String? = nil
+    /// Closes the panel through chat's state, before a changed file's review
+    /// comment goes to the composer.
+    let onClose: () -> Void
 
     @State private var changedSearchText = ""
 
@@ -122,11 +126,14 @@ struct ChatFileBrowserPanel: View {
     private var content: some View {
         switch selectedTab {
         case .changed:
+            // iPad keeps the title and Done while searching: its search bar
+            // has no Cancel to end the search.
             changedFilesList
-                .searchable(
+                .routerSearchable(
                     text: $changedSearchText,
-                    placement: .navigationBarDrawer(displayMode: .always),
-                    prompt: "Search changed files"
+                    prompt: "Search changed files",
+                    alwaysVisible: true,
+                    hidesNavigationBarDuringPresentation: UIDevice.current.userInterfaceIdiom != .pad
                 )
         case .all:
             if let workspaceId {
@@ -150,7 +157,8 @@ struct ChatFileBrowserPanel: View {
             searchText: changedSearchText,
             fileDetailReviewCommentScope: fileDetailReviewCommentScope,
             serverId: serverId,
-            worktreeId: worktreeId
+            worktreeId: worktreeId,
+            closePanel: onClose
         )
     }
 

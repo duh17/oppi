@@ -7,6 +7,7 @@ struct SessionTimelinePreview: View {
     @State private var inspectionFixture = ToolInspectionPreviewFixture.makeReducer()
     @State private var gitStatusStore = GitStatusStore()
     @State private var lastTreeNavigationCapture = "none"
+    @Environment(\.appRootEnvironment) private var appRoot
 
     private struct PreviewNavigationCaptureError: LocalizedError {
         let message: String
@@ -86,8 +87,30 @@ struct SessionTimelinePreview: View {
         ]
     )
 
+    /// The outline at the root of a router navigation controller, as chat
+    /// presents it; the capture overlay stays in this view's graph.
     var body: some View {
-        SessionOutlineView(
+        Group {
+            if let appRoot {
+                RouterPreviewStack(root: appRoot) { outline }
+                    .ignoresSafeArea()
+            }
+        }
+        .overlay(alignment: .bottomLeading) {
+            Text("Last tree navigate: \(lastTreeNavigationCapture)")
+                .font(.caption2.monospaced())
+                .foregroundStyle(.themeComment)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.themeBgDark.opacity(0.9), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(10)
+                .accessibilityIdentifier("session-timeline.last-navigation")
+        }
+    }
+
+    private var outline: some View {
+        let capture = $lastTreeNavigationCapture
+        return SessionOutlineView(
             items: inspectionFixture.items,
             sessionId: "preview-session",
             workspaceId: "preview-workspace",
@@ -106,25 +129,15 @@ struct SessionTimelinePreview: View {
                 let instructions = request.customInstructions ?? "-"
                 let summary = "mode=\(mode) instructions=\(instructions)"
                 await MainActor.run {
-                    lastTreeNavigationCapture = summary
+                    capture.wrappedValue = summary
                 }
                 throw PreviewNavigationCaptureError(message: "Captured \(summary)")
             },
             initialTreeSnapshot: Self.previewTreeSnapshot,
-            toolDetails: { inspectionFixture.toolDetailsStore.details(for: $0) }
+            toolDetails: { inspectionFixture.toolDetailsStore.details(for: $0) },
+            onClose: {}
         )
-        // Before the overlay, which keeps its own identifier.
         .accessibilityIdentifier("screenshot.ready")
-        .overlay(alignment: .bottomLeading) {
-            Text("Last tree navigate: \(lastTreeNavigationCapture)")
-                .font(.caption2.monospaced())
-                .foregroundStyle(.themeComment)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.themeBgDark.opacity(0.9), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .padding(10)
-                .accessibilityIdentifier("session-timeline.last-navigation")
-        }
         .environment(inspectionFixture.toolArgsStore)
         .environment(gitStatusStore)
     }

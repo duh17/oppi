@@ -123,8 +123,6 @@ struct ChatView: View {
     @State private var selectedFilePanelTab: ChatFileBrowserPanelTab
     @State private var showModelPicker = false
     @State private var showComposer = false
-    /// A chat opened above this one inside a SwiftUI stack (see `pushChat`).
-    @State private var stackedChatRoute: StackedChatRoute?
     @State private var showRenameAlert = false
     @State private var renameText = ""
     @State private var showShareRedactionSheet = false
@@ -179,11 +177,6 @@ struct ChatView: View {
             initialRepoPointers: initialPendingFiles
         ))
         _selectedFilePanelTab = State(initialValue: ChatFileBrowserPanelTabStore.shared.tab(for: sessionId))
-    }
-
-    private struct StackedChatRoute: Identifiable, Hashable {
-        let id: String
-        let workspaceId: String?
     }
 
     private struct ComposerDraftAttachmentKey: Equatable {
@@ -879,21 +872,20 @@ struct ChatView: View {
     /// `.overFullScreen`, which keeps the chat in the window: the chat keeps
     /// rendering under it, so the composer's model picker, which the chat
     /// presents, and the values the composer reads stay live. Outline, Files,
-    /// and Context bring their own `NavigationStack`s, because they also fill
-    /// the SwiftUI side-panel inspector (`ChatSidePanelInspector`).
+    /// and Context sit in a router navigation controller, as a modal here or
+    /// in the trailing column (`usesTrailingSidePanel`), and push through
+    /// their screen navigator.
     @ViewBuilder
     private func chatPresentation(railEdge: HorizontalEdge?) -> some View {
-        let joinsRail = railEdge != nil
+        let sidePanel = usesTrailingSidePanel
         configuredChatContent(railEdge: railEdge)
             .chatAuxiliaryPresentation(
-                isPresented: joinsRail && horizontalSizeClass == .regular ? .constant(false) : $showOutline,
-                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation,
-                navigation: nil
+                isPresented: sidePanel ? .constant(false) : $showOutline,
+                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
             ) { chatModalScope(outlineSheet) }
             .chatAuxiliaryPresentation(
-                isPresented: joinsRail && horizontalSizeClass == .regular ? .constant(false) : $isFilePanelVisible,
-                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation,
-                navigation: nil
+                isPresented: sidePanel ? .constant(false) : $isFilePanelVisible,
+                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
             ) { chatModalScope(filePanelSheet) }
             .routerModal(
                 isPresented: $showModelPicker,
@@ -903,14 +895,12 @@ struct ChatView: View {
                 chatModalScope(reviewCommentStashSheet(presentation))
             }
             .chatAuxiliaryPresentation(
-                isPresented: joinsRail && horizontalSizeClass == .regular ? .constant(false) : $showContextInspector,
-                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation,
-                navigation: nil
+                isPresented: sidePanel ? .constant(false) : $showContextInspector,
+                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
             ) { chatModalScope(contextInspectorSheet) }
             .chatAuxiliaryPresentation(
                 isPresented: $showShareRedactionSheet,
                 prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation,
-                navigation: ScreenBars(),
                 onDismiss: cancelSharePreflight
             ) { chatModalScope(shareRedactionSheet) }
             .routerModal(
@@ -1104,7 +1094,8 @@ struct ChatView: View {
     }
 
     /// A regular-width window (iPad, the iPhone Duo inner display, a large
-    /// iPhone in landscape) has room for full-screen panels.
+    /// iPhone in landscape) shows Share full screen. The side panels are in
+    /// the column there, so they present only as sheets.
     private var prefersFullScreenChatAuxiliaryPresentation: Bool {
         horizontalSizeClass == .regular
     }
@@ -1125,7 +1116,7 @@ struct ChatView: View {
             .toolbarVisibility(.visible, for: .navigationBar)
             .toolbar {
                 if joinsRail {
-                    chatRailToolbarContent(railEdge: railEdge)
+                    chatRailToolbarContent
                 } else {
                     ToolbarItem(placement: .topBarLeading) {
                         chatLeadingToolbarItem
@@ -1136,7 +1127,7 @@ struct ChatView: View {
                     }
 
                     ToolbarItem(placement: .topBarTrailing) {
-                        chatTrailingToolbarItem(railEdge: railEdge)
+                        chatTrailingToolbarItem
                     }
                 }
             }
@@ -1149,7 +1140,7 @@ struct ChatView: View {
     /// cover display in landscape) Back, Files, and Context stay, and the
     /// session menu and outline go to the overflow menu first.
     @ToolbarContentBuilder
-    private func chatRailToolbarContent(railEdge: HorizontalEdge?) -> some ToolbarContent {
+    private var chatRailToolbarContent: some ToolbarContent {
         if usesCustomChatBackButton {
             verticalRailToolbarItem(joinsVerticalRail: true) {
                 chatBackButton
@@ -1167,11 +1158,11 @@ struct ChatView: View {
         }
         if outlineAvailability.isAvailable {
             verticalRailToolbarItem(joinsVerticalRail: true) {
-                chatOutlineButton(railEdge: railEdge)
+                chatOutlineButton
             }
         }
         verticalRailToolbarItem(joinsVerticalRail: true) {
-            contextRingButton(railEdge: railEdge)
+            contextRingButton
         }
         .chatRailKeepsVisible()
     }
@@ -1209,21 +1200,23 @@ struct ChatView: View {
         .accessibilityIdentifier("chat.rail.session")
     }
 
-    /// At most one side panel at a time; the newest request wins.
-    private enum ChatSidePanel {
+    /// At most one side panel at a time; the newest request wins. A new
+    /// panel replaces the column's screen.
+    private enum ChatSidePanel: Identifiable {
         case files, outline, context
+
+        var id: Self { self }
     }
 
-    /// The column needs regular width. On a narrow rail screen (the Duo's
-    /// cover display) the inspector would become a sheet, so the existing
-    /// sheets stay in charge there. `railEdge` is the system's preferred
-    /// edge, nil where no vertical bar is placed.
-    private func usesTrailingSidePanel(railEdge: HorizontalEdge?) -> Bool {
-        railEdge != nil && horizontalSizeClass == .regular
+    /// Side panels slide in as a trailing column in regular width (iPad, the
+    /// Duo's inner display) and are sheets in compact width. A size-class
+    /// change while a panel is open moves it between the column and the
+    /// sheet; its pushed pages close.
+    private var usesTrailingSidePanel: Bool {
+        TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: horizontalSizeClass)
     }
 
-    /// Content follows the panel flags alone. Gating it on the rail too can
-    /// leave a presented column empty while the rail trait settles.
+    /// The open panel, wherever the width puts it.
     private var activeSidePanel: ChatSidePanel? {
         if isFilePanelVisible { return .files }
         if showOutline { return .outline }
@@ -1231,29 +1224,13 @@ struct ChatView: View {
         return nil
     }
 
-    private func sidePanelPresented(railEdge: HorizontalEdge?) -> Binding<Bool> {
-        Binding(
-            get: { usesTrailingSidePanel(railEdge: railEdge) && activeSidePanel != nil },
-            set: { presented in
-                guard !presented else { return }
-                isFilePanelVisible = false
-                showOutline = false
-                showContextInspector = false
-            }
-        )
-    }
-
     @ViewBuilder
-    private var chatSidePanel: some View {
-        Group {
-            switch activeSidePanel {
-            case .files: filePanelSheet
-            case .outline: outlineSheet
-            case .context: contextInspectorSheet
-            case nil: EmptyView()
-            }
+    private func chatSidePanel(_ panel: ChatSidePanel) -> some View {
+        switch panel {
+        case .files: filePanelSheet
+        case .outline: outlineSheet
+        case .context: contextInspectorSheet
         }
-        .inspectorColumnWidth(min: 320, ideal: 400, max: 520)
     }
 
     /// Rail buttons stay visible beside an open panel, so they switch panels.
@@ -1266,21 +1243,22 @@ struct ChatView: View {
     private func configuredChatNavigationContent(railEdge: HorizontalEdge?) -> some View {
         chatTimelineScaffold
             .themedScrollSurface()
-            // Inside the title and toolbar: attached outside them, the
-            // inspector drops the chat's whole navigation bar (title and
-            // every item) when the chat is the split shell's detail.
-            .modifier(ChatSidePanelInspector(
-                isAvailable: horizontalSizeClass == .regular,
-                isPresented: sidePanelPresented(railEdge: railEdge)
-            ) { chatSidePanel })
+            // A full-height UIKit column with its own bar beside the chat,
+            // its bar, timeline, and composer. The panel runs in its own
+            // screen, so the chat's own values go on explicitly
+            // (`chatModalScope`).
+            .routerTrailingColumn(
+                item: usesTrailingSidePanel ? activeSidePanel : nil,
+                minWidth: 320,
+                idealWidth: 400
+            ) { panel in
+                chatModalScope(chatSidePanel(panel))
+            }
             // On the side rail the system draws the title as its own strip
             // above the timeline. The rail session menu carries the name.
             .navigationTitle(railEdge == nil ? sessionDisplayName : "")
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarBackButtonHidden(usesCustomChatBackButton)
-            .navigationDestination(item: $stackedChatRoute) { route in
-                Self(sessionId: route.id, workspaceIdHint: route.workspaceId)
-            }
             .environment(\.openChatReader, ChatReaderOpenAction(handler: openTimelineReader))
     }
 
@@ -1637,14 +1615,7 @@ struct ChatView: View {
 
     /// Opens another session above this chat, on this chat's server and
     /// navigation (a fork, or a session link from an extension surface).
-    /// A chat inside a SwiftUI stack whose screen has no UIKit navigation
-    /// controller (a file review in the Files panel or the git bar's sheet)
-    /// pushes in that stack.
     private func pushChat(sessionId: String, workspaceId: String?) {
-        guard navigator.canPush else {
-            stackedChatRoute = StackedChatRoute(id: sessionId, workspaceId: workspaceId)
-            return
-        }
         let connection = connection
         let appNavigation = appNavigation
         navigator.push {
@@ -1699,21 +1670,21 @@ struct ChatView: View {
     }
 
     @ViewBuilder
-    private func chatTrailingToolbarItem(railEdge: HorizontalEdge?) -> some View {
+    private var chatTrailingToolbarItem: some View {
         HStack(spacing: 2) {
             // Do not read `reducer.items` here. Content-only streaming would
             // rebuild ChatView and `updateUIView`. The UIKit clock publishes
             // this boolean on empty/nonempty transitions and session bind.
             if outlineAvailability.isAvailable {
-                chatOutlineButton(railEdge: railEdge)
+                chatOutlineButton
             }
 
-            contextRingButton(railEdge: railEdge)
+            contextRingButton
         }
     }
 
-    private func chatOutlineButton(railEdge: HorizontalEdge?) -> some View {
-        let sidePanel = usesTrailingSidePanel(railEdge: railEdge)
+    private var chatOutlineButton: some View {
+        let sidePanel = usesTrailingSidePanel
         return Button {
             if sidePanel {
                 showSidePanel(showOutline ? nil : .outline)
@@ -1732,8 +1703,8 @@ struct ChatView: View {
         .accessibilityIdentifier("chat.toolbar.outline")
     }
 
-    private func contextRingButton(railEdge: HorizontalEdge?) -> some View {
-        let sidePanel = usesTrailingSidePanel(railEdge: railEdge)
+    private var contextRingButton: some View {
+        let sidePanel = usesTrailingSidePanel
         return Button {
             AppHaptics.toolbarExpansion()
             if sidePanel {
@@ -2907,26 +2878,22 @@ struct ChatView: View {
         }
     }
 
-    /// Keeps its own `NavigationStack`: the panel's "All" tab is the shared
-    /// `FileBrowserView`, which still navigates with SwiftUI links, and its
-    /// review pushes reach `WorkspaceReviewFileDetailView` the same way.
     private var filePanelSheet: some View {
-        NavigationStack {
-            ChatFileBrowserPanel(
-                sessionId: sessionId,
-                workspaceId: session?.workspaceId,
-                changedFiles: session?.changeStats?.changedFiles ?? [],
-                selectedTab: $selectedFilePanelTab,
-                fileDetailReviewCommentScope: .activeSession(reviewCommentSelectionRouter),
-                serverId: serverIdHint ?? connection.currentServerId,
-                worktreeId: session?.worktreeId
-            )
-            .navigationTitle("Files")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { closeChatFilePanel() }
-                }
+        ChatFileBrowserPanel(
+            sessionId: sessionId,
+            workspaceId: session?.workspaceId,
+            changedFiles: session?.changeStats?.changedFiles ?? [],
+            selectedTab: $selectedFilePanelTab,
+            fileDetailReviewCommentScope: .activeSession(reviewCommentSelectionRouter),
+            serverId: serverIdHint ?? connection.currentServerId,
+            worktreeId: session?.worktreeId,
+            onClose: closeChatFilePanel
+        )
+        .navigationTitle("Files")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Done") { closeChatFilePanel() }
             }
         }
     }
@@ -3084,24 +3051,20 @@ struct ChatView: View {
         return connection.workspaceStore.workspaces.first { $0.id == wsId }
     }
 
-    /// Keeps its own `NavigationStack`: a loaded skill opens the shared
-    /// `SkillDetailView`, whose file rows are SwiftUI value links.
     private var contextInspectorSheet: some View {
-        NavigationStack {
-            ContextInspectorView(
-                session: session,
-                workspace: currentWorkspace,
-                loadSessionStats: {
-                    try await connection.getSessionStats()
-                }
-            )
-            .navigationTitle("Context")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(role: .close) { showContextInspector = false }
-                        .accessibilityIdentifier("chat.context.close")
-                }
+        ContextInspectorView(
+            session: session,
+            workspace: currentWorkspace,
+            loadSessionStats: {
+                try await connection.getSessionStats()
+            }
+        )
+        .navigationTitle("Context")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(role: .close) { showContextInspector = false }
+                    .accessibilityIdentifier("chat.context.close")
             }
         }
         .environment(\.reviewCommentSelectionScope, .activeSession(reviewCommentSelectionRouter))
@@ -3275,30 +3238,6 @@ struct ChatSessionTitleView: View {
     }
 }
 
-/// The side-panel inspector, attached only at regular width, where its column
-/// can show (`usesTrailingSidePanel`). At compact width an attached inspector,
-/// even unpresented, kept the chat's own sheets (Context, Outline, Files) from
-/// presenting on iPhone. A size-class change swaps this branch, which rebuilds
-/// the timeline view under it; the chat's state above it survives.
-///
-/// Still SwiftUI: Files and Context need their own `NavigationStack`s (the
-/// shared `FileBrowserView` and `SkillDetailView` navigate with SwiftUI links),
-/// and a UIKit-hosted column with a stack inside reset the chat's enclosing
-/// SwiftUI `NavigationStack` to its root. It moves with the UIKit shell.
-private struct ChatSidePanelInspector<Panel: View>: ViewModifier {
-    let isAvailable: Bool
-    let isPresented: Binding<Bool>
-    @ViewBuilder let panel: () -> Panel
-
-    func body(content: Content) -> some View {
-        if isAvailable {
-            content.inspector(isPresented: isPresented, content: panel)
-        } else {
-            content
-        }
-    }
-}
-
 private extension ToolbarContent {
     @ToolbarContentBuilder
     func chatRailKeepsVisible() -> some ToolbarContent {
@@ -3317,21 +3256,18 @@ private struct ChatAuxiliaryModal: Identifiable {
 }
 
 private extension View {
-    /// A chat panel as a router modal: a sheet with medium and large detents
-    /// in compact width, full screen in regular width. `navigation` wraps it
-    /// in a router navigation controller; nil for panels with their own
-    /// `NavigationStack`.
+    /// A chat panel as a router modal in a router navigation controller, for
+    /// its bar and its pushes: a sheet with medium and large detents in
+    /// compact width, full screen in regular width.
     func chatAuxiliaryPresentation<PresentedContent: View>(
         isPresented: Binding<Bool>,
         prefersFullScreen: Bool,
-        navigation: ScreenBars?,
         onDismiss: (() -> Void)? = nil,
         @ViewBuilder content: @escaping () -> PresentedContent
     ) -> some View {
         modifier(ChatAuxiliaryPresentation(
             isPresented: isPresented,
             prefersFullScreen: prefersFullScreen,
-            navigation: navigation,
             onDismiss: onDismiss,
             panel: content
         ))
@@ -3344,7 +3280,6 @@ private extension View {
 private struct ChatAuxiliaryPresentation<Panel: View>: ViewModifier {
     @Binding var isPresented: Bool
     let prefersFullScreen: Bool
-    let navigation: ScreenBars?
     let onDismiss: (() -> Void)?
     let panel: () -> Panel
 
@@ -3353,10 +3288,10 @@ private struct ChatAuxiliaryPresentation<Panel: View>: ViewModifier {
         // fold, iPad multitasking) replaces an open sheet with the full-screen
         // modal and back. Full screen is `.overFullScreen`: the chat stays in
         // the window and keeps rendering, so the panel's chat values stay live.
-        var presentation = prefersFullScreen
+        let presentation = (prefersFullScreen
             ? ModalPresentation(style: .overFullScreen)
             : .sheet.detents([.medium(), .large()], grabber: true, selected: .large)
-        presentation.navigation = navigation
+        ).inNavigation()
         let isPresented = $isPresented
         let prefersFullScreen = prefersFullScreen
         let panel = panel

@@ -20,8 +20,8 @@ final class ChatRoutesUITests: XCTestCase {
 
     // MARK: - Side panels
 
-    /// Regular width with a vertical rail puts these in the trailing column;
-    /// otherwise they are sheets (compact) or full-screen modals (regular).
+    /// Regular width puts these in the trailing column beside the chat;
+    /// compact width presents them as sheets.
     func testOutlineSearchesAndClosesBothWays() {
         launch()
         let outlineButton = app.buttons["chat.toolbar.outline"]
@@ -67,7 +67,10 @@ final class ChatRoutesUITests: XCTestCase {
         app.buttons["chat.toolbar.files"].tap()
         let files = app.navigationBars["Files"]
         XCTAssertTrue(files.waitForExistence(timeout: 5), "Files panel did not open")
-        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "App.swift")).firstMatch
+        let changedSearch = app.searchFields["Search changed files"]
+        XCTAssertTrue(changedSearch.waitForExistence(timeout: 5), "Changed files must search in the panel's bar")
+        // The panel's row, not the timeline's file pill beside the column.
+        let row = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "App.swift")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 5), "Changed file row missing")
         row.tap()
         let review = app.navigationBars["App.swift"]
@@ -76,6 +79,20 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
         barButton(review, NSPredicate(format: "identifier == %@", "BackButton")).tap()
         XCTAssertTrue(files.waitForExistence(timeout: 5), "Back must pop to the file list")
+
+        // A file the session wrote outside Git opens its current bytes.
+        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "plan.md")).firstMatch.tap()
+        popPushedReader(returningTo: files, "The session file")
+
+        // All: the tab's own search takes the bar, and a file pushes its reader.
+        app.buttons["All"].firstMatch.tap()
+        XCTAssertTrue(app.searchFields["Search files"].waitForExistence(timeout: 5), "The All tab must search in the panel's bar")
+        let allRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "App.swift")).firstMatch
+        XCTAssertTrue(allRow.waitForExistence(timeout: 5), "The workspace listing did not load")
+        allRow.tap()
+        popPushedReader(returningTo: files, "The workspace file")
+        app.buttons["Changed"].firstMatch.tap()
+        XCTAssertTrue(changedSearch.waitForExistence(timeout: 5), "Changed must take the bar back")
 
         if app.buttons["Done"].exists {
             app.buttons["Done"].tap()
@@ -101,6 +118,21 @@ final class ChatRoutesUITests: XCTestCase {
         let context = app.navigationBars["Context"]
         XCTAssertTrue(context.waitForExistence(timeout: 5), "Context did not open")
         attachScreenshot("context")
+
+        // A loaded skill, then one of its files, push inside the panel.
+        let skillRow = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "route-skill")).firstMatch
+        XCTAssertTrue(skillRow.waitForExistence(timeout: 10), "The session's loaded skill is missing")
+        skillRow.tap()
+        let skill = app.navigationBars["route-skill"]
+        XCTAssertTrue(skill.waitForExistence(timeout: 5), "The skill was not pushed inside Context")
+        let fileRow = app.buttons["notes.md"]
+        XCTAssertTrue(fileRow.waitForExistence(timeout: 5), "The skill's files did not load")
+        fileRow.tap()
+        popPushedReader(returningTo: skill, "The skill file")
+        barButton(skill, NSPredicate(format: "identifier == %@", "BackButton")).tap()
+        XCTAssertTrue(context.waitForExistence(timeout: 5), "Back must pop to Context")
+        assertRunning()
+
         app.buttons["chat.context.close"].tap()
         XCTAssertTrue(waitForDisappearance(of: context), "Close must close Context")
         if usesSheets {
@@ -467,6 +499,15 @@ final class ChatRoutesUITests: XCTestCase {
         return all.element(boundBy: max(all.count - 1, 0))
     }
 
+    /// A text reader pushed inside a panel: its own back control pops it.
+    private func popPushedReader(returningTo bar: XCUIElement, _ name: String) {
+        let back = app.buttons["fullscreen-code.back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 10), "\(name) reader was not pushed")
+        assertRunning()
+        back.tap()
+        XCTAssertTrue(bar.waitForExistence(timeout: 5), "\(name) reader's back must pop it")
+    }
+
     private func openAndCloseDiff() {
         let fileRow = app.buttons["commit-detail.file"].firstMatch
         XCTAssertTrue(fileRow.waitForExistence(timeout: 5), "The commit's file list did not load")
@@ -542,7 +583,7 @@ final class ChatRoutesUITests: XCTestCase {
     }
 
     /// Compact width presents chat panels as sheets; regular width puts them
-    /// in a column or a full-screen modal.
+    /// in the trailing column, and Share full screen.
     private var usesSheets: Bool {
         app.windows.firstMatch.frame.width < 700
     }

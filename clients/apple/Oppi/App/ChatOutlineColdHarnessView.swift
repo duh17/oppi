@@ -558,6 +558,10 @@ private enum ChatRoutesFixture {
     static let sessionId = "chat-routes-session"
     static let commitSha = "abc1234"
     static let changedPath = "Sources/App.swift"
+    /// A file the session wrote outside Git's changes: the Files panel opens
+    /// its current bytes instead of a review.
+    static let touchedPath = "Notes/plan.md"
+    static let skillName = "route-skill"
     static let seedMarkerId = "chat-routes-user"
 
     static let workspace = Workspace(
@@ -587,6 +591,23 @@ private enum ChatRoutesFixture {
         let connection = ServerConnection()
         connection.setPreviewServerId(serverId)
         connection.setAPIClientForTesting(api)
+        // Context's usage and loaded skills come over the session socket,
+        // which the harness never opens: answer `get_session_stats`, and fail
+        // every other send the way an unopened socket does.
+        connection._sendMessageForTesting = { [weak connection] message in
+            guard case .getSessionStats(let requestId?) = message else {
+                throw WebSocketError.notConnected
+            }
+            Task { @MainActor in
+                _ = connection?.commands.resolveCommandResult(
+                    command: "get_session_stats",
+                    requestId: requestId,
+                    success: true,
+                    data: sessionStats,
+                    error: nil
+                )
+            }
+        }
         connection.workspaceStore.workspacesByServer[serverId] = [workspace]
         connection.sessionStore.switchServer(to: serverId)
         connection.sessionStore.upsert(session(
@@ -609,9 +630,11 @@ private enum ChatRoutesFixture {
         ]
     }
 
-    /// One staged review comment and the recommended share policy on every launch.
+    /// One staged review comment, the recommended share policy, and the Files
+    /// panel on Changed on every launch.
     @MainActor private static func resetLocalState() {
         AppPreferences.Share.setRedactionPolicy(.recommended)
+        ChatFileBrowserPanelTabStore.shared.setTab(.changed, for: sessionId)
         let store = ReviewCommentStore()
         store.load(workspaceId: workspace.id, sessionId: sessionId)
         for comment in store.comments {
@@ -652,8 +675,8 @@ private enum ChatRoutesFixture {
             cost: 0,
             changeStats: SessionChangeStats(
                 mutatingToolCalls: 1,
-                filesChanged: 1,
-                changedFiles: [changedPath],
+                filesChanged: 2,
+                changedFiles: [changedPath, touchedPath],
                 changedFilesOverflow: nil,
                 addedLines: 2,
                 removedLines: 1
@@ -665,6 +688,15 @@ private enum ChatRoutesFixture {
             thinkingLevel: "medium"
         )
     }
+
+    static let sessionStats: JSONValue = [
+        "tokens": ["input": 800, "output": 200, "cacheRead": 0, "cacheWrite": 0, "total": 1_000],
+        "cost": 0.01,
+        "loadedResources": [
+            "skills": [["name": .string(skillName), "description": "Routes through the panel", "path": "/tmp/oppi-chat-routes/.pi/skills/route-skill"]],
+            "extensions": [],
+        ],
+    ]
 
     static let models = [
         ModelInfo(id: "claude-routes", name: "Claude Routes", provider: "anthropic", contextWindow: 200_000),
@@ -805,8 +837,9 @@ private enum ChatRoutesFixture {
 }
 
 /// The chat's server, for the requests the routes make: Git status, a commit
-/// and its diff, a review diff, file text, models, session changes, and a new
-/// session (counted). Everything else is a 404.
+/// and its diff, a review diff, file text, the workspace root listing, a
+/// skill and its file, models, session changes, and a new session (counted).
+/// Everything else is a 404.
 private final class ChatRoutesURLProtocol: URLProtocol {
     static let host = "chat-routes.oppi"
 
@@ -847,10 +880,24 @@ private final class ChatRoutesURLProtocol: URLProtocol {
             body = Self.json([
                 "workspaceId": "chat-routes-ws",
                 "sessionId": "chat-routes-session",
-                "files": [["path": "Sources/App.swift"]],
-                "changedFileCount": 1,
+                "files": [["path": "Sources/App.swift"], ["path": "Notes/plan.md"]],
+                "changedFileCount": 2,
                 "changedFilesOverflow": 0,
             ])
+        case ("GET", "\(workspace)/contents"):
+            body = Self.json([
+                "path": "",
+                "entries": [["name": "App.swift", "path": "Sources/App.swift", "type": "file", "size": 20, "modifiedAt": 1_800_000_000_000]],
+                "truncated": false,
+            ])
+        case ("GET", "/skills/route-skill"):
+            body = Self.json([
+                "skill": ["name": "route-skill", "description": "Routes through the panel", "path": "/tmp/oppi-chat-routes/.pi/skills/route-skill"],
+                "content": "# Route skill\n\nOpens inside the Context panel.",
+                "files": ["SKILL.md", "notes.md"],
+            ])
+        case ("GET", "/skills/route-skill/file"):
+            body = Self.json(["content": "Route skill notes\n"])
         case ("GET", "\(workspace)/paths"):
             body = Self.json(["paths": ["Sources/App.swift"], "truncated": false])
         case ("GET", "/files/current"):

@@ -220,8 +220,6 @@ struct WorkspaceContextBar: View {
     @State private var selectedPaths: Set<String> = []
     @State private var launchActionInFlightTitle: String?
     @State private var launchError: String?
-    /// A quick-action chat opened inside a SwiftUI stack (see `openQuickActionSession`).
-    @State private var stackedQuickAction: QuickActionSessionNavDestination?
     @State private var quickActionOptions: [WorkspaceQuickActionOption] = []
     @State private var quickActionOptionsContextKey: String?
     @State private var isLoadingQuickActions = false
@@ -403,10 +401,12 @@ struct WorkspaceContextBar: View {
             }
         }
         // Keep review presenters on the stable outer view. A transient loss of
-        // session-scoped Git content must not unmount an active sheet.
+        // session-scoped Git content must not unmount an active sheet. The
+        // sheet is a router navigation controller: a commit or file review
+        // pushes its new-session chat there, and that chat its forks.
         .routerModal(
             item: $reviewPresentation.selectedReviewItem,
-            presentation: Self.reviewSheetPresentation(for: reviewPresentation.selectedReviewItem)
+            presentation: .sheet.inNavigation()
         ) { item in
             reviewSheet(item: item)
                 .presenterScope(connection: connection, apiClient: apiClient, navigation: appNavigation)
@@ -448,26 +448,11 @@ struct WorkspaceContextBar: View {
             guard isSelecting else { return }
             Task { await loadQuickActionsIfNeeded() }
         }
-        .navigationDestination(item: $stackedQuickAction) { destination in
-            ChatView(
-                sessionId: destination.id,
-                workspaceIdHint: workspaceId,
-                initialInputText: destination.inputText,
-                initialPendingFiles: destination.pendingFileReferences
-            )
-            .id(destination.id)
-        }
     }
 
     /// Pushes the new session's chat above the screen that shows this bar,
-    /// with this bar's server and navigation. A bar in a chat inside a
-    /// SwiftUI stack whose screen has no UIKit navigation controller (a file
-    /// review in the Files panel or the git bar's sheet) pushes in that stack.
+    /// with this bar's server and navigation.
     private func openQuickActionSession(_ destination: QuickActionSessionNavDestination) {
-        guard navigator.canPush else {
-            stackedQuickAction = destination
-            return
-        }
         let workspaceId = workspaceId
         let connection = connection
         let apiClient = apiClient
@@ -481,18 +466,6 @@ struct WorkspaceContextBar: View {
             )
             .id(destination.id)
             .presenterScope(connection: connection, apiClient: apiClient, navigation: appNavigation)
-        }
-    }
-
-    /// A commit pushes its new-session chat through the router, so its sheet
-    /// gets a router navigation controller. The file review keeps its own
-    /// `NavigationStack`: the same review screen is pushed by a SwiftUI link
-    /// inside the chat file panel, whose "All" browser still navigates with
-    /// SwiftUI links.
-    static func reviewSheetPresentation(for item: WorkspaceContextBarReviewItem?) -> ModalPresentation {
-        switch item {
-        case .commit: .sheet.inNavigation()
-        case .file, nil: .sheet
         }
     }
 
@@ -968,27 +941,25 @@ struct WorkspaceContextBar: View {
                 fallbackScope: nil,
                 dismissFileDetail: { reviewPresentation.dismiss() }
             )
-            NavigationStack {
-                WorkspaceReviewFileDetailView(
-                    workspaceId: workspaceId,
-                    selectedSessionId: sessionId,
-                    file: file.toReviewFile(),
-                    worktreeId: worktreeId,
-                    serverId: serverId,
-                    reviewCommentSelectionScopeOverride: reviewCommentScope,
-                    navigationFiles: navigationFiles,
-                    allowsHorizontalBackSwipe: false
-                )
-                .environment(\.reviewCommentSelectionScope, reviewCommentScope)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button {
-                            reviewPresentation.dismiss()
-                        } label: {
-                            Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
-                        }
-                        .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
+            WorkspaceReviewFileDetailView(
+                workspaceId: workspaceId,
+                selectedSessionId: sessionId,
+                file: file.toReviewFile(),
+                worktreeId: worktreeId,
+                serverId: serverId,
+                reviewCommentSelectionScopeOverride: reviewCommentScope,
+                navigationFiles: navigationFiles,
+                allowsHorizontalBackSwipe: false
+            )
+            .environment(\.reviewCommentSelectionScope, reviewCommentScope)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button {
+                        reviewPresentation.dismiss()
+                    } label: {
+                        Image(systemName: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName)
                     }
+                    .accessibilityLabel(FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel)
                 }
             }
         }

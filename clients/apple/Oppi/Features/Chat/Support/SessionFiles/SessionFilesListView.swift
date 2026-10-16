@@ -17,7 +17,8 @@ enum SessionFileOpenRouting {
 /// When `searchText` is non-empty, filters using `FuzzyMatch` and highlights
 /// matched characters in filename and parent path.
 ///
-/// Tapping a row navigates to the appropriate detail view:
+/// Tapping a row pushes the appropriate detail view through the screen
+/// navigator:
 /// - In-workspace files with git changes → diff + current view
 /// - Other workspace files and session-reported external paths → current-content view
 struct SessionFilesListView: View {
@@ -28,10 +29,15 @@ struct SessionFilesListView: View {
     var fileDetailReviewCommentScope: ReviewCommentSelectionScope? = nil
     var serverId: String? = nil
     var worktreeId: String? = nil
+    /// Closes the panel this list sits in, so a review comment started from
+    /// a pushed file reaches the chat's composer.
+    let closePanel: () -> Void
 
     @Environment(GitStatusStore.self) private var gitStatusStore
+    @Environment(ServerConnection.self) private var connection
+    @Environment(AppNavigation.self) private var appNavigation
     @Environment(\.apiClient) private var apiClient
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var loadedChangedFiles: [String]?
@@ -143,6 +149,7 @@ struct SessionFilesListView: View {
                                         reviewNavigationFiles: reviewNavigationFiles,
                                         sessionTouchedNavigationContext: sessionTouchedNavigationContext
                                     )
+                                    .themedListRowBackground()
                                 }
                             }
                         } header: {
@@ -220,13 +227,12 @@ struct SessionFilesListView: View {
             if let workspaceId, let gitFile,
                SessionFileOpenRouting.mode(path: path, gitFile: gitFile) == .review {
                 // Git-changed file → push to diff/review detail (needs tabs + actions)
-                NavigationLink {
-                    reviewDetail(
-                        workspaceId: workspaceId,
-                        file: gitFile.toReviewFile(),
-                        navigationFiles: reviewNavigationFiles
-                    )
-                } label: {
+                let detail = reviewDetail(
+                    workspaceId: workspaceId,
+                    file: gitFile.toReviewFile(),
+                    navigationFiles: reviewNavigationFiles
+                )
+                pushRow(detail) {
                     fileRowContent(
                         icon: icon, fileName: fileName, parentPath: parentPath,
                         gitFile: gitFile,
@@ -234,16 +240,15 @@ struct SessionFilesListView: View {
                     )
                 }
             } else if let workspaceId {
-                NavigationLink {
-                    SessionTouchedFileContentView(
-                        workspaceId: workspaceId,
-                        sessionId: sessionId,
-                        filePath: path,
-                        fileName: path.lastPathComponentForDisplay,
-                        navigationContext: sessionTouchedNavigationContext
-                    )
-                    .environment(\.reviewCommentSelectionScope, makeFileDetailReviewCommentScope())
-                } label: {
+                let content = SessionTouchedFileContentView(
+                    workspaceId: workspaceId,
+                    sessionId: sessionId,
+                    filePath: path,
+                    fileName: path.lastPathComponentForDisplay,
+                    navigationContext: sessionTouchedNavigationContext
+                )
+                .environment(\.reviewCommentSelectionScope, makeFileDetailReviewCommentScope())
+                pushRow(content) {
                     fileRowContent(
                         icon: icon, fileName: fileName, parentPath: parentPath,
                         gitFile: gitFile,
@@ -259,6 +264,31 @@ struct SessionFilesListView: View {
                 )
             }
         }
+    }
+
+    /// A row that pushes `page` above the panel, drawn like a list's
+    /// navigation row. The page runs in its own screen, so this chat's
+    /// server, API client, and navigation go on explicitly.
+    private func pushRow<Page: View, Label: View>(
+        _ page: Page,
+        @ViewBuilder label: () -> Label
+    ) -> some View {
+        let connection = connection
+        let apiClient = apiClient
+        let appNavigation = appNavigation
+        let navigator = navigator
+        return Button {
+            navigator.push {
+                page.presenterScope(connection: connection, apiClient: apiClient, navigation: appNavigation)
+            }
+        } label: {
+            HStack(spacing: 8) {
+                label()
+                SettingsDisclosureChevron()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func reviewDetail(
@@ -289,8 +319,9 @@ struct SessionFilesListView: View {
         guard case .activeSession(let router) = fileDetailReviewCommentScope else {
             return fileDetailReviewCommentScope
         }
+        let closePanel = closePanel
         return .activeSession(router.retargetingDispatch { request in
-            dismiss()
+            closePanel()
             router.dispatch(request)
         })
     }

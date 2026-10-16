@@ -202,6 +202,10 @@ final class HostedScreenController: UIHostingController<AnyView>, RouterModalCon
             let fill = UIColor(ThemeSurfaceStyle.resolve(.popover, palette: palette).fill)
             view.backgroundColor = fill
             popoverPresentationController?.backgroundColor = fill
+        } else {
+            // The theme's page, not the system background, behind content
+            // that leaves it bare (list gaps, a page without a background).
+            view.backgroundColor = root.themeStore.backgroundColor
         }
     }
 
@@ -334,6 +338,11 @@ final class ScreenNavigator {
     fileprivate weak var controller: HostedScreenController?
     private let root: AppRootEnvironment?
     private var search: ScreenSearchController?
+    /// The search anchors attached to this screen, newest last. Swapping one
+    /// searchable view for another (the chat file panel's tabs) attaches the
+    /// new anchor while the old one still updates until SwiftUI removes it.
+    /// The newest drives the bar, which goes when the last anchor leaves.
+    private var searchOwners: [ObjectIdentifier] = []
 
     fileprivate init(root: AppRootEnvironment?) {
         self.root = root
@@ -354,13 +363,6 @@ final class ScreenNavigator {
             onDismiss: onDismiss,
             content: content
         )
-    }
-
-    /// Whether this screen sits in a UIKit navigation controller that `push`
-    /// can push onto. False outside a hosted screen, and for a modal hosted
-    /// without `inNavigation()` whose content brings its own SwiftUI stack.
-    var canPush: Bool {
-        controller?.navigationController != nil
     }
 
     /// Pushes a screen onto the navigation controller that holds this one.
@@ -395,8 +397,17 @@ final class ScreenNavigator {
         Router.selectSheetDetent(detent, of: controller)
     }
 
-    fileprivate func searchController(prompt: String, alwaysVisible: Bool) -> ScreenSearchController? {
-        if let search { return search }
+    /// The bar for `owner`'s search, or nil while a newer anchor drives it.
+    fileprivate func searchController(prompt: String, alwaysVisible: Bool, owner: AnyObject) -> ScreenSearchController? {
+        let id = ObjectIdentifier(owner)
+        if !searchOwners.contains(id) {
+            searchOwners.append(id)
+        }
+        guard searchOwners.last == id else { return nil }
+        if let search {
+            search.searchController.searchBar.placeholder = prompt
+            return search
+        }
         guard let controller else {
             unattached("routerSearchable")
             return nil
@@ -412,8 +423,9 @@ final class ScreenNavigator {
         search?.hostDidAppear(controller)
     }
 
-    fileprivate func removeSearchController() {
-        guard let search else { return }
+    fileprivate func removeSearchController(owner: AnyObject) {
+        searchOwners.removeAll { $0 == ObjectIdentifier(owner) }
+        guard searchOwners.isEmpty, let search else { return }
         self.search = nil
         if let controller {
             search.uninstall(from: controller)
@@ -780,8 +792,11 @@ private struct RouterSearchAnchor: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ anchor: RouterAnchorController, context: Context) {
-        let search = context.coordinator.search
-            ?? navigator.searchController(prompt: prompt, alwaysVisible: alwaysVisible)
+        let search = navigator.searchController(
+            prompt: prompt,
+            alwaysVisible: alwaysVisible,
+            owner: context.coordinator
+        )
         context.coordinator.search = search
         context.coordinator.navigator = navigator
         let binding = $text
@@ -803,6 +818,6 @@ private struct RouterSearchAnchor: UIViewControllerRepresentable {
     }
 
     static func dismantleUIViewController(_ anchor: RouterAnchorController, coordinator: Coordinator) {
-        coordinator.navigator?.removeSearchController()
+        coordinator.navigator?.removeSearchController(owner: coordinator)
     }
 }
