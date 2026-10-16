@@ -36,11 +36,17 @@ Use these component scopes:
 Example:
 
 ```markdown
-### Added
+### Changed
 
-- **Client:** Added the workspace browser deep link flow.
-- **Server:** Added import support for stopped local sessions.
-- **Protocol:** Added `workspace_session_list` pagination fields.
+- **Client:** **Settings → Chat → Style** picks Full, Compact, or Chat. It replaces the Compact Turns toggle.
+
+### Fixed
+
+- **Client:** Tapping a notification while another chat is open shows the tapped session instead of an empty timeline.
+
+### Migration notes
+
+- **Compatibility:** Build 55 requires `oppi-server@0.52.0`; update the app and the server together.
 ```
 
 ## [Unreleased]
@@ -64,7 +70,6 @@ Example:
 - **Server:** Durable control conversation (`oppi control open`, `oppi control send`): manage Agents, Schedules, and sessions by chat. Every write waits for a confirm card in the app. See [Extensions](docs/extensions.md).
 - **Server:** `--idempotency-key` on `oppi agent create` and `oppi schedule create`, and `--turn-id` on `oppi session send`, make retries safe.
 - **Server:** Durable sessions load extensions from Pi packages that declare a durable entry in `package.json`, and `oppi extensions reload` swaps in new code without a restart. A package that fails to load keeps its previous code. See [Durable extensions](docs/extensions.md#durable-extensions).
-- **Server:** Durable sessions support share, HTML export, auto-retry, auto-compaction, and the steering and follow-up modes.
 - **Client/Server:** Messages between durable sessions (a child's task, its report, a sent message) show as a card naming the sending session instead of as your own message.
 - **Server/Relay:** Groundwork for end-to-end-encrypted push through a relay ([spec](protocol/push/spec.md)). No device receives push yet.
 
@@ -78,19 +83,14 @@ Example:
 - **Client:** Settings, Server Settings, and Workspace Settings are short indexes with one page per topic. Workspace toggles apply right away, so there is no global Save. Settings → Network is gone, and Customize Rows moved to **Settings → Sessions → Session Rows**. Destructive actions ask first.
 - **Client:** "Require Face ID" is now **Confirm New Servers**, and MCP transports are named HTTP and stdio.
 - **Client:** Durable Sessions experiment: new sessions start Classic; the composer's pill switches one launch to Durable, and **Start Sessions as Durable** makes Durable the default. Durable sessions show ∞ in All Sessions, and the sidebar's Durable list is gone.
-- **Server:** Durable sessions manage children with one `subagent` tool (spawn, send, wait, stop, list) instead of four `session_*` tools.
-- **Server:** Saved Agents can start durable sessions (`engine: "durable"` in `oppi session create --agent`, `POST /agents/:id/sessions`, and schedules), with the Agent's model, tools, instructions, Skills, and Extensions. The app still starts saved Agents Classic.
-- **Server:** Durable sandbox sessions load the global MCP servers picked for the sandbox instead of failing.
+- **Server:** Durable sessions support share, HTML export, auto-retry, auto-compaction, sandbox MCP servers, and saved Agents (`engine: "durable"` in `oppi session create --agent` and schedules; the app still starts saved Agents Classic). They manage children with one `subagent` tool instead of four `session_*` tools.
 - **Client/Server:** A host workspace with an empty folder now gets its own folder under `<dataDir>/workspaces/` instead of using your home folder, and a workspace whose folder is the home folder or above it is refused. Existing workspaces without a folder get one when the server starts.
 - **Client:** The SSH terminal no longer runs `ps` on the host every two seconds. The chat bar appears when an agent reports itself (OSC 7501) or Run on Connect starts `herdr`; otherwise use **Use Chat Bar**.
 - **Client:** Layout follows the window instead of the device. Any regular-width window, including the iPhone Duo inner display, gets the workspace sidebar, readable widths, and side-by-side file lists, and folding or rotating keeps your place and draft. On iOS 27.1, iPhones with a side rail put toolbar controls on it.
 - **Client:** Sheets follow your light, dark, or system theme, and a sheet opened from a navigation page shows its own title and buttons.
-- **Client:** Write tool rows no longer say "Requested", and Thread strips drop their header row and count the root session.
 - **Server:** Embedded Pi runtime 1.0.4 → 1.3.0. Durable sessions keep their system prompt and tools after compaction, Claude Opus 5 and Haiku 5.5 can run with thinking off, more provider outages retry, and a tool call with malformed JSON fails instead of running with partial arguments.
 - **Server:** `npm i -g oppi-server` installs the exact dependency tree Oppi was tested with, so a later Pi release cannot break a fresh install as it did for 0.51.0.
 - **Server:** Sandbox runtime Gondolin 0.13.0: long-running sandbox VMs no longer leak file descriptors, and sandboxes no longer need Node.js 23.6.
-- **Server:** When a durable store hits a storage error, Oppi reopens it and resumes its sessions instead of failing every action.
-- **Client:** Embedded Tailscale updated to v1.104.1.
 
 ### Fixed
 
@@ -105,7 +105,6 @@ Example:
 - **Client:** Opening a thread while Oppi is still connecting no longer leaves a permanent "Server connection is unavailable" error.
 - **Client:** Tapping the composer right after a back swipe no longer opens Quick Session.
 - **Client:** Long-pressing a wiki link to an image, video, or other file no longer crashes the app.
-- **Client:** The session list loads when a control session has a type this build does not know.
 - **Client:** The first syntax-highlighted tool row no longer freezes the chat for about 0.4 s.
 - **Client:** Audio served with a generic type plays, and a clip that cannot play says why. Several audio cards in one message no longer collapse onto each other.
 - **Client/Server:** Messages an extension adds to the transcript appear while the chat is open.
@@ -116,7 +115,7 @@ Example:
 - **Server:** Session search no longer indexes pasted screenshots, so text later in those sessions is searchable again and the index shrinks by about two thirds. Reindexing after each turn is about 15× faster.
 - **Server:** Session lists show a workspace's current name after a rename.
 - **Server:** Editor dialogs count as waiting for you in the ask badge, workspace attention, and `oppi session wait`.
-- **Server:** A failed durable run shows one error with the real reason, and it stays after reconnect or restart.
+- **Server:** A failed durable run shows one error with the real reason, and it stays after reconnect or restart. After a storage error, Oppi reopens the durable store and resumes its sessions instead of failing every action.
 - **Server:** Messages between durable sessions are delivered once and only to the intended session.
 - **Client/Server:** When a durable provider rewrites streamed text, the live bubble shows the new text instead of appending it.
 - **Server:** Durable sessions no longer grow storage with every working-message update or keep a second copy of background job output.
