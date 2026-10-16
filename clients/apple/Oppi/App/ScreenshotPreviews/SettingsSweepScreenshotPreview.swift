@@ -200,6 +200,10 @@ struct SettingsSweepScreenshotPreview: View {
         case "extensions":
             RouterPreviewStack(root: root) { ServerExtensionsView() }
                 .ignoresSafeArea()
+        // Pages that push through the router.
+        case "agents", "agents-pi", "agents-pi-file", "schedules", "mcp", "mcp-detail", "ssh-hosts", "ssh-setup":
+            RouterPreviewStack(root: root) { pushedPage }
+                .ignoresSafeArea()
         default:
             NavigationStack {
                 pushedPage

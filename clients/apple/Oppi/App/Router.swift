@@ -226,13 +226,21 @@ enum Router {
         }
     }
 
-    /// Pushes `screen` onto the navigation controller that holds `host`.
+    /// Pushes `screen` onto the navigation controller that holds `host`. A
+    /// push asked for while a pop is still animating (the SSH host list opens
+    /// the host's form as the terminal above it closes) waits for it to end.
     static func push(_ screen: UIViewController, from host: UIViewController) {
         guard let navigation = host.navigationController else {
             assertionFailure("Router.push from \(type(of: host)), which is not in a navigation controller")
             return
         }
-        navigation.pushViewController(screen, animated: true)
+        guard let transition = navigation.transitionCoordinator else {
+            navigation.pushViewController(screen, animated: true)
+            return
+        }
+        transition.animate(alongsideTransition: nil) { _ in
+            navigation.pushViewController(screen, animated: true)
+        }
     }
 
     /// Closes `screen` deterministically, where SwiftUI `dismiss()` is not:

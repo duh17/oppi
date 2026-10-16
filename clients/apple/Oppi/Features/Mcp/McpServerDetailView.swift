@@ -5,7 +5,7 @@ struct McpServerDetailView: View {
     let client: APIClient
     let serverId: String
     let serverName: String
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
     @State var entry: McpServerSummary
     @State private var busy = false
     @State private var error: String?
@@ -118,7 +118,7 @@ struct McpServerDetailView: View {
             Button("Remove Server", role: .destructive) {
                 busy = true
                 Task {
-                    do { try await client.removeMcpServer(scopeId: scope.id, name: entry.name); dismiss() } catch { self.error = error.localizedDescription }
+                    do { try await client.removeMcpServer(scopeId: scope.id, name: entry.name); navigator.finish() } catch { self.error = error.localizedDescription }
                     busy = false
                 }
             }

@@ -45,6 +45,32 @@ final class RouterSettingsModalsUITests: XCTestCase {
         )
     }
 
+    /// Tools is a pushed screen of its own: a toggle there must show its new
+    /// state and save at once, and Back returns to Pi.
+    func testPiToolsPushSavesAndGoesBack() {
+        launch(page: "agents-pi")
+        let toolsRow = app.buttons["agents.pi.tools"]
+        XCTAssertTrue(toolsRow.waitForExistence(timeout: 10), "Pi detail did not load")
+        toolsRow.tap()
+        XCTAssertTrue(app.navigationBars["Pi Tools"].waitForExistence(timeout: 5), "Pi did not push Tools")
+        // The fixture's Pi tools are `+codemode`.
+        let codemode = app.switches["agent.nativeEdit.optionalTool.codemode"]
+        XCTAssertTrue(codemode.waitForExistence(timeout: 5))
+        XCTAssertEqual(codemode.value as? String, "1", "Tools must open with Pi's loaded selection")
+        // The row's own switch: a tap on the row's center misses it.
+        codemode.switches.firstMatch.tap()
+        XCTAssertTrue(waitFor(codemode.value as? String == "0"), "The pushed page must show its own change")
+        XCTAssertTrue(
+            waitFor(lastWrite.contains("PUT /server/resources/pi/default-tools")),
+            "The change must save at once: \(lastWrite)"
+        )
+        assertRunning()
+
+        app.buttons["BackButton"].firstMatch.tap()
+        XCTAssertTrue(toolsRow.waitForExistence(timeout: 5), "Back must return to Pi")
+        assertRunning()
+    }
+
     func testPiFilePromptOpensReviewSheet() {
         launch(page: "agents-pi-file")
         let prompt = app.buttons["agents.pi.systemPrompt"]
@@ -139,6 +165,22 @@ final class RouterSettingsModalsUITests: XCTestCase {
             opener: { self.openOverflowAction("Edit with Oppi") },
             title: "Revise Nightly digest"
         )
+    }
+
+    // MARK: SSH hosts
+
+    func testSSHHostFormPushesAndGoesBack() {
+        launch(page: "ssh-hosts")
+        let add = app.buttons["sshTerminal.host.add"].firstMatch
+        XCTAssertTrue(add.waitForExistence(timeout: 10), "SSH host list did not appear")
+        tapBarButton(add)
+        let hostField = app.textFields["sshTerminal.host"]
+        XCTAssertTrue(hostField.waitForExistence(timeout: 5), "Add Host did not push the host form")
+        assertRunning()
+        app.buttons["BackButton"].firstMatch.tap()
+        XCTAssertTrue(waitForDisappearance(of: hostField), "Back must pop the host form")
+        XCTAssertTrue(add.waitForExistence(timeout: 5), "Back must return to the host list")
+        assertRunning()
     }
 
     // MARK: Themes and skills

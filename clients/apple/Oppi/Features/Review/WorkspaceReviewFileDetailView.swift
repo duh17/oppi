@@ -100,6 +100,9 @@ struct WorkspaceReviewFileDetailView: View {
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(SessionStore.self) private var sessionStore
+    @Environment(ServerConnection.self) private var connection
+    @Environment(AppNavigation.self) private var appNavigation
+    @Environment(\.screenNavigator) private var navigator
 
     @State private var activeFile: WorkspaceReviewFile?
     @State private var fileTransitionDirection: FileBrowserNavigationDirection = .next
@@ -109,7 +112,8 @@ struct WorkspaceReviewFileDetailView: View {
     @State private var isLoading = false
     @State private var launchActionInFlightTitle: String?
     @State private var launchError: String?
-    @State private var navigateToQuickAction: QuickActionSessionNavDestination?
+    /// A quick-action chat opened inside a SwiftUI stack (see `openQuickActionSession`).
+    @State private var stackedQuickAction: QuickActionSessionNavDestination?
     @State private var quickActionOptions: [WorkspaceQuickActionOption] = []
     @State private var isLoadingQuickActions = false
     /// The current-bytes reader has its text editor open.
@@ -250,17 +254,17 @@ struct WorkspaceReviewFileDetailView: View {
             diff = nil
             error = nil
         }
+        .navigationDestination(item: $stackedQuickAction) { destination in
+            ChatView(
+                sessionId: destination.id,
+                workspaceIdHint: workspaceId,
+                initialInputText: destination.inputText,
+                initialPendingFiles: destination.pendingFileReferences
+            )
+            .id(destination.id)
+        }
         .task(id: quickActionTaskID) {
             await loadQuickActionsIfNeeded()
-        }
-        .navigationDestination(item: $navigateToQuickAction) { dest in
-            ChatView(
-                sessionId: dest.id,
-                workspaceIdHint: workspaceId,
-                initialInputText: dest.inputText,
-                initialPendingFiles: dest.pendingFileReferences
-            )
-            .id(dest.id)
         }
         .overlay {
             if let launchActionInFlightTitle {
@@ -598,10 +602,10 @@ struct WorkspaceReviewFileDetailView: View {
             )
             sessionStore.upsert(response.session)
             launchError = nil
-            navigateToQuickAction = QuickActionSessionNavDestination.attaching(
+            openQuickActionSession(QuickActionSessionNavDestination.attaching(
                 sessionId: response.session.id,
                 filePath: currentFile.path
-            )
+            ))
         } catch {
             launchError = error.localizedDescription
         }
@@ -627,14 +631,38 @@ struct WorkspaceReviewFileDetailView: View {
             )
             sessionStore.upsert(response.session)
             launchError = nil
-            navigateToQuickAction = QuickActionSessionNavDestination(
+            openQuickActionSession(QuickActionSessionNavDestination(
                 id: response.session.id,
                 inputText: response.visiblePrompt,
                 filePaths: response.filePaths,
                 fileDisplayPrefix: option.title
-            )
+            ))
         } catch {
             launchError = error.localizedDescription
+        }
+    }
+
+    /// Pushes the new session's chat with this review's server and navigation.
+    /// A review inside a SwiftUI stack whose screen has no UIKit navigation
+    /// controller (chat's Files panel, the git bar's sheet) pushes in that stack.
+    private func openQuickActionSession(_ destination: QuickActionSessionNavDestination) {
+        guard navigator.canPush else {
+            stackedQuickAction = destination
+            return
+        }
+        let workspaceId = workspaceId
+        let connection = connection
+        let apiClient = apiClient
+        let appNavigation = appNavigation
+        navigator.push {
+            ChatView(
+                sessionId: destination.id,
+                workspaceIdHint: workspaceId,
+                initialInputText: destination.inputText,
+                initialPendingFiles: destination.pendingFileReferences
+            )
+            .id(destination.id)
+            .presenterScope(connection: connection, apiClient: apiClient, navigation: appNavigation)
         }
     }
 

@@ -5,7 +5,7 @@ import SwiftUI
 struct WorkspaceDetailsPage: View {
     let model: WorkspaceSettingsModel
 
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
     @Environment(\.apiClient) private var apiClient
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -256,7 +256,7 @@ struct WorkspaceDetailsPage: View {
         error = nil
         switch await model.saveDetails(draft) {
         case .saved:
-            if isVisible { dismiss() }
+            if isVisible { navigator.finish() }
             isSaving = false
         case .failed(let message):
             error = message

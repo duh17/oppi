@@ -16,6 +16,7 @@ struct SidePanelScreenshotPreview: View {
     @State private var navigation = AppNavigation()
     @State private var sessionStore = SessionStore()
     @State private var fileIndexStore = FileIndexStore()
+    @State private var connection = ServerConnection()
 
     private let apiClient = SidePanelScreenshotAPI.makeClient()
     @Environment(\.appRootEnvironment) private var appRoot
@@ -75,6 +76,8 @@ struct SidePanelScreenshotPreview: View {
                 file: SidePanelScreenshotAPI.reviewFiles[0],
                 navigationFiles: SidePanelScreenshotAPI.reviewFiles
             )
+            // The review pushes its quick-action chat on this server.
+            .environment(connection)
         }
     }
 }

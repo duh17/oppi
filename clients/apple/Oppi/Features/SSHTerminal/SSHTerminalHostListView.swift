@@ -1,28 +1,12 @@
 import SwiftUI
 
-enum SSHTerminalEditorRoute: Hashable, Identifiable {
-    case add
-    case edit(UUID)
-
-    var id: String {
-        switch self {
-        case .add: "add"
-        case .edit(let id): "edit-\(id.uuidString)"
-        }
-    }
-
-    var profileID: UUID? {
-        if case .edit(let id) = self { return id }
-        return nil
-    }
-}
-
-/// Device-local host list. Row tap connects. Edit and Add open the setup form.
+/// Device-local host list. Row tap connects. Edit and Add push the setup form.
 /// Appearing loads defaults only: it does not dial and does not read the Keychain.
+/// Coming back from the form or the terminal reloads the list.
 struct SSHTerminalHostListView: View {
     @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var experimentEnabled = false
+    @Environment(\.screenNavigator) private var navigator
     @State private var profiles: [SSHTerminalProfile] = []
-    @State private var editor: SSHTerminalEditorRoute?
     @State private var editAfterTerminal: UUID?
     @State private var connectingProfile = SSHTerminalProfile()
     @State private var session = SSHTerminalConnectSession()
@@ -57,7 +41,7 @@ struct SSHTerminalHostListView: View {
                 Section {
                     Text("No saved hosts.")
                         .foregroundStyle(.themeComment)
-                    Button("Add Host") { editor = .add }
+                    Button("Add Host") { openEditor(profileID: nil) }
                         .accessibilityIdentifier("sshTerminal.host.add")
                 }
             } else if !profiles.isEmpty {
@@ -78,12 +62,9 @@ struct SSHTerminalHostListView: View {
         .settingsPage("SSH Terminal")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Add Host", systemImage: "plus") { editor = .add }
+                Button("Add Host", systemImage: "plus") { openEditor(profileID: nil) }
                     .accessibilityIdentifier("sshTerminal.host.add")
             }
-        }
-        .navigationDestination(item: $editor) { route in
-            SSHTerminalSetupView(profileID: route.profileID)
         }
         .sshTerminalConnection(
             session: session, profile: $connectingProfile, experimentEnabled: experimentEnabled,
@@ -91,11 +72,10 @@ struct SSHTerminalHostListView: View {
             submitPassword: { connect(connectingProfile, password: $0) }
         )
         .onAppear { reload() }
-        .onChange(of: editor) { _, route in if route == nil { reload() } }
         .onChange(of: session.showsTerminal) { _, visible in
             guard !visible, let id = editAfterTerminal else { return }
             editAfterTerminal = nil
-            editor = .edit(id)
+            openEditor(profileID: id)
         }
         .confirmationDialog(
             "Reset the host list?",
@@ -141,7 +121,7 @@ struct SSHTerminalHostListView: View {
             .disabled(session.connecting || session.passwordPrompt)
             .accessibilityIdentifier("sshTerminal.host.row.\(profile.id.uuidString)")
             .accessibilityHint("Connect")
-            Button("Edit") { editor = .edit(profile.id) }
+            Button("Edit") { openEditor(profileID: profile.id) }
                 .buttonStyle(.borderless)
                 .accessibilityIdentifier("sshTerminal.host.edit.\(profile.id.uuidString)")
         }
@@ -149,6 +129,11 @@ struct SSHTerminalHostListView: View {
             Button("Delete Host", role: .destructive) { pendingDelete = profile }
                 .accessibilityIdentifier("sshTerminal.host.delete")
         }
+    }
+
+    /// The setup form: a new host when `profileID` is nil.
+    private func openEditor(profileID: UUID?) {
+        navigator.push { SSHTerminalSetupView(profileID: profileID) }
     }
 
     private func connect(_ profile: SSHTerminalProfile, password: String? = nil) {

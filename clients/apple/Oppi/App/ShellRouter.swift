@@ -32,29 +32,10 @@ enum ShellRoute: Hashable {
     case serverSkillFile(ServerSkillFileNavTarget)
     case sessionThread(SessionThreadNavTarget)
 
-    /// Screens that still navigate with SwiftUI links inside them. Each keeps
-    /// a SwiftUI `NavigationStack` of its own under a hidden UIKit bar: a
-    /// page a SwiftUI link pushes onto a UIKit stack loses the app
-    /// environment. A screen leaves this list when its links push through the
-    /// screen navigator; every other route is hosted directly in the stack.
-    var hostsOwnNavigationStack: Bool {
-        switch self {
-        case .utility(.agents), .utility(.schedules),
-             .utility(.mcpServers), .utility(.sshTerminal),
-             .workspaceConfiguration:
-            true
-        case .inbox, .sidebar, .workspace, .session, .fileBrowser, .linkedFile, .chatReader,
-             .utility, .serverDetails, .modelProviders, .serverResourceDetail, .serverSkillBrowser,
-             .serverSkillFile, .sessionThread:
-            false
-        }
-    }
-
-    /// Bars the router applies. A screen in its own SwiftUI stack shows its
-    /// bottom-bar items there. App Settings, the root of its pages, has a
+    /// Bars the router applies. App Settings, the root of its pages, has a
     /// large title.
     var bars: ScreenBars {
-        ScreenBars(largeTitle: self == .utility(.appSettings), showsToolbar: !hostsOwnNavigationStack)
+        ScreenBars(largeTitle: self == .utility(.appSettings), showsToolbar: true)
     }
 
     /// The screen a route shows. A workspace route whose workspace was
@@ -142,7 +123,7 @@ enum ShellRoutePlacement: Equatable {
 /// every screen whose route stays. A page a hosted screen pushed itself
 /// (`ScreenNavigator.push`) stays above it until a route below it changes.
 final class ShellNavigationController: UINavigationController, UINavigationControllerDelegate,
-    UIGestureRecognizerDelegate, RouterRootClosing {
+    RouterRootClosing {
     private let root: AppRootEnvironment
     private let rootPlacement: ShellRoutePlacement
     /// The user left routed screens; the argument is how many routes, root
@@ -157,7 +138,6 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
     private var shownRoutes: [ShellRoute] = []
     private var routes: [ShellRoute] = []
     private var routeByScreen: [ObjectIdentifier: ShellRoute] = [:]
-    private weak var systemPopGestureDelegate: UIGestureRecognizerDelegate?
 
     init(root: AppRootEnvironment, rootPlacement: ShellRoutePlacement) {
         self.root = root
@@ -169,11 +149,6 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
     @available(*, unavailable)
     required init?(coder aDecoder: NSCoder) {
         return nil
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        systemPopGestureDelegate = interactivePopGestureRecognizer?.delegate
     }
 
     override func updateProperties() {
@@ -253,20 +228,7 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
         routeByScreen = routeByScreen.filter { live.contains($0.key) }
     }
 
-    private func hostsOwnStack(_ screen: UIViewController?) -> Bool {
-        screen.flatMap { routeByScreen[ObjectIdentifier($0)] }?.hostsOwnNavigationStack ?? false
-    }
-
     // MARK: UINavigationControllerDelegate
-
-    func navigationController(
-        _ navigationController: UINavigationController,
-        willShow viewController: UIViewController,
-        animated: Bool
-    ) {
-        // A screen in its own SwiftUI stack draws its own bar.
-        setNavigationBarHidden(hostsOwnStack(viewController), animated: animated)
-    }
 
     func navigationController(
         _ navigationController: UINavigationController,
@@ -281,34 +243,8 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
             routes = remaining
             onRoutesPopped?(remaining.count)
         }
-        // The system back swipe refuses while the bar is hidden.
-        interactivePopGestureRecognizer?.delegate = hostsOwnStack(viewController) ? self : systemPopGestureDelegate
         if routes != shownRoutes {
             applyRoutes()
         }
-    }
-
-    // MARK: UIGestureRecognizerDelegate (back swipe over a screen with its own stack)
-
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard gestureRecognizer === interactivePopGestureRecognizer,
-              viewControllers.count > 1,
-              transitionCoordinator == nil,
-              let top = topViewController else { return false }
-        // Its own stack pops first.
-        return !Self.hasPushedPage(inStackWithin: top)
-    }
-
-    /// Whether the SwiftUI `NavigationStack` inside `screen` shows more than
-    /// its root.
-    private static func hasPushedPage(inStackWithin screen: UIViewController) -> Bool {
-        var pending = screen.children
-        while let candidate = pending.popLast() {
-            if let stack = candidate as? UINavigationController {
-                return stack.viewControllers.count > 1
-            }
-            pending.append(contentsOf: candidate.children)
-        }
-        return false
     }
 }

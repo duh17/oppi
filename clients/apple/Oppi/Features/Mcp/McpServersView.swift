@@ -11,6 +11,7 @@ struct McpServersView: View {
     @State private var model = McpServersModel()
     @State private var addContext: McpAddContext?
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.screenNavigator) private var navigator
 
     private var server: PairedServer? {
         serverStore.servers.first { $0.id == coordinator.activeServerId }
@@ -61,11 +62,14 @@ struct McpServersView: View {
                         Text("No MCP servers configured").foregroundStyle(.themeComment)
                     }
                     ForEach(scope.servers) { entry in
-                        NavigationLink {
-                            McpServerDetailView(
-                                scope: scope, entry: entry, client: client,
-                                serverId: server.id, serverName: server.name, signIn: signIn
-                            )
+                        SettingsIndexActionRow {
+                            let signIn = signIn
+                            navigator.push {
+                                McpServerDetailView(
+                                    scope: scope, entry: entry, client: client,
+                                    serverId: server.id, serverName: server.name, signIn: signIn
+                                )
+                            }
                         } label: {
                             serverRow(entry)
                         }

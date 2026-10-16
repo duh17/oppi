@@ -41,24 +41,16 @@ enum ShellRouteScreens {
 }
 
 /// One route's screen, with the chrome its place in the shell adds: the
-/// sidebar toggle at the split detail root, and for a screen in its own
-/// SwiftUI stack (`ShellRoute.hostsOwnNavigationStack`) that stack and a
-/// Back button, since its UIKit bar is hidden.
+/// sidebar toggle at the split detail root.
 struct ShellRouteView: View {
     let route: ShellRoute
     let placement: ShellRoutePlacement
     let openSidebar: (() -> Void)?
 
     @Environment(\.chatReaderPayloadStore) private var chatReaderPayloadStore
-    @Environment(\.screenNavigator) private var navigator
 
     var body: some View {
-        if route.hostsOwnNavigationStack {
-            NavigationStack {
-                content
-                    .toolbar { ownStackLeadingItem }
-            }
-        } else if placement == .splitDetailRoot {
+        if placement == .splitDetailRoot {
             content
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
@@ -67,23 +59,6 @@ struct ShellRouteView: View {
                 }
         } else {
             content
-        }
-    }
-
-    @ToolbarContentBuilder
-    private var ownStackLeadingItem: some ToolbarContent {
-        if placement == .splitDetailRoot {
-            ToolbarItem(placement: .topBarLeading) {
-                WorkspaceSplitSidebarToggleButton()
-            }
-        } else if placement == .pushed {
-            ToolbarItem(placement: .topBarLeading) {
-                Button(action: navigator.finish) {
-                    Label("Back", systemImage: "chevron.backward")
-                }
-                // UIKit's own back button carries this identifier.
-                .accessibilityIdentifier("BackButton")
-            }
         }
     }
 

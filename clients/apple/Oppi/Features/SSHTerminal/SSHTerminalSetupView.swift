@@ -4,7 +4,7 @@ import UIKit
 struct SSHTerminalSetupView: View {
     var profileID: UUID?
     @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var experimentEnabled = false
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
     @State private var profile: SSHTerminalProfile
     @State private var portText: String
     @State private var identity: SSHIdentity?
@@ -185,7 +185,7 @@ struct SSHTerminalSetupView: View {
         do {
             session.cancel()
             try SSHTerminalProfileStore().delete(id: profile.id)
-            dismiss()
+            navigator.finish()
         } catch {
             session.failure = error.localizedDescription
         }

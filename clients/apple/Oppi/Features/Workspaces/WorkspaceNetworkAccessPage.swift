@@ -5,7 +5,7 @@ import SwiftUI
 struct WorkspaceNetworkAccessPage: View {
     let model: WorkspaceSettingsModel
 
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
 
     @State private var hostsText: String
     @State private var error: String?
@@ -80,7 +80,7 @@ struct WorkspaceNetworkAccessPage: View {
         error = nil
         switch await model.saveAllowedHosts(draftHosts) {
         case .saved:
-            if isVisible { dismiss() }
+            if isVisible { navigator.finish() }
         case .failed(let message):
             error = message
         case .superseded:

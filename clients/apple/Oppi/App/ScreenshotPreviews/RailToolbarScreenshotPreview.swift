@@ -177,6 +177,8 @@ private struct RailSessionListScreenshotPreview: View {
         guard coordinator.switchToServer(server),
               let connection = coordinator.connection(for: server.id) else { return coordinator }
         connection.workspaceStore.upsert(workspace, serverId: server.id)
+        // Sampling on, so the host pill offers Server Metrics (its route smoke).
+        connection.serverMetricsEnabled = true
         connection.sessionStore.switchServer(to: server.id)
         connection.sessionStore.sessions = [
             session(id: "rail-1", name: "Fill the Duo side rail", status: .busy, minutesAgo: 2),

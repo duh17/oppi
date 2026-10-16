@@ -24,15 +24,21 @@ enum WorkspaceDeleteConfirmationPolicy {
 /// Toggles and pickers apply as soon as they change. Only the Details page,
 /// the Instructions editor, and the Network Access hosts editor are drafts
 /// with their own Save. Data for every page comes from one
-/// `WorkspaceSettingsModel`, so pushed pages never refetch.
+/// `WorkspaceSettingsModel`, so pushed pages never refetch. Each pushed page
+/// starts from the app root (the active server), so it gets this screen's
+/// server scope explicitly.
 struct WorkspaceSettingsRootView: View {
     let workspace: Workspace
+    /// Closes this screen after Delete Workspace or Use Oppi Session when it
+    /// was pushed onto another screen. As a shell route it leaves through the
+    /// `AppNavigation` change that follows instead.
+    var onLeave: (() -> Void)?
 
     @Environment(\.apiClient) private var apiClient
     @Environment(ServerConnection.self) private var connection
     @Environment(SessionStore.self) private var sessionStore
     @Environment(AppNavigation.self) private var navigation
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
 
     @State private var model: WorkspaceSettingsModel
     @State private var isConfirmingDelete = false
@@ -40,8 +46,9 @@ struct WorkspaceSettingsRootView: View {
     @State private var launchError: String?
     @State private var locks = ScopedLockService.shared
 
-    init(workspace: Workspace) {
+    init(workspace: Workspace, onLeave: (() -> Void)? = nil) {
         self.workspace = workspace
+        self.onLeave = onLeave
         _model = State(initialValue: WorkspaceSettingsModel(seed: workspace))
     }
 
@@ -61,33 +68,37 @@ struct WorkspaceSettingsRootView: View {
     }
 
     var body: some View {
+        // Copied here: the destinations run later, in the pushed screens.
+        let model = model
+        let scoped = pageScope
+        let workspaceId = workspace.id
         List {
             summarySection
 
             Section {
                 SettingsIndexRow("Instructions", systemImage: "doc.text", value: model.instructionsSummary) {
-                    WorkspaceInstructionsPage(model: model)
+                    scoped(WorkspaceInstructionsPage(model: model))
                 }
                 .accessibilityIdentifier("workspace.edit.instructions")
                 SettingsIndexRow("Skills", systemImage: "sparkles", value: model.skillsSummary) {
-                    WorkspaceSkillsPage(model: model)
+                    scoped(WorkspaceSkillsPage(model: model))
                 }
                 .accessibilityIdentifier("workspace.edit.skills")
                 SettingsIndexRow("Extensions", systemImage: "puzzlepiece.extension", value: model.extensionsSummary) {
-                    WorkspaceExtensionsPage(model: model)
+                    scoped(WorkspaceExtensionsPage(model: model))
                 }
                 .accessibilityIdentifier("workspace.edit.extensions")
                 SettingsIndexRow("MCP Servers", systemImage: "network", value: model.mcpSummary) {
-                    mcpDestination
+                    scoped(Self.mcpDestination(model: model, workspaceId: workspaceId))
                 }
                 .accessibilityIdentifier("workspace.edit.mcpServers")
                 SettingsIndexRow("Dictionary", systemImage: "text.book.closed") {
-                    DictationDictionaryView(workspaceId: workspace.id)
+                    scoped(DictationDictionaryView(workspaceId: workspaceId))
                 }
                 .accessibilityIdentifier("workspace.edit.dictionary")
                 if model.isSandbox {
                     SettingsIndexRow("Network Access", systemImage: "lock.shield", value: model.networkAccessSummary) {
-                        WorkspaceNetworkAccessPage(model: model)
+                        scoped(WorkspaceNetworkAccessPage(model: model))
                     }
                     .accessibilityIdentifier("workspace.edit.networkAccess")
                 }
@@ -197,8 +208,10 @@ struct WorkspaceSettingsRootView: View {
 
     private var summarySection: some View {
         Section {
-            NavigationLink {
-                WorkspaceDetailsPage(model: model)
+            SettingsIndexActionRow {
+                let model = model
+                let scoped = pageScope
+                navigator.push { scoped(WorkspaceDetailsPage(model: model)) }
             } label: {
                 HStack(spacing: 12) {
                     WorkspaceRuntimeIcon(workspace: current, size: 24, frameSize: 36)
@@ -221,6 +234,10 @@ struct WorkspaceSettingsRootView: View {
         }
     }
 
+    private var pageScope: WorkspaceSettingsPageScope {
+        WorkspaceSettingsPageScope(connection: connection, apiClient: apiClient, navigation: navigation)
+    }
+
     private var lockScope: ScopedLockScope? {
         (connection.currentServerId ?? connection.workspaceStore.activeServerId)
             .map { .workspace(serverId: $0, workspaceId: workspace.id) }
@@ -233,11 +250,11 @@ struct WorkspaceSettingsRootView: View {
 
     /// A host workspace manages its own `.pi/mcp.json`; a sandbox picks from the global servers.
     @ViewBuilder
-    private var mcpDestination: some View {
+    private static func mcpDestination(model: WorkspaceSettingsModel, workspaceId: String) -> some View {
         if model.isSandbox {
             WorkspaceSandboxMcpPage(model: model)
         } else {
-            McpServersView(scopeId: workspace.id)
+            McpServersView(scopeId: workspaceId)
         }
     }
 
@@ -253,7 +270,7 @@ struct WorkspaceSettingsRootView: View {
             workspaceId: deleted.workspaceId,
             sessionIds: sessionStore.listProjectionSessions(workspaceId: deleted.workspaceId).map(\.id)
         )
-        dismiss()
+        onLeave?()
         navigation.leaveDeletedWorkspace(serverId: deleted.serverId, workspaceId: deleted.workspaceId)
     }
 
@@ -279,7 +296,7 @@ struct WorkspaceSettingsRootView: View {
             ))
             sessionStore.cacheSessionForNavigation(response.session)
             guard let serverId = connection.currentServerId ?? sessionStore.activeServerId else { return }
-            dismiss()
+            onLeave?()
             await Task.yield()
             navigation.openWorkspaceSession(.init(
                 serverId: serverId,
@@ -290,5 +307,18 @@ struct WorkspaceSettingsRootView: View {
             guard WorkspacePiResourceErrorPolicy.shouldPresent(error) else { return }
             launchError = error.localizedDescription
         }
+    }
+}
+
+/// The workspace's server services, copied for the pages Workspace Settings
+/// pushes: a pushed page starts from the app root (the active server).
+@MainActor
+private struct WorkspaceSettingsPageScope {
+    let connection: ServerConnection
+    let apiClient: APIClient?
+    let navigation: AppNavigation
+
+    func callAsFunction(_ page: some View) -> some View {
+        page.presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
     }
 }

@@ -5,7 +5,10 @@ import SwiftUI
 struct WorkspaceSkillsPage: View {
     let model: WorkspaceSettingsModel
 
-    @State private var selectedSkillDetail: SkillDetailDestination?
+    @Environment(ServerConnection.self) private var connection
+    @Environment(\.apiClient) private var apiClient
+    @Environment(AppNavigation.self) private var navigation
+    @Environment(\.screenNavigator) private var navigator
 
     var body: some View {
         List {
@@ -27,7 +30,7 @@ struct WorkspaceSkillsPage: View {
                                 Task { await model.setPiResource(.skills, path: skill.path, enabled: enabled) }
                             },
                             onShowDetail: {
-                                selectedSkillDetail = SkillDetailDestination(skillName: skill.name, cwd: model.savedFolder)
+                                showDetail(skillName: skill.name)
                             }
                         )
                     }
@@ -44,14 +47,20 @@ struct WorkspaceSkillsPage: View {
             }
         }
         .settingsPage("Skills")
-        .navigationDestination(item: $selectedSkillDetail) { dest in
-            SkillDetailView(skillName: dest.skillName, cwd: dest.cwd)
-        }
-        .navigationDestination(for: SkillFileDestination.self) { dest in
-            SkillFileView(skillName: dest.skillName, filePath: dest.filePath, cwd: dest.cwd)
-        }
         .task {
             await model.loadPiResourcesIfNeeded()
+        }
+    }
+
+    /// The skill's detail, on this workspace's server and folder.
+    private func showDetail(skillName: String) {
+        let cwd = model.savedFolder
+        let connection = connection
+        let apiClient = apiClient
+        let navigation = navigation
+        navigator.push {
+            SkillDetailView(skillName: skillName, cwd: cwd)
+                .presenterScope(connection: connection, apiClient: apiClient, navigation: navigation)
         }
     }
 }

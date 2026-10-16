@@ -265,6 +265,7 @@ struct UseOppiSessionRow: View {
 
 struct AgentManagementView: View {
     @Environment(\.apiClient) private var apiClient
+    @Environment(\.screenNavigator) private var navigator
 
     @State private var agents: [AgentDefinitionSummary] = []
     @State private var isLoading = false
@@ -276,31 +277,17 @@ struct AgentManagementView: View {
                 ForEach(AgentManagementPresentation.rows(savedAgents: agents)) { row in
                     switch row {
                     case .pi:
-                        NavigationLink {
-                            PiAgentDetailView()
+                        SettingsIndexActionRow {
+                            navigator.push { PiAgentDetailView() }
                         } label: {
                             PiAgentSummaryRow()
                         }
                         .accessibilityIdentifier("agents.row.pi")
                     case .saved(let agent):
-                        NavigationLink {
-                            AgentDetailView(agentId: agent.id) { updated in
-                                guard let index = agents.firstIndex(where: { $0.id == updated.id }) else {
-                                    return
-                                }
-                                agents[index] = AgentDefinitionSummary(
-                                    id: updated.id,
-                                    name: updated.name,
-                                    icon: updated.definition.icon,
-                                    description: updated.description,
-                                    launchConstraints: updated.definition.launchConstraints,
-                                    sessionDefaults: updated.definition.sessionDefaults,
-                                    status: updated.status,
-                                    version: updated.version,
-                                    createdAt: updated.createdAt,
-                                    updatedAt: updated.updatedAt,
-                                    archivedAt: updated.archivedAt
-                                )
+                        SettingsIndexActionRow {
+                            // Start Session sits in the bottom bar.
+                            navigator.push(bars: ScreenBars(showsToolbar: true)) {
+                                AgentDetailView(agentId: agent.id, onUpdated: agentUpdated)
                             }
                         } label: {
                             AgentSummaryRow(agent: agent)
@@ -339,6 +326,25 @@ struct AgentManagementView: View {
         } message: {
             Text(error ?? "")
         }
+    }
+
+    /// The pushed detail reports edits here; the list shows them when it is
+    /// back on screen.
+    private func agentUpdated(_ updated: StoredAgentDefinition) {
+        guard let index = agents.firstIndex(where: { $0.id == updated.id }) else { return }
+        agents[index] = AgentDefinitionSummary(
+            id: updated.id,
+            name: updated.name,
+            icon: updated.definition.icon,
+            description: updated.description,
+            launchConstraints: updated.definition.launchConstraints,
+            sessionDefaults: updated.definition.sessionDefaults,
+            status: updated.status,
+            version: updated.version,
+            createdAt: updated.createdAt,
+            updatedAt: updated.updatedAt,
+            archivedAt: updated.archivedAt
+        )
     }
 
     @MainActor
@@ -383,23 +389,14 @@ struct PiAgentSummaryRow: View {
 
 struct PiAgentDetailView: View {
     @Environment(\.apiClient) private var apiClient
+    @Environment(\.screenNavigator) private var navigator
 
     @State private var isShowingSystemPromptSession = false
     @State private var isShowingFilePromptReview = false
     @State private var isShowingDefaultPrompt = false
-    @State private var isShowingPiTools = false
     @State private var prompt: PiSystemPromptSnapshot?
-    @State private var defaultTools: [String]?
-    @State private var builtInTools: [ServerToolSummary] = []
-    @State private var optionalTools: [ServerToolSummary] = []
-    @State private var toolSelectionMode: AgentToolSelectionMode = .inherit
-    @State private var selectedToolNames: Set<String> = []
-    @State private var selectedOptionalToolNames: Set<String> = []
-    @State private var hasLoadedTools = false
-    @State private var isApplyingLoadedTools = false
-    @State private var toolsSave = AgentManagementPresentation.PiToolsSaveCoordinator()
+    @State private var tools = PiToolsEditor()
     @State private var isLoading = false
-    @State private var error: String?
 
     var body: some View {
         List {
@@ -467,11 +464,10 @@ struct PiAgentDetailView: View {
             }
 
             Section {
-                // A button, not a `NavigationLink`: leaving the picker saves through `isShowingPiTools`.
                 SettingsIndexActionRow(
-                    value: AgentManagementPresentation.piToolsSummary(defaultTools: defaultTools)
+                    value: AgentManagementPresentation.piToolsSummary(defaultTools: tools.defaultTools)
                 ) {
-                    isShowingPiTools = true
+                    openTools()
                 } label: {
                     Text("Tools")
                 }
@@ -494,58 +490,11 @@ struct PiAgentDetailView: View {
         .navigationTitle("Pi")
         .navigationBarTitleDisplayMode(.inline)
         .themedListSurface()
-        .navigationDestination(isPresented: $isShowingPiTools) {
-            AgentToolSelectionView(
-                mode: $toolSelectionMode,
-                selectedNames: $selectedToolNames,
-                builtInTools: builtInTools,
-                defaultSelection: defaultBuiltInSelection,
-                optionalTools: optionalTools,
-                selectedOptionalNames: $selectedOptionalToolNames,
-                title: "Pi Tools",
-                inheritFooter: AgentManagementPresentation.piToolsInheritFooter,
-                exactFooter: AgentManagementPresentation.piToolsExactFooter,
-                optionalToolsFooter: AgentManagementPresentation.piOptionalToolsFooter
-            )
-        }
         .task {
-            guard !hasLoadedTools else { return }
+            guard !tools.hasLoadedTools else { return }
             await load()
         }
         .refreshable { await load() }
-        .onChange(of: isShowingPiTools) { wasPresented, isPresented in
-            guard wasPresented, !isPresented else { return }
-            saveCurrentTools(
-                pickerWasPresented: true,
-                pickerIsPresented: false,
-                selectionChangedAfterLoad: false
-            )
-        }
-        .onChange(of: toolSelectionMode) { _, _ in
-            syncDisplayedDefaultTools()
-            saveCurrentTools(
-                pickerWasPresented: isShowingPiTools,
-                pickerIsPresented: isShowingPiTools,
-                selectionChangedAfterLoad: true
-            )
-        }
-        .onChange(of: selectedToolNames) { _, _ in
-            syncDisplayedDefaultTools()
-            saveCurrentTools(
-                pickerWasPresented: isShowingPiTools,
-                pickerIsPresented: isShowingPiTools,
-                selectionChangedAfterLoad: true,
-                namesChanged: true
-            )
-        }
-        .onChange(of: selectedOptionalToolNames) { _, _ in
-            syncDisplayedDefaultTools()
-            saveCurrentTools(
-                pickerWasPresented: isShowingPiTools,
-                pickerIsPresented: isShowingPiTools,
-                selectionChangedAfterLoad: true
-            )
-        }
         .routerModal(isPresented: $isShowingSystemPromptSession, presentation: .sheet.inNavigation()) {
             GuidedControlSessionSheet(
                 domain: .agents,
@@ -578,12 +527,12 @@ struct PiAgentDetailView: View {
             .ignoresSafeArea(edges: .top)
         }
         .alert("Pi", isPresented: Binding(
-            get: { error != nil },
-            set: { if !$0 { error = nil } }
+            get: { tools.error != nil },
+            set: { if !$0 { tools.error = nil } }
         )) {
-            Button("OK", role: .cancel) { error = nil }
+            Button("OK", role: .cancel) { tools.error = nil }
         } message: {
-            Text(error ?? "")
+            Text(tools.error ?? "")
         }
     }
 
@@ -591,8 +540,14 @@ struct PiAgentDetailView: View {
         prompt?.source != .file
     }
 
-    private var defaultBuiltInSelection: Set<String> {
-        Set(builtInTools.filter { $0.defaultEnabled == true }.map(\.name))
+    /// Pushes the Tools page. It edits `tools`, which saves each change and
+    /// once more when the page closes.
+    private func openTools() {
+        let tools = tools
+        tools.pickerDidOpen()
+        navigator.push {
+            PiToolsPage(tools: tools)
+        }
     }
 
     private func openPrompt() {
@@ -601,17 +556,6 @@ struct PiAgentDetailView: View {
         } else if prompt?.content != nil {
             isShowingDefaultPrompt = true
         }
-    }
-
-    private func syncDisplayedDefaultTools() {
-        guard hasLoadedTools else { return }
-        defaultTools = AgentManagementPresentation.piDefaultTools(
-            mode: toolSelectionMode,
-            selectedNames: selectedToolNames,
-            optionalNames: selectedOptionalToolNames,
-            builtInTools: builtInTools,
-            optionalTools: optionalTools
-        )
     }
 
     @MainActor
@@ -627,30 +571,106 @@ struct PiAgentDetailView: View {
             async let fetchedCatalog = apiClient.listServerExtensions()
             let (resolvedPrompt, resolvedTools, catalog) = try await (fetchedPrompt, fetchedTools, fetchedCatalog)
             prompt = resolvedPrompt
-            builtInTools = catalog.builtInTools
-            optionalTools = catalog.optionalTools ?? []
-            applyLoadedDefaultTools(resolvedTools.defaultTools)
-            error = nil
+            tools.apiClient = apiClient
+            tools.applyLoaded(
+                resolvedTools.defaultTools,
+                builtInTools: catalog.builtInTools,
+                optionalTools: catalog.optionalTools ?? []
+            )
+            tools.error = nil
         } catch {
-            self.error = error.localizedDescription
+            tools.error = error.localizedDescription
         }
     }
+}
 
-    private func applyLoadedDefaultTools(
+/// The Pi Tools page the Pi page pushes.
+private struct PiToolsPage: View {
+    @Bindable var tools: PiToolsEditor
+
+    var body: some View {
+        AgentToolSelectionView(
+            mode: $tools.mode,
+            selectedNames: $tools.selectedNames,
+            builtInTools: tools.builtInTools,
+            defaultSelection: tools.defaultBuiltInSelection,
+            optionalTools: tools.optionalTools,
+            selectedOptionalNames: $tools.selectedOptionalNames,
+            title: "Pi Tools",
+            inheritFooter: AgentManagementPresentation.piToolsInheritFooter,
+            exactFooter: AgentManagementPresentation.piToolsExactFooter,
+            optionalToolsFooter: AgentManagementPresentation.piOptionalToolsFooter
+        )
+        .onDisappear { tools.pickerDidClose() }
+    }
+}
+
+/// Pi's default tools, shown on the Pi page and edited on the Tools page it
+/// pushes. The Tools page is its own screen (its own SwiftUI graph): a
+/// `@Binding` into the Pi page's `@State` would not refresh it, and the Pi
+/// page's `onChange` would not run while the Tools page covers it. So the
+/// selection and its saves live here. Every change saves at once, and closing
+/// the Tools page saves the selection it leaves with.
+@MainActor @Observable
+private final class PiToolsEditor {
+    private(set) var defaultTools: [String]?
+    private(set) var builtInTools: [ServerToolSummary] = []
+    private(set) var optionalTools: [ServerToolSummary] = []
+    private(set) var hasLoadedTools = false
+    var error: String?
+
+    var mode: AgentToolSelectionMode = .inherit {
+        didSet { if mode != oldValue { selectionChanged(namesChanged: false) } }
+    }
+    var selectedNames: Set<String> = [] {
+        didSet { if selectedNames != oldValue { selectionChanged(namesChanged: true) } }
+    }
+    var selectedOptionalNames: Set<String> = [] {
+        didSet { if selectedOptionalNames != oldValue { selectionChanged(namesChanged: false) } }
+    }
+
+    @ObservationIgnored var apiClient: APIClient?
+    @ObservationIgnored private var isPickerShown = false
+    /// GET and revert write the selection; that is not a user change.
+    @ObservationIgnored private var isApplyingLoadedTools = false
+    @ObservationIgnored private var toolsSave = AgentManagementPresentation.PiToolsSaveCoordinator()
+
+    var defaultBuiltInSelection: Set<String> {
+        Set(builtInTools.filter { $0.defaultEnabled == true }.map(\.name))
+    }
+
+    func pickerDidOpen() {
+        isPickerShown = true
+    }
+
+    func pickerDidClose() {
+        guard isPickerShown else { return }
+        isPickerShown = false
+        save(pickerWasPresented: true, pickerIsPresented: false, selectionChangedAfterLoad: false)
+    }
+
+    func applyLoaded(
         _ loaded: [String]?,
-        isRevertingAfterFailure: Bool = false
+        builtInTools: [ServerToolSummary],
+        optionalTools: [ServerToolSummary]
     ) {
+        self.builtInTools = builtInTools
+        self.optionalTools = optionalTools
+        applyLoadedDefaultTools(loaded)
+    }
+
+    private func applyLoadedDefaultTools(_ loaded: [String]?, isRevertingAfterFailure: Bool = false) {
         guard AgentManagementPresentation.shouldApplyLoadedPiTools(
             hasLoadedTools: hasLoadedTools,
             isSaving: toolsSave.isSaving,
-            pickerIsPresented: isShowingPiTools,
+            pickerIsPresented: isPickerShown,
             isRevertingAfterFailure: isRevertingAfterFailure
         ) else {
             hasLoadedTools = true
             return
         }
-        // Binding onChange must not PUT while GET/revert writes mode and names.
         isApplyingLoadedTools = true
+        defer { isApplyingLoadedTools = false }
         toolsSave = AgentManagementPresentation.PiToolsSaveCoordinator(persisted: loaded)
         defaultTools = loaded
         let selection = AgentManagementPresentation.piToolsSelection(
@@ -658,16 +678,32 @@ struct PiAgentDetailView: View {
             builtInTools: builtInTools,
             optionalTools: optionalTools
         )
-        toolSelectionMode = selection.mode
-        selectedToolNames = selection.builtInNames
-        selectedOptionalToolNames = selection.optionalNames
+        mode = selection.mode
+        selectedNames = selection.builtInNames
+        selectedOptionalNames = selection.optionalNames
         hasLoadedTools = true
-        Task { @MainActor in
-            isApplyingLoadedTools = false
-        }
     }
 
-    private func saveCurrentTools(
+    private func selectionChanged(namesChanged: Bool) {
+        guard !isApplyingLoadedTools else { return }
+        if hasLoadedTools {
+            defaultTools = AgentManagementPresentation.piDefaultTools(
+                mode: mode,
+                selectedNames: selectedNames,
+                optionalNames: selectedOptionalNames,
+                builtInTools: builtInTools,
+                optionalTools: optionalTools
+            )
+        }
+        save(
+            pickerWasPresented: isPickerShown,
+            pickerIsPresented: isPickerShown,
+            selectionChangedAfterLoad: true,
+            namesChanged: namesChanged
+        )
+    }
+
+    private func save(
         pickerWasPresented: Bool,
         pickerIsPresented: Bool,
         selectionChangedAfterLoad: Bool,
@@ -675,12 +711,12 @@ struct PiAgentDetailView: View {
     ) {
         let action = AgentManagementPresentation.piToolsSavePayload(
             leaveHasLoadedTools: hasLoadedTools,
-            leaveMode: toolSelectionMode,
-            leaveSelectedNames: selectedToolNames,
-            leaveOptionalNames: selectedOptionalToolNames,
+            leaveMode: mode,
+            leaveSelectedNames: selectedNames,
+            leaveOptionalNames: selectedOptionalNames,
             laterHasLoadedTools: hasLoadedTools,
-            laterMode: toolSelectionMode,
-            laterSelectedNames: selectedToolNames,
+            laterMode: mode,
+            laterSelectedNames: selectedNames,
             builtInTools: builtInTools,
             optionalTools: optionalTools,
             pickerWasPresented: pickerWasPresented,
@@ -693,12 +729,11 @@ struct PiAgentDetailView: View {
         // Mark isSaving before the async PUT so a following GET cannot apply stale names.
         guard toolsSave.requestSave(desired: desired) else { return }
         Task {
-            await performQueuedPiToolsSave()
+            await performQueuedSave()
         }
     }
 
-    @MainActor
-    private func performQueuedPiToolsSave() async {
+    private func performQueuedSave() async {
         guard let apiClient else {
             let persisted = toolsSave.persisted
             toolsSave.fail()

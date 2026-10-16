@@ -256,6 +256,7 @@ private struct SSHTerminalConnectionModifier: ViewModifier {
     let editHost: () -> Void
     let submitPassword: (String) -> Void
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.screenNavigator) private var navigator
 
     func body(content: Content) -> some View {
         content
@@ -297,12 +298,6 @@ private struct SSHTerminalConnectionModifier: ViewModifier {
             .confirmationDialog("Forget the trusted host key?", isPresented: $session.forgetConfirmation, titleVisibility: .visible) {
                 Button("Forget Trusted Key", role: .destructive) { session.forgetTrustedKey() }
             } message: { Text("Only do this after independently verifying why the host key changed.") }
-            .navigationDestination(isPresented: $session.showsTerminal) {
-                if let channel = session.channel {
-                    SSHTerminalView(channel: channel, reconnect: { session.reconnect(experimentEnabled: experimentEnabled) }, editHost: editHost, hostLabel: profile.endpointLabel)
-                        .id(ObjectIdentifier(channel))
-                }
-            }
             .onChange(of: scenePhase) { _, phase in
                 guard phase == .background else { return }
                 session.handleBackground()
@@ -311,7 +306,61 @@ private struct SSHTerminalConnectionModifier: ViewModifier {
                 if !enabled { session.handleExperimentDisabled() }
             }
             .onDisappear { if !session.showsTerminal { session.cancel() } }
-            .onChange(of: session.showsTerminal) { _, visible in if !visible { session.cancel() } }
+            .onChange(of: session.showsTerminal) { _, visible in
+                if visible { pushTerminal() } else { session.cancel() }
+            }
+    }
+
+    /// Pushes the terminal over this screen, after the SwiftUI update that
+    /// reported the open session.
+    private func pushTerminal() {
+        let session = session
+        let editHost = editHost
+        let hostLabel = profile.endpointLabel
+        DispatchQueue.main.async { [navigator] in
+            guard session.showsTerminal else { return }
+            navigator.push {
+                SSHTerminalScreen(session: session, editHost: editHost, hostLabel: hostLabel)
+            }
+        }
+    }
+}
+
+/// The terminal a connect pushed. It pops itself when the session stops
+/// showing it (Edit Host, the experiment turned off), and leaving it (Back,
+/// swipe) ends the session's terminal.
+private struct SSHTerminalScreen: View {
+    let session: SSHTerminalConnectSession
+    let editHost: () -> Void
+    let hostLabel: String
+    @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var experimentEnabled = false
+    @Environment(\.screenNavigator) private var navigator
+    @State private var isOnScreen = false
+
+    var body: some View {
+        Group {
+            // Reconnecting opens a new channel and a fresh terminal for it.
+            if let channel = session.channel {
+                SSHTerminalView(
+                    channel: channel,
+                    reconnect: { session.reconnect(experimentEnabled: experimentEnabled) },
+                    editHost: editHost,
+                    hostLabel: hostLabel
+                )
+                .id(ObjectIdentifier(channel))
+            }
+        }
+        .onAppear { isOnScreen = true }
+        .onDisappear {
+            isOnScreen = false
+            session.showsTerminal = false
+        }
+        .onChange(of: session.showsTerminal) { _, visible in
+            if !visible, isOnScreen { navigator.finish() }
+        }
+        .onChange(of: experimentEnabled) { _, enabled in
+            if !enabled { session.handleExperimentDisabled() }
+        }
     }
 }
 

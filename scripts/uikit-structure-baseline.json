@@ -208,7 +208,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/WorkspaceShellRoutes.swift": {
-      "NavigationStack": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/WorkspaceSidebarGitStatusPreview.swift": {
@@ -353,8 +352,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Agents/AgentManagementView.swift": {
-      "NavigationLink": 2,
-      ".navigationDestination(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Agents/AgentNativeEditView.swift": {
@@ -616,7 +613,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Mcp/McpServersView.swift": {
-      "NavigationLink": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Mcp/McpSignInOwner.swift": {
@@ -669,11 +665,9 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalConnectSession.swift": {
-      ".navigationDestination(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalHostListView.swift": {
-      ".navigationDestination(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalNoticeCard.swift": {
@@ -692,7 +686,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Schedules/ScheduleManagementView.swift": {
-      ".navigationDestination(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Schedules/ScheduleNativeEditView.swift": {
@@ -878,7 +871,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceListView.swift": {
-      ".navigationDestination(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceNetworkAccessPage.swift": {
@@ -891,11 +883,9 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSettingsRootView.swift": {
-      "NavigationLink": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceSkillsPage.swift": {
-      ".navigationDestination(": 2,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceStoppedSessionsSection.swift": {

@@ -4,7 +4,7 @@ import SwiftUI
 struct WorkspaceInstructionsPage: View {
     let model: WorkspaceSettingsModel
 
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
 
     @State private var text: String
     @State private var isSaving = false
@@ -107,7 +107,7 @@ struct WorkspaceInstructionsPage: View {
         error = nil
         switch await model.saveInstructions(text) {
         case .saved:
-            if isVisible { dismiss() }
+            if isVisible { navigator.finish() }
             isSaving = false
         case .failed(let message):
             error = message

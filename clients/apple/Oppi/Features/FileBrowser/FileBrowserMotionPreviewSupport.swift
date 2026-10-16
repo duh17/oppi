@@ -61,6 +61,8 @@ struct FileBrowserMotionPreview: View {
 struct ReviewFileMotionPreview: View {
     private let apiClient = FileBrowserMotionPreviewSupport.makeClient()
     @State private var sessionStore = SessionStore()
+    @State private var connection = ServerConnection()
+    @State private var navigation = AppNavigation()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -84,6 +86,9 @@ struct ReviewFileMotionPreview: View {
                 navigationFiles: files
             )
         }
+        // The review reads both; it pushes a quick-action chat with them.
+        .environment(connection)
+        .environment(navigation)
         .environment(sessionStore)
         .environment(\.apiClient, apiClient)
         .preferredColorScheme(.dark)

@@ -12,11 +12,11 @@ struct WorkspaceListView: View {
 
     @Environment(ConnectionCoordinator.self) private var coordinator
     @Environment(AppNavigation.self) private var navigation
+    @Environment(\.screenNavigator) private var navigator
     @State private var showCreate = false
     @State private var pendingDelete: Workspace?
     @State private var error: String?
     @State private var isDeleting = false
-    @State private var editing: Workspace?
     @State private var locks = ScopedLockService.shared
 
     private var workspaces: [Workspace] {
@@ -29,8 +29,8 @@ struct WorkspaceListView: View {
                 // A locked workspace asks before its settings open; cancel stays here.
                 SettingsIndexActionRow {
                     let lockTarget = ScopedLockTarget.workspace(serverId: server.id, workspaceId: workspace.id)
-                    if locks.gate(lockTarget, onUnlock: { editing = workspace }) {
-                        editing = workspace
+                    if locks.gate(lockTarget, onUnlock: { openSettings(workspace) }) {
+                        openSettings(workspace)
                     }
                 } label: {
                     WorkspaceRowView(
@@ -53,9 +53,6 @@ struct WorkspaceListView: View {
         .themedListSurface()
         .accessibilityIdentifier("server.workspaceList")
         .navigationTitle("Workspaces")
-        .navigationDestination(item: $editing) { workspace in
-            WorkspaceEditScopedDestinationView(server: server, workspace: workspace)
-        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button("New Workspace", systemImage: "plus") {
@@ -123,6 +120,13 @@ struct WorkspaceListView: View {
         }
     }
 
+    private func openSettings(_ workspace: Workspace) {
+        let server = server
+        navigator.push {
+            WorkspaceEditScopedDestinationView(server: server, workspace: workspace)
+        }
+    }
+
     private func deleteWorkspace(_ workspace: Workspace) async {
         guard !isDeleting else { return }
         guard await AppLockService.shared.authorizeProtectedAction(
@@ -162,6 +166,7 @@ struct WorkspaceEditScopedDestinationView: View {
     let workspace: Workspace
 
     @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(\.screenNavigator) private var navigator
     @State private var scopedConnection: ServerConnection?
 
     var body: some View {
@@ -176,7 +181,7 @@ struct WorkspaceEditScopedDestinationView: View {
     private var unlockedBody: some View {
         Group {
             if let scopedConnection {
-                WorkspaceSettingsRootView(workspace: workspace)
+                WorkspaceSettingsRootView(workspace: workspace, onLeave: navigator.finish)
                     .withServerScopedEnvironment(scopedConnection)
             } else {
                 ProgressView("Connecting…")

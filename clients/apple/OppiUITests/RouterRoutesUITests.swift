@@ -325,6 +325,85 @@ final class RouterRoutesUITests: XCTestCase {
         assertRunning()
     }
 
+    /// Agents and Workspace Settings are hosted in the shell's UIKit stack
+    /// with its bar, and their pages push onto that stack: Pi from Agents,
+    /// every Workspace Settings page (each reads the workspace's server
+    /// services), and a workspace's settings from Server Settings →
+    /// Workspaces; Server Metrics from the host pill. Back pops each.
+    func testWorkspaceShellUtilityAndSettingsPagesPushAndPop() {
+        launchShell()
+        let drawerButton = app.buttons["workspace.sidebar.open"]
+        let isSplit = !drawerButton.waitForExistence(timeout: 3)
+
+        let hostPill = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Current server:")).firstMatch
+        XCTAssertTrue(hostPill.waitForExistence(timeout: 5), "All Sessions has no host pill")
+        hostPill.tap()
+        let metricsItem = app.buttons["hostSwitcher.serverMetrics"]
+        XCTAssertTrue(metricsItem.waitForExistence(timeout: 5), "The host pill has no Server Metrics item")
+        metricsItem.tap()
+        XCTAssertTrue(app.navigationBars["Server Metrics"].waitForExistence(timeout: 5), "Server Metrics did not open")
+        attachScreenshot("shell-server-metrics")
+        assertRunning()
+        if !isSplit {
+            goBack()
+            XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop Server Metrics")
+        }
+
+        revealSidebar(isSplit: isSplit)
+        app.buttons["workspace.agents.open"].tap()
+        let agents = app.navigationBars["Agents"]
+        XCTAssertTrue(agents.waitForExistence(timeout: 5), "Agents did not open in the UIKit bar")
+        app.buttons["agents.row.pi"].tap()
+        XCTAssertTrue(app.navigationBars["Pi"].waitForExistence(timeout: 5), "Agents did not push Pi")
+        attachScreenshot("shell-agents-pi")
+        assertRunning()
+        app.buttons["BackButton"].firstMatch.tap()
+        XCTAssertTrue(agents.waitForExistence(timeout: 5), "Back must return to Agents")
+        if !isSplit {
+            app.buttons["BackButton"].tap()
+            XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop Agents")
+        }
+
+        revealSidebar(isSplit: isSplit)
+        app.buttons["workspace.open.oppi"].tap()
+        let openSettings = app.buttons["workspace.edit.open"].firstMatch
+        XCTAssertTrue(openSettings.waitForExistence(timeout: 10), "The workspace did not show")
+        openSettings.tap()
+        let settings = app.navigationBars["Workspace Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 10), "Workspace Settings did not open in the UIKit bar")
+        for (row, title) in [
+            ("workspace.edit.details", "Details"),
+            ("workspace.edit.instructions", "Instructions"),
+            ("workspace.edit.skills", "Skills"),
+            ("workspace.edit.extensions", "Extensions"),
+            ("workspace.edit.mcpServers", "MCP Servers"),
+            ("workspace.edit.dictionary", "Dictionary"),
+        ] {
+            pushAndReturn(row: row, title: title, to: settings)
+        }
+        attachScreenshot("shell-workspace-settings-after-pages")
+        if !isSplit {
+            goBack()
+            goBack()
+            XCTAssertTrue(drawerButton.waitForExistence(timeout: 5), "Back must pop to All Sessions")
+        }
+
+        revealSidebar(isSplit: isSplit)
+        app.buttons["App Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5), "Settings did not open")
+        app.buttons["settings.server.sha256:rail-inbox-preview"].tap()
+        XCTAssertTrue(app.navigationBars["Server Settings"].waitForExistence(timeout: 5), "Server Settings did not open")
+        reveal(app.buttons["server.manageWorkspaces"]).tap()
+        let workspaces = app.navigationBars["Workspaces"]
+        XCTAssertTrue(workspaces.waitForExistence(timeout: 5), "Server Settings did not push Workspaces")
+        app.buttons["server.workspace.oppi"].tap()
+        XCTAssertTrue(settings.waitForExistence(timeout: 10), "Workspaces did not push the workspace's settings")
+        pushAndReturn(row: "workspace.edit.instructions", title: "Instructions", to: settings)
+        goBack()
+        XCTAssertTrue(workspaces.waitForExistence(timeout: 5), "Back must return to Workspaces")
+        assertRunning()
+    }
+
     /// iPad: the split view turns into the drawer stack in portrait and back
     /// in landscape, rebuilt from `AppNavigation`, so the open chat and its
     /// workspace survive both changes.

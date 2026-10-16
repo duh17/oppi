@@ -184,6 +184,9 @@ private func makeReviewDetailFixture(
                     navigationFiles: navigationFiles
                 )
                 .environment(SessionStore())
+                // The app root supplies these to every hosted screen.
+                .environment(ServerConnection())
+                .environment(AppNavigation())
                 .environment(\.theme, ThemeID.dark.appTheme)
                 .environment(\.themeID, .dark)
             }

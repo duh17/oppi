@@ -2,10 +2,10 @@ import SwiftUI
 
 struct ScheduleManagementView: View {
     @Environment(\.apiClient) private var apiClient
+    @Environment(\.screenNavigator) private var navigator
 
     @State private var schedules: [AgentScheduleSummary] = []
     @State private var selectedStatus: AgentScheduleStatus = .active
-    @State private var selectedScheduleId: String?
     @State private var isLoading = false
     @State private var error: String?
 
@@ -32,7 +32,7 @@ struct ScheduleManagementView: View {
             } else {
                 ForEach(visibleSchedules) { schedule in
                     Button {
-                        selectedScheduleId = schedule.id
+                        openSchedule(schedule.id)
                     } label: {
                         ScheduleSummaryCard(schedule: schedule)
                     }
@@ -48,16 +48,6 @@ struct ScheduleManagementView: View {
             }
         }
         .listStyle(.plain)
-        .navigationDestination(isPresented: scheduleDetailPresented) {
-            if let selectedScheduleId {
-                ScheduleDetailView(scheduleId: selectedScheduleId) { updated in
-                    schedules = schedules.map { $0.id == updated.id ? updated : $0 }
-                    if selectedStatus == .archived, updated.status == .active {
-                        selectedStatus = .active
-                    }
-                }
-            }
-        }
         .navigationTitle("Schedules")
         .navigationBarTitleDisplayMode(.inline)
         .themedListSurface()
@@ -97,13 +87,19 @@ struct ScheduleManagementView: View {
         .task { await loadSchedules() }
     }
 
-    private var scheduleDetailPresented: Binding<Bool> {
-        Binding(
-            get: { selectedScheduleId != nil },
-            set: { isPresented in
-                if !isPresented { selectedScheduleId = nil }
-            }
-        )
+    /// The pushed detail reports changes here; the list shows them when it is
+    /// back on screen.
+    private func openSchedule(_ scheduleId: String) {
+        navigator.push {
+            ScheduleDetailView(scheduleId: scheduleId, onChanged: scheduleChanged)
+        }
+    }
+
+    private func scheduleChanged(_ updated: AgentScheduleSummary) {
+        schedules = schedules.map { $0.id == updated.id ? updated : $0 }
+        if selectedStatus == .archived, updated.status == .active {
+            selectedStatus = .active
+        }
     }
 
     @ViewBuilder
