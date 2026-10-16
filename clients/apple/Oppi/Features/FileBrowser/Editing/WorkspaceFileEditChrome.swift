@@ -272,19 +272,17 @@ struct WorkspaceFileConflictReviewView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            content
-                .safeAreaInset(edge: .bottom, spacing: 0) { actions }
-                .navigationTitle(String(localized: "Review Changes"))
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button(String(localized: "Keep Editing"), systemImage: "pencil", action: onClose)
-                            .accessibilityIdentifier("workspace-file-review.close")
-                    }
+        content
+            .safeAreaInset(edge: .bottom, spacing: 0) { actions }
+            .navigationTitle(String(localized: "Review Changes"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(String(localized: "Keep Editing"), systemImage: "pencil", action: onClose)
+                        .accessibilityIdentifier("workspace-file-review.close")
                 }
-        }
-        .task { await load() }
+            }
+            .task { await load() }
     }
 
     /// Plain SwiftUI row, not a toolbar group: the diff body is a UIKit

@@ -1531,6 +1531,7 @@
 		BB2D35961783877A69ADBA9D /* ChatTimelineToolOutputLoaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F73C39843AB74EC910286912 /* ChatTimelineToolOutputLoaderTests.swift */; };
 		BB355B8755937E98D064A766 /* HostDirectory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38806E81D6A6DFA26CEFFA0A /* HostDirectory.swift */; };
 		BB36DE8161FAC644F9DB84BC /* ChatTimelinePreparationRunwayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2560271BF1E3DF433653661D /* ChatTimelinePreparationRunwayTests.swift */; };
+		BB3816B4FEDD8AA151447BB0 /* RouterModalSitesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8F49AEE08BEBF3711D6B5E1 /* RouterModalSitesUITests.swift */; };
 		BB5A08CF04C1C28490CDAB2F /* MacComposerVisualGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEB5FF0D877AADE6BD04C7FA /* MacComposerVisualGateTests.swift */; };
 		BB612261A2C59369B6343A4C /* MacModelSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B0413D9B519772B076E8EB9 /* MacModelSelection.swift */; };
 		BB6BF1D67D2D368370532654 /* FileIndexStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 585CE55C9F00B5EFE4A62B78 /* FileIndexStoreTests.swift */; };
@@ -3557,6 +3558,7 @@
 		C85F1AFB4916830FE3F5B125 /* SessionInboxComposeChromeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionInboxComposeChromeTests.swift; sourceTree = "<group>"; };
 		C88513D18E6AFDE4E730CA88 /* MacPendingAttachmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacPendingAttachmentTests.swift; sourceTree = "<group>"; };
 		C88776834C95C072EDA0CC00 /* org-manual.org */ = {isa = PBXFileReference; path = "org-manual.org"; sourceTree = "<group>"; };
+		C8F49AEE08BEBF3711D6B5E1 /* RouterModalSitesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouterModalSitesUITests.swift; sourceTree = "<group>"; };
 		C8F55D5B231319462EC8F1B8 /* BiometricServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricServiceTests.swift; sourceTree = "<group>"; };
 		C95C8232C23FC95071664893 /* GeneratedH264Fixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneratedH264Fixture.swift; sourceTree = "<group>"; };
 		C97138172CFD4192FC16CF4B /* MacChatDisplayChromeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacChatDisplayChromeTests.swift; sourceTree = "<group>"; };
@@ -4902,6 +4904,7 @@
 				CCC9E73056927423B46F3E92 /* InAppBrowserPresentationUITests.swift */,
 				B5FBAE35B3DAA02D1F26E0B2 /* QAVerificationNegativeUITests.swift */,
 				FD168A5E9B727B98E7C2575D /* ReviewCommentStashUITests.swift */,
+				C8F49AEE08BEBF3711D6B5E1 /* RouterModalSitesUITests.swift */,
 				4C69F8AD3550F7A408E771E5 /* RouterRoutesUITests.swift */,
 				C5B4D903F59DBCC08FE75675 /* RouterSettingsModalsUITests.swift */,
 				0CD4BDFC8439271615BC5ACF /* SemanticPickJourneyUITests.swift */,
@@ -8041,6 +8044,7 @@
 				C85B5A423917106A7BAB3BFB /* QAVerificationNegativeUITests.swift in Sources */,
 				1C715284EB0342188D7CAEC3 /* QAVerificationReceipt.swift in Sources */,
 				C3B2258662B5E6DFD53C3990 /* ReviewCommentStashUITests.swift in Sources */,
+				BB3816B4FEDD8AA151447BB0 /* RouterModalSitesUITests.swift in Sources */,
 				85D621FAD02E7B1114745794 /* RouterRoutesUITests.swift in Sources */,
 				7151025E0C54F74E71FD75D9 /* RouterSettingsModalsUITests.swift in Sources */,
 				496C6EB4879322491AF9A1BA /* SemanticPickJourneyUITests.swift in Sources */,

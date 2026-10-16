@@ -331,7 +331,7 @@ struct FileBrowserContentView: View {
                 }
             }
         }
-        .sheet(isPresented: $isReviewingEdit) {
+        .routerModal(isPresented: $isReviewingEdit, presentation: .sheet.inNavigation()) {
             if let editSession {
                 WorkspaceFileConflictReviewView(
                     session: editSession,
@@ -346,6 +346,7 @@ struct FileBrowserContentView: View {
                     },
                     onClose: { isReviewingEdit = false }
                 )
+                .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
             }
         }
         .alert(

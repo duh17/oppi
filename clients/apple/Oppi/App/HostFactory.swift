@@ -173,6 +173,14 @@ final class HostedScreenController: UIHostingController<AnyView>, RouterModalCon
         super.updateProperties()
         // Observation tracking re-runs this when the theme store changes.
         overrideUserInterfaceStyle = root.themeStore.userInterfaceStyle
+        if modalPresentationStyle == .popover {
+            // The theme's popover surface, as SwiftUI's presentationBackground
+            // gave popovers, not the system background.
+            let palette = root.themeStore.activeThemeID.palette
+            let fill = UIColor(ThemeSurfaceStyle.resolve(.popover, palette: palette).fill)
+            view.backgroundColor = fill
+            popoverPresentationController?.backgroundColor = fill
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -476,6 +484,20 @@ private struct RouterModalAnchor<Item: Identifiable, ModalContent: View>: UIView
     }
 }
 
+private extension ModalPresentation {
+    /// Whether the controller presented for `other` can show this request:
+    /// same style and the same navigation wrapper. Sheet detents and the
+    /// grabber change in place.
+    func isPresentable(as other: ModalPresentation) -> Bool {
+        style == other.style && (navigation == nil) == (other.navigation == nil)
+    }
+
+    func hasSheetChrome(of other: ModalPresentation) -> Bool {
+        detents.map(\.identifier) == other.detents.map(\.identifier)
+            && prefersGrabberVisible == other.prefersGrabberVisible
+    }
+}
+
 /// Reconciles one anchor's requested modal with what UIKit has on screen.
 @MainActor
 final class RouterModalPresenter {
@@ -493,14 +515,38 @@ final class RouterModalPresenter {
 
     private var screen: HostedScreenController?
     private var presentedID: AnyHashable?
+    private var presentedPresentation: ModalPresentation?
     private var presentationCount = 0
     private var presentationScheduled = false
+    /// Dismissing to present the same item again with another style.
+    private var isRepresenting = false
 
     func sync() {
         if let screen {
             let container = screen.navigationController ?? screen
             if container.isBeingDismissed { return }
             if let request, request.id == presentedID {
+                if let presentedPresentation,
+                   !request.presentation.isPresentable(as: presentedPresentation) {
+                    // A size class change asked for another style, such as
+                    // a document viewer moving between the page sheet and
+                    // the full-window cover. UIKit cannot restyle a
+                    // presented controller, so present the item again.
+                    isRepresenting = true
+                    Router.dismiss(container)
+                    return
+                }
+                if let sheet = container.sheetPresentationController,
+                   let presentedPresentation,
+                   !request.presentation.hasSheetChrome(of: presentedPresentation) {
+                    sheet.animateChanges {
+                        if !request.presentation.detents.isEmpty {
+                            sheet.detents = request.presentation.detents
+                        }
+                        sheet.prefersGrabberVisible = request.presentation.prefersGrabberVisible
+                    }
+                    self.presentedPresentation = request.presentation
+                }
                 // The presenter re-rendered (it is still in the window under
                 // sheets and popovers): refresh the content it builds.
                 screen.setContent(request.makeContent)
@@ -542,18 +588,24 @@ final class RouterModalPresenter {
             content: request.makeContent
         )
         presentedID = request.id
+        presentedPresentation = request.presentation
     }
 
     private func screenDidDismiss() {
         let dismissedID = presentedID
+        let representing = isRepresenting
+        isRepresenting = false
         screen = nil
         presentedID = nil
-        // Swipe-down and the content's own finish() leave the binding set.
-        if request?.id == dismissedID {
-            request = nil
-            clearItem?()
+        presentedPresentation = nil
+        if !representing {
+            // Swipe-down and the content's own finish() leave the binding set.
+            if request?.id == dismissedID {
+                request = nil
+                clearItem?()
+            }
+            onDismiss?()
         }
-        onDismiss?()
         sync()
     }
 }

@@ -32,7 +32,7 @@ struct FullScreenReviewCommentStashOverlayHost<Content: View>: View {
                     }
                 )
             }
-            .sheet(item: $stashPresentation) { presentation in
+            .routerModal(item: $stashPresentation) { presentation in
                 FullScreenReviewCommentStashSheetGate(
                     isEnabled: isEnabled,
                     presentation: presentation,

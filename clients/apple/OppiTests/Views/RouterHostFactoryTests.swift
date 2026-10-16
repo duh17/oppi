@@ -359,6 +359,53 @@ struct RouterHostFactoryTests {
         #expect(probe.themeStore === root.themeStore)
     }
 
+    /// A document viewer covers the window in regular width and is a page
+    /// sheet in compact width. It kept the style it opened with when the
+    /// size class changed under it.
+    @Test("a routerModal whose requested style changes presents the same item again, keeping its binding")
+    func routerModalRepresentsWhenItsStyleChanges() async throws {
+        let state = RestyleState()
+        var dismissals = 0
+        let presenter = HostFactory.screen(root: makeTestAppRoot()) {
+            RestylingScreen(state: state, onDismiss: { dismissals += 1 })
+        }
+        let window = try showInWindow(presenter)
+        defer { hide(window) }
+
+        state.isPresented = true
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            isSettled(presenter.presentedViewController)
+        })
+        let sheet = try #require(presenter.presentedViewController)
+        #expect(sheet.modalPresentationStyle == .pageSheet)
+
+        state.coversWindow = true
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            guard let cover = presenter.presentedViewController else { return false }
+            return cover !== sheet && cover.modalPresentationStyle == .overFullScreen && isSettled(cover)
+        })
+        #expect(state.isPresented, "Presenting again must not clear the binding")
+        #expect(dismissals == 0, "Presenting again is not a dismissal")
+
+        // Detents of the same style change in place.
+        state.coversWindow = false
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            presenter.presentedViewController?.modalPresentationStyle == .pageSheet
+                && isSettled(presenter.presentedViewController)
+        })
+        let pageSheet = try #require(presenter.presentedViewController)
+        state.allowsMedium = true
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            pageSheet.sheetPresentationController?.detents.map(\.identifier) == [.medium, .large]
+        })
+        #expect(presenter.presentedViewController === pageSheet)
+
+        state.isPresented = false
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            presenter.presentedViewController == nil && dismissals == 1
+        })
+    }
+
     @Test("a router popover anchors to the declaring SwiftUI view and stays a popover in compact width")
     func popoverAnchorsToDeclaringView() async throws {
         let state = RouteState()
@@ -499,6 +546,30 @@ private struct SearchingScreen: View {
             Text("Row")
         }
         .routerSearchable(text: $state.query, prompt: "Search rows")
+    }
+}
+
+@MainActor @Observable
+private final class RestyleState {
+    var isPresented = false
+    var coversWindow = false
+    var allowsMedium = false
+}
+
+private struct RestylingScreen: View {
+    @Bindable var state: RestyleState
+    let onDismiss: () -> Void
+
+    var body: some View {
+        Text("Presenter")
+            .routerModal(isPresented: $state.isPresented, presentation: presentation, onDismiss: onDismiss) {
+                Text("Viewer")
+            }
+    }
+
+    private var presentation: ModalPresentation {
+        if state.coversWindow { return ModalPresentation(style: .overFullScreen) }
+        return ModalPresentation.pageSheet.detents(state.allowsMedium ? [.medium(), .large()] : [.large()])
     }
 }
 

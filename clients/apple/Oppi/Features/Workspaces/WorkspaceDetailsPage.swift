@@ -6,6 +6,9 @@ struct WorkspaceDetailsPage: View {
     let model: WorkspaceSettingsModel
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.apiClient) private var apiClient
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(ServerStore.self) private var serverStore
 
     @State private var draft: WorkspaceDetailsDraft
@@ -115,8 +118,15 @@ struct WorkspaceDetailsPage: View {
                 .accessibilityIdentifier("workspace.edit.save")
             }
         }
-        .sheet(isPresented: $isShowingIconPicker) {
+        .routerModal(
+            isPresented: $isShowingIconPicker,
+            presentation: .iconPicker(
+                horizontalSizeClass: horizontalSizeClass,
+                verticalSizeClass: verticalSizeClass
+            )
+        ) {
             WorkspaceIconPickerView(icon: $draft.icon)
+                .environment(\.apiClient, apiClient)
         }
         .onAppear { isVisible = true }
         .onDisappear { isVisible = false }

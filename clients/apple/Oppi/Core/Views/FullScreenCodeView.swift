@@ -391,10 +391,7 @@ private struct FullScreenViewerPresentationModifier: ViewModifier {
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.openChatReader) private var openChatReader
-
-    private var prefersFullScreenCover: Bool {
-        horizontalSizeClass == .regular
-    }
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -414,15 +411,15 @@ private struct FullScreenViewerPresentationModifier: ViewModifier {
                     )
                 )
             }
-        } else if prefersFullScreenCover {
-            content.fullScreenCover(isPresented: $isPresented) {
-                fullScreenCodeView
-            }
         } else {
-            content.sheet(isPresented: $isPresented) {
+            content.routerModal(
+                isPresented: $isPresented,
+                presentation: .largeViewer(
+                    for: UITraitCollection(horizontalSizeClass: UIUserInterfaceSizeClass(horizontalSizeClass))
+                )
+            ) {
                 fullScreenCodeView
-                    .presentationDetents([.large])
-                    .presentationDragIndicator(.visible)
+                    .environment(\.reviewCommentSelectionScope, reviewCommentSelectionScope)
             }
         }
     }

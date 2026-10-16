@@ -44,6 +44,8 @@ struct WorkspaceCreateView: View {
     @Environment(AppNavigation.self) private var navigation
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     @State private var step: CreateStep = .pickProject
     @State private var directories: [HostDirectory] = []
@@ -174,7 +176,13 @@ struct WorkspaceCreateView: View {
                 await validateAndCompleteHostMount()
             }
         }
-        .sheet(isPresented: $isShowingIconPicker) {
+        .routerModal(
+            isPresented: $isShowingIconPicker,
+            presentation: .iconPicker(
+                horizontalSizeClass: horizontalSizeClass,
+                verticalSizeClass: verticalSizeClass
+            )
+        ) {
             WorkspaceIconPickerView(
                 icon: $icon,
                 uploadOperation: uploadWorkspaceGenmoji

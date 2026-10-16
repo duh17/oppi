@@ -128,6 +128,8 @@ struct ScreenshotPreviewView: View {
             ServerProviderNavigationRegressionPreview()
         case "router-routes":
             RouterRoutesPreview()
+        case "router-modal-sites":
+            RouterModalSitesPreview()
         case "model-providers-quota-inline":
             ModelProvidersQuotaPreview()
         case "inbox-provider-setup-empty":
@@ -817,6 +819,311 @@ private extension PiSessionAttributes.ContentState {
         primaryRemovedLines: nil,
         sessionStartDate: nil
     )
+}
+
+// MARK: - Router modal sites
+
+/// Real presenters whose modals the router owns, over fixture services and an
+/// in-process stub server. `SCREENSHOT_MODAL_SITE` picks the presenter:
+/// `root` (the app root's extension dialog, notice, and What's New, with
+/// trigger buttons and what the dialog sent), `document` (the document viewer
+/// modifier), `stash` (the staged-comment sheet), `inbox-now-playing` and
+/// `workspace-now-playing` (the full-screen player over active playback), and
+/// `quick-session` (its pickers, model sheet, and expanded composer). The
+/// presenters and their modals share one app root over the fixture server, in
+/// the dark theme.
+private struct RouterModalSitesPreview: View {
+    private let site: String
+    @State private var root: AppRootEnvironment
+
+    init() {
+        ScreenshotVolatileDefaults.applyDarkTheme(true)
+        let site = ProcessInfo.processInfo.environment["SCREENSHOT_MODAL_SITE"] ?? "quick-session"
+        self.site = site
+        _root = State(initialValue: AppRootEnvironment(
+            coordinator: RouterModalSitesFixtures.makeCoordinator(playing: site.hasSuffix("now-playing")),
+            navigation: AppNavigation(),
+            themeStore: ThemeStore(),
+            quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
+            composerDraftStore: ComposerDraftStore(),
+            chatReaderPayloadStore: ChatReaderPayloadStore(),
+            sessionRowDisplay: SessionRowDisplay()
+        ))
+    }
+
+    var body: some View {
+        page.appRootEnvironment(root)
+    }
+
+    @ViewBuilder
+    private var page: some View {
+        switch site {
+        case "root":
+            RouterModalSitesRootPage()
+        case "document":
+            RouterModalSitesDocumentPage()
+        case "stash":
+            RouterModalSitesStashPage()
+        case "inbox-now-playing":
+            RouterModalSitesStack(root: root) { SessionInboxView() }
+                .ignoresSafeArea()
+        case "workspace-now-playing":
+            RouterModalSitesStack(root: root) { WorkspaceDetailView(workspace: RouterModalSitesFixtures.workspaces[0]) }
+                .ignoresSafeArea()
+        default:
+            QuickSessionOverlay {}
+        }
+    }
+}
+
+/// A session list as the root of a router navigation controller, with its
+/// toolbar shown so the Now Playing pill appears.
+private struct RouterModalSitesStack<Content: View>: UIViewControllerRepresentable {
+    let root: AppRootEnvironment
+    @ViewBuilder let content: () -> Content
+
+    func makeUIViewController(context: Context) -> RouterNavigationController {
+        let screen = HostFactory.screen(root: root, bars: ScreenBars(showsToolbar: true), content: content)
+        let navigation = RouterNavigationController(rootViewController: screen)
+        let themeStore = root.themeStore
+        navigation.interfaceStyle = { themeStore.userInterfaceStyle }
+        return navigation
+    }
+
+    func updateUIViewController(_ navigation: RouterNavigationController, context: Context) {}
+}
+
+/// `ContentView` over a fixture connection. The dialog's responses go to the
+/// connection's send hook, and the page shows the last one.
+private struct RouterModalSitesRootPage: View {
+    @State private var connection: ServerConnection
+    @State private var navigation = AppNavigation()
+    @State private var lastResponse = RouterModalSitesResponse()
+
+    init() {
+        let connection = ServerConnection()
+        connection.setPreviewServerId("router-modal-sites")
+        _ = connection.focusedSessionStore.focus(sessionId: "router-modal-sites-session")
+        _connection = State(initialValue: connection)
+    }
+
+    var body: some View {
+        ContentView()
+            .overlay(alignment: .top) {
+                VStack(spacing: 12) {
+                    Button("Extension Dialog") { showDialog(method: "custom", title: "Pick a Plan") }
+                        .accessibilityIdentifier("routerModalSites.dialog")
+                    Button("Extension Editor") { showDialog(method: "editor", title: "Commit Message") }
+                        .accessibilityIdentifier("routerModalSites.editor")
+                    Button("Notice") { connection.extensionToast = "Extension finished.\nDocs https://example.com/docs" }
+                        .accessibilityIdentifier("routerModalSites.notice")
+                    Button("What's New") { navigation.showWhatsNew = true }
+                        .accessibilityIdentifier("routerModalSites.whatsNew")
+                    Text(lastResponse.summary)
+                        .accessibilityIdentifier("routerModalSites.lastResponse")
+                    Text(connection.extensionToast == nil ? "Notice cleared" : "Notice shown")
+                        .accessibilityIdentifier("routerModalSites.noticeState")
+                    Text(navigation.showWhatsNew ? "What's New shown" : "What's New cleared")
+                        .accessibilityIdentifier("routerModalSites.whatsNewState")
+                }
+                .padding(.top, 80)
+            }
+            .withServerScopedEnvironment(connection)
+            .environment(navigation)
+            .task {
+                let response = lastResponse
+                connection._sendMessageForTesting = { @MainActor message in
+                    guard case .extensionUIResponse(_, let value, _, let cancelled, _) = message else { return }
+                    response.summary = cancelled == true ? "cancelled" : "value=\(value ?? "")"
+                }
+            }
+    }
+
+    private func showDialog(method: String, title: String) {
+        connection.activeExtensionDialog = ExtensionUIRequest(
+            id: "router-modal-sites-\(method)",
+            sessionId: "router-modal-sites-session",
+            method: method,
+            title: title,
+            message: "The extension is waiting for an answer."
+        )
+    }
+}
+
+@MainActor @Observable
+private final class RouterModalSitesResponse {
+    var summary = "none"
+}
+
+/// The document viewer modifier on a plain button; the page counts closes, so
+/// a dismissal that left the binding set shows.
+private struct RouterModalSitesDocumentPage: View {
+    @State private var isPresented = false
+    @State private var closes = 0
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Button("Open Document") { isPresented = true }
+                .accessibilityIdentifier("routerModalSites.openDocument")
+            Text("Viewer closed \(closes)")
+                .accessibilityIdentifier("routerModalSites.documentCloses")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.themeBg)
+        .fullScreenViewer(
+            isPresented: $isPresented,
+            content: .code(content: "let answer = 42\nprint(answer)\n", language: "swift", filePath: "Fixture.swift", startLine: 1)
+        )
+        .onChange(of: isPresented) { wasPresented, presented in
+            if wasPresented, !presented { closes += 1 }
+        }
+    }
+}
+
+/// The staged-comment control and sheet over two staged comments.
+private struct RouterModalSitesStashPage: View {
+    @State private var comments: ChatReviewCommentsController
+    @State private var router: ReviewCommentSelectionRouter
+
+    init() {
+        let suite = "router-modal-sites-stash"
+        let defaults = UserDefaults(suiteName: suite) ?? .standard
+        defaults.removePersistentDomain(forName: suite)
+        let comments = ChatReviewCommentsController(store: ReviewCommentStore(defaults: defaults, keyPrefix: suite))
+        comments.load(localScopeId: "workspace", sessionId: "session")
+        let source = ReviewCommentSourceContext(sessionId: "session", surface: .fullScreenSource, filePath: "Fixture.swift")
+        for body in ["Rename this.", "Explain this."] {
+            _ = comments.save(
+                body: body,
+                request: ReviewCommentSelectionRequest(selectedText: "let answer = 42", source: source),
+                localScopeId: "workspace",
+                sessionId: "session"
+            )
+        }
+        _comments = State(initialValue: comments)
+        _router = State(initialValue: ReviewCommentSelectionRouter(dispatch: { _ in }, stash: comments))
+    }
+
+    var body: some View {
+        Text("Staged \(comments.stagedCount)")
+            .accessibilityIdentifier("routerModalSites.staged")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.themeBg)
+            .fullScreenReviewCommentStashOverlay(scope: .activeSession(router))
+    }
+}
+
+/// A fixture server whose stub answers models, worktrees, and Agents.
+/// `playing` starts fixture playback, so the Now Playing pill shows.
+@MainActor
+private enum RouterModalSitesFixtures {
+    static let workspaces = [workspace(id: "oppi", icon: "iphone"), workspace(id: "kypu", icon: "figure.run")]
+
+    static func makeCoordinator(playing: Bool) -> ConnectionCoordinator {
+        let coordinator = ConnectionCoordinator(serverStore: ServerStore())
+        guard let server = PairedServer(from: ServerCredentials(
+            host: "router-modal-sites.invalid",
+            port: 7749,
+            token: "sk_preview",
+            name: "modal-sites",
+            scheme: .https,
+            serverFingerprint: "sha256:router-modal-sites",
+            tlsCertFingerprint: "sha256:router-modal-sites-leaf"
+        )) else { return coordinator }
+        coordinator.serverStore.replaceServersForPreview([server])
+        guard coordinator.switchToServer(server),
+              let connection = coordinator.connection(for: server.id) else { return coordinator }
+        connection.setAPIClientForTesting(api)
+        for workspace in workspaces {
+            connection.workspaceStore.upsert(workspace, serverId: server.id)
+        }
+        connection.sessionStore.switchServer(to: server.id)
+        if playing {
+            connection.audioPlayer._setPlaybackStateForTesting(playing: "router-modal-sites-audio", loading: nil)
+            connection.audioPlayer._setNowPlayingItemTitleForTesting("Fixture narration")
+        }
+        return coordinator
+    }
+
+    private static let api: APIClient = {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RouterModalSitesURLProtocol.self]
+        return APIClient(
+            baseURL: URL(string: "https://router-modal-sites.oppi") ?? URL(fileURLWithPath: "/"),
+            token: "preview-token",
+            configuration: config
+        )
+    }()
+
+    private static func workspace(id: String, icon: String) -> Workspace {
+        Workspace(
+            id: id,
+            name: id,
+            description: nil,
+            icon: .symbol(icon),
+            systemPrompt: nil,
+            hostMount: "~/workspace/\(id)",
+            gitStatusEnabled: false,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+    }
+}
+
+/// Answers models, worktrees, and Agents; everything else is a 404.
+private final class RouterModalSitesURLProtocol: URLProtocol {
+    private struct Models: Encodable { let models: [ModelInfo] }
+    private struct Worktrees: Encodable { let worktrees: [WorkspaceWorktree] }
+    private struct Agents: Encodable { let agents: [AgentDefinitionSummary] }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "router-modal-sites.oppi"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let encoder = JSONEncoder()
+        let response: Data? = switch (request.httpMethod, request.url?.path ?? "") {
+        case ("GET", "/models"):
+            try? encoder.encode(Models(models: [
+                ModelInfo(id: "fixture-swift", name: "Fixture Swift", provider: "fixture", contextWindow: 200_000),
+                ModelInfo(id: "fixture-steady", name: "Fixture Steady", provider: "fixture", contextWindow: 200_000),
+            ]))
+        case ("GET", "/workspaces/oppi/worktrees"):
+            try? encoder.encode(Worktrees(worktrees: [
+                WorkspaceWorktree(id: WorkspaceWorktree.mainId, name: "oppi", path: "~/workspace/oppi", branch: "main", headSha: nil, isMain: true, isGitRepo: true, sessionCount: nil),
+                WorkspaceWorktree(id: "router-fix", name: "router-fix", path: "~/workspace/oppi-router-fix", branch: "router-fix", headSha: nil, isMain: false, isGitRepo: true, sessionCount: nil),
+            ]))
+        case ("GET", "/agents"):
+            try? encoder.encode(Agents(agents: [
+                AgentDefinitionSummary(
+                    id: "reviewer", name: "Reviewer", icon: .defaultValue, description: nil,
+                    status: .active, version: 1,
+                    createdAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1), archivedAt: nil
+                ),
+            ]))
+        default:
+            nil
+        }
+        guard let url = request.url,
+              let http = HTTPURLResponse(
+                  url: url,
+                  statusCode: response == nil ? 404 : 200,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["Content-Type": "application/json"]
+              ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: response ?? Data(#"{"error":"Not found"}"#.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }
 
 #endif

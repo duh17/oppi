@@ -13,8 +13,10 @@ struct ContentViewNoticeTests {
             serverStore: ServerStore(), lanDiscovery: LANDiscovery(browsesBonjour: false)
         )
         let navigation = AppNavigation()
+        // The router hosts the notice with the app root, as the app does.
         let host = UIHostingController(rootView: ContentView()
-            .environment(connection).environment(coordinator).environment(navigation))
+            .environment(connection).environment(coordinator).environment(navigation)
+            .appRootEnvironment(makeTestAppRoot()))
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()

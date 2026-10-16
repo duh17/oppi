@@ -52,9 +52,8 @@ struct SSHTerminalStatusGlyph: View {
                 }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("sshTerminal.programStatus")
-                    .popover(isPresented: $showsDetail) {
+                    .routerModal(isPresented: $showsDetail, presentation: .popover.keepsPopoverInCompactWidth()) {
                         SSHTerminalStatusDetail(hostLabel: hostLabel, rows: rows)
-                            .presentationCompactAdaptation(.popover)
                     }
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frameBox?.rect = $0 }
             } else {

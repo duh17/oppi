@@ -134,6 +134,10 @@ struct QuickSessionOverlay: View {
 /// session create + optional auto-send. A selected Agent uses `launchAgentSession`
 /// so definition defaults apply.
 struct QuickSessionSheet: View {
+    /// Agent, workspace, and worktree pickers: a popover on the pill, also on
+    /// iPhone. Any arrow direction: below the Agent pill is the keyboard.
+    private static let pickerPopover = ModalPresentation.popover.keepsPopoverInCompactWidth()
+
     let onDismiss: () -> Void
 
     @Environment(ChatSessionState.self) private var chatState
@@ -381,7 +385,7 @@ struct QuickSessionSheet: View {
             .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .background(.clear)
-        .sheet(isPresented: $showModelPicker) {
+        .routerModal(isPresented: $showModelPicker) {
             ModelPickerSheet(
                 currentModel: displayedModelId,
                 onSelect: selectModel,
@@ -411,7 +415,9 @@ struct QuickSessionSheet: View {
             .environment(\.apiClient, selectedServerConnection()?.apiClient)
             .environment(selectedChatState)
         }
-        .fullScreenCover(isPresented: $showExpandedComposer) {
+        // Over full screen keeps this sheet in the window, so the composer's
+        // bindings into its state stay live.
+        .routerModal(isPresented: $showExpandedComposer, presentation: ModalPresentation(style: .overFullScreen)) {
             ExpandedComposerView(
                 text: $text,
                 textBeforeRecording: $composerTextBeforeRecording,
@@ -653,7 +659,7 @@ struct QuickSessionSheet: View {
             QuickSessionAgentPillLabel(agent: selectedAgent)
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $showAgentPicker, arrowEdge: .bottom) {
+        .routerModal(isPresented: $showAgentPicker, presentation: Self.pickerPopover) {
             QuickSessionAgentPicker(
                 agents: availableAgents,
                 selectedAgentId: selectedAgentId,
@@ -661,8 +667,6 @@ struct QuickSessionSheet: View {
                 iconAssetCache: selectedServerIconAssetCache,
                 onSelect: selectAgent
             )
-            .presentationCompactAdaptation(.popover)
-            .presentationBackground(Color.themeSurfaceFill(.popover))
         }
         .accessibilityLabel(
             selectedAgent.map { "Agent picker, current agent \($0.name)" }
@@ -724,7 +728,7 @@ struct QuickSessionSheet: View {
             SessionWorkspacePillLabel(workspace: selectedWorkspace)
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $showWorkspacePicker, arrowEdge: .bottom) {
+        .routerModal(isPresented: $showWorkspacePicker, presentation: Self.pickerPopover) {
             QuickSessionWorkspacePicker(
                 sections: workspacePickerSections,
                 showsSectionHeaders: workspacePickerSections.count > 1,
@@ -735,8 +739,6 @@ struct QuickSessionSheet: View {
                     ? "Pair or refresh a server, then try again."
                     : "\(selectedAgent?.name ?? "This Agent") requires a compatible workspace. Edit the Agent or add one, then try again."
             )
-            .presentationCompactAdaptation(.popover)
-            .presentationBackground(Color.themeSurfaceFill(.popover))
         }
         .accessibilityLabel(selectedWorkspace.map { "Workspace picker, current workspace \($0.name)" } ?? "Workspace picker")
         .accessibilityIdentifier("quickSession.workspacePicker")
@@ -865,15 +867,13 @@ struct QuickSessionSheet: View {
             QuickSessionWorktreePillLabel(worktree: selectedWorktree)
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $showWorktreePicker, arrowEdge: .bottom) {
+        .routerModal(isPresented: $showWorktreePicker, presentation: Self.pickerPopover) {
             QuickSessionWorktreePicker(
                 worktrees: worktrees,
                 selectedWorktreeId: selectedWorktreeId,
                 isLoading: isLoadingWorktrees,
                 onSelect: selectWorktree
             )
-            .presentationCompactAdaptation(.popover)
-            .presentationBackground(Color.themeSurfaceFill(.popover))
         }
         .accessibilityLabel("Worktree picker, current worktree \(selectedWorktreeDisplayName)")
         .accessibilityIdentifier("quickSession.worktreePicker")

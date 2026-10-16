@@ -29,9 +29,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/ContentView.swift": {
-      "NavigationStack": 2,
-      ".sheet(": 2,
-      ".fullScreenCover(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/ExtensionDockStressPreview.swift": {
@@ -308,15 +305,12 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/FullScreenCodeView.swift": {
-      ".sheet(": 1,
-      ".fullScreenCover(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/FullScreenCodeViewController.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/FullScreenReviewCommentStashOverlay.swift": {
-      ".sheet(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/GraphicalRendererView.swift": {
@@ -619,14 +613,12 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditChrome.swift": {
-      "NavigationStack": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/FileBrowser/Editing/WorkspaceFileEditorViewController.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/FileBrowser/FileBrowserContentView.swift": {
-      ".sheet(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/FileBrowser/FileBrowserMotionPreviewSupport.swift": {
@@ -671,9 +663,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/QuickSession/QuickSessionSheet.swift": {
-      ".sheet(": 1,
-      ".fullScreenCover(": 1,
-      ".popover(": 3,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Review/CommitDetailView.swift": {
@@ -699,7 +688,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/HerdrAgentsView.swift": {
-      "NavigationStack": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalArrowControl.swift": {
@@ -712,9 +700,7 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalConnectSession.swift": {
-      "NavigationStack": 1,
       ".navigationDestination(": 1,
-      ".sheet(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalHostListView.swift": {
@@ -728,14 +714,12 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalStatusGlyph.swift": {
-      ".popover(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalSurface.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalView.swift": {
-      ".sheet(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Schedules/ScheduleManagementView.swift": {
@@ -911,7 +895,6 @@
     "clients/apple/Oppi/Features/Workspaces/SessionInboxView.swift": {
       "NavigationStack": 1,
       ".navigationDestination(": 13,
-      ".fullScreenCover(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceComponents.swift": {
@@ -919,16 +902,13 @@
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceCreateView.swift": {
       "NavigationStack": 1,
-      ".sheet(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceDetailView.swift": {
       ".navigationDestination(": 2,
-      ".fullScreenCover(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceDetailsPage.swift": {
-      ".sheet(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Workspaces/WorkspaceExtensionsPage.swift": {

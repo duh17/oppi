@@ -641,7 +641,7 @@ struct WorkspaceDetailView: View {
         .searchPresentationToolbarBehavior(
             sessionListToolbar.avoidsHidingContentWhileSearching ? .avoidHidingContent : .automatic
         )
-        .fullScreenCover(isPresented: $presentsNowPlayingPlayer) {
+        .routerModal(isPresented: $presentsNowPlayingPlayer, presentation: .fullScreen) {
             InAppNowPlayingPlayerScreen(audioPlayer: connection.audioPlayer)
         }
         .onChange(of: sessionSearchText) { _, newValue in

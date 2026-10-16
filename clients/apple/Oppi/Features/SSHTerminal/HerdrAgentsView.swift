@@ -6,50 +6,52 @@ import SwiftUI
 struct HerdrAgentsView: View {
     let monitor: HerdrMonitor
     let channel: SSHTerminalChannel
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
+    /// A focus that lands after a swipe-down must not finish a closed sheet.
+    @State private var isVisible = false
 
     var body: some View {
-        NavigationStack {
-            List {
-                if let failure = monitor.failure {
-                    Text(failure).font(.footnote).foregroundStyle(.themeRed)
-                        .accessibilityIdentifier("sshTerminal.herdr.failure")
+        List {
+            if let failure = monitor.failure {
+                Text(failure).font(.footnote).foregroundStyle(.themeRed)
+                    .accessibilityIdentifier("sshTerminal.herdr.failure")
+            }
+            if let snapshot = monitor.snapshot {
+                if snapshot.workspaces.isEmpty {
+                    Text("No Herdr workspaces.").foregroundStyle(.themeComment)
                 }
-                if let snapshot = monitor.snapshot {
-                    if snapshot.workspaces.isEmpty {
-                        Text("No Herdr workspaces.").foregroundStyle(.themeComment)
-                    }
-                    ForEach(snapshot.workspaces) { workspace in
-                        Section {
-                            Button { focus(.workspace(workspace.workspaceID)) } label: {
-                                Label(workspace.label, systemImage: workspace.focused ? "checkmark.circle.fill" : "square.stack")
-                                    .foregroundStyle(.themeFg)
+                ForEach(snapshot.workspaces) { workspace in
+                    Section {
+                        Button { focus(.workspace(workspace.workspaceID)) } label: {
+                            Label(workspace.label, systemImage: workspace.focused ? "checkmark.circle.fill" : "square.stack")
+                                .foregroundStyle(.themeFg)
+                        }
+                        .accessibilityValue(workspace.focused ? "Focused" : "")
+                        ForEach(snapshot.agents(in: workspace)) { agent in
+                            Button { focus(.agent(agent.paneID)) } label: {
+                                AgentRow(agent: agent, tab: snapshot.tabLabel(agent.tabID))
                             }
-                            .accessibilityValue(workspace.focused ? "Focused" : "")
-                            ForEach(snapshot.agents(in: workspace)) { agent in
-                                Button { focus(.agent(agent.paneID)) } label: {
-                                    AgentRow(agent: agent, tab: snapshot.tabLabel(agent.tabID))
-                                }
-                                .accessibilityIdentifier("sshTerminal.herdr.agent")
-                            }
+                            .accessibilityIdentifier("sshTerminal.herdr.agent")
                         }
                     }
-                } else {
-                    ProgressView()
                 }
-            }
-            .navigationTitle("Herdr").navigationBarTitleDisplayMode(.inline)
-            .refreshable { await monitor.refresh(on: channel) }
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button(role: .confirm) { dismiss() } }
+            } else {
+                ProgressView()
             }
         }
+        .navigationTitle("Herdr").navigationBarTitleDisplayMode(.inline)
+        .refreshable { await monitor.refresh(on: channel) }
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) { Button(role: .confirm) { navigator.finish() } }
+        }
+        .onAppear { isVisible = true }
+        .onDisappear { isVisible = false }
     }
 
     private func focus(_ target: HerdrRemote.FocusTarget) {
         Task {
             await monitor.focus(target, on: channel)
-            if monitor.failure == nil { dismiss() }
+            if monitor.failure == nil, isVisible { navigator.finish() }
         }
     }
 }

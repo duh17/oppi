@@ -487,7 +487,7 @@ struct SessionInboxView: View {
         .searchPresentationToolbarBehavior(
             sessionListToolbar.avoidsHidingContentWhileSearching ? .avoidHidingContent : .automatic
         )
-        .fullScreenCover(isPresented: $presentsNowPlayingPlayer) {
+        .routerModal(isPresented: $presentsNowPlayingPlayer, presentation: .fullScreen) {
             if let player = sessionListAudioPlayer {
                 InAppNowPlayingPlayerScreen(audioPlayer: player)
             }

@@ -33,28 +33,22 @@ struct ContentView: View {
         .disabled(nav.showQuickSession)
         .allowsHitTesting(!nav.showQuickSession)
         .accessibilityHidden(nav.showQuickSession)
-        .sheet(
+        .routerModal(
             item: Binding<ExtensionUIRequest?>(
-                get: {
-                    guard let request = liveConnection.activeExtensionDialog else { return nil }
-                    switch request.nativePresentation {
-                    case .editorSheet, .fallbackSheet:
-                        return request
-                    case .askCard, .inlineAskCard:
-                        return nil
-                    }
-                },
+                get: { ExtensionSheetLayout.sheetRequest(liveConnection.activeExtensionDialog) },
                 set: { value in
                     liveConnection.activeExtensionDialog = value
                 }
+            ),
+            presentation: ExtensionSheetLayout.presentation(
+                for: ExtensionSheetLayout.sheetRequest(liveConnection.activeExtensionDialog)
             )
         ) { request in
             ExtensionDialogSheet(request: request)
                 .interactiveDismissDisabled()
-                .presentationDetents(ExtensionSheetLayout.detents(for: request))
-                .presentationDragIndicator(.hidden)
+                .withServerScopedEnvironment(liveConnection)
         }
-        .sheet(
+        .routerModal(
             isPresented: Binding(
                 get: { connection.extensionToast != nil },
                 set: { showing in
@@ -62,16 +56,17 @@ struct ContentView: View {
                         connection.extensionToast = nil
                     }
                 }
-            )
+            ),
+            presentation: ExtensionToastSheet.presentation
         ) {
             if let toast = connection.extensionToast {
                 ExtensionToastSheet(message: toast)
             }
         }
-        .fullScreenCover(isPresented: $nav.showWhatsNew) {
-            WhatsNewView {
-                navigation.showWhatsNew = false
-            }
+        // Full screen covers this view, which then stops updating, so the
+        // screen closes itself instead of waiting for the cleared flag.
+        .routerModal(isPresented: $nav.showWhatsNew, presentation: .fullScreen) {
+            WhatsNewScreen()
         }
         .overlay {
             if nav.showQuickSession {
@@ -312,15 +307,38 @@ private struct E2EWebSocketDiagnosticsView: View {
 }
 #endif
 
+@MainActor
 private enum ExtensionSheetLayout {
-    static func detents(for request: ExtensionUIRequest) -> Set<PresentationDetent> {
+    /// The dialog this sheet shows. Ask cards render in the chat instead.
+    static func sheetRequest(_ request: ExtensionUIRequest?) -> ExtensionUIRequest? {
+        guard let request else { return nil }
         switch request.nativePresentation {
-        case .editorSheet:
-            [.large]
-        case .fallbackSheet:
-            [.medium, .large]
+        case .editorSheet, .fallbackSheet:
+            return request
         case .askCard, .inlineAskCard:
-            []
+            return nil
+        }
+    }
+
+    /// The editor brings its own navigation; the fallback sheet gets the
+    /// router's. Neither shows a grabber.
+    static func presentation(for request: ExtensionUIRequest?) -> ModalPresentation {
+        switch request?.nativePresentation {
+        case .fallbackSheet:
+            .sheet.detents([.medium(), .large()]).inNavigation()
+        default:
+            .sheet.detents([.large()])
+        }
+    }
+}
+
+/// What's New, closed by its own Continue.
+private struct WhatsNewScreen: View {
+    @Environment(\.screenNavigator) private var navigator
+
+    var body: some View {
+        WhatsNewView {
+            navigator.finish()
         }
     }
 }
@@ -329,7 +347,7 @@ private struct ExtensionDialogSheet: View {
     let request: ExtensionUIRequest
 
     @Environment(ServerConnection.self) private var connection
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
 
     @State private var inputValue: String = ""
     @State private var isSubmitting = false
@@ -338,26 +356,27 @@ private struct ExtensionDialogSheet: View {
     @State private var editorPendingRepoPointers: [PendingFileReference] = []
     @State private var editorVoiceInputManager = VoiceInputManager.shared
     @State private var editorVoiceComposerGeneration: Int?
+    /// A response that lands after the server already closed the dialog must
+    /// not finish a closed sheet.
+    @State private var isVisible = false
 
     var body: some View {
         Group {
             if request.nativePresentation == .editorSheet {
                 extensionEditorContent
             } else {
-                NavigationStack {
-                    sheetContent
-                        .navigationTitle(dialogTitle)
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("Cancel", role: .cancel) {
-                                    cancelRequest()
-                                }
-                                .disabled(isSubmitting)
-                                .accessibilityIdentifier("extension.dialog.cancel")
+                sheetContent
+                    .navigationTitle(dialogTitle)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel", role: .cancel) {
+                                cancelRequest()
                             }
+                            .disabled(isSubmitting)
+                            .accessibilityIdentifier("extension.dialog.cancel")
                         }
-                }
+                    }
             }
         }
         .task(id: request.id) {
@@ -388,7 +407,9 @@ private struct ExtensionDialogSheet: View {
                 }
             }
         }
+        .onAppear { isVisible = true }
         .onDisappear {
+            isVisible = false
             let manager = editorVoiceInputManager
             let takeIdentity = ComposerShared.takeIdentityForDismissedComposer(
                 manager: manager,
@@ -542,7 +563,7 @@ private struct ExtensionDialogSheet: View {
                     sessionId: request.sessionId,
                     payload: payload
                 )
-                dismiss()
+                if isVisible { navigator.finish() }
             } catch {
                 isSubmitting = false
                 connection.extensionToast = "\(failurePrefix): \(error.localizedDescription)"
@@ -552,61 +573,62 @@ private struct ExtensionDialogSheet: View {
 }
 
 private struct ExtensionToastSheet: View {
+    static let presentation = ModalPresentation.sheet
+        .detents([.custom { $0.maximumDetentValue * 0.35 }, .medium()])
+        .inNavigation()
+
     let message: String
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    ForEach(parsedLines) { line in
-                        if let url = line.url {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(line.label)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.themeComment)
-                                HStack(spacing: 12) {
-                                    Button(action: { AppSupportLinks.open(url) }, label: {
-                                        Text(url.absoluteString)
-                                            .font(.body)
-                                            .lineLimit(1)
-                                    })
-                                    .buttonStyle(.plain)
-                                    .foregroundStyle(.themeBlue)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(parsedLines) { line in
+                    if let url = line.url {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(line.label)
+                                .font(.subheadline)
+                                .foregroundStyle(.themeComment)
+                            HStack(spacing: 12) {
+                                Button(action: { AppSupportLinks.open(url) }, label: {
+                                    Text(url.absoluteString)
+                                        .font(.body)
+                                        .lineLimit(1)
+                                })
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.themeBlue)
 
-                                    Spacer()
+                                Spacer()
 
-                                    Button {
-                                        UIPasteboard.general.string = url.absoluteString
-                                        AppHaptics.impact(style: .light, intensity: 0.8)
-                                    } label: {
-                                        Image(systemName: "doc.on.doc")
-                                            .imageScale(.medium)
-                                            .foregroundStyle(.themeFgDim)
-                                    }
+                                Button {
+                                    UIPasteboard.general.string = url.absoluteString
+                                    AppHaptics.impact(style: .light, intensity: 0.8)
+                                } label: {
+                                    Image(systemName: "doc.on.doc")
+                                        .imageScale(.medium)
+                                        .foregroundStyle(.themeFgDim)
                                 }
                             }
-                        } else {
-                            Text(line.text)
-                                .font(.body)
-                                .foregroundStyle(.themeFg)
                         }
+                    } else {
+                        Text(line.text)
+                            .font(.body)
+                            .foregroundStyle(.themeFg)
                     }
                 }
-                .padding()
             }
-            .background(.themeBg)
-            .navigationTitle("Notice")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        dismiss()
-                    }
+            .padding()
+        }
+        .background(.themeBg)
+        .navigationTitle("Notice")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") {
+                    navigator.finish()
                 }
             }
         }
-        .presentationDetents([.fraction(0.35), .medium])
     }
 
     private var parsedLines: [ParsedLine] {

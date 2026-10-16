@@ -108,11 +108,20 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
         Thread.sleep(forTimeInterval: 2.5)
         XCTAssertEqual(try diskString(), external, "autosave ran after 412")
 
+        // The review sheet closes by Keep Editing and by swipe-down, and opens again.
+        let keepEditing = app.buttons["workspace-file-review.close"]
         tap(app.buttons["workspace-file-editor.review"], named: "Review Changes")
-        XCTAssertTrue(
-            app.buttons["workspace-file-review.close"].waitForExistence(timeout: 10),
-            "Review Changes sheet did not open"
-        )
+        XCTAssertTrue(keepEditing.waitForExistence(timeout: 10), "Review Changes sheet did not open")
+        tap(keepEditing, named: "Keep Editing")
+        XCTAssertTrue(keepEditing.waitForNonExistence(timeout: 5), "Keep Editing did not close the sheet")
+        tap(app.buttons["workspace-file-editor.review"], named: "Review Changes")
+        let reviewBar = app.navigationBars["Review Changes"]
+        XCTAssertTrue(reviewBar.waitForExistence(timeout: 10), "Review Changes did not reopen in a navigation bar")
+        reviewBar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98)), withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertTrue(keepEditing.waitForNonExistence(timeout: 5), "Swipe-down did not close the sheet")
+        tap(app.buttons["workspace-file-editor.review"], named: "Review Changes")
+        XCTAssertTrue(keepEditing.waitForExistence(timeout: 10), "Review Changes sheet did not open again")
         let replace = app.buttons["workspace-file-review.replace"]
         tap(replace, named: "Replace Disk Version", timeout: 15)
         XCTAssertTrue(waitForStatus("Saved", timeout: 15), "Replace did not save")
@@ -257,7 +266,15 @@ final class WorkspaceFileEditorE2ETests: E2ETestCase {
 
     private func openFileInEditor() throws {
         try openFile()
-        tap(app.buttons["fullscreen-code.action.workspace-file-edit"], named: "Edit", timeout: 15)
+        // The reader's bar holds Edit; an iPad tree pane hides that bar and
+        // shows Edit in the SwiftUI toolbar instead.
+        let readerEdit = app.buttons["fullscreen-code.action.workspace-file-edit"]
+        let treePaneEdit = app.buttons["workspace-file-editor.edit"]
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline, !readerEdit.exists, !treePaneEdit.exists {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        tap(treePaneEdit.exists ? treePaneEdit : readerEdit, named: "Edit", timeout: 5)
         XCTAssertTrue(editorTextView.waitForExistence(timeout: 10), "editor text view did not appear")
     }
 }

@@ -215,9 +215,11 @@ struct SSHTerminalView: View {
 
     var body: some View {
         terminalScreen
-        .sheet(isPresented: $showsHerdr) {
+        .routerModal(
+            isPresented: $showsHerdr,
+            presentation: .sheet.detents([.medium(), .large()]).inNavigation()
+        ) {
             HerdrAgentsView(monitor: herdr, channel: channel)
-                .presentationDetents([.medium, .large])
         }
         .onChange(of: showsHerdr) { _, open in herdr.watching = open }
         .onChange(of: detectedMode) { _, mode in
