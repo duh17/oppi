@@ -91,11 +91,9 @@ import {
 import { DurableUIProjection } from "./durable-ui-projection.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { DurableMcp } from "./durable-mcp.js";
-import type { GondolinVm } from "./gondolin-ops.js";
 import { sandboxMcpForWorkspace } from "./sandbox-mcp.js";
 import {
   expandSkillCommand,
-  readSandboxContextFiles,
   loadDurableProjectResources,
   renderProjectContext,
   renderSkills,
@@ -317,18 +315,22 @@ export class DurableBackend implements AgentBackend {
       : await DurableBackend.launchedAs(options, { hostCwd, cwd, sandbox });
     // Sandboxes see only the workspace, as SDK sandbox sessions: trusted.
     const projectTrusted = sandbox || (await resolveProjectTrust(hostCwd, agentDir, options));
+    // A sandbox's workspace VM comes first: its Skills and context files are what this VM
+    // mounts and reads, whichever session booted it. Before the conversation exists, so a
+    // saved Agent selection the VM cannot present still fails the launch before it binds.
+    const sandboxEnv = sandbox
+      ? await DurableBackend.sandboxEnv(workspace, hostCwd, cwd)
+      : undefined;
     const loadResources = (): Promise<DurableProjectResources> =>
       loadDurableProjectResources({
         hostCwd,
         agentDir,
-        ...(sandbox ? { sandboxGuestCwd: cwd } : {}),
+        ...(sandboxEnv ? { sandbox: sandboxEnv } : {}),
         projectTrusted,
         ...(launched?.doc?.resources ? { resources: launched.doc.resources } : {}),
         projectContext: launched?.doc?.projectContext !== false,
       });
     const resources = await loadResources();
-    // Set by `bind` once this attachment's workspace VM is up, before servers connect.
-    let sandboxVm: GondolinVm | undefined;
     // The control conversation selects an exact extension list; it gets no MCP tools, and an
     // exact Extension selection without `builtin:mcp` gets none either.
     const mcp =
@@ -351,8 +353,8 @@ export class DurableBackend implements AgentBackend {
                       guestCwd: cwd,
                       // This attachment's VM, as classic sandbox sessions use theirs.
                       vm: async () => {
-                        if (!sandboxVm) throw new Error("The sandbox VM is not ready");
-                        return sandboxVm;
+                        if (!sandboxEnv) throw new Error("The sandbox VM is not ready");
+                        return sandboxEnv.vm;
                       },
                     }),
                   }
@@ -370,9 +372,7 @@ export class DurableBackend implements AgentBackend {
         cwd,
         mcp,
         launched,
-        onSandboxVm: (vm) => {
-          sandboxVm = vm;
-        },
+        sandboxEnv,
         resources,
         loadResources,
       });
@@ -430,7 +430,7 @@ export class DurableBackend implements AgentBackend {
       cwd: string;
       mcp: DurableMcp | undefined;
       launched: LaunchedAs | undefined;
-      onSandboxVm: (vm: GondolinVm) => void;
+      sandboxEnv: GondolinExecutionEnv | undefined;
       resources: DurableProjectResources;
       loadResources: () => Promise<DurableProjectResources>;
     },
@@ -537,27 +537,14 @@ export class DurableBackend implements AgentBackend {
       // only an empty unbound conversation, never a duplicated user turn.
       options.persistBinding();
     }
-    // Skill and context-file bytes come through the session's own view: the VM for a
-    // sandbox, whose shadow and mount jails the host loader does not apply.
+    // `/skill:` bytes come through the session's own view: the VM for a sandbox, whose
+    // shadow and mount jails the host filesystem does not apply.
     const readInView = sandbox
       ? (path: string) => options.host.readSandboxTextFile(conversation.id, path)
       : (path: string) => readFile(path, "utf-8");
-    const present = async (loaded: DurableProjectResources): Promise<DurableProjectResources> =>
-      sandbox ? readSandboxContextFiles(loaded, readInView, hostCwd, cwd) : loaded;
-    if (sandbox) {
-      const vm = await SdkBackend.ensureSandboxWorkspaceVm(workspace, hostCwd, [
-        ...resources.readonlyMounts,
-      ]);
-      const probe = await vm.exec(["/usr/bin/setsid", "/bin/true"]);
-      if (!probe.ok) throw new Error("Durable sandbox execution requires guest setsid");
-      const env = new GondolinExecutionEnv(vm, workspace.id, cwd);
-      options.host.bindSandboxEnv(conversation.id, env);
-      // Stdio MCP servers run in this VM; they connect at `attach` below.
-      target.onSandboxVm(vm);
-    }
-    // After the VM is bound: a sandbox's context files are read through it.
-    const presented = await present(resources);
-    await syncProjectContext(conversation, presented);
+    // Stdio MCP servers run in this VM; they connect at `attach` below.
+    if (target.sandboxEnv) options.host.bindSandboxEnv(conversation.id, target.sandboxEnv);
+    await syncProjectContext(conversation, resources);
     const words = host.runtime.installedTask(WORKING_WORDS_TASK);
     await conversation.commit(
       (tx) => ensureWorkingWords(tx, conversation.id, words),
@@ -581,8 +568,8 @@ export class DurableBackend implements AgentBackend {
         events,
         options.onEvent,
         mcp,
-        presented,
-        async () => present(await target.loadResources()),
+        resources,
+        target.loadResources,
         options.dataDir,
         readInView,
       );
@@ -596,6 +583,21 @@ export class DurableBackend implements AgentBackend {
       view.dispose();
       throw error;
     }
+  }
+
+  /**
+   * The workspace VM's capabilities for one sandbox attachment. The same env discovers its
+   * resources, on attach and on `/reload`, and is bound to the conversation once it exists.
+   */
+  private static async sandboxEnv(
+    workspace: Workspace,
+    hostCwd: string,
+    cwd: string,
+  ): Promise<GondolinExecutionEnv> {
+    const vm = await SdkBackend.ensureSandboxWorkspaceVm(workspace, hostCwd);
+    const probe = await vm.exec(["/usr/bin/setsid", "/bin/true"]);
+    if (!probe.ok) throw new Error("Durable sandbox execution requires guest setsid");
+    return new GondolinExecutionEnv(vm, workspace.id, cwd);
   }
 
   /** Start only after Oppi has registered its projection listener. */

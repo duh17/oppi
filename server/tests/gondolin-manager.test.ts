@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
-import { lstatSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHttpHooks, VM } from "@earendil-works/gondolin";
@@ -122,19 +122,6 @@ describe("withSandboxPiOverlayMounts", () => {
     const uid = process.getuid?.();
     if (uid !== undefined) expect(overlay.uid).toBe(uid);
   });
-
-  it("leaves mounts unchanged when no skill mounts live under workspace .pi", () => {
-    const mounts = [{ hostPath: "/host/extensions", guestPath: "/tmp/oppi-agent-extensions" }];
-    expect(withSandboxPiOverlayMounts("/workspace/slug", mounts)).toEqual(mounts);
-  });
-
-  it("leaves mounts unchanged when a .pi overlay is already present", () => {
-    const existing = [
-      { hostPath: "/host/pi", guestPath: "/workspace/slug/.pi" },
-      { hostPath: "/host/skills/review", guestPath: "/workspace/slug/.pi/skills/review" },
-    ];
-    expect(withSandboxPiOverlayMounts("/workspace/slug", existing)).toEqual(existing);
-  });
 });
 
 // ─── defaultVmFactory ───
@@ -186,7 +173,7 @@ describe("defaultVmFactory", () => {
     expect(overlay.readonly).toBe(true);
   });
 
-  it("does not invent a .pi overlay when no skill mounts live under it", async () => {
+  it("does not invent a .pi overlay when there are no skill mounts", async () => {
     const vm = {
       exec: vi.fn(async () => ({ stdout: "/bin/bash\n" })),
     };
@@ -196,12 +183,11 @@ describe("defaultVmFactory", () => {
     await defaultVmFactory({
       hostCwd: "/tmp/oppi-sandbox-ws",
       guestWorkspacePath,
-      readonlyMounts: ["/tmp/oppi-agent-extensions"],
+      readonlyMounts: [],
     });
 
     const mounts = vi.mocked(VM.create).mock.calls.at(-1)?.[0]?.vfs?.mounts ?? {};
-    expect(Object.keys(mounts)).toEqual([guestWorkspacePath, "/tmp/oppi-agent-extensions"]);
-    expect(mounts[`${guestWorkspacePath}/.pi`]).toBeUndefined();
+    expect(Object.keys(mounts)).toEqual([guestWorkspacePath]);
   });
 });
 
@@ -351,7 +337,7 @@ describe("workspace VM fingerprint reuse", () => {
       const { factory, calls, vms } = makeFactory();
       manager = new GondolinManager(factory);
       const ws = makeWorkspace({ id: "w1", sandboxConfig: { allowedHosts: [] } });
-      const vm = await manager.ensureWorkspaceVm(ws, "/path", {}, [], { LANG: "C" });
+      const vm = await manager.ensureWorkspaceVm(ws, "/path", {}, { LANG: "C" });
       manager.noteWorkspaceBusy("w1", "conversation-a");
       manager.noteWorkspaceBusy("w1", "conversation-b");
       manager.noteWorkspaceIdle("w1", "conversation-a");
@@ -362,7 +348,6 @@ describe("workspace VM fingerprint reuse", () => {
             : ws,
           changed === "hostCwd" ? "/different" : "/path",
           {},
-          [],
           changed === "extraEnv" ? { LANG: "en_US" } : { LANG: "C" },
         ),
       ).rejects.toThrow(/Cannot recycle.*busy/i);
@@ -380,15 +365,10 @@ describe("workspace VM fingerprint reuse", () => {
       id: "w1",
       sandboxConfig: { allowedHosts: ["api.example.com"], env: { FOO: "1" } },
     });
-    const mounts = [
-      { hostPath: "/skills/b", guestPath: "/guest/b" },
-      { hostPath: "/skills/a", guestPath: "/guest/a" },
-    ];
     const firstVm = await manager.ensureWorkspaceVm(
       firstWs,
       "/path",
       undefined,
-      mounts,
       { FOO: "1" },
       "/workspace/slug",
     );
@@ -397,15 +377,10 @@ describe("workspace VM fingerprint reuse", () => {
       id: "w1",
       sandboxConfig: { allowedHosts: ["api.example.com"], env: { FOO: "1" } },
     });
-    const reorderedMounts = [
-      { hostPath: "/skills/a", guestPath: "/guest/a" },
-      { hostPath: "/skills/b", guestPath: "/guest/b" },
-    ];
     const secondVm = await manager.ensureWorkspaceVm(
       secondWs,
       "/path",
       undefined,
-      reorderedMounts,
       { FOO: "1" },
       "/workspace/slug",
     );
@@ -420,47 +395,48 @@ describe("workspace VM fingerprint reuse", () => {
     manager = new GondolinManager(factory);
 
     const ws = makeWorkspace({ id: "w1" });
-    const firstVm = await manager.ensureWorkspaceVm(ws, "/path", undefined, undefined, {
-      FOO: "1",
-    });
-    const afterEnv = await manager.ensureWorkspaceVm(ws, "/path", undefined, undefined, {
-      FOO: "2",
-    });
+    const firstVm = await manager.ensureWorkspaceVm(ws, "/path", undefined, { FOO: "1" });
+    const afterEnv = await manager.ensureWorkspaceVm(ws, "/path", undefined, { FOO: "2" });
 
     expect(afterEnv).not.toBe(firstVm);
     expect(vms[0].close).toHaveBeenCalledOnce();
     expect(manager.getVm("w1")).toBe(vms[1]);
   });
 
-  it("reuses the live VM when only readonlyMounts differ", async () => {
+  it("mounts the workspace .pi/skills entries at boot and keeps them for the VM's life", async () => {
     const { factory, calls, vms } = makeFactory();
     manager = new GondolinManager(factory);
+    const root = mkdtempSync(join(tmpdir(), "oppi-skill-mounts-"));
+    try {
+      const hostCwd = join(root, "workspace");
+      const skills = join(hostCwd, ".pi", "skills");
+      const elsewhere = join(root, "elsewhere", "linked");
+      mkdirSync(join(skills, "alpha"), { recursive: true });
+      mkdirSync(join(skills, ".hidden"), { recursive: true });
+      mkdirSync(elsewhere, { recursive: true });
+      symlinkSync(elsewhere, join(skills, "linked"));
+      symlinkSync(join(root, "missing"), join(skills, "broken"));
+      writeFileSync(join(skills, "loose.md"), "loose");
+      const ws = makeWorkspace({ id: "w1" });
 
-    const ws = makeWorkspace({
-      id: "w1",
-      sandboxConfig: { allowedHosts: ["api.example.com"] },
-    });
-    const firstVm = await manager.ensureWorkspaceVm(
-      ws,
-      "/path",
-      undefined,
-      [{ hostPath: "/skills/agent-a", guestPath: "/workspace/slug/.pi/skills/a" }],
-      { FOO: "1" },
-      "/workspace/slug",
-    );
-    const secondVm = await manager.ensureWorkspaceVm(
-      ws,
-      "/path",
-      undefined,
-      [{ hostPath: "/skills/agent-b", guestPath: "/workspace/slug/.pi/skills/b" }],
-      { FOO: "1" },
-      "/workspace/slug",
-    );
+      const first = await manager.ensureWorkspaceVm(ws, hostCwd, undefined, undefined, "/g");
+      const expected = [
+        { hostPath: join(skills, "alpha"), guestPath: "/g/.pi/skills/alpha" },
+        { hostPath: join(skills, "linked"), guestPath: "/g/.pi/skills/linked" },
+      ];
+      expect(calls[0]?.readonlyMounts).toEqual(expected);
+      expect(first.skillMounts).toEqual(expected);
 
-    expect(secondVm).toBe(firstVm);
-    expect(vms[0].close).not.toHaveBeenCalled();
-    expect(calls).toHaveLength(1);
-    expect(manager.getVm("w1")).toBe(firstVm);
+      // Mounts are not part of the VM's identity: a Skill added later waits for the next boot.
+      mkdirSync(join(skills, "gamma"));
+      const second = await manager.ensureWorkspaceVm(ws, hostCwd, undefined, undefined, "/g");
+      expect(second).toBe(first);
+      expect(second.skillMounts).toEqual(expected);
+      expect(calls).toHaveLength(1);
+      expect(vms[0].close).not.toHaveBeenCalled();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

@@ -56,7 +56,6 @@ describe("Durable shared guest security", { timeout: 30_000 }, () => {
       },
       host,
       {},
-      [],
       {},
       root,
     );

@@ -26,7 +26,6 @@ import {
 } from "../src/sdk-backend.js";
 import { resolveSandboxGuestCwd } from "../src/workspace-folder.js";
 import { SdkUiBridge } from "../src/sdk-ui-bridge.js";
-import { loadDurableProjectResources } from "../src/durable-project-resources.js";
 import {
   callerSessionIdentityShellPrefix,
   OPPI_CALLER_SESSION_ID_ENV,
@@ -351,14 +350,6 @@ describe("SdkBackend sandbox", () => {
       );
       expect(manager.ensureWorkspaceVm).toHaveBeenCalled();
       expect(manager.ensureWorkspaceVm.mock.calls[0][2]).toEqual({});
-      expect(manager.ensureWorkspaceVm.mock.calls[0][3]).toEqual(
-        expect.arrayContaining([
-          {
-            hostPath: skillDir,
-            guestPath: "/workspace/sandbox-secrets-test/.pi/skills/sandbox-review",
-          },
-        ]),
-      );
 
       const runtime = (
         backend as unknown as {
@@ -392,25 +383,29 @@ describe("SdkBackend sandbox", () => {
     }
   });
 
-  it("durable-first VM setup requests the same Skill mounts as SDK sandbox setup", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-selected-agent-skill-"));
-    const agentDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-selected-agent-dir-"));
-    // Durable sandboxes present only Skills inside the workspace.
-    const selectedSkill = join(cwd, ".pi", "skills", "selected-sandbox-skill");
+  it("presents only the Skills the workspace VM mounted and the workspace's own", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-classic-skills-"));
+    const agentDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-classic-agent-dir-"));
+    const outside = mkdtempSync(join(tmpdir(), "oppi-sandbox-classic-outside-"));
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-    mkdirSync(selectedSkill, { recursive: true });
-    writeFileSync(
-      join(selectedSkill, "SKILL.md"),
-      [
-        "---",
-        "name: selected-sandbox-skill",
-        "description: Selected sandbox Skill.",
-        "---",
-        "Selected sandbox instructions.",
-      ].join("\n"),
-    );
+    const writeSkill = (dir: string, name: string) => {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "SKILL.md"),
+        ["---", `name: ${name}`, `description: ${name} Skill.`, "---", `${name} body.`].join("\n"),
+      );
+    };
+    const mountedSkill = join(cwd, ".pi", "skills", "mounted-skill");
+    writeSkill(mountedSkill, "mounted-skill");
+    // Added after the VM booted: the VM has no mount for it yet.
+    writeSkill(join(cwd, ".pi", "skills", "late-skill"), "late-skill");
+    writeSkill(join(agentDir, "skills", "global-skill"), "global-skill");
+    writeSkill(join(cwd, ".agents", "skills", "workspace-skill"), "workspace-skill");
+    writeSkill(join(outside, "escaped-skill"), "escaped-skill");
+    symlinkSync(join(outside, "escaped-skill"), join(cwd, ".agents", "skills", "escaped-skill"));
     writeFileSync(join(agentDir, "auth.json"), "{}");
     process.env.PI_CODING_AGENT_DIR = agentDir;
+    const guestCwd = "/workspace/sandbox-classic-skills";
 
     const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
     const execResult = {
@@ -429,6 +424,8 @@ describe("SdkBackend sandbox", () => {
       exec: vi.fn(() =>
         Object.assign(Promise.resolve(execResult), { output: async function* () {} }),
       ),
+      // What the manager recorded when it booted this VM, before `late-skill` existed.
+      skillMounts: [{ hostPath: mountedSkill, guestPath: `${guestCwd}/.pi/skills/mounted-skill` }],
     };
     const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
     const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
@@ -437,49 +434,48 @@ describe("SdkBackend sandbox", () => {
     let backend: SdkBackend | undefined;
     const workspace = {
       id: "w1",
-      name: "Sandbox Selected Agent Skill",
+      name: "Sandbox Classic Skills",
       runtime: "sandbox",
       hostMount: cwd,
       extensions: [],
     } as Workspace;
 
     try {
-      // Durable creates the shared VM through this entry point before SDK loads.
-      const durable = await loadDurableProjectResources({
-        hostCwd: cwd,
-        agentDir,
-        sandboxGuestCwd: resolveSandboxGuestCwd(workspace),
-        projectTrusted: true,
-      });
-      await SdkBackend.ensureSandboxWorkspaceVm(workspace, cwd, [...durable.readonlyMounts]);
-      const durableMounts = manager.ensureWorkspaceVm.mock.calls[0][3];
-      expect(durableMounts).toContainEqual({
-        hostPath: selectedSkill,
-        guestPath: "/workspace/sandbox-selected-agent-skill/.pi/skills/selected-sandbox-skill",
-      });
       backend = await SdkBackend.create({
         session: makeSession({ ephemeral: true }),
         workspace,
-        agentDefinition: {
-          name: "Sandbox Selected Skill",
-          resources: { skillPaths: [selectedSkill], extensionIds: [] },
-        },
         onEvent: vi.fn(),
         onEnd: vi.fn(),
       });
 
-      expect(backend.session.resourceLoader.getSkills().skills.map((skill) => skill.name)).toEqual([
-        "selected-sandbox-skill",
+      const skills = backend.session.resourceLoader.getSkills().skills;
+      expect(
+        skills
+          .map(({ name, filePath }) => ({ name, filePath }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      ).toEqual([
+        { name: "mounted-skill", filePath: `${guestCwd}/.pi/skills/mounted-skill/SKILL.md` },
+        {
+          name: "workspace-skill",
+          filePath: `${guestCwd}/.agents/skills/workspace-skill/SKILL.md`,
+        },
       ]);
-      expect(manager.ensureWorkspaceVm.mock.calls[1][3]).toEqual(durableMounts);
-      expect(manager.ensureWorkspaceVm).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.any(String),
-        expect.anything(),
-        expect.arrayContaining([expect.objectContaining({ hostPath: selectedSkill })]),
-        undefined,
-        expect.any(String),
-      );
+      // A saved Agent selecting a Skill the VM cannot serve fails instead of losing it.
+      await expect(
+        SdkBackend.create({
+          session: makeSession({ ephemeral: true }),
+          workspace,
+          agentDefinition: {
+            name: "Global Skill",
+            resources: {
+              skillPaths: [join(agentDir, "skills", "global-skill")],
+              extensionIds: [],
+            },
+          },
+          onEvent: vi.fn(),
+          onEnd: vi.fn(),
+        }),
+      ).rejects.toMatchObject({ code: "agent_skills_unavailable" });
     } finally {
       await backend?.dispose();
       sdkBackendType._gondolinManager = previousManager;
@@ -488,6 +484,7 @@ describe("SdkBackend sandbox", () => {
       else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
       rmSync(cwd, { recursive: true, force: true });
       rmSync(agentDir, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
     }
   });
 

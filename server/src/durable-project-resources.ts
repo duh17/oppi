@@ -1,15 +1,21 @@
 import { realpathSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import {
   DefaultResourceLoader,
   SettingsManager,
+  createSyntheticSourceInfo,
   formatSkillsForPrompt,
+  parseFrontmatter,
   stripFrontmatter,
   type Skill,
 } from "@earendil-works/pi-coding-agent";
+import type { FileInfo } from "@earendil-works/pi-durable/env";
 import { AgentConfigurationError } from "./agent-launch-errors.js";
 import type { DurableAgentResources } from "./durable-agent.js";
-import type { ReadonlyMount } from "./gondolin-manager.js";
+import type { GondolinExecutionEnv } from "./durable-gondolin-env.js";
+import { SANDBOX_RESOURCE_MAX_BYTES } from "./gondolin-ops.js";
+import { createLogger } from "./logger.js";
 import {
   assertSelectedAgentResourcesAvailable,
   assertSelectedAgentSkillsLoaded,
@@ -17,42 +23,47 @@ import {
   hostWorkspacePathToGuest,
   normalizeSelectedAgentSkillPaths,
   redactHostEnvironment,
-  sandboxGuestSkills,
 } from "./sdk-backend.js";
 
 type ContextFile = { path: string; content: string };
 
+const log = createLogger({ base: { component: "durable_project_resources" } });
+
+/** Pi's `loadContextFileFromDir` names, in its order: the first readable one is used. */
+const CONTEXT_FILE_NAMES = [
+  "AGENTS.override.md",
+  "AGENTS.md",
+  "AGENTS.MD",
+  "CLAUDE.md",
+  "CLAUDE.MD",
+];
+
 /** The AGENTS files and Skills a durable session presents, as an SDK session loads them. */
 export interface DurableProjectResources {
-  /**
-   * As presented to the model: guest paths in a sandbox. A sandbox's discovered files carry
-   * no content until `readSandboxContextFiles` reads them through the VM.
-   */
+  /** As presented to the model: guest paths in a sandbox, with the text the VM returned. */
   readonly contextFiles: readonly ContextFile[];
-  /**
-   * Sandbox only: guest paths of discovered context files. Their host read is discarded:
-   * the guest can make a context file a symlink to a file the VM shadow hides (`.env`), and
-   * the host follows it. Only the VM's own read counts.
-   */
-  readonly guestContextPaths?: ReadonlySet<string>;
   /**
    * As presented to the model: guest paths in a sandbox. `/skill:` reads `filePath` through
    * the session's own view (`expandSkillCommand`), never through a second host path.
    */
   readonly skills: readonly Skill[];
-  /** Read-only VM mounts for the presented sandbox Skill directories. */
-  readonly readonlyMounts: readonly ReadonlyMount[];
 }
 
 /**
  * Pi's resource discovery without classic extensions, prompt templates, or themes:
  * durable sessions cannot run classic extension factories.
+ *
+ * A host session uses Pi's `DefaultResourceLoader`. A sandbox session discovers and reads only
+ * through its workspace VM (`sandbox`): the Skill directories that VM mounts, the workspace's
+ * `.agents/skills`, and the context file at the guest root. Every byte comes through the VM's
+ * provider stack (shadow, mount jail), bounded by `SANDBOX_RESOURCE_MAX_BYTES`; the host
+ * filesystem is never walked, because the guest can rewrite the workspace under it.
  */
 export async function loadDurableProjectResources(options: {
   hostCwd: string;
   agentDir: string;
-  /** Present for sandbox sessions; paths are rewritten into the guest. */
-  sandboxGuestCwd?: string;
+  /** Sandbox sessions: the session's workspace VM; paths are guest paths. */
+  sandbox?: GondolinExecutionEnv;
   /** Host sessions: the project trust decision. Sandbox sessions are always trusted. */
   projectTrusted: boolean;
   /** The saved Agent's selection, from the session's `oppi.agent` document. */
@@ -60,48 +71,12 @@ export async function loadDurableProjectResources(options: {
   /** False when the Agent's instructions replace the prompt: no context files at all. */
   projectContext?: boolean;
 }): Promise<DurableProjectResources> {
-  const { hostCwd, agentDir, sandboxGuestCwd, resources } = options;
+  if (options.sandbox) return loadSandboxProjectResources({ ...options, env: options.sandbox });
+  const { hostCwd, agentDir, resources, projectTrusted } = options;
   const selectedSkillPaths = normalizeSelectedAgentSkillPaths(resources?.skillPaths, hostCwd);
-  const projectTrusted = sandboxGuestCwd !== undefined || options.projectTrusted;
   if (!projectTrusted)
     assertSelectedAgentSkillsOutsideUntrustedProject(selectedSkillPaths, hostCwd);
-  // A sandbox sees only its workspace. Skill directories are mounted into the guest and
-  // `/skill:` reads the host file, so every Skill must really live in the workspace.
-  const workspaceRoot = sandboxGuestCwd === undefined ? undefined : realPath(hostCwd);
-  const inWorkspace = (path: string): boolean =>
-    workspaceRoot === undefined || isWithin(workspaceRoot, realPath(path));
-  const escapedSkillPaths = (selectedSkillPaths ?? []).filter((path) => !inWorkspace(path));
-  if (escapedSkillPaths.length > 0) throw skillsOutsideWorkspace(escapedSkillPaths);
   assertSelectedAgentResourcesAvailable(selectedSkillPaths, undefined);
-  /** Sandbox AGENTS files: only those inside the workspace, at guest paths, redacted. */
-  const inGuest = (files: readonly ContextFile[], guestCwd: string): ContextFile[] =>
-    files.flatMap((file) => {
-      const path = inWorkspace(file.path)
-        ? hostWorkspacePathToGuest(hostCwd, guestCwd, file.path)
-        : null;
-      return path
-        ? [{ path, content: redactHostEnvironment(file.content, hostCwd, guestCwd) }]
-        : [];
-    });
-  const guestContextPaths = new Set<string>();
-  /** Discovered sandbox files: the guest path only; the content comes through the VM. */
-  const discoveredInGuest = (files: readonly ContextFile[], guestCwd: string): ContextFile[] =>
-    inGuest(files, guestCwd).map(({ path }) => {
-      guestContextPaths.add(path);
-      return { path, content: "" };
-    });
-  // Saved files are virtual paths relative to the workspace.
-  const savedAgentFiles =
-    sandboxGuestCwd === undefined
-      ? (resources?.agentsFiles ?? [])
-      : inGuest(
-          (resources?.agentsFiles ?? []).map((file) => ({
-            path: resolve(hostCwd, file.path),
-            content: file.content,
-          })),
-          sandboxGuestCwd,
-        );
-  const mounts = new Map<string, ReadonlyMount>();
   const loader = new DefaultResourceLoader({
     cwd: hostCwd,
     agentDir,
@@ -116,76 +91,214 @@ export async function loadDurableProjectResources(options: {
       : {}),
     ...(resources?.noContextFiles ? { noContextFiles: true } : {}),
     skillsOverride: (base) => {
-      // Validate the saved Agent selection against host paths, before the sandbox rewrite.
       assertSelectedAgentSkillsLoaded(selectedSkillPaths, base);
-      if (sandboxGuestCwd === undefined) return base;
-      // A selected path inside the workspace can still reach outside through a symlink:
-      // refuse the selection. Discovered Skills outside it are dropped, as AGENTS files are.
-      const escaped = base.skills.filter(
-        (skill) => !inWorkspace(skill.baseDir) || !inWorkspace(skill.filePath),
-      );
-      if (selectedSkillPaths !== undefined && escaped.length > 0)
-        throw skillsOutsideWorkspace(escaped.map((skill) => skill.name));
-      const skills = base.skills.filter((skill) => !escaped.includes(skill));
-      return { ...base, skills: sandboxGuestSkills(skills, sandboxGuestCwd, mounts) };
+      return base;
     },
+    // Saved files are virtual paths relative to the workspace.
     agentsFilesOverride: (base) => ({
-      agentsFiles: [
-        ...(sandboxGuestCwd === undefined
-          ? base.agentsFiles
-          : discoveredInGuest(base.agentsFiles, sandboxGuestCwd)),
-        ...savedAgentFiles,
-      ],
+      agentsFiles: [...base.agentsFiles, ...(resources?.agentsFiles ?? [])],
     }),
   });
   await loader.reload();
   return {
     contextFiles: options.projectContext === false ? [] : loader.getAgentsFiles().agentsFiles,
     skills: loader.getSkills().skills,
-    readonlyMounts: [...mounts.values()],
-    ...(sandboxGuestCwd === undefined ? {} : { guestContextPaths }),
   };
 }
 
-/**
- * A sandbox's discovered context files, read through the session's VM at their guest paths
- * and redacted like the host loader's text. A file the VM refuses (shadowed, or a symlink
- * out of its mount) is left out. Saved Agent files keep their definition text.
- */
-export async function readSandboxContextFiles(
-  resources: DurableProjectResources,
-  readFile: (path: string) => Promise<string>,
-  hostCwd: string,
-  guestCwd: string,
-): Promise<DurableProjectResources> {
-  const guestPaths = resources.guestContextPaths;
-  if (!guestPaths?.size) return resources;
-  const contextFiles: ContextFile[] = [];
-  // Discovered files come before saved Agent files (`agentsFilesOverride`), and a saved file
-  // can share a discovered file's guest path. Only the first entry per path is discovered;
-  // a later one is saved definition text and stays as it is.
-  const pending = new Set(guestPaths);
-  for (const file of resources.contextFiles) {
-    if (!pending.delete(file.path)) {
-      contextFiles.push(file);
-      continue;
-    }
-    const content = await readFile(file.path).catch(() => undefined);
-    if (content !== undefined)
-      contextFiles.push({
-        path: file.path,
-        content: redactHostEnvironment(content, hostCwd, guestCwd),
-      });
-  }
-  return { ...resources, contextFiles };
+async function loadSandboxProjectResources(options: {
+  hostCwd: string;
+  env: GondolinExecutionEnv;
+  resources?: DurableAgentResources;
+  projectContext?: boolean;
+}): Promise<DurableProjectResources> {
+  const { hostCwd, env, resources } = options;
+  const guestCwd = env.workspaceRoot;
+  const discovered = await discoverSandboxSkills(env);
+  // A saved Agent's selection maps lexically into the guest and must name a Skill this VM
+  // presents; anything else (outside the workspace, or not a mounted or `.agents/skills`
+  // Skill) fails the launch rather than presenting a Skill the VM cannot read.
+  const selection = normalizeSelectedAgentSkillPaths(resources?.skillPaths, hostCwd)?.map(
+    (hostPath) => ({ hostPath, guestPath: hostWorkspacePathToGuest(hostCwd, guestCwd, hostPath) }),
+  );
+  const unavailable = (selection ?? []).filter(
+    ({ guestPath }) => guestPath === null || !discovered.some((skill) => selects(guestPath, skill)),
+  );
+  if (unavailable.length > 0)
+    throw new AgentConfigurationError(
+      "agent_skills_unavailable",
+      { unavailableSkills: unavailable.map(({ hostPath }) => hostPath) },
+      `Selected Agent Skill is not available in the sandbox workspace: ${unavailable.map(({ hostPath }) => hostPath).join(", ")}`,
+    );
+  const skills =
+    selection === undefined
+      ? discovered
+      : discovered.filter((skill) =>
+          selection.some(({ guestPath }) => guestPath !== null && selects(guestPath, skill)),
+        );
+  if (options.projectContext === false) return { contextFiles: [], skills };
+  // Saved files are virtual paths relative to the workspace: kept only inside it, at guest
+  // paths, redacted. Their text is the definition's, not a file's.
+  const workspaceRoot = realPath(hostCwd);
+  const savedAgentFiles = (resources?.agentsFiles ?? []).flatMap((file) => {
+    const hostPath = resolve(hostCwd, file.path);
+    const path = isWithin(workspaceRoot, realPath(hostPath))
+      ? hostWorkspacePathToGuest(hostCwd, guestCwd, hostPath)
+      : null;
+    return path ? [{ path, content: redactHostEnvironment(file.content, hostCwd, guestCwd) }] : [];
+  });
+  const discoveredFiles = resources?.noContextFiles ? [] : await readGuestContextFile(env, hostCwd);
+  return { contextFiles: [...discoveredFiles, ...savedAgentFiles], skills };
 }
 
-function skillsOutsideWorkspace(unavailableSkills: string[]): AgentConfigurationError {
-  return new AgentConfigurationError(
-    "agent_skills_unavailable",
-    { unavailableSkills },
-    `Selected Agent Skill is outside the sandbox workspace: ${unavailableSkills.join(", ")}`,
+/** `assertSelectedAgentSkillsLoaded`'s match: the path is the Skill, holds it, or is in it. */
+function selects(selectedPath: string, skill: Skill): boolean {
+  return (
+    isWithinGuest(selectedPath, skill.filePath) ||
+    isWithinGuest(selectedPath, skill.baseDir) ||
+    isWithinGuest(skill.baseDir, selectedPath)
   );
+}
+
+/**
+ * The Skills a sandbox VM presents, by Pi's rules (`collectSkillEntries`, `loadSkillFromFile`):
+ * each `.pi/skills` entry the VM mounted, then the workspace's `.agents/skills`. The first
+ * Skill with a name wins. `.pi/settings.json` Skill filters and ignore files are not applied.
+ */
+async function discoverSandboxSkills(env: GondolinExecutionEnv): Promise<Skill[]> {
+  const files: string[] = [];
+  const walked = new Set<string>();
+  for (const mount of env.vm.skillMounts ?? [])
+    await collectSkillFiles(env, mount.guestPath, "mount", false, walked, files);
+  await collectSkillFiles(
+    env,
+    posix.join(env.workspaceRoot, ".agents", "skills"),
+    "agents",
+    true,
+    walked,
+    files,
+  );
+  const skills: Skill[] = [];
+  for (const file of files) {
+    const skill = await readSandboxSkill(env, file);
+    if (skill && !skills.some((existing) => existing.name === skill.name)) skills.push(skill);
+  }
+  return skills;
+}
+
+/**
+ * A directory with a `SKILL.md` is one Skill; otherwise recurse, skipping dot entries and
+ * `node_modules`. Loose `.md` files count only below the root of `.agents/skills`, as in Pi
+ * (a mounted entry is below `.pi/skills`, whose loose files are not mounted). The guest owns
+ * `.agents/skills`, so a directory already walked (by device and inode, from the provider)
+ * is not walked again: a `a -> .` link cannot make the walk unbounded.
+ */
+async function collectSkillFiles(
+  env: GondolinExecutionEnv,
+  dir: string,
+  mode: "mount" | "agents",
+  atRoot: boolean,
+  walked: Set<string>,
+  files: string[],
+): Promise<void> {
+  const identity = await env.vm.fs.stat?.(dir).catch(() => undefined);
+  if (!identity?.isDirectory()) return;
+  const key = identity.ino === undefined ? dir : `${identity.dev}:${identity.ino}`;
+  if (walked.has(key)) return;
+  walked.add(key);
+  const entries = await listGuestDir(env, dir);
+  const skillFile = entries.find((entry) => entry.name === "SKILL.md" && entry.kind === "file");
+  if (skillFile) {
+    files.push(skillFile.path);
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    if (entry.kind === "directory")
+      await collectSkillFiles(env, entry.path, mode, false, walked, files);
+    else if (entry.kind === "file" && entry.name.endsWith(".md") && mode === "agents" && !atRoot)
+      files.push(entry.path);
+  }
+}
+
+/**
+ * A guest directory's entries with their followed kinds. An entry the VM refuses (a symlink
+ * out of its mount, a link to a shadowed file) is left out, whatever error the VM gives,
+ * so one planted link cannot hide its siblings; an unreadable directory lists nothing.
+ */
+async function listGuestDir(env: GondolinExecutionEnv, dir: string): Promise<FileInfo[]> {
+  const names = await env.vm.fs.listDir?.(dir).catch(() => undefined);
+  const entries: FileInfo[] = [];
+  for (const name of names ?? []) {
+    const info = await env.fileInfo(posix.join(dir, name), BACKGROUND_CONTEXT);
+    if (info.ok) entries.push(info.value);
+  }
+  return entries;
+}
+
+/** Pi's `loadSkillFromFile` over the VM's text: no description, no Skill. */
+async function readSandboxSkill(
+  env: GondolinExecutionEnv,
+  filePath: string,
+): Promise<Skill | undefined> {
+  const text = await readGuestResource(env, filePath);
+  if (text === undefined) return undefined;
+  let frontmatter: Record<string, unknown>;
+  try {
+    ({ frontmatter } = parseFrontmatter(text));
+  } catch (error) {
+    log.warn("durable_resources.skill_unparsable", { path: filePath, error: String(error) });
+    return undefined;
+  }
+  const { description } = frontmatter;
+  if (typeof description !== "string" || description.trim() === "") return undefined;
+  const baseDir = posix.dirname(filePath);
+  return {
+    name: (typeof frontmatter.name === "string" && frontmatter.name) || posix.basename(baseDir),
+    description,
+    filePath,
+    baseDir,
+    sourceInfo: createSyntheticSourceInfo(filePath, {
+      source: "local",
+      scope: "project",
+      baseDir,
+    }),
+    disableModelInvocation: frontmatter["disable-model-invocation"] === true,
+  };
+}
+
+/** The guest root's context file, as the VM reads it, redacted like the host loader's text. */
+async function readGuestContextFile(
+  env: GondolinExecutionEnv,
+  hostCwd: string,
+): Promise<ContextFile[]> {
+  for (const name of CONTEXT_FILE_NAMES) {
+    const path = posix.join(env.workspaceRoot, name);
+    const text = await readGuestResource(env, path);
+    if (text !== undefined)
+      return [{ path, content: redactHostEnvironment(text, hostCwd, env.workspaceRoot) }];
+  }
+  return [];
+}
+
+/**
+ * A resource file's text through the VM, or undefined when the VM refuses it (missing,
+ * shadowed, a symlink out of its mount, not a regular file) or it is over the byte cap.
+ */
+async function readGuestResource(
+  env: GondolinExecutionEnv,
+  path: string,
+): Promise<string | undefined> {
+  const read = await env.readTextFileWithin(path, SANDBOX_RESOURCE_MAX_BYTES, BACKGROUND_CONTEXT);
+  if (!read.ok) return undefined;
+  if ("tooLarge" in read.value) {
+    log.warn("durable_resources.file_too_large", {
+      path,
+      maxBytes: SANDBOX_RESOURCE_MAX_BYTES,
+    });
+    return undefined;
+  }
+  return read.value.text;
 }
 
 /** The path with every symlink in its longest existing prefix followed. */
@@ -202,6 +315,11 @@ function realPath(path: string): string {
 function isWithin(root: string, path: string): boolean {
   const rel = relative(root, path);
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+function isWithinGuest(root: string, path: string): boolean {
+  const rel = posix.relative(root, path);
+  return rel === "" || (rel !== ".." && !rel.startsWith("../") && !posix.isAbsolute(rel));
 }
 
 /** Pi's `project_context` section body. */

@@ -2,11 +2,9 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  expandSkillCommand,
-  loadDurableProjectResources,
-  readSandboxContextFiles,
-} from "../src/durable-project-resources.js";
+import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
+import { loadDurableProjectResources } from "../src/durable-project-resources.js";
+import type { GondolinVm } from "../src/gondolin-ops.js";
 
 const GUEST = "/workspace/project";
 const dirs: string[] = [];
@@ -41,77 +39,26 @@ function layout() {
   return { root, hostCwd, agentDir, outside };
 }
 
-describe("durable sandbox project resources", () => {
-  it("refuses saved Agent Skills outside the sandbox workspace before any mount", async () => {
-    const { hostCwd, agentDir, outside } = layout();
-    const outsideSkill = writeSkill(join(outside, "secret-skill"), "secret-skill");
-    writeSkill(join(hostCwd, "skills", "local-skill"), "local-skill");
-    // Inside the workspace by name, outside by its real path.
-    symlinkSync(outsideSkill, join(hostCwd, "skills", "linked-skill"));
-    const load = (skillPaths: string[]) =>
-      loadDurableProjectResources({
-        hostCwd,
-        agentDir,
-        sandboxGuestCwd: GUEST,
-        projectTrusted: true,
-        resources: { skillPaths },
-      });
+/** A VM that serves nothing: every guest read is refused. */
+function refusingEnv(): GondolinExecutionEnv {
+  const refuse = async (): Promise<never> => {
+    throw new Error("ENOENT");
+  };
+  const vm: GondolinVm = {
+    fs: { access: refuse, mkdir: refuse, readFile: refuse, writeFile: refuse },
+    exec: () => {
+      throw new Error("no guest exec in this test");
+    },
+  };
+  return new GondolinExecutionEnv(vm, "w1", GUEST);
+}
 
-    for (const [skillPaths, named] of [
-      [[outsideSkill], outsideSkill],
-      [["../outside/secret-skill"], join(hostCwd, "../outside/secret-skill")],
-      [["skills/linked-skill"], join(hostCwd, "skills/linked-skill")],
-      // A selected directory inside the workspace whose Skill links outside.
-      [["skills"], "secret-skill"],
-    ] as const) {
-      await expect(load([...skillPaths]), skillPaths.join()).rejects.toMatchObject({
-        code: "agent_skills_unavailable",
-        details: { unavailableSkills: [named] },
-      });
-    }
-
-    const allowed = await load(["skills/local-skill"]);
-    expect(allowed.skills.map((skill) => skill.name)).toEqual(["local-skill"]);
-    expect(allowed.readonlyMounts).toEqual([
-      {
-        hostPath: expect.stringContaining(join("workspace", "skills", "local-skill")),
-        guestPath: `${GUEST}/.pi/skills/local-skill`,
-      },
-    ]);
-  });
-
-  it("drops discovered Skills outside the sandbox workspace and keeps the workspace's", async () => {
+describe("durable project resources", () => {
+  it("host sessions discover the agent directory's and the project's Skills", async () => {
     const { hostCwd, agentDir } = layout();
     writeSkill(join(agentDir, "skills", "global-skill"), "global-skill");
     writeSkill(join(hostCwd, ".pi", "skills", "project-skill"), "project-skill");
 
-    const resources = await loadDurableProjectResources({
-      hostCwd,
-      agentDir,
-      sandboxGuestCwd: GUEST,
-      projectTrusted: true,
-    });
-
-    expect(resources.skills.map((skill) => skill.name)).toEqual(["project-skill"]);
-    expect(resources.readonlyMounts.map((mount) => mount.guestPath)).toEqual([
-      `${GUEST}/.pi/skills/project-skill`,
-    ]);
-    // `/skill:` reads through the session's view: a sandbox asks its VM for the guest path,
-    // never the host file. The dropped Skill is not expanded at all.
-    const reads: string[] = [];
-    const vmRead = async (path: string) => {
-      reads.push(path);
-      return "project-skill body.";
-    };
-    expect(await expandSkillCommand("/skill:global-skill go", resources, vmRead)).toBe(
-      "/skill:global-skill go",
-    );
-    expect(await expandSkillCommand("/skill:project-skill go", resources, vmRead)).toContain(
-      "project-skill body.",
-    );
-    expect(reads).toEqual([`${GUEST}/.pi/skills/project-skill/SKILL.md`]);
-
-    // A host session still discovers the agent directory's Skills.
     const host = await loadDurableProjectResources({ hostCwd, agentDir, projectTrusted: true });
     expect(host.skills.map((skill) => skill.name).sort()).toEqual([
       "global-skill",
@@ -119,15 +66,17 @@ describe("durable sandbox project resources", () => {
     ]);
   });
 
-  it("presents saved AGENTS files only inside the workspace, at guest paths, redacted", async () => {
+  it("a sandbox presents saved AGENTS files only inside the workspace, at guest paths, redacted", async () => {
     const { hostCwd, agentDir, outside } = layout();
     symlinkSync(outside, join(hostCwd, "linked"));
+    // A host file the VM refuses is never read from the host instead.
+    writeFileSync(join(hostCwd, "AGENTS.md"), "HOST_AGENTS_TEXT");
     const content = `Build in ${hostCwd}/src; notes in ${homedir()}/notes.`;
 
     const resources = await loadDurableProjectResources({
       hostCwd,
       agentDir,
-      sandboxGuestCwd: GUEST,
+      sandbox: refusingEnv(),
       projectTrusted: true,
       resources: {
         agentsFiles: [
@@ -142,76 +91,6 @@ describe("durable sandbox project resources", () => {
         path: `${GUEST}/docs/AGENTS.md`,
         content: `Build in ${GUEST}/src; notes in /workspace/.host-home/notes.`,
       },
-    ]);
-  });
-
-  it("takes a sandbox's discovered AGENTS text only from the VM's read", async () => {
-    const { hostCwd, agentDir } = layout();
-    // A guest-planted symlink: the host follows it to a file the VM shadow hides.
-    writeFileSync(join(hostCwd, ".env"), "HOST_ENV_SECRET=1");
-    symlinkSync(join(hostCwd, ".env"), join(hostCwd, "AGENTS.md"));
-
-    const loaded = await loadDurableProjectResources({
-      hostCwd,
-      agentDir,
-      sandboxGuestCwd: GUEST,
-      projectTrusted: true,
-    });
-    // The host loader's bytes are not kept.
-    expect(JSON.stringify(loaded.contextFiles)).not.toContain("HOST_ENV_SECRET");
-    expect([...(loaded.guestContextPaths ?? [])]).toEqual([`${GUEST}/AGENTS.md`]);
-
-    // The VM refuses the shadowed target: the file is left out.
-    const refused = await readSandboxContextFiles(
-      loaded,
-      async () => {
-        throw new Error("ENOENT");
-      },
-      hostCwd,
-      GUEST,
-    );
-    expect(refused.contextFiles).toEqual([]);
-
-    // A readable file is the VM's text, redacted like the host loader's.
-    const reads: string[] = [];
-    const presented = await readSandboxContextFiles(
-      loaded,
-      async (path) => {
-        reads.push(path);
-        return `Build in ${hostCwd}/src.`;
-      },
-      hostCwd,
-      GUEST,
-    );
-    expect(reads).toEqual([`${GUEST}/AGENTS.md`]);
-    expect(presented.contextFiles).toEqual([
-      { path: `${GUEST}/AGENTS.md`, content: `Build in ${GUEST}/src.` },
-    ]);
-  });
-
-  it("keeps a saved Agent's AGENTS text when a discovered file shares its guest path", async () => {
-    const { hostCwd, agentDir } = layout();
-    writeFileSync(join(hostCwd, ".env"), "HOST_ENV_SECRET=1");
-    symlinkSync(join(hostCwd, ".env"), join(hostCwd, "AGENTS.md"));
-
-    const loaded = await loadDurableProjectResources({
-      hostCwd,
-      agentDir,
-      sandboxGuestCwd: GUEST,
-      projectTrusted: true,
-      resources: { agentsFiles: [{ path: "AGENTS.md", content: "Saved instructions." }] },
-    });
-    // The VM refuses the discovered symlink; the saved definition text stays.
-    const presented = await readSandboxContextFiles(
-      loaded,
-      async () => {
-        throw new Error("ENOENT");
-      },
-      hostCwd,
-      GUEST,
-    );
-    expect(presented.contextFiles).toEqual([
-      { path: `${GUEST}/AGENTS.md`, content: "Saved instructions." },
     ]);
   });
 });

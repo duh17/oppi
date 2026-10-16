@@ -6,12 +6,12 @@
  * with no busy session, or on workspace teardown / server shutdown.
  */
 
-import { chmodSync, lstatSync, mkdirSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import type { CreateHttpHooksOptions, CreateHttpHooksResult } from "@earendil-works/gondolin";
 import type { Workspace } from "./types.js";
-import { GUEST_WORKSPACE, type GondolinVm } from "./gondolin-ops.js";
+import { GUEST_WORKSPACE, type GondolinVm, type ReadonlyMount } from "./gondolin-ops.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
 
@@ -41,13 +41,6 @@ export interface GondolinManagerOptions {
 export type VmFactory = (
   options: VmFactoryOptions,
 ) => Promise<GondolinVm & { close(): Promise<void> }>;
-
-export interface ReadonlyMount {
-  hostPath: string;
-  guestPath: string;
-}
-
-export type ReadonlyMountSpec = string | ReadonlyMount;
 
 const DEFAULT_SHADOW_PATHS = [
   "/.env",
@@ -133,24 +126,39 @@ function sandboxPiOverlayHostDir(): string {
  */
 export function withSandboxPiOverlayMounts(
   guestWorkspacePath: string,
-  readonlyMounts: ReadonlyMountSpec[] | undefined,
-): ReadonlyMountSpec[] {
-  if (!readonlyMounts?.length) return readonlyMounts ?? [];
-
+  skillMounts: readonly ReadonlyMount[],
+): readonly ReadonlyMount[] {
+  if (skillMounts.length === 0) return skillMounts;
   const piGuestPath = sandboxPiOverlayGuestPath(guestWorkspacePath);
-  const needsOverlay = readonlyMounts.some((mount) => {
-    const guestPath = typeof mount === "string" ? mount : mount.guestPath;
-    return guestPath === piGuestPath || guestPath.startsWith(`${piGuestPath}/`);
-  });
-  if (!needsOverlay) return readonlyMounts;
+  return [{ hostPath: sandboxPiOverlayHostDir(), guestPath: piGuestPath }, ...skillMounts];
+}
 
-  const hasOverlay = readonlyMounts.some((mount) => {
-    const guestPath = typeof mount === "string" ? mount : mount.guestPath;
-    return guestPath === piGuestPath;
+/**
+ * One read-only mount per entry of the workspace's `.pi/skills` that is a directory or a
+ * symlink to one, at `<guest workspace>/.pi/skills/<entry>`. The guest cannot write `.pi` (the
+ * workspace shadow hides it), so this listing is the owner's. Gondolin realpaths a mount root,
+ * so a symlinked Skill directory (`.pi/skills/x -> ~/elsewhere/x`) mounts its target. Dot
+ * entries and `node_modules` are skipped, as Pi's Skill walk skips them. Read once at VM boot.
+ */
+function sandboxSkillMounts(hostCwd: string, guestWorkspacePath: string): ReadonlyMount[] {
+  const skillsDir = join(hostCwd, ".pi", "skills");
+  let names: string[];
+  try {
+    names = readdirSync(skillsDir).sort();
+  } catch {
+    return [];
+  }
+  return names.flatMap((name) => {
+    if (name.startsWith(".") || name === "node_modules") return [];
+    const hostPath = join(skillsDir, name);
+    try {
+      if (!statSync(hostPath).isDirectory()) return [];
+    } catch {
+      // A broken symlink.
+      return [];
+    }
+    return [{ hostPath, guestPath: posix.join(guestWorkspacePath, ".pi", "skills", name) }];
   });
-  if (hasOverlay) return readonlyMounts;
-
-  return [{ hostPath: sandboxPiOverlayHostDir(), guestPath: piGuestPath }, ...readonlyMounts];
 }
 
 export function shouldShadowSandboxWorkspacePath(ctx: { op: string; path: string }): boolean {
@@ -187,8 +195,8 @@ export interface VmFactoryOptions {
   allowedHosts?: string[];
   /** Secret definitions for host-mediated HTTP injection. Keys are env var names. */
   secrets?: Record<string, VmSecretDefinition>;
-  /** Additional host paths to mount read-only. Strings mount at the same guest path. */
-  readonlyMounts?: ReadonlyMountSpec[];
+  /** Host paths to mount read-only at their guest paths: the workspace `.pi/skills` entries. */
+  readonlyMounts?: readonly ReadonlyMount[];
   /** Non-secret guest env such as PATH or LANG. Do not put provider credentials here. */
   extraEnv?: Record<string, string>;
   /** Shown by `gondolin list`. Prefer the workspace id. */
@@ -285,7 +293,7 @@ export async function defaultVmFactory(
 
   const { httpHooks, env } = buildVmHttpHooks(createHttpHooks, options);
 
-  // Build VFS mounts: workspace + any read-only paths (skills, agent config)
+  // Build VFS mounts: workspace + the read-only Skill directories
   const workspaceGuestPath = options.guestWorkspacePath ?? GUEST_WORKSPACE;
   const workspaceProvider = new ShadowProvider(new RealFSProvider(options.hostCwd), {
     shouldShadow: shouldShadowSandboxWorkspacePath,
@@ -300,12 +308,13 @@ export async function defaultVmFactory(
   > = {
     [workspaceGuestPath]: workspaceProvider,
   };
-  const readonlyMounts = withSandboxPiOverlayMounts(workspaceGuestPath, options.readonlyMounts);
-  for (const mount of readonlyMounts) {
-    const hostPath = typeof mount === "string" ? mount : mount.hostPath;
-    const guestPath = typeof mount === "string" ? mount : mount.guestPath;
-    // Skill and agent-config directories hide the same secret-bearing names the workspace
-    // does: a Skill folder can hold `.env` or a key, or be the workspace root itself.
+  const readonlyMounts = withSandboxPiOverlayMounts(
+    workspaceGuestPath,
+    options.readonlyMounts ?? [],
+  );
+  for (const { hostPath, guestPath } of readonlyMounts) {
+    // Skill directories hide the same secret-bearing names the workspace does: a Skill
+    // folder can hold `.env` or a key, or be the workspace root itself.
     mounts[guestPath] = new ShadowProvider(new ReadonlyProvider(new RealFSProvider(hostPath)), {
       shouldShadow: shouldShadowSandboxWorkspacePath,
       writeMode: "deny",
@@ -373,13 +382,14 @@ export class GondolinManager {
    * Concurrent calls for the same workspace coalesce onto a single
    * startup promise to avoid spinning up duplicate VMs. A later call with a
    * different workspace cwd/host/env fingerprint closes the old VM and boots a new one.
-   * Per-session readonly skill mounts are not part of that identity.
+   * The VM's `.pi/skills` mounts (`sandboxSkillMounts`) are read at boot and recorded on the
+   * VM as `skillMounts`; they are not part of that identity, so a Skill added later appears
+   * at the next boot.
    */
   async ensureWorkspaceVm(
     workspace: Workspace,
     hostCwd: string,
     secrets?: Record<string, VmSecretDefinition>,
-    readonlyMounts?: ReadonlyMountSpec[],
     extraEnv?: Record<string, string>,
     guestWorkspacePath?: string,
   ): Promise<GondolinVm> {
@@ -409,14 +419,7 @@ export class GondolinManager {
     const inflightAfterStop = this.starting.get(id);
     if (inflightAfterStop) return inflightAfterStop;
 
-    const promise = this.startVm(
-      workspace,
-      hostCwd,
-      secrets,
-      readonlyMounts,
-      extraEnv,
-      guestWorkspacePath,
-    );
+    const promise = this.startVm(workspace, hostCwd, secrets, extraEnv, guestWorkspacePath);
     this.starting.set(id, promise);
 
     try {
@@ -517,16 +520,16 @@ export class GondolinManager {
     workspace: Workspace,
     hostCwd: string,
     secrets?: Record<string, VmSecretDefinition>,
-    readonlyMounts?: ReadonlyMountSpec[],
     extraEnv?: Record<string, string>,
     guestWorkspacePath?: string,
   ): Promise<GondolinVm & { close(): Promise<void> }> {
     const allowedHosts = workspace.sandboxConfig?.allowedHosts;
+    const readonlyMounts = sandboxSkillMounts(hostCwd, guestWorkspacePath ?? GUEST_WORKSPACE);
     log.info("gondolin.vm_starting", {
       workspaceId: workspace.id,
       cwd: hostCwd,
       allowedHosts,
-      roMounts: readonlyMounts?.length ?? 0,
+      roMounts: readonlyMounts.length,
     });
 
     const vm = await this.factory({
@@ -540,7 +543,7 @@ export class GondolinManager {
     });
 
     log.info("gondolin.vm_ready", { workspaceId: workspace.id });
-    return vm;
+    return Object.assign(vm, { skillMounts: readonlyMounts });
   }
 }
 

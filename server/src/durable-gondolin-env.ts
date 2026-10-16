@@ -24,6 +24,7 @@ import {
   type WatchTarget,
 } from "@earendil-works/pi-durable/env";
 import {
+  readVmTextFileWithin,
   resolveSandboxToolPath,
   type GondolinVm,
   type GondolinExecResult,
@@ -282,6 +283,16 @@ export class GondolinExecutionEnv implements ExecutionEnv {
   async readTextFile(path: string, context: Context): Promise<Result<string, FileError>> {
     const result = await this.readBinaryFile(path, context);
     return result.ok ? ok(Buffer.from(result.value).toString("utf8")) : result;
+  }
+  /** `readTextFile` for prompt resources: a file past `maxBytes` is `tooLarge`, not read whole. */
+  readTextFileWithin(
+    path: string,
+    maxBytes: number,
+    context: Context,
+  ): Promise<Result<{ text: string } | { tooLarge: true }, FileError>> {
+    return this.file(path, context, (resolved) =>
+      readVmTextFileWithin(this.vm, resolved, maxBytes, context.abortSignal),
+    );
   }
   async openTextLineReader(
     path: string,

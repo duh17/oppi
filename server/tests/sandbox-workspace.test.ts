@@ -412,7 +412,6 @@ describe("GondolinManager secret forwarding", () => {
       "/tmp/ws",
       undefined,
       undefined,
-      undefined,
       "/workspace/guest-path",
     );
 

@@ -47,14 +47,16 @@ New sandbox sessions behave as follows:
 - Model API calls run from the host process; the VM does not need provider API keys for normal agent operation.
 - Oppi/Pi provider API keys and per-command host environment variables are not forwarded into the VM by default. Pi may forward only non-secret session metadata (`PI_PROVIDER`, `PI_MODEL`, `PI_REASONING_LEVEL`, and `PI_SESSION_ID`) per command. Workspace `sandboxConfig.env` is for non-secret guest config such as `PATH` and `LANG`, not provider credentials.
 - Network egress follows Gondolin's default: omitted `allowedHosts` means allow all. Set an explicit allowlist, or set `allowedHosts: []` to deny all. Guest WebSocket upgrades are off; Oppi session WSS is host-side and unchanged.
-- Selected skills are mounted read-only under `/workspace/<slug>/.pi/skills/<name>/`. A skill mount hides the same secret-bearing files the workspace mount hides (`.env`, `.ssh`, keys, and the rest).
-- In a durable sandbox session, `/skill:name` reads the skill through the VM, at the path the model sees. A skill file that no longer resolves inside its mount (for example, one replaced with a symlink to a host file) fails the prompt.
-- Durable sandbox sessions present only skills whose real path is inside the workspace. A saved Agent that selects a skill outside it (an absolute path, `../`, or a symlink out) fails to start with `agent_skills_unavailable`; discovered skills outside it, such as global ones, are left out. Saved Agent AGENTS files are rewritten and redacted like workspace-local ones.
-- Workspace-local `AGENTS.md` and `CLAUDE.md` are rewritten to sandbox paths before they are shown to the model. A durable sandbox session reads their text through the VM, so a context file that is a symlink to a hidden file (such as `.env`) is left out.
+- When the workspace VM boots, each entry of the workspace's `.pi/skills` that is a directory, or a symlink to one, is mounted read-only at `/workspace/<slug>/.pi/skills/<name>/`. A symlinked entry (such as `.pi/skills/review -> ~/dotfiles/skills/review`) mounts its target. A skill mount hides the same secret-bearing files the workspace mount hides (`.env`, `.ssh`, keys, and the rest). Loose `.md` files directly in `.pi/skills` are not mounted.
+- Sandbox sessions present only skills the VM can serve: the mounted `.pi/skills` entries, and skills in the workspace itself (`.agents/skills`). Global skills (`~/.pi/agent/skills`, `~/.agents/skills`) are left out. A saved Agent that selects any other skill (an absolute path, `../`, a symlink out of the workspace, a global skill) fails to start with `agent_skills_unavailable`.
+- A durable sandbox session discovers its skills and reads every skill and context-file byte through the VM, never the host filesystem. An `.agents/skills` entry that links out of the workspace or to a hidden file (such as `.env`) yields no skill and no text. `/skill:name` reads the skill through the VM, at the path the model sees; a skill file that no longer resolves inside its mount (for example, one replaced with a symlink to a host file) fails the prompt.
+- A skill or context file over 1 MiB is skipped (logged), so a guest cannot stall a session start with a huge or sparse `AGENTS.md`.
+- In a sandbox, project `.pi/settings.json` skill filters and `.gitignore`/`.ignore` files in skill directories are not applied.
+- Workspace-local `AGENTS.md` and `CLAUDE.md` are rewritten to sandbox paths before they are shown to the model. Durable sandbox sessions read their text through the VM, so a context file that is a symlink to a hidden file (such as `.env`) is left out. Saved Agent AGENTS files are rewritten and redacted like workspace-local ones.
 - Global host agent instructions are not exposed to sandbox sessions.
 - Sandbox Oppi does not expose hostMount or host session file paths.
 
-Running sessions keep their current cwd and VM until they are stopped. Start a new session after changing sandbox settings that affect cwd, hosts, or environment. Skill mounts still come from whichever session booted the VM; they do not recycle a live VM. A new session is enough; a server restart is not required. Idle VMs stop 15 minutes after every sandbox session in that workspace has stopped. A ready session keeps the VM so the next prompt does not hit a closed handle. A new session after teardown boots on demand.
+Running sessions keep their current cwd and VM until they are stopped. Start a new session after changing sandbox settings that affect cwd, hosts, or environment. Skill mounts are read once when the VM boots and are the same for every session on it: a skill added to `.pi/skills` appears at the next VM boot (the VM stops 15 minutes after the workspace's last sandbox session stops, or when the server restarts). A new session is enough; a server restart is not required. Idle VMs stop 15 minutes after every sandbox session in that workspace has stopped. A ready session keeps the VM so the next prompt does not hit a closed handle. A new session after teardown boots on demand.
 
 ## Default safety model
 
@@ -162,7 +164,7 @@ Sandbox workspaces do not expose the global host agent files to the model. Oppi 
 
 - workspace-local `AGENTS.md` / `CLAUDE.md`, rewritten to sandbox paths
 - the Oppi workspace prompt from Workspace Settings → Instructions
-- selected skills, mounted read-only under `/workspace/<slug>/.pi/skills/<name>/`
+- the workspace's `.pi/skills` entries, mounted read-only under `/workspace/<slug>/.pi/skills/<name>/`, and its `.agents/skills`
 
 Put public project instructions in `AGENTS.md`. Put workspace-specific operating instructions in the Oppi workspace prompt. Do not rely on global host agent files for sandbox behavior.
 

@@ -10,6 +10,7 @@
  */
 
 import { isAbsolute, join, relative, resolve, posix } from "node:path";
+import type { Readable } from "node:stream";
 import { Type } from "typebox";
 import type {
   BashOperations,
@@ -45,6 +46,16 @@ export interface GondolinVm {
   ): GondolinProcess;
   /** Shell path detected during VM startup. Defaults to /bin/bash when absent. */
   shellPath?: string;
+  /**
+   * The workspace `.pi/skills` entries `GondolinManager` mounted read-only when it booted this
+   * VM. Every session on the VM presents Skills from this list, whoever booted it.
+   */
+  readonly skillMounts?: readonly ReadonlyMount[];
+}
+
+export interface ReadonlyMount {
+  hostPath: string;
+  guestPath: string;
 }
 
 export interface GondolinFs {
@@ -67,8 +78,12 @@ export interface GondolinFs {
     isSymbolicLink?: () => boolean;
     size?: number;
     mtimeMs?: number;
+    dev?: number;
+    ino?: number;
   }>;
   readFile(path: string, options?: { encoding?: null; signal?: AbortSignal }): Promise<Buffer>;
+  /** The same provider read as `readFile`, as a stream a caller can stop early. */
+  readFileStream?(path: string, options?: { signal?: AbortSignal }): Promise<Readable>;
   writeFile(
     path: string,
     content: string | Buffer,
@@ -96,6 +111,43 @@ export interface GondolinExecResult {
 
 /** Guest mount point for the host workspace directory. */
 export const GUEST_WORKSPACE = "/workspace";
+
+/**
+ * Largest Skill or context file a sandbox session reads to build its prompt. The guest can grow
+ * a workspace file (`truncate -s 50G AGENTS.md`); a larger file is skipped, never read whole.
+ */
+export const SANDBOX_RESOURCE_MAX_BYTES = 1024 * 1024;
+
+/**
+ * A regular file's text through the VM's own provider stack (shadow and mount jail), or
+ * `tooLarge` past `maxBytes`. Reading stops at the bound, so a file the guest grows after the
+ * size check still costs at most `maxBytes` plus one chunk. Throws when the VM refuses the path.
+ */
+export async function readVmTextFileWithin(
+  vm: GondolinVm,
+  path: string,
+  maxBytes: number,
+  signal?: AbortSignal,
+): Promise<{ text: string } | { tooLarge: true }> {
+  if (!vm.fs.stat || !vm.fs.readFileStream)
+    throw new Error("VM filesystem cannot read a file within a size bound");
+  const stat = await vm.fs.stat(path, { signal });
+  if (!stat.isFile?.()) throw new Error(`Not a regular file: ${path}`);
+  if ((stat.size ?? 0) > maxBytes) return { tooLarge: true };
+  const stream = await vm.fs.readFileStream(path, { signal });
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    for await (const chunk of stream as AsyncIterable<Buffer>) {
+      total += chunk.length;
+      if (total > maxBytes) return { tooLarge: true };
+      chunks.push(chunk);
+    }
+  } finally {
+    stream.destroy();
+  }
+  return { text: Buffer.concat(chunks).toString("utf8") };
+}
 
 /**
  * Map a host-absolute path into the guest /workspace tree.

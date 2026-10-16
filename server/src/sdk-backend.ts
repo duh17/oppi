@@ -90,8 +90,8 @@ import { resolveSessionWorkRoot } from "./session-work-root.js";
 import { resolveSandboxGuestCwd } from "./workspace-folder.js";
 import { OPPI_CLI_SYSTEM_PROMPT_HINT } from "./oppi-cli-prompt.js";
 import { buildMobileOutputGuide, buildOppiSystemPromptAppend } from "./oppi-docs.js";
-import type { ReadonlyMount, ReadonlyMountSpec, VmSecretDefinition } from "./gondolin-manager.js";
-import type { GondolinVm } from "./gondolin-ops.js";
+import type { VmSecretDefinition } from "./gondolin-manager.js";
+import type { GondolinVm, ReadonlyMount } from "./gondolin-ops.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import { callerSessionIdentityShellPrefix } from "./session-caller-identity.js";
 import {
@@ -495,30 +495,36 @@ export function hostWorkspacePathToGuest(
   return rel ? posix.join(guestCwd, rel.split(/[\\/]/).join("/")) : guestCwd;
 }
 
-function safeGuestSegment(value: string): string {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9-_]/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "") || "resource"
-  );
-}
-
-/** One mapping for both SDK presentation and durable shared VM mounts. */
-export function sandboxGuestSkills(
+/**
+ * A classic sandbox session's Skills, at the guest paths its VM serves: a Skill in a
+ * `.pi/skills` entry the VM mounted (`GondolinVm.skillMounts`), or one whose real path is
+ * inside the workspace and outside its `.pi`, which the workspace mount hides. Every other
+ * Skill Pi discovered, such as a global one, is left out: the VM cannot read it.
+ */
+function sandboxGuestSkills(
   skills: Skill[],
+  hostCwd: string,
   guestCwd: string,
-  mounts: Map<string, ReadonlyMount>,
-): Skill[] {
-  return skills.map((skill) => {
-    const guestBaseDir = posix.join(guestCwd, ".pi", "skills", safeGuestSegment(skill.name));
-    mounts.set(guestBaseDir, { hostPath: skill.baseDir, guestPath: guestBaseDir });
-    return {
-      ...skill,
-      baseDir: guestBaseDir,
-      filePath: posix.join(guestBaseDir, basename(skill.filePath)),
-    };
+  skillMounts: readonly ReadonlyMount[],
+): Array<{ host: Skill; guest: Skill }> {
+  const workspaceRoot = canonicalPath(hostCwd);
+  const projectPi = join(resolvePath(hostCwd), ".pi");
+  const inWorkspace = (path: string): boolean =>
+    isPathWithin(workspaceRoot, canonicalPath(path)) && !isPathWithin(projectPi, path);
+  return skills.flatMap((skill) => {
+    const mount = skillMounts.find(
+      ({ hostPath }) =>
+        isPathWithin(hostPath, skill.baseDir) && isPathWithin(hostPath, skill.filePath),
+    );
+    const toGuest = (path: string): string | null =>
+      mount
+        ? posix.join(mount.guestPath, relative(mount.hostPath, path).split(/[\\/]/).join("/"))
+        : inWorkspace(path)
+          ? hostWorkspacePathToGuest(hostCwd, guestCwd, path)
+          : null;
+    const baseDir = toGuest(skill.baseDir);
+    const filePath = toGuest(skill.filePath);
+    return baseDir && filePath ? [{ host: skill, guest: { ...skill, baseDir, filePath } }] : [];
   });
 }
 
@@ -811,7 +817,6 @@ export class SdkBackend implements AgentBackend {
   static async ensureSandboxWorkspaceVm(
     workspace: Workspace,
     hostCwd: string,
-    readonlyMounts: ReadonlyMountSpec[],
   ): Promise<GondolinVm> {
     const { GondolinManager, isQemuAvailable } = await import("./gondolin-manager.js");
     if (!(await isQemuAvailable())) throw new Error("Sandbox mode requires QEMU on the server");
@@ -820,7 +825,6 @@ export class SdkBackend implements AgentBackend {
       workspace,
       hostCwd,
       {},
-      readonlyMounts,
       workspace.sandboxConfig?.env,
       resolveSandboxGuestCwd(workspace),
     );
@@ -1001,7 +1005,6 @@ export class SdkBackend implements AgentBackend {
       const hostCwd = sandboxMode ? initialHostCwd : cwd;
       const guestCwd = sandboxMode && workspace ? resolveSandboxGuestCwd(workspace) : cwd;
       const sessionCwd = sandboxMode ? guestCwd : cwd;
-      const sandboxReadonlyMounts = new Map<string, ReadonlyMount>();
       const savedAgentFiles = normalizeAgentContextFiles(
         agentDefinition,
         sandboxMode ? sessionCwd : undefined,
@@ -1145,6 +1148,30 @@ export class SdkBackend implements AgentBackend {
         selectedResourceReloadError = undefined;
         return error;
       };
+      // The workspace VM comes before the loader: the `.pi/skills` entries it mounted decide
+      // which Skills this session presents, whichever session booted it.
+      if (sandboxMode && workspace) {
+        const { isQemuAvailable, GondolinManager } = await import("./gondolin-manager.js");
+        if (!(await isQemuAvailable())) {
+          throw new Error(
+            "Sandbox mode requires QEMU but it is not installed on the server. " +
+              "Install with: brew install qemu (macOS) or apt install qemu-system (Linux)",
+          );
+        }
+        // Lazy singleton — shared across all sessions for VM reuse.
+        SdkBackend._gondolinManager ??= new GondolinManager();
+        // Do not inject Oppi/pi provider credentials into the guest by default.
+        // The host process owns model calls; sandbox commands must opt into any
+        // future secret bridge explicitly instead of inheriting LLM API keys.
+        const secrets: Record<string, VmSecretDefinition> = {};
+        sandboxVm = await SdkBackend._gondolinManager.ensureWorkspaceVm(
+          workspace,
+          hostCwd,
+          secrets,
+          workspace.sandboxConfig?.env,
+          guestCwd,
+        );
+      }
       const loader = new DefaultResourceLoader({
         cwd: hostCwd,
         agentDir: runtimeAgentDir,
@@ -1188,17 +1215,26 @@ export class SdkBackend implements AgentBackend {
                 ],
               }),
               skillsOverride: (base: SkillLoadResult): SkillLoadResult => {
-                // The sandbox loader rewrites resource paths to guest paths
-                // below. Validate the saved Agent selection against the host
-                // paths before that presentation-only rewrite on every load.
+                const visible = sandboxGuestSkills(
+                  base.skills,
+                  hostCwd,
+                  guestCwd,
+                  sandboxVm?.skillMounts ?? [],
+                );
+                // Validate the saved Agent selection against the host paths of the Skills
+                // the VM can serve, before the guest rewrite, on every load: a selected
+                // Skill the VM cannot read fails instead of silently disappearing.
                 try {
-                  assertSelectedAgentSkillsLoaded(normalizedSelectedAgentSkillPaths, base);
+                  assertSelectedAgentSkillsLoaded(normalizedSelectedAgentSkillPaths, {
+                    skills: visible.map(({ host }) => host),
+                    diagnostics: base.diagnostics,
+                  });
                 } catch (error) {
                   if (isInitialResourceLoad) throw error;
                   recordSelectedResourceReloadError(error);
                 }
                 return {
-                  skills: sandboxGuestSkills(base.skills, guestCwd, sandboxReadonlyMounts),
+                  skills: visible.map(({ guest }) => guest),
                   diagnostics: base.diagnostics,
                 };
               },
@@ -1296,17 +1332,9 @@ export class SdkBackend implements AgentBackend {
       // Sandbox mode: create tools backed by Gondolin micro-VM
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let sandboxTools: any[] | undefined;
-      if (workspace?.runtime === "sandbox") {
-        // Pre-flight: check QEMU availability before attempting VM creation.
-        const { isQemuAvailable, GondolinManager, shouldShadowSandboxWorkspacePath } =
-          await import("./gondolin-manager.js");
-        if (!(await isQemuAvailable())) {
-          throw new Error(
-            "Sandbox mode requires QEMU but it is not installed on the server. " +
-              "Install with: brew install qemu (macOS) or apt install qemu-system (Linux)",
-          );
-        }
-
+      if (sandboxVm) {
+        const vm = sandboxVm;
+        const { shouldShadowSandboxWorkspacePath } = await import("./gondolin-manager.js");
         const {
           createGondolinBashOps,
           createGondolinReadOps,
@@ -1316,33 +1344,6 @@ export class SdkBackend implements AgentBackend {
           createSandboxLsOps,
           createSandboxGrepToolDefinition,
         } = await import("./gondolin-ops.js");
-
-        // Lazy singleton — shared across all sessions for VM reuse.
-        if (!SdkBackend._gondolinManager) {
-          SdkBackend._gondolinManager = new GondolinManager();
-        }
-        const manager = SdkBackend._gondolinManager;
-
-        // Do not inject Oppi/pi provider credentials into the guest by default.
-        // The host process owns model calls; sandbox commands must opt into any
-        // future secret bridge explicitly instead of inheriting LLM API keys.
-        const secrets: Record<string, VmSecretDefinition> = {};
-
-        // Mount only the read-only resources whose paths were rewritten into
-        // sandbox-visible locations. Do NOT mount agentDir itself — it contains
-        // auth.json and host-specific configuration.
-        const readonlyMounts = [...sandboxReadonlyMounts.values()];
-
-        const extraEnv = workspace.sandboxConfig?.env;
-        const vm = await manager.ensureWorkspaceVm(
-          workspace,
-          hostCwd,
-          secrets,
-          readonlyMounts,
-          extraEnv,
-          guestCwd,
-        );
-        sandboxVm = vm;
 
         // Authoritative sandbox set. Custom grep/find overwrite host builtins
         // in Pi's registry; do not call createGrepToolDefinition (host rg).
@@ -1370,7 +1371,7 @@ export class SdkBackend implements AgentBackend {
           }),
           createSandboxGrepToolDefinition(vm, sessionCwd, guestCwd),
         ];
-        log.info("sdk.sandbox_vm_ready", { workspaceId: workspace.id || "unknown" });
+        log.info("sdk.sandbox_vm_ready", { workspaceId: workspace?.id || "unknown" });
       }
 
       const workspaceTools = sandboxTools && workspace?.tools?.length ? workspace.tools : undefined;

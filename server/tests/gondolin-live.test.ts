@@ -14,7 +14,7 @@
  * Skipped automatically if QEMU is not available.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -347,6 +347,9 @@ describe("Gondolin live skill overlay", { timeout: 120_000 }, () => {
     mkdirSync(join(hostDir, ".pi"), { recursive: true });
     writeFileSync(join(hostDir, ".pi", "settings.json"), '{"secret":true}');
     writeFileSync(join(skillDir, "SKILL.md"), "# live skill");
+    // The manager mounts each `.pi/skills` entry; this one links outside the workspace.
+    mkdirSync(join(hostDir, ".pi", "skills"), { recursive: true });
+    symlinkSync(skillDir, join(hostDir, ".pi", "skills", "review"));
 
     manager = new GondolinManager();
     vm = await manager.ensureWorkspaceVm(
@@ -360,12 +363,6 @@ describe("Gondolin live skill overlay", { timeout: 120_000 }, () => {
       },
       hostDir,
       undefined,
-      [
-        {
-          hostPath: skillDir,
-          guestPath: "/workspace/live-skills/.pi/skills/review",
-        },
-      ],
       undefined,
       "/workspace/live-skills",
     );
