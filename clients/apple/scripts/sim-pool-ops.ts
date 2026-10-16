@@ -585,6 +585,28 @@ export function hostCrashLine(logText: string): string | undefined {
   return logText.split("\n").find((line) => /^(?:\d{4}-\d{2}-\d{2} \S+ \S+\[\d+:\d+\] )?(?:\S+:\d+: )?Fatal error: \S/.test(line));
 }
 
+function openedXcodeProject(logText: string): boolean {
+  return logText.includes("Resolve Package Graph");
+}
+
+/** `sample <pid> 3` while xcodebuild is still alive; PATH is the test stub seam. */
+function sampleHungXcodebuild(pid: number): string {
+  const sampled = spawnSync("sample", [String(pid), "3"], {
+    encoding: "utf8",
+    timeout: 15_000,
+    killSignal: "SIGKILL",
+  });
+  const output = `${sampled.stdout ?? ""}${sampled.stderr ?? ""}`;
+  if (sampled.error) {
+    return `sample ${pid} 3 failed: ${sampled.error.message}\n${output}`;
+  }
+  if (sampled.status !== 0) {
+    const why = sampled.signal ? `signal ${sampled.signal}` : `exit ${sampled.status}`;
+    return `sample ${pid} 3 ${why}\n${output}`;
+  }
+  return output;
+}
+
 export function extractBuildTimingSummary(logText: string): string[] {
   const lines = logText.split("\n");
   const output: string[] = [];
@@ -1229,6 +1251,8 @@ function printSummary(input: {
   completion?: TestCompletion;
   /** Crash line that made the run skip its hang retry. */
   hostCrash?: string;
+  /** Hang never reached Resolve Package Graph; erase-retry skipped. */
+  stalledBeforeProjectOpen?: boolean;
 }): boolean {
   const duration = input.endedAt - input.startedAt;
   const totalDuration = input.totalEndedAt - input.totalStartedAt;
@@ -1258,6 +1282,10 @@ function printSummary(input: {
     lines.push(`Hang detection: triggered (no log, DerivedData, or build CPU progress for timeout)`);
     if (input.hostCrash) {
       lines.push("Test host crashed; skipped simulator retry:", input.hostCrash);
+    } else if (input.stalledBeforeProjectOpen) {
+      lines.push(
+        "xcodebuild stalled before opening the project (likely another process such as Xcode.app holding the project); skipped simulator retry.",
+      );
     }
   }
   lines.push("");
@@ -1316,6 +1344,8 @@ async function runXcodebuildAttempt(input: {
   completion?: TestCompletion;
   rawCode?: number | null;
   rawSignal?: NodeJS.Signals | null;
+  stalledBeforeProjectOpen?: boolean;
+  sampleOutput?: string;
 }> {
   writeFileSync(input.logFile, "");
   const logFd = openSync(input.logFile, "a");
@@ -1426,11 +1456,27 @@ async function runXcodebuildAttempt(input: {
       break;
     }
   }
+  let stalledBeforeProjectOpen = false;
+  let sampleOutput: string | undefined;
+  if (hung && !completion && !input.session.canceled) {
+    const logText = existsSync(input.logFile) ? readFileSync(input.logFile, "utf8") : "";
+    if (!hostCrashLine(logText) && !openedXcodeProject(logText)) {
+      sampleOutput = sampleHungXcodebuild(spawned.owned.pid);
+      stalledBeforeProjectOpen = true;
+      log(
+        "[sim-pool] xcodebuild stalled before opening the project (likely another process such as Xcode.app holding the project); skipping simulator retry",
+      );
+    }
+  }
   const completed = await input.session.complete(spawned.owned, {
     stopFirst: hung || input.session.canceled,
   });
+  const stallFields = {
+    ...(stalledBeforeProjectOpen ? { stalledBeforeProjectOpen: true } : {}),
+    ...(sampleOutput != null ? { sampleOutput } : {}),
+  };
   if (hung && !completed.stop.quiescent) {
-    return { code: 1, hung: true, stop: completed.stop };
+    return { code: 1, hung: true, stop: completed.stop, ...stallFields };
   }
   // Cancellation, uncertain cleanup, and real nonzero xcodebuild exits must
   // never become passes. Keep the signal separately when recovering a result.
@@ -1443,6 +1489,7 @@ async function runXcodebuildAttempt(input: {
   return {
     code, hung, stop: completed.stop,
     ...(recovered ? { completion: recovered, rawCode: completed.wait.code, rawSignal: completed.wait.signal } : {}),
+    ...stallFields,
   };
 }
 
@@ -1573,6 +1620,8 @@ export async function commandRun(
   let exitCode = 1;
   let hangDetected = false;
   let hostCrash: string | undefined;
+  let stalledBeforeProjectOpen = false;
+  let sampleOutput: string | undefined;
   let attemptsUsed = 0;
   let testCompletion: TestCompletion | undefined;
   let completionMetadata: Record<string, unknown> = {};
@@ -1637,9 +1686,7 @@ export async function commandRun(
         logFile = baseLog.replace(/\.log$/, `-retry${attempt}.log`);
         artifactFile = baseArtifact.replace(/\.json$/, `-retry${attempt}.json`);
         log(`[sim-pool] Retry ${attemptsUsed}/${config.hangRetries + 1} — log: ${logFile}`);
-        const recoveryStart = nowEpoch();
         await prepareSimulator(session, config, simUdId, "recovery");
-        simPrep += nowEpoch() - recoveryStart;
       }
       const attemptArgs = buildAttemptCommand(attempt, split.argv);
       if (attempt > 0) {
@@ -1661,6 +1708,8 @@ export async function commandRun(
       exitCode = result.code;
       hangDetected = hangDetected || result.hung;
       testCompletion = result.completion;
+      stalledBeforeProjectOpen = Boolean(result.stalledBeforeProjectOpen);
+      sampleOutput = result.sampleOutput;
       completionMetadata = result.completion ? {
         completion_hang_detected: true,
         test_completion: result.completion,
@@ -1681,7 +1730,11 @@ export async function commandRun(
         attemptNumber: attemptsUsed,
         attemptCount: attemptsUsed,
         hangDetected: result.hung,
-        extra: completionMetadata,
+        extra: {
+          ...completionMetadata,
+          ...(stalledBeforeProjectOpen ? { stalled_before_project_open: true } : {}),
+          ...(sampleOutput != null ? { sample_output: sampleOutput } : {}),
+        },
         slot: owned.slot,
         udid: simUdId,
         derivedData,
@@ -1691,10 +1744,11 @@ export async function commandRun(
       attemptArtifacts.push(artifactFile);
       if (result.hung && !result.completion && attempt < config.hangRetries) {
         // A crashed host crashes the same way after a simulator erase; only a silent hang is worth retrying.
+        // Never opening the project (no Resolve Package Graph) is a held .xcodeproj, not a dirty simulator.
         hostCrash = hostCrashLine(readFileSync(logFile, "utf8"));
         if (hostCrash) {
           log(`[sim-pool] Skipping simulator retry: the test host crashed (${hostCrash})`);
-        } else {
+        } else if (!result.stalledBeforeProjectOpen) {
           log("[sim-pool] Retrying after simulator hang recovery...");
           attempt += 1;
           continue;
@@ -1794,6 +1848,8 @@ export async function commandRun(
             ...completionMetadata,
             attempt_artifacts: attemptArtifacts,
             ...(hostCrash ? { host_crash_line: hostCrash } : {}),
+            ...(stalledBeforeProjectOpen ? { stalled_before_project_open: true } : {}),
+            ...(sampleOutput != null ? { sample_output: sampleOutput } : {}),
             ...(videoPath ? { video_path: videoPath } : {}),
             ...(videoRecording ? { video_recording: videoRecording } : {}),
             timing_breakdown_seconds: {
@@ -1831,6 +1887,7 @@ export async function commandRun(
           derivedData,
           completion: testCompletion,
           hostCrash,
+          stalledBeforeProjectOpen,
         });
       } catch {
         uncertain = true;

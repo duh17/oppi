@@ -62,6 +62,7 @@ case "$sub" in
     if [[ "$sub" == "spawn" && "\${2:-}" == "/usr/bin/env" && -f "$dir/device.env" ]]; then cat "$dir/device.env"; fi
     if [[ "$sub" == "create" ]]; then echo UDID-CREATED; fi
     if [[ "$sub" == "io" ]]; then echo "Recording started" >&2; fi
+    if [[ "$sub" == "erase" && -f "$dir/erase.sleep" ]]; then sleep "$(cat "$dir/erase.sleep")"; fi
     exit 0
     ;;
   *)
@@ -84,6 +85,19 @@ printf '%s\\n' "$@" > "${fakeDir}/xcodebuild.args"
 echo "** BUILD SUCCEEDED **"
 echo "Test run with 3 tests passed"
 exit 0
+`,
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    join(bin, "sample"),
+    `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> "${fakeDir}/sample.calls"
+if ! kill -0 "$1" 2>/dev/null; then
+  echo "sample: pid $1 is not running" >&2
+  exit 1
+fi
+echo "Sample of process $1 for \${2:-?} seconds"
 `,
     { mode: 0o755 },
   );
@@ -151,6 +165,8 @@ function runCompletionFixture(text: string, options: {
   env?: Record<string, string>;
   afterLog?: string;
   failQuery?: boolean;
+  /** Seconds the fake simctl erase sleeps, to make hang-recovery time visible. */
+  eraseSleep?: string;
 } = {}) {
   const root = tempDir("completion");
   const fake = join(root, "fake");
@@ -161,6 +177,9 @@ function runCompletionFixture(text: string, options: {
   writeFileSync(join(fake, "devices.json"), devicesJson());
   writeFileSync(join(fake, "runtimes.json"), runtimesJson());
   writeFakeXcrun(bin, fake);
+  if (options.eraseSleep) {
+    writeFileSync(join(fake, "erase.sleep"), options.eraseSleep);
+  }
   writeFileSync(join(bin, "xcodebuild"), `#!/bin/sh
 set -eu
 echo attempt >> "${fake}/attempts"
@@ -204,6 +223,7 @@ exec /usr/bin/pgrep "$@"
     run, summary,
     attempts: readFileSync(join(fake, "attempts"), "utf8").trim().split("\n"),
     calls: readFileSync(join(fake, "xcrun.calls"), "utf8"),
+    sampleCalls: existsSync(join(fake, "sample.calls")) ? readFileSync(join(fake, "sample.calls"), "utf8") : "",
     state: readSlotState(join(root, "locks"), 0),
     attempt: summary.attempt_artifacts?.[0] ? JSON.parse(readFileSync(summary.attempt_artifacts[0], "utf8")) : undefined,
   };
@@ -929,6 +949,7 @@ esac
       `#!/usr/bin/env bash
 set -euo pipefail
 printf 'started\\n' > "${fake}/xcodebuild.started"
+echo "Resolve Package Graph"
 sleep 30
 `,
       { mode: 0o755 },
@@ -1029,12 +1050,39 @@ sleep 30
   }, 20_000);
 
   test("silent hang is retried after a simulator erase", () => {
-    const result = runCompletionFixture("Test session started\n");
+    const result = runCompletionFixture("Resolve Package Graph\nTest session started\n", { eraseSleep: "1" });
     expect(result.run.status).not.toBe(0);
     expect(result.attempts).toHaveLength(2);
     expect(result.calls).toContain("simctl erase");
     expect(result.summary.host_crash_line).toBeUndefined();
+    expect(result.summary.stalled_before_project_open).toBeUndefined();
+    const timing = result.summary.timing_breakdown_seconds as { simulator_prepare: number };
+    const epochs = result.summary.timing_phase_epochs as {
+      simulator_prepare_start: number;
+      simulator_prepare_end: number;
+    };
+    expect(timing.simulator_prepare).toBe(epochs.simulator_prepare_end - epochs.simulator_prepare_start);
   }, 20_000);
+
+  test("hang before Resolve Package Graph is diagnosed once and not erased", () => {
+    const result = runCompletionFixture(
+      "Command line invocation:\n    /fake/xcodebuild\n\nBuild settings from command line:\n    COMPILER_INDEX_STORE_ENABLE = NO\n",
+    );
+    expect(result.run.status).not.toBe(0);
+    expect(result.attempts).toHaveLength(1);
+    expect(result.calls).not.toContain("simctl erase");
+    expect(result.run.stderr).toContain(
+      "xcodebuild stalled before opening the project (likely another process such as Xcode.app holding the project)",
+    );
+    expect(result.run.stdout).toContain(
+      "xcodebuild stalled before opening the project (likely another process such as Xcode.app holding the project); skipped simulator retry.",
+    );
+    expect(result.sampleCalls).toMatch(/^[0-9]+ 3$/m);
+    expect(result.attempt?.sample_output).toMatch(/Sample of process [0-9]+ for 3 seconds/);
+    expect(result.attempt?.stalled_before_project_open).toBe(true);
+    expect(result.summary.sample_output).toBe(result.attempt?.sample_output);
+    expect(result.summary.stalled_before_project_open).toBe(true);
+  }, 15_000);
 
   test("hang after a Swift runtime crash is not retried or erased and the summary shows the crash", () => {
     const crash = "/Users/x/Oppi/App/OppiApp.swift:430: Fatal error: No Observable object of type ConnectionCoordinator found";
@@ -1059,6 +1107,7 @@ sleep 30
 
   test("app log and test names that mention a crash do not suppress the hang retry", () => {
     const result = runCompletionFixture([
+      "Resolve Package Graph",
       "Dictation error (fatal=true): STT crashed",
       "Test case 'crashed host report fixture Fatal error: boom' started",
       "Test case 'OppiApp.swift:469: Fatal error: friction-repro' started",
@@ -1101,7 +1150,7 @@ sleep 30
   ];
   for (const guard of completionGuards) {
     test(`${guard.name} cannot turn an incomplete hang into a pass`, () => {
-      const result = runCompletionFixture(guard.text, { args: guard.args, extraArgs: guard.extraArgs });
+      const result = runCompletionFixture(`Resolve Package Graph\n${guard.text}`, { args: guard.args, extraArgs: guard.extraArgs });
       expect(result.run.status).toBe(143);
       expect(result.attempts).toHaveLength(2);
       expect(result.summary.hang_detected).toBe(true);

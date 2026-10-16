@@ -173,6 +173,8 @@ cd clients/apple
   xcodebuild -project Oppi.xcodeproj -scheme OppiUnitTests test -only-testing:OppiTests
 ```
 
+Run baselines in a separate worktree, not with `--root ~/workspace/oppi`.
+
 Public fallback:
 
 ```bash
