@@ -438,6 +438,40 @@ describe("workspace VM fingerprint reuse", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("mounts nothing when .pi or .pi/skills is a symlink into the writable workspace", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-skill-mounts-link-"));
+    try {
+      for (const linked of [".pi", ".pi/skills"]) {
+        const { factory, calls } = makeFactory();
+        const local = new GondolinManager(factory);
+        const hostCwd = join(root, linked.replace("/", "-"), "workspace");
+        // The guest can write this target, and plants an entry pointing at a host secret dir.
+        const planted = join(hostCwd, "skill-src");
+        mkdirSync(join(planted, "skills"), { recursive: true });
+        symlinkSync(join(root, "secrets"), join(planted, "skills", "pwn"));
+        symlinkSync(join(root, "secrets"), join(planted, "pwn"));
+        mkdirSync(join(root, "secrets"), { recursive: true });
+        if (linked === ".pi") symlinkSync(planted, join(hostCwd, ".pi"));
+        else {
+          mkdirSync(join(hostCwd, ".pi"), { recursive: true });
+          symlinkSync(planted, join(hostCwd, ".pi", "skills"));
+        }
+        const vm = await local.ensureWorkspaceVm(
+          makeWorkspace({ id: `w-${linked}` }),
+          hostCwd,
+          undefined,
+          undefined,
+          "/g",
+        );
+        expect(calls[0]?.readonlyMounts ?? []).toEqual([]);
+        expect(vm.skillMounts).toEqual([]);
+        await local.stopAll();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("stopWorkspaceVm", () => {

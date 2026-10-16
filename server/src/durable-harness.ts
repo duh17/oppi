@@ -34,6 +34,7 @@ import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import { DurableJobs } from "../extensions/durable/background-jobs/contract.js";
 import { controlConversationExtensions } from "./durable-control-conversation.js";
 import { GondolinExecutionEnv } from "./durable-gondolin-env.js";
+import { SANDBOX_RESOURCE_MAX_BYTES } from "./gondolin-ops.js";
 import {
   SESSION_REPORTER_TASK,
   bindOppiHost,
@@ -336,13 +337,23 @@ export class SessionHost {
     await mcp?.close();
   }
 
-  /** Read a text file through the conversation's sandbox VM; fails when none is bound. */
+  /**
+   * Read a prompt resource (a `/skill:` file) through the conversation's sandbox VM, bounded
+   * like discovery: the guest can grow a Skill file after it was discovered. Fails when no VM
+   * is bound, or the file is past the cap.
+   */
   async readSandboxTextFile(id: ConversationId, path: string): Promise<string> {
     const env = this.sandboxEnvs.get(id);
-    if (!env) throw new Error("The sandbox VM is not ready");
-    const result = await env.readTextFile(path, BACKGROUND_CONTEXT);
+    if (!(env instanceof GondolinExecutionEnv)) throw new Error("The sandbox VM is not ready");
+    const result = await env.readTextFileWithin(
+      path,
+      SANDBOX_RESOURCE_MAX_BYTES,
+      BACKGROUND_CONTEXT,
+    );
     if (!result.ok) throw new Error(`Cannot read ${path}: ${result.error.message}`);
-    return result.value;
+    if ("tooLarge" in result.value)
+      throw new Error(`Cannot read ${path}: larger than ${SANDBOX_RESOURCE_MAX_BYTES} bytes`);
+    return result.value.text;
   }
 
   bindSandboxEnv(id: ConversationId, env: ExecutionEnv): void {

@@ -12,6 +12,9 @@ import {
 import { InboxDoc, type ConversationId } from "@earendil-works/pi-durable";
 import { DurableHarness, durableStoreDir, durableStoreSqlitePath } from "../src/durable-harness.js";
 import { DurableInputCards } from "../extensions/durable/durable-ui.js";
+import { GondolinExecutionEnv } from "../src/durable-gondolin-env.js";
+import { SANDBOX_RESOURCE_MAX_BYTES } from "../src/gondolin-ops.js";
+import type { GondolinVm } from "../src/gondolin-ops.js";
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
 import type { ConversationStreamServerMessage } from "../src/types.js";
 import { SessionManager } from "../src/sessions.js";
@@ -283,6 +286,48 @@ describe("durable SessionHost stores", () => {
       expect(restated.map((entry) => entry.card?.title)).toEqual(["Background job 1 (renamed)"]);
     } finally {
       stop();
+    }
+  });
+
+  it("reads a sandbox /skill: file within the resource cap", async () => {
+    const f = await fixture();
+    const session = enroll(f.storage, f.workspace.id, "Skill cap");
+    await f.manager.startSession(session.id, f.workspace);
+    const conversationId = f.storage.getSession(session.id)!.serverDurable!
+      .conversationId as ConversationId;
+    const runtime = await (f.manager as unknown as { durableHarness: Promise<DurableHarness> })
+      .durableHarness;
+    const host = runtime.host(session.id)!;
+    // A guest grew the Skill file after discovery; the small one still reads.
+    const sizes: Record<string, number> = {
+      "/workspace/big/SKILL.md": SANDBOX_RESOURCE_MAX_BYTES + 1,
+      "/workspace/small/SKILL.md": 5,
+    };
+    const vm = {
+      fs: {
+        stat: async (path: string) => ({ isFile: () => true, size: sizes[path] ?? 0 }),
+        readFileStream: async () =>
+          Object.assign(
+            (async function* () {
+              yield Buffer.from("hello");
+            })(),
+            {
+              destroy: () => undefined,
+            },
+          ),
+      },
+      exec: vi.fn(),
+    } as unknown as GondolinVm;
+    host.bindSandboxEnv(conversationId, new GondolinExecutionEnv(vm, f.workspace.id, "/workspace"));
+    try {
+      await expect(
+        host.readSandboxTextFile(conversationId, "/workspace/small/SKILL.md"),
+      ).resolves.toBe("hello");
+      await expect(
+        host.readSandboxTextFile(conversationId, "/workspace/big/SKILL.md"),
+      ).rejects.toThrow("larger than");
+    } finally {
+      await host.unbindSandboxEnv(conversationId, true);
     }
   });
 

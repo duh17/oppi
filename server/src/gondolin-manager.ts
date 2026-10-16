@@ -141,9 +141,14 @@ export function withSandboxPiOverlayMounts(
  * entries and `node_modules` are skipped, as Pi's Skill walk skips them. Read once at VM boot.
  */
 function sandboxSkillMounts(hostCwd: string, guestWorkspacePath: string): ReadonlyMount[] {
-  const skillsDir = join(hostCwd, ".pi", "skills");
+  const piDir = join(hostCwd, ".pi");
+  const skillsDir = join(piDir, "skills");
   let names: string[];
   try {
+    // The listing is the owner's only while `.pi` and `.pi/skills` are real directories. A
+    // symlink could point into the writable workspace, where the guest would plant entries
+    // (`pwn -> ~/.ssh`) that the next boot mounts, outside the shadow's names.
+    if (!lstatSync(piDir).isDirectory() || !lstatSync(skillsDir).isDirectory()) return [];
     names = readdirSync(skillsDir).sort();
   } catch {
     return [];
