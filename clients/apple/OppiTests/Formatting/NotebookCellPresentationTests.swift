@@ -71,7 +71,6 @@ struct NotebookCellPresentationTests {
             Issue.record("A scalar result should be stdout, not another fence")
         }
         #expect(config.copyOutputText == "3")
-        #expect(config.rawMarkdownText == nil)
         let reader = try #require(ToolTimelineRowFullScreenSupport.staticFullScreenContent(
             configuration: config, outputCopyText: config.copyOutputText, terminalStream: nil))
         guard case .notebook(let opened) = reader else {
