@@ -399,6 +399,13 @@ run_mac_gate() {
 
 echo "pre-push: $CHANGED_COUNT changed paths; server=$SERVER_MODE apple=$APPLE_MODE mac=$MAC_CHANGED harness=$HARNESS_CHANGED"
 
+if [[ "$SERVER_MODE" != "none" || "$HARNESS_CHANGED" -eq 1 ]]; then
+  if [[ ! -f "$REPO_ROOT/server/node_modules/.package-lock.json" ]]; then
+    echo "[server] FAILED: No dependencies installed in server/. Run npm ci in server/ and retry." >&2
+    exit 1
+  fi
+fi
+
 PIDS=()
 LANES=()
 if [[ "$HARNESS_CHANGED" -eq 1 ]]; then

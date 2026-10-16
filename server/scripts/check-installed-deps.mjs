@@ -11,7 +11,7 @@ const lock = JSON.parse(readFileSync(join(serverRoot, "package-lock.json"), "utf
 const root = lock.packages[""];
 const direct = Object.keys({ ...root.dependencies, ...root.devDependencies });
 
-if (!existsSync(join(serverRoot, "node_modules"))) {
+if (!existsSync(join(serverRoot, "node_modules", ".package-lock.json"))) {
   console.error("No dependencies installed in server/. Run `npm ci` in server/ and retry.");
   process.exit(1);
 }
