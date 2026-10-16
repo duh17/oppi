@@ -1593,7 +1593,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         updateReviewCommentSelectionIntegration(
             plan: plan,
             showCommandContainer: showCommand,
-            showOutputContainer: showOutput,
             showExpandedContainer: showExpanded,
             expandedContent: expandedContent
         )
@@ -1971,7 +1970,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
     private func updateReviewCommentSelectionIntegration(
         plan: ToolRowRenderPlan,
         showCommandContainer: Bool,
-        showOutputContainer: Bool,
         showExpandedContainer: Bool,
         expandedContent: ToolPresentationBuilder.ToolExpandedContent?
     ) {
@@ -1991,10 +1989,8 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         let flags = ToolTimelineRowReviewCommentSelectionSupport.selectionFlags(
             spec: plan.interactionSpec,
             showCommand: showCommandContainer,
-            showOutput: showOutputContainer,
             showExpanded: showExpandedContainer,
             hasCommandContext: hasSession,
-            hasOutputContext: hasSession,
             hasExpandedContext: hasExpandedContext,
             hasMarkdownContext: hasSession,
             isMarkdownLayout: markdownSurface.isLiveLayoutActive,
@@ -2004,10 +2000,6 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
         bashToolRowView.commandLabel.isSelectable = flags.commandSelectable
         commandDoubleTapGesture.isEnabled = !flags.commandSelectable
         commandSingleTapBlocker.isEnabled = !flags.commandSelectable
-
-        bashToolRowView.outputLabel.isSelectable = flags.outputSelectable
-        outputDoubleTapGesture.isEnabled = !flags.outputSelectable
-        outputSingleTapBlocker.isEnabled = !flags.outputSelectable
 
         expandedLabel.isSelectable = flags.expandedLabelSelectable
 
@@ -2023,7 +2015,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             return nil
         }
         let surface: ToolTimelineRowReviewCommentSelectionSupport.Surface
-        if textView === bashToolRowView.commandLabel { surface = .command } else if textView === bashToolRowView.outputLabel { surface = .output } else if textView === expandedLabel { surface = .expandedLabel } else { return nil }
+        if textView === bashToolRowView.commandLabel { surface = .command } else if textView === expandedLabel { surface = .expandedLabel } else { return nil }
         return toolReviewCommentSourceContext(
             surface: surface,
             expandedContent: currentConfiguration.expandedContent,

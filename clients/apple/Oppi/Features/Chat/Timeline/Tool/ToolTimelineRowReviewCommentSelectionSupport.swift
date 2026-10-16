@@ -8,7 +8,6 @@ enum ToolTimelineRowReviewCommentSelectionSupport {
     /// Identifies which text surface is requesting a source context.
     enum Surface {
         case command
-        case output
         case expandedLabel
         case expandedMarkdown
     }
@@ -16,7 +15,6 @@ enum ToolTimelineRowReviewCommentSelectionSupport {
     /// Computed selection flags for all text surfaces in a tool row.
     struct SelectionFlags: Equatable {
         let commandSelectable: Bool
-        let outputSelectable: Bool
         let expandedLabelSelectable: Bool
         let markdownSelectable: Bool
         /// When true, tap-copy gestures and pinch should be disabled.
@@ -53,14 +51,6 @@ enum ToolTimelineRowReviewCommentSelectionSupport {
                 timelineItemId: timelineItemId
             )
 
-        case .output:
-            return ReviewCommentSourceContext(
-                sessionId: sessionId,
-                surface: .toolOutput,
-                sourceLabel: sourceLabel,
-                timelineItemId: timelineItemId
-            )
-
         case .expandedLabel:
             guard let expandedContent else { return nil }
             return expandedLabelSourceContext(
@@ -89,10 +79,8 @@ enum ToolTimelineRowReviewCommentSelectionSupport {
     static func selectionFlags(
         spec: TimelineInteractionSpec,
         showCommand: Bool,
-        showOutput: Bool,
         showExpanded: Bool,
         hasCommandContext: Bool,
-        hasOutputContext: Bool,
         hasExpandedContext: Bool,
         hasMarkdownContext: Bool,
         isMarkdownLayout: Bool,
@@ -101,10 +89,6 @@ enum ToolTimelineRowReviewCommentSelectionSupport {
         let commandSelectable = showCommand
             && spec.commandSelectionEnabled
             && hasCommandContext
-
-        // Bash output never qualifies: full-screen is on whenever that output
-        // exists, so inline review-comment selection stays off.
-        let outputSelectable = showOutput && false && hasOutputContext
 
         let expandedLabelSelectable = showExpanded
             && !isReadMediaLayout
@@ -118,7 +102,6 @@ enum ToolTimelineRowReviewCommentSelectionSupport {
 
         return SelectionFlags(
             commandSelectable: commandSelectable,
-            outputSelectable: outputSelectable,
             expandedLabelSelectable: expandedLabelSelectable,
             markdownSelectable: markdownSelectable,
             disableGestureInterception: markdownSelectable || expandedLabelSelectable
