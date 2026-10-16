@@ -126,6 +126,8 @@ struct ScreenshotPreviewView: View {
             ServerResourcesScreenshotPreview(screen: .cachedOffline)
         case "server-provider-navigation-regression":
             ServerProviderNavigationRegressionPreview()
+        case "router-routes":
+            RouterRoutesPreview()
         case "model-providers-quota-inline":
             ModelProvidersQuotaPreview()
         case "inbox-provider-setup-empty":
@@ -383,6 +385,258 @@ private struct ReviewCommentInlineDraftScreenshotPreview: UIViewControllerRepres
                 )
             )
         }
+    }
+}
+
+/// The UIKit router with real screens and fixture services, no network: a
+/// `RouterNavigationController` whose root is a screen hosted by `HostFactory`
+/// (large title, bottom bar). Quick Comments is pushed and opens its editor
+/// sheet (detents, navigation) and the icon popover; Edit Agent is a full-screen
+/// modal that pushes its Tools page; Edit Schedule opens the time zone search
+/// sheet; both editors open the model picker. The editors save to an in-process
+/// stub server, and "Last save sent" shows what reached it.
+/// `SCREENSHOT_COLOR_SCHEME=light|dark` pins the theme.
+private struct RouterRoutesPreview: View {
+    private let root: AppRootEnvironment
+
+    init() {
+        switch ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] {
+        case "dark":
+            ScreenshotVolatileDefaults.applyDarkTheme(true)
+        case "light":
+            ScreenshotVolatileDefaults.apply([
+                "\(AppIdentifiers.subsystem).theme.mode": ThemeMode.manual.rawValue,
+                ThemeID.storageKey: ThemeID.light.rawValue,
+            ])
+        default:
+            break
+        }
+        root = AppRootEnvironment(
+            coordinator: ConnectionCoordinator(serverStore: ServerStore()),
+            navigation: AppNavigation(),
+            themeStore: ThemeStore(),
+            quickCommentTemplateStore: QuickCommentTemplateStore(templates: QuickCommentTemplate.builtInDefaults),
+            composerDraftStore: ComposerDraftStore(),
+            chatReaderPayloadStore: ChatReaderPayloadStore(),
+            sessionRowDisplay: SessionRowDisplay()
+        )
+    }
+
+    var body: some View {
+        RouterRoutesStack(root: root)
+            .ignoresSafeArea()
+    }
+}
+
+private struct RouterRoutesStack: UIViewControllerRepresentable {
+    let root: AppRootEnvironment
+
+    func makeUIViewController(context: Context) -> RouterNavigationController {
+        let menu = HostFactory.screen(root: root, bars: ScreenBars(largeTitle: true, showsToolbar: true)) {
+            RouterRoutesMenu()
+        }
+        let navigation = RouterNavigationController(rootViewController: menu)
+        let themeStore = root.themeStore
+        navigation.interfaceStyle = { themeStore.userInterfaceStyle }
+        return navigation
+    }
+
+    func updateUIViewController(_ navigation: RouterNavigationController, context: Context) {}
+}
+
+private struct RouterRoutesMenu: View {
+    @Environment(\.screenNavigator) private var navigator
+    @State private var dismissedModals = 0
+    @State private var saves = RouterRoutesSaves.shared
+
+    var body: some View {
+        List {
+            Button("Quick Comments") {
+                navigator.push { QuickCommentsSettingsView() }
+            }
+            .accessibilityIdentifier("routerRoutes.quickComments")
+
+            Button("Edit Agent") {
+                navigator.present(
+                    .fullScreen.inNavigation(),
+                    onDismiss: { dismissedModals += 1 },
+                    content: {
+                        AgentNativeEditView(agent: RouterRoutesFixtures.agent) { _ in }
+                            .environment(\.apiClient, RouterRoutesFixtures.api)
+                    }
+                )
+            }
+            .accessibilityIdentifier("routerRoutes.editAgent")
+
+            Button("Edit Schedule") {
+                navigator.present(
+                    .fullScreen.inNavigation(),
+                    onDismiss: { dismissedModals += 1 },
+                    content: {
+                        ScheduleNativeEditView(schedule: RouterRoutesFixtures.schedule) { _, _ in }
+                            .environment(\.apiClient, RouterRoutesFixtures.api)
+                    }
+                )
+            }
+            .accessibilityIdentifier("routerRoutes.editSchedule")
+
+            Section("Last save sent") {
+                Text(saves.lastSave)
+                    .accessibilityIdentifier("routerRoutes.lastSave")
+            }
+        }
+        .navigationTitle("Router Routes")
+        .toolbar {
+            ToolbarItem(placement: .bottomBar) {
+                Text("Dismissed \(dismissedModals)")
+                    .accessibilityIdentifier("routerRoutes.dismissedModals")
+            }
+        }
+    }
+}
+
+/// What the editors last sent to the stub server, so a save is visible.
+@MainActor @Observable
+private final class RouterRoutesSaves {
+    static let shared = RouterRoutesSaves()
+    var lastSave = "none"
+}
+
+private enum RouterRoutesFixtures {
+    static let agent = StoredAgentDefinition(
+        id: "agent-router-routes",
+        name: "Design Reviewer",
+        icon: .defaultValue,
+        description: nil,
+        status: .active,
+        version: 1,
+        definition: AgentDefinition(
+            name: "Design Reviewer",
+            icon: .defaultValue,
+            sessionDefaults: AgentSessionDefaults(tools: ["read"])
+        ),
+        createdAt: Date(timeIntervalSince1970: 1),
+        updatedAt: Date(timeIntervalSince1970: 1),
+        archivedAt: nil
+    )
+
+    static let scheduleSummary = AgentScheduleSummary(
+        id: "schedule-router-routes",
+        name: "Nightly digest",
+        status: .active,
+        trigger: .every(intervalMs: 3_600_000, timeZone: "America/Los_Angeles"),
+        action: AgentScheduleActionSummary(
+            type: .newSession,
+            workspaceId: "ws-router-routes",
+            sessionId: nil,
+            agentId: nil,
+            promptChars: 31
+        ),
+        createdAt: Date(timeIntervalSince1970: 1),
+        updatedAt: Date(timeIntervalSince1970: 1),
+        archivedAt: nil
+    )
+
+    /// A client whose requests the stub below answers in-process.
+    static let api: APIClient = {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [RouterRoutesURLProtocol.self]
+        return APIClient(
+            baseURL: URL(string: "https://router-routes.oppi") ?? URL(fileURLWithPath: "/"),
+            token: "preview-token",
+            configuration: config
+        )
+    }()
+
+    static let schedule = AgentSchedule(
+        id: "schedule-router-routes",
+        name: "Nightly digest",
+        status: .active,
+        trigger: .every(intervalMs: 3_600_000, timeZone: "America/Los_Angeles"),
+        action: .newSession(
+            workspaceId: "ws-router-routes",
+            prompt: "Summarize yesterday's sessions.",
+            agentId: nil,
+            model: nil,
+            thinkingLevel: nil,
+            worktreeId: nil,
+            name: nil
+        ),
+        createdAt: Date(timeIntervalSince1970: 1),
+        updatedAt: Date(timeIntervalSince1970: 1),
+        archivedAt: nil
+    )
+}
+
+/// Answers the editors' saves with the fixtures and records what they sent:
+/// the agent's tool policy and the schedule's time zone.
+private final class RouterRoutesURLProtocol: URLProtocol {
+    private struct AgentBody: Encodable { let agent: StoredAgentDefinition }
+    private struct ScheduleBody: Encodable { let schedule: AgentScheduleSummary }
+    private struct AgentsBody: Encodable { let agents: [String] }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "router-routes.oppi"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        let path = request.url?.path ?? ""
+        let sent = Self.jsonBody(of: request)
+        let response: Data?
+        switch (request.httpMethod, path) {
+        case ("PATCH", "/agents/\(RouterRoutesFixtures.agent.id)"):
+            let defaults = sent?["sessionDefaults"] as? [String: Any]
+            let tools = (defaults?["tools"] as? [String])?.joined(separator: ",") ?? "inherit"
+            Self.record("agent tools=\(tools)")
+            response = try? JSONEncoder().encode(AgentBody(agent: RouterRoutesFixtures.agent))
+        case ("PATCH", "/schedules/\(RouterRoutesFixtures.scheduleSummary.id)"):
+            let trigger = sent?["trigger"] as? [String: Any]
+            Self.record("schedule timeZone=\(trigger?["timeZone"] as? String ?? "none")")
+            response = try? JSONEncoder().encode(ScheduleBody(schedule: RouterRoutesFixtures.scheduleSummary))
+        case ("GET", "/agents"):
+            response = try? JSONEncoder().encode(AgentsBody(agents: []))
+        default:
+            response = nil
+        }
+        guard let url = request.url,
+              let http = HTTPURLResponse(
+                  url: url,
+                  statusCode: response == nil ? 404 : 200,
+                  httpVersion: "HTTP/1.1",
+                  headerFields: ["Content-Type": "application/json"]
+              ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: response ?? Data(#"{"error":"Not found"}"#.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+
+    private static func record(_ summary: String) {
+        Task { @MainActor in RouterRoutesSaves.shared.lastSave = summary }
+    }
+
+    /// URLSession hands a protocol its body as a stream.
+    private static func jsonBody(of request: URLRequest) -> [String: Any]? {
+        var data = request.httpBody ?? Data()
+        if data.isEmpty, let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                guard count > 0 else { break }
+                data.append(buffer, count: count)
+            }
+        }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
     }
 }
 

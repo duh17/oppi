@@ -28,7 +28,8 @@ final class NativeMarkdownUSDZView: UIView {
     private let chromeStack = UIStackView()
     private var heightConstraint: NSLayoutConstraint?
     private let interactChrome = USDZInteractChrome()
-    private var sceneHost: UIHostingController<USDZRealityCanvas>?
+    private var sceneHost: HostedContentController?
+    private var sceneWaitingForWindow: USDZLocalFileStore.Handle?
     private var resolutionTask: Task<Void, Never>?
     private var currentEmbed: MarkdownUSDZEmbed?
     private var currentIdentity: String?
@@ -255,7 +256,20 @@ final class NativeMarkdownUSDZView: UIView {
         accessibilityLabel = title
     }
 
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil, let handle = sceneWaitingForWindow else { return }
+        sceneWaitingForWindow = nil
+        installScene(handle: handle, interactive: false)
+    }
+
     private func installScene(handle: USDZLocalFileStore.Handle, interactive: Bool) {
+        // The canvas is hosted with the app root above this view, which only a
+        // view in a window can find. A scene that loads off-window waits.
+        guard window != nil else {
+            sceneWaitingForWindow = handle
+            return
+        }
         statusLabel.isHidden = true
         retryButton.isHidden = true
         openButton.isHidden = true
@@ -276,7 +290,7 @@ final class NativeMarkdownUSDZView: UIView {
                 )
             }
         )
-        let host = UIHostingController(rootView: canvas)
+        let host = HostFactory.content(canvas, root: HostFactory.root(near: self))
         host.view.translatesAutoresizingMaskIntoConstraints = false
         host.view.backgroundColor = .clear
         host.view.isUserInteractionEnabled = interactive
@@ -357,6 +371,7 @@ final class NativeMarkdownUSDZView: UIView {
     }
 
     private func removeScene() {
+        sceneWaitingForWindow = nil
         sceneHost?.willMove(toParent: nil)
         sceneHost?.view.removeFromSuperview()
         sceneHost?.removeFromParent()
@@ -405,9 +420,7 @@ enum FullScreenUSDZPresenter {
             initialHandle: handle,
             fileProvider: fileProvider
         )
-        let host = UIHostingController(rootView: root)
-        host.modalPresentationStyle = .fullScreen
-        presenter.present(host, animated: true)
+        Router.present(presentation: .fullScreen, from: presenter) { root }
     }
 
     @MainActor
@@ -427,7 +440,7 @@ struct FullScreenUSDZView: View {
     let embed: MarkdownUSDZEmbed
     let initialHandle: USDZLocalFileStore.Handle?
     let fileProvider: MarkdownUSDZFileProvider?
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
     @State private var handle: USDZLocalFileStore.Handle?
     @State private var didFail = false
     @State private var isLoading = false
@@ -462,7 +475,7 @@ struct FullScreenUSDZView: View {
                     .font(.headline)
                     .lineLimit(1)
                 Spacer()
-                Button("Done") { dismiss() }
+                Button("Done") { navigator.finish() }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)

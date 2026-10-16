@@ -120,7 +120,7 @@ final class FullScreenCodeViewController: UIViewController {
     private var trailingFloatingAccessoryCount = 0
     private var viewingOptionsBottomConstraint: NSLayoutConstraint?
     private var lastPresentedStashCount = 0
-    private weak var presentedStashSheetHost: UIViewController?
+    private weak var presentedStashSheet: HostedScreenController?
     private var isSnapshotting = false
     private let addToChatDestination: ComposerCanvasDestination?
     private(set) var didDismissAfterCanvasDeliveryForTesting = false
@@ -1335,15 +1335,18 @@ final class FullScreenCodeViewController: UIViewController {
         presentReviewCommentStashSheet()
     }
 
+    /// The router presents from the window's front-most controller, which is
+    /// not this viewer when it is embedded, so the sheet is tracked by its own
+    /// presentation rather than by `presentedViewController`.
+    private var openStashSheet: HostedScreenController? {
+        guard let sheet = presentedStashSheet, sheet.presentingViewController != nil else { return nil }
+        return sheet
+    }
+
     private func presentReviewCommentStashSheet() {
         guard let sheet = makeStashSheet() else { return }
-        if presentedViewController === presentedStashSheetHost {
-            presentedStashSheetHost?.dismiss(animated: false)
-        }
-        let host = UIHostingController(rootView: sheet)
-        host.modalPresentationStyle = .pageSheet
-        presentedStashSheetHost = host
-        present(host, animated: true)
+        openStashSheet?.dismiss(animated: false)
+        presentedStashSheet = Router.present(presentation: .pageSheet, from: self) { sheet }
     }
 
     private func makeStashSheet() -> ReviewCommentStashSheet? {
@@ -1365,21 +1368,15 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     private func refreshPresentedStashSheet() {
-        guard presentedViewController === presentedStashSheetHost,
-              let sheet = makeStashSheet(),
-              let host = presentedStashSheetHost as? UIHostingController<ReviewCommentStashSheet> else {
-            return
-        }
-        host.rootView = sheet
+        guard let open = openStashSheet, let sheet = makeStashSheet() else { return }
+        open.setContent { sheet }
     }
 
     private func dismissReviewCommentStashSheet() {
-        guard presentedViewController === presentedStashSheetHost else {
-            presentedStashSheetHost = nil
-            return
+        if let open = openStashSheet {
+            Router.dismiss(open)
         }
-        presentedStashSheetHost?.dismiss(animated: true)
-        presentedStashSheetHost = nil
+        presentedStashSheet = nil
     }
 
     private func makePresentation() -> Presentation {

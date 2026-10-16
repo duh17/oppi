@@ -2,7 +2,8 @@ import SwiftUI
 
 struct ScheduleNativeEditView: View {
     @Environment(\.apiClient) private var apiClient
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
+    @Environment(ServerConnection.self) private var connection
     @Environment(WorkspaceStore.self) private var workspaceStore
     @Environment(SessionStore.self) private var sessionStore
 
@@ -99,165 +100,168 @@ struct ScheduleNativeEditView: View {
         Array(Set(Self.commonIntervals + [triggerDraft.intervalMs])).sorted()
     }
 
+    /// Presented by the router inside a navigation controller, which owns the bar.
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("Schedule") {
-                    TextField("Name", text: $name)
-                        .accessibilityIdentifier("schedule.nativeEdit.name")
+        Form {
+            Section("Schedule") {
+                TextField("Name", text: $name)
+                    .accessibilityIdentifier("schedule.nativeEdit.name")
 
-                    Picker("Cadence", selection: $triggerDraft.cadence) {
-                        ForEach(ScheduleTriggerDraft.Cadence.allCases, id: \.self) { cadence in
-                            Text(cadence.title).tag(cadence)
+                Picker("Cadence", selection: $triggerDraft.cadence) {
+                    ForEach(ScheduleTriggerDraft.Cadence.allCases, id: \.self) { cadence in
+                        Text(cadence.title).tag(cadence)
+                    }
+                }
+                .accessibilityIdentifier("schedule.nativeEdit.cadence")
+
+                triggerControls
+
+                Button {
+                    isShowingTimeZonePicker = true
+                } label: {
+                    LabeledContent("Time Zone") {
+                        HStack(spacing: 6) {
+                            Text(timeZoneDisplayName(triggerDraft.timeZone))
+                                .foregroundStyle(.themeFg)
+                            Image(systemName: "chevron.forward")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.themeComment)
+                                .accessibilityHidden(true)
                         }
                     }
-                    .accessibilityIdentifier("schedule.nativeEdit.cadence")
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Choose the schedule time zone")
+                .accessibilityIdentifier("schedule.nativeEdit.timeZone")
+            }
 
-                    triggerControls
+            Section("Instructions") {
+                TextEditor(text: $prompt)
+                    .frame(minHeight: 180)
+                    .accessibilityLabel("Schedule prompt")
+                    .accessibilityIdentifier("schedule.nativeEdit.prompt")
+            }
+
+            Section(isNewSessionAction ? "Start New Session" : "Existing Session") {
+                Picker("Workspace", selection: $workspaceId) {
+                    if !workspaceStore.workspaces.contains(where: { $0.id == workspaceId }) {
+                        Text("Current workspace").tag(workspaceId)
+                    }
+                    ForEach(workspaceStore.workspaces) { workspace in
+                        Text(workspace.name).tag(workspace.id)
+                    }
+                }
+                .onChange(of: workspaceId) { _, newWorkspaceId in
+                    guard !isNewSessionAction else { return }
+                    targetSessionId = sessionStore
+                        .listProjectionSessions(workspaceId: newWorkspaceId)
+                        .first?.id ?? ""
+                }
+                .accessibilityIdentifier("schedule.nativeEdit.workspace")
+
+                if isNewSessionAction {
+                    Picker("Agent", selection: $agentId) {
+                        Text("No saved Agent").tag("")
+                        if !agentId.isEmpty, !agents.contains(where: { $0.id == agentId }) {
+                            Text("Current saved Agent").tag(agentId)
+                        }
+                        ForEach(agents) { agent in
+                            Text(agent.name).tag(agent.id)
+                        }
+                    }
+                    .accessibilityIdentifier("schedule.nativeEdit.agent")
 
                     Button {
-                        isShowingTimeZonePicker = true
+                        isShowingModelPicker = true
                     } label: {
-                        LabeledContent("Time Zone") {
-                            HStack(spacing: 6) {
-                                Text(timeZoneDisplayName(triggerDraft.timeZone))
-                                    .foregroundStyle(.themeFg)
-                                Image(systemName: "chevron.forward")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.themeComment)
-                                    .accessibilityHidden(true)
-                            }
+                        LabeledContent("Model") {
+                            Text(modelDisplayName)
+                                .foregroundStyle(.themeFg)
                         }
                     }
                     .buttonStyle(.plain)
-                    .accessibilityHint("Choose the schedule time zone")
-                    .accessibilityIdentifier("schedule.nativeEdit.timeZone")
-                }
+                    .accessibilityIdentifier("schedule.nativeEdit.model")
 
-                Section("Instructions") {
-                    TextEditor(text: $prompt)
-                        .frame(minHeight: 180)
-                        .accessibilityLabel("Schedule prompt")
-                        .accessibilityIdentifier("schedule.nativeEdit.prompt")
-                }
+                    if !model.isEmpty {
+                        Button("Use Agent or Server Default Model") { model = "" }
+                            .foregroundStyle(.themeBlue)
+                    }
 
-                Section(isNewSessionAction ? "Start New Session" : "Existing Session") {
-                    Picker("Workspace", selection: $workspaceId) {
-                        if !workspaceStore.workspaces.contains(where: { $0.id == workspaceId }) {
-                            Text("Current workspace").tag(workspaceId)
-                        }
-                        ForEach(workspaceStore.workspaces) { workspace in
-                            Text(workspace.name).tag(workspace.id)
+                    Picker("Thinking", selection: $thinkingLevel) {
+                        Text("Agent or server default").tag(ThinkingLevel?.none)
+                        ForEach(ThinkingLevel.allCases) { level in
+                            Text(level.displayTitle).tag(Optional(level))
                         }
                     }
-                    .onChange(of: workspaceId) { _, newWorkspaceId in
-                        guard !isNewSessionAction else { return }
-                        targetSessionId = sessionStore
-                            .listProjectionSessions(workspaceId: newWorkspaceId)
-                            .first?.id ?? ""
+                    .accessibilityIdentifier("schedule.nativeEdit.thinking")
+
+                    TextField("Session title (optional)", text: $sessionName)
+                        .accessibilityIdentifier("schedule.nativeEdit.sessionName")
+                } else {
+                    Picker("Session", selection: $targetSessionId) {
+                        if !targetSessionId.isEmpty,
+                           !availableSessions.contains(where: { $0.id == targetSessionId }) {
+                            Text("Current session").tag(targetSessionId)
+                        }
+                        ForEach(availableSessions) { session in
+                            Text(session.displayTitle).tag(session.id)
+                        }
                     }
-                    .accessibilityIdentifier("schedule.nativeEdit.workspace")
+                    .accessibilityIdentifier("schedule.nativeEdit.session")
 
-                    if isNewSessionAction {
-                        Picker("Agent", selection: $agentId) {
-                            Text("No saved Agent").tag("")
-                            if !agentId.isEmpty, !agents.contains(where: { $0.id == agentId }) {
-                                Text("Current saved Agent").tag(agentId)
-                            }
-                            ForEach(agents) { agent in
-                                Text(agent.name).tag(agent.id)
-                            }
+                    Picker("Delivery", selection: $streamingBehavior) {
+                        Text("Automatic").tag(ExistingSessionStreamingBehavior?.none)
+                        ForEach(ExistingSessionStreamingBehavior.allCases, id: \.rawValue) { behavior in
+                            Text(behavior.displayName).tag(Optional(behavior))
                         }
-                        .accessibilityIdentifier("schedule.nativeEdit.agent")
-
-                        Button {
-                            isShowingModelPicker = true
-                        } label: {
-                            LabeledContent("Model") {
-                                Text(modelDisplayName)
-                                    .foregroundStyle(.themeFg)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("schedule.nativeEdit.model")
-
-                        if !model.isEmpty {
-                            Button("Use Agent or Server Default Model") { model = "" }
-                                .foregroundStyle(.themeBlue)
-                        }
-
-                        Picker("Thinking", selection: $thinkingLevel) {
-                            Text("Agent or server default").tag(ThinkingLevel?.none)
-                            ForEach(ThinkingLevel.allCases) { level in
-                                Text(level.displayTitle).tag(Optional(level))
-                            }
-                        }
-                        .accessibilityIdentifier("schedule.nativeEdit.thinking")
-
-                        TextField("Session title (optional)", text: $sessionName)
-                            .accessibilityIdentifier("schedule.nativeEdit.sessionName")
-                    } else {
-                        Picker("Session", selection: $targetSessionId) {
-                            if !targetSessionId.isEmpty,
-                               !availableSessions.contains(where: { $0.id == targetSessionId }) {
-                                Text("Current session").tag(targetSessionId)
-                            }
-                            ForEach(availableSessions) { session in
-                                Text(session.displayTitle).tag(session.id)
-                            }
-                        }
-                        .accessibilityIdentifier("schedule.nativeEdit.session")
-
-                        Picker("Delivery", selection: $streamingBehavior) {
-                            Text("Automatic").tag(ExistingSessionStreamingBehavior?.none)
-                            ForEach(ExistingSessionStreamingBehavior.allCases, id: \.rawValue) { behavior in
-                                Text(behavior.displayName).tag(Optional(behavior))
-                            }
-                        }
-                        .accessibilityIdentifier("schedule.nativeEdit.delivery")
                     }
-                }
-
-                if let error {
-                    Section {
-                        Label(error, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.themeRed)
-                    }
+                    .accessibilityIdentifier("schedule.nativeEdit.delivery")
                 }
             }
-            .disabled(isSaving)
-            .navigationTitle("Edit Schedule")
-            .navigationBarTitleDisplayMode(.inline)
-            .themedListSurface()
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(role: .cancel) { dismiss() }
-                        .disabled(isSaving)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    if isSaving {
-                        ProgressView()
-                            .accessibilityLabel("Saving")
-                    } else {
-                        Button(role: .confirm) {
-                            Task { await save() }
-                        }
-                        .disabled(!canSave)
-                        .accessibilityLabel("Save")
-                        .accessibilityIdentifier("schedule.nativeEdit.save")
-                    }
+
+            if let error {
+                Section {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.themeRed)
                 }
             }
-            .task { await loadAgents() }
-            .interactiveDismissDisabled(isSaving)
         }
-        .sheet(isPresented: $isShowingModelPicker) {
+        .disabled(isSaving)
+        .navigationTitle("Edit Schedule")
+        .navigationBarTitleDisplayMode(.inline)
+        .themedListSurface()
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(role: .cancel) { navigator.finish() }
+                    .disabled(isSaving)
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                if isSaving {
+                    ProgressView()
+                        .accessibilityLabel("Saving")
+                } else {
+                    Button(role: .confirm) {
+                        Task { await save() }
+                    }
+                    .disabled(!canSave)
+                    .accessibilityLabel("Save")
+                    .accessibilityIdentifier("schedule.nativeEdit.save")
+                }
+            }
+        }
+        .task { await loadAgents() }
+        .interactiveDismissDisabled(isSaving)
+        .routerModal(isPresented: $isShowingModelPicker) {
+            // The picker keeps its own navigation stack; it gets this editor's
+            // server explicitly.
             ModelPickerSheet(currentModel: model.managementNilIfBlank) { selected in
                 model = ModelSwitchPolicy.fullModelID(for: selected)
                 AppPreferences.RecentModels.record(model)
             }
+            .environment(\.apiClient, apiClient)
+            .environment(connection.chatState)
         }
-        .sheet(isPresented: $isShowingTimeZonePicker) {
+        .routerModal(isPresented: $isShowingTimeZonePicker, presentation: .sheet.inNavigation()) {
             TimeZonePickerView(selection: $triggerDraft.timeZone)
         }
     }
@@ -394,7 +398,7 @@ struct ScheduleNativeEditView: View {
             updated.action = action
             updated.updatedAt = summary.updatedAt
             onSaved(updated, summary)
-            dismiss()
+            navigator.finish()
         } catch {
             self.error = error.localizedDescription
         }
@@ -605,7 +609,7 @@ struct ScheduleTriggerDraft: Equatable {
 }
 
 private struct TimeZonePickerView: View {
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
     @Binding var selection: String
     @State private var searchText = ""
 
@@ -618,34 +622,34 @@ private struct TimeZonePickerView: View {
         }
     }
 
+    /// Presented by the router inside a navigation controller, which owns the
+    /// bar and the search field.
     var body: some View {
-        NavigationStack {
-            List(identifiers, id: \.self) { identifier in
-                Button {
-                    selection = identifier
-                    dismiss()
-                } label: {
-                    HStack {
-                        Text(identifier.replacingOccurrences(of: "_", with: " "))
-                            .foregroundStyle(.themeFg)
-                        Spacer(minLength: 8)
-                        if identifier == selection {
-                            Image(systemName: "checkmark")
-                                .foregroundStyle(.themeBlue)
-                        }
+        List(identifiers, id: \.self) { identifier in
+            Button {
+                selection = identifier
+                navigator.finish()
+            } label: {
+                HStack {
+                    Text(identifier.replacingOccurrences(of: "_", with: " "))
+                        .foregroundStyle(.themeFg)
+                    Spacer(minLength: 8)
+                    if identifier == selection {
+                        Image(systemName: "checkmark")
+                            .foregroundStyle(.themeBlue)
                     }
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .contentShape(Rectangle())
             }
-            .navigationTitle("Time Zone")
-            .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $searchText, prompt: "Search time zones")
-            .themedListSurface()
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(role: .cancel) { dismiss() }
-                }
+            .buttonStyle(.plain)
+        }
+        .navigationTitle("Time Zone")
+        .navigationBarTitleDisplayMode(.inline)
+        .routerSearchable(text: $searchText, prompt: "Search time zones")
+        .themedListSurface()
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(role: .cancel) { navigator.finish() }
             }
         }
     }

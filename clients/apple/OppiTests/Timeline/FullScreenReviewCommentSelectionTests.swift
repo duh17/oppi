@@ -2902,6 +2902,8 @@ struct FullScreenReviewCommentSelectionTests {
 
     @Test func reviewCommentStashButtonPresentsExistingStashSheet() async throws {
         let fixture = try makeStashFixture(stagedCount: 1)
+        // The viewer sits under the app root; the router finds it through the trait bridge.
+        fixture.controller.traitOverrides.appRootEnvironment = makeTestAppRoot()
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = fixture.controller
         window.makeKeyAndVisible()
@@ -2915,10 +2917,51 @@ struct FullScreenReviewCommentSelectionTests {
             fixture.controller.presentedViewController != nil
         }
         #expect(presented)
-        let host = try #require(
-            fixture.controller.presentedViewController as? UIHostingController<ReviewCommentStashSheet>
-        )
-        #expect(host.rootView.comments.count == 1)
+        let host = try #require(fixture.controller.presentedViewController as? HostedScreenController)
+        #expect(host.modalPresentationStyle == .pageSheet)
+    }
+
+    /// An embedded viewer is not the controller the router presents from: the
+    /// sheet comes from the window's front-most controller. The viewer must
+    /// still replace, not stack, its sheet, and reopen it after a swipe-down.
+    @Test func embeddedViewerKeepsOneStashSheetAcrossTapsAndSwipeDown() async throws {
+        let fixture = try makeStashFixture(stagedCount: 1)
+        let container = UIViewController()
+        container.traitOverrides.appRootEnvironment = makeTestAppRoot()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = container
+        window.makeKeyAndVisible()
+        defer {
+            container.dismiss(animated: false)
+            window.isHidden = true
+        }
+        fixture.controller.view.frame = container.view.bounds
+        container.view.addSubview(fixture.controller.view)
+        fixture.controller.view.layoutIfNeeded()
+        let button = try #require(fixture.controller.floatingStashButtonForTesting)
+
+        button.sendActions(for: .touchUpInside)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            guard let sheet = container.presentedViewController as? HostedScreenController else { return false }
+            return !sheet.isBeingPresented
+        })
+        let first = try #require(container.presentedViewController)
+        #expect(fixture.controller.presentedViewController == nil)
+
+        button.sendActions(for: .touchUpInside)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            guard let sheet = container.presentedViewController as? HostedScreenController else { return false }
+            return sheet !== first && !sheet.isBeingPresented
+        })
+        #expect(container.presentedViewController?.presentedViewController == nil)
+
+        // Swipe-down: UIKit dismisses without the viewer.
+        container.dismiss(animated: false)
+        button.sendActions(for: .touchUpInside)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            container.presentedViewController is HostedScreenController
+        })
+        #expect(container.presentedViewController?.presentedViewController == nil)
     }
 
     @Test func reviewCommentStashButtonSkipsPopWhenReduceMotionIsEnabled() throws {

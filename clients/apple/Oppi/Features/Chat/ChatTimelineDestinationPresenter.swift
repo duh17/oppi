@@ -3,16 +3,12 @@ import UIKit
 
 /// Chat composition's builder and presenter for destinations the timeline requests.
 ///
-/// The timeline raises a typed `ChatTimelineDestinationRequest`; this type owns the app-service
-/// environment those screens need and the presentation policy. The environment sets are the
-/// ones the timeline assembled before this moved: the commit detail sheet gets the full
-/// connection store set plus a fresh `AppNavigation` and empty `QuickCommentTemplateStore`;
-/// file viewers get the API client, audio player, and session store.
+/// The timeline raises a typed `ChatTimelineDestinationRequest`; this type picks the screen
+/// and its presentation. The router hosts it with the app root services. The chat's own
+/// server connection is presenter-local: its scoped stores override the active server's.
 @MainActor
 struct ChatTimelineDestinationPresenter {
     let connection: ServerConnection
-    let audioPlayer: AudioPlayerService
-    let composerDraftStore: ComposerDraftStore?
 
     func open(_ request: ChatTimelineDestinationRequest) {
         switch request.destination {
@@ -24,53 +20,30 @@ struct ChatTimelineDestinationPresenter {
     }
 
     private func presentCommitDetail(sha: String, request: ChatTimelineDestinationRequest) {
-        let presenter = request.presenter
-        let commit = GitCommitSummary(sha: sha, message: "", date: "")
         let view = TimelineCommitDetailHost(
             workspaceId: request.workspaceId,
-            commit: commit,
-            onDismiss: { [weak presenter] in
-                presenter?.dismiss(animated: true)
-            },
-            composerDraftStore: composerDraftStore
+            commit: GitCommitSummary(sha: sha, message: "", date: "")
         )
-        .environment(\.apiClient, connection.apiClient)
-        .environment(connection)
-        .environment(connection.chatState)
-        .environment(connection.sessionStore)
-        .environment(connection.audioPlayer)
-        .environment(connection.gitStatusStore)
-        .environment(connection.fileIndexStore)
-        .environment(connection.messageQueueStore)
-        .environment(connection.askRequestStore)
-        .environment(AppNavigation())
-        .environment(QuickCommentTemplateStore(templates: []))
+        .withServerScopedEnvironment(connection)
         .environment(\.reviewCommentSelectionScope, request.reviewCommentSelectionScope)
 
-        let host = UIHostingController(rootView: view)
-        FullScreenViewerPresentationPolicy.configureLargePresentation(
-            host,
-            traitCollection: request.sourceView.traitCollection
-        )
-        presenter.present(host, animated: true)
+        Router.present(
+            presentation: .largeViewer(for: request.sourceView.traitCollection),
+            from: request.presenter
+        ) { view }
     }
 
     private func presentWorkspaceFile(for pill: UserMessagePathPill, request: ChatTimelineDestinationRequest) {
-        guard let apiClient = connection.apiClient else { return }
+        guard connection.apiClient != nil else { return }
 
         let view = fileContent(for: pill, request: request)
-            .environment(\.apiClient, apiClient)
-            .environment(audioPlayer)
-            .environment(connection.sessionStore)
+            .withServerScopedEnvironment(connection)
             .environment(\.reviewCommentSelectionScope, request.reviewCommentSelectionScope)
 
-        let host = UIHostingController(rootView: view)
-        let navigation = UINavigationController(rootViewController: host)
-        FullScreenViewerPresentationPolicy.configureLargePresentation(
-            navigation,
-            traitCollection: request.sourceView.traitCollection
-        )
-        request.presenter.present(navigation, animated: true)
+        Router.present(
+            presentation: .largeViewer(for: request.sourceView.traitCollection).inNavigation(),
+            from: request.presenter
+        ) { view }
     }
 
     /// Upload pills open the session-origin copy the server materialized in
@@ -106,9 +79,13 @@ struct ChatTimelineDestinationPresenter {
 struct TimelineCommitDetailHost: View {
     let workspaceId: String
     let commit: GitCommitSummary
-    let onDismiss: () -> Void
-    var composerDraftStore: ComposerDraftStore? = nil
     var testingQuickActionDestination: QuickActionSessionNavDestination? = nil
+    @Environment(\.screenNavigator) private var navigator
+    /// The viewer runs its own chat stack inside the modal. A `ChatView` pushed
+    /// here must not take the app's pending quick-session message (it would
+    /// send it into this session) or change the app's split state underneath,
+    /// so it gets a navigation of its own.
+    @State private var modalNavigation = AppNavigation()
 
     var body: some View {
         NavigationStack {
@@ -119,7 +96,7 @@ struct TimelineCommitDetailHost: View {
             )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(action: onDismiss) {
+                    Button(action: navigator.finish) {
                         Label(
                             FullScreenViewerNavigationChrome.DismissMode.modal.accessibilityLabel,
                             systemImage: FullScreenViewerNavigationChrome.DismissMode.modal.systemImageName
@@ -129,20 +106,6 @@ struct TimelineCommitDetailHost: View {
                 }
             }
         }
-        .environment(\.composerDraftStore, composerDraftStore)
-        .modifier(TimelineCommitThemeEnvironment())
-    }
-}
-
-struct TimelineCommitThemeEnvironment: ViewModifier {
-    @State private var themeID = ThemeRuntimeState.currentThemeID()
-
-    func body(content: Content) -> some View {
-        content
-            .environment(\.theme, themeID.appTheme)
-            .environment(\.themeID, themeID)
-            .onReceive(NotificationCenter.default.publisher(for: .oppiThemeDidChange)) { _ in
-                themeID = ThemeRuntimeState.currentThemeID()
-            }
+        .environment(modalNavigation)
     }
 }

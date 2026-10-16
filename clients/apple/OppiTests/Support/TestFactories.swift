@@ -43,6 +43,28 @@ func makeTestSession(
     )
 }
 
+/// App root services for hosting tests, with no paired server. Drafts go to a
+/// throwaway file unless the test passes its own store.
+@MainActor
+func makeTestAppRoot(
+    themeStore: ThemeStore = ThemeStore(),
+    composerDraftStore: ComposerDraftStore? = nil
+) -> AppRootEnvironment {
+    AppRootEnvironment(
+        coordinator: ConnectionCoordinator(serverStore: ServerStore()),
+        navigation: AppNavigation(),
+        themeStore: themeStore,
+        quickCommentTemplateStore: QuickCommentTemplateStore(templates: []),
+        composerDraftStore: composerDraftStore ?? ComposerDraftStore(
+            fileURL: FileManager.default.temporaryDirectory
+                .appending(path: "test-app-root-drafts-\(UUID().uuidString).json", directoryHint: .notDirectory),
+            saveDelay: .seconds(60)
+        ),
+        chatReaderPayloadStore: ChatReaderPayloadStore(),
+        sessionRowDisplay: SessionRowDisplay()
+    )
+}
+
 @MainActor
 func makeTestConnection(sessionId: String = "s1") -> (conn: ServerConnection, pipe: TestEventPipeline) {
     let connection = ServerConnection()

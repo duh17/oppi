@@ -466,7 +466,10 @@ struct ChatViewLifecycleTests {
     }
 
     private func makeHost(root: AnyView) -> HostHarness {
-        let controller = UIHostingController(rootView: root)
+        // The timeline hosts its empty state with the app root above it.
+        let controller = UIHostingController(
+            rootView: AnyView(root.environment(\.appRootEnvironment, makeTestAppRoot()))
+        )
         controller.loadViewIfNeeded()
         controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
 

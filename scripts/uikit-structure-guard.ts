@@ -136,8 +136,9 @@ console.log("UIKit structure guard: FAIL — SwiftUI structure constructs exceed
 for (const line of failures) console.log(line);
 console.log(`
 UIKit owns iOS app structure, modal presentation, and new views. New screens and
-views are UIKit view controllers/views; present modals through UIKit (uiKitSheet
-until the AppNavigation router exists). See ${guide}.
+views are UIKit view controllers/views; present and push through the router
+(routerModal, ScreenNavigator present/push/finish) and host SwiftUI only through
+HostFactory. See ${guide}.
 Existing SwiftUI screens change only when a trigger (crash/bug in the screen,
 substantive rewrite, router migration) moves them; name the trigger in the commit.
 Raising the baseline needs Chen's approval. Lowering it after a migration is

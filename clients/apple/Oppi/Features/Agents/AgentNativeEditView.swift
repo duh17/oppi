@@ -84,7 +84,7 @@ struct AgentNativeEditView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(ServerConnection.self) private var connection
     @Environment(WorkspaceStore.self) private var workspaceStore
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.screenNavigator) private var navigator
 
     let agent: StoredAgentDefinition
     let onSaved: (StoredAgentDefinition) -> Void
@@ -96,17 +96,11 @@ struct AgentNativeEditView: View {
     @State private var instructionText: String
     @State private var model: String
     @State private var thinkingLevel: ThinkingLevel?
-    @State private var toolSelectionMode: AgentToolSelectionMode
-    @State private var selectedToolNames: Set<String>
-    @State private var extensionToolDetailsById: [String: ServerExtensionDetail] = [:]
+    @State private var selections: AgentNativeEditSelections
     @State private var extensionToolInspectionIds: Set<String> = []
-    @State private var isLoadingExtensionTools = false
     @State private var skillSelectionMode: AgentResourceSelectionMode
-    @State private var selectedSkillPaths: Set<String>
     @State private var extensionSelectionMode: AgentResourceSelectionMode
-    @State private var selectedExtensionIds: Set<String>
     @State private var workspaceConstraintMode: AgentResourceSelectionMode
-    @State private var selectedAllowedWorkspaceIds: Set<String>
     @State private var requiredRuntime: WorkspaceRuntime?
     @State private var isShowingModelPicker = false
     @State private var isLoadingResources = false
@@ -124,29 +118,15 @@ struct AgentNativeEditView: View {
         _instructionText = State(initialValue: definition.instructions?.text ?? "")
         _model = State(initialValue: definition.sessionDefaults?.model ?? "")
         _thinkingLevel = State(initialValue: definition.sessionDefaults?.thinkingLevel)
-        let defaults = definition.sessionDefaults
-        let toolMode: AgentToolSelectionMode = if defaults?.tools != nil {
-            .exact
-        } else if defaults?.excludeTools != nil || defaults?.noTools != nil {
-            .existingPolicy
-        } else {
-            .inherit
-        }
-        _toolSelectionMode = State(initialValue: toolMode)
-        _selectedToolNames = State(initialValue: Set(defaults?.tools ?? []))
+        _selections = State(initialValue: AgentNativeEditSelections(definition: definition))
         _skillSelectionMode = State(
             initialValue: definition.resources?.skillPaths == nil ? .inherit : .exact
         )
-        _selectedSkillPaths = State(initialValue: Set(definition.resources?.skillPaths ?? []))
         _extensionSelectionMode = State(
             initialValue: definition.resources?.extensionIds == nil ? .inherit : .exact
         )
-        _selectedExtensionIds = State(initialValue: Set(definition.resources?.extensionIds ?? []))
         _workspaceConstraintMode = State(
             initialValue: definition.launchConstraints?.allowedWorkspaceIds == nil ? .inherit : .exact
-        )
-        _selectedAllowedWorkspaceIds = State(
-            initialValue: Set(definition.launchConstraints?.allowedWorkspaceIds ?? [])
         )
         _requiredRuntime = State(initialValue: definition.launchConstraints?.requiredRuntime)
     }
@@ -163,9 +143,9 @@ struct AgentNativeEditView: View {
 
     private var canSaveLaunchConstraints: Bool {
         guard workspaceConstraintMode == .exact else { return true }
-        guard !selectedAllowedWorkspaceIds.isEmpty else { return false }
+        guard !selections.selectedAllowedWorkspaceIds.isEmpty else { return false }
         return workspaceStore.workspaces.contains { workspace in
-            selectedAllowedWorkspaceIds.contains(workspace.id)
+            selections.selectedAllowedWorkspaceIds.contains(workspace.id)
                 && (requiredRuntime.map { $0 == (workspace.runtime ?? .host) } ?? true)
         }
     }
@@ -185,238 +165,259 @@ struct AgentNativeEditView: View {
     }
 
     private var canSaveToolSelection: Bool {
-        guard toolSelectionMode == .exact else { return true }
+        guard selections.toolSelectionMode == .exact else { return true }
         return agent.definition.sessionDefaults?.tools != nil || !availableBuiltInTools.isEmpty
     }
 
+    /// Presented by the router inside a navigation controller, which owns the
+    /// bar and the selection pushes.
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("Identity") {
-                    TextField("Name", text: $name)
-                        .accessibilityIdentifier("agent.nativeEdit.name")
-                    TextField("Description (optional)", text: $description, axis: .vertical)
-                        .lineLimit(2...5)
-                        .accessibilityIdentifier("agent.nativeEdit.description")
+        Form {
+            Section("Identity") {
+                TextField("Name", text: $name)
+                    .accessibilityIdentifier("agent.nativeEdit.name")
+                TextField("Description (optional)", text: $description, axis: .vertical)
+                    .lineLimit(2...5)
+                    .accessibilityIdentifier("agent.nativeEdit.description")
+            }
+
+            Section {
+                Toggle("Custom system prompt", isOn: $usesCustomInstructions)
+                    .accessibilityIdentifier("agent.nativeEdit.customPrompt")
+
+                if usesCustomInstructions {
+                    Picker("Behavior", selection: $instructionMode) {
+                        Text("Append").tag(AgentInstructionMode.append)
+                        Text("Replace").tag(AgentInstructionMode.replace)
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("agent.nativeEdit.promptMode")
+
+                    TextEditor(text: $instructionText)
+                        .frame(minHeight: 180)
+                        .accessibilityLabel("System prompt")
+                        .accessibilityIdentifier("agent.nativeEdit.prompt")
                 }
-
-                Section {
-                    Toggle("Custom system prompt", isOn: $usesCustomInstructions)
-                        .accessibilityIdentifier("agent.nativeEdit.customPrompt")
-
-                    if usesCustomInstructions {
-                        Picker("Behavior", selection: $instructionMode) {
-                            Text("Append").tag(AgentInstructionMode.append)
-                            Text("Replace").tag(AgentInstructionMode.replace)
-                        }
-                        .pickerStyle(.segmented)
-                        .accessibilityIdentifier("agent.nativeEdit.promptMode")
-
-                        TextEditor(text: $instructionText)
-                            .frame(minHeight: 180)
-                            .accessibilityLabel("System prompt")
-                            .accessibilityIdentifier("agent.nativeEdit.prompt")
-                    }
-                } header: {
-                    Text("System Prompt")
-                } footer: {
-                    if usesCustomInstructions {
-                        Text(instructionMode == .append
-                            ? "Adds these instructions after the server's default system prompt."
-                            : "Uses these instructions instead of the server's default system prompt.")
-                    } else {
-                        Text("Uses the server's default system prompt.")
-                    }
-                }
-
-                Section("Pi Session Defaults") {
-                    Button {
-                        isShowingModelPicker = true
-                    } label: {
-                        LabeledContent("Model") {
-                            Text(modelDisplayName)
-                                .foregroundStyle(.themeFg)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("agent.nativeEdit.model")
-
-                    if !model.isEmpty {
-                        Button("Use Server Default Model") { model = "" }
-                            .foregroundStyle(.themeBlue)
-                    }
-
-                    Picker("Thinking", selection: $thinkingLevel) {
-                        Text("Default").tag(ThinkingLevel?.none)
-                        ForEach(ThinkingLevel.allCases) { level in
-                            Text(level.displayTitle).tag(Optional(level))
-                        }
-                    }
-                    .accessibilityIdentifier("agent.nativeEdit.thinking")
-
-                    NavigationLink {
-                        AgentToolSelectionView(
-                            mode: $toolSelectionMode,
-                            selectedNames: $selectedToolNames,
-                            builtInTools: availableBuiltInTools,
-                            extensionGroups: effectiveExtensionToolGroups,
-                            unavailableNames: unavailableSelectedToolNames,
-                            defaultSelection: effectiveDefaultToolNames,
-                            existingPolicySummary: existingToolPolicySummary,
-                            isLoadingExtensionTools: isLoadingExtensionTools
-                        )
-                    } label: {
-                        LabeledContent("Tools", value: toolSelectionSummary)
-                    }
-                    .accessibilityIdentifier("agent.nativeEdit.tools")
-                }
-
-                Section {
-                    Picker("Skills", selection: $skillSelectionMode) {
-                        ForEach(AgentResourceSelectionMode.allCases, id: \.self) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    .accessibilityIdentifier("agent.nativeEdit.skillMode")
-
-                    if skillSelectionMode == .exact {
-                        NavigationLink {
-                            AgentSkillSelectionView(
-                                skills: availableSkills,
-                                selectedPaths: $selectedSkillPaths,
-                                catalogState: skillCatalogState
-                            )
-                        } label: {
-                            LabeledContent("Selected Skills", value: selectionCount(selectedSkillPaths.count))
-                        }
-                        .accessibilityIdentifier("agent.nativeEdit.skills")
-                    }
-
-                    Picker("Extensions", selection: $extensionSelectionMode) {
-                        ForEach(AgentResourceSelectionMode.allCases, id: \.self) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    .accessibilityIdentifier("agent.nativeEdit.extensionMode")
-
-                    if extensionSelectionMode == .exact {
-                        NavigationLink {
-                            AgentExtensionSelectionView(
-                                extensions: availableExtensions,
-                                selectedIds: $selectedExtensionIds,
-                                catalogState: extensionCatalogState
-                            )
-                        } label: {
-                            LabeledContent(
-                                "Selected Extensions",
-                                value: selectionCount(selectedExtensionIds.count)
-                            )
-                        }
-                        .accessibilityIdentifier("agent.nativeEdit.extensions")
-                    }
-
-                    if isLoadingResources {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                            Text("Refreshing discovered resources…")
-                                .font(.caption)
-                                .foregroundStyle(.themeComment)
-                        }
-                    }
-
-                    if let message = skillCatalogState.statusMessage(for: "Skills") {
-                        Label(message, systemImage: "exclamationmark.triangle")
-                            .font(.caption)
-                            .foregroundStyle(.themeOrange)
-                    }
-                    if let message = extensionCatalogState.statusMessage(for: "Extensions") {
-                        Label(message, systemImage: "exclamationmark.triangle")
-                            .font(.caption)
-                            .foregroundStyle(.themeOrange)
-                    }
-                } header: {
-                    Text("Resources")
-                } footer: {
-                    Text("Inherit follows normal Pi discovery. Exact selection can be empty to give this Agent no Skills or optional Extensions. Exact selections explicitly override server discovery, including resources currently Disabled or Off, for this Agent only.")
-                }
-
-                Section {
-                    Picker("Runtime", selection: $requiredRuntime) {
-                        Text("Any runtime").tag(WorkspaceRuntime?.none)
-                        Text("Host").tag(Optional(WorkspaceRuntime.host))
-                        Text("Sandbox").tag(Optional(WorkspaceRuntime.sandbox))
-                    }
-                    .accessibilityIdentifier("agent.nativeEdit.requiredRuntime")
-
-                    Picker("Workspaces", selection: $workspaceConstraintMode) {
-                        Text("Any workspace").tag(AgentResourceSelectionMode.inherit)
-                        Text("Allowed list").tag(AgentResourceSelectionMode.exact)
-                    }
-                    .accessibilityIdentifier("agent.nativeEdit.workspaceMode")
-
-                    if workspaceConstraintMode == .exact {
-                        NavigationLink {
-                            AgentWorkspaceSelectionView(
-                                workspaces: workspaceStore.workspaces,
-                                selectedIds: $selectedAllowedWorkspaceIds,
-                                requiredRuntime: requiredRuntime
-                            )
-                        } label: {
-                            LabeledContent(
-                                "Allowed Workspaces",
-                                value: selectionCount(selectedAllowedWorkspaceIds.count)
-                            )
-                        }
-                        .accessibilityIdentifier("agent.nativeEdit.workspaces")
-                    }
-                } header: {
-                    Text("Launch Constraints")
-                } footer: {
-                    Text("Only compatible workspaces appear when this Agent starts. The server enforces the same restrictions for API and scheduled launches.")
-                }
-
-                if let error {
-                    Section {
-                        Label(error, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.themeRed)
-                    }
+            } header: {
+                Text("System Prompt")
+            } footer: {
+                if usesCustomInstructions {
+                    Text(instructionMode == .append
+                        ? "Adds these instructions after the server's default system prompt."
+                        : "Uses these instructions instead of the server's default system prompt.")
+                } else {
+                    Text("Uses the server's default system prompt.")
                 }
             }
-            .disabled(isSaving)
-            .navigationTitle("Edit Agent")
-            .navigationBarTitleDisplayMode(.inline)
-            .themedListSurface()
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(role: .cancel) { dismiss() }
-                        .disabled(isSaving)
+
+            Section("Pi Session Defaults") {
+                Button {
+                    isShowingModelPicker = true
+                } label: {
+                    LabeledContent("Model") {
+                        Text(modelDisplayName)
+                            .foregroundStyle(.themeFg)
+                    }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    if isSaving {
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("agent.nativeEdit.model")
+
+                if !model.isEmpty {
+                    Button("Use Server Default Model") { model = "" }
+                        .foregroundStyle(.themeBlue)
+                }
+
+                Picker("Thinking", selection: $thinkingLevel) {
+                    Text("Default").tag(ThinkingLevel?.none)
+                    ForEach(ThinkingLevel.allCases) { level in
+                        Text(level.displayTitle).tag(Optional(level))
+                    }
+                }
+                .accessibilityIdentifier("agent.nativeEdit.thinking")
+
+                SettingsIndexActionRow(value: toolSelectionSummary) {
+                    navigator.push { toolSelectionPage }
+                } label: {
+                    Text("Tools")
+                }
+                .accessibilityIdentifier("agent.nativeEdit.tools")
+            }
+
+            Section {
+                Picker("Skills", selection: $skillSelectionMode) {
+                    ForEach(AgentResourceSelectionMode.allCases, id: \.self) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .accessibilityIdentifier("agent.nativeEdit.skillMode")
+
+                if skillSelectionMode == .exact {
+                    SettingsIndexActionRow(value: selectionCount(selections.selectedSkillPaths.count)) {
+                        navigator.push { skillSelectionPage }
+                    } label: {
+                        Text("Selected Skills")
+                    }
+                    .accessibilityIdentifier("agent.nativeEdit.skills")
+                }
+
+                Picker("Extensions", selection: $extensionSelectionMode) {
+                    ForEach(AgentResourceSelectionMode.allCases, id: \.self) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .accessibilityIdentifier("agent.nativeEdit.extensionMode")
+
+                if extensionSelectionMode == .exact {
+                    SettingsIndexActionRow(value: selectionCount(selections.selectedExtensionIds.count)) {
+                        navigator.push { extensionSelectionPage }
+                    } label: {
+                        Text("Selected Extensions")
+                    }
+                    .accessibilityIdentifier("agent.nativeEdit.extensions")
+                }
+
+                if isLoadingResources {
+                    HStack(spacing: 8) {
                         ProgressView()
-                            .accessibilityLabel("Saving")
-                    } else {
-                        Button(role: .confirm) {
-                            Task { await save() }
-                        }
-                        .disabled(!canSave)
-                        .accessibilityLabel("Save")
-                        .accessibilityIdentifier("agent.nativeEdit.save")
+                        Text("Refreshing discovered resources…")
+                            .font(.caption)
+                            .foregroundStyle(.themeComment)
                     }
                 }
+
+                if let message = skillCatalogState.statusMessage(for: "Skills") {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.themeOrange)
+                }
+                if let message = extensionCatalogState.statusMessage(for: "Extensions") {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.themeOrange)
+                }
+            } header: {
+                Text("Resources")
+            } footer: {
+                Text("Inherit follows normal Pi discovery. Exact selection can be empty to give this Agent no Skills or optional Extensions. Exact selections explicitly override server discovery, including resources currently Disabled or Off, for this Agent only.")
             }
-            .interactiveDismissDisabled(isSaving)
+
+            Section {
+                Picker("Runtime", selection: $requiredRuntime) {
+                    Text("Any runtime").tag(WorkspaceRuntime?.none)
+                    Text("Host").tag(Optional(WorkspaceRuntime.host))
+                    Text("Sandbox").tag(Optional(WorkspaceRuntime.sandbox))
+                }
+                .accessibilityIdentifier("agent.nativeEdit.requiredRuntime")
+
+                Picker("Workspaces", selection: $workspaceConstraintMode) {
+                    Text("Any workspace").tag(AgentResourceSelectionMode.inherit)
+                    Text("Allowed list").tag(AgentResourceSelectionMode.exact)
+                }
+                .accessibilityIdentifier("agent.nativeEdit.workspaceMode")
+
+                if workspaceConstraintMode == .exact {
+                    SettingsIndexActionRow(value: selectionCount(selections.selectedAllowedWorkspaceIds.count)) {
+                        navigator.push { workspaceSelectionPage }
+                    } label: {
+                        Text("Allowed Workspaces")
+                    }
+                    .accessibilityIdentifier("agent.nativeEdit.workspaces")
+                }
+            } header: {
+                Text("Launch Constraints")
+            } footer: {
+                Text("Only compatible workspaces appear when this Agent starts. The server enforces the same restrictions for API and scheduled launches.")
+            }
+
+            if let error {
+                Section {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.themeRed)
+                }
+            }
         }
-        .sheet(isPresented: $isShowingModelPicker) {
+        .disabled(isSaving)
+        .navigationTitle("Edit Agent")
+        .navigationBarTitleDisplayMode(.inline)
+        .themedListSurface()
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button(role: .cancel) { navigator.finish() }
+                    .disabled(isSaving)
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                if isSaving {
+                    ProgressView()
+                        .accessibilityLabel("Saving")
+                } else {
+                    Button(role: .confirm) {
+                        Task { await save() }
+                    }
+                    .disabled(!canSave)
+                    .accessibilityLabel("Save")
+                    .accessibilityIdentifier("agent.nativeEdit.save")
+                }
+            }
+        }
+        .interactiveDismissDisabled(isSaving)
+        .routerModal(isPresented: $isShowingModelPicker) {
+            // The picker keeps its own navigation stack; it gets this editor's
+            // server explicitly.
             ModelPickerSheet(currentModel: model.managementNilIfBlank) { selected in
                 model = ModelSwitchPolicy.fullModelID(for: selected)
                 AppPreferences.RecentModels.record(model)
             }
+            .environment(\.apiClient, apiClient)
+            .environment(connection.chatState)
         }
         .task { await refreshResources() }
         .task(id: extensionToolRefreshKey) {
             await refreshSelectedExtensionToolDetails()
         }
+    }
+
+    // Selection pages. Each is pushed as its own screen and built in that
+    // screen's graph, so the store and `selections` reads below stay live.
+
+    private var toolSelectionPage: some View {
+        @Bindable var selections = selections
+        return AgentToolSelectionView(
+            mode: $selections.toolSelectionMode,
+            selectedNames: $selections.selectedToolNames,
+            builtInTools: availableBuiltInTools,
+            extensionGroups: effectiveExtensionToolGroups,
+            unavailableNames: unavailableSelectedToolNames,
+            defaultSelection: effectiveDefaultToolNames,
+            existingPolicySummary: existingToolPolicySummary,
+            isLoadingExtensionTools: selections.isLoadingExtensionTools
+        )
+    }
+
+    private var skillSelectionPage: some View {
+        @Bindable var selections = selections
+        return AgentSkillSelectionView(
+            skills: availableSkills,
+            selectedPaths: $selections.selectedSkillPaths,
+            catalogState: skillCatalogState
+        )
+    }
+
+    private var extensionSelectionPage: some View {
+        @Bindable var selections = selections
+        return AgentExtensionSelectionView(
+            extensions: availableExtensions,
+            selectedIds: $selections.selectedExtensionIds,
+            catalogState: extensionCatalogState
+        )
+    }
+
+    private var workspaceSelectionPage: some View {
+        @Bindable var selections = selections
+        return AgentWorkspaceSelectionView(
+            workspaces: workspaceStore.workspaces,
+            selectedIds: $selections.selectedAllowedWorkspaceIds,
+            requiredRuntime: requiredRuntime
+        )
     }
 
     private var availableBuiltInTools: [ServerToolSummary] {
@@ -440,11 +441,11 @@ struct AgentNativeEditView: View {
             case .inherit:
                 resource.state == .on
             case .exact:
-                selectedExtensionIds.contains(resource.id)
+                selections.selectedExtensionIds.contains(resource.id)
             }
         }
         return effectiveExtensions.compactMap { resource in
-            let details = extensionToolDetailsById[resource.id]
+            let details = selections.extensionToolDetailsById[resource.id]
             let tools = details?.contributedToolDetails
                 ?? resource.contributedToolDetails
                 ?? (details?.contributedTools ?? resource.contributedTools ?? []).map {
@@ -460,7 +461,7 @@ struct AgentNativeEditView: View {
     }
 
     private var unavailableSelectedToolNames: [String] {
-        selectedToolNames
+        selections.selectedToolNames
             .subtracting(knownToolNames)
             .sorted()
     }
@@ -478,11 +479,12 @@ struct AgentNativeEditView: View {
     }
 
     private var toolSelectionSummary: String {
-        switch toolSelectionMode {
+        switch selections.toolSelectionMode {
         case .inherit:
             return "Pi defaults"
         case .exact:
-            return selectedToolNames.isEmpty ? "None" : "\(selectedToolNames.count) selected"
+            let names = selections.selectedToolNames
+            return names.isEmpty ? "None" : "\(names.count) selected"
         case .existingPolicy:
             return "Existing policy"
         }
@@ -503,7 +505,8 @@ struct AgentNativeEditView: View {
 
     private var extensionToolRefreshKey: String {
         let catalogIds = availableExtensions.map(\.id).sorted().joined(separator: ",")
-        return "\(extensionSelectionMode.rawValue):\(selectedExtensionIds.sorted().joined(separator: ",")):\(catalogIds)"
+        let selectedIds = selections.selectedExtensionIds.sorted().joined(separator: ",")
+        return "\(extensionSelectionMode.rawValue):\(selectedIds):\(catalogIds)"
     }
 
     private var skillCatalogState: AgentResourceCatalogState {
@@ -550,23 +553,23 @@ struct AgentNativeEditView: View {
         guard extensionSelectionMode == .exact,
               let apiClient else { return }
         let resources = availableExtensions.filter {
-            selectedExtensionIds.contains($0.id)
+            selections.selectedExtensionIds.contains($0.id)
                 && $0.contributedToolDetails == nil
                 && $0.contributedTools == nil
-                && extensionToolDetailsById[$0.id] == nil
+                && selections.extensionToolDetailsById[$0.id] == nil
                 && !extensionToolInspectionIds.contains($0.id)
         }
         guard !resources.isEmpty else { return }
 
-        isLoadingExtensionTools = true
-        defer { isLoadingExtensionTools = false }
+        selections.isLoadingExtensionTools = true
+        defer { selections.isLoadingExtensionTools = false }
         for resource in resources {
             guard !Task.isCancelled else { return }
-            guard extensionToolDetailsById[resource.id] == nil,
+            guard selections.extensionToolDetailsById[resource.id] == nil,
                   extensionToolInspectionIds.insert(resource.id).inserted else { continue }
             defer { extensionToolInspectionIds.remove(resource.id) }
             do {
-                extensionToolDetailsById[resource.id] = try await apiClient.inspectAgentExtensionTools(
+                selections.extensionToolDetailsById[resource.id] = try await apiClient.inspectAgentExtensionTools(
                     id: resource.id
                 )
             } catch {
@@ -589,11 +592,11 @@ struct AgentNativeEditView: View {
         do {
             let originalDefaults = agent.definition.sessionDefaults
             let toolPolicy: (tools: [String]?, excluded: [String]?, noTools: AgentNoToolsMode?)
-            switch toolSelectionMode {
+            switch selections.toolSelectionMode {
             case .inherit:
                 toolPolicy = (nil, nil, nil)
             case .exact:
-                toolPolicy = (selectedToolNames.sorted(), nil, nil)
+                toolPolicy = (selections.selectedToolNames.sorted(), nil, nil)
             case .existingPolicy:
                 toolPolicy = (
                     originalDefaults?.tools,
@@ -611,8 +614,8 @@ struct AgentNativeEditView: View {
                     : nil,
                 model: model.managementNilIfBlank,
                 thinkingLevel: thinkingLevel,
-                skillPaths: skillSelectionMode == .inherit ? nil : selectedSkillPaths.sorted(),
-                extensionIds: extensionSelectionMode == .inherit ? nil : selectedExtensionIds.sorted(),
+                skillPaths: skillSelectionMode == .inherit ? nil : selections.selectedSkillPaths.sorted(),
+                extensionIds: extensionSelectionMode == .inherit ? nil : selections.selectedExtensionIds.sorted(),
                 launchConstraints: resolvedLaunchConstraints,
                 previouslyHadLaunchConstraints: agent.definition.launchConstraints != nil,
                 tools: toolPolicy.tools,
@@ -620,7 +623,7 @@ struct AgentNativeEditView: View {
                 noTools: toolPolicy.noTools
             )
             onSaved(updated)
-            dismiss()
+            navigator.finish()
         } catch {
             self.error = error.localizedDescription
         }
@@ -630,10 +633,39 @@ struct AgentNativeEditView: View {
         let constraints = AgentLaunchConstraints(
             allowedWorkspaceIds: workspaceConstraintMode == .inherit
                 ? nil
-                : selectedAllowedWorkspaceIds.sorted(),
+                : selections.selectedAllowedWorkspaceIds.sorted(),
             requiredRuntime: requiredRuntime
         )
         return constraints.isEmpty ? nil : constraints
+    }
+}
+
+/// What the editor's selection pages read and edit. Each page is pushed as its
+/// own screen (its own SwiftUI graph), so a `@Binding` into the editor's
+/// `@State` would not refresh it; this observable model does.
+@MainActor @Observable
+private final class AgentNativeEditSelections {
+    var toolSelectionMode: AgentToolSelectionMode
+    var selectedToolNames: Set<String>
+    var selectedSkillPaths: Set<String>
+    var selectedExtensionIds: Set<String>
+    var selectedAllowedWorkspaceIds: Set<String>
+    var extensionToolDetailsById: [String: ServerExtensionDetail] = [:]
+    var isLoadingExtensionTools = false
+
+    init(definition: AgentDefinition) {
+        let defaults = definition.sessionDefaults
+        toolSelectionMode = if defaults?.tools != nil {
+            .exact
+        } else if defaults?.excludeTools != nil || defaults?.noTools != nil {
+            .existingPolicy
+        } else {
+            .inherit
+        }
+        selectedToolNames = Set(defaults?.tools ?? [])
+        selectedSkillPaths = Set(definition.resources?.skillPaths ?? [])
+        selectedExtensionIds = Set(definition.resources?.extensionIds ?? [])
+        selectedAllowedWorkspaceIds = Set(definition.launchConstraints?.allowedWorkspaceIds ?? [])
     }
 }
 

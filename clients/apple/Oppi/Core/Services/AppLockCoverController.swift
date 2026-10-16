@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 
 /// Paints the App Lock cover in its own window above every window of each
@@ -88,7 +87,7 @@ final class AppLockCoverController {
         guard covers[key] == nil else { return }
         let window = UIWindow(windowScene: scene)
         window.windowLevel = .alert + 1
-        window.rootViewController = UIHostingController(rootView: AppLockCoverView(service: service))
+        window.rootViewController = HostFactory.appLockCover(AppLockCoverView(service: service))
         window.accessibilityViewIsModal = true
         window.rootViewController?.view.accessibilityViewIsModal = true
         window.isHidden = true

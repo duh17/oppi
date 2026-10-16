@@ -52,6 +52,9 @@
     "clients/apple/Oppi/App/HTMLDOMAnnotationHarnessView.swift": {
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/App/HostFactory.swift": {
+      "import SwiftUI": 1
+    },
     "clients/apple/Oppi/App/NavigationBreadcrumb.swift": {
       "import SwiftUI": 1
     },
@@ -211,9 +214,6 @@
       ".navigationDestination(": 1,
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/App/UIKitSheetPresentation.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/App/WorkspaceAdaptiveRootView.swift": {
       "NavigationStack": 2,
       "NavigationSplitView": 1,
@@ -248,10 +248,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Networking/APIClientEnvironment.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Services/AppLockCoverController.swift": {
-      "UIHostingController(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Services/ComposerDraftEnvironment.swift": {
@@ -317,7 +313,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/FullScreenCodeViewController.swift": {
-      "UIHostingController(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/FullScreenReviewCommentStashOverlay.swift": {
@@ -380,18 +375,14 @@
       "NavigationLink": 2,
       ".navigationDestination(": 1,
       ".sheet(": 6,
-      ".fullScreenCover(": 2,
+      ".fullScreenCover(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Agents/AgentNativeEditView.swift": {
-      "NavigationStack": 1,
-      "NavigationLink": 4,
-      ".sheet(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/ChatTimelineDestinationPresenter.swift": {
       "NavigationStack": 1,
-      "UIHostingController(": 2,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/ChatView.swift": {
@@ -480,7 +471,6 @@
     },
     "clients/apple/Oppi/Features/Chat/Support/ExtensionSurfacePanel.swift": {
       ".fullScreenCover(": 1,
-      "UIHostingController(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Support/InAppNowPlayingChrome.swift": {
@@ -526,14 +516,12 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Assistant/NativeMarkdownUSDZView.swift": {
-      "UIHostingController(": 2,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/ChatItemRow.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/ChatTimelineView.swift": {
-      "UIHostingController(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Chat/Timeline/Collection/ChatTimelineCollectionView+DataSource.swift": {
@@ -644,7 +632,6 @@
     },
     "clients/apple/Oppi/Features/FileBrowser/FileBrowserContentView.swift": {
       ".sheet(": 1,
-      "UIHostingController(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/FileBrowser/FileBrowserMotionPreviewSupport.swift": {
@@ -763,12 +750,9 @@
     "clients/apple/Oppi/Features/Schedules/ScheduleManagementView.swift": {
       ".navigationDestination(": 1,
       ".sheet(": 2,
-      ".fullScreenCover(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Schedules/ScheduleNativeEditView.swift": {
-      "NavigationStack": 2,
-      ".sheet(": 2,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Server/DailyCostChartView.swift": {
@@ -854,9 +838,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/QuickCommentsSettingsView.swift": {
-      "NavigationStack": 1,
-      ".sheet(": 1,
-      ".popover(": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Settings/SSHPreflightView.swift": {

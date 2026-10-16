@@ -487,58 +487,81 @@ struct OppiApp: App {
     @ViewBuilder
     private var windowContent: some View {
 #if DEBUG
-            if HTMLDOMAnnotationHarnessConfig.isEnabled {
-                HTMLDOMAnnotationHarnessView()
-                    .ignoresSafeArea()
-            } else if WikiLineAnchorHarnessConfig.isEnabled {
-                WikiLineAnchorHarnessView()
-                    .ignoresSafeArea()
-            } else if ReviewCommentStashHarnessConfig.isEnabled {
-                ReviewCommentStashHarnessView()
-            } else if SemanticPickHarnessConfig.isEnabled {
-                SemanticPickHarnessView()
-                    .ignoresSafeArea()
-            } else if FullScreenReviewCommentHarnessConfig.isEnabled {
-                FullScreenReviewCommentHarnessView()
-                    .ignoresSafeArea()
-            } else if CodeGutterAlignmentHarnessConfig.isEnabled {
-                CodeGutterAlignmentHarnessView()
-                    .ignoresSafeArea()
-            } else if CodeBlockWrappingHarnessConfig.isEnabled {
-                CodeBlockWrappingHarnessView()
-                    .ignoresSafeArea()
-            } else if ChatOutlineColdHarnessConfig.isEnabled {
-                ChatOutlineColdHarnessView()
-            } else if NavigationChromeProfileConfig.isEnabled {
-                NavigationChromeProfileHarnessView()
-            } else if UIHangHarnessConfig.isEnabled {
-                UIHangHarnessView()
-            } else if ScreenshotPreviewConfig.isEnabled {
-                switch ScreenshotPreviewConfig.screen {
-                case "usage":
-                    UsageChromePreview()
-                default:
-                    ScreenshotPreviewView()
-                }
-            } else {
-                appRootView
-            }
-#else
+        if let debugHarness {
+            // Harnesses and previews render app screens, the timeline, and
+            // UIKit-hosted SwiftUI outside ContentView. The router and
+            // HostFactory need the app root above them there too.
+            debugHarness
+                .appRootEnvironment(appRoot)
+                .publishesAppRootToWindow(appRoot)
+        } else {
             appRootView
+        }
+#else
+        appRootView
 #endif
+    }
+
+#if DEBUG
+    /// The harness or screenshot preview chosen by launch arguments, or nil
+    /// for the app.
+    private var debugHarness: AnyView? {
+        if HTMLDOMAnnotationHarnessConfig.isEnabled {
+            return AnyView(HTMLDOMAnnotationHarnessView().ignoresSafeArea())
+        }
+        if WikiLineAnchorHarnessConfig.isEnabled {
+            return AnyView(WikiLineAnchorHarnessView().ignoresSafeArea())
+        }
+        if ReviewCommentStashHarnessConfig.isEnabled {
+            return AnyView(ReviewCommentStashHarnessView())
+        }
+        if SemanticPickHarnessConfig.isEnabled {
+            return AnyView(SemanticPickHarnessView().ignoresSafeArea())
+        }
+        if FullScreenReviewCommentHarnessConfig.isEnabled {
+            return AnyView(FullScreenReviewCommentHarnessView().ignoresSafeArea())
+        }
+        if CodeGutterAlignmentHarnessConfig.isEnabled {
+            return AnyView(CodeGutterAlignmentHarnessView().ignoresSafeArea())
+        }
+        if CodeBlockWrappingHarnessConfig.isEnabled {
+            return AnyView(CodeBlockWrappingHarnessView().ignoresSafeArea())
+        }
+        if ChatOutlineColdHarnessConfig.isEnabled {
+            return AnyView(ChatOutlineColdHarnessView())
+        }
+        if NavigationChromeProfileConfig.isEnabled {
+            return AnyView(NavigationChromeProfileHarnessView())
+        }
+        if UIHangHarnessConfig.isEnabled {
+            return AnyView(UIHangHarnessView())
+        }
+        if ScreenshotPreviewConfig.isEnabled {
+            if ScreenshotPreviewConfig.screen == "usage" {
+                return AnyView(UsageChromePreview())
+            }
+            return AnyView(ScreenshotPreviewView())
+        }
+        return nil
+    }
+#endif
+
+    private var appRoot: AppRootEnvironment {
+        AppRootEnvironment(
+            coordinator: coordinator,
+            navigation: navigation,
+            themeStore: themeStore,
+            quickCommentTemplateStore: quickCommentTemplateStore,
+            composerDraftStore: composerDraftStore,
+            chatReaderPayloadStore: chatReaderPayloadStore,
+            sessionRowDisplay: sessionRowDisplay
+        )
     }
 
     private var appRootView: some View {
         let root = ContentView()
-            .appRootEnvironment(AppRootEnvironment(
-                coordinator: coordinator,
-                navigation: navigation,
-                themeStore: themeStore,
-                quickCommentTemplateStore: quickCommentTemplateStore,
-                composerDraftStore: composerDraftStore,
-                chatReaderPayloadStore: chatReaderPayloadStore,
-                sessionRowDisplay: sessionRowDisplay
-            ))
+            .appRootEnvironment(appRoot)
+            .publishesAppRootToWindow(appRoot)
             .onReceive(NotificationCenter.default.publisher(for: AppPreferences.SessionRows.didChangeNotification)) { _ in
                 sessionRowDisplay = AppPreferences.SessionRows.display
             }

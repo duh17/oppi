@@ -571,11 +571,7 @@ struct ChatView: View {
     /// Commit and path-pill destinations are built here, not by the timeline, so the timeline
     /// holds no app services.
     private var timelineDestinationAction: ChatTimelineOpenDestination {
-        let presenter = ChatTimelineDestinationPresenter(
-            connection: connection,
-            audioPlayer: audioPlayer,
-            composerDraftStore: composerDraftStore
-        )
+        let presenter = ChatTimelineDestinationPresenter(connection: connection)
         return { presenter.open($0) }
     }
 

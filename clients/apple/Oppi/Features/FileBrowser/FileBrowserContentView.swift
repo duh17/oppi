@@ -165,6 +165,7 @@ struct FileBrowserContentView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
     @Environment(SessionStore.self) private var sessionStore: SessionStore?
+    @Environment(\.appRootEnvironment) private var appRoot
     @State private var activeSelection: FileBrowserSelection?
     @State private var fileTransitionDirection: FileBrowserNavigationDirection = .next
     @State private var content: FileContentPhase = .loading
@@ -443,10 +444,13 @@ struct FileBrowserContentView: View {
             isShowingPreview: isShowingEditPreview,
             replacementText: editorReplacement,
             makePreview: { text in
-                UIHostingController(rootView: EmbeddedFileViewerView(
-                    content: fullScreenContent(text: text),
-                    showsNavigationChrome: false
-                ))
+                HostFactory.content(
+                    EmbeddedFileViewerView(
+                        content: fullScreenContent(text: text),
+                        showsNavigationChrome: false
+                    ),
+                    root: appRoot
+                )
             }
         )
         .safeAreaInset(edge: .top, spacing: 0) {

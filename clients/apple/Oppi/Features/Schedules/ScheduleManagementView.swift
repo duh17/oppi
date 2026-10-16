@@ -419,7 +419,7 @@ private struct ScheduleDetailView: View {
         }
         .task(id: scheduleId) { await load() }
         .refreshable { await load() }
-        .fullScreenCover(isPresented: $showNativeEdit) {
+        .routerModal(isPresented: $showNativeEdit, presentation: .fullScreen.inNavigation()) {
             if let schedule {
                 ScheduleNativeEditView(schedule: schedule) { updated, summary in
                     self.schedule = updated

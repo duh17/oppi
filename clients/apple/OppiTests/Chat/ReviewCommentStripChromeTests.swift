@@ -534,6 +534,8 @@ private func measureReviewCommentStashDrawer(
         )
         .environment(\.theme, ThemeID.dark.appTheme)
         .environment(\.themeID, .dark)
+        // The drawer's viewport hosts its rows with the app root above it.
+        .environment(\.appRootEnvironment, makeTestAppRoot())
         .ignoresSafeArea()
     )
     host.safeAreaRegions = []

@@ -471,6 +471,8 @@ struct UserTimelineRowContentTests {
     func chatCompositionPresentsCommitViewer() throws {
         let connection = ServerConnection()
         let host = UIViewController()
+        // Chat sits under the app root; the router finds it through the trait bridge.
+        host.traitOverrides.appRootEnvironment = makeTestAppRoot()
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         window.rootViewController = host
         window.makeKeyAndVisible()
@@ -483,11 +485,7 @@ struct UserTimelineRowContentTests {
         let source = UIView(frame: CGRect(x: 0, y: 0, width: 20, height: 20))
         host.view.addSubview(source)
 
-        ChatTimelineDestinationPresenter(
-            connection: connection,
-            audioPlayer: connection.audioPlayer,
-            composerDraftStore: nil
-        ).open(
+        ChatTimelineDestinationPresenter(connection: connection).open(
             ChatTimelineDestinationRequest(
                 destination: .commitDetail(sha: "0486bc75"),
                 serverId: "server-1",
@@ -500,14 +498,9 @@ struct UserTimelineRowContentTests {
         )
 
         let presented = try #require(host.presentedViewController)
-        #expect(!(presented is UINavigationController))
+        #expect(presented is HostedScreenController, "Commit viewer must be a hosted screen")
         #expect(presented.modalPresentationStyle == .pageSheet)
         #expect(presented.sheetPresentationController?.prefersGrabberVisible == true)
-        let typeName = String(describing: type(of: presented))
-        #expect(
-            typeName.contains("UIHostingController"),
-            "Commit viewer must be a SwiftUI host, got \(typeName)"
-        )
     }
 
     @MainActor
@@ -520,11 +513,7 @@ struct UserTimelineRowContentTests {
         var session = makeTestSession(id: sessionId, workspaceId: "ws-test")
         session.worktreeId = "wt-agent"
         connection.sessionStore.upsert(session)
-        let presenter = ChatTimelineDestinationPresenter(
-            connection: connection,
-            audioPlayer: connection.audioPlayer,
-            composerDraftStore: nil
-        )
+        let presenter = ChatTimelineDestinationPresenter(connection: connection)
 
         func request(_ pill: UserMessagePathPill, workspaceId: String = "ws-test") -> ChatTimelineDestinationRequest {
             ChatTimelineDestinationRequest(
@@ -594,6 +583,41 @@ struct UserTimelineRowContentTests {
     }
 
     @MainActor
+    @Test("a chat opened inside the commit viewer leaves the app's pending quick-session message alone")
+    func commitViewerChatDoesNotTakeAppQuickSessionMessage() async throws {
+        let connection = ServerConnection()
+        let root = makeTestAppRoot()
+        root.navigation.pendingQuickSessionMessage = "meant for the session Quick Session opens"
+        let host = makeTimelineCommitHostController(
+            connection: connection,
+            destination: QuickActionSessionNavDestination.empty(sessionId: "session-from-commit"),
+            root: root
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        let chatMounted = await waitForTimelineCondition(timeoutMs: 1_200) {
+            await MainActor.run {
+                host.view.layoutIfNeeded()
+                return timelineFirstView(ofType: UICollectionView.self, in: host.view)?
+                    .accessibilityIdentifier == "chat.timeline"
+            }
+        }
+        #expect(chatMounted, "The commit viewer's New Session chat did not mount")
+        // A chat consumes the app's pending message as soon as it appears.
+        let kept = await waitForMainActorConditionToStayTrue(for: .milliseconds(600)) {
+            host.view.layoutIfNeeded()
+            return root.navigation.pendingQuickSessionMessage != nil
+        }
+        #expect(kept, "A chat inside the commit viewer must not send the app's quick-session message")
+    }
+
+    @MainActor
     @Test("commit host restores unsent drafts through New Session")
     func commitHostRestoresUnsentDraftsThroughNewSession() async throws {
         let connection = ServerConnection()
@@ -657,9 +681,9 @@ struct UserTimelineRowContentTests {
         #expect(!color(darkColor, approximatelyEquals: lightColor, tolerance: 0.08))
 
         store.updateSystemColorScheme(.dark)
-        let liveHost = UIHostingController(
-            rootView: commitViewerForThemeTest()
-        )
+        let liveHost = HostFactory.screen(root: makeTestAppRoot(themeStore: store)) {
+            commitViewerForThemeTest()
+        }
         window.rootViewController = liveHost
         window.makeKeyAndVisible()
         liveHost.view.layoutIfNeeded()
@@ -675,7 +699,7 @@ struct UserTimelineRowContentTests {
         }
         #expect(
             switched,
-            "Injected theme environment must repaint the mounted viewer; sampled \(commitViewerThemeBackground(in: liveHost.view)?.description ?? "nil") expected light \(lightColor)"
+            "The root theme store must repaint the mounted viewer; sampled \(commitViewerThemeBackground(in: liveHost.view)?.description ?? "nil") expected light \(lightColor)"
         )
     }
 
@@ -1990,37 +2014,23 @@ private func color(_ lhs: UIColor?, approximatelyEquals rhs: UIColor, tolerance:
         abs(la - ra) <= tolerance
 }
 
+/// The commit viewer as chat presents it: hosted with the app root, scoped to
+/// the chat's connection.
 @MainActor
 private func makeTimelineCommitHostController(
     connection: ServerConnection,
     destination: QuickActionSessionNavDestination?,
-    composerDraftStore: ComposerDraftStore? = nil
-) -> UIHostingController<some View> {
-    let root = TimelineCommitDetailHost(
-        workspaceId: "ws-test",
-        commit: GitCommitSummary(sha: "0486bc75", message: "", date: ""),
-        onDismiss: {},
-        composerDraftStore: composerDraftStore,
-        testingQuickActionDestination: destination
-    )
-    .environment(\.apiClient, connection.apiClient)
-    .environment(connection)
-    .environment(connection.chatState)
-    .environment(connection.sessionStore)
-    .environment(connection.audioPlayer)
-    .environment(connection.gitStatusStore)
-    .environment(connection.fileIndexStore)
-    .environment(connection.messageQueueStore)
-    .environment(connection.askRequestStore)
-    .environment(AppNavigation())
-    .environment(QuickCommentTemplateStore(templates: []))
-
-    let host = UIHostingController(rootView: root)
-    FullScreenViewerPresentationPolicy.configureLargePresentation(
-        host,
-        traitCollection: UITraitCollection(horizontalSizeClass: .compact)
-    )
-    return host
+    composerDraftStore: ComposerDraftStore? = nil,
+    root: AppRootEnvironment? = nil
+) -> HostedScreenController {
+    HostFactory.screen(root: root ?? makeTestAppRoot(composerDraftStore: composerDraftStore)) {
+        TimelineCommitDetailHost(
+            workspaceId: "ws-test",
+            commit: GitCommitSummary(sha: "0486bc75", message: "", date: ""),
+            testingQuickActionDestination: destination
+        )
+        .withServerScopedEnvironment(connection)
+    }
 }
 
 @MainActor
@@ -2071,8 +2081,6 @@ private func commitViewerForThemeTest() -> some View {
             CommitViewerThemeConsumer()
         }
     }
-    .environment(ServerConnection().sessionStore)
-    .modifier(TimelineCommitThemeEnvironment())
 }
 
 @MainActor

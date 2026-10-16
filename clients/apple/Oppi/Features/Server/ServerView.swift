@@ -97,7 +97,7 @@ struct ServerView: View {
         .navigationDestination(for: ModelProvidersNavTarget.self) { target in
             ModelProvidersScopedDestinationView(target: target)
         }
-        .uiKitSheet(isPresented: $showAddServer) {
+        .routerModal(isPresented: $showAddServer) {
             OnboardingView(mode: .addServer)
         }
     }

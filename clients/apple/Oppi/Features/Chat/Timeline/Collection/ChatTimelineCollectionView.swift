@@ -201,6 +201,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         collectionView.topEdgeEffect.style = .hard
         collectionView.bottomEdgeEffect.style = .soft
         collectionView.delegate = context.coordinator
+        context.coordinator.contentRoot = context.environment.appRootEnvironment
 
         let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Controller.handleTimelineTap(_:)))
         tapGesture.cancelsTouchesInView = false
@@ -228,6 +229,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
     func updateUIView(_ collectionView: UICollectionView, context: Context) {
         ChatTimelinePerf.recordHostUpdateUIView()
         ChatReaderOpenLookup.install(configuration.onOpenChatReader, on: collectionView)
+        context.coordinator.contentRoot = context.environment.appRootEnvironment
         if configuration.ownsTimelineProjection {
             context.coordinator.updateHostChrome(configuration: configuration, to: collectionView)
         } else {
@@ -261,6 +263,9 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
 
         private let context = ChatTimelineControllerContext()
         let ownedClock = ChatTimelineOwnedClockState()
+        /// The app root above this timeline, for SwiftUI content it hosts
+        /// through `HostFactory.content`. The timeline reads no services from it.
+        var contentRoot: AppRootEnvironment?
 
         var hiddenCount = 0
         var hasOlderServerPage = false

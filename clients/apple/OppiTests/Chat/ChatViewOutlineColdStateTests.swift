@@ -207,6 +207,8 @@ private struct MountedChatViewRoot: View {
     let connection: ServerConnection
     let appNavigation: AppNavigation
     let quickCommentTemplateStore: QuickCommentTemplateStore
+    /// The timeline hosts its empty state with the app root above it.
+    let appRoot = makeTestAppRoot()
 
     var body: some View {
         NavigationStack {
@@ -214,6 +216,7 @@ private struct MountedChatViewRoot: View {
             // new ChatView identity, never an in-place sessionId swap.
             ChatView(sessionId: sessionId)
                 .id(sessionId)
+                .environment(\.appRootEnvironment, appRoot)
                 .environment(connection)
                 .environment(connection.chatState)
                 .environment(connection.sessionStore)

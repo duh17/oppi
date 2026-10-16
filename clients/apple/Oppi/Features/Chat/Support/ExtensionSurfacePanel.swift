@@ -111,6 +111,7 @@ struct NativeSurfaceViewportScrollContainer<Content: View>: UIViewRepresentable 
     func makeUIView(context: Context) -> NativeSurfaceViewportContainerView<Content> {
         NativeSurfaceViewportContainerView(
             rootView: content,
+            appRoot: context.environment.appRootEnvironment,
             maxHeight: maxHeight,
             accessibilityIdentifier: accessibilityIdentifier,
             onDoubleTap: onDoubleTap
@@ -142,7 +143,7 @@ struct NativeSurfaceViewportScrollContainer<Content: View>: UIViewRepresentable 
 
 final class NativeSurfaceViewportContainerView<Content: View>: UIView, UIGestureRecognizerDelegate {
     private let scrollView = UIScrollView()
-    private let hostingController: UIHostingController<Content>
+    private let hostingController: HostedContentController
     private var hostedHeightConstraint: NSLayoutConstraint?
     private var maxHeight: CGFloat
     private var onDoubleTap: (() -> Void)?
@@ -156,13 +157,16 @@ final class NativeSurfaceViewportContainerView<Content: View>: UIView, UIGesture
         return recognizer
     }()
 
+    /// `appRoot` comes from the embedding representable: the hosted content is
+    /// measured before this view is in a window, so it cannot wait for traits.
     init(
         rootView: Content,
+        appRoot: AppRootEnvironment?,
         maxHeight: CGFloat,
         accessibilityIdentifier: String,
         onDoubleTap: (() -> Void)?
     ) {
-        hostingController = UIHostingController(rootView: rootView)
+        hostingController = HostFactory.content(rootView, root: appRoot)
         self.maxHeight = maxHeight
         self.onDoubleTap = onDoubleTap
         super.init(frame: .zero)
@@ -190,7 +194,7 @@ final class NativeSurfaceViewportContainerView<Content: View>: UIView, UIGesture
         accessibilityIdentifier: String,
         onDoubleTap: (() -> Void)?
     ) {
-        hostingController.rootView = rootView
+        hostingController.setContent(rootView)
         hostingController.view.invalidateIntrinsicContentSize()
         self.maxHeight = maxHeight
         self.onDoubleTap = onDoubleTap

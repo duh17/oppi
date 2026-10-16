@@ -64,7 +64,7 @@ struct WorkspaceListView: View {
                 .accessibilityIdentifier("server.workspace.create")
             }
         }
-        .uiKitSheet(isPresented: $showCreate) {
+        .routerModal(isPresented: $showCreate) {
             WorkspaceCreateView(server: server)
         }
         .refreshable {

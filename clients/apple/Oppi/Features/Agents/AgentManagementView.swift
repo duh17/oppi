@@ -989,7 +989,7 @@ private struct AgentDetailView: View {
             await loadAgent()
             await loadResources()
         }
-        .fullScreenCover(isPresented: $isShowingNativeEdit) {
+        .routerModal(isPresented: $isShowingNativeEdit, presentation: .fullScreen.inNavigation()) {
             if let agent {
                 AgentNativeEditView(agent: agent) { updated in
                     self.agent = updated

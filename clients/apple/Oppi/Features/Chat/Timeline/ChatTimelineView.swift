@@ -203,13 +203,13 @@ extension ChatTimelineCollectionHost.Controller {
             bottomOverlap: configuration.bottomOverlap
         )
         if shouldShow {
-            if let host = ownedClock.emptyOverlayController as? UIHostingController<ChatTimelineEmptyOverlay> {
-                host.rootView = overlay
+            if let host = ownedClock.emptyOverlayController as? HostedContentController {
+                host.setContent(overlay)
                 if collectionView.backgroundView !== host.view {
                     collectionView.backgroundView = host.view
                 }
             } else {
-                let host = UIHostingController(rootView: overlay)
+                let host = HostFactory.content(overlay, root: contentRoot)
                 host.view.backgroundColor = .clear
                 host.view.isUserInteractionEnabled = false
                 collectionView.backgroundView = host.view

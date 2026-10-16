@@ -59,27 +59,27 @@ struct QuickCommentsSettingsView: View {
                 EditButton()
             }
         }
-        .sheet(item: $editingTemplate) { template in
-            NavigationStack {
-                QuickCommentEditorView(
-                    template: template,
-                    isNew: isAdding,
-                    onSave: { saved in
-                        if isAdding {
-                            store.add(saved)
-                        } else {
-                            store.update(saved)
-                        }
-                        editingTemplate = nil
-                        isAdding = false
-                    },
-                    onCancel: {
-                        editingTemplate = nil
-                        isAdding = false
+        .routerModal(
+            item: $editingTemplate,
+            presentation: .sheet.detents([.medium(), .large()]).inNavigation()
+        ) { template in
+            QuickCommentEditorView(
+                template: template,
+                isNew: isAdding,
+                onSave: { saved in
+                    if isAdding {
+                        store.add(saved)
+                    } else {
+                        store.update(saved)
                     }
-                )
-            }
-            .presentationDetents([.medium, .large])
+                    editingTemplate = nil
+                    isAdding = false
+                },
+                onCancel: {
+                    editingTemplate = nil
+                    isAdding = false
+                }
+            )
         }
         .confirmationDialog(
             "Reset quick comments to defaults?",
@@ -268,9 +268,9 @@ struct SFSymbolPicker: View {
                 .frame(width: 32, height: 32)
                 .background(.themeComment.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
         }
-        .popover(isPresented: $showPicker) {
+        .accessibilityIdentifier("quickComments.editor.symbolPicker")
+        .routerModal(isPresented: $showPicker, presentation: .popover.keepsPopoverInCompactWidth()) {
             symbolGrid
-                .presentationCompactAdaptation(.popover)
         }
     }
 
