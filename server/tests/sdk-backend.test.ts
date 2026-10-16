@@ -384,111 +384,6 @@ describe("SdkBackend sandbox", () => {
     }
   });
 
-  it("presents only the Skills the workspace VM mounted and the workspace's own", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-classic-skills-"));
-    const agentDir = mkdtempSync(join(tmpdir(), "oppi-sandbox-classic-agent-dir-"));
-    const outside = mkdtempSync(join(tmpdir(), "oppi-sandbox-classic-outside-"));
-    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-    const writeSkill = (dir: string, name: string) => {
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        join(dir, "SKILL.md"),
-        ["---", `name: ${name}`, `description: ${name} Skill.`, "---", `${name} body.`].join("\n"),
-      );
-    };
-    const mountedSkill = join(cwd, ".pi", "skills", "mounted-skill");
-    writeSkill(mountedSkill, "mounted-skill");
-    // Added after the VM booted: the VM has no mount for it yet.
-    writeSkill(join(cwd, ".pi", "skills", "late-skill"), "late-skill");
-    writeSkill(join(agentDir, "skills", "global-skill"), "global-skill");
-    writeSkill(join(cwd, ".agents", "skills", "workspace-skill"), "workspace-skill");
-    writeSkill(join(outside, "escaped-skill"), "escaped-skill");
-    symlinkSync(join(outside, "escaped-skill"), join(cwd, ".agents", "skills", "escaped-skill"));
-    writeFileSync(join(agentDir, "auth.json"), "{}");
-    process.env.PI_CODING_AGENT_DIR = agentDir;
-    const guestCwd = "/workspace/sandbox-classic-skills";
-
-    const qemuSpy = vi.spyOn(GondolinManagerModule, "isQemuAvailable").mockResolvedValue(true);
-    const execResult = {
-      exitCode: 0,
-      stdout: "",
-      stdoutBuffer: Buffer.alloc(0),
-      ok: true,
-    };
-    const vm = {
-      fs: {
-        access: vi.fn(async () => undefined),
-        mkdir: vi.fn(async () => undefined),
-        readFile: vi.fn(async () => Buffer.alloc(0)),
-        writeFile: vi.fn(async () => undefined),
-      },
-      exec: vi.fn(() =>
-        Object.assign(Promise.resolve(execResult), { output: async function* () {} }),
-      ),
-      // What the manager recorded when it booted this VM, before `late-skill` existed.
-      skillMounts: [{ hostPath: mountedSkill, guestPath: `${guestCwd}/.pi/skills/mounted-skill` }],
-    };
-    const manager = { ensureWorkspaceVm: vi.fn(async () => vm) };
-    const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: typeof manager };
-    const previousManager = sdkBackendType._gondolinManager;
-    sdkBackendType._gondolinManager = manager;
-    let backend: SdkBackend | undefined;
-    const workspace = {
-      id: "w1",
-      name: "Sandbox Classic Skills",
-      runtime: "sandbox",
-      hostMount: cwd,
-      extensions: [],
-    } as Workspace;
-
-    try {
-      backend = await SdkBackend.create({
-        session: makeSession({ ephemeral: true }),
-        workspace,
-        onEvent: vi.fn(),
-        onEnd: vi.fn(),
-      });
-
-      const skills = backend.session.resourceLoader.getSkills().skills;
-      expect(
-        skills
-          .map(({ name, filePath }) => ({ name, filePath }))
-          .sort((a, b) => a.name.localeCompare(b.name)),
-      ).toEqual([
-        { name: "mounted-skill", filePath: `${guestCwd}/.pi/skills/mounted-skill/SKILL.md` },
-        {
-          name: "workspace-skill",
-          filePath: `${guestCwd}/.agents/skills/workspace-skill/SKILL.md`,
-        },
-      ]);
-      // A saved Agent selecting a Skill the VM cannot serve fails instead of losing it.
-      await expect(
-        SdkBackend.create({
-          session: makeSession({ ephemeral: true }),
-          workspace,
-          agentDefinition: {
-            name: "Global Skill",
-            resources: {
-              skillPaths: [join(agentDir, "skills", "global-skill")],
-              extensionIds: [],
-            },
-          },
-          onEvent: vi.fn(),
-          onEnd: vi.fn(),
-        }),
-      ).rejects.toMatchObject({ code: "agent_skills_unavailable" });
-    } finally {
-      await backend?.dispose();
-      sdkBackendType._gondolinManager = previousManager;
-      qemuSpy.mockRestore();
-      if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-      else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
-      rmSync(cwd, { recursive: true, force: true });
-      rmSync(agentDir, { recursive: true, force: true });
-      rmSync(outside, { recursive: true, force: true });
-    }
-  });
-
   it("takes a sandbox's context file text only from the VM's read", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "oppi-sandbox-classic-context-"));
     // A guest-planted link: the host would follow it to the file the VM shadow hides.
@@ -627,7 +522,10 @@ describe("SdkBackend sandbox", () => {
         listDir: vi.fn(async () => ["packet.md"]),
         readFile: vi.fn(async () => Buffer.from("ok\n")),
         writeFile: vi.fn(async () => undefined),
-        stat: vi.fn(async () => ({ isDirectory: () => true, isFile: () => false })),
+        stat: vi.fn(async (path: string) => ({
+          isDirectory: () => !String(path).endsWith(".md"),
+          isFile: () => String(path).endsWith(".md"),
+        })),
       },
       exec: vi.fn(() =>
         Object.assign(Promise.resolve(execResult), { output: async function* () {} }),

@@ -105,28 +105,8 @@ async function loadSandboxProjectResources(options: {
 }): Promise<DurableProjectResources> {
   const { hostCwd, env, resources } = options;
   const guestCwd = env.workspaceRoot;
-  const discovered = await discoverSandboxSkills(env);
-  // A saved Agent's selection maps lexically into the guest and must name a Skill this VM
-  // presents; anything else (outside the workspace, or not a mounted or `.agents/skills`
-  // Skill) fails the launch rather than presenting a Skill the VM cannot read.
-  const selection = normalizeSelectedAgentSkillPaths(resources?.skillPaths, hostCwd)?.map(
-    (hostPath) => ({ hostPath, guestPath: hostWorkspacePathToGuest(hostCwd, guestCwd, hostPath) }),
-  );
-  const unavailable = (selection ?? []).filter(
-    ({ guestPath }) => guestPath === null || !discovered.some((skill) => selects(guestPath, skill)),
-  );
-  if (unavailable.length > 0)
-    throw new AgentConfigurationError(
-      "agent_skills_unavailable",
-      { unavailableSkills: unavailable.map(({ hostPath }) => hostPath) },
-      `Selected Agent Skill is not available in the sandbox workspace: ${unavailable.map(({ hostPath }) => hostPath).join(", ")}`,
-    );
-  const skills =
-    selection === undefined
-      ? discovered
-      : discovered.filter((skill) =>
-          selection.some(({ guestPath }) => guestPath !== null && selects(guestPath, skill)),
-        );
+  const { skills, unavailable } = await loadSandboxSkills(env, hostCwd, resources?.skillPaths);
+  if (unavailable) throw unavailable;
   if (options.projectContext === false) return { contextFiles: [], skills };
   // Saved files are virtual paths relative to the workspace: kept only inside it, at guest
   // paths, redacted. Their text is the definition's, not a file's.
@@ -140,6 +120,47 @@ async function loadSandboxProjectResources(options: {
   });
   const discoveredFiles = resources?.noContextFiles ? [] : await readGuestContextFile(env, hostCwd);
   return { contextFiles: [...discoveredFiles, ...savedAgentFiles], skills };
+}
+
+/**
+ * A sandbox session's Skills, discovered only through its workspace VM (`findSandboxSkills`),
+ * at guest paths. Durable and classic sandbox sessions both present this list.
+ *
+ * A saved Agent's selection (`skillPaths`, host paths) maps lexically into the guest and must
+ * name a Skill this VM presents; anything else (outside the workspace, or not a mounted or
+ * `.agents/skills` Skill) is `unavailable`, an `agent_skills_unavailable` error the caller
+ * raises rather than presenting a Skill the VM cannot read. `skills` keeps the selected ones.
+ */
+export async function loadSandboxSkills(
+  env: GondolinExecutionEnv,
+  hostCwd: string,
+  skillPaths: string[] | undefined,
+): Promise<{ skills: Skill[]; unavailable?: AgentConfigurationError }> {
+  const guestCwd = env.workspaceRoot;
+  const discovered = await findSandboxSkills(env);
+  const selection = normalizeSelectedAgentSkillPaths(skillPaths, hostCwd)?.map((hostPath) => ({
+    hostPath,
+    guestPath: hostWorkspacePathToGuest(hostCwd, guestCwd, hostPath),
+  }));
+  if (selection === undefined) return { skills: discovered };
+  const skills = discovered.filter((skill) =>
+    selection.some(({ guestPath }) => guestPath !== null && selects(guestPath, skill)),
+  );
+  const unavailable = selection
+    .filter(
+      ({ guestPath }) =>
+        guestPath === null || !discovered.some((skill) => selects(guestPath, skill)),
+    )
+    .map(({ hostPath }) => hostPath);
+  if (unavailable.length === 0) return { skills };
+  return {
+    skills,
+    unavailable: new AgentConfigurationError(
+      "agent_skills_unavailable",
+      { unavailableSkills: unavailable },
+      `Selected Agent Skill is not available in the sandbox workspace: ${unavailable.join(", ")}`,
+    ),
+  };
 }
 
 /** `assertSelectedAgentSkillsLoaded`'s match: the path is the Skill, holds it, or is in it. */
@@ -156,7 +177,7 @@ function selects(selectedPath: string, skill: Skill): boolean {
  * each `.pi/skills` entry the VM mounted, then the workspace's `.agents/skills`. The first
  * Skill with a name wins. `.pi/settings.json` Skill filters and ignore files are not applied.
  */
-async function discoverSandboxSkills(env: GondolinExecutionEnv): Promise<Skill[]> {
+async function findSandboxSkills(env: GondolinExecutionEnv): Promise<Skill[]> {
   const files: string[] = [];
   const walked = new Set<string>();
   for (const mount of env.vm.skillMounts ?? [])
@@ -346,7 +367,7 @@ export function renderSkills(
  */
 export async function expandSkillCommand(
   text: string,
-  resources: DurableProjectResources,
+  resources: Pick<DurableProjectResources, "skills">,
   readFile: (path: string) => Promise<string>,
 ): Promise<string> {
   if (!text.startsWith("/skill:")) return text;

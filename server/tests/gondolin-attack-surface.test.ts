@@ -11,12 +11,13 @@
  *
  * Requires QEMU installed. Skipped automatically if not available.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import {
   closeSync,
   ftruncateSync,
   mkdtempSync,
   openSync,
+  realpathSync,
   rmSync,
   writeFileSync,
   mkdirSync,
@@ -34,7 +35,9 @@ import {
   renderSkills,
   type DurableProjectResources,
 } from "../src/durable-project-resources.js";
+import { SdkBackend } from "../src/sdk-backend.js";
 import type { Workspace } from "../src/types.js";
+import { resolveSandboxGuestCwd } from "../src/workspace-folder.js";
 
 let qemuAvailable = false;
 
@@ -405,5 +408,172 @@ describe("Gondolin attack surface", { timeout: 120_000 }, () => {
     const verify = await vm.exec("cat /workspace/test-write.txt");
     expect(verify.ok).toBe(true);
     expect(verify.stdout.trim()).toBe("new file");
+  });
+});
+
+/**
+ * Classic (SDK) sandbox sessions discover Skills the way durable ones do: through the workspace
+ * VM only. The guest owns `.agents/skills`, so a host walk or read of it would follow its links.
+ */
+describe("Classic sandbox Skills through the workspace VM", { timeout: 120_000 }, () => {
+  let hostDir: string;
+  let agentDir: string;
+  let secretSkillDir: string;
+  let manager: GondolinManager;
+  let previousManager: unknown;
+  let previousAgentDir: string | undefined;
+  const backends: SdkBackend[] = [];
+  const sdkBackendType = SdkBackend as unknown as { _gondolinManager?: unknown };
+  const workspace: Workspace = {
+    id: "classic-skills-test",
+    name: "Classic Skills Test",
+    runtime: "sandbox",
+    sandboxConfig: { allowedHosts: [] },
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  const guestCwd = resolveSandboxGuestCwd(workspace);
+  const skillFile = (dir: string, name: string, body: string) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "SKILL.md"),
+      `---\nname: ${name}\ndescription: ${name} description.\n---\n${body}`,
+    );
+  };
+  const classicSession = async (resources?: { skillPaths: string[] }): Promise<SdkBackend> => {
+    const backend = await SdkBackend.create({
+      session: {
+        id: `classic-skills-${backends.length}`,
+        workspaceId: workspace.id,
+        status: "starting",
+        createdAt: Date.now(),
+        lastActivity: Date.now(),
+        messageCount: 0,
+        tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+        ephemeral: true,
+      },
+      workspace,
+      ...(resources
+        ? {
+            agentDefinition: {
+              name: "Selected Skills",
+              resources: { ...resources, extensionIds: [] },
+            },
+          }
+        : {}),
+      onEvent: () => {},
+      onEnd: () => {},
+    });
+    backends.push(backend);
+    return backend;
+  };
+  const skillNames = (backend: SdkBackend) =>
+    backend.session.resourceLoader
+      .getSkills()
+      .skills.map((skill) => skill.name)
+      .sort();
+
+  beforeAll(async () => {
+    if (!qemuAvailable) return;
+    hostDir = realpathSync(mkdtempSync(join(tmpdir(), "gondolin-classic-skills-")));
+    workspace.hostMount = hostDir;
+    agentDir = mkdtempSync(join(tmpdir(), "gondolin-classic-agent-"));
+    writeFileSync(join(agentDir, "auth.json"), "{}");
+    skillFile(join(agentDir, "skills", "global-skill"), "global-skill", "global body");
+    previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+
+    // Mounted at boot: a real `.pi/skills` entry and one linked out of the workspace.
+    skillFile(join(hostDir, ".pi", "skills", "local-skill"), "local-skill", "local skill body");
+    secretSkillDir = mkdtempSync(join(tmpdir(), "gondolin-classic-linked-skill-"));
+    skillFile(secretSkillDir, "linked-skill", "linked skill body");
+    symlinkSync(secretSkillDir, join(hostDir, ".pi", "skills", "linked-skill"));
+    // The guest-writable workspace's own Skill.
+    skillFile(join(hostDir, ".agents", "skills", "ok"), "ok-skill", "ok body");
+    writeFileSync(
+      join(hostDir, ".env"),
+      "---\nname: env-skill\ndescription: WORKSPACE_ENV_SECRET\n---\nWORKSPACE_ENV_SECRET=1",
+    );
+
+    manager = new GondolinManager();
+    previousManager = sdkBackendType._gondolinManager;
+    sdkBackendType._gondolinManager = manager;
+    await SdkBackend.ensureSandboxWorkspaceVm(workspace, hostDir);
+  }, 90_000);
+
+  afterEach(async () => {
+    for (const backend of backends.splice(0)) await backend.dispose();
+  });
+
+  afterAll(async () => {
+    if (!qemuAvailable) return;
+    sdkBackendType._gondolinManager = previousManager;
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    await manager?.stopAll();
+    for (const dir of [hostDir, agentDir, secretSkillDir])
+      if (dir) rmSync(dir, { recursive: true, force: true });
+  }, 30_000);
+
+  it("lists mounted and workspace Skills and expands /skill: through the VM", async () => {
+    if (!qemuAvailable) return;
+
+    const backend = await classicSession();
+    expect(skillNames(backend)).toEqual(["linked-skill", "local-skill", "ok-skill"]);
+    expect(backend.session.systemPrompt).toContain(
+      `<location>${guestCwd}/.agents/skills/ok/SKILL.md</location>`,
+    );
+    expect(backend.session.systemPrompt).not.toContain("global-skill");
+    for (const [command, body] of [
+      ["/skill:local-skill go", "local skill body"],
+      ["/skill:linked-skill go", "linked skill body"],
+    ]) {
+      const input = await backend.session.extensionRunner.emitInput(
+        command,
+        undefined,
+        "interactive",
+      );
+      expect(input, command).toMatchObject({ action: "transform" });
+      expect(input.action === "transform" && input.text, command).toContain(body);
+    }
+
+    // A saved Agent selection presents only the selected Skill; one the VM cannot serve fails.
+    const selected = await classicSession({ skillPaths: [".pi/skills/linked-skill"] });
+    expect(skillNames(selected)).toEqual(["linked-skill"]);
+    await expect(
+      classicSession({ skillPaths: [join(agentDir, "skills", "global-skill")] }),
+    ).rejects.toMatchObject({ code: "agent_skills_unavailable" });
+  });
+
+  it("SAFE: a .agents/skills SKILL.md linked to a shadowed file adds no Skill or description", async () => {
+    if (!qemuAvailable) return;
+
+    const link = join(hostDir, ".agents", "skills", "env-skill");
+    mkdirSync(link);
+    symlinkSync("../../../.env", join(link, "SKILL.md"));
+    try {
+      const backend = await classicSession();
+      expect(skillNames(backend)).toEqual(["linked-skill", "local-skill", "ok-skill"]);
+      expect(backend.session.systemPrompt).not.toContain("WORKSPACE_ENV_SECRET");
+      expect(JSON.stringify(backend.session.resourceLoader.getSkills())).not.toContain(
+        "WORKSPACE_ENV_SECRET",
+      );
+    } finally {
+      rmSync(link, { recursive: true, force: true });
+    }
+  });
+
+  // Last: on a host walk without a cycle guard, these links never finish.
+  it("SAFE: .agents/skills links back to their directory start quickly with only real Skills", async () => {
+    if (!qemuAvailable) return;
+
+    const agentsSkills = join(hostDir, ".agents", "skills");
+    symlinkSync(".", join(agentsSkills, "loop"));
+    symlinkSync(".", join(agentsSkills, "loop2"));
+    const started = Date.now();
+    const backend = await classicSession();
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(skillNames(backend)).toEqual(["linked-skill", "local-skill", "ok-skill"]);
   });
 });

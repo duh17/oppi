@@ -26,6 +26,7 @@ import {
 import {
   readVmTextFileWithin,
   resolveSandboxToolPath,
+  SANDBOX_RESOURCE_MAX_BYTES,
   type GondolinVm,
   type GondolinExecResult,
 } from "./gondolin-ops.js";
@@ -293,6 +294,17 @@ export class GondolinExecutionEnv implements ExecutionEnv {
     return this.file(path, context, (resolved) =>
       readVmTextFileWithin(this.vm, resolved, maxBytes, context.abortSignal),
     );
+  }
+  /**
+   * A `/skill:` file's text, bounded like discovery: the guest can grow a Skill file after it
+   * was found. Throws when the VM refuses the path or the file is past the cap.
+   */
+  async readSkillFile(path: string, context: Context): Promise<string> {
+    const result = await this.readTextFileWithin(path, SANDBOX_RESOURCE_MAX_BYTES, context);
+    if (!result.ok) throw new Error(`Cannot read ${path}: ${result.error.message}`);
+    if ("tooLarge" in result.value)
+      throw new Error(`Cannot read ${path}: larger than ${SANDBOX_RESOURCE_MAX_BYTES} bytes`);
+    return result.value.text;
   }
   async openTextLineReader(
     path: string,

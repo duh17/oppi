@@ -10,6 +10,7 @@ import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { basename, isAbsolute, join, posix, relative, resolve as resolvePath } from "node:path";
 
 import {
@@ -27,6 +28,7 @@ import {
   type AgentSessionRuntime,
   type CreateAgentSessionRuntimeFactory,
   type ExtensionToolContext,
+  type InlineExtension,
   type ResourceDiagnostic,
   type Skill,
   type ToolDefinition,
@@ -96,7 +98,6 @@ import {
   SANDBOX_CONTEXT_FILE_NAMES,
   SANDBOX_RESOURCE_MAX_BYTES,
   type GondolinVm,
-  type ReadonlyMount,
 } from "./gondolin-ops.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import { callerSessionIdentityShellPrefix } from "./session-caller-identity.js";
@@ -501,37 +502,57 @@ export function hostWorkspacePathToGuest(
   return rel ? posix.join(guestCwd, rel.split(/[\\/]/).join("/")) : guestCwd;
 }
 
+type PiAutoDiscovery = { cwd: string; addAutoDiscoveredResources: (...args: unknown[]) => void };
+
 /**
- * A classic sandbox session's Skills, at the guest paths its VM serves: a Skill in a
- * `.pi/skills` entry the VM mounted (`GondolinVm.skillMounts`), or one whose real path is
- * inside the workspace and outside its `.pi`, which the workspace mount hides. Every other
- * Skill Pi discovered, such as a global one, is left out: the VM cannot read it.
+ * Keep a classic sandbox loader's Pi from walking the guest's `.agents/skills` on the host.
+ * `noSkills` stops Pi loading Skills, not discovering them: on every reload its package
+ * manager walks `.agents/skills` from its cwd up to the git root (`addAutoDiscoveredResources`,
+ * synchronously, with no cycle guard), so two `loop -> .` links block the server. That walk
+ * is the method's only use of `cwd`, so it runs from `/`, which no guest can write; project
+ * `.pi` resources keep the workspace's base dir. Extension-provided Skill paths are dropped
+ * for the same reason. Throws if Pi no longer has this shape, rather than walk silently.
  */
-function sandboxGuestSkills(
-  skills: Skill[],
-  hostCwd: string,
-  guestCwd: string,
-  skillMounts: readonly ReadonlyMount[],
-): Array<{ host: Skill; guest: Skill }> {
-  const workspaceRoot = canonicalPath(hostCwd);
-  const projectPi = join(resolvePath(hostCwd), ".pi");
-  const inWorkspace = (path: string): boolean =>
-    isPathWithin(workspaceRoot, canonicalPath(path)) && !isPathWithin(projectPi, path);
-  return skills.flatMap((skill) => {
-    const mount = skillMounts.find(
-      ({ hostPath }) =>
-        isPathWithin(hostPath, skill.baseDir) && isPathWithin(hostPath, skill.filePath),
-    );
-    const toGuest = (path: string): string | null =>
-      mount
-        ? posix.join(mount.guestPath, relative(mount.hostPath, path).split(/[\\/]/).join("/"))
-        : inWorkspace(path)
-          ? hostWorkspacePathToGuest(hostCwd, guestCwd, path)
-          : null;
-    const baseDir = toGuest(skill.baseDir);
-    const filePath = toGuest(skill.filePath);
-    return baseDir && filePath ? [{ host: skill, guest: { ...skill, baseDir, filePath } }] : [];
-  });
+function keepSandboxSkillDiscoveryOffHost(loader: DefaultResourceLoader): void {
+  const packageManager = (loader as unknown as { packageManager?: Partial<PiAutoDiscovery> })
+    .packageManager;
+  const discover = packageManager?.addAutoDiscoveredResources;
+  if (typeof discover !== "function" || typeof packageManager?.cwd !== "string")
+    throw new Error("Cannot keep sandbox Skill discovery off the host with this Pi version");
+  const manager = packageManager as PiAutoDiscovery;
+  manager.addAutoDiscoveredResources = (...args) => {
+    const cwd = manager.cwd;
+    manager.cwd = "/";
+    try {
+      discover.apply(manager, args);
+    } finally {
+      manager.cwd = cwd;
+    }
+  };
+  const extendResources = loader.extendResources.bind(loader);
+  loader.extendResources = (paths) => extendResources({ ...paths, skillPaths: [] });
+}
+
+/**
+ * A classic sandbox's `/skill:name args`, expanded through its workspace VM. Pi's own
+ * expansion reads the Skill's (guest) path on the host; this `input` handler runs before it,
+ * for prompts, steers, follow-ups, and extension-sent messages alike, and inline factories
+ * load after file extensions, so it sees their transforms. An unreadable Skill fails the handler:
+ * Pi reports the extension error and passes the command through, as for a host Skill.
+ */
+function createSandboxSkillCommandExtension(
+  expand: (text: string) => Promise<string>,
+): InlineExtension {
+  return {
+    name: "oppi-sandbox-skill-command",
+    factory: (pi) => {
+      pi.on("input", async (event) => {
+        if (!event.text.startsWith("/skill:")) return { action: "continue" };
+        const text = await expand(event.text);
+        return text === event.text ? { action: "continue" } : { action: "transform", text };
+      });
+    },
+  };
 }
 
 /**
@@ -1183,8 +1204,13 @@ export class SdkBackend implements AgentBackend {
       };
       // A sandbox's context file, as its VM last read it (`readSandboxContextFiles`).
       let sandboxContextFiles: AgentContextFile[] = [];
-      // The workspace VM comes before the loader: the `.pi/skills` entries it mounted decide
-      // which Skills this session presents, whichever session booted it.
+      // A sandbox's Skills, as its VM last presented them (`loadSandboxSkills`), at guest paths.
+      let sandboxSkills: Skill[] = [];
+      let sandboxSkillCommand: InlineExtension | undefined;
+      let loadSandboxSkillsFromVm:
+        (() => Promise<{ skills: Skill[]; unavailable?: Error }>) | undefined;
+      // The workspace VM comes before the loader: Skills and context files are what it mounts
+      // and serves, whichever session booted it.
       if (sandboxMode && workspace) {
         const { isQemuAvailable, GondolinManager } = await import("./gondolin-manager.js");
         if (!(await isQemuAvailable())) {
@@ -1199,12 +1225,25 @@ export class SdkBackend implements AgentBackend {
         // The host process owns model calls; sandbox commands must opt into any
         // future secret bridge explicitly instead of inheriting LLM API keys.
         const secrets: Record<string, VmSecretDefinition> = {};
-        sandboxVm = await SdkBackend._gondolinManager.ensureWorkspaceVm(
+        const vm: GondolinVm = await SdkBackend._gondolinManager.ensureWorkspaceVm(
           workspace,
           hostCwd,
           secrets,
           workspace.sandboxConfig?.env,
           guestCwd,
+        );
+        sandboxVm = vm;
+        // Skills come only through the VM, as for durable sandbox sessions: never a host walk
+        // or read of the guest-writable workspace.
+        const { GondolinExecutionEnv } = await import("./durable-gondolin-env.js");
+        const { expandSkillCommand, loadSandboxSkills } =
+          await import("./durable-project-resources.js");
+        const env = new GondolinExecutionEnv(vm, workspace.id, guestCwd);
+        loadSandboxSkillsFromVm = () => loadSandboxSkills(env, hostCwd, selectedAgentSkillPaths);
+        sandboxSkillCommand = createSandboxSkillCommandExtension((text) =>
+          expandSkillCommand(text, { skills: sandboxSkills }, (path) =>
+            env.readSkillFile(path, BACKGROUND_CONTEXT),
+          ),
         );
       }
       const loader = new DefaultResourceLoader({
@@ -1215,12 +1254,15 @@ export class SdkBackend implements AgentBackend {
         extensionFactories: [
           createLifecycleJournalExtension(sessionManager),
           ...createMcpBuiltinExtensions(mcpBuiltinNames, sandboxMcp),
+          ...(sandboxSkillCommand ? [sandboxSkillCommand] : []),
         ],
-        ...(selectedAgentSkillPaths !== undefined
-          ? { noSkills: true, additionalSkillPaths: selectedAgentSkillPaths }
-          : config.skillPaths
-            ? { additionalSkillPaths: config.skillPaths }
-            : {}),
+        ...(sandboxMode
+          ? {}
+          : selectedAgentSkillPaths !== undefined
+            ? { noSkills: true, additionalSkillPaths: selectedAgentSkillPaths }
+            : config.skillPaths
+              ? { additionalSkillPaths: config.skillPaths }
+              : {}),
         ...(selectedAgentExtensionPaths !== undefined
           ? {
               noExtensions: true,
@@ -1241,30 +1283,11 @@ export class SdkBackend implements AgentBackend {
               agentsFilesOverride: () => ({
                 agentsFiles: [...sandboxContextFiles, ...savedAgentFiles],
               }),
-              skillsOverride: (base: SkillLoadResult): SkillLoadResult => {
-                const visible = sandboxGuestSkills(
-                  base.skills,
-                  hostCwd,
-                  guestCwd,
-                  sandboxVm?.skillMounts ?? [],
-                );
-                // Validate the saved Agent selection against the host paths of the Skills
-                // the VM can serve, before the guest rewrite, on every load: a selected
-                // Skill the VM cannot read fails instead of silently disappearing.
-                try {
-                  assertSelectedAgentSkillsLoaded(normalizedSelectedAgentSkillPaths, {
-                    skills: visible.map(({ host }) => host),
-                    diagnostics: base.diagnostics,
-                  });
-                } catch (error) {
-                  if (isInitialResourceLoad) throw error;
-                  recordSelectedResourceReloadError(error);
-                }
-                return {
-                  skills: visible.map(({ guest }) => guest),
-                  diagnostics: base.diagnostics,
-                };
-              },
+              // Pi discovers no Skill on the host: its walk follows guest-planted links
+              // (`.agents/skills/loop -> .`) and reads `SKILL.md` targets the VM hides. The
+              // VM's discovery, taken before each load, is the only list the session presents.
+              noSkills: true,
+              skillsOverride: (): SkillLoadResult => ({ skills: sandboxSkills, diagnostics: [] }),
             }
           : {
               agentsFilesOverride: (base: { agentsFiles: AgentContextFile[] }) => ({
@@ -1272,12 +1295,21 @@ export class SdkBackend implements AgentBackend {
               }),
             }),
       });
+      if (sandboxMode) keepSandboxSkillDiscoveryOffHost(loader);
       const reload = loader.reload.bind(loader);
       loader.reload = async (options) => {
         selectedResourceReloadError = undefined;
         await resolveTrust();
         if (sandboxVm && !agentDefinition?.resources?.noContextFiles)
           sandboxContextFiles = await readSandboxContextFiles(sandboxVm, hostCwd, guestCwd);
+        if (loadSandboxSkillsFromVm) {
+          // A saved Agent selecting a Skill the VM cannot serve fails instead of silently
+          // losing it: the launch on first load, later model turns after a reload.
+          const { skills, unavailable } = await loadSandboxSkillsFromVm();
+          sandboxSkills = skills;
+          if (unavailable && isInitialResourceLoad) throw unavailable;
+          if (unavailable) recordSelectedResourceReloadError(unavailable);
+        }
         await reload(options);
         try {
           if (!sandboxMode) {

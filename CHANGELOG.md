@@ -109,7 +109,7 @@ Example:
 - **Client/Server:** Word highlights in diffs mark only lines that were actually edited, not unrelated lines that happen to sit side by side in a rewrite, and long edited lines highlight the changed words instead of the whole line. Diffs of rewritten prose, such as a trimmed changelog, open and scroll faster, and commit file diffs no longer download both full copies of the file.
 - **Client:** Commit file diffs and the Changes review scroll smoothly on long diffs and long lines, and have the same Viewing Options as full-screen diffs: text size and Wrap Text, shared with them.
 - **Server:** Sandbox workspaces can no longer run programs on the host through their git config or hooks. As a result, sandbox workspaces no longer support worktrees.
-- **Server:** Sandbox sessions read `AGENTS.md`, `CLAUDE.md`, and Skills through the VM, so a symlink can no longer put a file the VM hides, such as `.env`, into the prompt.
+- **Server:** Sandbox sessions, classic and durable, discover Skills and read `AGENTS.md`, `CLAUDE.md`, and Skill files through the VM, so a symlink can no longer put a file the VM hides, such as `.env`, into the prompt. Classic sandboxes no longer hang at start on `.agents/skills` loop links, and `/skill:name` there reads through the VM instead of failing on the guest path on the host.
 - **Server:** Someone who knew a paired device's id could block its token refresh.
 - **Client:** The Linux `/health` check no longer follows redirects, so another host cannot pose as an Oppi server.
 - **Client:** Server responses and access tokens are no longer stored in the iOS HTTP cache, and removing a server deletes its cached data on the phone.
