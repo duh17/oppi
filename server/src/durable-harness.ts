@@ -1375,17 +1375,24 @@ export class DurableHarness {
       // This load replaces or removes the previous packages' extensions, and their tasks with them.
       tasks: installedTasks(registry, new Set(previous.map((old) => old.extension.name))),
     });
-    const installed = installPackages(registry, result.loaded, previous);
+    // Packages no longer discovered go first, so a new package may take over a name or task
+    // they held in this same reload. A package still discovered stays installed until its new
+    // code installs, so a broken update of it rolls back to its previous code.
+    const discoveredRoots = new Set(discovered.packages.map((found) => found.root));
+    const gone = previous.filter((old) => !discoveredRoots.has(old.root));
+    for (const old of gone) registry.uninstall(old.extension);
+    const remaining = previous.filter((old) => discoveredRoots.has(old.root));
+    const installed = installPackages(registry, result.loaded, remaining);
     const loadedNames = new Set(installed.loaded.map((loaded) => loaded.extension.name));
     const errors = [...discovered.errors, ...result.errors, ...installed.errors];
     const failedRoots = new Set(errors.flatMap((issue) => (issue.root ? [issue.root] : [])));
-    const kept = previous.filter(
+    const kept = remaining.filter(
       (old) => failedRoots.has(old.root) && !loadedNames.has(old.extension.name),
     );
     const next = [...installed.loaded, ...kept];
     const nextNames = new Set(next.map((loaded) => loaded.extension.name));
     const removed = previous.filter((old) => !nextNames.has(old.extension.name));
-    for (const old of removed) registry.uninstall(old.extension);
+    for (const old of removed) if (!gone.includes(old)) registry.uninstall(old.extension);
     this.packageExtensions = next;
     return {
       loaded: installed.loaded.map((loaded) => summarize(loaded, false)),

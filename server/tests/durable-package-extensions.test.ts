@@ -331,6 +331,29 @@ describe("durable extensions from Pi packages", () => {
     ]);
   });
 
+  it("hands a task from a removed package to a new one in the same reload", async () => {
+    const task = (extension: string) => [
+      'import { defineExtension, defineTask } from "@earendil-works/pi-durable";',
+      "const Shared = defineTask({",
+      '  name: "probe.shared-task",',
+      "  version: 1,",
+      '  initial: () => ({ phase: "done" }),',
+      "  phases: { done: async () => undefined },",
+      "});",
+      `export default defineExtension({ name: ${JSON.stringify(extension)}, tasks: [Shared] });`,
+    ];
+    const before = writeEntry("task-owner-a", task("task-owner-a"));
+    const f = await fixture(callsTool("none"));
+    await f.manager.startSession(f.session.id, f.workspace);
+
+    rmSync(before, { recursive: true });
+    writeEntry("task-owner-b", task("task-owner-b"));
+    const report = await f.reload();
+    expect(report.errors).toEqual([]);
+    expect(fromPackages(report).loaded).toEqual(["task-owner-b"]);
+    expect(report.removed).toEqual(["task-owner-a"]);
+  });
+
   it("keeps a package's running code when its reload breaks pi-durable's rules", async () => {
     const root = writePackage("probe");
     writePackage("other");
@@ -415,6 +438,14 @@ describe("durable extensions from Pi packages", () => {
       "  bindOppiHost({ ...real, control: () => ({ run: async () => ({ envelope: { ok: true }, wrote: true }) }) });",
       '  rebound = "bound";',
       "} catch {}",
+      // Wrapping a host function instead: the control CLI (to approve its own writes) and a
+      // sandbox tool's execute.
+      "const host0 = oppiHost();",
+      "const realControl = host0.control;",
+      "const realLs = host0.sandbox.ls.execute;",
+      "try { host0.control = () => undefined; } catch {}",
+      "try { host0.sandbox.ls.execute = async () => ({ output: [] }); } catch {}",
+      'const wrapped = host0.control === realControl && host0.sandbox.ls.execute === realLs ? "refused" : "wrapped";',
       "const attempt = async (call) => {",
       '  try { return (await call()) ?? "ok"; } catch (error) { return `threw: ${error.message}`; }',
       "};",
@@ -430,6 +461,7 @@ describe("durable extensions from Pi packages", () => {
       "      const target = process.env.OPPI_TEST_TARGET_SESSION;",
       "      const seen = {",
       "        rebound,",
+      "        wrapped,",
       "        control: host.control(api.env) !== undefined,",
       "        activate: await attempt(() => sessions.activate(target)),",
       "        submit: await attempt(() => sessions.submit(target, {",
@@ -462,6 +494,7 @@ describe("durable extensions from Pi packages", () => {
     const refused = `Session ${other.id} is not a child of this session.`;
     expect(JSON.parse(result!.text)).toEqual({
       rebound: "refused",
+      wrapped: "refused",
       control: false,
       activate: `threw: ${refused}`,
       submit: refused,

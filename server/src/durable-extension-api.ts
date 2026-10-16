@@ -77,11 +77,16 @@ export function oppiHost(): OppiDurableHost {
 
 /**
  * Server only: bind the host once, before any package loads. The slot cannot be written,
- * deleted, or bound again, so package code cannot replace the host the built-ins use.
+ * deleted, or bound again, and the host's objects are frozen, so package code cannot replace
+ * the host or wrap one of its functions (`control`, a sandbox tool's `execute`).
  */
 export function bindOppiHost(host: OppiDurableHost): void {
   if (Object.hasOwn(globalThis, HOST))
     throw new Error("oppi/durable: the Oppi durable host is already bound");
+  // Freeze is shallow: freeze each object a built-in calls through.
+  for (const tool of [host.sandbox.ls, host.sandbox.find, host.sandbox.grep]) Object.freeze(tool);
+  Object.freeze(host.sandbox);
+  Object.freeze(host);
   Object.defineProperty(globalThis, HOST, {
     value: host,
     writable: false,
