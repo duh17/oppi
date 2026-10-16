@@ -493,8 +493,8 @@ struct StreamingRenderPolicyInconsistencyTests {
             Code strategy gives .unknown language 2x threshold tolerance \
             (80->160 lines, 4KB->8KB bytes, 160->320 bytes/line) because \
             unknown-language highlighting is cheaper (no keyword matching). \
-            This threshold adjustment is buried in shouldDeferHighlight() \
-            and not applied to any other content kind. If text or bash \
+            This threshold adjustment lives in StreamingRenderPolicy.codeTier \
+            and is not applied to any other content kind. If text or bash \
             got a deferred path, they'd need their own complexity-adjusted \
             thresholds but have no infrastructure for it.
             """)

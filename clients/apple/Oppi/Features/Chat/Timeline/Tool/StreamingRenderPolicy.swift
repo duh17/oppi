@@ -283,7 +283,7 @@ enum StreamingRenderPolicy {
         return .full
     }
 
-    /// Code-specific tier logic, mirroring `ToolRowCodeRenderStrategy.shouldDeferHighlight`.
+    /// Code-specific tier logic. This policy owns the deferred-highlight thresholds.
     private static func codeTier(
         languageCategory: CodeLanguageCategory,
         byteCount: Int,
@@ -292,7 +292,7 @@ enum StreamingRenderPolicy {
     ) -> RenderTier {
         switch languageCategory {
         case .none:
-            // nil language → shouldDeferHighlight returns false → always full
+            // nil language has no keyword work, so highlighting stays on the main thread.
             return .full
 
         case .unknown:

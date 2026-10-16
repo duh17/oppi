@@ -2,9 +2,9 @@ import UIKit
 
 /// Owns the hosted media and document viewport of a tool timeline row.
 ///
-/// A tool row hosts one embedded view inside `container` for read-media
-/// (image, SVG, audio, video, PDF), voice messages, CSV/TSV tables and
-/// GeoJSON/TopoJSON maps. The surface keeps that lifecycle in one place: the
+/// A tool row hosts one embedded view inside `container` for the notebook
+/// cell, read-media (image, SVG, audio, video, PDF), voice messages, CSV/TSV
+/// tables and GeoJSON/TopoJSON maps. The surface keeps that lifecycle in one place: the
 /// container and its width and height constraints, the currently mounted
 /// content view and whether the container is the row's active expanded
 /// layout, the install methods that create or reuse the content view, and
