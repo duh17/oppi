@@ -314,11 +314,13 @@ export async function getCommitFileDiff(
     const hunks = buildDiffHunks(flatLines);
     const stats = computeLineDiffStatsFromLines(flatLines);
 
+    // The commit diff view renders hunks only. Sending both full file copies
+    // more than tripled the response for a large file with a small change.
     return {
       workspaceId,
       path: trimmedPath,
-      baselineText: beforeText,
-      currentText: afterText,
+      baselineText: "",
+      currentText: "",
       addedLines: stats.added,
       removedLines: stats.removed,
       hunks,

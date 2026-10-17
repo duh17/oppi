@@ -206,7 +206,12 @@ describe("sandbox git: repository-controlled execution", () => {
     expect(detail.files).toEqual([{ path: "a.txt", status: "M", addedLines: 1, removedLines: 1 }]);
 
     const commitDiff = await getCommitFileDiff(mount, trust, commitSha, "a.txt", "ws");
-    expect(commitDiff).toMatchObject({ baselineText: "one\n", currentText: "two\n" });
+    expect(
+      commitDiff.hunks.flatMap((hunk) => hunk.lines.map((line) => [line.kind, line.text])),
+    ).toEqual([
+      ["removed", "one"],
+      ["added", "two"],
+    ]);
 
     const reviewDiff = await buildWorkspaceReviewDiff({
       workspaceId: "ws",

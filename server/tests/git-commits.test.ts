@@ -112,7 +112,11 @@ describe("getCommitFileDiff", () => {
     expect(diff.workspaceId).toBe("workspace-1");
     expect(diff.path).toBe(filePath);
     expect(diff.baselineText).toBe("");
-    expect(diff.currentText).toBe("alpha\nbeta\n");
+    expect(diff.currentText).toBe("");
+    expect(diff.hunks.flatMap((hunk) => hunk.lines.map((line) => line.text))).toEqual([
+      "alpha",
+      "beta",
+    ]);
     expect(diff.addedLines).toBe(2);
     expect(diff.removedLines).toBe(0);
   });

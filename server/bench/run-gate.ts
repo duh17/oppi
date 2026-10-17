@@ -15,7 +15,7 @@ import {
 } from "./compare-metrics.js";
 
 interface SuiteConfig {
-  id: "hotpath";
+  id: "hotpath" | "review-diff";
   displayName: string;
   command: string;
   args: string[];
@@ -24,7 +24,7 @@ interface SuiteConfig {
 
 interface CliArgs extends CompareOptions {
   runs: number;
-  suite: "all" | "hotpath";
+  suite: "all" | SuiteConfig["id"];
 }
 
 const SUITES: SuiteConfig[] = [
@@ -35,11 +35,18 @@ const SUITES: SuiteConfig[] = [
     args: ["bench/server-hotpath.bench.ts"],
     baselinePath: "bench/baselines/server-hotpath.metrics",
   },
+  {
+    id: "review-diff",
+    displayName: "review diff",
+    command: "tsx",
+    args: ["bench/review-diff.bench.ts"],
+    baselinePath: "bench/baselines/review-diff.metrics",
+  },
 ];
 
 function usage(): never {
   console.error(
-    "Usage: tsx bench/run-gate.ts [--suite all|hotpath] [--runs <n>] [--metric-set avg|all] [--max-regression-pct <n>] [--min-baseline-us <n>] [--max-absolute-regression-us <n>]",
+    "Usage: tsx bench/run-gate.ts [--suite all|hotpath|review-diff] [--runs <n>] [--metric-set avg|all] [--max-regression-pct <n>] [--min-baseline-us <n>] [--max-absolute-regression-us <n>]",
   );
   process.exit(2);
 }
@@ -57,7 +64,7 @@ function parseArgs(argv: string[]): CliArgs {
 
     if (arg === "--suite") {
       const raw = (argv[++i] ?? "").trim();
-      if (raw !== "all" && raw !== "hotpath") {
+      if (raw !== "all" && raw !== "hotpath" && raw !== "review-diff") {
         usage();
       }
       suite = raw;

@@ -8,6 +8,7 @@ import {
   computeLineDiffStatsFromLines,
   type DiffLine as FlatDiffLine,
 } from "./diff-core.js";
+import { matchSequences } from "./sequence-diff.js";
 import type {
   WorkspaceReviewDiffHunk,
   WorkspaceReviewDiffLine,
@@ -18,7 +19,20 @@ import type {
 const GIT_TIMEOUT_MS = 5000;
 const MAX_REVIEW_TEXT_BYTES = 256 * 1024;
 const HUNK_CONTEXT_LINES = 3;
-const MAX_TOKEN_DIFF_CELLS = 40_000;
+/**
+ * A removed and an added line are the same line edited only when at least half
+ * of their combined non-whitespace text is shared. Below that, word spans mark
+ * almost every token of two unrelated lines, which is noise, not a word diff.
+ */
+const WORD_PAIR_MIN_SIMILARITY = 0.5;
+/** How many added lines past the previous pair a removed line may look for its edit. */
+const WORD_PAIR_LOOKAHEAD = 8;
+/** Token-matching work for one diff; past it, remaining lines stay line-level. */
+const WORD_DIFF_MAX_COST = 4_000_000;
+/** Most changed places per side for a positional pair that is not similar. */
+const WORD_FALLBACK_MAX_REGIONS = 3;
+/** Work cap for one positional pair: a few dozen token edits, never a paragraph rewrite. */
+const WORD_FALLBACK_MAX_COST = 4_096;
 
 export class WorkspaceReviewDiffError extends Error {
   constructor(
@@ -41,6 +55,8 @@ type Token = {
   value: string;
   start: number;
   end: number;
+  /** Whitespace run: matched for spans, ignored for line similarity. */
+  space: boolean;
 };
 
 function bufferLooksBinary(buffer: Buffer): boolean {
@@ -161,7 +177,7 @@ function tokenize(text: string): Token[] {
   if (!text) return [];
 
   const tokens: Token[] = [];
-  const regex = /\s+|[\p{L}\p{N}_]+|[^\s\p{L}\p{N}_]+/gu;
+  const regex = /(\s+)|[\p{L}\p{N}_]+|[^\s\p{L}\p{N}_]+/gu;
   let match: RegExpExecArray | null;
 
   while ((match = regex.exec(text)) !== null) {
@@ -169,11 +185,12 @@ function tokenize(text: string): Token[] {
       value: match[0],
       start: match.index,
       end: match.index + match[0].length,
+      space: match[1] !== undefined,
     });
   }
 
   if (tokens.length === 0) {
-    return [{ value: text, start: 0, end: text.length }];
+    return [{ value: text, start: 0, end: text.length, space: false }];
   }
 
   return tokens;
@@ -205,107 +222,202 @@ function mergeSpans(spans: WorkspaceReviewDiffSpan[]): WorkspaceReviewDiffSpan[]
   return merged;
 }
 
-function fullLineSpan(text: string): WorkspaceReviewDiffSpan[] {
-  return text.length > 0 ? [{ start: 0, end: text.length, kind: "changed" }] : [];
+/** Tokenized line text, interned for the integer sequence matcher. */
+type WordLine = {
+  tokens: Token[];
+  ids: Int32Array;
+  /** Non-whitespace characters per token (0 for whitespace runs). */
+  weights: Int32Array;
+  /** Sum of `weights`. */
+  contentChars: number;
+  /** Ids of the non-whitespace tokens, for the shared-text bound. */
+  contentIds: number[];
+};
+
+/** Shared token table, scratch counts, and work budget for one diff. */
+type WordDiffContext = {
+  ids: Map<string, number>;
+  /** Per-token-id scratch counts for the shared-text bound; all zero between calls. */
+  counts: Int32Array;
+  remainingCost: number;
+};
+
+function wordLine(text: string, context: WordDiffContext): WordLine {
+  const tokens = tokenize(text);
+  const ids = new Int32Array(tokens.length);
+  const weights = new Int32Array(tokens.length);
+  const contentIds: number[] = [];
+  let contentChars = 0;
+  tokens.forEach((token, index) => {
+    let id = context.ids.get(token.value);
+    if (id === undefined) {
+      id = context.ids.size;
+      context.ids.set(token.value, id);
+    }
+    ids[index] = id;
+    if (token.space) return;
+    weights[index] = token.end - token.start;
+    contentChars += token.end - token.start;
+    contentIds.push(id);
+  });
+  return { tokens, ids, weights, contentChars, contentIds };
 }
 
-function computeWordSpans(
-  oldText: string,
-  newText: string,
-): {
-  old: WorkspaceReviewDiffSpan[];
-  new: WorkspaceReviewDiffSpan[];
-} {
-  if (oldText === newText) {
-    return { old: [], new: [] };
-  }
-
-  const oldTokens = tokenize(oldText);
-  const newTokens = tokenize(newText);
-
-  const cellCount = oldTokens.length * newTokens.length;
-  if (cellCount > MAX_TOKEN_DIFF_CELLS) {
-    return {
-      old: fullLineSpan(oldText),
-      new: fullLineSpan(newText),
-    };
-  }
-
-  const m = oldTokens.length;
-  const n = newTokens.length;
-  const dp = Array.from({ length: m + 1 }, () => Array<number>(n + 1).fill(0));
-
-  for (let i = 0; i < m; i += 1) {
-    const currentRow = dp[i + 1];
-    const previousRow = dp[i];
-    if (!currentRow || !previousRow) {
-      continue;
-    }
-
-    for (let j = 0; j < n; j += 1) {
-      const left = currentRow[j] ?? 0;
-      const up = previousRow[j + 1] ?? 0;
-      const diagonal = previousRow[j] ?? 0;
-
-      if (oldTokens[i]?.value === newTokens[j]?.value) {
-        currentRow[j + 1] = diagonal + 1;
-      } else {
-        currentRow[j + 1] = Math.max(up, left);
-      }
-    }
-  }
-
-  const oldSpans: WorkspaceReviewDiffSpan[] = [];
-  const newSpans: WorkspaceReviewDiffSpan[] = [];
-  let i = m;
-  let j = n;
-
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && oldTokens[i - 1]?.value === newTokens[j - 1]?.value) {
-      i -= 1;
-      j -= 1;
-      continue;
-    }
-
-    const left = i >= 0 ? (dp[i]?.[j - 1] ?? 0) : 0;
-    const up = i > 0 ? (dp[i - 1]?.[j] ?? 0) : 0;
-
-    if (j > 0 && (i === 0 || left >= up)) {
-      const token = newTokens[j - 1];
-      if (token) {
-        newSpans.push({ start: token.start, end: token.end, kind: "changed" });
-      }
-      j -= 1;
-      continue;
-    }
-
-    const token = oldTokens[i - 1];
-    if (token) {
-      oldSpans.push({ start: token.start, end: token.end, kind: "changed" });
-    }
-    i -= 1;
-  }
-
-  return {
-    old: mergeSpans(oldSpans.reverse()),
-    new: mergeSpans(newSpans.reverse()),
-  };
+function unmatchedSpans(tokens: Token[], matched: Uint8Array): WorkspaceReviewDiffSpan[] {
+  const spans: WorkspaceReviewDiffSpan[] = [];
+  tokens.forEach((token, index) => {
+    if (!matched[index]) spans.push({ start: token.start, end: token.end, kind: "changed" });
+  });
+  return mergeSpans(spans);
 }
 
 /**
- * Apply the existing token-LCS word spans to already-numbered hunks.
+ * Shared non-whitespace characters if order did not matter (multiset
+ * intersection of tokens). A common subsequence can never share more, so a
+ * pair that fails the threshold here cannot pass it after exact matching.
+ */
+function sharedContentUpperBound(
+  oldLine: WordLine,
+  newLine: WordLine,
+  context: WordDiffContext,
+): number {
+  if (context.counts.length < context.ids.size) {
+    context.counts = new Int32Array(Math.max(context.ids.size, context.counts.length * 2));
+  }
+  // A token id always has the same text, so its weight is its length.
+  const counts = context.counts;
+  for (const id of oldLine.contentIds) counts[id] = (counts[id] ?? 0) + 1;
+  let shared = 0;
+  newLine.tokens.forEach((token, index) => {
+    const id = newLine.ids[index] ?? -1;
+    const available = counts[id] ?? 0;
+    if (token.space || available === 0) return;
+    counts[id] = available - 1;
+    shared += token.end - token.start;
+  });
+  for (const id of oldLine.contentIds) counts[id] = 0;
+  return shared;
+}
+
+/**
+ * Word spans for a removed/added pair, or null when the lines are not the same
+ * line edited. Spans mark exactly the tokens outside a longest common token
+ * subsequence (minimal word edit). Pairs whose shared non-whitespace text is
+ * under `WORD_PAIR_MIN_SIMILARITY` are unrelated rewrites and stay line-level.
+ */
+function similarLineWordSpans(
+  oldLine: WordLine,
+  newLine: WordLine,
+  context: WordDiffContext,
+): WordSpans | null {
+  const totalContent = oldLine.contentChars + newLine.contentChars;
+  // Upper bound: at most the shorter side can be shared.
+  if (
+    totalContent > 0 &&
+    (2 * Math.min(oldLine.contentChars, newLine.contentChars)) / totalContent <
+      WORD_PAIR_MIN_SIMILARITY
+  ) {
+    return null;
+  }
+  if (context.remainingCost <= 0) return null;
+  if (
+    totalContent > 0 &&
+    (2 * sharedContentUpperBound(oldLine, newLine, context)) / totalContent <
+      WORD_PAIR_MIN_SIMILARITY
+  ) {
+    return null;
+  }
+
+  const match = matchSequences(oldLine.ids, newLine.ids, context.remainingCost);
+  context.remainingCost -= match.cost;
+  if (!match.exact) return null;
+
+  let sharedContent = 0;
+  oldLine.weights.forEach((weight, index) => {
+    if (match.oldMatched[index]) sharedContent += weight;
+  });
+  if (totalContent > 0 && (2 * sharedContent) / totalContent < WORD_PAIR_MIN_SIMILARITY) {
+    return null;
+  }
+
+  return {
+    old: unmatchedSpans(oldLine.tokens, match.oldMatched),
+    new: unmatchedSpans(newLine.tokens, match.newMatched),
+  };
+}
+
+type WordSpans = { old: WorkspaceReviewDiffSpan[]; new: WorkspaceReviewDiffSpan[] };
+
+/**
+ * Word spans for a positional pair that failed the similarity test, kept only
+ * when the exact word diff changes at most `WORD_FALLBACK_MAX_REGIONS` places
+ * per side. Short edits such as `foo()` -> `bar()` or `let a = b` -> `var a = c`
+ * share little text yet read best with words marked; unrelated paragraphs
+ * change dozens of places (or exceed the small work cap) and stay line-level.
+ */
+function fewChangeWordSpans(
+  oldLine: WordLine,
+  newLine: WordLine,
+  context: WordDiffContext,
+): WordSpans | null {
+  if (context.remainingCost <= 0) return null;
+  const match = matchSequences(
+    oldLine.ids,
+    newLine.ids,
+    Math.min(WORD_FALLBACK_MAX_COST, context.remainingCost),
+  );
+  context.remainingCost -= match.cost;
+  if (!match.exact) return null;
+  const spans = {
+    old: unmatchedSpans(oldLine.tokens, match.oldMatched),
+    new: unmatchedSpans(newLine.tokens, match.newMatched),
+  };
+  if (
+    spans.old.length > WORD_FALLBACK_MAX_REGIONS ||
+    spans.new.length > WORD_FALLBACK_MAX_REGIONS
+  ) {
+    return null;
+  }
+  return spans;
+}
+
+function applySpans(
+  removedLine: MutableReviewLine,
+  addedLine: MutableReviewLine,
+  spans: WordSpans,
+): void {
+  if (spans.old.length > 0) removedLine.spans = spans.old;
+  if (spans.new.length > 0) addedLine.spans = spans.new;
+}
+
+/**
+ * Apply word spans to already-numbered hunks.
  * Does not renumber lines or load file text.
  */
 export function applyWordSpansToNumberedHunks(
   hunks: WorkspaceReviewDiffHunk[],
 ): WorkspaceReviewDiffHunk[] {
+  const context = newWordDiffContext();
   for (const hunk of hunks) {
-    applyWordLevelHighlights(hunk.lines);
+    applyWordLevelHighlights(hunk.lines, context);
   }
   return hunks;
 }
 
-function applyWordLevelHighlights(lines: MutableReviewLine[]): void {
+function newWordDiffContext(): WordDiffContext {
+  return { ids: new Map(), counts: new Int32Array(256), remainingCost: WORD_DIFF_MAX_COST };
+}
+
+/**
+ * Word spans within each change block, in two passes that keep both sides in
+ * order:
+ * 1. Each removed line pairs with the first similar added line at or after the
+ *    previous pair (within `WORD_PAIR_LOOKAHEAD`).
+ * 2. Lines left between two pairs pair by position when the word diff stays
+ *    small (`fewChangeWordSpans`).
+ * Lines that pair with nothing stay line-level.
+ */
+function applyWordLevelHighlights(lines: MutableReviewLine[], context: WordDiffContext): void {
   let index = 0;
 
   while (index < lines.length) {
@@ -314,8 +426,8 @@ function applyWordLevelHighlights(lines: MutableReviewLine[]): void {
       continue;
     }
 
-    const removed: number[] = [];
-    const added: number[] = [];
+    const removed: MutableReviewLine[] = [];
+    const added: MutableReviewLine[] = [];
     let cursor = index;
 
     while (cursor < lines.length && lines[cursor]?.kind !== "context") {
@@ -323,31 +435,47 @@ function applyWordLevelHighlights(lines: MutableReviewLine[]): void {
       if (!line) {
         break;
       }
-      if (line.kind === "removed") removed.push(cursor);
-      if (line.kind === "added") added.push(cursor);
+      if (line.kind === "removed") removed.push(line);
+      if (line.kind === "added") added.push(line);
       cursor += 1;
     }
 
-    const pairCount = Math.min(removed.length, added.length);
-    for (let pairIndex = 0; pairIndex < pairCount; pairIndex += 1) {
-      const removedLineIndex = removed[pairIndex];
-      const addedLineIndex = added[pairIndex];
-      if (removedLineIndex === undefined || addedLineIndex === undefined) {
-        continue;
-      }
+    if (removed.length > 0 && added.length > 0) {
+      const removedWords = removed.map((line) => wordLine(line.text, context));
+      const addedWords = added.map((line) => wordLine(line.text, context));
+      const pairs: Array<[number, number]> = [];
+      let nextAdded = 0;
+      removedWords.forEach((oldWords, removedIndex) => {
+        const searchEnd = Math.min(added.length, nextAdded + WORD_PAIR_LOOKAHEAD);
+        for (let candidate = nextAdded; candidate < searchEnd; candidate += 1) {
+          const newWords = addedWords[candidate];
+          const removedLine = removed[removedIndex];
+          const addedLine = added[candidate];
+          if (!newWords || !removedLine || !addedLine) return;
+          const spans = similarLineWordSpans(oldWords, newWords, context);
+          if (!spans) continue;
+          applySpans(removedLine, addedLine, spans);
+          pairs.push([removedIndex, candidate]);
+          nextAdded = candidate + 1;
+          return;
+        }
+      });
 
-      const removedLine = lines[removedLineIndex];
-      const addedLine = lines[addedLineIndex];
-      if (!removedLine || !addedLine) {
-        continue;
-      }
-
-      const spans = computeWordSpans(removedLine.text, addedLine.text);
-      if (spans.old.length > 0) {
-        removedLine.spans = spans.old;
-      }
-      if (spans.new.length > 0) {
-        addedLine.spans = spans.new;
+      let previousRemoved = -1;
+      let previousAdded = -1;
+      for (const [pairRemoved, pairAdded] of [...pairs, [removed.length, added.length]]) {
+        const gap = Math.min(pairRemoved - previousRemoved, pairAdded - previousAdded) - 1;
+        for (let offset = 1; offset <= gap; offset += 1) {
+          const removedLine = removed[previousRemoved + offset];
+          const addedLine = added[previousAdded + offset];
+          const oldWords = removedWords[previousRemoved + offset];
+          const newWords = addedWords[previousAdded + offset];
+          if (!removedLine || !addedLine || !oldWords || !newWords) break;
+          const spans = fewChangeWordSpans(oldWords, newWords, context);
+          if (spans) applySpans(removedLine, addedLine, spans);
+        }
+        previousRemoved = pairRemoved;
+        previousAdded = pairAdded;
       }
     }
 
@@ -426,7 +554,7 @@ function buildHunks(lines: MutableReviewLine[]): WorkspaceReviewDiffHunk[] {
  */
 export function buildDiffHunks(flatLines: FlatDiffLine[]): WorkspaceReviewDiffHunk[] {
   const lines = numberDiffLines(flatLines);
-  applyWordLevelHighlights(lines);
+  applyWordLevelHighlights(lines, newWordDiffContext());
   return buildHunks(lines);
 }
 

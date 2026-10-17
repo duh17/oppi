@@ -55,6 +55,8 @@ npm run bench:perf        # run hotpath benchmark once (no compare)
 npm run bench:perf:gate   # run hotpath multi-run + compare to baseline
 npm run bench:hotpath     # critical event pipeline benchmark
 npm run bench:hotpath:gate
+npm run bench:review-diff       # commit/workspace/session diff: line diff, word spans, payload size
+npm run bench:review-diff:gate  # median of 3 vs bench/baselines/review-diff.metrics
 npm run bench:compare -- --baseline <file> --current <file>
 
 # Separate HTTPS/Tailscale evidence lane; not part of the flaky-sensitive unit/perf gate
