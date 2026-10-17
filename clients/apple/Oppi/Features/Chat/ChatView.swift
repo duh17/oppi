@@ -94,6 +94,8 @@ struct ChatView: View {
     @Environment(\.composerDraftStore) private var composerDraftStore
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.theme) private var theme
+    @Environment(\.themeID) private var themeID
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.dismiss) private var dismiss
@@ -1464,9 +1466,7 @@ struct ChatView: View {
                     appliesOuterPadding: true,
                     alwaysShowActionRow: false,
                     allowsExpansion: composerAskRequest == nil,
-                    actionRow: {
-                        composerActionRow
-                    }
+                    actionRow: composerActionRow
                 )
 
                 if !hasBlockingExtensionInput,
@@ -1486,73 +1486,52 @@ struct ChatView: View {
         }
     }
 
-    @ViewBuilder
-    private var composerActionRow: some View {
-        if let request = activeReviewCommentRequest {
-            HStack(spacing: 8) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(QuickCommentTemplate.quickCommentTemplates(quickCommentTemplateStore.templates)) { template in
-                            Button {
-                                applyQuickCommentTemplate(template)
-                            } label: {
-                                Label(template.title, systemImage: template.systemImage)
-                                    .font(.subheadline.weight(.semibold))
-                                    .lineLimit(1)
-                                    .fixedSize(horizontal: true, vertical: false)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 7)
-                                    .background(.themeBgHighlight.opacity(0.85), in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.themeFg)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Button {
-                    cancelReviewCommentInput()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.subheadline.weight(.bold))
-                        .frame(width: 32, height: 32)
-                        .background(.themeBgHighlight.opacity(0.85), in: Circle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.themeFgDim)
-                .accessibilityLabel("Cancel comment")
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("Comment actions for selected text: \(request.selectedText)")
-        } else {
-            SessionToolbar(
-                session: session,
-                thinkingLevel: chatState.thinkingLevel,
-                supportedThinkingLevels: ThinkingLevelMenuSource.levels(
-                    for: session?.model,
-                    in: chatState.cachedModels
-                ),
-                onModelTap: { showModelPicker = true },
-                onThinkingSelect: { level in
-                    actionHandler.setThinking(
-                        level,
-                        connection: connection,
-                        reducer: reducer,
-                        sessionId: sessionId
+    private var composerActionRow: ComposerActionRow {
+        let colors = ComposerThemeColors(palette: themeID.palette)
+        if activeReviewCommentRequest != nil {
+            let templates = QuickCommentTemplate.quickCommentTemplates(quickCommentTemplateStore.templates)
+            return ComposerActionRow(
+                leading: templates.map { template in
+                    .reviewChip(
+                        id: "chat.reviewComment.\(template.id.uuidString)",
+                        title: template.title,
+                        systemImage: template.systemImage,
+                        onTap: { applyQuickCommentTemplate(template) }
                     )
                 },
-                onSaveThinkingAsDefault: canPersistSessionDefaults ? {
-                    actionHandler.setThinking(
-                        chatState.thinkingLevel,
-                        connection: connection,
-                        reducer: reducer,
-                        sessionId: sessionId,
-                        persist: true
-                    )
-                } : nil
+                trailing: [.reviewCancel { cancelReviewCommentInput() }],
+                leadingScrolls: true
             )
         }
+        return .sessionToolbar(
+            modelTitle: session?.model.map(shortModelName) ?? "Model",
+            modelProvider: session?.model.flatMap(providerFromModel),
+            thinkingLevel: chatState.thinkingLevel,
+            thinkingTint: UIColor(theme.thinking.color(for: chatState.thinkingLevel)),
+            supportedThinkingLevels: ThinkingLevelMenuSource.levels(
+                for: session?.model,
+                in: chatState.cachedModels
+            ),
+            colors: colors,
+            onModelTap: { showModelPicker = true },
+            onThinkingSelect: { level in
+                actionHandler.setThinking(
+                    level,
+                    connection: connection,
+                    reducer: reducer,
+                    sessionId: sessionId
+                )
+            },
+            onSaveThinkingAsDefault: canPersistSessionDefaults ? {
+                actionHandler.setThinking(
+                    chatState.thinkingLevel,
+                    connection: connection,
+                    reducer: reducer,
+                    sessionId: sessionId,
+                    persist: true
+                )
+            } : nil
+        )
     }
 
     private var canPersistSessionDefaults: Bool {

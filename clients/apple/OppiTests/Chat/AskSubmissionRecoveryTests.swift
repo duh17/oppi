@@ -291,7 +291,7 @@ struct AskSubmissionRecoveryTests {
             AskQuestion(id: "q", question: "Which?", options: [], multiSelect: false),
         ], allowCustom: true, timeout: nil)
         let textBinding = Binding(get: { text }, set: { text = $0 })
-        let field = ChatInputBar<EmptyView>.askComposerTextFieldBinding(
+        let field = ChatInputBar.askComposerTextFieldBinding(
             text: textBinding,
             clearing: Binding(get: { state }, set: { state = $0 }),
             displayText: { text }
@@ -303,7 +303,7 @@ struct AskSubmissionRecoveryTests {
             done = $0
         }, completion: { result in
             if result == .retryableFailure {
-                ChatInputBar<EmptyView>.restoreFailedAskComposerText(
+                ChatInputBar.restoreFailedAskComposerText(
                     text: textBinding, clearing: state, submittedTextRevision: revision,
                     request: request, activeQuestionID: "q"
                 )
@@ -343,12 +343,12 @@ struct AskSubmissionRecoveryTests {
         #expect(state.submittedRequestID == nil)
         #expect(state.currentPage == 1)
         var text = ""
-        #expect(ChatInputBar<EmptyView>.restoreFailedAskComposerText(
+        #expect(ChatInputBar.restoreFailedAskComposerText(
             text: Binding(get: { text }, set: { text = $0 }), clearing: state,
             submittedTextRevision: state.textRevision, request: request, activeQuestionID: "q"
         ))
         #expect(text == "keep this")
-        #expect(ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+        #expect(ChatInputBar.composerTextForActiveAskQuestion(
             request: request, activeQuestionID: "q", draftAnswers: state.draftAnswers,
             keepComposerClearedForSubmittedRequestID: state.submittedRequestID
         ) == "keep this")

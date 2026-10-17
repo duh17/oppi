@@ -1,4 +1,5 @@
 import Foundation
+import PhotosUI
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -29,7 +30,71 @@ struct AskComposerClearingState {
     }
 }
 
+/// Action-row pills the composer owns. Hosts pass data and callbacks, never views.
+struct ComposerActionRow {
+    var leading: [ComposerAction] = []
+    var trailing: [ComposerAction] = []
+    var leadingScrolls = false
+}
+
+struct ComposerAction: Identifiable {
+    enum Icon {
+        case image(UIImage)
+        case symbol(String)
+        case monogram(String)
+    }
+
+    enum Chrome {
+        case toolbar
+        case chip
+        case cancel
+    }
+
+    final class Handler {
+        let run: () -> Void
+        init(_ run: @escaping () -> Void) {
+            self.run = run
+        }
+    }
+
+    enum Kind {
+        case tap(Handler)
+        case menu(UIMenu)
+        case picker(ComposerActionPopover)
+    }
+
+    let id: String
+    var icon: Icon?
+    var title: String
+    var tint: UIColor?
+    var accessibilityLabel: String
+    var accessibilityValue: String?
+    var showsChevron = true
+    var chrome: Chrome = .toolbar
+    var kind: Kind
+}
+
+struct ComposerActionPopover {
+    var preferredWidth: CGFloat = 220
+    var make: @MainActor () -> UIViewController
+    var update: (@MainActor (UIViewController) -> Void)?
+}
+
+struct ComposerOptionRow {
+    var id: String
+    var title: String
+    var subtitle: String?
+    var icon: UIImage?
+    var isSelected: Bool
+    var accessibilityIdentifier: String
+    var accessibilityLabel: String?
+}
+
 /// Chat input bar with full-width composer and action row.
+///
+/// UIKit owns the bar. SwiftUI hosts embed it through one representable seam.
+/// Ask card content stays SwiftUI until its own conversion and is hosted with
+/// `HostFactory.content`.
 ///
 /// **Layout**:
 /// ```
@@ -39,12 +104,7 @@ struct AskComposerClearingState {
 /// └──────────────────────────────────────┘
 /// [+]  [action row content…]
 /// ```
-///
-/// - Composer capsule spans full width; send/ignore/stop button lives inside it.
-/// - `+` and any additional controls (model/thinking pills) sit in a
-///   dedicated action row below the capsule.
-/// - Expand stays on the trailing side without taking text width.
-struct ChatInputBar<ActionRow: View>: View {
+struct ChatInputBar: View {
     @Binding var text: String
     @Binding var textBeforeRecording: String?
     @Binding var pendingAttachments: [PendingAttachment]
@@ -75,368 +135,121 @@ struct ChatInputBar<ActionRow: View>: View {
     let onForceStop: () -> Void
     let onExpand: () -> Void
     let externalFocusRequestID: Int
-    /// Bumped by an outside mic (All Sessions, the review-comment edit menu)
-    /// to start dictation once the bar is on screen.
     var externalDictationRequestID: Int = 0
     var externalDictationOwner: ComposerShared.VoiceInputOwner = .inboxComposer
-    /// Called once the request was attempted. A parent whose bar can remount
-    /// (stop/resume) clears its request ID here so remounting never re-arms the mic.
     var onExternalDictationHandled: ((_ requestID: Int) -> Void)? = nil
     let appliesOuterPadding: Bool
     var alwaysShowActionRow: Bool = false
     var allowsExpansion: Bool = true
     var allowsAttachments: Bool = true
-    /// Surfaces can keep upload beside their trailing controls instead of chat's leading +.
     var attachmentButtonPlacement: HorizontalEdge = .leading
-    /// A surface-owned scroll row needs a vertical budget, not just its content's ideal height.
-    /// Zero preserves the intrinsic layout of existing chat and intake actions.
     var actionRowMinimumHeight: CGFloat = 0
     var showsAccessoryRow: Bool = true
-    /// Off for shell input, where corrections and capitals break commands.
     var autocorrectionEnabled: Bool = true
-    @ViewBuilder let actionRow: () -> ActionRow
+    var inputAccessibilityIdentifier: String = "chat.input"
+    var sendAccessibilityIdentifier: String = "chat.send"
+    var actionRow: ComposerActionRow = .init()
+    var keyStripSlot: AnyView? = nil
 
-    @State private var showPhotoPicker = false
-    @State private var showCamera = false
-    @State private var showFileImporter = false
-    @State private var showCanvas = false
-    @State private var canvasBackgroundImage: UIImage?
-    @State private var canvasReplacingAttachmentID: String?
-    @State private var inlineVisualLineCount = 1
-    @State private var askClearing = AskComposerClearingState()
-    @State private var isBusyModePickerPresented = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.theme) private var theme
     @Environment(\.themeID) private var themeID
-
-    /// Bumped to programmatically focus the text field.
-    @State private var focusRequestID = 0
-
-    /// When true, the keyboard is hidden while the cursor remains visible.
-    /// Used during voice recording to show cursor without keyboard.
+    @Environment(\.composerDraftStore) private var composerDraftStore
+    @Environment(\.composerMediaImportGate) private var mediaImportGate
+    @State private var askHeight: CGFloat = 0
+    @State private var askHeightRevision = 0
     @State private var suppressKeyboard = false
-    @State private var voiceInputStartError: String?
-
-    /// Prevents double-submit while final dictation text is being committed.
-    @State private var isFinishingVoiceBeforeSend = false
-    @State private var attachmentImportError: String?
-    @State private var localMediaImportEpoch: UInt64 = 0
-
-    /// BCP 47 language of the active keyboard (e.g. "zh-Hans", "en-US").
-    /// Updated by PastableTextView when the keyboard input mode changes.
-    /// Read at mic-tap time to select the correct speech model.
+    @State private var focusRequestID = 0
     @State private var keyboardLanguage: String?
-
-    /// Tracks text view focus to reveal composer controls on demand.
+    @State private var voiceInputStartError: String?
     @State private var isInputFocused = false
-
-    private let expandVisibilityLineThreshold = 5
-    /// Apple HIG uses 44×44 pt as the practical minimum touch target.
-    /// Keep visible controls at that floor so composer actions are easier to hit.
-    private let actionVisualDiameter = ComposerInputMetrics.controlDiameter
-    private let expandVisualDiameter = ComposerInputMetrics.controlDiameter
-    private let composerHorizontalPadding: CGFloat = 12
-
-    private var composerInputFont: UIFont {
-        .preferredFont(forTextStyle: .body)
-    }
-
-    private var composerPlaceholderFont: Font { .body }
-    private var composerAutocorrectionEnabled: Bool { autocorrectionEnabled }
-
-    private var composerDisplayText: String {
-        ComposerShared.currentComposerText(
-            storedText: text,
-            textBeforeRecording: textBeforeRecording,
-            manager: voiceInputManager,
-            owner: .inlineComposer
-        )
-    }
-
-    private var ownsVoiceInput: Bool {
-        ComposerShared.ownsVoiceInput(voiceInputManager, owner: .inlineComposer)
-    }
-
-    private var canSend: Bool {
-        if askRequest != nil {
-            return pendingAskSendTransition != nil
-        }
-
-        return Self.canSubmitMessage(
-            allowsEmptySubmit: allowsEmptySubmit,
-            text: composerDisplayText,
-            hasImages: pendingAttachments.contains { $0.source == .image },
-            hasFiles: pendingAttachments.contains { $0.source != .image } || !pendingRepoPointers.isEmpty,
-            hasReviewComments: pendingReviewCommentCount > 0
-        )
-    }
-
-    private var activeAskQuestionID: String? {
-        guard let askRequest,
-              askClearing.currentPage >= 0,
-              askClearing.currentPage < askRequest.questions.count else {
-            return nil
-        }
-        return askRequest.questions[askClearing.currentPage].id
-    }
-
-    private var pendingAskSendTransition: AskComposerSendTransition? {
-        Self.askComposerSendTransition(
-            request: askRequest,
-            currentPage: askClearing.currentPage,
-            draftAnswers: askClearing.draftAnswers,
-            text: composerDisplayText
-        )
-    }
-
-    private var accentColor: Color { theme.accent.blue }
-
-    private var composerPlaceholder: String {
-        placeholderOverride ?? Self.composerPlaceholder(
-            askRequest: askRequest,
-            pendingReviewCommentCount: pendingReviewCommentCount,
-            isBusy: isBusy,
-            busyStreamingBehavior: busyStreamingBehavior
-        )
-    }
-
-    private var sendActionFillColor: Color {
-        if isSendInFlight {
-            return isBusy ? theme.accent.purple : accentColor
-        }
-        return canSend ? (isBusy ? theme.accent.purple : accentColor) : theme.bg.highlight
-    }
-
-    private var isSendInFlight: Bool {
-        isSending || isFinishingVoiceBeforeSend
-    }
-
-    private var isCurrentAskSubmitted: Bool {
-        askClearing.submittedRequestID != nil && askClearing.submittedRequestID == askRequest?.id
-    }
-
-    private var sendActionStrokeColor: Color {
-        if isSendInFlight {
-            return sendActionFillColor.opacity(0.9)
-        }
-        return canSend ? sendActionFillColor.opacity(0.9) : theme.text.tertiary.opacity(0.35)
-    }
-
-    private var sendActionForegroundColor: Color {
-        guard canSend || isSendInFlight else { return theme.text.tertiary }
-        return ThemeColorContrast.contrastingForeground(
-            on: sendActionFillColor,
-            candidates: [theme.text.primary, theme.bg.primary]
-        )
-    }
-
-    private var primaryActionKind: ChatInputPrimaryActionKind {
-        Self.primaryActionKind(
-            isBusy: isBusy,
-            canSend: canSend,
-            isSending: isSendInFlight,
-            hasAskRequest: askRequest != nil
-        )
-    }
-
-    private var autocompleteContext: ComposerAutocompleteContext {
-        ComposerAutocomplete.context(for: text, isBusy: isBusy)
-    }
-
-    private var slashSuggestions: [SlashCommand] {
-        guard case .slash(let query) = autocompleteContext else {
-            return []
-        }
-        return ComposerAutocomplete.slashSuggestions(query: query, commands: slashCommands)
-    }
-
-    /// Keep the text editor compact when other composer content already consumes
-    /// vertical space. Overflow remains available through internal scrolling and
-    /// the full-screen composer.
-    private var effectiveMaxLines: Int {
-        Self.inlineTextMaxLines(
-            hasAskRequest: askRequest != nil,
-            hasAttachments: !pendingAttachments.isEmpty,
-            hasRepoPointers: !pendingRepoPointers.isEmpty
-        )
-    }
-
-    /// Show manual expand when the input reaches its current inline budget.
-    private var showsExpandButton: Bool {
-        Self.shouldShowExpandButton(
-            allowsExpansion: allowsExpansion,
-            visualLineCount: inlineVisualLineCount,
-            threshold: expandVisibilityLineThreshold,
-            maxLines: effectiveMaxLines
-        )
-    }
-
-    /// Slack-style inline controls row: hidden until composer is active.
-    private var showsComposerActionRow: Bool {
-        guard showsAccessoryRow else { return false }
-        return Self.shouldShowComposerActionRow(
-            alwaysShowActionRow: alwaysShowActionRow,
-            isBusy: isBusy,
-            isInputFocused: isInputFocused,
-            isKeyboardSuppressed: suppressKeyboard,
-            hasAttachments: !pendingAttachments.isEmpty,
-            hasRepoPointers: !pendingRepoPointers.isEmpty
-        )
-    }
-
-    private var showsBusyModeSelector: Bool {
-        Self.showsBusyModeSelector(isBusy: isBusy, hasAskRequest: askRequest != nil)
-    }
-
-    /// Tapping the input while voice is active should switch back to typing:
-    /// restore the keyboard immediately and stop/cancel voice automatically.
-    private var allowKeyboardRestoreOnTap: Bool {
-        guard let manager = voiceInputManager else { return true }
-        return Self.allowKeyboardRestoreOnTap(voiceState: manager.state)
-    }
-
-    /// Text binding for the input field.
-    private var textFieldBinding: Binding<String> {
-        Self.askComposerTextFieldBinding(text: $text, clearing: $askClearing) { composerDisplayText }
-    }
-
-    static func askComposerTextFieldBinding(
-        text: Binding<String>,
-        clearing: Binding<AskComposerClearingState>,
-        displayText: @escaping () -> String
-    ) -> Binding<String> {
-        let field = ComposerShared.textFieldBinding(text: text, displayText: displayText)
-        return Binding(
-            get: { field.wrappedValue },
-            set: {
-                // Track edits synchronously, not in onChange: failure can arrive
-                // before SwiftUI renders, and type-then-delete is still an edit.
-                clearing.wrappedValue.textRevision &+= 1
-                field.wrappedValue = $0
-            }
-        )
-    }
-
-    @discardableResult
-    static func restoreFailedAskComposerText(
-        text: Binding<String>,
-        clearing: AskComposerClearingState,
-        submittedTextRevision: UInt64,
-        request: AskRequest?,
-        activeQuestionID: String?
-    ) -> Bool {
-        // Other binding writers may also have staged text while delivery was
-        // pending. Restore only our untouched post-submit empty composer.
-        guard clearing.textRevision == submittedTextRevision, text.wrappedValue.isEmpty else { return false }
-        guard let restored = composerTextForActiveAskQuestion(
-            request: request,
-            activeQuestionID: activeQuestionID,
-            draftAnswers: clearing.draftAnswers,
-            keepComposerClearedForSubmittedRequestID: clearing.submittedRequestID
-        ) else { return false }
-        text.wrappedValue = restored
-        return true
-    }
-
-    private var correctionRangesForDisplay: [NSRange] {
-        return ComposerShared.correctionRanges(
-            manager: voiceInputManager,
-            textBeforeRecording: textBeforeRecording,
-            owner: .inlineComposer
-        )
-    }
 
     var body: some View {
         VStack(spacing: 8) {
-            if showForceStop {
-                forceStopButton
-            }
-
-            if !slashSuggestions.isEmpty {
-                SlashCommandSuggestionList(suggestions: slashSuggestions) { command in
-                    ComposerShared.insertSlashCommand(command, into: $text)
+            ComposerShared.captureFailureNotice(
+                manager: voiceInputManager,
+                owner: .inlineComposer
+            ) {
+                Button("Retry dictation") {
+                    Task { await startOwnedVoiceInput(owner: .inlineComposer) }
                 }
             }
-
-            if !fileSuggestions.isEmpty, case .atFile = autocompleteContext {
-                FileSuggestionList(suggestions: fileSuggestions) { suggestion in
-                    ComposerShared.insertFileSuggestion(suggestion, text: $text, pendingRepoPointers: $pendingRepoPointers)
-                }
-            }
-
-            if let sendProgressText {
-                HStack(spacing: 6) {
-                    if isSending {
-                        ProgressView()
-                            .controlSize(.mini)
-                    } else {
-                        Image(systemName: "checkmark.circle")
-                            .font(.caption2)
-                    }
-                    Text(sendProgressText)
-                        .font(.caption.monospaced())
-                        .accessibilityIdentifier("chat.sendProgress")
-                }
-                .foregroundStyle(.themeComment)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            ComposerShared.captureFailureNotice(manager: voiceInputManager, owner: .inlineComposer) {
-                if let manager = voiceInputManager {
-                    inlineMicButton(manager: manager, isRetry: true)
-                }
-            }
-            composerCapsule
+            ChatInputBarHost(
+                text: $text,
+                textBeforeRecording: $textBeforeRecording,
+                pendingAttachments: $pendingAttachments,
+                pendingRepoPointers: $pendingRepoPointers,
+                isBusy: isBusy,
+                busyStreamingBehavior: $busyStreamingBehavior,
+                isSending: isSending,
+                pendingReviewCommentCount: pendingReviewCommentCount,
+                placeholderOverride: placeholderOverride,
+                allowsEmptySubmit: allowsEmptySubmit,
+                sendProgressText: sendProgressText,
+                isStopping: isStopping,
+                voiceInputManager: voiceInputManager,
+                onPrepareVoiceInput: onPrepareVoiceInput,
+                showForceStop: showForceStop,
+                isForceStopInFlight: isForceStopInFlight,
+                askRequest: askRequest,
+                onAskSubmit: onAskSubmit,
+                onAskIgnoreAll: onAskIgnoreAll,
+                autoAdvanceController: autoAdvanceController,
+                slashCommands: slashCommands,
+                fileSuggestions: fileSuggestions,
+                onFileSuggestionQuery: onFileSuggestionQuery,
+                onSend: onSend,
+                onStop: onStop,
+                onForceStop: onForceStop,
+                onExpand: onExpand,
+                appliesOuterPadding: appliesOuterPadding,
+                alwaysShowActionRow: alwaysShowActionRow,
+                allowsExpansion: allowsExpansion,
+                allowsAttachments: allowsAttachments,
+                attachmentButtonPlacement: attachmentButtonPlacement == .trailing ? .trailing : .leading,
+                actionRowMinimumHeight: actionRowMinimumHeight,
+                showsAccessoryRow: showsAccessoryRow,
+                autocorrectionEnabled: autocorrectionEnabled,
+                inputAccessibilityIdentifier: inputAccessibilityIdentifier,
+                sendAccessibilityIdentifier: sendAccessibilityIdentifier,
+                actionRow: actionRow,
+                keyStripSlot: keyStripSlot,
+                palette: themeID.palette,
+                reduceMotion: reduceMotion,
+                composerDraftStore: composerDraftStore,
+                mediaImportGate: mediaImportGate,
+                askHeight: $askHeight,
+                askHeightRevision: $askHeightRevision,
+                suppressKeyboard: $suppressKeyboard,
+                focusRequestID: $focusRequestID,
+                keyboardLanguage: $keyboardLanguage,
+                reportsInputFocused: $isInputFocused
+            )
+            .frame(maxWidth: .infinity)
+            .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, appliesOuterPadding ? 16 : 0)
-        .padding(.bottom, appliesOuterPadding ? 8 : 0)
-        .alert("Couldn't Start Dictation", isPresented: Binding(
-            get: { voiceInputStartError != nil },
-            set: { if !$0 { voiceInputStartError = nil } }
-        )) {
-            Button("OK", role: .cancel) { voiceInputStartError = nil }
-        } message: {
-            Text(voiceInputStartError ?? "Please try again.")
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    UIApplication.shared.sendAction(
+                        #selector(UIResponder.resignFirstResponder),
+                        to: nil,
+                        from: nil,
+                        for: nil
+                    )
+                }
+                .font(.subheadline.weight(.semibold))
+                .accessibilityIdentifier("chat.keyboard.dismiss")
+                .accessibilityLabel("Dismiss keyboard")
+            }
         }
-        .alert("Couldn't Attach", isPresented: Binding(
-            get: { attachmentImportError != nil },
-            set: { if !$0 { attachmentImportError = nil } }
-        )) {
-            Button("OK", role: .cancel) { attachmentImportError = nil }
-        } message: {
-            Text(attachmentImportError ?? "Please try again.")
-        }
-        // Opening Photos resigns text focus, which can remove the inline action row.
-        // Keep its presenter on the stable composer root instead of the attach button.
-        .composerPhotoLibraryCover(
-            isPresented: $showPhotoPicker,
-            pendingAttachments: $pendingAttachments,
-            importError: $attachmentImportError,
-            localImportEpoch: $localMediaImportEpoch
-        )
         .onChange(of: text) { _, newValue in
-            if newValue.isEmpty {
-                inlineVisualLineCount = 1
-            }
             ComposerShared.notifyFileSuggestionContext(
                 for: newValue,
                 isBusy: isBusy,
                 onFileSuggestionQuery: onFileSuggestionQuery
             )
-        }
-        .onChange(of: askRequest?.id) { _, newID in
-            askClearing.applyRequestIDChange(newID)
-        }
-        .onChange(of: askClearing.currentPage) { _, _ in
-            syncComposerTextWithActiveAskQuestion()
-        }
-        .onChange(of: askClearing.draftAnswers) { _, _ in
-            syncComposerTextWithActiveAskQuestion()
-        }
-        .onChange(of: isSending) { _, sending in
-            if sending {
-                localMediaImportEpoch &+= 1
-            }
         }
         .onChange(of: externalFocusRequestID) { _, _ in
             suppressKeyboard = false
@@ -464,518 +277,14 @@ struct ChatInputBar<ActionRow: View>: View {
             guard ComposerShared.ownsVoiceInput(manager, owner: .inlineComposer) else { return }
             text = prefix + manager.currentTranscript
         }
-        .onChange(of: keyboardLanguage) { _, newLanguage in
-            guard ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager else { return }
-            guard AppPreferences.Keyboard.normalize(newLanguage) != nil else { return }
-            Task {
-                await manager.prewarm(
-                    keyboardLanguage: newLanguage,
-                    source: "inline_keyboard_change"
-                )
-            }
+        .alert("Couldn't Start Dictation", isPresented: Binding(
+            get: { voiceInputStartError != nil },
+            set: { if !$0 { voiceInputStartError = nil } }
+        )) {
+            Button("OK", role: .cancel) { voiceInputStartError = nil }
+        } message: {
+            Text(voiceInputStartError ?? "Please try again.")
         }
-        .composerCameraCover(isPresented: $showCamera, pendingAttachments: $pendingAttachments)
-        .composerCanvasCover(
-            isPresented: $showCanvas,
-            text: $text,
-            pendingAttachments: $pendingAttachments,
-            backgroundImage: canvasBackgroundImage,
-            replacingAttachmentID: canvasReplacingAttachmentID
-        )
-        .onChange(of: showCanvas) { _, isPresented in
-            if !isPresented {
-                canvasBackgroundImage = nil
-                canvasReplacingAttachmentID = nil
-            }
-        }
-        .composerFileImporter(
-            isPresented: $showFileImporter,
-            pendingAttachments: $pendingAttachments,
-            importError: $attachmentImportError,
-            localImportEpoch: $localMediaImportEpoch
-        )
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") {
-                    dismissKeyboard()
-                }
-                .font(.subheadline.weight(.semibold))
-                .accessibilityIdentifier("chat.keyboard.dismiss")
-                .accessibilityLabel("Dismiss keyboard")
-            }
-        }
-    }
-
-    // MARK: - Subviews
-
-    private var composerCapsule: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Ask card (inline question from agent). Always scroll overflow
-            // inside a capped viewport so a long unfocused ask cannot take
-            // remaining chat height. Keep the shorter keyboard cap so composer
-            // actions stay on-screen. Full height stays on AskCardExpanded.
-            if let askRequest {
-                ScrollView(.vertical, showsIndicators: true) {
-                    askCard(request: askRequest)
-                }
-                .frame(
-                    maxHeight: isInputFocused && !suppressKeyboard
-                        ? ComposerInputMetrics.inlineAskCardMaxHeightWithKeyboard
-                        : ExtensionNativeSurfaceLayout.expandedMaxHeight
-                )
-                .scrollBounceBehavior(.basedOnSize)
-                .scrollDismissesKeyboard(.never)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .id(askRequest.id)
-                .padding(.horizontal, composerHorizontalPadding)
-                .padding(.top, 8)
-                .padding(.bottom, 4)
-                .transition(ThemeMotion.move(edge: .top, reduceMotion: reduceMotion))
-            }
-
-            if !pendingAttachments.isEmpty {
-                attachmentStrip
-                    .padding(.horizontal, composerHorizontalPadding)
-                    .padding(.top, 8)
-                    .padding(.bottom, 4)
-            }
-
-            if !pendingRepoPointers.isEmpty {
-                filePillStrip
-                    .padding(.horizontal, composerHorizontalPadding)
-                    .padding(.top, pendingAttachments.isEmpty ? 8 : 2)
-                    .padding(.bottom, 4)
-            }
-
-            // Text row with mic + text + send/stop
-            HStack(alignment: .bottom, spacing: 8) {
-                if ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager {
-                    inlineMicButton(manager: manager)
-                        .fixedSize()
-                }
-
-                ZStack(alignment: .leading) {
-                    if ComposerShared.visibleComposerText(composerDisplayText).isEmpty {
-                        Text(composerPlaceholder)
-                            .font(composerPlaceholderFont)
-                            .foregroundStyle(.themeComment)
-                            .padding(.vertical, 4)
-                            .allowsHitTesting(false)
-                    }
-
-                    PastableTextView(
-                        text: textFieldBinding,
-                        placeholder: "",
-                        font: composerInputFont,
-                        textColor: UIColor(theme.text.primary),
-                        tintColor: UIColor(isBusy ? theme.accent.purple : accentColor),
-                        volatileSuffixLength: ComposerShared.volatileSuffixLength(manager: voiceInputManager, owner: .inlineComposer),
-                        correctionRanges: correctionRangesForDisplay,
-                        maxLines: effectiveMaxLines,
-                        autocorrectionEnabled: composerAutocorrectionEnabled,
-                        onPasteImages: { ComposerShared.handlePastedImages($0, into: $pendingAttachments) },
-                        onCommandEnter: handleSend,
-                        onAlternateEnter: handleAlternateSend,
-                        onOverflowChange: nil,
-                        onLineCountChange: handleInlineLineCountChange,
-                        onFocusChange: handleInputFocusChange,
-                        onDictationStateChange: nil,
-                        focusRequestID: focusRequestID,
-                        blurRequestID: 0,
-                        dictationRequestID: 0,
-                        suppressKeyboard: suppressKeyboard,
-                        allowKeyboardRestoreOnTap: allowKeyboardRestoreOnTap,
-                        onKeyboardRestoreRequest: {
-                            ComposerShared.handleKeyboardRestore(
-                                suppressKeyboard: $suppressKeyboard,
-                                textBeforeRecording: $textBeforeRecording,
-                                voiceInputManager: voiceInputManager,
-                                expectedOwner: .inlineComposer
-                            )
-                        },
-                        accessibilityIdentifier: "chat.input",
-                        keyboardLanguage: $keyboardLanguage
-                    )
-                }
-                .padding(.trailing, Self.composerTextTrailingPadding(showsExpandButton: showsExpandButton))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .layoutPriority(1)
-
-                primaryActionButton
-                    .fixedSize()
-            }
-            .padding(.horizontal, composerHorizontalPadding)
-            .padding(.vertical, 10)
-
-            if showsBusyModeSelector {
-                FeatureEducationTipBannerHost(
-                    tip: FeatureEducationTips.BusySendModeTip(),
-                    descriptor: FeatureEducationTips.busySendMode,
-                    contentInsets: EdgeInsets(
-                        top: 8,
-                        leading: composerHorizontalPadding,
-                        bottom: 2,
-                        trailing: composerHorizontalPadding
-                    )
-                )
-            }
-
-            if showsComposerActionRow {
-                GlassEffectContainer(spacing: 0) {
-                    HStack(spacing: 6) {
-                        if allowsAttachments, attachmentButtonPlacement == .leading {
-                            attachButton
-                        }
-
-                        if showsExpandButton, askRequest != nil {
-                            expandButton
-                        }
-
-                        if showsBusyModeSelector {
-                            busyModeSelector
-                        }
-
-                        actionRow()
-
-                        if allowsAttachments, attachmentButtonPlacement == .trailing {
-                            attachButton
-                        }
-                    }
-                    .frame(minHeight: actionRowMinimumHeight)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, composerHorizontalPadding)
-                .padding(.top, 8)
-                .padding(.bottom, 7)
-                .transition(ThemeMotion.move(edge: .bottom, reduceMotion: reduceMotion))
-            }
-        }
-        .frame(minHeight: showsComposerActionRow ? 88 : 52)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .themedSurface(
-            .elevatedPanel,
-            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
-        )
-        .overlay(alignment: .topTrailing) {
-            if showsExpandButton, askRequest == nil {
-                expandButton
-                    .padding(.top, 6)
-                    .padding(.trailing, composerHorizontalPadding)
-            }
-        }
-        .animation(ThemeMotion.easeInOut(duration: 0.18, reduceMotion: reduceMotion), value: showsComposerActionRow)
-    }
-
-    private func askCard(request: AskRequest) -> some View {
-        AskCard(
-            request: request,
-            currentPage: $askClearing.currentPage,
-            answers: $askClearing.draftAnswers,
-            onSubmit: { answers, complete in
-                submitAskResponse(request: request, answers: answers, completion: complete)
-            },
-            onIgnoreAll: { complete in
-                submitAskResponse(request: request, answers: nil, completion: complete)
-            },
-            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
-            submittedRequestID: askClearing.submittedRequestID,
-            responseFailed: askClearing.submission.phase == .failed(request.id),
-            autoAdvanceController: autoAdvanceController
-        )
-    }
-
-    private var attachButton: some View {
-        Menu {
-            ComposerShared.attachmentMenuButtons(
-                showPhotoPicker: $showPhotoPicker,
-                showCamera: $showCamera,
-                showFileImporter: $showFileImporter,
-                showCanvas: $showCanvas
-            )
-        } label: {
-            Image(systemName: "plus")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.themeFg)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .glassEffect(.regular, in: Capsule())
-        }
-        .menuOrder(ComposerShared.attachmentMenuOrder)
-        .disabled(isSending)
-        .accessibilityIdentifier("chat.attach")
-        .accessibilityLabel("Add attachment")
-    }
-
-    private var busyModeSelector: some View {
-        Button {
-            isBusyModePickerPresented = true
-        } label: {
-            HStack(spacing: 5) {
-                Text(busyStreamingBehavior == .steer ? "Steering" : "Follow-up")
-                    .font(.caption.weight(.semibold))
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption2.weight(.semibold))
-            }
-            .foregroundStyle(.themeFg)
-            .padding(.horizontal, 11)
-            .padding(.vertical, 6)
-            .glassEffect(.regular, in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("chat.busyMode")
-        .accessibilityLabel("Busy send mode")
-        .accessibilityValue(busyStreamingBehavior == .steer ? "Steering" : "Follow-up")
-        .routerModal(
-            isPresented: $isBusyModePickerPresented,
-            presentation: .popover
-                .arrowDirections(.down)
-                .keepsPopoverInCompactWidth()
-        ) {
-            VStack(spacing: 0) {
-                busyModeOption(.steer, title: "Steering")
-                busyModeOption(.followUp, title: "Follow-up")
-            }
-            .padding(.vertical, 6)
-            .frame(width: 190)
-        }
-    }
-
-    private func busyModeOption(_ behavior: StreamingBehavior, title: String) -> some View {
-        Button {
-            isBusyModePickerPresented = false
-            FeatureEducationTips.markBusySendModeUsed()
-            guard behavior != busyStreamingBehavior else { return }
-            busyStreamingBehavior = behavior
-        } label: {
-            HStack(spacing: 10) {
-                Text(title)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Image(systemName: "checkmark")
-                    .opacity(behavior == busyStreamingBehavior ? 1 : 0)
-                    .accessibilityHidden(true)
-            }
-            .font(.body)
-            .foregroundStyle(.themeFg)
-            .padding(.horizontal, 16)
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(title)
-        .accessibilityValue(behavior == busyStreamingBehavior ? "Selected" : "")
-        .accessibilityIdentifier("chat.busyMode.option.\(behavior.rawValue)")
-    }
-
-    private var attachmentStrip: some View {
-        ComposerShared.attachmentStrip(
-            pendingAttachments: $pendingAttachments,
-            allowsMutation: !isSending,
-            onAnnotateImage: { attachment in
-                canvasBackgroundImage = ComposerShared.image(forPendingAttachment: attachment)
-                canvasReplacingAttachmentID = attachment.id
-                showCanvas = true
-            }
-        )
-    }
-
-    private var filePillStrip: some View {
-        ComposerShared.filePillStrip(pendingRepoPointers: $pendingRepoPointers)
-    }
-
-    private var expandButton: some View {
-        Button(action: onExpand) {
-            Image(systemName: "arrow.up.left.and.arrow.down.right")
-                .font(.appCaption)
-                .foregroundStyle(.themeComment)
-                .frame(width: expandVisualDiameter, height: expandVisualDiameter)
-        }
-        .accessibilityIdentifier("chat.expand")
-        .accessibilityLabel("Expand composer")
-        .accessibilityHint("Opens the full-screen message editor")
-    }
-
-    @ViewBuilder
-    private var primaryActionButton: some View {
-        switch primaryActionKind {
-        case .send:
-            sendActionButton
-        case .ignoreAsk:
-            ignoreAskActionButton
-        case .stop:
-            stopActionButton
-        }
-    }
-
-    private var sendActionButton: some View {
-        Button(action: handleSend) {
-            ZStack {
-                Circle().fill(sendActionFillColor)
-                Circle().stroke(sendActionStrokeColor, lineWidth: 1)
-
-                if isSendInFlight {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .tint(sendActionForegroundColor)
-                } else {
-                    Image(systemName: "arrow.up")
-                        .font(.appButton)
-                        .foregroundStyle(sendActionForegroundColor)
-                }
-            }
-            .frame(width: actionVisualDiameter, height: actionVisualDiameter)
-        }
-        .buttonStyle(.plain)
-        .disabled(!canSend || isSendInFlight || isCurrentAskSubmitted)
-        .accessibilityIdentifier("chat.send")
-        .accessibilityLabel(isSendInFlight ? "Sending" : "Send")
-    }
-
-    private var ignoreAskActionButton: some View {
-        Button(action: {
-            guard let askRequest else { return }
-            submitAskResponse(request: askRequest, answers: nil)
-        }, label: {
-            ZStack {
-                Circle().fill(Color.themeBgHighlight)
-                Circle().stroke(Color.themeComment.opacity(0.35), lineWidth: 1)
-
-                Image(systemName: "xmark")
-                    .font(.appActionBold)
-                    .foregroundStyle(.themeComment)
-            }
-            .frame(width: actionVisualDiameter, height: actionVisualDiameter)
-        })
-        .buttonStyle(.plain)
-        .disabled(onAskIgnoreAll == nil || isCurrentAskSubmitted)
-        .accessibilityIdentifier("chat.askIgnore")
-        .accessibilityLabel("Ignore request")
-        .accessibilityHint("Responds to the current extension request as ignored")
-    }
-
-    /// Compact mic toggle inside the capsule, left of the text field.
-    /// Tap to start recording, tap again to stop. Works in any state
-    /// (idle or busy) so you can mix typing and dictation freely.
-    private func inlineMicButton(manager: VoiceInputManager, isRetry: Bool = false) -> some View {
-        let presentation = ComposerShared.micButtonPresentation(for: manager, owner: .inlineComposer)
-
-        return Button {
-            Task {
-                guard ComposerShared.canControlVoiceInput(manager, owner: .inlineComposer) else { return }
-                switch ComposerShared.micTapAction(for: manager.state) {
-                case .stop:
-                    await ComposerShared.stopVoiceInput(
-                        manager: manager,
-                        text: $text,
-                        textBeforeRecording: $textBeforeRecording
-                    )
-                    // Keep keyboard suppressed — user tapping the text field
-                    // will restore it via handleKeyboardRestore()
-                case .cancelPreparing:
-                    await ComposerShared.cancelVoiceInput(
-                        manager: manager,
-                        textBeforeRecording: $textBeforeRecording,
-                        suppressKeyboard: $suppressKeyboard
-                    )
-                case .start:
-                    do {
-                        try await ComposerShared.startVoiceInput(
-                            manager: manager,
-                            keyboardLanguage: keyboardLanguage,
-                            owner: .inlineComposer,
-                            baseText: text,
-                            text: $text,
-                            textBeforeRecording: $textBeforeRecording,
-                            suppressKeyboard: $suppressKeyboard,
-                            focusRequestID: $focusRequestID,
-                            prepare: {
-                                try await onPrepareVoiceInput?(manager)
-                            }
-                        )
-                    } catch is CancellationError {
-                        // An intentional cancellation isn't a capture failure.
-                    } catch {
-                        voiceInputStartError = error.localizedDescription
-                    }
-                case .ignore:
-                    break
-                }
-            }
-        } label: {
-            if isRetry {
-                Text("Retry dictation").font(.subheadline.weight(.semibold))
-            } else {
-                MicButtonLabel(
-                    presentation: presentation,
-                    accentColor: accentColor,
-                    diameter: actionVisualDiameter
-                )
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(!presentation.isEnabled)
-        .accessibilityIdentifier("chat.voiceInput")
-        .accessibilityLabel(presentation.accessibilityLabel)
-        .accessibilityValue(presentation.accessibilityValue)
-    }
-
-    private var stopActionButton: some View {
-        let fillColor = isStopping ? Color.themeOrange : Color.themeRed
-        let foregroundColor = ThemeColorContrast.foreground(for: fillColor)
-
-        return Button(action: onStop) {
-            ZStack {
-                Circle().fill(fillColor)
-                Circle().stroke(fillColor.opacity(0.9), lineWidth: 1)
-
-                if isStopping {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .tint(foregroundColor)
-                } else {
-                    Image(systemName: "stop.fill")
-                        .font(.appActionBold)
-                        .foregroundStyle(foregroundColor)
-                }
-            }
-            .frame(width: actionVisualDiameter + 2, height: actionVisualDiameter + 2)
-        }
-        .buttonStyle(.plain)
-        .disabled(isStopping)
-        .accessibilityIdentifier("chat.stop")
-        .accessibilityLabel(isStopping ? "Stopping" : "Stop response")
-    }
-
-    private var forceStopButton: some View {
-        Button(role: .destructive) {
-            onForceStop()
-        } label: {
-            if isForceStopInFlight {
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .tint(.themeRed)
-                    Text("Stopping…")
-                }
-            } else {
-                Text("Force Stop Session")
-            }
-        }
-        .font(.caption)
-        .foregroundStyle(.themeRed)
-        .disabled(isForceStopInFlight)
-    }
-
-    // MARK: - Actions
-
-    private func handleInlineLineCountChange(_ lineCount: Int) {
-        inlineVisualLineCount = max(lineCount, 1)
-    }
-
-    private func handleInputFocusChange(_ isFocused: Bool) {
-        isInputFocused = isFocused
     }
 
     private func startExternalDictationIfRequested() async {
@@ -985,11 +294,17 @@ struct ChatInputBar<ActionRow: View>: View {
         guard let manager = voiceInputManager else { return }
         guard ComposerShared.canControlVoiceInput(manager, owner: externalDictationOwner) else { return }
         guard ComposerShared.micTapAction(for: manager.state) == .start else { return }
+        await startOwnedVoiceInput(owner: externalDictationOwner)
+    }
+
+    private func startOwnedVoiceInput(owner: ComposerShared.VoiceInputOwner) async {
+        guard let manager = voiceInputManager else { return }
+        guard ComposerShared.canControlVoiceInput(manager, owner: owner) else { return }
         do {
             try await ComposerShared.startVoiceInput(
                 manager: manager,
                 keyboardLanguage: keyboardLanguage,
-                owner: externalDictationOwner,
+                owner: owner,
                 baseText: text,
                 text: $text,
                 textBeforeRecording: $textBeforeRecording,
@@ -1000,19 +315,43 @@ struct ChatInputBar<ActionRow: View>: View {
                 }
             )
         } catch is CancellationError {
-            // The external request can be cancelled when its composer disappears.
         } catch {
             voiceInputStartError = error.localizedDescription
         }
     }
 
-    private func dismissKeyboard() {
-        UIApplication.shared.sendAction(
-            #selector(UIResponder.resignFirstResponder),
-            to: nil,
-            from: nil,
-            for: nil
+    static func askComposerTextFieldBinding(
+        text: Binding<String>,
+        clearing: Binding<AskComposerClearingState>,
+        displayText: @escaping () -> String
+    ) -> Binding<String> {
+        let field = ComposerShared.textFieldBinding(text: text, displayText: displayText)
+        return Binding(
+            get: { field.wrappedValue },
+            set: {
+                clearing.wrappedValue.textRevision &+= 1
+                field.wrappedValue = $0
+            }
         )
+    }
+
+    @discardableResult
+    static func restoreFailedAskComposerText(
+        text: Binding<String>,
+        clearing: AskComposerClearingState,
+        submittedTextRevision: UInt64,
+        request: AskRequest?,
+        activeQuestionID: String?
+    ) -> Bool {
+        guard clearing.textRevision == submittedTextRevision, text.wrappedValue.isEmpty else { return false }
+        guard let restored = composerTextForActiveAskQuestion(
+            request: request,
+            activeQuestionID: activeQuestionID,
+            draftAnswers: clearing.draftAnswers,
+            keepComposerClearedForSubmittedRequestID: clearing.submittedRequestID
+        ) else { return false }
+        text.wrappedValue = restored
+        return true
     }
 
     static func composerTextTrailingPadding(showsExpandButton: Bool) -> CGFloat {
@@ -1080,9 +419,6 @@ struct ChatInputBar<ActionRow: View>: View {
         }
     }
 
-    /// Ask responses take precedence over normal busy sends while an ask card
-    /// is active. That lets the main composer answer the visible custom ask
-    /// directly instead of creating a steering/follow-up message.
     static func composerPlaceholder(
         askRequest: AskRequest?,
         pendingReviewCommentCount: Int,
@@ -1171,8 +507,6 @@ struct ChatInputBar<ActionRow: View>: View {
         keepComposerClearedForSubmittedRequestID: String?
     ) -> String? {
         if let submittedRequestID = keepComposerClearedForSubmittedRequestID {
-            // A settled submitted request must not revive the custom answer.
-            // Return nil so a restored pre-ask message draft is not overwritten.
             if request == nil {
                 return nil
             }
@@ -1235,140 +569,730 @@ struct ChatInputBar<ActionRow: View>: View {
             shouldSubmit: false
         )
     }
+}
 
-    private func syncComposerTextWithActiveAskQuestion() {
-        guard let desiredText = Self.composerTextForActiveAskQuestion(
-            request: askRequest,
-            activeQuestionID: activeAskQuestionID,
-            draftAnswers: askClearing.draftAnswers,
-            keepComposerClearedForSubmittedRequestID: askClearing.submittedRequestID
-        ) else { return }
-        guard text != desiredText || textBeforeRecording != nil else { return }
-        text = desiredText
-        textBeforeRecording = nil
+// MARK: - Representable seam
+
+private struct ChatInputBarHost: UIViewControllerRepresentable {
+    @Binding var text: String
+    @Binding var textBeforeRecording: String?
+    @Binding var pendingAttachments: [PendingAttachment]
+    @Binding var pendingRepoPointers: [PendingFileReference]
+    var isBusy: Bool
+    @Binding var busyStreamingBehavior: StreamingBehavior
+    var isSending: Bool
+    var pendingReviewCommentCount: Int
+    var placeholderOverride: String?
+    var allowsEmptySubmit: Bool
+    var sendProgressText: String?
+    var isStopping: Bool
+    var voiceInputManager: VoiceInputManager?
+    var onPrepareVoiceInput: ((VoiceInputManager) async throws -> Void)?
+    var showForceStop: Bool
+    var isForceStopInFlight: Bool
+    var askRequest: AskRequest?
+    var onAskSubmit: ((AskRequest, [String: AskAnswer], @escaping AskResponseSubmission.Completion) -> Void)?
+    var onAskIgnoreAll: ((AskRequest, @escaping AskResponseSubmission.Completion) -> Void)?
+    var autoAdvanceController: AskInlineAutoAdvanceController?
+    var slashCommands: [SlashCommand]
+    var fileSuggestions: [FileSuggestion]
+    var onFileSuggestionQuery: ((String?) -> Void)?
+    var onSend: () -> Void
+    var onStop: () -> Void
+    var onForceStop: () -> Void
+    var onExpand: () -> Void
+    var appliesOuterPadding: Bool
+    var alwaysShowActionRow: Bool
+    var allowsExpansion: Bool
+    var allowsAttachments: Bool
+    var attachmentButtonPlacement: ComposerAttachmentButtonPlacement
+    var actionRowMinimumHeight: CGFloat
+    var showsAccessoryRow: Bool
+    var autocorrectionEnabled: Bool
+    var inputAccessibilityIdentifier: String
+    var sendAccessibilityIdentifier: String
+    var actionRow: ComposerActionRow
+    var keyStripSlot: AnyView?
+    var palette: ThemePalette
+    var reduceMotion: Bool
+    var composerDraftStore: ComposerDraftStore?
+    var mediaImportGate: ComposerMediaImportGate?
+    @Binding var askHeight: CGFloat
+    @Binding var askHeightRevision: Int
+    @Binding var suppressKeyboard: Bool
+    @Binding var focusRequestID: Int
+    @Binding var keyboardLanguage: String?
+    @Binding var reportsInputFocused: Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
     }
 
-    private func handleSend() {
-        guard !isSendInFlight else { return }
+    func makeUIViewController(context: Context) -> ComposerBarController {
+        let controller = ComposerBarController()
+        context.coordinator.controller = controller
+        controller.host = context.coordinator
+        return controller
+    }
 
-        if let manager = voiceInputManager,
-           ComposerShared.ownsVoiceInput(manager, owner: .inlineComposer),
-           manager.isRecording || manager.isPreparing {
-            isFinishingVoiceBeforeSend = true
-            let wasSuppressed = suppressKeyboard
-            let voiceState = manager.state
-            Task { @MainActor in
-                await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
-                    manager: manager,
-                    owner: .inlineComposer,
-                    text: $text,
-                    textBeforeRecording: $textBeforeRecording,
-                    suppressKeyboard: $suppressKeyboard,
-                    restoreKeyboard: false
-                )
-                suppressKeyboard = Self.suppressKeyboardAfterSend(
-                    voiceState: voiceState,
-                    wasSuppressed: wasSuppressed
-                )
-                isFinishingVoiceBeforeSend = false
-                submitCurrentComposerAction()
+    func updateUIViewController(_ controller: ComposerBarController, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.controller = controller
+        controller.host = context.coordinator
+        controller.apply()
+        context.coordinator.scheduleSlots()
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiViewController controller: ComposerBarController,
+        context: Context
+    ) -> CGSize? {
+        _ = askHeightRevision
+        let proposed = proposal.width ?? 0
+        let fallback = controller.view.bounds.width
+        let safeWidth: CGFloat
+        if proposed.isFinite, proposed >= 280, proposed < 10_000 {
+            safeWidth = proposed
+        } else if fallback.isFinite, fallback >= 280, fallback < 10_000 {
+            safeWidth = fallback
+        } else {
+            safeWidth = 390
+        }
+        return controller.sizeThatFits(width: safeWidth)
+    }
+
+    @MainActor
+    final class Coordinator: ComposerBarHosting {
+        var parent: ChatInputBarHost
+        weak var controller: ComposerBarController?
+        private var askHost: HostedContentController?
+        private var tipHost: HostedContentController?
+        private var keyStripHost: HostedContentController?
+        private var slotRefreshScheduled = false
+
+        init(parent: ChatInputBarHost) {
+            self.parent = parent
+        }
+
+        var content: ComposerBarContent {
+            ComposerBarContent(
+                text: parent.text,
+                textBeforeRecording: parent.textBeforeRecording,
+                pendingAttachments: parent.pendingAttachments,
+                pendingRepoPointers: parent.pendingRepoPointers,
+                isBusy: parent.isBusy,
+                busyStreamingBehavior: parent.busyStreamingBehavior,
+                isSending: parent.isSending,
+                pendingReviewCommentCount: parent.pendingReviewCommentCount,
+                placeholderOverride: parent.placeholderOverride,
+                allowsEmptySubmit: parent.allowsEmptySubmit,
+                sendProgressText: parent.sendProgressText,
+                isStopping: parent.isStopping,
+                voiceInputManager: parent.voiceInputManager,
+                showForceStop: parent.showForceStop,
+                isForceStopInFlight: parent.isForceStopInFlight,
+                askRequest: parent.askRequest,
+                slashCommands: parent.slashCommands,
+                fileSuggestions: parent.fileSuggestions,
+                appliesOuterPadding: parent.appliesOuterPadding,
+                alwaysShowActionRow: parent.alwaysShowActionRow,
+                allowsExpansion: parent.allowsExpansion,
+                allowsAttachments: parent.allowsAttachments,
+                attachmentButtonPlacement: parent.attachmentButtonPlacement,
+                actionRowMinimumHeight: parent.actionRowMinimumHeight,
+                showsAccessoryRow: parent.showsAccessoryRow,
+                autocorrectionEnabled: parent.autocorrectionEnabled,
+                inputAccessibilityIdentifier: parent.inputAccessibilityIdentifier,
+                sendAccessibilityIdentifier: parent.sendAccessibilityIdentifier,
+                actionRow: parent.actionRow,
+                colors: ComposerThemeColors(palette: parent.palette),
+                reduceMotion: parent.reduceMotion,
+                suppressKeyboard: parent.suppressKeyboard,
+                focusRequestID: parent.focusRequestID,
+                keyboardLanguage: parent.keyboardLanguage,
+                askHeight: parent.askHeight,
+                keyStripHeight: parent.keyStripSlot == nil ? 0 : ComposerInputMetrics.controlDiameter,
+                mediaImportEpoch: parent.mediaImportGate?.epoch ?? 0
+            )
+        }
+
+        func setText(_ text: String) { parent.text = text }
+        func setTextBeforeRecording(_ value: String?) { parent.textBeforeRecording = value }
+        func setPendingAttachments(_ value: [PendingAttachment]) { parent.pendingAttachments = value }
+        func setPendingRepoPointers(_ value: [PendingFileReference]) { parent.pendingRepoPointers = value }
+        func setBusyStreamingBehavior(_ value: StreamingBehavior) { parent.busyStreamingBehavior = value }
+        func setSuppressKeyboard(_ value: Bool) { parent.suppressKeyboard = value }
+        func consumeFocusRequest() { parent.focusRequestID = 0 }
+        func setKeyboardLanguage(_ value: String?) { parent.keyboardLanguage = value }
+        func setInputFocused(_ value: Bool) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.parent.reportsInputFocused != value else { return }
+                self.parent.reportsInputFocused = value
             }
-            return
+        }
+        func performSend() { parent.onSend() }
+        func performStop() { parent.onStop() }
+        func performForceStop() { parent.onForceStop() }
+        func performExpand() { parent.onExpand() }
+        func submitAsk(
+            _ request: AskRequest,
+            answers: [String: AskAnswer],
+            completion: @escaping AskResponseSubmission.Completion
+        ) {
+            parent.onAskSubmit?(request, answers, completion)
+        }
+        func ignoreAsk(_ request: AskRequest, completion: @escaping AskResponseSubmission.Completion) {
+            parent.onAskIgnoreAll?(request, completion)
+        }
+        func startVoice(
+            keyboardLanguage: String?,
+            owner: ComposerShared.VoiceInputOwner,
+            baseText: String
+        ) async throws {
+            guard let manager = parent.voiceInputManager else { return }
+            try await ComposerShared.startVoiceInput(
+                manager: manager,
+                keyboardLanguage: keyboardLanguage,
+                owner: owner,
+                baseText: baseText,
+                text: parent.$text,
+                textBeforeRecording: parent.$textBeforeRecording,
+                suppressKeyboard: parent.$suppressKeyboard,
+                focusRequestID: parent.$focusRequestID,
+                prepare: {
+                    try await self.parent.onPrepareVoiceInput?(manager)
+                }
+            )
+        }
+        func stopVoice() async {
+            guard let manager = parent.voiceInputManager else { return }
+            await ComposerShared.stopVoiceInput(
+                manager: manager,
+                text: parent.$text,
+                textBeforeRecording: parent.$textBeforeRecording
+            )
+        }
+        func cancelVoice() async {
+            guard let manager = parent.voiceInputManager else { return }
+            await ComposerShared.cancelVoiceInput(
+                manager: manager,
+                textBeforeRecording: parent.$textBeforeRecording,
+                suppressKeyboard: parent.$suppressKeyboard
+            )
+        }
+        func finishVoiceBeforeSubmit() async {
+            guard let manager = parent.voiceInputManager else { return }
+            await ComposerShared.finishOwnedVoiceInputBeforeSubmit(
+                manager: manager,
+                owner: .inlineComposer,
+                text: parent.$text,
+                textBeforeRecording: parent.$textBeforeRecording,
+                suppressKeyboard: parent.$suppressKeyboard,
+                restoreKeyboard: false
+            )
+        }
+        func handlePastedImages(_ images: [UIImage]) {
+            ComposerShared.handlePastedImages(images, into: parent.$pendingAttachments)
+        }
+        func insertSlashCommand(_ command: SlashCommand) {
+            ComposerShared.insertSlashCommand(command, into: parent.$text)
+        }
+        func insertFileSuggestion(_ suggestion: FileSuggestion) {
+            ComposerShared.insertFileSuggestion(
+                suggestion,
+                text: parent.$text,
+                pendingRepoPointers: parent.$pendingRepoPointers
+            )
+        }
+        func removeAttachment(id: String) {
+            ComposerShared.removeAttachment(id, from: parent.$pendingAttachments)
+        }
+        func removeRepoPointer(id: String) {
+            ComposerShared.removeFile(id, from: parent.$pendingRepoPointers)
+        }
+        func importPhotoProviders(
+            _ providers: [NSItemProvider],
+            capturedGate: UInt64,
+            capturedLocal: UInt64,
+            currentLocal: @escaping () -> UInt64,
+            onFailure: @escaping (String) -> Void
+        ) {
+            let gate = capturedGate
+            ComposerShared.importPhotoLibraryProviders(
+                providers,
+                into: parent.$pendingAttachments,
+                store: parent.composerDraftStore,
+                shouldAccept: {
+                    (self.parent.mediaImportGate?.isCurrent(gate) ?? true)
+                        && capturedLocal == currentLocal()
+                },
+                onFailure: { message in
+                    Task { @MainActor in
+                        onFailure(message)
+                    }
+                }
+            )
+        }
+        func addCapturedImage(_ image: UIImage) {
+            ComposerShared.addCapturedImage(image, to: parent.$pendingAttachments)
+        }
+        func applyCanvas(
+            attachment: PendingAttachment,
+            recognizedText: String,
+            replacingAttachmentID: String?
+        ) -> Bool {
+            ComposerShared.applyCanvasToComposer(
+                attachment: attachment,
+                recognizedText: recognizedText,
+                text: parent.$text,
+                pendingAttachments: parent.$pendingAttachments,
+                replacingAttachmentID: replacingAttachmentID
+            )
+        }
+        func loadSelectedFiles(
+            _ result: Result<[URL], Error>,
+            capturedGate: UInt64,
+            capturedLocal: UInt64,
+            currentLocal: @escaping () -> UInt64,
+            onFailure: @escaping (String) -> Void
+        ) {
+            ComposerShared.loadSelectedFiles(
+                result,
+                into: parent.$pendingAttachments,
+                store: parent.composerDraftStore,
+                shouldAccept: {
+                    (self.parent.mediaImportGate?.isCurrent(capturedGate) ?? true)
+                        && capturedLocal == currentLocal()
+                },
+                onFailure: { message in
+                    Task { @MainActor in
+                        onFailure(message)
+                    }
+                }
+            )
+        }
+        func notifyFileSuggestionContext(for text: String) {
+            ComposerShared.notifyFileSuggestionContext(
+                for: text,
+                isBusy: parent.isBusy,
+                onFileSuggestionQuery: parent.onFileSuggestionQuery
+            )
+        }
+        func discardFailedVoiceTake() {
+            ComposerShared.discardFailedTake(
+                manager: parent.voiceInputManager,
+                owner: .inlineComposer,
+                text: parent.$text,
+                textBeforeRecording: parent.$textBeforeRecording,
+                suppressKeyboard: parent.$suppressKeyboard
+            )
+        }
+        func restoreKeyboardFromSuppression() {
+            ComposerShared.handleKeyboardRestore(
+                suppressKeyboard: parent.$suppressKeyboard,
+                textBeforeRecording: parent.$textBeforeRecording,
+                voiceInputManager: parent.voiceInputManager,
+                expectedOwner: .inlineComposer
+            )
         }
 
-        submitCurrentComposerAction()
-    }
-
-    private func submitCurrentComposerAction() {
-        if handleAskComposerSendIfNeeded() {
-            return
-        }
-        if let askRequest {
-            submitAskResponse(request: askRequest, answers: nil)
-            return
-        }
-        if isBusy {
-            FeatureEducationTips.markBusySendModeUsed()
-        }
-        onSend()
-    }
-
-    private func handleAskComposerSendIfNeeded() -> Bool {
-        guard !isCurrentAskSubmitted else { return true }
-        guard let transition = Self.askComposerSendTransition(
-            request: askRequest,
-            currentPage: askClearing.currentPage,
-            draftAnswers: askClearing.draftAnswers,
-            text: composerDisplayText
-        ) else {
-            return false
+        func scheduleSlots() {
+            guard !slotRefreshScheduled else { return }
+            slotRefreshScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                self?.slotRefreshScheduled = false
+                self?.updateAsk()
+                self?.updateTip()
+                self?.updateKeyStrip()
+            }
         }
 
-        if transition.shouldSubmit, let askRequest {
-            askClearing.draftAnswers = transition.answers
-            submitAskResponse(request: askRequest, answers: transition.answers)
-            return true
-        }
-
-        askClearing.draftAnswers = transition.answers
-        text = transition.nextComposerText
-        textBeforeRecording = nil
-        withAnimation(ThemeMotion.easeInOut(duration: 0.25, reduceMotion: reduceMotion)) {
-            askClearing.currentPage = transition.nextPage
-        }
-
-        return true
-    }
-
-    private func submitAskResponse(
-        request: AskRequest,
-        answers: [String: AskAnswer]?,
-        completion: @escaping AskResponseSubmission.Completion = { _ in }
-    ) {
-        guard askRequest?.id == request.id else {
-            completion(.completed)
-            return
-        }
-        // Only the callback that actually clears the composer may restore it;
-        // mixed actions joining an in-flight attempt must not take a new snapshot.
-        var submittedTextRevision: UInt64?
-        askClearing.submission.submit(requestID: request.id, deliver: { complete in
-            submittedTextRevision = askClearing.textRevision
-            text = ""
-            textBeforeRecording = nil
-            if let answers, let onAskSubmit {
-                onAskSubmit(request, answers, complete)
-            } else if answers == nil, let onAskIgnoreAll {
-                onAskIgnoreAll(request, complete)
+        private func updateAsk() {
+            guard let controller else { return }
+            guard let request = parent.askRequest else {
+                controller.installAsk(nil)
+                controller.setAskHeight(0)
+                return
+            }
+            guard let root = HostFactory.root(near: controller) else { return }
+            let card = askCard(request: request)
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.height
+                } action: { [weak self] height in
+                    DispatchQueue.main.async {
+                        self?.commitAskHeight(height)
+                    }
+                }
+            if let askHost {
+                askHost.setContent(card)
+                askHost.view.backgroundColor = .clear
+                controller.installAsk(askHost)
             } else {
-                complete(.retryableFailure)
+                let hosted = HostFactory.content(card, root: root)
+                hosted.sizingOptions = []
+                hosted.view.backgroundColor = .clear
+                askHost = hosted
+                controller.installAsk(hosted)
             }
-            FeatureEducationTips.markPromptAnswered()
-        }, completion: { result in
-            if result == .retryableFailure,
-               let submittedTextRevision,
-               Self.restoreFailedAskComposerText(
-                   text: $text,
-                   clearing: askClearing,
-                   submittedTextRevision: submittedTextRevision,
-                   request: askRequest,
-                   activeQuestionID: activeAskQuestionID
-               ) {
-                textBeforeRecording = nil
-            }
-            completion(result)
-        })
-    }
-
-    private func handleAlternateSend() {
-        guard !isSendInFlight else { return }
-
-        if isBusy {
-            busyStreamingBehavior = .followUp
-            FeatureEducationTips.markBusySendModeUsed()
         }
 
-        handleSend()
+        private func commitAskHeight(_ height: CGFloat) {
+            let next = max(height, 0)
+            if abs(parent.askHeight - next) > 0.5 {
+                parent.askHeight = next
+                parent.askHeightRevision += 1
+            }
+            controller?.setAskHeight(next)
+            controller?.view.invalidateIntrinsicContentSize()
+        }
+
+        private func askCard(request: AskRequest) -> AskCard {
+            AskCard(
+                request: request,
+                currentPage: Binding(
+                    get: { self.controller?.askCurrentPage ?? 0 },
+                    set: {
+                        self.controller?.askCurrentPage = $0
+                        self.updateAsk()
+                    }
+                ),
+                answers: Binding(
+                    get: { self.controller?.askDraftAnswers ?? [:] },
+                    set: {
+                        self.controller?.askDraftAnswers = $0
+                        self.updateAsk()
+                    }
+                ),
+                onSubmit: { [weak self] answers, complete in
+                    self?.controller?.submitAskResponse(request: request, answers: answers, completion: complete)
+                },
+                onIgnoreAll: { [weak self] complete in
+                    self?.controller?.submitAskResponse(request: request, answers: nil, completion: complete)
+                },
+                voiceInputManager: ReleaseFeatures.voiceInputEnabled ? parent.voiceInputManager : nil,
+                submittedRequestID: controller?.askSubmittedRequestID,
+                responseFailed: controller?.askFailed(for: request) ?? false,
+                autoAdvanceController: parent.autoAdvanceController
+            )
+        }
+
+        private func updateTip() {
+            guard let controller else { return }
+            let show = ChatInputBar.showsBusyModeSelector(
+                isBusy: parent.isBusy,
+                hasAskRequest: parent.askRequest != nil
+            )
+            guard show else {
+                controller.installBusyTip(nil)
+                return
+            }
+            guard let root = HostFactory.root(near: controller) else { return }
+            let tip = FeatureEducationTipBannerHost(
+                tip: FeatureEducationTips.BusySendModeTip(),
+                descriptor: FeatureEducationTips.busySendMode,
+                contentInsets: EdgeInsets(top: 8, leading: 12, bottom: 2, trailing: 12)
+            )
+            if let tipHost {
+                tipHost.setContent(tip)
+                tipHost.view.backgroundColor = .clear
+                controller.installBusyTip(tipHost)
+            } else {
+                let hosted = HostFactory.content(tip, root: root)
+                hosted.sizingOptions = []
+                hosted.view.backgroundColor = .clear
+                tipHost = hosted
+                controller.installBusyTip(hosted)
+            }
+        }
+
+        private func updateKeyStrip() {
+            guard let controller else { return }
+            guard let slot = parent.keyStripSlot else {
+                controller.installKeyStrip(nil)
+                return
+            }
+            guard let root = HostFactory.root(near: controller) else { return }
+            if let keyStripHost {
+                keyStripHost.setContent(slot)
+                keyStripHost.view.backgroundColor = .clear
+                controller.installKeyStrip(keyStripHost)
+            } else {
+                let hosted = HostFactory.content(slot, root: root)
+                hosted.sizingOptions = []
+                hosted.view.backgroundColor = .clear
+                keyStripHost = hosted
+                controller.installKeyStrip(hosted)
+            }
+        }
+    }
+}
+
+// MARK: - Action factories
+
+@MainActor
+extension ComposerAction {
+    static func model(
+        title: String,
+        provider: String?,
+        colors: ComposerThemeColors,
+        onTap: @escaping () -> Void
+    ) -> ComposerAction {
+        ComposerAction(
+            id: "session.toolbar.model",
+            icon: provider.map { .image(ComposerProviderIconRenderer.image(provider: $0, size: 11, colors: colors)) },
+            title: title,
+            tint: colors.fg,
+            accessibilityLabel: "Model",
+            accessibilityValue: title,
+            showsChevron: true,
+            chrome: .toolbar,
+            kind: .tap(.init(onTap))
+        )
+    }
+
+    static func thinking(
+        level: ThinkingLevel,
+        supported: [ThinkingLevel],
+        tint: UIColor,
+        colors: ComposerThemeColors,
+        onSelect: @escaping (ThinkingLevel) -> Void,
+        onSaveDefault: (() -> Void)?
+    ) -> ComposerAction {
+        ComposerAction(
+            id: "session.toolbar.thinking",
+            icon: .symbol("sparkle"),
+            title: level.compactTitle,
+            tint: tint,
+            accessibilityLabel: "Thinking level",
+            accessibilityValue: level.displayTitle,
+            showsChevron: true,
+            chrome: .toolbar,
+            kind: .picker(ComposerActionPopover(
+                preferredWidth: 220,
+                make: {
+                    ComposerThinkingPickerController(
+                        levels: supported,
+                        selected: level,
+                        colors: colors,
+                        onSelect: onSelect,
+                        onSaveDefault: onSaveDefault
+                    )
+                },
+                update: { screen in
+                    (screen as? ComposerThinkingPickerController)?.apply(
+                        levels: supported,
+                        selected: level,
+                        onSelect: onSelect,
+                        onSaveDefault: onSaveDefault
+                    )
+                }
+            ))
+        )
+    }
+
+    static func agent(
+        title: String,
+        icon: UIImage,
+        colors: ComposerThemeColors,
+        rows: [ComposerOptionRow],
+        isLoading: Bool,
+        onSelect: @escaping (String?) -> Void
+    ) -> ComposerAction {
+        ComposerAction(
+            id: "quickSession.agentPicker",
+            icon: .image(icon),
+            title: title,
+            tint: colors.fg,
+            accessibilityLabel: title == "Pi"
+                ? "Agent picker, Pi with no agent"
+                : "Agent picker, current agent \(title)",
+            accessibilityValue: title,
+            showsChevron: true,
+            chrome: .toolbar,
+            kind: .picker(ComposerActionPopover(
+                preferredWidth: 280,
+                make: {
+                    ComposerOptionListController(
+                        rows: rows,
+                        isLoading: isLoading,
+                        emptyMessage: "No saved Agents on this server.",
+                        colors: colors,
+                        preferredWidth: 280,
+                        onSelect: { id in onSelect(id == "pi" ? nil : id) }
+                    )
+                },
+                update: { screen in
+                    (screen as? ComposerOptionListController)?.apply(
+                        rows: rows,
+                        isLoading: isLoading,
+                        emptyMessage: "No saved Agents on this server.",
+                        onSelect: { id in onSelect(id == "pi" ? nil : id) }
+                    )
+                }
+            ))
+        )
+    }
+
+    static func workspace(
+        title: String,
+        icon: UIImage?,
+        identifier: String,
+        menu: UIMenu,
+        colors: ComposerThemeColors
+    ) -> ComposerAction {
+        ComposerAction(
+            id: identifier,
+            icon: icon.map { .image($0) } ?? .symbol("folder"),
+            title: title,
+            tint: colors.fg,
+            accessibilityLabel: "Workspace picker, current workspace \(title)",
+            accessibilityValue: title,
+            showsChevron: true,
+            chrome: .toolbar,
+            kind: .menu(menu)
+        )
+    }
+
+    static func reviewChip(id: String, title: String, systemImage: String, onTap: @escaping () -> Void) -> ComposerAction {
+        ComposerAction(
+            id: id,
+            icon: .symbol(systemImage),
+            title: title,
+            tint: nil,
+            accessibilityLabel: title,
+            accessibilityValue: nil,
+            showsChevron: false,
+            chrome: .chip,
+            kind: .tap(.init(onTap))
+        )
+    }
+
+    static func reviewCancel(onTap: @escaping () -> Void) -> ComposerAction {
+        ComposerAction(
+            id: "chat.reviewComment.cancel",
+            icon: .symbol("xmark"),
+            title: "",
+            tint: nil,
+            accessibilityLabel: "Cancel comment",
+            accessibilityValue: nil,
+            showsChevron: false,
+            chrome: .cancel,
+            kind: .tap(.init(onTap))
+        )
+    }
+}
+
+@MainActor
+enum ComposerProviderIconRenderer {
+    static func image(provider: String, size: CGFloat, colors: ComposerThemeColors) -> UIImage {
+        let tint = UIColor(providerIconTint(
+            ProviderIcon.brandColor(for: provider),
+            palette: ThemeRuntimeState.currentPalette()
+        ))
+        if let assetName = ProviderIcon.logoAssetName(for: provider),
+           let asset = UIImage(named: assetName) {
+            return asset.withTintColor(tint, renderingMode: .alwaysOriginal)
+        }
+        let mark = ProviderIcon.mark(for: provider) as NSString
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+        return renderer.image { _ in
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: max(8, size * 0.8), weight: .heavy),
+                .foregroundColor: tint,
+            ]
+            let textSize = mark.size(withAttributes: attributes)
+            mark.draw(
+                at: CGPoint(x: (size - textSize.width) / 2, y: (size - textSize.height) / 2),
+                withAttributes: attributes
+            )
+        }
+    }
+}
+
+@MainActor
+extension ComposerActionRow {
+    static var previewModelThinking: ComposerActionRow {
+        ComposerActionRow(
+            leading: [
+                ComposerAction(
+                    id: "session.toolbar.model",
+                    icon: nil,
+                    title: "gpt-5.5",
+                    tint: nil,
+                    accessibilityLabel: "Model",
+                    accessibilityValue: "gpt-5.5",
+                    showsChevron: false,
+                    kind: .tap(.init {})
+                ),
+                ComposerAction(
+                    id: "session.toolbar.thinking",
+                    icon: nil,
+                    title: "max",
+                    tint: UIColor(red: 0.75, green: 0.62, blue: 1, alpha: 1),
+                    accessibilityLabel: "Thinking level",
+                    accessibilityValue: "Max",
+                    showsChevron: false,
+                    kind: .tap(.init {})
+                ),
+            ]
+        )
+    }
+
+    static func sessionToolbar(
+        modelTitle: String,
+        modelProvider: String?,
+        thinkingLevel: ThinkingLevel,
+        thinkingTint: UIColor,
+        supportedThinkingLevels: [ThinkingLevel],
+        colors: ComposerThemeColors,
+        onModelTap: @escaping () -> Void,
+        onThinkingSelect: @escaping (ThinkingLevel) -> Void,
+        onSaveThinkingAsDefault: (() -> Void)?
+    ) -> ComposerActionRow {
+        ComposerActionRow(
+            trailing: [
+                .model(title: modelTitle, provider: modelProvider, colors: colors, onTap: onModelTap),
+                .thinking(
+                    level: thinkingLevel,
+                    supported: supportedThinkingLevels,
+                    tint: thinkingTint,
+                    colors: colors,
+                    onSelect: onThinkingSelect,
+                    onSaveDefault: onSaveThinkingAsDefault
+                ),
+            ]
+        )
+    }
+}
+
+
+extension ComposerThemeColors {
+    init(palette: ThemePalette) {
+        let elevated = ThemeSurfaceStyle.resolve(.elevatedPanel, palette: palette)
+        let floating = ThemeSurfaceStyle.resolve(.floatingControl, palette: palette)
+        self.init(
+            bg: UIColor(palette.bg),
+            bgDark: UIColor(palette.bgDark),
+            bgHighlight: UIColor(palette.bgHighlight),
+            fg: UIColor(palette.fg),
+            fgDim: UIColor(palette.fgDim),
+            comment: UIColor(palette.comment),
+            blue: UIColor(palette.blue),
+            cyan: UIColor(palette.cyan),
+            green: UIColor(palette.green),
+            orange: UIColor(palette.orange),
+            purple: UIColor(palette.purple),
+            red: UIColor(palette.red),
+            yellow: UIColor(palette.yellow),
+            scrim: UIColor(palette.bgDark.opacity(0.82)),
+            elevatedFill: UIColor(elevated.fill),
+            elevatedStroke: UIColor(elevated.stroke ?? palette.fg.opacity(0.12)),
+            floatingFill: UIColor(floating.fill)
+        )
     }
 }
 
@@ -1400,8 +1324,6 @@ struct PendingImage: Identifiable, Sendable {
         )
     }
 
-    /// Create from original picked image data when it is already in a model-friendly format.
-    /// Unsupported formats such as HEIC are converted to full-resolution JPEG without downscaling.
     static func from(data: Data, mimeType: String?, image: UIImage) -> Self {
         if let sendableMimeType = sendableOriginalMimeType(data: data, declaredMimeType: mimeType) {
             return Self(
@@ -1413,16 +1335,13 @@ struct PendingImage: Identifiable, Sendable {
                 )
             )
         }
-
         return from(image)
     }
 
-    /// Create from a UIImage without reducing dimensions. Uses maximum JPEG quality for upload.
     static func from(_ image: UIImage) -> Self {
         let thumb = downsample(image, maxDimension: 112)
         let imageData = image.jpegData(compressionQuality: 1.0) ?? image.pngData() ?? Data()
         let mimeType = sniffedMimeType(data: imageData) ?? "image/jpeg"
-
         return Self(
             id: UUID().uuidString,
             thumbnail: thumb,
@@ -1433,8 +1352,6 @@ struct PendingImage: Identifiable, Sendable {
         )
     }
 
-    /// Apply server-configured Pi-style upload resizing when requested.
-    /// Keeps the pending/original attachment untouched when resizing is disabled.
     static func uploadAttachment(from attachment: ImageAttachment, autoResize: Bool) -> ImageAttachment {
         guard autoResize,
               let originalData = Data(base64Encoded: attachment.data, options: .ignoreUnknownCharacters),
@@ -1491,7 +1408,6 @@ struct PendingImage: Identifiable, Sendable {
         if let sniffed = sniffedMimeType(data: data) {
             return sniffed
         }
-
         switch normalizedMimeType(declaredMimeType) {
         case "image/jpeg", "image/jpg": return "image/jpeg"
         case "image/png": return "image/png"
@@ -1557,14 +1473,11 @@ struct PendingImage: Identifiable, Sendable {
         return image.size
     }
 
-    /// Downsample to fit within maxDimension, preserving aspect ratio.
     private static func downsample(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
         let size = pixelSize(for: image)
         guard size.width > 0, size.height > 0 else { return image }
-
         let scale = min(maxDimension / size.width, maxDimension / size.height)
         if scale >= 1.0 { return image }
-
         let newSize = CGSize(width: floor(size.width * scale), height: floor(size.height * scale))
         return render(image, size: newSize)
     }

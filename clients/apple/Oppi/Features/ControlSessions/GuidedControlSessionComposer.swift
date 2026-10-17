@@ -186,6 +186,8 @@ struct GuidedControlSessionComposer: View {
     @Environment(ChatSessionState.self) private var chatState
     @Environment(AppNavigation.self) private var navigation
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.theme) private var theme
+    @Environment(\.themeID) private var themeID
 
     let domain: ControlSessionDomain
     let intent: ControlSessionIntent
@@ -304,11 +306,7 @@ struct GuidedControlSessionComposer: View {
                 allowsExpansion: false,
                 allowsAttachments: false,
                 showsAccessoryRow: !stacksControls,
-                actionRow: {
-                    if !stacksControls {
-                        composerControls
-                    }
-                }
+                actionRow: stacksControls ? .init() : guidedComposerActionRow
             )
             .disabled(!isAvailable || !isInitialized)
 
@@ -401,10 +399,51 @@ struct GuidedControlSessionComposer: View {
         }
     }
 
-    @ViewBuilder
-    private var composerControls: some View {
-        workspacePicker
-        sessionToolbar
+    private var guidedComposerActionRow: ComposerActionRow {
+        let colors = ComposerThemeColors(palette: themeID.palette)
+        let toolbar = ComposerActionRow.sessionToolbar(
+            modelTitle: shortModelName(effectiveModelId ?? modelPresentation.pillText),
+            modelProvider: modelPresentation.pillProvider,
+            thinkingLevel: thinkingLevel,
+            thinkingTint: UIColor(theme.thinking.color(for: thinkingLevel)),
+            supportedThinkingLevels: ThinkingLevelMenuSource.levels(
+                for: effectiveModelId,
+                in: chatState.cachedModels
+            ),
+            colors: colors,
+            onModelTap: { showModelPicker = true },
+            onThinkingSelect: selectThinkingLevel,
+            onSaveThinkingAsDefault: nil
+        )
+        let icon: UIImage?
+        if let workspace = selectedWorkspace {
+            icon = WorkspaceRuntimeIconRenderer.render(
+                workspace: workspace,
+                size: 12,
+                frameSize: 16,
+                colors: colors
+            )
+        } else {
+            icon = nil
+        }
+        let children = workspaceStore.workspaces.map { workspace -> UIAction in
+            let captured = workspace
+            return UIAction(
+                title: captured.name,
+                image: UIImage(systemName: captured.id == selectedWorkspace?.id ? "checkmark" : "folder"),
+                identifier: UIAction.Identifier("\(identifierPrefix).workspace.\(captured.id)")
+            ) { _ in
+                selectWorkspace(captured)
+            }
+        }
+        let workspaceAction = ComposerAction.workspace(
+            title: selectedWorkspace?.name ?? "Workspace",
+            icon: icon,
+            identifier: "\(identifierPrefix).workspacePicker",
+            menu: UIMenu(children: children),
+            colors: colors
+        )
+        return ComposerActionRow(leading: [workspaceAction], trailing: toolbar.trailing)
     }
 
     private var sessionToolbar: some View {

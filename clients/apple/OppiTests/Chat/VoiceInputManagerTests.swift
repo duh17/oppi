@@ -1514,7 +1514,7 @@ struct VoiceInputManagerTests {
                 voiceInputManager: manager, showForceStop: false, isForceStopInFlight: false,
                 slashCommands: [], fileSuggestions: [], onFileSuggestionQuery: nil,
                 onSend: {}, onStop: {}, onForceStop: {}, onExpand: {},
-                externalFocusRequestID: 0, appliesOuterPadding: true, actionRow: { EmptyView() }
+                externalFocusRequestID: 0, appliesOuterPadding: true
             ))
         }
         let host = UIHostingController(rootView: root.environment(\.dynamicTypeSize, .accessibility1))

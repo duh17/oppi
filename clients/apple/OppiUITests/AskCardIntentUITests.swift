@@ -114,6 +114,54 @@ final class AskCardIntentUITests: XCTestCase {
         saveScreenshot(name: "ask-intent-same-id")
     }
 
+    func testTallAskCardScrollsInsideCappedSlot() {
+        app = XCUIApplication()
+        app.launchArguments.append("--screenshot-preview")
+        app.launchEnvironment["SCREENSHOT_SCREEN"] = "ask-card-tall-scroll"
+        app.launch()
+
+        let ready = app.descendants(matching: .any)["screenshot.ready"]
+        XCTAssertTrue(ready.waitForExistence(timeout: 8), "Tall Ask preview did not become ready")
+        let scroll = app.scrollViews["chat.ask.scroll"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 5), "Ask slot scroll view missing")
+        let last = app.descendants(matching: .any)["ask.option.omega"]
+        XCTAssertTrue(last.waitForExistence(timeout: 5), "Last Ask option missing from the tall card")
+        XCTAssertFalse(
+            app.keyboards.firstMatch.exists,
+            "Tall Ask preview must start unfocused so the keyboard-down slot can be measured"
+        )
+        saveScreenshot(name: "ask-tall-keyboard-down")
+        XCTAssertLessThanOrEqual(
+            scroll.frame.height,
+            260 + 1,
+            "Unfocused Ask slot must stay at the expanded cap"
+        )
+        XCTAssertGreaterThan(
+            scroll.frame.height,
+            80,
+            "Tall Ask must occupy the capped slot when unfocused"
+        )
+
+        let input = app.textViews["chat.input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5), "Composer input missing")
+        input.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Keyboard did not appear")
+        saveScreenshot(name: "ask-tall-keyboard-up")
+        XCTAssertLessThanOrEqual(
+            scroll.frame.height,
+            240 + 1,
+            "Focused Ask slot must stay at the keyboard cap"
+        )
+
+        scroll.swipeUp()
+        scroll.swipeUp()
+        XCTAssertTrue(
+            last.isHittable || last.frame.maxY <= scroll.frame.maxY + 8,
+            "Last Ask option must be reachable by scrolling. last=\(last.frame) slot=\(scroll.frame)"
+        )
+        saveScreenshot(name: "ask-tall-keyboard-up-scrolled")
+    }
+
     func testIgnoreHitTargetOutsideGlyph() {
         launchIntentPreview()
         let ignore = inCardIgnore

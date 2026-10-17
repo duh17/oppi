@@ -403,18 +403,17 @@ struct SSHTerminalTests {
                 ))
                 defer { mounted.dismiss(); channel.close(reason: "done") }
                 let textView = try #require(mounted.find { $0 is PastableUITextView } as? PastableUITextView)
-                let coordinator = try #require(textView.delegate as? PastableTextView.Coordinator)
+                let delegate = try #require(textView.delegate)
+                #expect(
+                    delegate is ComposerBarController || delegate is PastableTextView.Coordinator,
+                    "Terminal chat bar must use the UIKit composer or PastableTextView coordinator"
+                )
                 channel.modifierLatch.toggle(modifier)
                 for draft in drafts {
-                    if scenario == "typing" || scenario == "paste" {
-                        textView.text = draft
-                        coordinator.textViewDidChange(textView)
-                    } else {
-                        coordinator.text = draft
-                    }
+                    textView.text = draft
+                    delegate.textViewDidChange?(textView)
                     await mounted.update()
-                    #expect(coordinator.text == draft, "\(scenario): draft must stay intact")
-                    #expect(textView.text == draft)
+                    #expect(textView.text == draft, "\(scenario): draft must stay intact")
                     #expect(channel.modifierLatch.isArmed(modifier), "\(scenario): draft must not spend the latch")
                 }
                 // Queue a real key, then drain: comparing the complete sink

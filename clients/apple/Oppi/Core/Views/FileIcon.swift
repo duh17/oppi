@@ -96,6 +96,18 @@ struct FileIcon: Equatable, Sendable {
         }
     }
 
+    /// UIKit counterpart to `iconView`. Template-tinted so composer lists can
+    /// paint without a SwiftUI host.
+    func uiImage(pointSize: CGFloat, weight: UIImage.SymbolWeight = .medium) -> UIImage {
+        let color = UIColor(tint.snapshotColor)
+        if let assetName, let asset = UIImage(named: assetName) {
+            return asset.withTintColor(color, renderingMode: .alwaysTemplate)
+        }
+        let configuration = UIImage.SymbolConfiguration(pointSize: pointSize, weight: weight)
+        let symbol = UIImage(systemName: symbolName, withConfiguration: configuration) ?? UIImage()
+        return symbol.withTintColor(color, renderingMode: .alwaysOriginal)
+    }
+
     /// Resolve icon for a file path. Checks well-known filenames first,
     /// then extension, then falls back to a generic doc icon.
     static func forPath(_ path: String) -> Self {

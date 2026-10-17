@@ -78,10 +78,7 @@ struct ExtensionNotifyChipScreenshotPreview: View {
                     onExpand: {},
                     externalFocusRequestID: 0,
                     appliesOuterPadding: false,
-                    alwaysShowActionRow: true,
-                    actionRow: {
-                        EmptyView()
-                    }
+                    alwaysShowActionRow: true
                 )
             }
             .padding(.horizontal, 16)

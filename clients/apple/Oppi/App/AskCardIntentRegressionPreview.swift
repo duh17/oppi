@@ -133,10 +133,7 @@ struct AskCardIntentRegressionPreview: View {
                 onExpand: {},
                 externalFocusRequestID: 0,
                 appliesOuterPadding: true,
-                alwaysShowActionRow: true,
-                actionRow: {
-                    Spacer(minLength: 0)
-                }
+                alwaysShowActionRow: true
             )
         }
         .onAppear {
@@ -196,6 +193,79 @@ struct AskCardIntentRegressionPreview: View {
             ),
         ],
         allowCustom: false,
+        timeout: nil
+    )
+}
+
+/// One question with enough options to exceed the inline Ask cap so the
+/// card must scroll instead of stretching the composer.
+struct AskCardTallScrollPreview: View {
+    @State private var text = ""
+    @State private var textBeforeRecording: String?
+    @State private var attachments: [PendingAttachment] = []
+    @State private var repoPointers: [PendingFileReference] = []
+    @State private var busyBehavior: StreamingBehavior = .followUp
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Color.themeBg.ignoresSafeArea()
+            ChatInputBar(
+                text: $text,
+                textBeforeRecording: $textBeforeRecording,
+                pendingAttachments: $attachments,
+                pendingRepoPointers: $repoPointers,
+                isBusy: false,
+                busyStreamingBehavior: $busyBehavior,
+                isSending: false,
+                sendProgressText: nil,
+                isStopping: false,
+                showForceStop: false,
+                isForceStopInFlight: false,
+                askRequest: Self.tallRequest,
+                onAskSubmit: { _, _, complete in complete(.completed) },
+                onAskIgnoreAll: { _, complete in complete(.completed) },
+                slashCommands: [],
+                fileSuggestions: [],
+                onFileSuggestionQuery: nil,
+                onSend: {},
+                onStop: {},
+                onForceStop: {},
+                onExpand: {},
+                externalFocusRequestID: 0,
+                appliesOuterPadding: true,
+                alwaysShowActionRow: true
+            )
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+        }
+        .onAppear {
+            FeatureEducationTips.markPromptAnswered()
+        }
+        .preferredColorScheme(.light)
+        .accessibilityIdentifier("screenshot.ready")
+    }
+
+    static let tallRequest = AskRequest(
+        id: "ask-tall-scroll",
+        sessionId: "preview-session",
+        questions: [
+            AskQuestion(
+                id: "tall",
+                question: "Pick a path for this long inline Ask.",
+                options: [
+                    AskOption(value: "alpha", label: "Alpha", description: "First choice in a list tall enough to scroll."),
+                    AskOption(value: "bravo", label: "Bravo", description: "Second choice, still above the fold on a phone."),
+                    AskOption(value: "charlie", label: "Charlie", description: "Third choice pushes past the keyboard cap."),
+                    AskOption(value: "delta", label: "Delta", description: "Fourth choice keeps the card growing."),
+                    AskOption(value: "echo", label: "Echo", description: "Fifth choice is below the unfocused cap."),
+                    AskOption(value: "foxtrot", label: "Foxtrot", description: "Sixth choice stays reachable by scrolling."),
+                    AskOption(value: "golf", label: "Golf", description: "Seventh choice near the bottom of the list."),
+                    AskOption(value: "omega", label: "Omega last option", description: "Last option the slot must scroll to."),
+                ],
+                multiSelect: false
+            ),
+        ],
+        allowCustom: true,
         timeout: nil
     )
 }

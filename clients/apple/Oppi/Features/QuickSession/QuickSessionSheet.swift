@@ -145,6 +145,8 @@ struct QuickSessionSheet: View {
     @Environment(AppNavigation.self) private var navigation
     @Environment(\.composerDraftStore) private var composerDraftStore
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.theme) private var theme
+    @Environment(\.themeID) private var themeID
 
     @State private var text = ""
     @State private var composerTextBeforeRecording: String?
@@ -576,9 +578,7 @@ struct QuickSessionSheet: View {
                 externalDictationRequestID: composerDictationRequestID,
                 appliesOuterPadding: true,
                 alwaysShowActionRow: true,
-                actionRow: {
-                    quickSessionActionControls
-                }
+                actionRow: stacksActionControls ? .init() : quickSessionComposerActionRow
             )
         }
         .padding(.top, 6)
@@ -590,12 +590,68 @@ struct QuickSessionSheet: View {
         QuickSessionOverlayLayout.stacksActionControls(for: dynamicTypeSize)
     }
 
-    @ViewBuilder
-    private var quickSessionActionControls: some View {
-        if !stacksActionControls {
-            agentPickerButton
-            sessionToolbar
+    private var quickSessionComposerActionRow: ComposerActionRow {
+        let colors = ComposerThemeColors(palette: themeID.palette)
+        let toolbar = ComposerActionRow.sessionToolbar(
+            modelTitle: shortModelName(effectiveModelId ?? modelPresentation.pillText),
+            modelProvider: modelPresentation.pillProvider,
+            thinkingLevel: effectiveThinkingLevel,
+            thinkingTint: UIColor(theme.thinking.color(for: effectiveThinkingLevel)),
+            supportedThinkingLevels: ThinkingLevelMenuSource.levels(
+                for: displayedModelId,
+                in: selectedChatState.cachedModels
+            ),
+            colors: colors,
+            onModelTap: { showModelPicker = true },
+            onThinkingSelect: selectThinkingLevel,
+            onSaveThinkingAsDefault: nil
+        )
+        let agentIcon: UIImage
+        if let agent = selectedAgent {
+            agentIcon = AgentIconRenderer.render(value: agent.icon, size: 12)
+        } else {
+            agentIcon = PiAvatarRenderer.render(size: 16)
         }
+        let agentAction = ComposerAction.agent(
+            title: selectedAgent?.name ?? "Pi",
+            icon: agentIcon,
+            colors: colors,
+            rows: agentPickerRows,
+            isLoading: isLoadingAgents,
+            onSelect: selectAgent
+        )
+        return ComposerActionRow(
+            leading: [agentAction],
+            trailing: toolbar.trailing
+        )
+    }
+
+    private var agentPickerRows: [ComposerOptionRow] {
+        var rows: [ComposerOptionRow] = [
+            ComposerOptionRow(
+                id: "pi",
+                title: "Pi",
+                subtitle: nil,
+                icon: PiAvatarRenderer.render(size: 22),
+                isSelected: selectedAgentId == nil,
+                accessibilityIdentifier: "quickSession.agent.pi",
+                accessibilityLabel: "Pi"
+            ),
+        ]
+        for agent in availableAgents {
+            rows.append(
+                ComposerOptionRow(
+                    id: agent.id,
+                    title: agent.name,
+                    subtitle: agent.description,
+                    icon: AgentIconRenderer.render(value: agent.icon, size: 16),
+                    isSelected: selectedAgentId == agent.id,
+                    accessibilityIdentifier: "quickSession.agent.\(agent.id)",
+                    accessibilityLabel: agent.name
+                )
+            )
+        }
+        return rows
     }
 
     private var accessibilityActionControls: some View {

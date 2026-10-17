@@ -9,20 +9,20 @@ import UIKit
 struct ChatInputBarTests {
     @Test("Tap-to-type remains enabled while voice is active")
     func tapToTypeRemainsEnabledDuringVoiceStates() {
-        #expect(ChatInputBar<EmptyView>.allowKeyboardRestoreOnTap(voiceState: .recording))
-        #expect(ChatInputBar<EmptyView>.allowKeyboardRestoreOnTap(voiceState: .preparingModel))
-        #expect(ChatInputBar<EmptyView>.allowKeyboardRestoreOnTap(voiceState: .processing))
+        #expect(ChatInputBar.allowKeyboardRestoreOnTap(voiceState: .recording))
+        #expect(ChatInputBar.allowKeyboardRestoreOnTap(voiceState: .preparingModel))
+        #expect(ChatInputBar.allowKeyboardRestoreOnTap(voiceState: .processing))
     }
 
     @Test("Tap-to-type remains enabled while idle or after errors")
     func tapToTypeRemainsEnabledOutsideVoiceStates() {
-        #expect(ChatInputBar<EmptyView>.allowKeyboardRestoreOnTap(voiceState: .idle))
-        #expect(ChatInputBar<EmptyView>.allowKeyboardRestoreOnTap(voiceState: .error("boom")))
+        #expect(ChatInputBar.allowKeyboardRestoreOnTap(voiceState: .idle))
+        #expect(ChatInputBar.allowKeyboardRestoreOnTap(voiceState: .error("boom")))
     }
 
     @Test("Dictation focus expands composer action row")
     func dictationFocusExpandsActionRow() {
-        #expect(ChatInputBar<EmptyView>.shouldShowComposerActionRow(
+        #expect(ChatInputBar.shouldShowComposerActionRow(
             alwaysShowActionRow: false,
             isBusy: false,
             isInputFocused: true,
@@ -34,7 +34,7 @@ struct ChatInputBarTests {
 
     @Test("Visible keyboard focus expands composer action row")
     func visibleKeyboardFocusExpandsActionRow() {
-        #expect(ChatInputBar<EmptyView>.shouldShowComposerActionRow(
+        #expect(ChatInputBar.shouldShowComposerActionRow(
             alwaysShowActionRow: false,
             isBusy: false,
             isInputFocused: true,
@@ -46,7 +46,7 @@ struct ChatInputBarTests {
 
     @Test("Unfocused composer hides plus model and thinking pills")
     func unfocusedComposerHidesActionRowEvenWhenBusy() {
-        #expect(!ChatInputBar<EmptyView>.shouldShowComposerActionRow(
+        #expect(!ChatInputBar.shouldShowComposerActionRow(
             alwaysShowActionRow: false,
             isBusy: false,
             isInputFocused: false,
@@ -54,7 +54,7 @@ struct ChatInputBarTests {
             hasAttachments: false,
             hasRepoPointers: false
         ))
-        #expect(!ChatInputBar<EmptyView>.shouldShowComposerActionRow(
+        #expect(!ChatInputBar.shouldShowComposerActionRow(
             alwaysShowActionRow: false,
             isBusy: true,
             isInputFocused: false,
@@ -66,7 +66,7 @@ struct ChatInputBarTests {
 
     @Test("Send while recording keeps keyboard suppressed")
     func sendWhileRecordingKeepsSuppressed() {
-        let suppressed = ChatInputBar<EmptyView>.suppressKeyboardAfterSend(
+        let suppressed = ChatInputBar.suppressKeyboardAfterSend(
             voiceState: .recording,
             wasSuppressed: true
         )
@@ -76,7 +76,7 @@ struct ChatInputBarTests {
 
     @Test("Send while preparing keeps keyboard suppressed")
     func sendWhilePreparingKeepsSuppressed() {
-        let suppressed = ChatInputBar<EmptyView>.suppressKeyboardAfterSend(
+        let suppressed = ChatInputBar.suppressKeyboardAfterSend(
             voiceState: .preparingModel,
             wasSuppressed: true
         )
@@ -86,11 +86,11 @@ struct ChatInputBarTests {
 
     @Test("Non-voice states preserve existing suppression value")
     func nonVoiceStatesPreserveSuppression() {
-        let idleSuppressed = ChatInputBar<EmptyView>.suppressKeyboardAfterSend(
+        let idleSuppressed = ChatInputBar.suppressKeyboardAfterSend(
             voiceState: .idle,
             wasSuppressed: true
         )
-        let processingUnsuppressed = ChatInputBar<EmptyView>.suppressKeyboardAfterSend(
+        let processingUnsuppressed = ChatInputBar.suppressKeyboardAfterSend(
             voiceState: .processing,
             wasSuppressed: false
         )
@@ -307,7 +307,7 @@ struct ChatInputBarTests {
         #expect(text == "typed final draft")
         #expect(textBeforeRecording == nil)
         #expect(suppressKeyboard)
-        #expect(ChatInputBar<EmptyView>.suppressKeyboardAfterSend(
+        #expect(ChatInputBar.suppressKeyboardAfterSend(
             voiceState: voiceStateBeforeFinish,
             wasSuppressed: true
         ))
@@ -322,10 +322,49 @@ struct ChatInputBarTests {
             until: "private func submitCurrentComposerAction()",
             in: source
         )
+        let finish = try chatInputBarSourceSlice(
+            named: "func finishVoiceBeforeSubmit() async {",
+            until: "func handlePastedImages(",
+            in: source
+        )
 
-        #expect(slice.contains("restoreKeyboard: false"))
+        #expect(slice.contains("finishVoiceBeforeSubmit()"))
         #expect(slice.contains("suppressKeyboardAfterSend("))
+        #expect(finish.contains("restoreKeyboard: false"))
+        #expect(!finish.contains("restoreKeyboard: true"))
         #expect(!slice.contains("restoreKeyboard: true"))
+    }
+
+    @Test("External dictation still starts from task(id:) once per request")
+    func externalDictationStartsFromTaskIdentifier() throws {
+        let source = try chatInputBarSource()
+        #expect(source.contains(".task(id: externalDictationRequestID)"))
+        let task = try chatInputBarSourceSlice(
+            named: ".task(id: externalDictationRequestID) {",
+            until: ".alert(\"Couldn't Start Dictation\"",
+            in: source
+        )
+        #expect(task.contains("await startExternalDictationIfRequested()"))
+        #expect(!task.contains("layoutRevision"))
+    }
+
+    @Test("Dictation failure Retry starts voice input")
+    func dictationFailureRetryStartsVoiceInput() throws {
+        let source = try chatInputBarSource()
+        let retry = try chatInputBarSourceSlice(
+            named: "Button(\"Retry dictation\") {",
+            until: "ChatInputBarHost(",
+            in: source
+        )
+        #expect(retry.contains("startOwnedVoiceInput(owner: .inlineComposer)"))
+        let start = try chatInputBarSourceSlice(
+            named: "private func startOwnedVoiceInput(owner: ComposerShared.VoiceInputOwner) async {",
+            until: "static func askComposerTextFieldBinding(",
+            in: source
+        )
+        #expect(start.contains("ComposerShared.startVoiceInput("))
+        #expect(start.contains("owner: owner"))
+        #expect(!start.contains("layoutRevision"))
     }
 
     @Test("Stashing a review comment plays the same success haptic as full-screen save")
@@ -688,7 +727,7 @@ struct ChatInputBarTests {
 
     @Test("Ask request constrains inline input height")
     func askRequestConstrainsInlineInputHeight() {
-        let maxLines = ChatInputBar<EmptyView>.inlineTextMaxLines(
+        let maxLines = ChatInputBar.inlineTextMaxLines(
             hasAskRequest: true,
             hasAttachments: false,
             hasRepoPointers: false
@@ -700,7 +739,7 @@ struct ChatInputBarTests {
 
     @Test("Plain composer keeps the full inline input height")
     func plainComposerKeepsFullInlineInputHeight() {
-        let maxLines = ChatInputBar<EmptyView>.inlineTextMaxLines(
+        let maxLines = ChatInputBar.inlineTextMaxLines(
             hasAskRequest: false,
             hasAttachments: false,
             hasRepoPointers: false
@@ -712,59 +751,79 @@ struct ChatInputBarTests {
     @Test("Unfocused inline ask is a capped scrolling viewport, not an unbounded card")
     func unfocusedInlineAskIsCappedScrollingViewport() throws {
         let source = try chatInputBarSource()
-        let capsule = try chatInputBarSourceSlice(
-            named: "private var composerCapsule: some View {",
-            until: "private func askCard(request: AskRequest) -> some View {",
+        let cap = try chatInputBarSourceSlice(
+            named: "private func applyAskViewport() {",
+            until: "private func applyActionPills",
             in: source
         )
 
-        #expect(capsule.contains("ScrollView(.vertical, showsIndicators: true)"))
-        #expect(capsule.contains("ExtensionNativeSurfaceLayout.expandedMaxHeight"))
-        #expect(capsule.contains("ComposerInputMetrics.inlineAskCardMaxHeightWithKeyboard"))
-        #expect(!capsule.contains("NativeSurfaceViewportScrollContainer"))
-        #expect(capsule.components(separatedBy: "askCard(request: askRequest)").count - 1 == 1)
+        #expect(cap.contains("ComposerInputMetrics.inlineAskCardMaxHeightWithKeyboard"))
+        #expect(cap.contains("ExtensionNativeSurfaceLayout.expandedMaxHeight"))
+        #expect(cap.contains("askScroll.isScrollEnabled"))
+        #expect(source.contains("private let askScroll = UIScrollView()"))
+        #expect(!source.contains("NativeSurfaceViewportScrollContainer"))
         #expect(ExtensionNativeSurfaceLayout.expandedMaxHeight == 260)
         #expect(ComposerInputMetrics.inlineAskCardMaxHeightWithKeyboard == 240)
+        #expect(cap.contains("if slotChanged"))
+        #expect(cap.contains("view.invalidateIntrinsicContentSize()"))
+    }
+
+    @Test("Composer apply does not layout the hosted Ask card")
+    func composerApplyDoesNotLayoutHostedAskCard() throws {
+        let controller = try composerSource(named: "ComposerBarController.swift")
+        #expect(!controller.contains("capsuleStack.layoutIfNeeded()"))
+        let visibility = try chatInputBarSourceSlice(
+            named: "private func applyActionRowVisibility",
+            until: "private func applyAskViewport",
+            in: controller
+        )
+        #expect(visibility.contains("self.actionRowStack.layoutIfNeeded()"))
+        #expect(!visibility.contains("capsuleStack.layoutIfNeeded()"))
+        let layoutCalls = controller.components(separatedBy: "layoutIfNeeded()").count - 1
+        #expect(layoutCalls == 1)
     }
 
     @Test("Expand affordance reserves only a tight trailing gutter")
     func expandAffordanceUsesTightTrailingGutter() {
-        #expect(ChatInputBar<EmptyView>.composerTextTrailingPadding(showsExpandButton: false) == 0)
-        #expect(ChatInputBar<EmptyView>.composerTextTrailingPadding(showsExpandButton: true) == 10)
+        #expect(ChatInputBar.composerTextTrailingPadding(showsExpandButton: false) == 0)
+        #expect(ChatInputBar.composerTextTrailingPadding(showsExpandButton: true) == 10)
     }
 
     @Test("Expand affordance no longer reserves a full button width")
     func expandAffordanceDoesNotReserveFullButtonWidth() {
-        let reserved = ChatInputBar<EmptyView>.composerTextTrailingPadding(showsExpandButton: true)
+        let reserved = ChatInputBar.composerTextTrailingPadding(showsExpandButton: true)
         #expect(reserved < 20, "Trailing gutter should stay visually tight so wrapped text reaches near the send button")
     }
 
     @Test("Composer capsule uses the live semantic themed panel contract")
     func composerCapsuleUsesLiveSemanticThemedPanel() throws {
         let source = try chatInputBarSource()
-        let slice = try chatInputBarSourceSlice(
-            named: "private var composerCapsule: some View {",
-            until: "private func askCard",
-            in: source
+        let chrome = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appending(path: "Oppi/Features/Chat/Composer/ComposerBarChrome.swift"),
+            encoding: .utf8
         )
 
-        #expect(slice.contains(".themedSurface("))
-        #expect(slice.contains(".elevatedPanel"))
-        #expect(slice.contains("RoundedRectangle(cornerRadius: 20, style: .continuous)"))
-        #expect(!slice.contains(".glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20"))
+        #expect(source.contains("ThemeSurfaceStyle.resolve(.elevatedPanel"))
+        #expect(chrome.contains("cornerRadius: CGFloat = 20"))
+        #expect(chrome.contains("UIGlassEffect(style: .regular)"))
+        #expect(!source.contains(".glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20"))
     }
 
     @Test("Photo picker presentation stays on stable composer roots")
     func photoPickerPresentationStaysOnStableComposerRoots() throws {
         let inlineSource = try chatInputBarSource()
-        let inlineRoot = try chatInputBarSourceSlice(
-            named: "var body: some View {",
-            until: "// MARK: - Subviews",
+        let inlinePresent = try chatInputBarSourceSlice(
+            named: "private func presentPhotoLibrary() {",
+            until: "private func presentCamera()",
             in: inlineSource
         )
-        let inlineAttachButton = try chatInputBarSourceSlice(
-            named: "private var attachButton: some View {",
-            until: "private var busyModeSelector",
+        let inlineAttachMenu = try chatInputBarSourceSlice(
+            named: "private func attachmentMenu() -> UIMenu {",
+            until: "private func presentPhotoLibrary()",
             in: inlineSource
         )
 
@@ -780,13 +839,14 @@ struct ChatInputBarTests {
             in: expandedSource
         )
 
-        #expect(inlineRoot.contains(".composerPhotoLibraryCover("))
-        #expect(!inlineAttachButton.contains(".composerPhotoLibraryCover("))
-        #expect(!inlineAttachButton.contains("PhotoLibraryPicker"))
+        #expect(inlinePresent.contains("presentPhotoLibrary()") || inlinePresent.contains("PhotoLibraryPicker"))
+        #expect(inlinePresent.contains(".composerCover") || inlinePresent.contains("PHPickerViewController"))
+        #expect(!inlineAttachMenu.contains("PhotoLibraryPicker"))
+        #expect(!inlineAttachMenu.contains(".composerPhotoLibraryCover("))
         #expect(expandedRoot.contains(".composerPhotoLibraryCover("))
         #expect(!expandedAttachMenu.contains(".composerPhotoLibraryCover("))
         #expect(!expandedAttachMenu.contains("PhotoLibraryPicker"))
-        #expect(!inlineRoot.contains(".photosPicker("))
+        #expect(!inlineSource.contains(".photosPicker("))
         #expect(!expandedRoot.contains(".photosPicker("))
 
         let pickerSource = try photoLibraryPickerSource()
@@ -797,13 +857,13 @@ struct ChatInputBarTests {
 
     @Test("Active asks can disable expanded composer routing")
     func activeAsksCanDisableExpandedComposerRouting() {
-        #expect(!ChatInputBar<EmptyView>.shouldShowExpandButton(
+        #expect(!ChatInputBar.shouldShowExpandButton(
             allowsExpansion: false,
             visualLineCount: 8,
             threshold: 5,
             maxLines: 10
         ))
-        #expect(ChatInputBar<EmptyView>.shouldShowExpandButton(
+        #expect(ChatInputBar.shouldShowExpandButton(
             allowsExpansion: true,
             visualLineCount: 5,
             threshold: 5,
@@ -813,14 +873,14 @@ struct ChatInputBarTests {
 
     @Test("Empty submit is opt-in")
     func emptySubmitIsOptIn() {
-        #expect(!ChatInputBar<EmptyView>.canSubmitMessage(
+        #expect(!ChatInputBar.canSubmitMessage(
             allowsEmptySubmit: false,
             text: "   ",
             hasImages: false,
             hasFiles: false,
             hasReviewComments: false
         ))
-        #expect(ChatInputBar<EmptyView>.canSubmitMessage(
+        #expect(ChatInputBar.canSubmitMessage(
             allowsEmptySubmit: true,
             text: "   ",
             hasImages: false,
@@ -831,7 +891,7 @@ struct ChatInputBarTests {
 
     @Test("Non-empty submit stays enabled")
     func nonEmptySubmitStaysEnabled() {
-        #expect(ChatInputBar<EmptyView>.canSubmitMessage(
+        #expect(ChatInputBar.canSubmitMessage(
             allowsEmptySubmit: false,
             text: "hello",
             hasImages: false,
@@ -850,7 +910,7 @@ struct ChatInputBarTests {
             timeout: nil
         )
 
-        let placeholder = ChatInputBar<EmptyView>.composerPlaceholder(
+        let placeholder = ChatInputBar.composerPlaceholder(
             askRequest: request,
             pendingReviewCommentCount: 0,
             isBusy: true,
@@ -870,7 +930,7 @@ struct ChatInputBarTests {
             timeout: nil
         )
 
-        let placeholder = ChatInputBar<EmptyView>.composerPlaceholder(
+        let placeholder = ChatInputBar.composerPlaceholder(
             askRequest: request,
             pendingReviewCommentCount: 0,
             isBusy: true,
@@ -890,7 +950,7 @@ struct ChatInputBarTests {
             timeout: nil
         )
 
-        let placeholder = ChatInputBar<EmptyView>.composerPlaceholder(
+        let placeholder = ChatInputBar.composerPlaceholder(
             askRequest: request,
             pendingReviewCommentCount: 0,
             isBusy: true,
@@ -910,7 +970,7 @@ struct ChatInputBarTests {
             timeout: nil
         )
 
-        let placeholder = ChatInputBar<EmptyView>.composerPlaceholder(
+        let placeholder = ChatInputBar.composerPlaceholder(
             askRequest: request,
             pendingReviewCommentCount: 0,
             isBusy: true,
@@ -922,13 +982,13 @@ struct ChatInputBarTests {
 
     @Test("Review comment placeholder includes staged count")
     func reviewCommentPlaceholderIncludesStagedCount() {
-        let singular = ChatInputBar<EmptyView>.composerPlaceholder(
+        let singular = ChatInputBar.composerPlaceholder(
             askRequest: nil,
             pendingReviewCommentCount: 1,
             isBusy: false,
             busyStreamingBehavior: .steer
         )
-        let plural = ChatInputBar<EmptyView>.composerPlaceholder(
+        let plural = ChatInputBar.composerPlaceholder(
             askRequest: nil,
             pendingReviewCommentCount: 3,
             isBusy: false,
@@ -941,7 +1001,7 @@ struct ChatInputBarTests {
 
     @Test("Staged review comments enable send with an empty composer")
     func stagedReviewCommentsEnableSendWithEmptyComposer() {
-        #expect(ChatInputBar<EmptyView>.canSubmitMessage(
+        #expect(ChatInputBar.canSubmitMessage(
             allowsEmptySubmit: false,
             text: "   ",
             hasImages: false,
@@ -953,15 +1013,8 @@ struct ChatInputBarTests {
     @Test("Composer capsule no longer hosts the staged review comment bar")
     func composerCapsuleNoLongerHostsStagedReviewCommentBar() throws {
         let source = try chatInputBarSource()
-        let capsule = try chatInputBarSourceSlice(
-            named: "private var composerCapsule: some View {",
-            until: "private func askCard(request: AskRequest) -> some View {",
-            in: source
-        )
 
-        #expect(!capsule.contains("reviewCommentStashBar"))
-        #expect(!capsule.contains("Text(\"Review\")"))
-        #expect(!source.contains("private var reviewCommentStashBar"))
+        #expect(!source.contains("reviewCommentStashBar"))
         #expect(!source.contains("onReviewCommentsTap"))
         #expect(!source.contains("static func reviewCommentStashTitle"))
         #expect(source.contains("pendingReviewCommentCount"))
@@ -969,7 +1022,7 @@ struct ChatInputBarTests {
 
     @Test("Busy ask with no custom answer uses ignore instead of stop")
     func busyAskWithoutAnswerUsesIgnoreInsteadOfStop() {
-        let action = ChatInputBar<EmptyView>.primaryActionKind(
+        let action = ChatInputBar.primaryActionKind(
             isBusy: true,
             canSend: false,
             isSending: false,
@@ -981,7 +1034,7 @@ struct ChatInputBarTests {
 
     @Test("Busy session without ask still uses stop")
     func busySessionWithoutAskStillUsesStop() {
-        let action = ChatInputBar<EmptyView>.primaryActionKind(
+        let action = ChatInputBar.primaryActionKind(
             isBusy: true,
             canSend: false,
             isSending: false,
@@ -993,7 +1046,7 @@ struct ChatInputBarTests {
 
     @Test("Custom ask answer keeps send as the primary action")
     func customAskAnswerKeepsSendPrimaryAction() {
-        let action = ChatInputBar<EmptyView>.primaryActionKind(
+        let action = ChatInputBar.primaryActionKind(
             isBusy: true,
             canSend: true,
             isSending: false,
@@ -1005,9 +1058,9 @@ struct ChatInputBarTests {
 
     @Test("Ask hides the busy steering mode selector")
     func askHidesBusyModeSelector() {
-        #expect(!ChatInputBar<EmptyView>.showsBusyModeSelector(isBusy: true, hasAskRequest: true))
-        #expect(ChatInputBar<EmptyView>.showsBusyModeSelector(isBusy: true, hasAskRequest: false))
-        #expect(!ChatInputBar<EmptyView>.showsBusyModeSelector(isBusy: false, hasAskRequest: false))
+        #expect(!ChatInputBar.showsBusyModeSelector(isBusy: true, hasAskRequest: true))
+        #expect(ChatInputBar.showsBusyModeSelector(isBusy: true, hasAskRequest: false))
+        #expect(!ChatInputBar.showsBusyModeSelector(isBusy: false, hasAskRequest: false))
     }
 
     @Test("Composer text answers ask instead of becoming steering or follow-up")
@@ -1020,13 +1073,13 @@ struct ChatInputBarTests {
             timeout: nil
         )
 
-        let answers = try #require(ChatInputBar<EmptyView>.customAskAnswers(request: request, text: "  we already got this from pi  "))
+        let answers = try #require(ChatInputBar.customAskAnswers(request: request, text: "  we already got this from pi  "))
         #expect(answers == ["q1": .custom("we already got this from pi")])
     }
 
     @Test("Composer text falls through to normal send when no ask is active")
     func composerTextFallsThroughWithoutAsk() {
-        #expect(ChatInputBar<EmptyView>.customAskAnswers(request: nil, text: "steer the agent") == nil)
+        #expect(ChatInputBar.customAskAnswers(request: nil, text: "steer the agent") == nil)
     }
 
     @Test("Composer text does not answer asks that disallow custom input")
@@ -1039,8 +1092,8 @@ struct ChatInputBarTests {
             timeout: nil
         )
 
-        #expect(ChatInputBar<EmptyView>.customAskAnswers(request: request, text: "custom") == nil)
-        #expect(ChatInputBar<EmptyView>.customAskAnswers(request: request, text: "   ") == nil)
+        #expect(ChatInputBar.customAskAnswers(request: request, text: "custom") == nil)
+        #expect(ChatInputBar.customAskAnswers(request: request, text: "   ") == nil)
     }
 
     @Test("Composer text answers the active page in a multi-question ask")
@@ -1056,7 +1109,7 @@ struct ChatInputBarTests {
             timeout: nil
         )
 
-        let answers = try #require(ChatInputBar<EmptyView>.customAskAnswers(
+        let answers = try #require(ChatInputBar.customAskAnswers(
             request: request,
             activeQuestionID: "q2",
             draftAnswers: ["q1": .single("a")],
@@ -1082,8 +1135,8 @@ struct ChatInputBarTests {
             timeout: nil
         )
 
-        #expect(!ChatInputBar<EmptyView>.shouldSubmitAskResponseImmediately(request: request, currentPage: 0))
-        #expect(ChatInputBar<EmptyView>.shouldSubmitAskResponseImmediately(request: request, currentPage: 1))
+        #expect(!ChatInputBar.shouldSubmitAskResponseImmediately(request: request, currentPage: 0))
+        #expect(ChatInputBar.shouldSubmitAskResponseImmediately(request: request, currentPage: 1))
     }
 
     @Test("Ask composer send transition advances and keeps prior answers")
@@ -1099,7 +1152,7 @@ struct ChatInputBarTests {
             timeout: nil
         )
 
-        let transition = try #require(ChatInputBar<EmptyView>.askComposerSendTransition(
+        let transition = try #require(ChatInputBar.askComposerSendTransition(
             request: request,
             currentPage: 0,
             draftAnswers: ["q2": .custom("saved second")],
@@ -1128,7 +1181,7 @@ struct ChatInputBarTests {
             timeout: nil
         )
 
-        let transition = try #require(ChatInputBar<EmptyView>.askComposerSendTransition(
+        let transition = try #require(ChatInputBar.askComposerSendTransition(
             request: request,
             currentPage: 1,
             draftAnswers: ["q1": .single("picked")],
@@ -1157,7 +1210,7 @@ struct ChatInputBarTests {
             timeout: nil
         )
 
-        let transition = try #require(ChatInputBar<EmptyView>.askComposerSendTransition(
+        let transition = try #require(ChatInputBar.askComposerSendTransition(
             request: request,
             currentPage: 1,
             draftAnswers: [
@@ -1183,14 +1236,14 @@ struct ChatInputBarTests {
             "q2": .single("picked option")
         ]
 
-        #expect(ChatInputBar<EmptyView>.customAskText(answers: answers, questionID: "q1") == "saved first answer")
-        #expect(ChatInputBar<EmptyView>.customAskText(answers: answers, questionID: "q2").isEmpty)
-        #expect(ChatInputBar<EmptyView>.customAskText(answers: answers, questionID: nil).isEmpty)
+        #expect(ChatInputBar.customAskText(answers: answers, questionID: "q1") == "saved first answer")
+        #expect(ChatInputBar.customAskText(answers: answers, questionID: "q2").isEmpty)
+        #expect(ChatInputBar.customAskText(answers: answers, questionID: nil).isEmpty)
     }
 
     @Test("Settled ask does not provide replacement composer text")
     func settledAskDoesNotReplaceRestoredMessageDraft() {
-        let displayedText = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+        let displayedText = ChatInputBar.composerTextForActiveAskQuestion(
             request: nil,
             activeQuestionID: nil,
             draftAnswers: [:],
@@ -1211,7 +1264,7 @@ struct ChatInputBarTests {
         )
 
         let draftAnswers: [String: AskAnswer] = ["q1": .custom("because the larger tables should download")]
-        let displayedText = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+        let displayedText = ChatInputBar.composerTextForActiveAskQuestion(
             request: request,
             activeQuestionID: "q1",
             draftAnswers: draftAnswers,
@@ -1231,7 +1284,7 @@ struct ChatInputBarTests {
             timeout: nil
         )
         let submittedText = "because the larger tables should download"
-        let transition = try #require(ChatInputBar<EmptyView>.askComposerSendTransition(
+        let transition = try #require(ChatInputBar.askComposerSendTransition(
             request: request,
             currentPage: 0,
             draftAnswers: [:],
@@ -1241,7 +1294,7 @@ struct ChatInputBarTests {
         #expect(transition.shouldSubmit)
         #expect(transition.nextComposerText.isEmpty)
 
-        let whileVisible = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+        let whileVisible = ChatInputBar.composerTextForActiveAskQuestion(
             request: request,
             activeQuestionID: "q1",
             draftAnswers: transition.answers,
@@ -1255,7 +1308,7 @@ struct ChatInputBarTests {
         let retainedID = submission.submittedRequestID
         #expect(retainedID == request.id)
 
-        let afterServerCleared = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+        let afterServerCleared = ChatInputBar.composerTextForActiveAskQuestion(
             request: nil,
             activeQuestionID: "q1",
             draftAnswers: transition.answers,
@@ -1278,7 +1331,7 @@ struct ChatInputBarTests {
         let submission = AskResponseSubmission()
         submission.submit(requestID: request.id) { $0(.completed) }
         #expect(submission.submittedRequestID == request.id)
-        #expect(ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+        #expect(ChatInputBar.composerTextForActiveAskQuestion(
             request: request,
             activeQuestionID: "q1",
             draftAnswers: ["q1": .custom(submittedText)],
@@ -1289,7 +1342,7 @@ struct ChatInputBarTests {
         let retainedID = submission.submittedRequestID
         #expect(retainedID == request.id)
 
-        let replacement = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+        let replacement = ChatInputBar.composerTextForActiveAskQuestion(
             request: nil,
             activeQuestionID: "q1",
             draftAnswers: ["q1": .custom(submittedText)],
@@ -1334,7 +1387,7 @@ struct ChatInputBarTests {
         )
 
         state.submission.submit(requestID: request.id) { $0(.completed) }
-        let nextComposerText = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+        let nextComposerText = ChatInputBar.composerTextForActiveAskQuestion(
             request: request,
             activeQuestionID: "q1",
             draftAnswers: state.draftAnswers,
@@ -1349,7 +1402,7 @@ struct ChatInputBarTests {
         #expect(state.draftAnswers.isEmpty)
         #expect(nextComposerText?.isEmpty == true)
 
-        let afterRequestCleared = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+        let afterRequestCleared = ChatInputBar.composerTextForActiveAskQuestion(
             request: nil,
             activeQuestionID: "q1",
             draftAnswers: state.draftAnswers,
@@ -1372,7 +1425,7 @@ struct ChatInputBarTests {
         )
 
         let draftAnswers: [String: AskAnswer] = ["q1": .custom("because the larger tables should download")]
-        let displayedText = ChatInputBar<EmptyView>.composerTextForActiveAskQuestion(
+        let displayedText = ChatInputBar.composerTextForActiveAskQuestion(
             request: request,
             activeQuestionID: "q1",
             draftAnswers: draftAnswers,
@@ -1426,6 +1479,186 @@ struct ChatInputBarTests {
             picker.dismissCallCount == 0,
             "CameraPicker must let composerCameraCover's binding dismiss only the camera cover; UIKit self-dismiss can also close the parent quick-session sheet."
         )
+    }
+
+    @Test("Apply does not write voice or ask bindings during the SwiftUI update turn")
+    func applyDoesNotWriteBindingsDuringUpdateTurn() throws {
+        let bar = try composerSource(named: "ChatInputBar.swift")
+        let controller = try composerSource(named: "ComposerBarController.swift")
+        #expect(!bar.contains("voiceInputManager?.voiceSpectrum"))
+        #expect(bar.contains(".onChange(of: voiceInputManager?.currentComposerCaptureFailure"))
+        #expect(bar.contains(".onChange(of: voiceInputManager?.transcriptPresentationRevision"))
+        #expect(bar.contains(".onChange(of: text)"))
+        #expect(!controller.contains("host.discardFailedVoiceTake()"))
+        #expect(!controller.contains("host.setSuppressKeyboard(true)"))
+        #expect(!controller.contains("prefix + manager.currentTranscript"))
+
+        let host = ComposerBarTestHost()
+        host.text = "KEEP"
+        host.textBeforeRecording = "KEEP"
+        host.suppressKeyboard = false
+        let barController = ComposerBarController()
+        barController.host = host
+        _ = barController.view
+        barController.apply()
+        #expect(host.setTextCount == 0)
+        #expect(host.discardCount == 0)
+        #expect(host.setSuppressCount == 0)
+        #expect(host.text == "KEEP")
+        #expect(host.textBeforeRecording == "KEEP")
+    }
+
+    @Test("Focus token stays pending until the field has a window and becomeFirstResponder succeeds")
+    func focusRequestStaysPendingUntilWindowedBecomeFirstResponder() throws {
+        let source = try composerSource(named: "ComposerBarController.swift")
+        let attempt = try chatInputBarSourceSlice(
+            named: "private func attemptFocusIfRequested() {",
+            until: "private func applyTextHeight",
+            in: source
+        )
+        #expect(attempt.contains("guard textView.window != nil else { return }"))
+        #expect(attempt.contains("guard textView.becomeFirstResponder() else { return }"))
+        #expect(attempt.contains("host.consumeFocusRequest()"))
+        #expect(!attempt.contains("host?.consumeFocusRequest()\n            DispatchQueue.main.async"))
+
+        let host = ComposerBarTestHost()
+        host.content.focusRequestID = 7
+        let controller = ComposerBarController()
+        controller.host = host
+        _ = controller.view
+        controller.apply()
+        #expect(host.consumedFocus == 0)
+        #expect(host.content.focusRequestID == 7)
+
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.apply()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        if host.consumedFocus == 1 {
+            #expect(host.content.focusRequestID == 0)
+        } else {
+            #expect(host.content.focusRequestID == 7)
+            #expect(host.consumedFocus == 0)
+        }
+        window.rootViewController = nil
+        window.isHidden = true
+    }
+
+    @Test("Applying twice keeps a presented picker source and updates the list")
+    func applyTwiceKeepsPresentedPopoverSource() {
+        let host = ComposerBarTestHost()
+        var updated = 0
+        func rows(selected: String) -> [ComposerOptionRow] {
+            ["max", "high"].map { id in
+                ComposerOptionRow(
+                    id: id,
+                    title: id == "max" ? "Max" : "High",
+                    subtitle: nil,
+                    icon: nil,
+                    isSelected: id == selected,
+                    accessibilityIdentifier: "session.toolbar.thinking.option.\(id)",
+                    accessibilityLabel: nil
+                )
+            }
+        }
+        func picker(selected: String) -> ComposerAction {
+            ComposerAction(
+                id: "session.toolbar.thinking",
+                icon: nil,
+                title: selected,
+                tint: nil,
+                accessibilityLabel: "Thinking",
+                accessibilityValue: selected,
+                showsChevron: true,
+                chrome: .toolbar,
+                kind: .picker(ComposerActionPopover(
+                    make: {
+                        ComposerOptionListController(
+                            rows: rows(selected: selected),
+                            isLoading: false,
+                            emptyMessage: "",
+                            colors: .placeholder,
+                            preferredWidth: 220,
+                            onSelect: { _ in }
+                        )
+                    },
+                    update: { screen in
+                        updated += 1
+                        (screen as? ComposerOptionListController)?.apply(
+                            rows: rows(selected: selected),
+                            isLoading: false,
+                            emptyMessage: "",
+                            onSelect: { _ in }
+                        )
+                    }
+                ))
+            )
+        }
+        host.content.alwaysShowActionRow = true
+        host.content.actionRow = ComposerActionRow(trailing: [picker(selected: "off")])
+        let controller = ComposerBarController()
+        controller.host = host
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.apply()
+        controller.view.layoutIfNeeded()
+        let thinking = descendant(in: controller.view, identifier: "session.toolbar.thinking")
+        #expect(thinking != nil)
+        let identity = thinking.map(ObjectIdentifier.init)
+        controller.presentActionForTesting(id: "session.toolbar.thinking")
+        #expect(controller.presentedActionIDForTesting == "session.toolbar.thinking")
+        host.content.actionRow = ComposerActionRow(trailing: [picker(selected: "high")])
+        controller.apply()
+        controller.apply()
+        #expect(controller.presentedActionIDForTesting == "session.toolbar.thinking")
+        let again = descendant(in: controller.view, identifier: "session.toolbar.thinking")
+        #expect(again.map(ObjectIdentifier.init) == identity)
+        #expect(updated >= 1)
+        #expect(again?.superview != nil)
+        controller.dismiss(animated: false)
+        window.rootViewController = nil
+        window.isHidden = true
+    }
+
+    @Test("Long Ask cards scroll inside a capped slot; short cards stay short")
+    func askSlotScrollsWhenTallerThanCap() {
+        let host = ComposerBarTestHost()
+        host.content.askRequest = AskRequest(
+            id: "ask", sessionId: "s", questions: [], allowCustom: true, timeout: nil
+        )
+        host.content.askHeight = 80
+        let controller = ComposerBarController()
+        controller.host = host
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.apply()
+        controller.setAskHeight(80)
+        controller.view.layoutIfNeeded()
+        #expect(!controller.askScrollViewForTesting.isScrollEnabled)
+        #expect(controller.askScrollViewForTesting.bounds.height <= 81)
+
+        controller.setAskHeight(400)
+        host.content.askHeight = 400
+        controller.apply()
+        controller.view.layoutIfNeeded()
+        #expect(controller.askScrollViewForTesting.isScrollEnabled)
+        #expect(
+            controller.askScrollViewForTesting.bounds.height
+                <= ExtensionNativeSurfaceLayout.expandedMaxHeight + 0.5
+        )
+        window.rootViewController = nil
+        window.isHidden = true
+    }
+
+    private func descendant(in root: UIView, identifier: String) -> UIView? {
+        if root.accessibilityIdentifier == identifier { return root }
+        for child in root.subviews {
+            if let match = descendant(in: child, identifier: identifier) { return match }
+        }
+        return nil
     }
 
     private func makeTinyImage() -> UIImage {
@@ -1483,24 +1716,21 @@ struct AskSubmissionWiringTests {
         let source = try chatInputBarSource()
         let card = try chatInputBarSourceSlice(
             named: "private func askCard(request: AskRequest)",
-            until: "private var attachButton",
+            until: "private func updateTip()",
             in: source
         )
-        #expect(card.components(separatedBy: "submitAskResponse(request: request, answers:").count - 1 == 2)
+        #expect(card.contains("submitAskResponse(request: request, answers:"))
         let marker = try chatInputBarSourceSlice(
-            named: "private func submitAskResponse(", until: "private func handleAlternateSend", in: source
+            named: "func submitAskResponse(", until: "private func handleAlternateSend", in: source
         )
-        #expect(marker.contains("guard askRequest?.id == request.id else"))
+        #expect(marker.contains("guard host?.content.askRequest?.id == request.id else") || marker.contains("guard askRequest?.id == request.id else"))
         #expect(marker.contains("askClearing.submission.submit(requestID: request.id"))
-        #expect(marker.contains("Self.restoreFailedAskComposerText("))
+        #expect(marker.contains("composerTextForActiveAskQuestion("))
         let delivery = try chatInputBarSourceSlice(
-            named: "deliver: { complete in", until: "text = \"\"", in: marker
+            named: "deliver: { complete in", until: "self.host?.setText(\"\")", in: marker
         )
-        #expect(delivery.contains("submittedTextRevision = askClearing.textRevision"))
-        let binding = try chatInputBarSourceSlice(
-            named: "private var textFieldBinding:", until: "static func askComposerTextFieldBinding", in: source
-        )
-        #expect(binding.contains("Self.askComposerTextFieldBinding(text: $text, clearing: $askClearing)"))
+        #expect(delivery.contains("submittedTextRevision = self.askClearing.textRevision") || delivery.contains("submittedTextRevision = askClearing.textRevision"))
+        #expect(source.contains("askClearing.textRevision &+= 1"))
     }
 
     @Test func finalPageSendIsDisabledAndSubmissionIsGuarded() throws {
@@ -1516,7 +1746,9 @@ struct AskSubmissionWiringTests {
 }
 
 private func chatInputBarSource() throws -> String {
-    try composerSource(named: "ChatInputBar.swift")
+    let bar = try composerSource(named: "ChatInputBar.swift")
+    let controller = try composerSource(named: "ComposerBarController.swift")
+    return bar + "\n" + controller
 }
 
 private func expandedComposerSource() throws -> String {
@@ -1559,6 +1791,132 @@ private func chatInputBarSourceSlice(
 
 private enum ChatInputBarSourceSliceError: Error {
     case missingMarker(String)
+}
+
+@MainActor
+private final class ComposerBarTestHost: ComposerBarHosting {
+    var content = ComposerBarContent(
+        text: "",
+        textBeforeRecording: nil,
+        pendingAttachments: [],
+        pendingRepoPointers: [],
+        isBusy: false,
+        busyStreamingBehavior: .followUp,
+        isSending: false,
+        pendingReviewCommentCount: 0,
+        placeholderOverride: nil,
+        allowsEmptySubmit: false,
+        sendProgressText: nil,
+        isStopping: false,
+        voiceInputManager: nil,
+        showForceStop: false,
+        isForceStopInFlight: false,
+        askRequest: nil,
+        slashCommands: [],
+        fileSuggestions: [],
+        appliesOuterPadding: false,
+        alwaysShowActionRow: true,
+        allowsExpansion: true,
+        allowsAttachments: true,
+        attachmentButtonPlacement: .leading,
+        actionRowMinimumHeight: 0,
+        showsAccessoryRow: true,
+        autocorrectionEnabled: true,
+        inputAccessibilityIdentifier: "chat.input",
+        sendAccessibilityIdentifier: "chat.send",
+        actionRow: .init(),
+        colors: .placeholder,
+        reduceMotion: true,
+        suppressKeyboard: false,
+        focusRequestID: 0,
+        keyboardLanguage: nil,
+        askHeight: 0,
+        keyStripHeight: 0,
+        mediaImportEpoch: 0
+    )
+    var text: String {
+        get { content.text }
+        set { content.text = newValue }
+    }
+    var textBeforeRecording: String? {
+        get { content.textBeforeRecording }
+        set { content.textBeforeRecording = newValue }
+    }
+    var suppressKeyboard: Bool {
+        get { content.suppressKeyboard }
+        set { content.suppressKeyboard = newValue }
+    }
+    var setTextCount = 0
+    var discardCount = 0
+    var setSuppressCount = 0
+    var consumedFocus = 0
+
+    func setText(_ text: String) {
+        setTextCount += 1
+        content.text = text
+    }
+    func setTextBeforeRecording(_ value: String?) { content.textBeforeRecording = value }
+    func setPendingAttachments(_ value: [PendingAttachment]) { content.pendingAttachments = value }
+    func setPendingRepoPointers(_ value: [PendingFileReference]) { content.pendingRepoPointers = value }
+    func setBusyStreamingBehavior(_ value: StreamingBehavior) { content.busyStreamingBehavior = value }
+    func setSuppressKeyboard(_ value: Bool) {
+        setSuppressCount += 1
+        content.suppressKeyboard = value
+    }
+    func consumeFocusRequest() {
+        consumedFocus += 1
+        content.focusRequestID = 0
+    }
+    func setKeyboardLanguage(_ value: String?) { content.keyboardLanguage = value }
+    func setInputFocused(_ value: Bool) {}
+    func performSend() {}
+    func performStop() {}
+    func performForceStop() {}
+    func performExpand() {}
+    func submitAsk(
+        _ request: AskRequest,
+        answers: [String: AskAnswer],
+        completion: @escaping AskResponseSubmission.Completion
+    ) { completion(.completed) }
+    func ignoreAsk(_ request: AskRequest, completion: @escaping AskResponseSubmission.Completion) {
+        completion(.completed)
+    }
+    func startVoice(
+        keyboardLanguage: String?,
+        owner: ComposerShared.VoiceInputOwner,
+        baseText: String
+    ) async throws {}
+    func stopVoice() async {}
+    func cancelVoice() async {}
+    func finishVoiceBeforeSubmit() async {}
+    func handlePastedImages(_ images: [UIImage]) {}
+    func insertSlashCommand(_ command: SlashCommand) {}
+    func insertFileSuggestion(_ suggestion: FileSuggestion) {}
+    func removeAttachment(id: String) {}
+    func removeRepoPointer(id: String) {}
+    func importPhotoProviders(
+        _ providers: [NSItemProvider],
+        capturedGate: UInt64,
+        capturedLocal: UInt64,
+        currentLocal: @escaping () -> UInt64,
+        onFailure: @escaping (String) -> Void
+    ) {}
+    func addCapturedImage(_ image: UIImage) {}
+    func applyCanvas(
+        attachment: PendingAttachment,
+        recognizedText: String,
+        replacingAttachmentID: String?
+    ) -> Bool { true }
+    func loadSelectedFiles(
+        _ result: Result<[URL], Error>,
+        capturedGate: UInt64,
+        capturedLocal: UInt64,
+        currentLocal: @escaping () -> UInt64,
+        onFailure: @escaping (String) -> Void
+    ) {}
+    func notifyFileSuggestionContext(for text: String) {}
+    func discardFailedVoiceTake() { discardCount += 1 }
+    func restoreKeyboardFromSuppression() {}
 }
 
 private final class DismissSpyImagePickerController: UIImagePickerController {

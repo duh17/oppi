@@ -248,10 +248,7 @@ private struct FeatureEducationBusyComposerPreview: View {
             onExpand: {},
             externalFocusRequestID: 0,
             appliesOuterPadding: false,
-            alwaysShowActionRow: true,
-            actionRow: {
-                EmptyView()
-            }
+            alwaysShowActionRow: true
         )
     }
 }

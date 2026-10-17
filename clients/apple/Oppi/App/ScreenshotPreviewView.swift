@@ -91,6 +91,8 @@ struct ScreenshotPreviewView: View {
             ChatRoutesHarnessView()
         case "ask-card-intent-regression":
             AskCardIntentRegressionPreview()
+        case "ask-card-tall-scroll":
+            AskCardTallScrollPreview()
         case "model-providers-quota-inline":
             ModelProvidersQuotaPreview()
         case "workspace-sidebar-git-status":

@@ -64,7 +64,7 @@ struct SSHTerminalComposer: View {
                 attachmentButtonPlacement: .leading,
                 actionRowMinimumHeight: ComposerInputMetrics.controlDiameter,
                 autocorrectionEnabled: false,
-                actionRow: { keyStrip }
+                keyStripSlot: AnyView(keyStrip)
             )
             .disabled(!channel.connected)
         }
