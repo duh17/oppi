@@ -1,5 +1,5 @@
 import type { ServerResponse } from "node:http";
-import type { Dirent } from "node:fs";
+import type { Dirent, Stats } from "node:fs";
 import { lstat, opendir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { resolveWorkspaceFileRoot } from "../current-file.js";
@@ -178,9 +178,16 @@ async function walkDirectoryForSearch(root: string): Promise<SearchWalkResult> {
   return { paths, truncated };
 }
 
-/** The walk's name rules, applied to a workspace-relative path. */
+/**
+ * The walk's name rules, applied to a path from the Git index. The index is
+ * repository data, not a listing: a crafted one can hold `../x` or `/x`, which
+ * `git ls-files` prints as is. Only plain relative segments pass.
+ */
 function isIndexablePath(path: string): boolean {
   const segments = path.split("/");
+  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+    return false;
+  }
   if (SEARCH_ROOT_IGNORE_DIRS.has(segments[0] ?? "")) return false;
   for (let i = 0; i < segments.length - 1; i++) {
     if (SEARCH_IGNORE_DIRS.has(segments[i] ?? "")) return false;
@@ -207,17 +214,35 @@ async function listGitVisibleFiles(root: string): Promise<SearchWalkResult | nul
 
   // A conflicted path is listed once per stage.
   const candidates = [...new Set(String(stdout).split("\0"))]
-    .filter((path) => path.length > 0 && isIndexablePath(path))
+    .filter(isIndexablePath)
     .sort(compareSearchNames);
 
-  // Regular files only, like the walk. This also drops symlinks, submodule
-  // checkouts, and tracked files deleted from the working tree.
+  // What the walk would reach: a regular file under real directories, with
+  // no symlink anywhere on the way. This also drops submodule checkouts and
+  // tracked files deleted from the working tree. Each directory is checked once.
+  const lstatOrNull = (path: string): Promise<Stats | null> =>
+    lstat(join(root, path)).catch(() => null);
+  const parentOf = (path: string): string => path.slice(0, Math.max(0, path.lastIndexOf("/")));
+  const directories = new Map<string, Promise<boolean>>([["", Promise.resolve(true)]]);
+  const isRealDirectory = (dir: string): Promise<boolean> => {
+    let known = directories.get(dir);
+    if (!known) {
+      known = (async () =>
+        (await isRealDirectory(parentOf(dir))) &&
+        (await lstatOrNull(dir))?.isDirectory() === true)();
+      directories.set(dir, known);
+    }
+    return known;
+  };
+  const isReachableFile = async (path: string): Promise<boolean> =>
+    (await isRealDirectory(parentOf(path))) && (await lstatOrNull(path))?.isFile() === true;
+
   const paths: string[] = [];
   for (let start = 0; start < candidates.length; start += LSTAT_BATCH) {
     const batch = candidates.slice(start, start + LSTAT_BATCH);
-    const stats = await Promise.all(batch.map((path) => lstat(join(root, path)).catch(() => null)));
-    for (const [offset, stat] of stats.entries()) {
-      if (!stat?.isFile()) continue;
+    const reachable = await Promise.all(batch.map(isReachableFile));
+    for (const [offset, ok] of reachable.entries()) {
+      if (!ok) continue;
       if (paths.length >= MAX_INDEX_PATHS) return { paths, truncated: true };
       paths.push(batch[offset] as string);
     }
@@ -245,7 +270,9 @@ export async function getFileIndex(
   workspaceRoot: string,
   trust: GitTrust,
 ): Promise<FileIndexResponse> {
-  const cached = fileIndexCache.get(workspaceRoot);
+  // Host and sandbox list a shared directory differently.
+  const cacheKey = `${trust.kind}\0${workspaceRoot}`;
+  const cached = fileIndexCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < FILE_INDEX_TTL_MS) {
     return { paths: cached.paths, truncated: cached.truncated };
   }
@@ -253,7 +280,7 @@ export async function getFileIndex(
   const result =
     (trust.kind === "host" ? await listGitVisibleFiles(workspaceRoot) : null) ??
     (await walkDirectoryForSearch(workspaceRoot));
-  fileIndexCache.set(workspaceRoot, { ...result, timestamp: Date.now() });
+  fileIndexCache.set(cacheKey, { ...result, timestamp: Date.now() });
   return result;
 }
 

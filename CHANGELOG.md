@@ -101,7 +101,7 @@ Example:
 - **Server:** `npm i -g oppi-server` installs the exact dependency tree Oppi was tested with, so a later Pi release cannot break a fresh install as it did for 0.51.0.
 - **Server:** Sandbox runtime Gondolin 0.13.0: long-running sandbox VMs no longer leak file descriptors, and sandboxes no longer need Node.js 23.6.
 - **Client:** Every search field matches the same way: the session timeline and tree, Files, `@` file and `/` command suggestions, models, sessions, Skills, Extensions, icons, and time zones. Words can come in any order, case and accents are ignored, and abbreviations such as `wf` for `web_fetch` or `fbv` for `FileBrowserView` work, without matching letters scattered across a paragraph.
-- **Server:** `@` file suggestions and Files search list only files Git sees (tracked, or new and not ignored), like terminal Pi's `@`, so they load much faster in large repositories and source files no longer drop off a list filled with ignored files. Sandbox workspaces and folders outside Git still list everything. See [Document viewers](docs/document-viewers.md).
+- **Server:** In a Git repository, `@` file suggestions and Files search list tracked files and new files no ignore rule matches, and leave out Git-ignored ones like terminal Pi's `@`. They load much faster in large repositories, and source files no longer drop off a list filled with ignored files. Sandbox workspaces and folders outside Git still include ignored files. See [Document viewers](docs/document-viewers.md).
 
 ### Fixed
 

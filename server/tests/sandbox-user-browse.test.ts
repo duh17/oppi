@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -192,6 +193,17 @@ describe("sandbox user browse of host-mount artifacts", () => {
       expect(index.res.statusCode).toBe(200);
       const body = JSON.parse(index.res.body) as { paths: string[] };
       expect(body.paths).toEqual(expect.arrayContaining(["notes.txt", "reports/foo.png"]));
+    });
+
+    it("walks a sandbox repository instead of asking host git, so ignored files stay listed", async () => {
+      const { hostMount, workspace } = seedSandboxMount();
+      execSync("git init -q", { cwd: hostMount, stdio: "ignore" });
+      writeFileSync(join(hostMount, ".gitignore"), "notes.txt\n");
+
+      const index = await dispatchWorkspace(workspace, "GET", `/workspaces/${workspace.id}/paths`);
+      expect(index.res.statusCode).toBe(200);
+      const body = JSON.parse(index.res.body) as { paths: string[] };
+      expect(body.paths).toContain("notes.txt");
     });
 
     it("serves an empty-folder sandbox from its persisted ~/sandbox/<slug> folder when worktree id is main", async () => {

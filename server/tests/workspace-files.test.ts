@@ -1,8 +1,9 @@
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 
 import { parseByteRangeHeader } from "../src/http-range.js";
 import { createRouteHelpers } from "../src/routes/http.js";
@@ -708,6 +709,30 @@ describe("workspace file symlink security", () => {
 
 // MARK: - getFileIndex (git-backed)
 
+/**
+ * Replace `repo`'s index with a v2 index naming `names` as empty blobs.
+ * `git update-index` refuses `..` and absolute names, but a copied tree's
+ * index can hold them and `git ls-files` prints them as is.
+ */
+function writeRawGitIndex(repo: string, names: string[]): void {
+  const emptyBlob = Buffer.from("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391", "hex");
+  const header = Buffer.alloc(12);
+  header.write("DIRC", 0);
+  header.writeUInt32BE(2, 4);
+  header.writeUInt32BE(names.length, 8);
+  const entries = [...names].sort().flatMap((name) => {
+    const fixed = Buffer.alloc(62);
+    fixed.writeUInt32BE(0o100644, 24);
+    emptyBlob.copy(fixed, 40);
+    const nameBytes = Buffer.from(name);
+    fixed.writeUInt16BE(nameBytes.length, 60);
+    return [fixed, nameBytes, Buffer.alloc(8 - ((62 + nameBytes.length) % 8))];
+  });
+  const body = Buffer.concat([header, ...entries]);
+  const checksum = createHash("sha1").update(body).digest();
+  writeFileSync(join(repo, ".git", "index"), Buffer.concat([body, checksum]));
+}
+
 describe("getFileIndex with git repo", () => {
   let tmpRoot: string;
 
@@ -751,6 +776,25 @@ describe("getFileIndex with git repo", () => {
     expect(result.paths).not.toContain("readme-link.md");
     expect(result.paths).not.toContain("src/app.ts");
     expect(result.paths).toContain("README.md");
+  });
+
+  test("lists only files reached through real directories inside the root", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "oppi-ws-git-outside-"));
+    try {
+      writeFileSync(join(outside, "secret.txt"), "secret");
+      symlinkSync(outside, join(tmpRoot, "linked"));
+      writeRawGitIndex(tmpRoot, [
+        "README.md",
+        `../${basename(outside)}/secret.txt`,
+        "linked/secret.txt",
+      ]);
+
+      const result = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
+      expect(result.paths).toContain("README.md");
+      expect(result.paths.filter((path) => path.endsWith("secret.txt"))).toEqual([]);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   test("lists paths relative to a root below the repository top", async () => {
