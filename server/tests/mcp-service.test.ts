@@ -541,6 +541,19 @@ describe("MCP callback boundary", () => {
         .pathname,
     ).toBe("/callback");
   });
+  it("accepts the callback as iOS Safari copies it, without a scheme", () => {
+    const pasted = validateMcpCallback(
+      authorization,
+      " 127.0.0.1:8765/callback?code=abc&state=this-flow ",
+    );
+    expect(pasted.href).toBe("http://127.0.0.1:8765/callback?code=abc&state=this-flow");
+    expect(() =>
+      validateMcpCallback(authorization, "127.0.0.1:8765/callback?code=abc&state=other"),
+    ).toThrow();
+    expect(() =>
+      validateMcpCallback(authorization, "evil.example:8765/callback?code=abc&state=this-flow"),
+    ).toThrow();
+  });
   it.each([
     "http://localhost:8765/callback",
     "http://127.0.0.1:8766/callback",

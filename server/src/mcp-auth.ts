@@ -31,7 +31,10 @@ function loopback(value: string): URL {
 export function validateMcpCallback(authorizationUrl: string, input: string): URL {
   const auth = new URL(authorizationUrl);
   const expected = loopback(auth.searchParams.get("redirect_uri") ?? "");
-  const pasted = loopback(input.trim());
+  // Safari on iOS copies a failed loopback page's address without `http://`. Only the
+  // scheme is added; host, port, path, and state must still match this flow below.
+  const trimmed = input.trim();
+  const pasted = loopback(trimmed.includes("://") ? trimmed : `http://${trimmed}`);
   if (
     expected.search ||
     expected.hostname !== pasted.hostname ||
