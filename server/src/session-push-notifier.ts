@@ -2,12 +2,10 @@ import { safeErrorMessage } from "./log-utils.js";
 import { createLogger } from "./logger.js";
 import type { PushNotification, PushSender } from "./push/push-sender.js";
 import type { ProgramStatusSync } from "./program-status.js";
-import type { SessionBroadcastEvent } from "./session-broadcast.js";
 import type { Storage } from "./storage.js";
 import type { ProgramStatusKind, Session, SessionPushEvent } from "./types.js";
 
 const log = createLogger({ base: { component: "session_push_notifier" } });
-const GENERIC_SESSION_ERROR_REASON = "Open Oppi to review the session error.";
 
 /** Shortest gap between two pushes of the same kind for one session. */
 const PROGRAM_STATUS_PUSH_MIN_INTERVAL_MS = 60_000;
@@ -16,6 +14,13 @@ const BLOCKED_PRESENTATION = {
   permission: { title: "Needs Approval", body: "Waiting for your approval." },
   question: { title: "Question", body: "Waiting for your answer." },
   auth: { title: "Sign-in Needed", body: "Waiting for you to sign in." },
+} as const;
+
+/** Body of the Stopped alert by how the run ended. Fixed text; never the error itself. */
+const STOPPED_BODY = {
+  done: "Finished.",
+  error: "Stopped with an error.",
+  idle: "Stopped before finishing.",
 } as const;
 
 type PushEventContent = {
@@ -36,14 +41,16 @@ export interface SessionPushNotifierOptions {
 /**
  * Sends end-to-end-encrypted session alerts through the push relay (protocol/push/spec.md).
  *
- * `error` fires on its lifecycle event. `blocked` and `done` fire on program status
- * transitions, at most once a minute per session and kind, and skip each device that is
- * present (holds a live stream, so the app already shows the change or posts its own
- * banner). An open Mac or iPad never silences the phone. `done` is for top-level sessions
- * only, and not while one of their children still works: a lead's turns between child
- * results are not the finished run. Delegated sessions report to their parent, but their
- * `blocked` still pushes. A session ending pushes nothing: it ends after `done`, on an idle
- * timeout, or because someone stopped it, and none of those needs the user.
+ * Two alerts, both program status transitions (OSC 7501 states):
+ * - **Needs you** (`blocked`): any session starts waiting on an approval, question, or sign-in.
+ * - **Stopped** (`done` push): a top-level session stops working, whether it finished
+ *   (`done`), failed after any automatic retries (`error`), or was cancelled (`idle`), and none
+ *   of its children still works. Delegated sessions report to their parent, and a lead's
+ *   turns between child results are not the end of its work. A failed model call that a retry
+ *   recovers never leaves `working`, so it pushes nothing.
+ * Both skip each device that is present (holds a live stream, so the app already shows the
+ * change or posts its own banner) and push at most once a minute per session and alert. An
+ * open Mac or iPad never silences the phone. A session ending pushes nothing.
  * Each device gets its own sealed envelope; a device without a push key gets nothing.
  */
 export class SessionPushNotifier {
@@ -58,32 +65,19 @@ export class SessionPushNotifier {
     this.now = options.now ?? Date.now;
   }
 
-  handleSessionEvent(payload: SessionBroadcastEvent): void {
-    const content = this.contentForEvent(payload);
-    if (!content) {
-      return;
-    }
-    this.deliver(payload.sessionId, content, { skipPresent: false });
-  }
-
-  /** Push on entering `blocked` or `done`. Same-state updates (message, kind) never push. */
+  /** Same-state updates (message, kind) and a first-seen status never push. */
   handleProgramStatusChange(session: Session, change: ProgramStatusSync): void {
     const { previous, current } = change;
     if (!previous || previous.state === current.state) return;
-    if (current.state !== "blocked" && current.state !== "done") return;
-    if (
-      current.state === "done" &&
-      (session.launch?.parentSessionId || this.options.hasWorkingChild(session.id))
-    ) {
-      return;
-    }
+    const content = this.alertFor(session, previous.state, current);
+    if (!content) return;
 
-    const throttleKey = `${session.id}:${current.state}`;
+    const throttleKey = `${session.id}:${content.event}`;
     const now = this.now();
     const last = this.lastProgramPushAt.get(throttleKey);
     if (last !== undefined && now - last < PROGRAM_STATUS_PUSH_MIN_INTERVAL_MS) return;
 
-    if (this.deliver(session.id, this.programStatusContent(current), { skipPresent: true })) {
+    if (this.deliver(session.id, content)) {
       // Entries older than the interval no longer throttle anything; keep the map bounded.
       for (const [key, at] of this.lastProgramPushAt) {
         if (now - at >= PROGRAM_STATUS_PUSH_MIN_INTERVAL_MS) this.lastProgramPushAt.delete(key);
@@ -92,23 +86,32 @@ export class SessionPushNotifier {
     }
   }
 
-  private programStatusContent(current: ProgramStatusSync["current"]): PushEventContent {
+  private alertFor(
+    session: Session,
+    previousState: ProgramStatusSync["current"]["state"],
+    current: ProgramStatusSync["current"],
+  ): PushEventContent | null {
     if (current.state === "blocked") {
       const kind = current.kind ?? "question";
       return { event: "blocked", kind, ...BLOCKED_PRESENTATION[kind] };
     }
-    return { event: "done", title: "Session Done", body: "The run finished." };
+    const body = STOPPED_BODY[current.state as keyof typeof STOPPED_BODY];
+    if (
+      !body ||
+      (previousState !== "working" && previousState !== "blocked") ||
+      session.launch?.parentSessionId ||
+      this.options.hasWorkingChild(session.id)
+    ) {
+      return null;
+    }
+    return { event: "done", title: "Session Done", body };
   }
 
   /** Returns whether a push was attempted (some registered device was not skipped). */
-  private deliver(
-    sessionId: string,
-    content: PushEventContent,
-    options: { skipPresent: boolean },
-  ): boolean {
+  private deliver(sessionId: string, content: PushEventContent): boolean {
     const registrations = this.push
       .registrations()
-      .filter((entry) => !options.skipPresent || !this.options.isDevicePresent(entry.deviceId));
+      .filter((entry) => !this.options.isDevicePresent(entry.deviceId));
     if (registrations.length === 0) {
       return false;
     }
@@ -131,14 +134,5 @@ export class SessionPushNotifier {
       });
     }
     return true;
-  }
-
-  private contentForEvent(payload: SessionBroadcastEvent): PushEventContent | null {
-    const { event } = payload;
-
-    if (event.type !== "error" || event.error.startsWith("Retrying (")) {
-      return null;
-    }
-    return { event: "error", title: "Session Error", body: GENERIC_SESSION_ERROR_REASON };
   }
 }

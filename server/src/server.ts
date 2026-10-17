@@ -708,7 +708,6 @@ export class Server {
     });
 
     const handleSessionEvent = (payload: SessionBroadcastEvent): void => {
-      this.sessionPushNotifier.handleSessionEvent(payload);
       this.appEventStreamMux.handleSessionBroadcastEvent(payload);
     };
     this.sessions.on("session_event", handleSessionEvent);

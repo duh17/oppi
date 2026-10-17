@@ -1,7 +1,7 @@
 // ─── Push ───
 
 /** Session events that push (protocol/push/spec.md §5). Pairing events: `PushSubject`. */
-export type SessionPushEvent = "blocked" | "done" | "error";
+export type SessionPushEvent = "blocked" | "done";
 
 /** `off`: no pushes (default). `relay`: end-to-end-encrypted pushes through a push relay. */
 export type PushMode = "off" | "relay";

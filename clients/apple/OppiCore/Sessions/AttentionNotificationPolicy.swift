@@ -2,21 +2,18 @@ import Foundation
 
 /// UIKit-free attention-notification policy shared by iOS and Mac painters.
 ///
-/// Local banners exist for agent asks, and for `done` while the app runs in the
-/// background on a server that pushes: that server skips its push to a device
-/// holding a live stream. `SESSION_DONE` / `SESSION_ERROR` / `SESSION_BLOCKED`
-/// are also the tap-routing categories for remote session-event payloads
-/// (done, error, blocked).
+/// Local banners exist for agent asks, and for the Stopped alert while the app runs in the
+/// background on a server that pushes: that server skips its push to a device holding a
+/// live stream. `SESSION_DONE` / `SESSION_BLOCKED` are also the tap-routing categories for
+/// remote session-event payloads (done, blocked).
 enum AttentionNotificationPolicy: Sendable {
     static let askCategoryId = SessionNotificationCategory.ask
     static let sessionDoneCategoryId = SessionNotificationCategory.sessionDone
-    static let sessionErrorCategoryId = SessionNotificationCategory.sessionError
     static let sessionBlockedCategoryId = SessionNotificationCategory.sessionBlocked
 
     static let sessionCategoryIds = [
         askCategoryId,
         sessionDoneCategoryId,
-        sessionErrorCategoryId,
         sessionBlockedCategoryId,
     ]
 
@@ -52,28 +49,34 @@ enum AttentionNotificationPolicy: Sendable {
         "done-\(sessionId)"
     }
 
-    /// A store update that moves a top-level session into `done`, matching the server's
-    /// `done` push rule: delegated sessions report to their parent, a lead is not done while
-    /// one of its children (in `sessions`) still starts or works, and a first-seen status is
-    /// not a transition.
-    static func enteredDone(previous: Session?, current: Session, sessions: [Session]) -> Bool {
+    /// The Stopped alert's body when a store update means a top-level run stopped, else nil.
+    /// Matches the server's push rule: from `working` or `blocked` into `done`, `error`, or
+    /// `idle`; delegated sessions report to their parent; a lead with a child (in `sessions`)
+    /// still starting or working has not stopped; a first-seen status is not a transition.
+    static func stoppedBody(previous: Session?, current: Session, sessions: [Session]) -> String? {
         guard current.parentSessionId == nil,
+              let previousState = previous?.programStatus?.state,
+              previousState == .working || previousState == .blocked,
               !sessions.contains(where: {
                   $0.parentSessionId == current.id && ($0.status == .starting || $0.status == .busy)
-              }),
-              current.programStatus?.state == .done,
-              let previousState = previous?.programStatus?.state else {
-            return false
+              }) else {
+            return nil
         }
-        return previousState != .done
+        switch current.programStatus?.state {
+        case .done: return String(localized: "Finished.")
+        case .error: return String(localized: "Stopped with an error.")
+        case .idle: return String(localized: "Stopped before finishing.")
+        default: return nil
+        }
     }
 
-    /// Local stand-in for the server's `done` push: same title, body, category, and
-    /// tap-routing key (`sessionId`). The push names the session; this banner hides the name
-    /// while App Lock or a scoped lock covers it, like ask banners.
+    /// Local stand-in for the server's Stopped push: same title, body, category, and
+    /// tap-routing key (`sessionId`). The push names the session; this banner hides the name,
+    /// and shows the push's fixed redacted body, while App Lock or a scoped lock covers it.
     static func sessionDonePayload(
         sessionId: String,
         sessionName: String?,
+        body: String,
         revealsSessionName: Bool
     ) -> AttentionNotificationPayload {
         let name = sessionName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -82,7 +85,7 @@ enum AttentionNotificationPolicy: Sendable {
             identifier: sessionDoneRequestIdentifier(sessionId: sessionId),
             title: text.title,
             subtitle: revealsSessionName ? name : "",
-            body: text.body,
+            body: revealsSessionName ? body : text.body,
             categoryIdentifier: sessionDoneCategoryId,
             userInfo: [
                 "event": "done",

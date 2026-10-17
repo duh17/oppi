@@ -76,12 +76,6 @@ struct AttentionNotificationServiceTests {
         )
         #expect(
             AttentionNotificationService.navigationSessionId(
-                categoryIdentifier: AttentionNotificationService.sessionErrorCategoryId,
-                userInfo: ["sessionId": "error-session"]
-            ) == "error-session"
-        )
-        #expect(
-            AttentionNotificationService.navigationSessionId(
                 categoryIdentifier: AttentionNotificationService.sessionBlockedCategoryId,
                 userInfo: ["sessionId": "blocked-session", "event": "blocked", "kind": "permission"]
             ) == "blocked-session"

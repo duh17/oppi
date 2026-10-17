@@ -106,7 +106,7 @@ bytes `[0, 577)`. The signature covers the version, `kid`, `enc`, and `ct`.
 | --- | --- |
 | `v` | `1` |
 | `ts` | Server time in Unix milliseconds when sealed. |
-| `event` | `blocked`, `done`, `error`, `pairing_approval`, or `device_enrolled` |
+| `event` | `blocked`, `done`, `pairing_approval`, or `device_enrolled` |
 | `kind` | `blocked` only: `permission`, `question`, or `auth` |
 | `sessionId` | Session the push is about; omitted for `pairing_approval` and `device_enrolled` |
 | `workspaceId` | Present when the session has a workspace |
@@ -188,8 +188,7 @@ plaintext.
 | `blocked`/`permission` | Needs Approval | Waiting for your approval. |
 | `blocked`/`question` | Question | Waiting for your answer. |
 | `blocked`/`auth` | Sign-in Needed | Waiting for you to sign in. |
-| `done` | Session Done | The run finished. |
-| `error` | Session Error | Open Oppi to review the session error. |
+| `done` | Session Done | Stopped working. |
 | `pairing_approval` | Approve New Device? | A new device is waiting for your approval. |
 | `device_enrolled` | New Device Paired | A new device was paired with your server. |
 
@@ -375,13 +374,16 @@ any field from a push that failed a check. Without Apple's
   write and asks the relay to delete the permission.
 - Per-device budget, in memory: 100 pushes per UTC day and 10 per minute for each device,
   matching the relay's quota so the server stops before the relay refuses. Routine events
-  (`done`, `error`, `device_enrolled`) stop at 80 a day and 8 a minute; the rest
+  (`done`, `device_enrolled`) stop at 80 a day and 8 a minute; the rest
   is kept for `blocked` and `pairing_approval`, which wait on the user. A relay `429` with
   `Retry-After` pauses that device's pushes until it passes.
-- Events: `blocked` and `done` on program-status transitions, at most once a minute per
-  session and kind, skipping devices that hold a live stream; `done` only for top-level
-  sessions with no child session still starting or working; `error` on its lifecycle event.
-  A session ending pushes nothing. `pairing_approval` when a pairing waits
+- Session events are program-status transitions only, at most once a minute per session
+  and event, skipping devices that hold a live stream. `blocked` (Needs you): any session
+  enters `blocked`. `done` (Stopped): a top-level session goes from `working` or `blocked`
+  to `done`, `error`, or `idle` with no child session still starting or working; the body
+  says which (Finished., Stopped with an error., Stopped before finishing.). A failed model
+  call that an automatic retry recovers never leaves `working`, so it pushes nothing, and a
+  session ending pushes nothing. `pairing_approval` when a pairing waits
   for approval and `device_enrolled` after each enrollment (never to the new device). See
   [onboarding](../../docs/onboarding.md) for when pairing needs approval.
 - Sends go to the primary; network errors, timeouts, and `5xx` move to the standby. A `410`

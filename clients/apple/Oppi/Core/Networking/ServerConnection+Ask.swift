@@ -25,14 +25,14 @@ extension ServerConnection {
         }
     }
 
-    /// A session entered `done` while this app is not active. A pushing server skips any
+    /// A top-level run stopped while this app is not active. A pushing server skips any
     /// device holding a live stream, and agent keep-alive holds this app's streams open in
-    /// the background, so the banner comes from here instead. Servers without push keep
-    /// `done` in-app, as before.
+    /// the background, so the Stopped banner comes from here instead. Servers without push
+    /// keep it in-app, as before.
     func notifySessionDoneIfEntered(previous: Session?, current: Session) {
         guard ReleaseFeatures.localAttentionNotificationsEnabled,
               pushNotificationsAvailable,
-              AttentionNotificationPolicy.enteredDone(
+              let body = AttentionNotificationPolicy.stoppedBody(
                   previous: previous,
                   current: current,
                   sessions: sessionStore.sessions
@@ -40,6 +40,7 @@ extension ServerConnection {
         AttentionNotificationService.shared.notifySessionDoneIfNeeded(
             sessionId: current.id,
             sessionName: current.name,
+            body: body,
             hidesSessionName: sessionTextIsLocked(current)
         )
     }

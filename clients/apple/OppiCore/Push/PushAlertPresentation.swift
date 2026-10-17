@@ -87,7 +87,7 @@ struct PushAlertPresentation: Equatable, Sendable {
             targetContentIdentifier: plaintext.sessionId ?? plaintext.approvalId ?? plaintext.deviceId,
             userInfo: userInfo,
             interruption: interruption(for: plaintext.event),
-            playsSound: plaintext.event == .blocked || plaintext.event == .error || plaintext.event == .pairingApproval
+            playsSound: plaintext.event == .blocked || plaintext.event == .pairingApproval
         )
     }
 
@@ -100,8 +100,8 @@ struct PushAlertPresentation: Equatable, Sendable {
             case .question: (String(localized: "Question"), String(localized: "Waiting for your answer."))
             case .auth: (String(localized: "Sign-in Needed"), String(localized: "Waiting for you to sign in."))
             }
-        case .done: (String(localized: "Session Done"), String(localized: "The run finished."))
-        case .error: (String(localized: "Session Error"), String(localized: "Open Oppi to review the session error."))
+        // The Stopped alert: the unredacted body says how the run ended.
+        case .done: (String(localized: "Session Done"), String(localized: "Stopped working."))
         case .pairingApproval:
             (String(localized: "Approve New Device?"), String(localized: "A new device is waiting for your approval."))
         case .deviceEnrolled:
@@ -113,7 +113,6 @@ struct PushAlertPresentation: Equatable, Sendable {
         switch event {
         case .blocked: SessionNotificationCategory.sessionBlocked
         case .done: SessionNotificationCategory.sessionDone
-        case .error: SessionNotificationCategory.sessionError
         case .pairingApproval: SessionNotificationCategory.pairingApproval
         case .deviceEnrolled: SessionNotificationCategory.deviceEnrolled
         }
@@ -122,7 +121,7 @@ struct PushAlertPresentation: Equatable, Sendable {
     private static func interruption(for event: PushPlaintext.Event) -> Interruption {
         switch event {
         case .blocked, .pairingApproval: .timeSensitive
-        case .error, .deviceEnrolled: .active
+        case .deviceEnrolled: .active
         case .done: .passive
         }
     }
@@ -139,7 +138,7 @@ struct PushAlertPresentation: Equatable, Sendable {
             plaintext.deviceId.map { "device:\($0)" } ?? ""
         case .done:
             sessionDoneThreadIdentifier
-        case .blocked, .error:
+        case .blocked:
             plaintext.sessionId ?? ""
         }
     }

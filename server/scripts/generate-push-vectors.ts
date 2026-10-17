@@ -117,16 +117,7 @@ addValid(
     kind: undefined,
     workspaceId: undefined,
     title: "Session Done",
-    body: "The run finished.",
-  }),
-);
-addValid(
-  "error",
-  base({
-    event: "error",
-    kind: undefined,
-    title: "Session Error",
-    body: "Open Oppi to review the session error.",
+    body: "Finished.",
   }),
 );
 addValid(

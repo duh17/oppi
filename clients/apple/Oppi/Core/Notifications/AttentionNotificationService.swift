@@ -96,7 +96,6 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
     nonisolated static let sessionDoneCategoryId = AttentionNotificationPolicy.sessionDoneCategoryId
 
     /// Remote session-error alerts. Tapping opens the owning session.
-    nonisolated static let sessionErrorCategoryId = AttentionNotificationPolicy.sessionErrorCategoryId
 
     /// Remote alerts for a session waiting on approval, an answer, or a sign-in. Tapping opens the owning session.
     nonisolated static let sessionBlockedCategoryId = AttentionNotificationPolicy.sessionBlockedCategoryId
@@ -244,14 +243,17 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
         }
     }
 
-    /// Post the `done` banner the server skipped: a device holding a live stream gets no
+    /// Post the Stopped banner the server skipped: a device holding a live stream gets no
     /// push, and agent keep-alive holds the stream open while the app is in the background.
     /// Only while the app is not active, like the push it replaces.
-    /// - Parameter hidesSessionName: true when a scoped lock covers the session; read when
-    ///   the request is added.
+    /// - Parameters:
+    ///   - body: how the run ended (`AttentionNotificationPolicy.stoppedBody`).
+    ///   - hidesSessionName: true when a scoped lock covers the session; read when the
+    ///     request is added.
     func notifySessionDoneIfNeeded(
         sessionId: String,
         sessionName: String?,
+        body: String,
         hidesSessionName: @escaping @MainActor () -> Bool
     ) {
         let appState = _applicationStateForTesting ?? UIApplication.shared.applicationState
@@ -261,6 +263,7 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             let payload = AttentionNotificationPolicy.sessionDonePayload(
                 sessionId: sessionId,
                 sessionName: sessionName,
+                body: body,
                 revealsSessionName: !(_appLockEnabledForTesting ?? AppLockService.shared.isEnabled)
                     && !hidesSessionName()
             )

@@ -44,21 +44,25 @@ struct RemotePushTests {
         return session
     }
 
-    private func finished(_ session: Session) -> Session {
+    private func finished(_ session: Session, as state: ProgramStatusState = .done) -> Session {
         var done = session
         done.status = .ready
-        done.programStatus = ProgramStatus(state: .done, since: Date(timeIntervalSince1970: 2))
+        done.programStatus = ProgramStatus(state: state, since: Date(timeIntervalSince1970: 2))
         return done
     }
 
-    @Test func onlyATopLevelSessionEnteringDoneCounts() {
+    @Test func aTopLevelRunStoppingGetsOneBodyPerOutcome() {
         let session = working()
-        #expect(AttentionNotificationPolicy.enteredDone(previous: session, current: finished(session), sessions: []))
-        #expect(!AttentionNotificationPolicy.enteredDone(previous: finished(session), current: finished(session), sessions: []))
-        #expect(!AttentionNotificationPolicy.enteredDone(previous: nil, current: finished(session), sessions: []))
+        #expect(AttentionNotificationPolicy.stoppedBody(previous: session, current: finished(session), sessions: []) == "Finished.")
+        #expect(AttentionNotificationPolicy.stoppedBody(previous: session, current: finished(session, as: .error), sessions: []) == "Stopped with an error.")
+        #expect(AttentionNotificationPolicy.stoppedBody(previous: session, current: finished(session, as: .idle), sessions: []) == "Stopped before finishing.")
+        #expect(AttentionNotificationPolicy.stoppedBody(previous: finished(session), current: finished(session), sessions: []) == nil)
+        // Not a run stopping: done to idle, or a first-seen status.
+        #expect(AttentionNotificationPolicy.stoppedBody(previous: finished(session), current: finished(session, as: .idle), sessions: []) == nil)
+        #expect(AttentionNotificationPolicy.stoppedBody(previous: nil, current: finished(session), sessions: []) == nil)
 
         let child = working("child", parent: "s1")
-        #expect(!AttentionNotificationPolicy.enteredDone(previous: child, current: finished(child), sessions: []))
+        #expect(AttentionNotificationPolicy.stoppedBody(previous: child, current: finished(child, as: .error), sessions: []) == nil)
     }
 
     @Test func theBadgeCountsWaitingNotificationsAndAReplacementAddsNothing() {
@@ -71,11 +75,11 @@ struct RemotePushTests {
     @Test func aLeadIsNotDoneWhileAChildStillWorks() {
         let lead = working()
         let child = working("child", parent: "s1")
-        #expect(!AttentionNotificationPolicy.enteredDone(previous: lead, current: finished(lead), sessions: [child]))
-        #expect(AttentionNotificationPolicy.enteredDone(previous: lead, current: finished(lead), sessions: [finished(child)]))
+        #expect(AttentionNotificationPolicy.stoppedBody(previous: lead, current: finished(lead), sessions: [child]) == nil)
+        #expect(AttentionNotificationPolicy.stoppedBody(previous: lead, current: finished(lead), sessions: [finished(child)]) != nil)
         // Another lead's working child does not hold this one.
         let otherChild = working("other-child", parent: "s2")
-        #expect(AttentionNotificationPolicy.enteredDone(previous: lead, current: finished(lead), sessions: [otherChild]))
+        #expect(AttentionNotificationPolicy.stoppedBody(previous: lead, current: finished(lead), sessions: [otherChild]) != nil)
     }
 
     /// Delivers the request a `working -> done` app-event summary schedules, or nil.

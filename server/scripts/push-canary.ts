@@ -380,19 +380,14 @@ async function runCanary(
       current: { state: "done", since: 4 },
       changed: true,
     });
-    notifier.handleSessionEvent({
-      sessionId: canaries.sessionId,
-      event: { type: "error", error: `${canaries.sessionName} crashed` },
-      durable: true,
-    });
     const settled = (await Promise.all(results)) as Array<{ status: string } | null>;
-    if (settled.length !== 3 || settled.some((result) => result?.status !== "delivered")) {
-      fail(`${name}: expected 3 delivered pushes, got ${JSON.stringify(settled)}`);
+    if (settled.length !== 2 || settled.some((result) => result?.status !== "delivered")) {
+      fail(`${name}: expected 2 delivered pushes, got ${JSON.stringify(settled)}`);
     }
 
     // The server forgets the registration (a relay 410 prune, revoke, or token rotation) and
     // the phone registers the same push key again. The next push must still open on a phone
-    // that already accepted the first three (Apple PushCanaryCaptureTests).
+    // that already accepted the first two (Apple PushCanaryCaptureTests).
     storage.removePushRegistration(enrolled.deviceId);
     await register();
     const [reregistered] = storage.getPushRegistrations();
@@ -411,7 +406,7 @@ async function runCanary(
     }
 
     const apns = relay.apns();
-    if (apns.length !== 4) fail(`${name}: expected 4 APNs requests, saw ${apns.length}`);
+    if (apns.length !== 3) fail(`${name}: expected 3 APNs requests, saw ${apns.length}`);
     const surfaces = {
       "relay input": proxy.input(),
       "relay logs": relay.logs(),
@@ -454,7 +449,7 @@ async function runCanary(
       if (!decrypted.includes(canary)) fail(`${name}: ${label} canary did not survive encryption`);
     }
     console.log(
-      `PASS ${name}: 4 pushes (1 after re-registering the same key); canaries absent from relay input (${surfaces["relay input"].length} B), logs (${surfaces["relay logs"].length} B), storage (${surfaces["relay storage"].length} B), APNs output (${surfaces["APNs output"].length} B); all 4 envelopes open to them`,
+      `PASS ${name}: 3 pushes (1 after re-registering the same key); canaries absent from relay input (${surfaces["relay input"].length} B), logs (${surfaces["relay logs"].length} B), storage (${surfaces["relay storage"].length} B), APNs output (${surfaces["APNs output"].length} B); all 3 envelopes open to them`,
     );
     return {
       canaries,
