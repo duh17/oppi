@@ -81,10 +81,13 @@ struct SSHTerminalMetalTests {
         )
         let scale: CGFloat = 2
         let font = metrics.font
+        let italic = styledFont(font, italic: true)
+        let bold = metrics.boldFont
+        let boldItalic = styledFont(bold, italic: true)
         let record = "\u{23FA}"
-        let box = "\u{2500}"
         let powerline = "\u{E0B0}"
         let wide = "\u{4E2D}"
+        let nerd = NerdFontSymbols.font(size: font.pointSize) ?? font
 
         #expect(!fontCovers(font, record), "primary code font must not cover U+23FA")
         #expect(!NerdFontSymbols.isPrivateUse(Unicode.Scalar(0x23FA)!), "U+23FA is not PUA")
@@ -95,14 +98,13 @@ struct SSHTerminalMetalTests {
         let unclipped = originDrawInk(
             text: record, font: font, canvas: CGSize(width: cell.width * 3, height: cell.height * 2), scale: scale
         )
-        let appleSymbolsName = UIFont(name: "AppleSymbols", size: 13)?.fontName ?? "nil"
-        let nerdCoversRecord = NerdFontSymbols.font(size: 13).map { fontCovers($0, record) } ?? false
+        let italicCoversBar = fontCovers(italic, "\u{2502}")
+        let boldItalicCoversHeavy = fontCovers(boldItalic, "\u{2501}")
         print(
-            "FALLBACK_DIAGNOSIS primary=\(font.fontName) ps=\(font.fontDescriptor.postscriptName) " +
-            "covers23FA=false resolved=\(fallback) cellW=\(cell.width) cellH=\(cell.height) " +
-            "unclippedInk=\(unclipped.bounds) unclippedMaxX=\(unclipped.maxX) " +
-            "appleSymbols=\(appleSymbolsName) coversBox=\(fontCovers(font, box)) " +
-            "coversWide=\(fontCovers(font, wide)) nerdCovers23FA=\(nerdCoversRecord)"
+            "FALLBACK_DIAGNOSIS primary=\(font.fontName) resolved=\(fallback) " +
+            "cellW=\(cell.width) cellH=\(cell.height) unclippedInk=\(unclipped.bounds) " +
+            "unclippedMaxX=\(unclipped.maxX) italicCoversBar=\(italicCoversBar) " +
+            "boldItalicCoversHeavy=\(boldItalicCoversHeavy)"
         )
         #expect(
             unclipped.maxX > cell.width + 0.5,
@@ -128,55 +130,50 @@ struct SSHTerminalMetalTests {
         let shot = try harness.render()
         try writeShot(shot, name: "grid-record-glyph.png")
 
-        #expect(recordInk != nil && recordInk!.count > 0, "U+23FA must have ink")
+        let ink = try #require(recordInk)
+        #expect(ink.count > 0, "U+23FA must have ink")
+        #expect(ink.minX > 0, "U+23FA ink must not sit on the left clip edge (\(ink))")
+        #expect(ink.maxX < recordBytes.width - 1, "U+23FA ink must not sit on the right clip edge (\(ink))")
+        #expect(ink.minY > 0, "U+23FA ink must not sit on the top clip edge (\(ink))")
+        #expect(ink.maxY < recordBytes.height - 1, "U+23FA ink must not sit on the bottom clip edge (\(ink))")
         #expect(
             recordBytes.bytes != chopped.bytes,
-            "U+23FA must not be the origin-clipped overflow (cut at the cell edge)"
+            "U+23FA must not be the origin-clipped Apple Color Emoji overflow"
         )
-        if let recordInk {
-            let cutAtEdge = recordInk.maxX >= recordBytes.width - 1
-            #expect(
-                !(unclipped.maxX > cell.width + 0.5 && cutAtEdge && recordBytes.bytes == chopped.bytes),
-                "rightmost ink at the clip boundary with overflow beyond it (ink=\(recordInk), width=\(recordBytes.width))"
-            )
-        }
 
         let wideBytes = try rasterize(wide, font: font, metrics: metrics, columns: 2, scale: scale)
-        let wideInk = atlasInk(wideBytes.bytes, width: wideBytes.width, height: wideBytes.height)
-        #expect(wideInk != nil && wideInk!.count > 0, "width-2 CJK must have ink")
-        if let wideInk {
-            #expect(wideInk.maxX <= wideBytes.width - 1, "width-2 ink stays inside the 2-cell bitmap")
-            let wideUnclipped = originDrawInk(
-                text: wide, font: font,
-                canvas: CGSize(width: cell.width * 4, height: cell.height * 2), scale: scale
-            )
-            let wideChopped = originClippedRasterize(wide, font: font, metrics: metrics, columns: 2, scale: scale)
-            if wideUnclipped.maxX > cell.width * 2 + 0.5 {
-                #expect(
-                    wideBytes.bytes != wideChopped.bytes,
-                    "width-2 overflow must be fitted, not clipped"
-                )
-            }
-        }
+        let wideOrigin = originClippedRasterize(wide, font: font, metrics: metrics, columns: 2, scale: scale)
+        #expect(atlasInk(wideBytes.bytes, width: wideBytes.width, height: wideBytes.height) != nil, "width-2 CJK must have ink")
+        #expect(wideBytes.bytes == wideOrigin.bytes, "CJK cascade must keep origin-clipped drawing")
 
         for (glyph, label, glyphFont) in [
             ("M", "Latin M", font),
-            (box, "box drawing", font),
-            (powerline, "Nerd PUA", NerdFontSymbols.font(size: font.pointSize) ?? font),
+            ("\u{2500}", "light horizontal", font),
+            ("\u{2502}", "light vertical", font),
+            ("\u{2501}", "heavy horizontal", font),
+            ("\u{2588}", "full block", font),
+            ("\u{2502}", "italic light vertical", italic),
+            ("\u{2500}", "italic light horizontal", italic),
+            ("\u{2501}", "italic heavy horizontal", italic),
+            ("\u{2502}", "bold light vertical", bold),
+            ("\u{2500}", "bold light horizontal", bold),
+            ("\u{2501}", "bold heavy horizontal", bold),
+            ("\u{2502}", "bold-italic light vertical", boldItalic),
+            ("\u{2501}", "bold-italic heavy horizontal", boldItalic),
+            ("\u{2588}", "bold-italic full block", boldItalic),
+            (powerline, "Nerd PUA", nerd),
         ] as [(String, String, UIFont)] {
             let product = try rasterize(glyph, font: glyphFont, metrics: metrics, columns: 1, scale: scale)
             let origin = originClippedRasterize(glyph, font: glyphFont, metrics: metrics, columns: 1, scale: scale)
             #expect(
                 product.bytes == origin.bytes,
-                "\(label) must keep origin-clipped code-font metrics"
+                "\(label) must keep origin-clipped cascade metrics"
             )
         }
 
         #expect(recordWidth == 1, "libghostty-vt width of U+23FA is 1, got \(recordWidth)")
         #expect(shot.hasInk(column: 0, row: 0), "rendered U+23FA has ink")
-        if frame.rows[0][1].displayText == " " {
-            #expect(!shot.hasInk(column: 1, row: 0), "width-1 U+23FA must not spill into the next cell")
-        }
+        #expect(!shot.hasInk(column: 1, row: 0), "width-1 U+23FA must not spill into the next cell")
     }
 
     @Test func cursorOutlineBlendsOverAColouredCell() throws {
@@ -544,6 +541,12 @@ struct SSHTerminalMetalTests {
         }
         if count == 0 { return nil }
         return (minX, maxX, minY, maxY, count)
+    }
+
+    private func styledFont(_ font: UIFont, italic: Bool) -> UIFont {
+        guard italic else { return font }
+        return font.fontDescriptor.withSymbolicTraits(.traitItalic)
+            .map { UIFont(descriptor: $0, size: font.pointSize) } ?? font
     }
 
     private func fontCovers(_ font: UIFont, _ text: String) -> Bool {

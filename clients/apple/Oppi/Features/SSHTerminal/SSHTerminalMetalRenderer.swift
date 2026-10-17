@@ -251,9 +251,10 @@ final class SSHTerminalGlyphAtlas {
         return origin
     }
 
-    /// White ink at device scale. Covered code-font glyphs still draw at the
-    /// cell origin and clip to the cell. Uncovered fallbacks prefer a text
-    /// face over Apple Color Emoji, then scale-to-fit when ink would clip.
+    /// White ink at device scale. Covered glyphs and cascade fallbacks
+    /// (PingFang, Menlo, STIX, box-drawing) still draw at the cell origin and
+    /// clip. Only a text-presentation substitute or a remaining color-emoji
+    /// run may scale-to-fit.
     static func rasterize(
         text: String, font: UIFont,
         width: Int, height: Int,
@@ -263,28 +264,25 @@ final class SSHTerminalGlyphAtlas {
         format.scale = scale
         format.opaque = false
         let points = CGSize(width: cellSize.width * CGFloat(columns), height: cellSize.height)
-        let covered = sshTerminalFontCovers(font, text)
-        let planned = covered
-            ? (text: text, font: font)
-            : preferredFallback(text: text, font: font, columns: columns)
+        let plan = planDraw(text: text, font: font, columns: columns)
         let area = CGRect(origin: .zero, size: points)
-        let uncoveredInk: CGRect? = covered ? nil : measureInk(
-            text: planned.text, font: planned.font,
+        let constrainedInk: CGRect? = plan.constrain ? measureInk(
+            text: plan.text, font: plan.font,
             canvas: CGSize(width: max(area.width * 3, area.width + 1), height: max(area.height * 2, area.height + 1)),
             scale: scale
-        )
+        ) : nil
         let image = UIGraphicsImageRenderer(size: points, format: format).image { ctx in
             ctx.cgContext.clip(to: area)
-            if covered {
-                (planned.text as NSString).draw(at: area.origin, withAttributes: [
-                    .font: planned.font,
+            if plan.constrain {
+                drawConstrainedGlyph(
+                    text: plan.text, font: plan.font,
+                    ink: constrainedInk, in: area, scale: scale, context: ctx.cgContext
+                )
+            } else {
+                (plan.text as NSString).draw(at: area.origin, withAttributes: [
+                    .font: plan.font,
                     .foregroundColor: UIColor.white,
                 ])
-            } else {
-                drawUncoveredGlyph(
-                    text: planned.text, font: planned.font,
-                    ink: uncoveredInk, in: area, context: ctx.cgContext
-                )
             }
         }
         guard let cgImage = image.cgImage else { return nil }
@@ -302,21 +300,26 @@ final class SSHTerminalGlyphAtlas {
         return ok ? bytes : nil
     }
 
-    /// Width-1 cells that CoreText would send to a color-emoji face use Apple
-    /// Symbols or U+FE0E instead. Other uncovered text keeps the primary font
-    /// so CJK and box-drawing cascade stays as it is.
-    private static func preferredFallback(
+    /// Text-presentation only for a width-1 single-scalar color-emoji cell.
+    /// Multi-scalar clusters keep their bytes and may only scale if they are
+    /// still emoji. Cascade box-drawing, blocks, and CJK never constrain.
+    private static func planDraw(
         text: String, font: UIFont, columns: Int
-    ) -> (text: String, font: UIFont) {
-        guard columns == 1, resolvedFontLooksLikeColorEmoji(text: text, font: font) else {
-            return (text, font)
+    ) -> (text: String, font: UIFont, constrain: Bool) {
+        if sshTerminalFontCovers(font, text) {
+            return (text, font, false)
         }
-        let stripped = String(text.unicodeScalars.filter { $0.value != 0xFE0E && $0.value != 0xFE0F })
-        if let symbols = UIFont(name: "AppleSymbols", size: font.pointSize),
-           sshTerminalFontCovers(symbols, stripped) {
-            return (stripped, symbols)
+        let emoji = resolvedFontLooksLikeColorEmoji(text: text, font: font)
+        guard emoji else { return (text, font, false) }
+        let scalars = Array(text.unicodeScalars)
+        if columns == 1, scalars.count == 1 {
+            if let symbols = UIFont(name: "AppleSymbols", size: font.pointSize),
+               sshTerminalFontCovers(symbols, text) {
+                return (text, symbols, true)
+            }
+            return (text + "\u{FE0E}", font, true)
         }
-        return (stripped + "\u{FE0E}", font)
+        return (text, font, true)
     }
 
     private static func resolvedFontLooksLikeColorEmoji(text: String, font: UIFont) -> Bool {
@@ -336,8 +339,8 @@ final class SSHTerminalGlyphAtlas {
         return false
     }
 
-    private static func drawUncoveredGlyph(
-        text: String, font: UIFont, ink: CGRect?, in area: CGRect, context: CGContext
+    private static func drawConstrainedGlyph(
+        text: String, font: UIFont, ink: CGRect?, in area: CGRect, scale: CGFloat, context: CGContext
     ) {
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
@@ -353,10 +356,17 @@ final class SSHTerminalGlyphAtlas {
             (text as NSString).draw(at: area.origin, withAttributes: attributes)
             return
         }
-        let s = min(1, area.width / max(ink.width, 0.001), area.height / max(ink.height, 0.001))
+        // 1px inset so a fitted glyph is strictly inside the cell, not flush-clipped.
+        let pad = 1 / max(scale, 1)
+        let avail = CGRect(
+            x: pad, y: pad,
+            width: max(area.width - 2 * pad, pad),
+            height: max(area.height - 2 * pad, pad)
+        )
+        let s = min(1, avail.width / max(ink.width, 0.001), avail.height / max(ink.height, 0.001))
         let fitted = CGSize(width: ink.width * s, height: ink.height * s)
-        let tx = (area.width - fitted.width) / 2 - ink.minX * s
-        let ty = (area.height - fitted.height) / 2 - ink.minY * s
+        let tx = avail.minX + (avail.width - fitted.width) / 2 - ink.minX * s
+        let ty = avail.minY + (avail.height - fitted.height) / 2 - ink.minY * s
         context.saveGState()
         context.translateBy(x: tx, y: ty)
         context.scaleBy(x: s, y: s)
