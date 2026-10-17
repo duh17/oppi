@@ -66,9 +66,8 @@ struct ServerConnectionStreamRecoveryTests {
         defer { cleanup(reconnected) }
         await reconnected.refreshStreamCapabilities()
         await reconnected.refreshStreamCapabilities()
-        // While the release flag is off the app never starts push registration, even for a
-        // server that pushes and was opted in.
-        #expect(registered == (ReleaseFeatures.pushNotificationsEnabled ? [serverId] : []))
+        // Opted in for a server that pushes: registers once, not again for the same relay.
+        #expect(registered == [serverId])
         #expect(reconnected.pushNotificationsAvailable)
     }
 

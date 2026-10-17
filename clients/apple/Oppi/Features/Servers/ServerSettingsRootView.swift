@@ -117,12 +117,10 @@ struct ServerSettingsRootView: View {
                 Text("Off by default. When on, samples this server's CPU, memory, and disk every 30 seconds for Server Metrics and Grafana, kept 30 days on the server.")
             }
 
-            if ReleaseFeatures.pushNotificationsEnabled {
-                ServerPushNotificationsSection(
-                    serverId: pairedServer.id,
-                    connection: coordinator.connection(for: pairedServer.id)
-                )
-            }
+            ServerPushNotificationsSection(
+                serverId: pairedServer.id,
+                connection: coordinator.connection(for: pairedServer.id)
+            )
 
             Section {
                 ScopedLockToggle(title: "Lock Server", scope: .server(serverId: pairedServer.id))

@@ -1428,8 +1428,7 @@ final class ServerConnection {
         // Only a server that pushes, and that the user opted in for, gets this device's push
         // key, once per configuration. Otherwise the app never registers with APNs or the
         // relay, and never asks for notification permission.
-        if ReleaseFeatures.pushNotificationsEnabled,
-           let pushRelay, pushRelay != previousRelay, let apiClient {
+        if let pushRelay, pushRelay != previousRelay, let apiClient {
             PushRegistration.shared.serverAdvertisesPush(
                 api: apiClient,
                 serverId: currentServerId,
