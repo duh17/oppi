@@ -555,7 +555,10 @@ describe("Classic sandbox Skills through the workspace VM", { timeout: 120_000 }
     const hostFile = join(hostDir, ".agents", "skills", "ok", "SKILL.md");
     const original = readFileSync(hostFile, "utf8");
     rmSync(hostFile);
-    symlinkSync("../../.env", hostFile);
+    // Same depth as the sibling `.agents/skills/env-skill/SKILL.md` case: three hops
+    // to the workspace `.env`. `../../.env` is `.agents/.env` and ENOENT, so a host
+    // `readFileSync` would return the raw command and a secret-absent check would pass.
+    symlinkSync("../../../.env", hostFile);
     const session = backend.session as typeof backend.session & {
       _expandSkillCommand: (text: string) => string;
     };
@@ -581,8 +584,9 @@ describe("Classic sandbox Skills through the workspace VM", { timeout: 120_000 }
       return result;
     };
     try {
+      expect(readFileSync(hostFile, "utf8")).toContain("WORKSPACE_ENV_SECRET");
       await session.prompt("/skill:ok-skill go").catch(() => undefined);
-      expect(prompts.join("\n")).not.toContain("WORKSPACE_ENV_SECRET");
+      expect(prompts).toEqual([]);
       expect(JSON.stringify(session.messages)).not.toContain("WORKSPACE_ENV_SECRET");
     } finally {
       rmSync(hostFile);
