@@ -23,7 +23,7 @@ struct LiveActivityCountsTests {
         return session
     }
 
-    @Test func countsTopLevelRunningAndWaitingSessionsOnly() {
+    @Test func countsEachThreadOnce() {
         let counts = LiveActivityManager.counts(for: [
             session("a", .working),
             session("b", .working),
@@ -32,10 +32,18 @@ struct LiveActivityCountsTests {
             session("e", .done, status: .ready),
             session("f", .idle, status: .ready),
             session("g", .working, status: .stopped),
+            // A lead idling while its subagents work runs, once.
+            session("lead", .idle, status: .ready),
+            session("lead-child-1", .working, parent: "lead"),
+            session("lead-child-2", .working, parent: "lead"),
+            session("lead-grandchild", .working, parent: "lead-child-1"),
+            // A blocked subagent makes its working lead's thread need you.
             session("child-1", .working, parent: "a"),
-            session("child-2", .blocked, kind: .question, parent: "a"),
+            session("child-2", .blocked, kind: .question, parent: "b"),
+            // Finished subagents add nothing.
+            session("child-3", .done, status: .ready, parent: "f"),
         ])
-        #expect(counts == .init(running: 2, needsYou: 2))
+        #expect(counts == .init(running: 2, needsYou: 3))
     }
 
     @Test func syncTracksOnlyServersWhoseCardIsOn() {

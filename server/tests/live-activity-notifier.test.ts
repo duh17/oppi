@@ -34,7 +34,7 @@ function session(id: string, state: string, parentSessionId?: string): Session {
 }
 
 describe("liveActivityCounts", () => {
-  it("counts top-level running and waiting sessions; subagents never count", () => {
+  it("counts each thread once: needs you if any session in it is blocked, else running if any works", () => {
     expect(
       liveActivityCounts([
         session("a", "working"),
@@ -42,10 +42,21 @@ describe("liveActivityCounts", () => {
         session("c", "blocked"),
         session("d", "done"),
         session("e", "idle"),
+        // A lead idling while its subagents work runs, once.
+        session("lead", "idle"),
+        session("lead-child-1", "working", "lead"),
+        session("lead-child-2", "working", "lead"),
+        session("lead-grandchild", "working", "lead-child-1"),
+        // A blocked subagent makes its working lead's thread need you.
         session("child-1", "working", "a"),
-        session("child-2", "blocked", "a"),
+        session("child-2", "blocked", "b"),
+        // Finished subagents add nothing.
+        session("child-3", "done", "e"),
+        // Subagents of a session that is gone still count, once per missing parent.
+        session("orphan-1", "working", "gone"),
+        session("orphan-2", "working", "gone"),
       ]),
-    ).toEqual({ running: 2, needsYou: 1 });
+    ).toEqual({ running: 3, needsYou: 2 });
   });
 
   it("caps each count at the relay's bound", () => {

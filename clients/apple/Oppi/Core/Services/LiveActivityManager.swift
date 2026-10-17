@@ -112,18 +112,35 @@ final class LiveActivityManager {
 
     // MARK: - Counts
 
-    /// Running and waiting top-level sessions. Subagents never count, matching the server.
+    /// One count per thread (a top-level session with all its subagents), matching the server:
+    /// a thread needs you while any session in it is blocked, else runs while any is working.
     static func counts(for sessions: [Session]) -> Counts {
-        var counts = noCounts
-        for session in sessions where session.parentSessionId == nil {
+        let byId = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var blockedThreads = Set<String>()
+        var workingThreads = Set<String>()
+        for session in sessions {
             let kind = SessionStatusKind.resolve(session: session, seenAt: nil)
-            if kind == .working {
-                counts.running += 1
-            } else if kind.isBlocked {
-                counts.needsYou += 1
+            if kind.isBlocked {
+                blockedThreads.insert(threadRoot(session, byId: byId))
+            } else if kind == .working {
+                workingThreads.insert(threadRoot(session, byId: byId))
             }
         }
+        var counts = noCounts
+        counts.needsYou = blockedThreads.count
+        counts.running = workingThreads.subtracting(blockedThreads).count
         return counts
+    }
+
+    /// The thread's top-level session id, or the topmost ancestor id when that session is gone.
+    private static func threadRoot(_ session: Session, byId: [String: Session]) -> String {
+        var current = session
+        var seen: Set<String> = [session.id]
+        while let parentId = current.parentSessionId {
+            guard let parent = byId[parentId], seen.insert(parentId).inserted else { return parentId }
+            current = parent
+        }
+        return current.id
     }
 
     // MARK: - Inputs

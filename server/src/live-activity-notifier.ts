@@ -37,18 +37,43 @@ export const LIVE_ACTIVITY_MISSING_TOKEN_RETRIES = 5;
  * card answers "what is on my plate", and a lead already counts while its children work.
  */
 export function liveActivityCounts(sessions: Iterable<Session>): LiveActivityCounts {
+  // One count per thread: a top-level session with all its subagents. A thread needs you
+  // while any session in it is blocked, else runs while any is working, so a lead idling
+  // while its subagents work still counts as running, once.
+  const byId = new Map<string, Session>();
+  for (const session of sessions) byId.set(session.id, session);
+  const threads = new Map<string, "working" | "blocked">();
+  for (const session of byId.values()) {
+    const state = session.programStatus?.state;
+    if (state !== "working" && state !== "blocked") continue;
+    const root = threadRoot(session, byId);
+    if (threads.get(root) !== "blocked") threads.set(root, state);
+  }
   let running = 0;
   let needsYou = 0;
-  for (const session of sessions) {
-    if (session.launch?.parentSessionId) continue;
-    const state = session.programStatus?.state;
-    if (state === "working") running += 1;
-    else if (state === "blocked") needsYou += 1;
+  for (const state of threads.values()) {
+    if (state === "blocked") needsYou += 1;
+    else running += 1;
   }
   return {
     running: Math.min(running, LIVE_ACTIVITY_MAX_COUNT),
     needsYou: Math.min(needsYou, LIVE_ACTIVITY_MAX_COUNT),
   };
+}
+
+/** The thread's top-level session id, or the topmost ancestor id when that session is gone. */
+function threadRoot(session: Session, byId: ReadonlyMap<string, Session>): string {
+  let current = session;
+  const seen = new Set<string>([current.id]);
+  let parentId = current.launch?.parentSessionId;
+  while (parentId) {
+    const parent = byId.get(parentId);
+    if (!parent || seen.has(parentId)) return parentId;
+    seen.add(parentId);
+    current = parent;
+    parentId = current.launch?.parentSessionId;
+  }
+  return current.id;
 }
 
 function sameCounts(a: LiveActivityCounts | undefined, b: LiveActivityCounts): boolean {
