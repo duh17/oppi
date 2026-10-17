@@ -313,8 +313,9 @@ struct SessionOutlineView: View {
         }
 
         if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // Best matches first; equal matches stay in timeline order.
-            let matches = FuzzyMatch.rank(query: query, candidates: filtered.map(\.summary))
+            // Best matches first; equal matches stay in timeline order. The
+            // tool name counts too: shell rows summarize as "$ <command>".
+            let matches = FuzzyMatch.rank(query: query, fields: filtered.map { [$0.summary, $0.tool] })
             filtered = matches.map { match in
                 var entry = filtered[match.index]
                 entry.matchPositions = match.positions

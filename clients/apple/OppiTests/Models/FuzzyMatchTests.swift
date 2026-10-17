@@ -482,9 +482,31 @@ struct FuzzyMatchTests {
             "web_fetch https://www.lookonchain.com/feeds/76594",
             "read the web docs",
         ]
-        let ranked = FuzzyMatch.rank(query: "web", candidates: candidates)
+        let ranked = FuzzyMatch.rank(query: "web", fields: candidates.map { [$0] })
         #expect(ranked.map(\.index) == [0, 2, 3, 4])
         #expect(ranked.first?.positions == [0, 1, 2])
+    }
+
+    @Test func rankMatchesSecondaryFieldsWithoutHighlightingThem() {
+        let ranked = FuzzyMatch.rank(
+            query: "BASH",
+            fields: [["$ ls -la", "bash"], ["web_fetch https://example.com", "web_fetch"]]
+        )
+        #expect(ranked.map(\.index) == [0])
+        #expect(ranked.first?.positions.isEmpty == true)
+    }
+
+    @Test func acronymAndDigitHumpsAreWordStarts() {
+        #expect(FuzzyMatch.match(query: "hs", candidate: "HTTPServer")?.positions == [0, 4])
+        #expect(FuzzyMatch.match(query: "jd", candidate: "JSONDecoder.swift")?.positions == [0, 4])
+        #expect(FuzzyMatch.match(query: "us", candidate: "utf8String")?.positions == [0, 4])
+    }
+
+    @Test func searchKeepsShorterPathAmongEqualScoresPastCompaction() {
+        var candidates = (0..<401).map { "xxab_" + String(repeating: "z", count: 10) + "\($0)" }
+        candidates[200] = "xxab"
+        let results = FuzzyMatch.search(query: "ab", candidates: candidates, limit: 100)
+        #expect(results.first?.path == "xxab")
     }
 
     /// ASCII paths should still work (fast path — no conversion needed).

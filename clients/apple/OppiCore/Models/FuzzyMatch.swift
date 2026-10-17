@@ -148,12 +148,25 @@ enum FuzzyMatch {
 
     /// Every matching candidate with positions, best score first; equal
     /// scores keep the input order (chronological lists stay chronological).
-    static func rank(query: String, candidates: [String]) -> [RankedCandidate] {
+    ///
+    /// Each item is ranked by its best-matching field. `positions` index the
+    /// first field (the text a row highlights) and are empty when only another
+    /// field matched.
+    static func rank(query: String, fields: [[String?]]) -> [RankedCandidate] {
         guard let prepared = Query(query) else { return [] }
         var ranked: [RankedCandidate] = []
-        for (index, candidate) in candidates.enumerated() {
-            guard let hit = evaluate(prepared, candidate: candidate, track: true) else { continue }
-            ranked.append(RankedCandidate(index: index, score: hit.score, positions: hit.positions))
+        for (index, itemFields) in fields.enumerated() {
+            var best: Int?
+            var positions: [Int] = []
+            for (fieldIndex, field) in itemFields.enumerated() {
+                guard let field,
+                      let hit = evaluate(prepared, candidate: field, track: fieldIndex == 0)
+                else { continue }
+                if fieldIndex == 0 { positions = hit.positions }
+                if best.map({ hit.score > $0 }) ?? true { best = hit.score }
+            }
+            guard let best else { continue }
+            ranked.append(RankedCandidate(index: index, score: best, positions: positions))
         }
         ranked.sort { lhs, rhs in
             lhs.score != rhs.score ? lhs.score > rhs.score : lhs.index < rhs.index
@@ -174,26 +187,28 @@ enum FuzzyMatch {
         var scored: [Scored] = []
         scored.reserveCapacity(min(candidates.count, limit * 2))
         var minThreshold = Int.min
-
-        for (index, candidate) in candidates.enumerated() {
-            guard let score = evaluate(prepared, candidate: candidate, track: false)?.score else { continue }
-            if scored.count >= limit && score < minThreshold { continue }
-            scored.append(Scored(index: index, score: score))
-
-            // Periodically compact to keep memory bounded.
-            if scored.count > limit * 4 {
-                scored.sort { $0.score > $1.score }
-                scored.removeSubrange(limit...)
-                minThreshold = scored.last?.score ?? Int.min
-            }
-        }
-
-        scored.sort { a, b in
+        func ranksBefore(_ a: Scored, _ b: Scored) -> Bool {
             if a.score != b.score { return a.score > b.score }
             let aCount = candidates[a.index].utf8.count
             let bCount = candidates[b.index].utf8.count
             return aCount != bCount ? aCount < bCount : a.index < b.index
         }
+
+        for (index, candidate) in candidates.enumerated() {
+            guard let score = evaluate(prepared, candidate: candidate, track: false)?.score else { continue }
+            // Equal scores still enter: a shorter path can win the next compaction.
+            if scored.count >= limit && score < minThreshold { continue }
+            scored.append(Scored(index: index, score: score))
+
+            // Periodically compact to keep memory bounded, with the final order.
+            if scored.count > limit * 4 {
+                scored.sort(by: ranksBefore)
+                scored.removeSubrange(limit...)
+                minThreshold = scored.last?.score ?? Int.min
+            }
+        }
+
+        scored.sort(by: ranksBefore)
         if scored.count > limit {
             scored.removeSubrange(limit...)
         }
@@ -318,6 +333,7 @@ enum FuzzyMatch {
         let flags: UnsafeMutablePointer<UInt8>
         var count = 0
         private var previousKind: CharKind = .whitespace
+        private var kindBeforePrevious: CharKind = .whitespace
         private var previousUnit: UInt32 = 0
         private var sawWordStartInToken = false
         private var lastSlash = -1
@@ -342,10 +358,17 @@ enum FuzzyMatch {
                 }
                 if kind == .separator { flag |= ColumnFlags.spaceLike }
                 if kind.isWord,
-                   !previousKind.isWord || (kind == .upper && previousKind == .lower) {
+                   !previousKind.isWord
+                   || (kind == .upper && (previousKind == .lower || previousKind == .digit)) {
                     flag |= ColumnFlags.wordStart
                     if !sawWordStartInToken { flag |= ColumnFlags.firstWordInToken }
                     sawWordStartInToken = true
+                }
+                // The last capital of an acronym starts the next word:
+                // HTTPServer -> S, JSONDecoder -> D. The acronym's first
+                // capital already opened a word, so this is never the first.
+                if kind == .lower, previousKind == .upper, kindBeforePrevious == .upper {
+                    flags[count - 1] |= ColumnFlags.wordStart
                 }
             }
             if previousUnit == FuzzyMatch.slashUnit { flag |= ColumnFlags.afterSlash }
@@ -353,6 +376,7 @@ enum FuzzyMatch {
 
             units[count] = unit
             flags[count] = flag
+            kindBeforePrevious = previousKind
             previousKind = kind
             previousUnit = unit
             count += 1
