@@ -262,8 +262,10 @@ registration.
 - **`POST /v1/registrations/{id}/permissions`**, body `{}` → `201 {"permissionId":
   "p_<base64url 16 bytes>", "sendToken": "osp1.<registrationId>.<permissionId>.<base64url 32
   bytes>"}`. At most 16 permissions per registration (`409 too_many_permissions`). The app
-  hands the token to one paired server, which treats it as opaque. The relay stores only
-  `SHA-256` of its secret part; the ids route the request to the registration's storage.
+  hands the token to one paired server, which treats it as opaque. The app keeps the token
+  and gives the same one to that server on later connections; it mints another only for a
+  new registration or a new pairing. The relay stores only `SHA-256` of its secret part; the
+  ids route the request to the registration's storage.
 - **`DELETE /v1/registrations/{id}/permissions/{permissionId}`** → `204`.
 - **`DELETE /v1/registrations/{id}`** → `204`. Deletes its permissions.
 

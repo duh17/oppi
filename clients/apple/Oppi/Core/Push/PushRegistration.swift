@@ -12,7 +12,8 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Push
 ///
 /// 1. gets this device's APNs token and notification permission;
 /// 2. registers the token with the relay, with App Attest when the device supports it;
-/// 3. mints a send permission for this server at the relay;
+/// 3. mints a send permission for this server at the relay, or reuses the one this phone
+///    already gave the server (`PushSendTokenStore`);
 /// 4. sends the server this device's X25519 push public key for that server and the send
 ///    token, signed by the device's pairing key;
 /// 5. checks the server's Ed25519 key against the fingerprint pinned at pairing and stores
@@ -40,10 +41,6 @@ final class PushRegistration {
 
     private static func optInKey(serverId: String) -> String {
         "\(AppIdentifiers.subsystem).push.enabled.\(serverId)"
-    }
-
-    private static func permissionKey(serverId: String) -> String {
-        "\(AppIdentifiers.subsystem).push.permission.\(serverId)"
     }
 
     /// The user turned on push for this server. Off by default.
@@ -93,6 +90,7 @@ final class PushRegistration {
                 relay: relay,
                 environment: environment,
                 apnsToken: token,
+                client: PushRelayClient(relay: relay),
                 retryWithNewRelayRegistration: true
             )
             logger.info("Push registered with server \(server, privacy: .public) (\(environment.rawValue, privacy: .public))")
@@ -103,16 +101,16 @@ final class PushRegistration {
         }
     }
 
-    private func register(
+    func register(
         api: APIClient,
         serverId: String,
         deviceId: String,
         relay: URL,
         environment: APNsEnvironment,
         apnsToken: String,
+        client: PushRelayClient,
         retryWithNewRelayRegistration: Bool
     ) async throws {
-        let client = PushRelayClient(relay: relay)
         var relayRegistration = PushRelayRegistrationStore.load(relay: relay, environment: environment)
         if let existing = relayRegistration, existing.apnsToken != apnsToken {
             // A new APNs token needs a new relay registration; the old one is useless.
@@ -127,20 +125,45 @@ final class PushRegistration {
             try PushRelayRegistrationStore.save(registration, relay: relay, environment: environment)
         }
 
-        let minted: (permissionId: String, sendToken: String)
-        do {
-            minted = try await client.mintSendToken(registration)
-        } catch PushRelayClient.RelayError.gone, PushRelayClient.RelayError.tooManyPermissions
-            where retryWithNewRelayRegistration {
-            // The relay forgot this device (APNs retired the token) or leaked permissions
-            // filled it: start over with a fresh registration, once.
-            try? await client.deleteRegistration(registration)
-            PushRelayRegistrationStore.delete(relay: relay, environment: environment)
-            try await register(
-                api: api, serverId: serverId, deviceId: deviceId, relay: relay,
-                environment: environment, apnsToken: apnsToken, retryWithNewRelayRegistration: false
+        // Each connection re-sends the permission this phone already gave the server: minting
+        // on every connection would leak one permission each time, and a full registration
+        // takes every server's alerts down with it (below). A token is reused only on the
+        // registration that holds it, for the pairing it went to: a revoked or re-paired
+        // device's server released its token.
+        let stored = PushSendTokenStore.load(serverId: serverId)
+        let storedPermission = stored.flatMap { PushRelayClient.permission(ofSendToken: $0.sendToken) }
+        let sendToken: String
+        if let stored, stored.deviceId == deviceId,
+           storedPermission?.registrationId == registration.registrationId {
+            sendToken = stored.sendToken
+        } else {
+            do {
+                if let storedPermission, storedPermission.registrationId == registration.registrationId {
+                    // An earlier pairing's permission on this registration: its server may not
+                    // have released it.
+                    try? await client.deletePermission(storedPermission.permissionId, registration: registration)
+                }
+                sendToken = try await client.mintSendToken(registration).sendToken
+            } catch PushRelayClient.RelayError.gone, PushRelayClient.RelayError.tooManyPermissions
+                where retryWithNewRelayRegistration {
+                // The relay forgot this device (APNs retired the token), or permissions leaked
+                // before this phone reused them filled it: start over with a fresh
+                // registration, once. Every server mints again on its next connection.
+                try? await client.deleteRegistration(registration)
+                PushRelayRegistrationStore.delete(relay: relay, environment: environment)
+                try await register(
+                    api: api, serverId: serverId, deviceId: deviceId, relay: relay,
+                    environment: environment, apnsToken: apnsToken, client: client,
+                    retryWithNewRelayRegistration: false
+                )
+                return
+            }
+            // Kept before the server hears it, so a failed call below reuses it next time
+            // instead of leaking it.
+            try PushSendTokenStore.save(
+                PushSendTokenStore.Entry(sendToken: sendToken, deviceId: deviceId),
+                serverId: serverId
             )
-            return
         }
 
         let key = try currentOrNewKey(serverId: serverId)
@@ -152,7 +175,7 @@ final class PushRegistration {
             serverFingerprint: serverId,
             keyId: keyId,
             publicKey: publicKey,
-            sendToken: minted.sendToken,
+            sendToken: sendToken,
             relay: relay.absoluteString,
             issuedAt: issuedAt
         )
@@ -160,7 +183,7 @@ final class PushRegistration {
         let response = try await api.putPushRegistration(PushRegistrationRequest(
             keyId: keyId,
             publicKey: publicKey.base64URLEncodedString,
-            sendToken: minted.sendToken,
+            sendToken: sendToken,
             relay: relay.absoluteString,
             issuedAt: issuedAt,
             signature: signature.base64URLEncodedString
@@ -170,7 +193,9 @@ final class PushRegistration {
         guard let serverPublicKey = Data(base64URLEncoded: response.serverPublicKey),
               serverPublicKey.sha256Fingerprint == serverId,
               response.keyId == keyId else {
+            // The server releases the permission as it forgets the registration.
             try? await api.deletePushRegistration()
+            PushSendTokenStore.delete(serverId: serverId)
             throw PushRegistrationError.serverKeyMismatch
         }
         try PushSharedStore.saveKey(PushSharedStore.KeyRecord(
@@ -180,20 +205,21 @@ final class PushRegistration {
             createdAt: key.createdAt
         ))
         pruneKeys(serverId: serverId, keeping: 2)
-        UserDefaults.standard.set(minted.permissionId, forKey: Self.permissionKey(serverId: serverId))
     }
 
     /// Turn push off for a server: the server forgets this device's key and token, the relay
-    /// the permission, and this phone the keys.
+    /// the permission, and this phone the keys and token.
     func disable(serverId: String, api: APIClient?, relay: URL?) async {
         Self.setEnabled(false, serverId: serverId)
+        let permission = PushSendTokenStore.load(serverId: serverId)
+            .flatMap { PushRelayClient.permission(ofSendToken: $0.sendToken) }
+        PushSendTokenStore.delete(serverId: serverId)
         try? await api?.deletePushRegistration()
-        if let relay, let environment = APNsEnvironment.current,
+        if let relay, let permission, let environment = APNsEnvironment.current,
            let registration = PushRelayRegistrationStore.load(relay: relay, environment: environment),
-           let permissionId = UserDefaults.standard.string(forKey: Self.permissionKey(serverId: serverId)) {
-            try? await PushRelayClient(relay: relay).deletePermission(permissionId, registration: registration)
+           permission.registrationId == registration.registrationId {
+            try? await PushRelayClient(relay: relay).deletePermission(permission.permissionId, registration: registration)
         }
-        UserDefaults.standard.removeObject(forKey: Self.permissionKey(serverId: serverId))
         pruneKeys(serverId: serverId, keeping: 0)
     }
 

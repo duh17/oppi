@@ -73,6 +73,14 @@ struct PushRelayClient: Sendable {
         return (response.permissionId, response.sendToken)
     }
 
+    /// The registration and permission a send token (`osp1.<registrationId>.<permissionId>.<secret>`)
+    /// belongs to.
+    static func permission(ofSendToken sendToken: String) -> (registrationId: String, permissionId: String)? {
+        let parts = sendToken.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 4, parts[0] == "osp1" else { return nil }
+        return (String(parts[1]), String(parts[2]))
+    }
+
     func deletePermission(_ permissionId: String, registration: Registration) async throws {
         let path = "/v1/registrations/\(registration.registrationId)/permissions/\(permissionId)"
         _ = try await sendAuthenticated("DELETE", path: path, body: Data(), registration: registration)
@@ -152,6 +160,55 @@ struct DeviceAppAttest: AppAttestProviding {
 
     func generateAssertion(_ keyId: String, clientDataHash: Data) async throws -> Data {
         try await DCAppAttestService.shared.generateAssertion(keyId, clientDataHash: clientDataHash)
+    }
+}
+
+/// The send token this phone gave each paired server, in this app's keychain, so the next
+/// connection re-sends it instead of minting another permission.
+enum PushSendTokenStore {
+    struct Entry: Codable, Equatable, Sendable {
+        let sendToken: String
+        /// The server's id for this phone's pairing. A server releases the token of a device it
+        /// revokes, so a new pairing never reuses it.
+        let deviceId: String
+    }
+
+    private static let service = "\(SharedConstants.keychainService).push-send-token"
+
+    private static func query(serverId: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccessGroup as String: SharedConstants.keychainAccessGroup,
+            kSecAttrAccount as String: serverId,
+        ]
+    }
+
+    static func load(serverId: String) -> Entry? {
+        var lookup = query(serverId: serverId)
+        lookup[kSecReturnData as String] = true
+        lookup[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: AnyObject?
+        guard SecItemCopyMatching(lookup as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return nil }
+        return try? JSONDecoder().decode(Entry.self, from: data)
+    }
+
+    static func save(_ entry: Entry, serverId: String) throws {
+        let key = query(serverId: serverId)
+        let attributes: [String: Any] = [
+            kSecValueData as String: try JSONEncoder().encode(entry),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        let update = SecItemUpdate(key as CFDictionary, attributes as CFDictionary)
+        if update == errSecSuccess { return }
+        guard update == errSecItemNotFound else { throw PushStoreError.keychain(update) }
+        let status = SecItemAdd(key.merging(attributes) { _, new in new } as CFDictionary, nil)
+        guard status == errSecSuccess else { throw PushStoreError.keychain(status) }
+    }
+
+    static func delete(serverId: String) {
+        SecItemDelete(query(serverId: serverId) as CFDictionary)
     }
 }
 

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 import UserNotifications
@@ -166,5 +167,175 @@ private final class DeliveredOnce {
     func resume(_ value: DeliveredBanner?) {
         continuation?.resume(returning: value)
         continuation = nil
+    }
+}
+
+@Suite("Push send permission", .serialized)
+@MainActor
+struct PushSendPermissionTests {
+    /// A relay and an Oppi server behind one URL protocol: the relay mints permissions on any
+    /// registration, the server keeps the last send token it was given.
+    fileprivate final class Backend: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _mints: [String] = []
+        private var _sentTokens: [String] = []
+        private var _deletedPermissions: [String] = []
+        let serverPublicKey = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+
+        var mints: [String] { lock.withLock { _mints } }
+        var sentTokens: [String] { lock.withLock { _sentTokens } }
+        var deletedPermissions: [String] { lock.withLock { _deletedPermissions } }
+
+        func handle(_ request: URLRequest) throws -> (Data, HTTPURLResponse) {
+            let path = request.url?.path ?? ""
+            let parts = path.split(separator: "/")
+            var status = 200
+            var body: [String: Any] = [:]
+            if request.httpMethod == "POST", parts.count == 4, parts[1] == "registrations", parts[3] == "permissions" {
+                let registrationId = String(parts[2])
+                let permissionId = lock.withLock {
+                    _mints.append(registrationId)
+                    return "p_\(_mints.count)"
+                }
+                status = 201
+                body = ["permissionId": permissionId, "sendToken": "osp1.\(registrationId).\(permissionId).secret"]
+            } else if request.httpMethod == "DELETE", parts.count == 5, parts[3] == "permissions" {
+                lock.withLock { _deletedPermissions.append(String(parts[4])) }
+                status = 204
+            } else if request.httpMethod == "PUT", path.hasSuffix("/me/push-registration") {
+                let json = try JSONSerialization.jsonObject(with: Self.body(of: request)) as? [String: Any]
+                let token = json?["sendToken"] as? String ?? ""
+                lock.withLock { _sentTokens.append(token) }
+                body = ["serverPublicKey": serverPublicKey.base64URLEncodedString, "keyId": json?["keyId"] as? String ?? ""]
+            } else {
+                status = 404
+            }
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+            return (try JSONSerialization.data(withJSONObject: body), response)
+        }
+
+        private static func body(of request: URLRequest) -> Data {
+            if let body = request.httpBody { return body }
+            guard let stream = request.httpBodyStream else { return Data() }
+            stream.open()
+            defer { stream.close() }
+            var data = Data()
+            var buffer = [UInt8](repeating: 0, count: 1024)
+            while stream.hasBytesAvailable {
+                let read = stream.read(&buffer, maxLength: buffer.count)
+                if read <= 0 { break }
+                data.append(contentsOf: buffer.prefix(read))
+            }
+            return data
+        }
+    }
+
+    fileprivate final class BackendProtocol: URLProtocol, @unchecked Sendable {
+        nonisolated(unsafe) static var backend: Backend?
+
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override func startLoading() {
+            do {
+                guard let backend = Self.backend else { throw URLError(.badServerResponse) }
+                let (data, response) = try backend.handle(request)
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                client?.urlProtocol(self, didLoad: data)
+                client?.urlProtocolDidFinishLoading(self)
+            } catch {
+                client?.urlProtocol(self, didFailWithError: error)
+            }
+        }
+        override func stopLoading() {}
+    }
+
+    private let backend = Backend()
+    private let relay = URL(string: "https://relay-\(UUID().uuidString.lowercased()).example")!
+    private let configuration: URLSessionConfiguration = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [BackendProtocol.self]
+        return configuration
+    }()
+
+    private var serverId: String { backend.serverPublicKey.sha256Fingerprint }
+
+    private func storeRelayRegistration(_ registrationId: String) throws {
+        try PushRelayRegistrationStore.save(PushRelayClient.Registration(
+            relay: relay.absoluteString,
+            environment: APNsEnvironment.sandbox.rawValue,
+            apnsToken: String(repeating: "a", count: 64),
+            registrationId: registrationId,
+            registrationSecret: "secret",
+            appAttestKeyId: nil
+        ), relay: relay, environment: .sandbox)
+    }
+
+    /// One connection's registration with the server, as `register()` runs it.
+    private func connect(deviceId: String = "d_phone") async throws {
+        let api = APIClient(
+            environment: OppiClientEnvironment(baseURL: URL(string: "http://localhost:7749")!, bearerToken: "sk_test"),
+            configuration: configuration
+        )
+        try await PushRegistration.shared.register(
+            api: api,
+            serverId: serverId,
+            deviceId: deviceId,
+            relay: relay,
+            environment: .sandbox,
+            apnsToken: String(repeating: "a", count: 64),
+            client: PushRelayClient(relay: relay, session: URLSession(configuration: configuration)),
+            retryWithNewRelayRegistration: true
+        )
+    }
+
+    private func withBackend(_ body: () async throws -> Void) async throws {
+        BackendProtocol.backend = backend
+        defer {
+            BackendProtocol.backend = nil
+            PushRelayRegistrationStore.delete(relay: relay, environment: .sandbox)
+            PushSendTokenStore.delete(serverId: serverId)
+            for record in PushSharedStore.allKeys() where record.serverId == serverId {
+                if let keyId = try? record.keyId { PushSharedStore.deleteKey(keyId: keyId) }
+            }
+        }
+        try await body()
+    }
+
+    @Test func reconnectingReusesTheServersPermission() async throws {
+        try await withBackend {
+            try storeRelayRegistration("r_A")
+            try await connect()
+            try await connect()
+
+            #expect(backend.mints == ["r_A"])
+            #expect(backend.sentTokens.count == 2)
+            #expect(Set(backend.sentTokens) == ["osp1.r_A.p_1.secret"])
+        }
+    }
+
+    @Test func aNewRelayRegistrationGetsOneNewPermission() async throws {
+        try await withBackend {
+            try storeRelayRegistration("r_A")
+            try await connect()
+            try storeRelayRegistration("r_B")
+            try await connect()
+            try await connect()
+
+            #expect(backend.mints == ["r_A", "r_B"])
+            #expect(backend.sentTokens == ["osp1.r_A.p_1.secret", "osp1.r_B.p_2.secret", "osp1.r_B.p_2.secret"])
+        }
+    }
+
+    @Test func aNewPairingGetsANewPermission() async throws {
+        try await withBackend {
+            try storeRelayRegistration("r_A")
+            try await connect(deviceId: "d_first")
+            // The server revoked the first pairing and released its token.
+            try await connect(deviceId: "d_second")
+
+            #expect(backend.mints == ["r_A", "r_A"])
+            #expect(backend.deletedPermissions == ["p_1"])
+            #expect(backend.sentTokens == ["osp1.r_A.p_1.secret", "osp1.r_A.p_2.secret"])
+        }
     }
 }
