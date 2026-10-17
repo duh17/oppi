@@ -295,7 +295,7 @@ struct TimelineReducerLoadTests {
         #expect(reducer.items.map(\.id) == ["u1", "a1", "u2", "a2"])
     }
 
-    @Test func prependTracePageRefusesDirtyTimelineAndPreservesLiveItems() {
+    @Test func prependTracePageAfterLiveEventsKeepsLiveRowsInPlace() throws {
         let reducer = TimelineReducer()
         let latest = [
             TraceEvent(id: "u2", type: .user, timestamp: "2025-01-01T00:00:02.000Z",
@@ -315,21 +315,31 @@ struct TimelineReducerLoadTests {
         ]
 
         reducer.loadSession(latest, preserveOrphans: false)
+        let promptID = reducer.appendUserMessage("Third")
+        reducer.appendSystemEvent("Model changed")
         reducer.processBatch([
             .agentStart(sessionId: "s1"),
-            .textDelta(sessionId: "s1", delta: "live tail"),
+            .textDelta(sessionId: "s1", delta: "live "),
         ])
-        let itemsBeforePrepend = reducer.items
+        let rowsBeforePrepend = reducer.items
+        let streamingID = try #require(reducer.streamingAssistantID)
 
-        let didPrepend = reducer.prependTracePage(older)
+        #expect(reducer.prependTracePage(older))
 
-        #expect(!didPrepend)
-        #expect(reducer.items == itemsBeforePrepend)
-        guard case .assistantMessage(_, let text, _) = reducer.items.last else {
+        // The page goes in front; every row after it is untouched and in order.
+        #expect(reducer.items.map(\.id) == ["u1", "a1"] + rowsBeforePrepend.map(\.id))
+        #expect(Array(reducer.items.dropFirst(2)) == rowsBeforePrepend)
+        #expect(reducer.items.contains { $0.id == promptID })
+        // The answer in flight keeps streaming into the same row.
+        reducer.processBatch([.textDelta(sessionId: "s1", delta: "tail")])
+        #expect(reducer.streamingAssistantID == streamingID)
+        guard case .assistantMessage(let id, let text, _) = reducer.items.last else {
             Issue.record("Expected live assistant item to remain at tail")
             return
         }
+        #expect(id == streamingID)
         #expect(text == "live tail")
+        #expect(reducer.items.count == rowsBeforePrepend.count + 2)
     }
 
     @Test func loadSessionForcesFullRebuildAfterOutOfBandMutation() {

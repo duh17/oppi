@@ -98,13 +98,13 @@ extension ChatSessionManager {
     }
 
     @discardableResult
-    func loadTracePageAround(
-        entryId: String,
+    func loadOlderHistory(
+        through entryId: String,
         connection: ServerConnection,
         sessionStore: SessionStore
     ) async -> Bool {
         bindIOSRuntime(connection: connection, sessionStore: sessionStore)
-        return await loadTracePageAround(entryId: entryId)
+        return await loadOlderHistory(through: entryId)
     }
 
     @discardableResult

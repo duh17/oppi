@@ -1012,12 +1012,8 @@ struct ChatFocusOwnershipTests {
             try await adapter.fetchLatestTrace(scope: scope, sessionId: sessionId, previewBytes: previewBytes)
         }
 
-        func fetchOlderTracePage(scope: SessionRouteScope, sessionId: String, cursor: String, previewBytes: Int) async throws -> ChatSessionTraceSnapshot {
-            try await adapter.fetchOlderTracePage(scope: scope, sessionId: sessionId, cursor: cursor, previewBytes: previewBytes)
-        }
-
-        func fetchTracePageAround(scope: SessionRouteScope, sessionId: String, entryId: String, previewBytes: Int) async throws -> ChatSessionTraceSnapshot {
-            try await adapter.fetchTracePageAround(scope: scope, sessionId: sessionId, entryId: entryId, previewBytes: previewBytes)
+        func fetchOlderTracePage(scope: SessionRouteScope, sessionId: String, cursor: String, targetEvents: Int?, previewBytes: Int) async throws -> ChatSessionTraceSnapshot {
+            try await adapter.fetchOlderTracePage(scope: scope, sessionId: sessionId, cursor: cursor, targetEvents: targetEvents, previewBytes: previewBytes)
         }
 
         func fetchCatchUp(scope: SessionRouteScope, sessionId: String, since: Int) async throws -> ChatSessionCatchUpResponse {

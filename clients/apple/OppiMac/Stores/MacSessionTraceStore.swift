@@ -991,10 +991,11 @@ final class MacSessionTraceStore {
     func jumpToOutlineEntry(_ id: String) async {
         let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        if !items.contains(where: { $0.id == trimmed }) {
-            _ = await sessionManager?.loadTracePageAround(entryId: trimmed)
-        }
-        scrollTargetID = trimmed
+        guard let sessionManager,
+              await sessionManager.loadOlderHistory(through: trimmed) else { return }
+        // Only a held row: a target the timeline never gets detaches it from
+        // the live tail until Latest. A landed answer keeps its live row id.
+        scrollTargetID = sessionManager.reducer.timelineItemID(for: trimmed)
     }
 
     func clearScrollTarget() {

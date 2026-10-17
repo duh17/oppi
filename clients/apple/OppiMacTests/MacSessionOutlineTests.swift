@@ -278,16 +278,16 @@ struct MacSessionOutlineStoreTests {
         #expect(!store.isLoadingSessionOutline)
     }
 
-    @Test func jumpSetsScrollTargetWithoutOpeningTheDocumentColumn() async {
+    /// A target the timeline never gets would detach it from the live tail
+    /// until Latest, so a jump that cannot load its row leaves no target.
+    @Test func jumpToAnEntryThatNeverLoadsSetsNoScrollTarget() async {
         let store = MacSessionTraceStore()
         store.select(makeOutlineTarget())
 
         await store.jumpToOutlineEntry("user-1")
 
-        #expect(store.scrollTargetID == "user-1")
-        #expect(store.openToolDocumentID == nil)
-        store.clearScrollTarget()
         #expect(store.scrollTargetID == nil)
+        #expect(store.openToolDocumentID == nil)
     }
 
     @Test func selectingAnotherSessionClearsOutlineAndScrollTarget() async {

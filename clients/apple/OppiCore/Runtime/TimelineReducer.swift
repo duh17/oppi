@@ -644,18 +644,56 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         }
     }
 
+    /// Older history: the page that ends right before the oldest loaded event.
+    ///
+    /// The loaded timeline is one contiguous range of the session that ends at the live
+    /// tail. Older pages grow it at the head and live events grow it at the tail, so the
+    /// page's rows go in front of every row without rebuilding the rest: streaming rows,
+    /// optimistic prompts, and client-only rows keep their place, ids, and state.
     @discardableResult
     func prependTracePage(_ olderEvents: [TraceEvent]) -> Bool {
-        guard !olderEvents.isEmpty else { return false }
-        guard canPrependTracePage else { return false }
+        let heldIDs = Set(loadedTraceEventIDs)
+        let page = olderEvents.filter { !heldIDs.contains($0.id) && indexForID($0.id) == nil }
+        guard !page.isEmpty else { return false }
 
-        let existingIDs = Set(loadedTraceEvents.map(\.id))
-        let dedupedOlderEvents = olderEvents.filter { !existingIDs.contains($0.id) }
-        guard !dedupedOlderEvents.isEmpty else { return false }
+        // Project the page on its own: trace application appends rows and closes
+        // unanswered calls among the rows it sees, which must be the page's alone.
+        let tail = items
+        let compactionItemID = currentCompactionItemID
+        items = []
+        itemIndex.clear()
+        let dateFormatter = Self.makeTraceDateFormatter()
+        var assistantTexts: [String] = []
+        for event in page {
+            if let text = applyTraceEvent(event, dateFormatter: dateFormatter, appendOnly: true) {
+                assistantTexts.append(text)
+            }
+        }
+        // A later run in the held trace ended any call the page left open, as a full
+        // load would have closed it at that run's boundary.
+        if loadedTraceEvents.contains(where: Self.startsOrSettlesRun) {
+            closeAllOrphanedTools()
+        }
+        let pageRowCount = items.count
+        items.append(contentsOf: tail)
+        rebuildIndex()
+        currentCompactionItemID = compactionItemID
+        messageRegionStart += pageRowCount
 
-        let combinedEvents = dedupedOlderEvents + loadedTraceEvents
-        loadSession(combinedEvents, preserveOrphans: false)
+        loadedTraceEvents.insert(contentsOf: page, at: 0)
+        loadedTraceEventIDs.insert(contentsOf: page.map(\.id), at: 0)
+        bumpRenderVersion()
+        environment.logLoadSession("[prependTracePage] +\(page.count) events → \(pageRowCount) rows")
+        environment.markdownPrewarmer.prewarm(assistantTexts)
         return true
+    }
+
+    private static func startsOrSettlesRun(_ event: TraceEvent) -> Bool {
+        func boundary(_ lifecycle: TraceLifecycleEvent) -> Bool {
+            lifecycle.event == .agentStart || lifecycle.event == .agentSettled
+        }
+        return (event.lifecycleBefore ?? []).contains(where: boundary)
+            || (event.lifecycleAfter ?? []).contains(where: boundary)
     }
 
     func traceEventsForCache() -> [TraceEvent] {
@@ -1376,10 +1414,6 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
         case noOp
         case incremental(appendStart: Int)
         case fullRebuild
-    }
-
-    var canPrependTracePage: Bool {
-        timelineMatchesTrace
     }
 
     private func loadSessionMode(events: [TraceEvent]) -> HistoryLoadMode {

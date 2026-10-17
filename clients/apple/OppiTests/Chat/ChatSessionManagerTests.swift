@@ -2626,7 +2626,7 @@ struct ChatSessionManagerTests {
         manager.cleanup()
     }
 
-    @Test func tracePageAroundDeepLinkAppliesReducerWhilePresentationPaused() async throws {
+    @Test func historyJumpAppliesReducerWhilePresentationPaused() async throws {
         defer { TestURLProtocol.handler = nil }
 
         let sessionId = "paused-trace-page-\(UUID().uuidString)"
@@ -2641,7 +2641,7 @@ struct ChatSessionManagerTests {
             previewBytes: 4_096,
             staleCursor: false
         )
-        let aroundPage = TracePageMetadata(
+        let olderPage = TracePageMetadata(
             hasOlder: false,
             olderCursor: nil,
             traceVersion: "v1",
@@ -2673,8 +2673,8 @@ struct ChatSessionManagerTests {
         let encodedInitial = try JSONEncoder().encode(
             TracePagePayload(session: session, trace: currentTrace, page: initialPage, metrics: metrics)
         )
-        let encodedAround = try JSONEncoder().encode(
-            TracePagePayload(session: session, trace: olderTrace, page: aroundPage, metrics: metrics)
+        let encodedOlder = try JSONEncoder().encode(
+            TracePagePayload(session: session, trace: olderTrace, page: olderPage, metrics: metrics)
         )
         let initialResponse = (try #require(HTTPURLResponse(
             url: URL(string: "http://localhost:7749")!,
@@ -2684,8 +2684,8 @@ struct ChatSessionManagerTests {
         )))
         TestURLProtocol.handler = { request in
             #expect(request.url?.path == "/workspaces/\(workspaceId)/sessions/\(sessionId)/trace-page")
-            if request.url?.query?.contains("aroundEntryId=older") == true {
-                return (encodedAround, initialResponse)
+            if request.url?.query?.contains("cursor=older-cursor") == true {
+                return (encodedOlder, initialResponse)
             }
             return (encodedInitial, initialResponse)
         }
@@ -2699,8 +2699,8 @@ struct ChatSessionManagerTests {
         #expect(await manager.forceHistoryReload(connection: connection, sessionStore: sessionStore))
         manager.coalescer.pause()
 
-        let loaded = await manager.loadTracePageAround(
-            entryId: "older",
+        let loaded = await manager.loadOlderHistory(
+            through: "older",
             connection: connection,
             sessionStore: sessionStore
         )
@@ -2840,6 +2840,101 @@ struct ChatSessionManagerTests {
 
         #expect(!manager.coalescer.resume())
         #expect(manager.reducer.toolStartTime(for: "tool-1") != nil)
+    }
+
+    // MARK: - Older history while live
+
+    /// A busy session's manager on a scripted 60-event trace, its latest 10 loaded,
+    /// with an optimistic prompt and a streaming answer after them.
+    private func makeLivePagingHarness() async throws -> (
+        manager: ChatSessionManager,
+        history: ScriptedTraceHistory,
+        connection: ServerConnection,
+        liveIDs: [String]
+    ) {
+        let sessionId = "live-paging-\(UUID().uuidString)"
+        let session = makeTestSession(id: sessionId, workspaceId: "w1", status: .busy)
+        let history = ScriptedTraceHistory(session: session, events: (0..<60).map { index in
+            makeTraceEvent(
+                id: "e\(index)",
+                type: index.isMultiple(of: 2) ? .user : .assistant,
+                text: "event \(index)"
+            )
+        })
+        let connection = ServerConnection()
+        connection.sessionStore.upsert(session)
+        let adapter = IOSChatSessionRuntimeAdapter()
+        adapter.bind(connection: connection, sessionStore: connection.sessionStore)
+        let manager = ChatSessionManager(
+            sessionId: sessionId,
+            routeScope: .workspace("w1"),
+            historyPort: history,
+            focusedStreamPort: adapter,
+            effectsStatePort: adapter,
+            reducer: TimelineReducer(),
+            coalescer: DeltaCoalescer()
+        )
+        #expect(await manager.forceHistoryReload())
+        #expect(manager.reducer.items.map(\.id) == (50..<60).map { "e\($0)" })
+
+        let promptID = manager.reducer.appendUserMessage("next")
+        manager.reducer.processBatch([
+            .agentStart(sessionId: sessionId),
+            .textDelta(sessionId: sessionId, delta: "streaming"),
+        ])
+        let streamingID = try #require(manager.reducer.streamingAssistantID)
+        return (manager, history, connection, [promptID, streamingID])
+    }
+
+    @Test func olderHistoryPageLoadsAfterLiveEventsAndKeepsLiveRows() async throws {
+        let (manager, _, connection, liveIDs) = try await makeLivePagingHarness()
+        defer { manager.cleanup(); connection.disconnectStream() }
+
+        #expect(manager.hasOlderTracePage)
+        #expect(await manager.loadOlderTracePage())
+
+        #expect(manager.reducer.items.map(\.id) == (40..<60).map { "e\($0)" } + liveIDs)
+        manager.reducer.processBatch([.textDelta(sessionId: manager.sessionId, delta: " on")])
+        guard case .assistantMessage(liveIDs[1], let text, _) = manager.reducer.items.last else {
+            Issue.record("The streaming answer must stay the last row")
+            return
+        }
+        #expect(text == "streaming on")
+    }
+
+    @Test func outlineJumpPagesBackContiguouslyAndKeepsTheBeginningReachable() async throws {
+        let (manager, history, connection, liveIDs) = try await makeLivePagingHarness()
+        defer { manager.cleanup(); connection.disconnectStream() }
+
+        // Several pages older than the loaded range (the server caps each page at 15).
+        #expect(await manager.loadOlderHistory(through: "e7"))
+        #expect(manager.reducer.items.map(\.id) == (5..<60).map { "e\($0)" } + liveIDs)
+        #expect(history.requestedCursors == ["c50", "c35", "c20"])
+
+        // Scrolling up afterwards still reaches the first entry, with no gap or repeat.
+        #expect(manager.hasOlderTracePage)
+        #expect(await manager.loadOlderTracePage())
+        #expect(!manager.hasOlderTracePage)
+        #expect(!(await manager.loadOlderTracePage()))
+        #expect(manager.reducer.items.map(\.id) == (0..<60).map { "e\($0)" } + liveIDs)
+    }
+
+    @Test func outlineJumpDuringAScrollLoadWaitsForThatPageAndLands() async throws {
+        let (manager, history, connection, liveIDs) = try await makeLivePagingHarness()
+        defer { manager.cleanup(); connection.disconnectStream() }
+
+        history.holdsNextOlderPage = true
+        let scroll = Task { await manager.loadOlderTracePage() }
+        for _ in 0..<100 where history.requestedCursors.isEmpty { await Task.yield() }
+        // The jump arrives while the scroll's page is still loading.
+        let jump = Task { await manager.loadOlderHistory(through: "e7") }
+        for _ in 0..<10 { await Task.yield() }
+        history.releaseHeldPage()
+
+        #expect(await scroll.value)
+        #expect(await jump.value)
+        #expect(history.requestedCursors == ["c50", "c40", "c25", "c10"])
+        #expect(manager.reducer.items.map(\.id) == (0..<60).map { "e\($0)" } + liveIDs)
     }
 
     // MARK: - Helpers
@@ -3034,6 +3129,72 @@ struct ChatSessionManagerTests {
 
         streams.finish(index: 0)
         await connectTask.value
+    }
+}
+
+/// Trace history paged by cursor like the server: `c<n>` asks for the events before
+/// event `n`, newest first, at most 15 per page whatever the requested size.
+@MainActor
+private final class ScriptedTraceHistory: ChatSessionHistoryPort {
+    let session: Session
+    let events: [TraceEvent]
+    private(set) var requestedCursors: [String] = []
+    /// When set, the next older page waits for `releaseHeldPage()`.
+    var holdsNextOlderPage = false
+    private var heldPage: CheckedContinuation<Void, Never>?
+    var canFetchRemoteHistory: Bool { true }
+
+    func releaseHeldPage() {
+        heldPage?.resume()
+        heldPage = nil
+    }
+    var canFetchCatchUp: Bool { false }
+
+    init(session: Session, events: [TraceEvent]) {
+        self.session = session
+        self.events = events
+    }
+
+    func loadCachedTrace(sessionId: String) async -> ChatSessionCachedTrace? { nil }
+    func saveCachedTrace(sessionId: String, events: [TraceEvent], page: TracePageMetadata?) async {}
+
+    func fetchLatestTrace(scope: SessionRouteScope, sessionId: String, previewBytes: Int) async throws -> ChatSessionTraceSnapshot {
+        page(before: events.count, size: 10)
+    }
+
+    func fetchOlderTracePage(
+        scope: SessionRouteScope,
+        sessionId: String,
+        cursor: String,
+        targetEvents: Int?,
+        previewBytes: Int
+    ) async throws -> ChatSessionTraceSnapshot {
+        requestedCursors.append(cursor)
+        if holdsNextOlderPage {
+            holdsNextOlderPage = false
+            await withCheckedContinuation { heldPage = $0 }
+        }
+        let end = try #require(Int(cursor.dropFirst()))
+        return page(before: end, size: min(targetEvents ?? 10, 15))
+    }
+
+    func fetchCatchUp(scope: SessionRouteScope, sessionId: String, since: Int) async throws -> ChatSessionCatchUpResponse {
+        throw URLError(.unsupportedURL)
+    }
+
+    private func page(before end: Int, size: Int) -> ChatSessionTraceSnapshot {
+        let start = max(0, end - size)
+        return ChatSessionTraceSnapshot(
+            session: session,
+            trace: Array(events[start..<end]),
+            page: TracePageMetadata(
+                hasOlder: start > 0,
+                olderCursor: start > 0 ? "c\(start)" : nil,
+                traceVersion: "v1",
+                previewBytes: 4_096,
+                staleCursor: false
+            )
+        )
     }
 }
 

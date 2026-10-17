@@ -82,7 +82,7 @@ struct SessionTimelineNavigationTests {
                 ) {
                     didLoadTarget = true
                     await Task.yield()
-                    #expect(reducer.prependTracePage(Array(events.prefix(201))))
+                    return reducer.prependTracePage(Array(events.prefix(201)))
                 }
             },
             onClose: {}
@@ -130,6 +130,80 @@ struct SessionTimelineNavigationTests {
         let targetIndex = coordinator.currentIDs.firstIndex(of: targetID)
         let targetY = targetIndex.flatMap { cv.layoutAttributesForItem(at: IndexPath(item: $0, section: 0))?.frame.minY }
         #expect(retainedLanding, "New publication must preserve the outline landing; count=\(coordinator.currentIDs.count), first=\(coordinator.currentIDs.first ?? "nil"), targetY=\(targetY ?? -999), offset=\(cv.contentOffset.y), inset=\(cv.adjustedContentInset.top), top=\(scrollController.currentTopVisibleItemId ?? "nil"), attached=\(scrollController.isCurrentlyNearBottom)")
+    }
+
+    /// A jump whose entry never loads (past the paging bound, or the request failed) must
+    /// leave the timeline following the live tail instead of waiting on a row that never comes.
+    @Test func outlineJumpThatCannotLoadKeepsFollowingTheLiveTail() async throws {
+        let manager = ChatSessionManager(sessionId: "outline-unloaded")
+        let reducer = manager.reducer
+        reducer.loadSession((0..<120).map { index in
+            TraceEvent(
+                id: "entry-\(index)",
+                type: index.isMultiple(of: 2) ? .user : .assistant,
+                timestamp: "2026-09-07T10:00:00Z",
+                text: "Message \(index). " + String(repeating: "Timeline navigation context. ", count: 4),
+                tool: nil, args: nil, output: nil, toolCallId: nil,
+                toolName: nil, isError: nil, thinking: nil
+            )
+        })
+        let connection = ServerConnection()
+        let audioPlayer = AudioPlayerService()
+        let scrollController = ChatScrollController()
+        manager.needsInitialScroll = true
+        let timeline = ChatTimelineView(
+            sessionId: manager.sessionId, serverId: nil, workspaceId: nil,
+            isBusy: true, extensionWorkingState: nil, extensionHiddenThinkingLabel: nil,
+            currentModel: nil, sessionContent: connection.sessionContent,
+            iconAssetCache: nil, openDestination: nil, loadOlderPage: nil, scrollController: scrollController,
+            sessionManager: manager, audioLifecycleCoordinator: nil,
+            quietModeEnabled: false,
+            onFork: { _ in }, onOpenCurrentFile: { _ in }, onBackSwipe: {}, reviewCommentSelectionRouter: nil,
+            topOverlap: 160, bottomOverlap: 0
+        )
+        let host = UIHostingController(rootView:
+            NavigationStack { timeline.navigationTitle("Chat") }
+                .environment(reducer)
+                .environment(audioPlayer)
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        let ready = await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                host.view.layoutIfNeeded()
+                return scrollController.currentTopVisibleItemId != nil && !manager.needsInitialScroll
+            }
+        }
+        #expect(ready)
+        let cv = try #require(timelineFirstView(ofType: UICollectionView.self, in: host.view))
+        let coordinator = try #require(cv.delegate as? ChatTimelineCollectionHost.Controller)
+        #expect(scrollController.isCurrentlyNearBottom)
+
+        var didTryLoad = false
+        ChatView.selectOutlineTimelineEntry(
+            "not-loaded", items: reducer.items, scrollController: scrollController
+        ) {
+            didTryLoad = true
+            return false
+        }
+        #expect(await waitForTimelineCondition(timeoutMs: 1_000) { await MainActor.run { didTryLoad } })
+        #expect(scrollController.scrollTargetID == nil)
+
+        // New rows keep arriving at the tail; the timeline still shows the newest one.
+        let newTailID = reducer.appendUserMessage("A new live message")
+        let followed = await waitForTimelineCondition(timeoutMs: 1_000) {
+            await MainActor.run {
+                host.view.layoutIfNeeded()
+                cv.layoutIfNeeded()
+                guard let index = coordinator.currentIDs.firstIndex(of: newTailID),
+                      let attrs = cv.layoutAttributesForItem(at: IndexPath(item: index, section: 0)) else { return false }
+                let visibleBottom = cv.contentOffset.y + cv.bounds.height - cv.adjustedContentInset.bottom
+                return attrs.frame.maxY <= visibleBottom + 1 && scrollController.isCurrentlyNearBottom
+            }
+        }
+        #expect(followed, "A failed jump must not detach the live tail; attached=\(scrollController.isCurrentlyNearBottom)")
     }
 
     @Test func detachedNavigationExpandsHistoryAndLandsOnSelectedAssistantMessage() async throws {

@@ -501,7 +501,7 @@ struct ConversationStreamSessionTests {
         #expect(reducer.items.map(\.id) == ["1"] + liveIDs)
         #expect(reducer.items.contains { if case .thinking(liveIDs[0], "plan", _, true) = $0 { true } else { false } })
         #expect(reducer.traceEventsForCache().map(\.id) == ["1", "2-think-0", "2-text-1"])
-        #expect(await harness.manager.loadTracePageAround(entryId: "2-text-1"))
+        #expect(await harness.manager.loadOlderHistory(through: "2-text-1"))
 
         // The next answer streams in rows of its own.
         harness.frame(.update(.init(conversationId: 7, docs: ["pi.live": [.replace(Wire.live(text: "Again"))]])))

@@ -38,6 +38,7 @@ struct MacChatSessionRuntimeAdapterTests {
             scope: .workspace("ws-1"),
             sessionId: "sess-1",
             cursor: "older-1",
+            targetEvents: 1_000,
             previewBytes: 4_096
         )
 
@@ -45,26 +46,7 @@ struct MacChatSessionRuntimeAdapterTests {
         #expect(request.method == "GET")
         #expect(request.path.contains("/workspaces/ws-1/sessions/sess-1/trace-page?"))
         #expect(request.path.contains("cursor=older-1"))
-        #expect(request.headers["Authorization"] == "Bearer sk_owner")
-        #expect(!request.path.contains("https"))
-        #expect(!request.path.contains("sk_"))
-    }
-
-    @Test func aroundTracePageUsesEntryIdOnOwnerUnixSocket() async throws {
-        let transport = RecordingLocalHTTPTransport(response: .json(Self.tracePageJSON))
-        let adapter = Self.makeAdapter(transport: transport)
-
-        _ = try await adapter.fetchTracePageAround(
-            scope: .workspace("ws-1"),
-            sessionId: "sess-1",
-            entryId: "event-1",
-            previewBytes: 4_096
-        )
-
-        let request = try #require(await transport.requests.first)
-        #expect(request.method == "GET")
-        #expect(request.path.contains("/workspaces/ws-1/sessions/sess-1/trace-page?"))
-        #expect(request.path.contains("aroundEntryId=event-1"))
+        #expect(request.path.contains("targetEvents=1000"))
         #expect(request.headers["Authorization"] == "Bearer sk_owner")
         #expect(!request.path.contains("https"))
         #expect(!request.path.contains("sk_"))

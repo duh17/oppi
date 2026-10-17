@@ -103,6 +103,7 @@ Example:
 
 ### Fixed
 
+- **Client:** In a long session that is still working, scrolling up loads earlier history all the way to the start, and Session Outline jumps to rows that are not loaded yet land on them. Before, older history stopped loading once new output arrived, a jump to an unloaded row did nothing and left later rows missing, and the chat could stop following new output.
 - **Server:** In a mirrored terminal session, a question, confirmation, or other prompt the agent opens while the mirror is reconnecting, such as during a server restart, now appears on the phone once the mirror reconnects. Before, it showed only in the terminal and the phone sat on "Waiting on you" with no way to answer.
 - **Client:** Tapping a row in Session Outline, including a search hit, closes the outline so the chat is visible, lands on exactly that row just below the top bar, and keeps it there while rows above it finish loading. After the outline closes, the row lifts slightly with a soft tint and a light tap (the tap follows Settings > Haptic Feedback; Reduce Motion keeps only the tint).
 - **Client:** Session timeline search highlights the letters that match what you typed. Before, rows could keep highlights from an earlier keystroke or show none, and equally good matches came back out of order; they now stay in timeline order.

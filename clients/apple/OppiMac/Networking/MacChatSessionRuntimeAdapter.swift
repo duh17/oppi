@@ -136,27 +136,15 @@ final class MacChatSessionRuntimeAdapter:
         scope: SessionRouteScope,
         sessionId: String,
         cursor: String,
+        targetEvents: Int?,
         previewBytes: Int
     ) async throws -> ChatSessionTraceSnapshot {
         try await fetchTracePage(
             scope: scope,
             sessionId: sessionId,
             previewBytes: previewBytes,
-            cursor: cursor
-        )
-    }
-
-    func fetchTracePageAround(
-        scope: SessionRouteScope,
-        sessionId: String,
-        entryId: String,
-        previewBytes: Int
-    ) async throws -> ChatSessionTraceSnapshot {
-        try await fetchTracePage(
-            scope: scope,
-            sessionId: sessionId,
-            previewBytes: previewBytes,
-            aroundEntryId: entryId
+            cursor: cursor,
+            targetEvents: targetEvents
         )
     }
 
@@ -566,16 +554,25 @@ final class MacChatSessionRuntimeAdapter:
         sessionId: String,
         previewBytes: Int,
         cursor: String? = nil,
-        aroundEntryId: String? = nil
+        targetEvents: Int? = nil
     ) async throws -> ChatSessionTraceSnapshot {
         try requireSupportedScope(scope)
-        let page = try await client.getSessionTracePage(
-            scope: scope,
-            sessionId: sessionId,
-            previewBytes: previewBytes,
-            cursor: cursor,
-            aroundEntryId: aroundEntryId
-        )
+        let page = if let targetEvents {
+            try await client.getSessionTracePage(
+                scope: scope,
+                sessionId: sessionId,
+                targetEvents: targetEvents,
+                previewBytes: previewBytes,
+                cursor: cursor
+            )
+        } else {
+            try await client.getSessionTracePage(
+                scope: scope,
+                sessionId: sessionId,
+                previewBytes: previewBytes,
+                cursor: cursor
+            )
+        }
         return ChatSessionTraceSnapshot(
             session: page.session,
             trace: page.trace,

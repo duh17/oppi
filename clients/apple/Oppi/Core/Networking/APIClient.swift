@@ -837,14 +837,14 @@ actor APIClient: ClientLogUploading {
         workspaceId: String,
         sessionId: String,
         cursor: String? = nil,
-        aroundEntryId: String? = nil,
+        targetEvents: Int? = nil,
         previewBytes: Int? = nil
     ) async throws -> SessionTracePageResponse {
         try await getSessionTracePage(
             scope: .workspace(workspaceId),
             sessionId: sessionId,
             cursor: cursor,
-            aroundEntryId: aroundEntryId,
+            targetEvents: targetEvents,
             previewBytes: previewBytes
         )
     }
@@ -853,15 +853,15 @@ actor APIClient: ClientLogUploading {
         scope: SessionRouteScope,
         sessionId: String,
         cursor: String? = nil,
-        aroundEntryId: String? = nil,
+        targetEvents: Int? = nil,
         previewBytes: Int? = nil
     ) async throws -> SessionTracePageResponse {
         var items = [URLQueryItem(name: "presentation", value: "mobile")]
         if let cursor {
             items.append(URLQueryItem(name: "cursor", value: cursor))
         }
-        if let aroundEntryId {
-            items.append(URLQueryItem(name: "aroundEntryId", value: aroundEntryId))
+        if let targetEvents {
+            items.append(URLQueryItem(name: "targetEvents", value: String(targetEvents)))
         }
         if let previewBytes {
             items.append(URLQueryItem(name: "previewBytes", value: String(previewBytes)))

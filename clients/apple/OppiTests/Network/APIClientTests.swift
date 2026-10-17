@@ -1010,13 +1010,13 @@ struct APIClientTests {
         #expect(response.trace[0].callSegments?.first?.text.contains("\u{FFFD}") == true)
     }
 
-    @Test func getSessionTracePageCanRequestAroundEntryPage() async throws {
+    @Test func getSessionTracePageCanRequestLargerOlderPage() async throws {
         let client = makeClient()
         defer { cleanup() }
 
         MockURLProtocol.handler = { request in
             #expect(request.url?.path == "/workspaces/w1/sessions/s1/trace-page")
-            #expect(request.url?.query == "presentation=mobile&aroundEntryId=a1-text-0&previewBytes=4096")
+            #expect(request.url?.query == "presentation=mobile&cursor=c1&targetEvents=1000&previewBytes=4096")
             return self.mockResponse(json: """
             {
                 "session":{"id":"s1","workspaceId":"w1","status":"ready","createdAt":0,"lastActivity":0,"messageCount":1,"tokens":{"input":10,"output":5},"cost":0},
@@ -1032,7 +1032,8 @@ struct APIClientTests {
         let response = try await client.getWorkspaceSessionTracePage(
             workspaceId: "w1",
             sessionId: "s1",
-            aroundEntryId: "a1-text-0",
+            cursor: "c1",
+            targetEvents: 1_000,
             previewBytes: 4096
         )
 

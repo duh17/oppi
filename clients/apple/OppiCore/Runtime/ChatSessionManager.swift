@@ -128,7 +128,7 @@ final class ChatSessionManager {
 
     var hasOlderTracePage: Bool {
         if let conversationStream { return conversationStream.hasOlder }
-        return reducer.canPrependTracePage && tracePage?.hasOlder == true && tracePage?.olderCursor != nil
+        return tracePage?.hasOlder == true && tracePage?.olderCursor != nil
     }
 
     /// Test seam: inject a scripted bare message stream to exercise lifecycle
@@ -1806,7 +1806,11 @@ final class ChatSessionManager {
     }
 
     private static let conversationRequestTimeout: Duration = .seconds(10)
-    private static let conversationAroundMaxPages = 20
+    /// A jump pages back at most this many pages: 10k conversation entries or 20k trace
+    /// events past the loaded history.
+    private static let historyJumpMaxPages = 20
+    private static let conversationJumpPageEntries = 500
+    private static let traceJumpPageEvents = 1_000
 
     /// Attach the conversation stream when `session` is durable and the server offers it.
     /// Replaces trace catch-up: the durable event cursor only moves forward, so classic
@@ -2157,13 +2161,56 @@ final class ChatSessionManager {
         }
     }
 
+    /// Grow the loaded history at its head by one older page. The loaded timeline is one
+    /// contiguous range that ends at the live tail, so this works while events stream.
     @discardableResult
     func loadOlderTracePage() async -> Bool {
+        await loadOlderHistoryPage(jump: false)
+    }
+
+    /// Page back until history holds `entryId` (an outline jump or a deep link), in larger
+    /// pages than scrolling and bounded. Never loads a detached page around the target:
+    /// rows between it and the loaded range would be missing.
+    @discardableResult
+    func loadOlderHistory(through entryId: String) async -> Bool {
+        // A landed answer keeps its live row id; resolve the trace id to that row.
+        func holdsEntry() -> Bool {
+            let rowID = reducer.timelineItemID(for: entryId)
+            return reducer.items.contains { $0.id == rowID }
+        }
+        guard !holdsEntry() else { return true }
+        for _ in 0..<Self.historyJumpMaxPages {
+            guard await loadOlderHistoryPage(jump: true) else { break }
+            if holdsEntry() { return true }
+        }
+        return false
+    }
+
+    /// The older page in flight, shared by scrolling and jumps: a jump that arrives while
+    /// a scroll-triggered page loads waits for that page and keeps going, instead of
+    /// reading "busy" as "no older history".
+    private var olderHistoryLoad: Task<Bool, Never>?
+
+    private func loadOlderHistoryPage(jump: Bool) async -> Bool {
+        if let inFlight = olderHistoryLoad {
+            return await inFlight.value
+        }
+        // Cleared by the load itself on completion, before any waiter resumes: a waiter
+        // that found it still set would count the finished page again instead of
+        // fetching the next one.
+        let load = Task {
+            defer { self.olderHistoryLoad = nil }
+            return await self.fetchOlderHistoryPage(jump: jump)
+        }
+        olderHistoryLoad = load
+        return await load.value
+    }
+
+    private func fetchOlderHistoryPage(jump: Bool) async -> Bool {
         if conversationStream != nil {
-            return await loadOlderConversationEntries()
+            return await loadOlderConversationEntries(limit: jump ? Self.conversationJumpPageEntries : nil)
         }
         guard !isLoadingOlderTracePage else { return false }
-        guard reducer.canPrependTracePage else { return false }
         guard let cursor = tracePage?.olderCursor, tracePage?.hasOlder == true else { return false }
         guard historyPort.canFetchRemoteHistory else { return false }
         guard let routeScope = resolveRouteScope() else {
@@ -2179,53 +2226,13 @@ final class ChatSessionManager {
                 scope: routeScope,
                 sessionId: sessionId,
                 cursor: cursor,
+                targetEvents: jump ? Self.traceJumpPageEvents : nil,
                 previewBytes: Self.tracePagePreviewBytes
             )
             return applyPrependedTracePage(response)
         } catch {
             markSyncFailed()
             log.warning("Older trace page failed for \(self.sessionId): \(error.localizedDescription)")
-            return false
-        }
-    }
-
-    @discardableResult
-    func loadTracePageAround(entryId: String) async -> Bool {
-        // A landed answer keeps its live row id; resolve the trace id to that row.
-        guard !reducer.items.contains(where: { $0.id == reducer.timelineItemID(for: entryId) }) else { return true }
-        if conversationStream != nil {
-            // Page back until the entry is held; bounded like a deep link should be.
-            for _ in 0..<Self.conversationAroundMaxPages {
-                guard await loadOlderConversationEntries(limit: 500) else { break }
-                if reducer.items.contains(where: { $0.id == reducer.timelineItemID(for: entryId) }) { return true }
-            }
-            return false
-        }
-        guard !isLoadingOlderTracePage else { return false }
-        guard reducer.canPrependTracePage else { return false }
-        guard historyPort.canFetchRemoteHistory else { return false }
-        guard let routeScope = resolveRouteScope() else {
-            log.warning("Trace page around skipped for \(self.sessionId): missing workspaceId")
-            return false
-        }
-
-        isLoadingOlderTracePage = true
-        defer { isLoadingOlderTracePage = false }
-
-        do {
-            let response = try await historyPort.fetchTracePageAround(
-                scope: routeScope,
-                sessionId: sessionId,
-                entryId: entryId,
-                previewBytes: Self.tracePagePreviewBytes
-            )
-            guard applyPrependedTracePage(response) else {
-                return reducer.items.contains(where: { $0.id == entryId })
-            }
-            return reducer.items.contains(where: { $0.id == entryId })
-        } catch {
-            markSyncFailed()
-            log.warning("Trace page around failed for \(self.sessionId): \(error.localizedDescription)")
             return false
         }
     }

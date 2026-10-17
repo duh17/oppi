@@ -2843,8 +2843,8 @@ struct ChatView: View {
                     items: reducer.items,
                     scrollController: scrollController
                 ) {
-                    _ = await sessionManager.loadTracePageAround(
-                        entryId: targetID,
+                    await sessionManager.loadOlderHistory(
+                        through: targetID,
                         connection: connection,
                         sessionStore: sessionStore
                     )
@@ -2872,18 +2872,21 @@ struct ChatView: View {
 
     /// Shared by the outline callback and mounted navigation regression tests.
     /// Loading stays in ChatView; the timeline receives only the selected ID.
+    /// `loadTarget` reports whether history now holds the target. A target that never
+    /// loaded gets no scroll: its jump could never land, and while pending it kept the
+    /// timeline from following the live tail.
     static func selectOutlineTimelineEntry(
         _ targetID: String,
         items: [ChatItem],
         scrollController: ChatScrollController,
-        loadTarget: @escaping @MainActor () async -> Void
+        loadTarget: @escaping @MainActor () async -> Bool
     ) {
         if items.contains(where: { $0.id == targetID }) {
             scrollController.scrollTargetID = targetID
             return
         }
         Task { @MainActor in
-            await loadTarget()
+            guard await loadTarget() else { return }
             scrollController.scrollTargetID = targetID
         }
     }

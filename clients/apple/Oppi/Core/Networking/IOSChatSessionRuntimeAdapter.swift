@@ -87,27 +87,14 @@ final class IOSChatSessionRuntimeAdapter:
         scope: SessionRouteScope,
         sessionId: String,
         cursor: String,
+        targetEvents: Int?,
         previewBytes: Int
     ) async throws -> ChatSessionTraceSnapshot {
         let response = try await requireAPIClient().getSessionTracePage(
             scope: scope,
             sessionId: sessionId,
             cursor: cursor,
-            previewBytes: previewBytes
-        )
-        return Self.snapshot(response)
-    }
-
-    func fetchTracePageAround(
-        scope: SessionRouteScope,
-        sessionId: String,
-        entryId: String,
-        previewBytes: Int
-    ) async throws -> ChatSessionTraceSnapshot {
-        let response = try await requireAPIClient().getSessionTracePage(
-            scope: scope,
-            sessionId: sessionId,
-            aroundEntryId: entryId,
+            targetEvents: targetEvents,
             previewBytes: previewBytes
         )
         return Self.snapshot(response)

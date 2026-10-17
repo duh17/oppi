@@ -636,16 +636,14 @@ actor MacWorkspaceClient {
         sessionId: String,
         targetEvents: Int = 120,
         previewBytes: Int = 8_192,
-        cursor: String? = nil,
-        aroundEntryId: String? = nil
+        cursor: String? = nil
     ) async throws -> SessionTracePage {
         try await getSessionTracePage(
             scope: .workspace(workspaceId),
             sessionId: sessionId,
             targetEvents: targetEvents,
             previewBytes: previewBytes,
-            cursor: cursor,
-            aroundEntryId: aroundEntryId
+            cursor: cursor
         )
     }
 
@@ -654,8 +652,7 @@ actor MacWorkspaceClient {
         sessionId: String,
         targetEvents: Int = 120,
         previewBytes: Int = 8_192,
-        cursor: String? = nil,
-        aroundEntryId: String? = nil
+        cursor: String? = nil
     ) async throws -> SessionTracePage {
         var queryItems = [
             URLQueryItem(name: "presentation", value: "mobile"),
@@ -664,9 +661,6 @@ actor MacWorkspaceClient {
         ]
         if let cursor {
             queryItems.append(URLQueryItem(name: "cursor", value: cursor))
-        }
-        if let aroundEntryId {
-            queryItems.append(URLQueryItem(name: "aroundEntryId", value: aroundEntryId))
         }
         let data = try await get(
             url: try makeURL(

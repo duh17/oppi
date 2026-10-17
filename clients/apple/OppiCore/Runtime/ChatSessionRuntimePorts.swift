@@ -134,17 +134,13 @@ protocol ChatSessionHistoryPort: AnyObject {
         previewBytes: Int
     ) async throws -> ChatSessionTraceSnapshot
 
+    /// The page that ends right before `cursor`. `targetEvents` nil keeps the client's
+    /// usual page size.
     func fetchOlderTracePage(
         scope: SessionRouteScope,
         sessionId: String,
         cursor: String,
-        previewBytes: Int
-    ) async throws -> ChatSessionTraceSnapshot
-
-    func fetchTracePageAround(
-        scope: SessionRouteScope,
-        sessionId: String,
-        entryId: String,
+        targetEvents: Int?,
         previewBytes: Int
     ) async throws -> ChatSessionTraceSnapshot
 
