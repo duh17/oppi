@@ -1481,6 +1481,25 @@ struct ChatInputBarTests {
         )
     }
 
+    @Test("Dictation indicator change posted off the main thread does not trap a live mic button")
+    func dictationIndicatorChangeOffMainDoesNotTrapMicButton() async {
+        let button = MicButtonChromeView()
+        let key = AppPreferenceStore.Appearance.dictationIndicatorStyleKey
+        let original = UserDefaults.standard.object(forKey: key)
+        defer {
+            if let original {
+                UserDefaults.standard.set(original, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+        await Task.detached {
+            AppPreferenceStore.Appearance.setDictationIndicatorStyle(.breathing)
+            AppPreferenceStore.Appearance.setDictationIndicatorStyle(.ring)
+        }.value
+        #expect(button.intrinsicContentSize.width == 44)
+    }
+
     @Test("Apply does not write voice or ask bindings during the SwiftUI update turn")
     func applyDoesNotWriteBindingsDuringUpdateTurn() throws {
         let bar = try composerSource(named: "ChatInputBar.swift")

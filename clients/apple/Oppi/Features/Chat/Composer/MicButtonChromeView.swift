@@ -24,6 +24,7 @@ final class MicButtonChromeView: UIControl {
     private var accentColor = UIColor(ThemeRuntimeState.currentPalette().blue)
     private var engineBadge: MicButtonLabel.EngineBadge = .auto
     private var dictationStyle: DictationIndicatorStyle = .current
+    nonisolated(unsafe) private var dictationStyleObserver: NSObjectProtocol?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -153,16 +154,23 @@ final class MicButtonChromeView: UIControl {
             activityIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(dictationStyleDidChange),
-            name: AppPreferenceStore.Appearance.dictationIndicatorDidChangeNotification,
-            object: nil
-        )
+        dictationStyleObserver = NotificationCenter.default.addObserver(
+            forName: AppPreferenceStore.Appearance.dictationIndicatorDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.applyDictationStyleFromPreferences()
+        }
         updateAppearance(animated: false)
     }
 
-    @objc private func dictationStyleDidChange() {
+    deinit {
+        if let dictationStyleObserver {
+            NotificationCenter.default.removeObserver(dictationStyleObserver)
+        }
+    }
+
+    private func applyDictationStyleFromPreferences() {
         dictationStyle = DictationIndicatorStyle.current
         updateAppearance(animated: false)
     }
