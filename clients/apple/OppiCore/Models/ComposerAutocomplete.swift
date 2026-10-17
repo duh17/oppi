@@ -67,38 +67,7 @@ enum ComposerAutocomplete {
         commands: [SlashCommand],
         limit: Int? = nil
     ) -> [SlashCommand] {
-        guard !commands.isEmpty else { return [] }
-
-        var deduped: [String: SlashCommand] = [:]
-        for command in commands {
-            let key = command.name.lowercased()
-            if deduped[key] == nil {
-                deduped[key] = command
-            }
-        }
-
-        let ranked: [SlashCommand]
-        if query.isEmpty {
-            ranked = deduped.values.sorted { $0.name.lowercased() < $1.name.lowercased() }
-        } else {
-            var scored: [(command: SlashCommand, score: Int)] = []
-            for command in deduped.values {
-                if let result = FuzzyMatch.match(query: query, candidate: command.name) {
-                    scored.append((command, result.score))
-                }
-            }
-
-            scored.sort { lhs, rhs in
-                if lhs.score != rhs.score {
-                    return lhs.score > rhs.score
-                }
-                return lhs.command.name.lowercased() < rhs.command.name.lowercased()
-            }
-            ranked = scored.map(\.command)
-        }
-
-        guard let limit else { return ranked }
-        return Array(ranked.prefix(max(0, limit)))
+        slashSuggestionCache.suggestions(query: query, commands: commands, limit: limit)
     }
 
     static func streamingBehavior(
@@ -185,5 +154,97 @@ enum ComposerAutocomplete {
         }
 
         return start..<text.endIndex
+    }
+}
+
+/// Precomputed `/command` ranking. Dedupes and empty-query order once per
+/// command list. UI-framework-free; C1's suggestion list can hold one and
+/// call `suggestions`.
+struct SlashCommandSuggestionIndex: Sendable {
+    private let deduped: [SlashCommand]
+    private let emptyRanked: [SlashCommand]
+
+    init(commands: [SlashCommand]) {
+        var seen: [String: SlashCommand] = [:]
+        for command in commands {
+            let key = command.name.lowercased()
+            if seen[key] == nil {
+                seen[key] = command
+            }
+        }
+        let deduped = Array(seen.values)
+        self.deduped = deduped
+        self.emptyRanked = deduped.sorted { $0.name.lowercased() < $1.name.lowercased() }
+    }
+
+    func suggestions(query: String, limit: Int? = nil) -> [SlashCommand] {
+        guard !deduped.isEmpty else { return [] }
+
+        let ranked: [SlashCommand]
+        if query.isEmpty {
+            ranked = emptyRanked
+        } else {
+            var scored: [(command: SlashCommand, score: Int)] = []
+            for command in deduped {
+                if let result = FuzzyMatch.match(query: query, candidate: command.name) {
+                    scored.append((command, result.score))
+                }
+            }
+            scored.sort { lhs, rhs in
+                if lhs.score != rhs.score {
+                    return lhs.score > rhs.score
+                }
+                return lhs.command.name.lowercased() < rhs.command.name.lowercased()
+            }
+            ranked = scored.map(\.command)
+        }
+
+        guard let limit else { return ranked }
+        return Array(ranked.prefix(max(0, limit)))
+    }
+}
+
+/// Last-query cache so SwiftUI body re-evals do not re-rank the same list.
+private let slashSuggestionCache = SlashCommandSuggestionCache()
+
+private final class SlashCommandSuggestionCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var commands: [SlashCommand] = []
+    private var index: SlashCommandSuggestionIndex?
+    private var lastQuery: String?
+    private var lastLimit: Int?
+    private var hasLastLimit = false
+    private var lastResults: [SlashCommand] = []
+
+    func suggestions(query: String, commands: [SlashCommand], limit: Int?) -> [SlashCommand] {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if commands.isEmpty {
+            self.commands = []
+            index = nil
+            lastQuery = nil
+            hasLastLimit = false
+            lastResults = []
+            return []
+        }
+
+        if commands != self.commands {
+            self.commands = commands
+            index = SlashCommandSuggestionIndex(commands: commands)
+            lastQuery = nil
+            hasLastLimit = false
+        }
+
+        if lastQuery == query, hasLastLimit, lastLimit == limit {
+            return lastResults
+        }
+
+        let results = index?.suggestions(query: query, limit: limit) ?? []
+        lastQuery = query
+        lastLimit = limit
+        hasLastLimit = true
+        lastResults = results
+        return results
     }
 }

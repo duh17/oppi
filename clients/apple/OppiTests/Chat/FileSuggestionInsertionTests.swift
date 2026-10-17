@@ -289,6 +289,24 @@ struct FileSuggestionInsertionTests {
                 "No match positions for empty query")
     }
 
+    @Test func newerKeystrokeDiscardsStaleRankingResults() async {
+        let (conn, _) = makeTestConnection()
+        conn.fileIndexStore.setPathsForTesting([
+            "zzzz-unique-stale-token.swift",
+            "a.md",
+            "bb.swift",
+        ])
+
+        conn.fetchFileSuggestions(query: "zzzz-unique-stale-token")
+        conn.fetchFileSuggestions(query: "")
+
+        #expect(conn.chatState.fileSuggestions.map(\.path) == ["a.md", "bb.swift", "zzzz-unique-stale-token.swift"])
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(300)) {
+            conn.chatState.fileSuggestions.first?.path == "a.md"
+                && !conn.chatState.fileSuggestions.contains { $0.path.contains("zzzz") && !$0.matchPositions.isEmpty }
+        })
+    }
+
     @Test func invalidateMarksIndexDirty() {
         let (conn, _) = makeTestConnection()
         conn.fileIndexStore.setPathsForTesting(["README.md"])

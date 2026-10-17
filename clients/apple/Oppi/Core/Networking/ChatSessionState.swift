@@ -51,6 +51,8 @@ final class ChatSessionState {
 
     var fileSuggestions: [FileSuggestion] = []
     var fileSuggestionTask: Task<Void, Never>?
+    /// Bumped on every keystroke / clear so a stale ranking never lands.
+    @ObservationIgnored var fileSuggestionGeneration: UInt64 = 0
 
     // MARK: - Model Cache
 
@@ -75,6 +77,7 @@ final class ChatSessionState {
         slashCommandsCacheKey = nil
         fileSuggestionTask?.cancel()
         fileSuggestionTask = nil
+        fileSuggestionGeneration &+= 1
         modelPrefetchTask?.cancel()
         modelPrefetchTask = nil
     }

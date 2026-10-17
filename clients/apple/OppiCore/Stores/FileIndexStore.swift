@@ -45,6 +45,10 @@ final class FileIndexStore {
     /// Cached file paths for the current workspace. Nil until first load.
     private(set) var paths: [String]?
 
+    /// Precomputed `@file` ranking index for `paths`. Built once per load.
+    /// UI-framework-free; C1 can read this and call `ranked`.
+    @ObservationIgnored private(set) var suggestionIndex: FileSuggestionIndex?
+
     /// True while the initial fetch is in-flight.
     private(set) var isLoading = false
 
@@ -77,6 +81,7 @@ final class FileIndexStore {
 
         if self.workspaceId != workspaceId || self.worktreeId != normalizedWorktreeId {
             paths = nil
+            suggestionIndex = nil
         }
         self.workspaceId = workspaceId
         self.worktreeId = normalizedWorktreeId
@@ -101,7 +106,7 @@ final class FileIndexStore {
     // periphery:ignore - used by tests via @testable import
     /// Set paths directly for unit tests. Not for production use.
     func setPathsForTesting(_ paths: [String]) {
-        self.paths = paths
+        applyPaths(paths)
         self.dirty = false
     }
 
@@ -121,8 +126,11 @@ final class FileIndexStore {
             Task { [weak self] in
                 guard let self else { return }
                 if let cached = await self.environment.loadCachedFileIndex(key) {
+                    let index = await Task.detached(priority: .userInitiated) {
+                        FileSuggestionIndex(paths: cached)
+                    }.value
                     if self.workspaceId == workspaceId, self.worktreeId == worktreeId, self.paths == nil {
-                        self.paths = cached
+                        self.applyPaths(cached, index: index)
                         self.isLoading = false
                         self.environment.logDebug("File index loaded from cache: \(cached.count) paths")
                     }
@@ -143,7 +151,14 @@ final class FileIndexStore {
                       self.workspaceId == workspaceId,
                       self.worktreeId == worktreeId
                 else { return }
-                self.paths = response.paths
+                let index = await Task.detached(priority: .userInitiated) {
+                    FileSuggestionIndex(paths: response.paths)
+                }.value
+                guard !Task.isCancelled,
+                      self.workspaceId == workspaceId,
+                      self.worktreeId == worktreeId
+                else { return }
+                self.applyPaths(response.paths, index: index)
                 self.isLoading = false
                 // Persist to disk for next app launch.
                 await self.environment.cacheFileIndex(response.paths, key)
@@ -155,12 +170,17 @@ final class FileIndexStore {
                       self.worktreeId == worktreeId
                 else { return }
                 if self.paths == nil {
-                    self.paths = []
+                    self.applyPaths([])
                 }
                 self.isLoading = false
                 self.environment.logWarning("Failed to load file index: \(error.localizedDescription)")
             }
         }
+    }
+
+    private func applyPaths(_ paths: [String], index: FileSuggestionIndex? = nil) {
+        self.paths = paths
+        self.suggestionIndex = index ?? FileSuggestionIndex(paths: paths)
     }
 
     private func normalizeWorktreeId(_ value: String?) -> String? {

@@ -5,27 +5,117 @@ extension FileSuggestion {
     ///
     /// Empty query: shortest paths first, matching iOS `fetchFileSuggestions`.
     /// Non-empty query: precision literal matches, then FuzzyMatch with file-path rerank.
+    ///
+    /// Builds a throwaway `FileSuggestionIndex`. Production and C1 should reuse
+    /// `FileSuggestionIndex.ranked` built once per index load.
     static func ranked(
         query: String,
         paths: [String],
         limit: Int = ComposerAutocomplete.maxSuggestions
     ) -> [FileSuggestion] {
-        guard limit > 0, !paths.isEmpty else { return [] }
+        FileSuggestionIndex(paths: paths).ranked(query: query, limit: limit)
+    }
 
-        if query.isEmpty {
-            return paths
-                .sorted { $0.count < $1.count }
-                .prefix(limit)
-                .map { FileSuggestion(path: $0, isDirectory: $0.hasSuffix("/")) }
+    /// Rank against a precomputed index. UI-framework-free; C1's suggestion list
+    /// can call this from any queue.
+    static func ranked(
+        query: String,
+        index: FileSuggestionIndex,
+        limit: Int = ComposerAutocomplete.maxSuggestions
+    ) -> [FileSuggestion] {
+        index.ranked(query: query, limit: limit)
+    }
+}
+
+/// Precomputed `@file` index. Built once per workspace index load.
+///
+/// Stores lowercased path, basename, extension class, and test-path flag so
+/// each keystroke does not re-derive them. Empty-query top-N is the prefix of
+/// a path-length order computed at init.
+///
+/// UI-framework-free. Slice C1 should hold one of these and call `ranked`.
+struct FileSuggestionIndex: Sendable {
+    struct Entry: Sendable {
+        let path: String
+        let pathLower: String
+        let basenameLower: String
+        let ext: String
+        let isDirectory: Bool
+        let isCodeFile: Bool
+        let isMediaFile: Bool
+        let isTestPath: Bool
+        let pathCount: Int
+        let basenameScalarCount: Int
+    }
+
+    let entries: [Entry]
+    let paths: [String]
+    /// Indices of `entries` sorted by path length (shortest first).
+    private let emptyOrder: [Int]
+    private let entryByPath: [String: Int]
+
+    var isEmpty: Bool { entries.isEmpty }
+    var count: Int { entries.count }
+
+    init(paths: [String]) {
+        var entries: [Entry] = []
+        entries.reserveCapacity(paths.count)
+        var entryByPath: [String: Int] = [:]
+        entryByPath.reserveCapacity(paths.count)
+
+        for path in paths {
+            let pathLower = path.lowercased()
+            let basenameLower = basename(pathLower)
+            let ext = fileExtensionFromBasename(basenameLower)
+            let entry = Entry(
+                path: path,
+                pathLower: pathLower,
+                basenameLower: basenameLower,
+                ext: ext,
+                isDirectory: path.hasSuffix("/"),
+                isCodeFile: codeFileExtensions.contains(ext),
+                isMediaFile: mediaFileExtensions.contains(ext),
+                isTestPath: isTestPath(pathLower),
+                pathCount: path.count,
+                basenameScalarCount: basenameLower.unicodeScalars.count
+            )
+            if entryByPath[path] == nil {
+                entryByPath[path] = entries.count
+            }
+            entries.append(entry)
         }
 
-        return rankFileSuggestionPaths(query: query, candidates: paths, limit: limit).map { scored in
+        self.entries = entries
+        self.paths = paths
+        self.entryByPath = entryByPath
+        self.emptyOrder = entries.indices.sorted { entries[$0].pathCount < entries[$1].pathCount }
+    }
+
+    func ranked(
+        query: String,
+        limit: Int = ComposerAutocomplete.maxSuggestions
+    ) -> [FileSuggestion] {
+        guard limit > 0, !entries.isEmpty else { return [] }
+
+        if query.isEmpty {
+            return emptyOrder.prefix(limit).map { index in
+                let entry = entries[index]
+                return FileSuggestion(path: entry.path, isDirectory: entry.isDirectory)
+            }
+        }
+
+        return rankFileSuggestionPaths(query: query, index: self, limit: limit).map { scored in
             FileSuggestion(
                 path: scored.path,
-                isDirectory: scored.path.hasSuffix("/"),
+                isDirectory: entry(for: scored.path)?.isDirectory ?? scored.path.hasSuffix("/"),
                 matchPositions: scored.positions
             )
         }
+    }
+
+    func entry(for path: String) -> Entry? {
+        guard let index = entryByPath[path] else { return nil }
+        return entries[index]
     }
 }
 
@@ -53,19 +143,19 @@ private struct PrecisionLiteralCandidate {
 
 private func rankFileSuggestionPaths(
     query: String,
-    candidates: [String],
+    index: FileSuggestionIndex,
     limit: Int
 ) -> [FuzzyMatch.ScoredPath] {
     // Precision-first: prefer literal filename/path matches for @mentions.
-    let literal = precisionLiteralMatches(query: query, candidates: candidates, limit: limit)
+    let literal = precisionLiteralMatches(query: query, index: index, limit: limit)
     if literal.count >= limit {
         return literal
     }
 
     // Fuzzy fallback for abbreviation-style queries.
-    let preLimit = min(candidates.count, max(limit * 8, 64))
-    let fuzzy = FuzzyMatch.search(query: query, candidates: candidates, limit: preLimit)
-    let rerankedFuzzy = rerankFileSuggestions(query: query, results: fuzzy, limit: preLimit)
+    let preLimit = min(index.paths.count, max(limit * 8, 64))
+    let fuzzy = FuzzyMatch.search(query: query, candidates: index.paths, limit: preLimit)
+    let rerankedFuzzy = rerankFileSuggestions(query: query, results: fuzzy, index: index, limit: preLimit)
     return mergeSuggestions(primary: literal, secondary: rerankedFuzzy, limit: limit)
 }
 
@@ -103,7 +193,7 @@ private func mergeSuggestions(
 /// users typing explicit file tokens get deterministic top hits.
 private func precisionLiteralMatches(
     query: String,
-    candidates: [String],
+    index: FileSuggestionIndex,
     limit: Int
 ) -> [FuzzyMatch.ScoredPath] {
     guard limit > 0 else { return [] }
@@ -115,34 +205,30 @@ private func precisionLiteralMatches(
     let prefersTests = queryLower.contains("test")
 
     var literalCandidates: [PrecisionLiteralCandidate] = []
-    literalCandidates.reserveCapacity(min(candidates.count, 256))
+    literalCandidates.reserveCapacity(min(index.entries.count, 256))
 
-    for (index, path) in candidates.enumerated() {
-        let pathLower = path.lowercased()
-        let fileNameLower = basename(pathLower)
-
+    for (offset, entry) in index.entries.enumerated() {
         let literalClass = literalMatchClass(
             queryLower: queryLower,
-            pathLower: pathLower,
-            fileNameLower: fileNameLower
+            pathLower: entry.pathLower,
+            fileNameLower: entry.basenameLower
         )
         if literalClass == .none {
             continue
         }
 
-        let ext = fileExtension(pathLower)
-        let positions = literalMatchPositions(query: query, path: path, literalClass: literalClass)
+        let positions = literalMatchPositions(query: query, path: entry.path, literalClass: literalClass)
 
         literalCandidates.append(
             PrecisionLiteralCandidate(
-                path: path,
-                index: index,
+                path: entry.path,
+                index: offset,
                 positions: positions,
                 literalClass: literalClass,
-                fileNameLength: fileNameLower.unicodeScalars.count,
-                isCodeFile: codeFileExtensions.contains(ext),
-                isMediaFile: mediaFileExtensions.contains(ext),
-                isTestPath: isTestPath(pathLower)
+                fileNameLength: entry.basenameScalarCount,
+                isCodeFile: entry.isCodeFile,
+                isMediaFile: entry.isMediaFile,
+                isTestPath: entry.isTestPath
             )
         )
     }
@@ -313,6 +399,7 @@ private func normalizedScalar(_ scalar: UnicodeScalar) -> UInt32 {
 private func rerankFileSuggestions(
     query: String,
     results: [FuzzyMatch.ScoredPath],
+    index: FileSuggestionIndex,
     limit: Int
 ) -> [FuzzyMatch.ScoredPath] {
     guard !results.isEmpty, limit > 0 else { return [] }
@@ -331,7 +418,8 @@ private func rerankFileSuggestions(
             adjustedScore: adjustedFilePathScore(
                 queryLower: queryLower,
                 queryScalarCount: queryScalarCount,
-                scored: scored
+                scored: scored,
+                entry: index.entry(for: scored.path)
             )
         )
     }
@@ -354,13 +442,17 @@ private func rerankFileSuggestions(
 private func adjustedFilePathScore(
     queryLower: String,
     queryScalarCount: Int,
-    scored: FuzzyMatch.ScoredPath
+    scored: FuzzyMatch.ScoredPath,
+    entry: FileSuggestionIndex.Entry?
 ) -> Int {
     var score = scored.score
 
-    let pathLower = scored.path.lowercased()
-    let fileNameLower = basename(pathLower)
-    let ext = fileExtension(pathLower)
+    let pathLower = entry?.pathLower ?? scored.path.lowercased()
+    let fileNameLower = entry?.basenameLower ?? basename(pathLower)
+    let ext = entry?.ext ?? fileExtensionFromBasename(fileNameLower)
+    let isCode = entry?.isCodeFile ?? codeFileExtensions.contains(ext)
+    let isMedia = entry?.isMediaFile ?? mediaFileExtensions.contains(ext)
+    let testPath = entry?.isTestPath ?? isTestPath(pathLower)
 
     // Strongly prefer direct filename matches for user-entered tokens.
     if fileNameLower == queryLower {
@@ -388,9 +480,9 @@ private func adjustedFilePathScore(
 
     // For code-like queries, demote media assets and lightly boost code files.
     if queryScalarCount >= 3 {
-        if mediaFileExtensions.contains(ext) {
+        if isMedia {
             score -= 30
-        } else if codeFileExtensions.contains(ext) {
+        } else if isCode {
             score += 8
         }
     }
@@ -398,7 +490,7 @@ private func adjustedFilePathScore(
     // Prefer implementation paths over test trees unless query asks for tests.
     if queryScalarCount >= 5,
        !queryLower.contains("test"),
-       isTestPath(pathLower) {
+       testPath {
         score -= 14
     }
 
@@ -409,8 +501,7 @@ private func basename(_ path: String) -> String {
     path.split(separator: "/").last.map(String.init) ?? path
 }
 
-private func fileExtension(_ path: String) -> String {
-    let name = basename(path)
+private func fileExtensionFromBasename(_ name: String) -> String {
     guard let dot = name.lastIndex(of: "."), dot < name.index(before: name.endIndex) else {
         return ""
     }
