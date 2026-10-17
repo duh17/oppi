@@ -362,16 +362,29 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             .removeDeliveredNotifications(withIdentifiers: [identifier])
     }
 
-    private func schedule(identifier: String, content: @escaping @MainActor () -> UNNotificationContent) {
+    /// Recount the app icon badge from what is left in Notification Center, after the user
+    /// opened or cleared notifications while the app was away.
+    func syncBadgeToDelivered() {
+        guard !_skipSchedulingForTesting else { return }
+        Task { @MainActor in
+            let center = UNUserNotificationCenter.current()
+            let count = await center.deliveredNotifications().count
+            try? await center.setBadgeCount(count)
+        }
+    }
+
+    private func schedule(identifier: String, content: @escaping @MainActor () -> UNMutableNotificationContent) {
         guard !_skipSchedulingForTesting else {
             return
         }
 
         // Fire immediately (0.1s minimum for time-interval triggers)
-        func request() -> UNNotificationRequest {
-            UNNotificationRequest(
+        func request(badge: Int? = nil) -> UNNotificationRequest {
+            let content = content()
+            content.badge = badge.map { NSNumber(value: $0) }
+            return UNNotificationRequest(
                 identifier: identifier,
-                content: content(),
+                content: content,
                 trigger: UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
             )
         }
@@ -384,8 +397,12 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             guard await notificationsAuthorized() else {
                 return
             }
+            let center = UNUserNotificationCenter.current()
+            let delivered = await center.deliveredNotifications().map(\.request.identifier)
             do {
-                try await UNUserNotificationCenter.current().add(request())
+                try await center.add(request(
+                    badge: NotificationBadge.count(deliveredIdentifiers: delivered, adding: identifier)
+                ))
             } catch {
                 notificationLogger.error("Failed to schedule attention notification: \(error.localizedDescription, privacy: .public)")
             }

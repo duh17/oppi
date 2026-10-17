@@ -580,6 +580,7 @@
 		46FCB4025C0883E592D5411E /* NotebookCellPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5FDAF51A5A8D7D8600313E5 /* NotebookCellPlan.swift */; };
 		474A4DDC809ECE7DE4406CC9 /* ExpandedRenderOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 215A2085CF481FF99A7DEE2E /* ExpandedRenderOutput.swift */; };
 		474CC58ED85AE3F925FEAEB4 /* ServerPairedDevicesPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 521B7FA44071BB55DA9AC3E3 /* ServerPairedDevicesPage.swift */; };
+		475214CE0FD067760BF92699 /* NotificationBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = F08EA0CC50DB6FCDF4DD5A59 /* NotificationBadge.swift */; };
 		4752869006B86D05A3775E19 /* ServerConnectionForegroundRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07D6D176BA726AD604D6BB90 /* ServerConnectionForegroundRecoveryTests.swift */; };
 		475C635EF6F613D7E839DEC7 /* InAppBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19DF6B26AFB30174BDB64DEE /* InAppBrowserView.swift */; };
 		4767CC4FB5D0789AC4A9C77C /* MermaidQuadrantParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69D30D46B8A00309262E6696 /* MermaidQuadrantParser.swift */; };
@@ -855,6 +856,7 @@
 		68769C35E5E9CC7AFDA47DB4 /* TurnSendTracking.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72A5E67A4BF2CBC123584FD0 /* TurnSendTracking.swift */; };
 		6881BC8298401A5B53D56FFC /* SharedConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70F4B7C1B3CA7399E365AA80 /* SharedConstants.swift */; };
 		68AAFF74046372B8E2A4225C /* SpinnerStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6E090E49055686ACBC122E5 /* SpinnerStyle.swift */; };
+		68C2F969CC52539CB3188B28 /* NotificationBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = F08EA0CC50DB6FCDF4DD5A59 /* NotificationBadge.swift */; };
 		68E3E8070C15788FFB264CBF /* ClientMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2C3C70BD59E7E4AACF8F03C /* ClientMessage.swift */; };
 		68ECEAB12B085B601A7EECCF /* SessionNotificationCategory.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA7AA4D33F6DA04C84D675A0 /* SessionNotificationCategory.swift */; };
 		690694F1E3716FF50DE9072A /* MermaidGanttRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F18A5EDD0D5360E79FEC7967 /* MermaidGanttRenderer.swift */; };
@@ -1699,6 +1701,7 @@
 		CD6E0D0FCAD95BFEB7C9589D /* AppDiagnosticsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120E49BBF6DB7EC01BE77E6E /* AppDiagnosticsService.swift */; };
 		CDCA93DA0876967A5CD12899 /* AppRootEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30D72CB77E12C80F71163613 /* AppRootEnvironment.swift */; };
 		CE35EBEF35E7E6BECBD5634A /* MermaidTextUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4A7823A5C60628A22055031 /* MermaidTextUtils.swift */; };
+		CE3DC59E9863F58AEFB800DF /* NotificationBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = F08EA0CC50DB6FCDF4DD5A59 /* NotificationBadge.swift */; };
 		CEA7E742B4D0AEC520FF32D8 /* MarkdownTableColumnLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90ACA06659FCB4108760A9FF /* MarkdownTableColumnLayout.swift */; };
 		CECFF8E7CEA973D9F6B7C891 /* MacSessionTimelineViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8B4A0FD4DA34E6267CD77F0 /* MacSessionTimelineViews.swift */; };
 		CEF015695D8877FE024368E6 /* LiveActivityPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B678D2C7494B1364BEEEC6F /* LiveActivityPresentation.swift */; };
@@ -3866,6 +3869,7 @@
 		EF9FFB71AD5BF0309DCC3970 /* ShellRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellRouter.swift; sourceTree = "<group>"; };
 		F02D7A5411649B81B30C008C /* MarkdownPrewarmer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownPrewarmer.swift; sourceTree = "<group>"; };
 		F08483EB16EB870ECD9B8DC0 /* ServerViewSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerViewSelectionTests.swift; sourceTree = "<group>"; };
+		F08EA0CC50DB6FCDF4DD5A59 /* NotificationBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationBadge.swift; sourceTree = "<group>"; };
 		F0ACDDF6704B026A2DE5B56E /* VoiceInputManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputManager.swift; sourceTree = "<group>"; };
 		F0F24D9B33516A6AD3CE86BB /* ScreenCaptureKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ScreenCaptureKit.framework; path = System/Library/Frameworks/ScreenCaptureKit.framework; sourceTree = SDKROOT; };
 		F10DAFC602A678F0A1BACE53 /* OppiApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OppiApp.swift; sourceTree = "<group>"; };
@@ -5873,6 +5877,7 @@
 		8F10CA8460BA14B9EFC39C19 /* Push */ = {
 			isa = PBXGroup;
 			children = (
+				F08EA0CC50DB6FCDF4DD5A59 /* NotificationBadge.swift */,
 				53977C716B1023E1947075B9 /* PushAlertPresentation.swift */,
 				C77B5D9B52AF85DDEE510CFF /* PushEnvelope.swift */,
 				FB85228F0059CE79D0E72963 /* PushNotificationOpening.swift */,
@@ -7703,6 +7708,7 @@
 			files = (
 				D2996AD422BD882EE1861EF3 /* Base64URL.swift in Sources */,
 				95149F324EA5B4EDEE8F671C /* CrossProcessFileLock.swift in Sources */,
+				CE3DC59E9863F58AEFB800DF /* NotificationBadge.swift in Sources */,
 				59DDCBEF182F5D1399FAE27A /* NotificationService.swift in Sources */,
 				DD2DEA0B071AB4F0AF570CB0 /* PushAlertPresentation.swift in Sources */,
 				70D8427365941E8DB2D8E855 /* PushEnvelope.swift in Sources */,
@@ -7974,6 +7980,7 @@
 				75408E78D2C953B9C090883D /* NearbyPairingConstants.swift in Sources */,
 				3D7EF0A3D45A5BCBF4F94074 /* NearbyPairingInviteMessage.swift in Sources */,
 				F79C2AF6B69E63798B68E1A0 /* NotebookCellPlan.swift in Sources */,
+				475214CE0FD067760BF92699 /* NotificationBadge.swift in Sources */,
 				673F04D784F7DAECB630140D /* OnboardingState.swift in Sources */,
 				83820011099AB300D0C3D2BB /* OnboardingWindow.swift in Sources */,
 				9FE62C52206F8DB964611E67 /* OppiClientEnvironment.swift in Sources */,
@@ -9248,6 +9255,7 @@
 				3E48E6406890AA40F04DD048 /* NetworkPathTelemetry.swift in Sources */,
 				46FCB4025C0883E592D5411E /* NotebookCellPlan.swift in Sources */,
 				638C23994A37A4FEC9B9AC9C /* NotebookCellView.swift in Sources */,
+				68C2F969CC52539CB3188B28 /* NotificationBadge.swift in Sources */,
 				250244A2726D540CB8B88374 /* NotificationNames.swift in Sources */,
 				013EAD264D2E7732EBF7E119 /* OnboardingView.swift in Sources */,
 				3A206E5ED7ED9486258281A8 /* OppiApp.swift in Sources */,

@@ -61,6 +61,13 @@ struct RemotePushTests {
         #expect(!AttentionNotificationPolicy.enteredDone(previous: child, current: finished(child), sessions: []))
     }
 
+    @Test func theBadgeCountsWaitingNotificationsAndAReplacementAddsNothing() {
+        #expect(NotificationBadge.count(deliveredIdentifiers: [], adding: "a") == 1)
+        #expect(NotificationBadge.count(deliveredIdentifiers: ["a", "b"], adding: "c") == 3)
+        // A push with a delivered collapse ID replaces that notification in place.
+        #expect(NotificationBadge.count(deliveredIdentifiers: ["a", "b"], adding: "b") == 2)
+    }
+
     @Test func aLeadIsNotDoneWhileAChildStillWorks() {
         let lead = working()
         let child = working("child", parent: "s1")

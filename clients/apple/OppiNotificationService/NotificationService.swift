@@ -9,7 +9,10 @@ import UserNotifications
 /// Lock and scoped-lock redaction, and shows the result. Anything that fails a check, or a
 /// timeout, shows the fixed fallback: never a field from the failed push. Each fallback logs
 /// its rejection reason, and nothing from the push.
-final class NotificationService: UNNotificationServiceExtension {
+/// The badge is set after counting delivered notifications, on another queue, so the content
+/// handler is taken under a lock: whichever of that count or the timeout comes first delivers.
+final class NotificationService: UNNotificationServiceExtension, @unchecked Sendable {
+    private let lock = NSLock()
     private var contentHandler: ((UNNotificationContent) -> Void)?
 
     override func didReceive(
@@ -27,27 +30,40 @@ final class NotificationService: UNNotificationServiceExtension {
         if case .failure(let reason) = result {
             PushSharedStore.logger.notice("Push shown as fallback: \(reason.rawValue, privacy: .public)")
         }
-        deliver(PushNotificationOpening.presentation(
+        let presentation = PushNotificationOpening.presentation(
             for: result,
             redaction: { PushSharedStore.loadRedactionSnapshot() }
-        ))
+        )
+        let identifier = request.identifier
+        UNUserNotificationCenter.current().getDeliveredNotifications { [self] delivered in
+            deliver(presentation, badge: NotificationBadge.count(
+                deliveredIdentifiers: delivered.map(\.request.identifier),
+                adding: identifier
+            ))
+        }
     }
 
     override func serviceExtensionTimeWillExpire() {
-        if contentHandler != nil {
+        if deliver(.fallback, badge: nil) {
             PushSharedStore.logger.notice("Push shown as fallback: timeout")
         }
-        deliver(.fallback)
     }
 
-    private func deliver(_ presentation: PushAlertPresentation) {
-        guard let contentHandler else { return }
+    /// `badge` nil leaves the app icon badge as it is. False when already delivered.
+    @discardableResult
+    private func deliver(_ presentation: PushAlertPresentation, badge: Int?) -> Bool {
+        lock.lock()
+        let contentHandler = contentHandler
         self.contentHandler = nil
-        contentHandler(Self.content(for: presentation))
+        lock.unlock()
+        guard let contentHandler else { return false }
+        contentHandler(Self.content(for: presentation, badge: badge))
+        return true
     }
 
-    static func content(for presentation: PushAlertPresentation) -> UNNotificationContent {
+    static func content(for presentation: PushAlertPresentation, badge: Int?) -> UNNotificationContent {
         let content = UNMutableNotificationContent()
+        content.badge = badge.map { NSNumber(value: $0) }
         content.title = presentation.title
         content.subtitle = presentation.subtitle
         content.body = presentation.body
