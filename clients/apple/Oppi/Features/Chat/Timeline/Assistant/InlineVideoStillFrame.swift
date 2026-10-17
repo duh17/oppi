@@ -10,101 +10,35 @@ import UIKit
 enum InlineVideoStillFrameGenerator {
     /// Fraction of a short clip to sample; frame zero is often black.
     fileprivate static let sampleTimeLimitSeconds = 1.0
-    /// Longest wait for the first frame (header + range reads) before the
-    /// placeholder stays. A slow link retries on a later row entry.
-    static let deadline: Duration = .seconds(6)
 
-    /// One generation's AVFoundation objects. `AVAssetImageGenerator` and the asset
-    /// are documented thread-safe for the calls made here (load, request, cancel).
-    private final class Job: @unchecked Sendable {
-        let loader: AuthenticatedMediaResourceLoader
-        let asset: AVURLAsset
-        let generator: AVAssetImageGenerator
+    /// Returns the frame, or nil when it cannot be read. A stalled server is
+    /// bounded by the loader's URLSession request timeout, which fails the
+    /// loading request so `load` and `image(at:)` return.
+    static func generate(source: AuthenticatedMediaSource, maxPixelSize: CGSize) async -> UIImage? {
+        let loader = AuthenticatedMediaResourceLoader(source: source)
+        let asset = AVURLAsset(url: AuthenticatedMediaPlaybackSession.makeAssetURL())
+        asset.resourceLoader.setDelegate(loader, queue: loader.delegateQueue)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = maxPixelSize
+        generator.requestedTimeToleranceBefore = .positiveInfinity
+        generator.requestedTimeToleranceAfter = .positiveInfinity
 
-        init(source: AuthenticatedMediaSource, maxPixelSize: CGSize) {
-            loader = AuthenticatedMediaResourceLoader(source: source)
-            asset = AVURLAsset(url: AuthenticatedMediaPlaybackSession.makeAssetURL())
-            asset.resourceLoader.setDelegate(loader, queue: loader.delegateQueue)
-            generator = AVAssetImageGenerator(asset: asset)
-            generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = maxPixelSize
-            generator.requestedTimeToleranceBefore = .positiveInfinity
-            generator.requestedTimeToleranceAfter = .positiveInfinity
-        }
+        let duration = (try? await asset.load(.duration).seconds) ?? 0
+        let seconds = duration.isFinite && duration > 0
+            ? min(sampleTimeLimitSeconds, duration / 10)
+            : 0
+        let image = (try? await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600)))
+            .map { UIImage(cgImage: $0.image) }
 
-        private let lock = NSLock()
-        private var isCancelled = false
-
-        func cancel() {
-            lock.withLock { isCancelled = true }
-            generator.cancelAllCGImageGeneration()
-            // Fail pending loads: `loader.cancelAll()` fails the outstanding
-            // resource requests so `load`/`image(at:)` return instead of waiting.
-            asset.cancelLoading()
-            loader.cancelAll()
-        }
-
-        func frame() async -> UIImage? {
-            let duration = (try? await asset.load(.duration).seconds) ?? 0
-            // The job was cancelled while the load was pending. An image request on
-            // an asset whose loading was cancelled never completes, so do not start
-            // one. (`Task.isCancelled` is not enough: the load can fail from
-            // `cancel()` just before the group's own cancellation lands.)
-            guard !lock.withLock({ isCancelled }) else { return nil }
-            let seconds = duration.isFinite && duration > 0
-                ? min(InlineVideoStillFrameGenerator.sampleTimeLimitSeconds, duration / 10)
-                : 0
-            guard let result = try? await generator.image(
-                at: CMTime(seconds: seconds, preferredTimescale: 600)
-            ) else { return nil }
-            return UIImage(cgImage: result.image)
-        }
-    }
-
-    private enum Outcome {
-        /// The read finished: a frame, or nil for a genuine failure (missing file, undecodable).
-        case finished(UIImage?)
-        case deadline
-    }
-
-    /// Returns the frame, or nil when the read genuinely failed. Throws when the
-    /// deadline or cancellation cut the read short, which says nothing about the file.
-    static func generate(
-        source: AuthenticatedMediaSource,
-        maxPixelSize: CGSize,
-        deadline: Duration = InlineVideoStillFrameGenerator.deadline
-    ) async throws -> UIImage? {
-        let job = Job(source: source, maxPixelSize: maxPixelSize)
-        let outcome = await withTaskCancellationHandler {
-            await withTaskGroup(of: Outcome.self) { group in
-                group.addTask { .finished(await job.frame()) }
-                group.addTask {
-                    try? await Task.sleep(for: deadline)
-                    return .deadline
-                }
-                // First finisher wins: a frame, a failure, or the deadline.
-                let first = await group.next() ?? .deadline
-                // On the deadline the frame task may still be mid-read; fail its
-                // loading requests so the group can finish instead of waiting on it.
-                job.cancel()
-                group.cancelAll()
-                return first
-            }
-        } onCancel: {
-            job.cancel()
-        }
-
-        // AVAssetResourceLoader does not retain its delegate. Detach it, fail any
-        // pending requests, then drain the delegate queue while the loader is still
-        // retained so a queued `didCancel` never runs against a released loader.
-        job.asset.resourceLoader.setDelegate(nil, queue: nil)
-        job.cancel()
+        // AVAssetResourceLoader does not retain its delegate. Detach it, then drain
+        // the delegate queue while the loader is still retained so a queued
+        // `didCancel` never runs against a released loader.
+        asset.resourceLoader.setDelegate(nil, queue: nil)
         await withCheckedContinuation { continuation in
-            job.loader.delegateQueue.async { continuation.resume() }
+            loader.delegateQueue.async { continuation.resume() }
         }
-        withExtendedLifetime(job) {}
-        try Task.checkCancellation()
-        guard case .finished(let image) = outcome else { throw CancellationError() }
+        withExtendedLifetime(loader) {}
         return image
     }
 }
@@ -118,9 +52,7 @@ enum InlineVideoStillFrameGenerator {
 /// window so a missing file does not refetch on every scroll-in.
 @MainActor
 final class InlineVideoStillFrameStore {
-    /// Nil is a genuine failure and backs the key off. A throw means the work was cut
-    /// short (deadline, cancellation); it leaves no backoff so the next row entry retries.
-    typealias Generator = @Sendable (AuthenticatedMediaSource, CGSize) async throws -> UIImage?
+    typealias Generator = @Sendable (AuthenticatedMediaSource, CGSize) async -> UIImage?
 
     static let countLimit = 48
     static let totalCostLimit = 48 * 1024 * 1024
@@ -137,12 +69,11 @@ final class InlineVideoStillFrameStore {
     private let generator: Generator
     #if DEBUG
     private(set) var debugGenerationCountForTesting = 0
-    var debugInFlightCountForTesting: Int { inFlight.count }
     #endif
 
     init(
         generator: @escaping Generator = { source, size in
-            try await InlineVideoStillFrameGenerator.generate(source: source, maxPixelSize: size)
+            await InlineVideoStillFrameGenerator.generate(source: source, maxPixelSize: size)
         },
         notificationCenter: NotificationCenter = .default
     ) {
@@ -187,25 +118,13 @@ final class InlineVideoStillFrameStore {
             // Completion runs inside the shared task so the cache is populated
             // before any waiter resumes.
             task = Task { @MainActor [weak self] in
-                let image: UIImage?
-                do {
-                    image = try await generator(source, maxPixelSize)
-                } catch {
-                    self?.abandon(key: key, epoch: startEpoch)
-                    return nil
-                }
+                let image = await generator(source, maxPixelSize)
                 self?.finish(key: key, image: image, epoch: startEpoch)
                 return image
             }
             inFlight[key] = task
         }
         return await task.value
-    }
-
-    /// A deadline or cancel miss: free the key without recording a failure.
-    private func abandon(key: String, epoch startEpoch: Int) {
-        guard startEpoch == epoch else { return }
-        inFlight[key] = nil
     }
 
     private func finish(key: String, image: UIImage?, epoch startEpoch: Int) {
@@ -222,7 +141,7 @@ final class InlineVideoStillFrameStore {
 
     func removeAll() {
         epoch += 1
-        for task in inFlight.values { task.cancel() }
+        // In-flight generations keep running; the epoch guard discards their results.
         inFlight.removeAll()
         cache.removeAllObjects()
         failedAt.removeAll()

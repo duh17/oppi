@@ -193,44 +193,6 @@ struct MarkdownInlineVideoNativePlayTests {
     }
 
     @MainActor
-    @Test(
-        "a stalled server cannot hold a still-frame read past its deadline, and the next request recovers",
-        .timeLimit(.minutes(2))
-    )
-    func stalledStillFrameReadFailsAtDeadlineAndRecovers() async throws {
-        let body = try Data(contentsOf: try knownGoodH264URL())
-        let server = try AuthenticatedRangeHTTPServer(body: body, token: "Bearer native-play")
-        defer { server.stop() }
-        let source = mediaSource(url: server.url)
-        let size = CGSize(width: 320, height: 180)
-        let store = InlineVideoStillFrameStore(
-            generator: { source, size in
-                try await InlineVideoStillFrameGenerator.generate(
-                    source: source, maxPixelSize: size, deadline: .seconds(1)
-                )
-            },
-            notificationCenter: NotificationCenter()
-        )
-
-        server.setStalled(true)
-        let clock = ContinuousClock()
-        let started = clock.now
-        let stalled = await store.image(for: source, maxPixelSize: size)
-        let elapsed = clock.now - started
-        #expect(server.stalledRequestCount > 0, "the read never reached the stalled server")
-        #expect(stalled == nil)
-        #expect(elapsed < .seconds(5), "the deadline did not return: \(elapsed)")
-        #expect(store.debugInFlightCountForTesting == 0, "a hung generation stayed in flight")
-
-        // A deadline miss says nothing about the file: no failure backoff.
-        server.setStalled(false)
-        let recovered = await store.image(for: source, maxPixelSize: size)
-        #expect(recovered != nil, "a later request did not produce a frame: \(server.snapshotRanges())")
-        #expect(store.debugGenerationCountForTesting == 2)
-        #expect(store.debugInFlightCountForTesting == 0)
-    }
-
-    @MainActor
     @Test("timeline scroll builds no player before tap; one tap builds one playing player; each still loads once")
     func timelineScrollBuildsNoPlayerUntilTap() async throws {
         let body = try Data(contentsOf: try knownGoodH264URL())
