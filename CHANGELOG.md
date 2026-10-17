@@ -101,6 +101,7 @@ Example:
 
 ### Fixed
 
+- **Client:** Tapping a row in Session Outline lands the chat on exactly that row, just below the top bar, and keeps it there while rows above it finish loading. After the outline closes, the row lifts slightly with a soft tint and a light tap (the tap follows Settings > Haptic Feedback; Reduce Motion keeps only the tint).
 - **Server:** Commit, Changes, and session file diffs now match `git diff --minimal` line for line. Before, about a third of file diffs could show a blank line that was not in the file and shift the line numbers after it.
 - **Client/Server:** Word highlights in diffs mark only lines that were actually edited, not unrelated lines that happen to sit side by side in a rewrite, and long edited lines highlight the changed words instead of the whole line. Diffs of rewritten prose, such as a trimmed changelog, open and scroll faster, and commit file diffs no longer download both full copies of the file.
 - **Client:** Commit file diffs and the Changes review scroll smoothly on long diffs and long lines, and have the same Viewing Options as full-screen diffs: text size and Wrap Text, shared with them.

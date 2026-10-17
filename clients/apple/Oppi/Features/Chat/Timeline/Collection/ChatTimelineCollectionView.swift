@@ -266,6 +266,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         /// The app root above this timeline, for SwiftUI content it hosts
         /// through `HostFactory.content`. The timeline reads no services from it.
         var contentRoot: AppRootEnvironment?
+        /// Prepared when an explicit jump starts, spent when its row arrives.
+        private var navigationArrivalHaptic: UIImpactFeedbackGenerator?
 
         var hiddenCount = 0
         var hasOlderServerPage = false
@@ -2250,7 +2252,8 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     return
                 }
 
-                guard attempt < 20 else { return }
+                // Covers a router sheet's dismissal, which can outlast the jump.
+                guard attempt < 60 else { return }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     tryApplyHighlight(attempt: attempt + 1)
                 }
@@ -2270,12 +2273,18 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 return false
             }
 
+            // The outline sheet closes while the jump runs under it. Arrive
+            // once the chat is uncovered, or the lift plays behind the sheet.
+            guard !Self.isCoveredByPresentation(collectionView) else { return false }
+
             let indexPath = IndexPath(item: itemIndex, section: 0)
             guard let cell = collectionView.cellForItem(at: indexPath) as? SafeSizingCell else {
                 return false
             }
 
-            cell.performNavigationHighlight(token: token)
+            cell.performNavigationArrival()
+            AppHaptics.navigationArrival(navigationArrivalHaptic)
+            navigationArrivalHaptic = nil
             scrollController.clearNavigationHighlightIfNeeded(for: itemID, token: token)
 
             let refreshZOrder: @MainActor @Sendable () -> Void = { [weak collectionView] in
@@ -2290,6 +2299,19 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: refreshZOrder)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: refreshZOrder)
             return true
+        }
+
+        /// Warm the arrival tap when a jump starts so it fires on landing.
+        func prepareNavigationArrivalHaptic() {
+            navigationArrivalHaptic = AppHaptics.prepareNavigationArrival()
+        }
+
+        /// `presentedViewController` also reports a modal presented by any
+        /// ancestor, so this sees a router sheet over the chat's screen.
+        private static func isCoveredByPresentation(_ view: UIView) -> Bool {
+            let owner = sequence(first: view as UIResponder, next: \.next)
+                .lazy.compactMap { $0 as? UIViewController }.first
+            return owner?.presentedViewController != nil
         }
 
         private func correctProgrammaticScrollAlignmentIfNeeded(

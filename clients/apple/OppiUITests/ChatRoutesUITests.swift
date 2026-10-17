@@ -62,6 +62,41 @@ final class ChatRoutesUITests: XCTestCase {
         assertRunning()
     }
 
+    /// A long session (about 700 rows): an outline tap on a far row, one
+    /// mid-session, and one near the tail each land that row's top edge just
+    /// below the chat's top chrome, and the row lights up.
+    func testOutlineJumpLandsOnTheTappedRow() {
+        launch(environment: ["CHAT_ROUTES_LONG_TURNS": "175"])
+        let outlineButton = app.buttons["chat.toolbar.outline"]
+        XCTAssertTrue(outlineButton.waitForExistence(timeout: 10), "Seeded timeline must make the outline available")
+        let landing = app.staticTexts["chatRoutes.landing"]
+        // Far rows (the whole history renders), one mid-session, one near the tail.
+        for turn in [3, 21, 91, 171] {
+            outlineButton.tap()
+            let outline = app.navigationBars["Session Outline"]
+            XCTAssertTrue(outline.waitForExistence(timeout: 5), "Outline did not open")
+            let search = outlineSearchField()
+            search.tap()
+            search.typeText("LONG_BASH_\(turn)")
+            let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "echo LONG_BASH_\(turn) &&")).firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 5), "Search must list bash \(turn)")
+            row.tap()
+            XCTAssertTrue(waitForDisappearance(of: outline), "Selecting a row must close the outline")
+            let target = "long-bash-\(turn)"
+            // The row lights up once the outline is gone, not under it.
+            XCTAssertTrue(
+                waitFor(text(of: landing).contains("arrived=\(target)/open "), timeout: 3),
+                "The landed row must light up after the outline closes: \(text(of: landing))"
+            )
+            let settled = text(of: landing)
+            XCTAssertTrue(
+                ["@0 ", "@1 ", "@-1 "].contains { settled.contains("top=\(target)\($0)") },
+                "Outline jump to \(target) must land its top edge under the chrome: \(settled)"
+            )
+        }
+        assertRunning()
+    }
+
     func testFilesPanelPushesAReviewAndCloses() {
         launch()
         app.buttons["chat.toolbar.files"].tap()

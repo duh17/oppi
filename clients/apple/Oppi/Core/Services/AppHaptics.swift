@@ -60,6 +60,24 @@ enum AppHaptics {
         }
     }
 
+    /// Warm the tap for a jump's landing (outline, search result) when the
+    /// jump starts. Nil while haptics are off in Settings.
+    @MainActor
+    static func prepareNavigationArrival() -> UIImpactFeedbackGenerator? {
+        guard AppPreferences.Interaction.isHapticFeedbackEnabled else { return nil }
+        let feedback = UIImpactFeedbackGenerator(style: .light)
+        feedback.prepare()
+        return feedback
+    }
+
+    /// One light tap as the jumped-to row lights up. The setting is read
+    /// again here, so turning haptics off mid-jump silences it.
+    @MainActor
+    static func navigationArrival(_ prepared: UIImpactFeedbackGenerator?) {
+        guard AppPreferences.Interaction.isHapticFeedbackEnabled else { return }
+        (prepared ?? UIImpactFeedbackGenerator(style: .light)).impactOccurred(intensity: 0.6)
+    }
+
     static func impact(style: UIImpactFeedbackGenerator.FeedbackStyle, intensity: CGFloat? = nil) {
         guard AppPreferences.Interaction.isHapticFeedbackEnabled else { return }
         MainActor.assumeIsolated {

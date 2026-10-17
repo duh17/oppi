@@ -390,6 +390,7 @@ extension ChatTimelineCollectionHost.Controller {
             ownedClock.renderWindow = reducer.items.count
         }
         scrollController.handleScrollTarget { [weak self] target in
+            self?.prepareNavigationArrivalHaptic()
             self?.issueOwnedScrollCommand(id: target, anchor: .top, animated: false)
         }
     }

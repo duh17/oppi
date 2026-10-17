@@ -797,7 +797,11 @@ struct SessionOutlineView: View {
                         let entry = displayedEntries[index]
                         Button {
                             onSelect(entry.id)
-                            onClose()
+                            // Close one main-queue turn later: the timeline
+                            // applies the jump on the turn `onSelect` queued,
+                            // so the outline slides away from the landed row
+                            // instead of revealing the old spot, then a jump.
+                            DispatchQueue.main.async { onClose() }
                         } label: {
                             OutlineRow(
                                 item: entry.item,

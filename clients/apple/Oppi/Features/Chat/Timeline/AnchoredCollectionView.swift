@@ -196,8 +196,19 @@ final class AnchoredCollectionView: UICollectionView {
             return
         }
 
+        // Pin the first row the reader sees: below the top chrome, not one
+        // realized under the translucent bar. A row hidden there can still
+        // resize (late output, markdown re-layout), and pinning it pushed the
+        // row an outline jump had just landed on down by that growth.
+        let insets = adjustedContentInset
+        let readingRect = CGRect(
+            x: contentOffset.x,
+            y: contentOffset.y + insets.top,
+            width: bounds.width,
+            height: max(bounds.height - insets.top - insets.bottom, 1)
+        )
         let visibleRect = CGRect(origin: contentOffset, size: bounds.size)
-        let candidate = indexPathsForVisibleItems
+        let rows = indexPathsForVisibleItems
             .compactMap { indexPath -> (indexPath: IndexPath, attributes: UICollectionViewLayoutAttributes, itemID: String)? in
                 guard let attributes = layoutAttributesForItem(at: indexPath),
                       attributes.frame.intersects(visibleRect),
@@ -206,6 +217,8 @@ final class AnchoredCollectionView: UICollectionView {
                 }
                 return (indexPath, attributes, itemID)
             }
+        let readRows = rows.filter { $0.attributes.frame.intersects(readingRect) }
+        let candidate = (readRows.isEmpty ? rows : readRows)
             .min { $0.attributes.frame.minY < $1.attributes.frame.minY }
 
         guard let candidate else {

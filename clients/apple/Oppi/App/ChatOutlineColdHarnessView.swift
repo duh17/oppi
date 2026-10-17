@@ -437,6 +437,7 @@ struct ChatRoutesHarnessView: View {
         templates: QuickCommentTemplate.builtInDefaults
     )
     @State private var stub = ChatRoutesStubRecord.shared
+    @State private var landing = ""
 
     var body: some View {
         RouterPreviewNavigation {
@@ -471,6 +472,20 @@ struct ChatRoutesHarnessView: View {
                 .accessibilityIdentifier("chatRoutes.createdSessions")
                 .accessibilityValue("\(stub.createdSessions)")
                 .allowsHitTesting(false)
+        }
+        .overlay(alignment: .bottomLeading) {
+            Text(landing)
+                .font(.system(size: 8))
+                .opacity(0.02)
+                .accessibilityIdentifier("chatRoutes.landing")
+                .accessibilityValue(landing)
+                .allowsHitTesting(false)
+        }
+        .task {
+            while !Task.isCancelled {
+                landing = ChatRoutesFixture.landingProbe()
+                try? await Task.sleep(for: .milliseconds(100))
+            }
         }
         .task {
             navigation.launchPhase = .ready
@@ -761,7 +776,91 @@ private enum ChatRoutesFixture {
         for turn in 1...4 {
             events.append(traceEvent(id: "chat-routes-assistant-\(turn)", type: .assistant, text: "ROUTES_FILL_\(turn) reply."))
         }
+        if let turns = environment["CHAT_ROUTES_LONG_TURNS"].flatMap(Int.init) {
+            events += longSessionEvents(turns: turns)
+        }
         reducer.loadSession(events)
+    }
+
+    /// `CHAT_ROUTES_LONG_TURNS=N`: N agent turns of thinking, a bash call
+    /// (`LONG_BASH_<n>`), and a reply of varying length, so rows far from
+    /// the tail sit at estimated heights until a jump realizes them.
+    private static func longSessionEvents(turns: Int) -> [TraceEvent] {
+        var events: [TraceEvent] = []
+        for turn in 0..<turns {
+            if turn.isMultiple(of: 12) {
+                events.append(traceEvent(id: "long-user-\(turn)", type: .user, text: "LONG_USER_\(turn) keep going."))
+            }
+            events.append(TraceEvent(
+                id: "long-thinking-\(turn)",
+                type: .thinking,
+                timestamp: "2026-10-15T18:00:00.000Z",
+                thinking: "LONG_THINK_\(turn) check the next step before running it. "
+                    + String(repeating: "Weigh what the last output said and pick the next command. ", count: turn % 5)
+            ))
+            let command = "cd ~/workspace/oppi && echo LONG_BASH_\(turn)"
+                + String(repeating: " && git status --short", count: turn % 4)
+            events.append(TraceEvent(
+                id: "long-bash-\(turn)",
+                type: .toolCall,
+                timestamp: "2026-10-15T18:00:00.000Z",
+                tool: "bash",
+                args: ["command": .string(command)]
+            ))
+            events.append(TraceEvent(
+                id: "long-bash-result-\(turn)",
+                type: .toolResult,
+                timestamp: "2026-10-15T18:00:01.000Z",
+                output: (0...(turn % 6)).map { "LONG_BASH_\(turn) line \($0)" }.joined(separator: "\n"),
+                toolCallId: "long-bash-\(turn)",
+                toolName: "bash",
+                isError: false
+            ))
+            events.append(traceEvent(
+                id: "long-assistant-\(turn)",
+                type: .assistant,
+                text: "LONG_REPLY_\(turn) " + String(repeating: "The step finished and the next one follows. ", count: 1 + (turn * 7) % 9)
+                    + (turn.isMultiple(of: 3)
+                        ? "\n\n## Notes \(turn)\n\n- first point with `code`\n- second point\n\n```swift\nlet turn = \(turn)\nprint(turn)\n```\n"
+                        : "")
+            ))
+        }
+        return events
+    }
+
+    /// The last row seen arriving, and whether a modal covered the chat then.
+    /// Latched: UI tests wait for the app to idle, which outlasts the arrival.
+    @MainActor private static var lastArrival = ""
+
+    /// Where the timeline sits under its top chrome, for outline-jump tests:
+    /// `top=<row id>@<y>`, the first row reaching below the top inset and its
+    /// top edge relative to that inset; `arrived=<row id>/<open|covered>`, the
+    /// last row seen arriving after a jump.
+    @MainActor static func landingProbe() -> String {
+        guard let collection = timelineCollectionInWindows(),
+              let controller = collection.delegate as? ChatTimelineCollectionHost.Controller else { return "" }
+        let insetTop = collection.adjustedContentInset.top
+        var top = ""
+        var topY = CGFloat.greatestFiniteMagnitude
+        var lit = ""
+        for indexPath in collection.indexPathsForVisibleItems where indexPath.item < controller.currentIDs.count {
+            guard let attributes = collection.layoutAttributesForItem(at: indexPath) else { continue }
+            let id = controller.currentIDs[indexPath.item]
+            let relativeY = attributes.frame.minY - collection.contentOffset.y - insetTop
+            if attributes.frame.maxY - collection.contentOffset.y > insetTop + 1, relativeY < topY {
+                topY = relativeY
+                top = id
+            }
+            if (collection.cellForItem(at: indexPath) as? SafeSizingCell)?.isShowingNavigationHighlightForTesting == true {
+                lit = id
+            }
+        }
+        if !lit.isEmpty {
+            let covered = collection.window?.rootViewController?.presentedViewController != nil
+            lastArrival = "\(lit)/\(covered ? "covered" : "open")"
+        }
+        let y = top.isEmpty ? "-" : String(Int(topY.rounded()))
+        return "top=\(top)@\(y) arrived=\(lastArrival) inset=\(Int(insetTop))"
     }
 
     private static func traceEvent(id: String, type: TraceEventType, text: String) -> TraceEvent {

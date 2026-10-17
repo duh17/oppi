@@ -309,6 +309,48 @@ struct SessionTimelineNavigationTests {
         #expect(result.highlightOverlayFrontmost, "Expected tool highlight overlay to render above row content")
     }
 
+    /// After a jump, the row just above the target sits under the top chrome
+    /// and can still resize (late output, markdown re-layout, streaming). The
+    /// landed row must stay where the jump put it, not ride along.
+    @Test func landedRowStaysBelowChromeWhenTheRowAboveItResizes() async throws {
+        let topOverlap: CGFloat = 152
+        let targetID = "tool-61"
+        let resizedID = "msg-60"
+        let harness = makeWindowedTimelineHarness(
+            sessionId: "session-outline-landing",
+            useAnchoredCollectionView: true
+        )
+        var items = makeMixedTimelineItems(count: 120)
+        applyTimelineItems(items, hiddenCount: 0, nonce: nil, topOverlap: topOverlap, to: harness)
+        settleTimelineLayout(harness.collectionView, passes: 2)
+        harness.coordinator.updateScrollState(harness.collectionView)
+        harness.scrollController.detachFromBottomForUserScroll()
+        applyTimelineItems(
+            items, hiddenCount: 0, nonce: 1, scrollTargetID: targetID, topOverlap: topOverlap, to: harness
+        )
+        let landed = await waitForTimelineCondition(timeoutMs: 500) {
+            await MainActor.run {
+                settleTimelineLayout(harness.collectionView, passes: 3)
+                return targetRelativeY(targetID, in: harness).map { abs($0) < 0.5 } ?? false
+            }
+        }
+        #expect(landed, "Jump must land \(targetID) at the top inset; y=\(String(describing: targetRelativeY(targetID, in: harness)))")
+        let resizedIndex = try #require(items.firstIndex { $0.id == resizedID })
+        let resizedTop = try #require(harness.collectionView.layoutAttributesForItem(
+            at: IndexPath(item: resizedIndex, section: 0)
+        )).frame.minY - harness.collectionView.contentOffset.y
+        #expect(resizedTop < topOverlap, "\(resizedID) must sit under the top chrome for this case")
+
+        let grownText = Array(repeating: "Late content that makes this row much taller.", count: 12)
+            .joined(separator: "\n")
+        items[resizedIndex] = .assistantMessage(id: resizedID, text: grownText, timestamp: Date(timeIntervalSince1970: 60))
+        applyTimelineItems(items, hiddenCount: 0, nonce: nil, topOverlap: topOverlap, to: harness)
+        settleTimelineLayout(harness.collectionView, passes: 3)
+
+        let after = try #require(targetRelativeY(targetID, in: harness))
+        #expect(abs(after) < 0.5, "\(targetID) drifted \(after)pt from the top inset when \(resizedID) resized")
+    }
+
     @Test func navigationReentryRestoresStableItemAtExactRelativeViewportPosition() async throws {
         let harness = makeWindowedTimelineHarness(
             sessionId: "session-document-reentry",
@@ -607,6 +649,17 @@ private func firstItemIsBelowTopChrome(_ itemID: String, in harness: WindowedTim
     let insets = harness.collectionView.adjustedContentInset
     let relativeY = attributes.frame.minY - harness.collectionView.contentOffset.y
     return abs(relativeY - insets.top) < 8
+}
+
+/// The row's top edge relative to the top content inset (0 = just below chrome).
+@MainActor
+private func targetRelativeY(_ itemID: String, in harness: WindowedTimelineHarness) -> CGFloat? {
+    guard let index = harness.coordinator.currentIDs.firstIndex(of: itemID),
+          let attributes = harness.collectionView.layoutAttributesForItem(at: IndexPath(item: index, section: 0)) else {
+        return nil
+    }
+    return attributes.frame.minY - harness.collectionView.contentOffset.y
+        - harness.collectionView.adjustedContentInset.top
 }
 
 private func makeMixedTimelineItems(count: Int) -> [ChatItem] {

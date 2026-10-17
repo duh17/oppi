@@ -286,6 +286,9 @@ final class ChatScrollController: NSObject {
             // even if UIKit repeats the callback while interaction is active.
             navigationRestoration = nil
             activeImagePreviewPreservation = nil
+            // A touch takes over: a jump that has not arrived yet must not
+            // lift a row later, under the reader's finger.
+            pendingNavigationHighlightItemID = nil
         }
 
         guard anchor.isUserInteracting != isInteracting else { return }

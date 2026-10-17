@@ -45,7 +45,8 @@ final class SafeSizingCell: UICollectionViewCell {
     private static let streamingSizeThrottleNs: UInt64 = 340_000_000 // 340ms
 
     private let navigationHighlightOverlay = UIView()
-    private var navigationHighlightToken: UInt = 0
+    private var navigationArrival: NavigationArrivalDriver?
+    private var navigationArrivalTransform: CGAffineTransform = .identity
     private var preparationItemID: String?
     private var cancelPreparationDemand: (() -> Void)?
     private weak var toolHeaderContentView: UIView?
@@ -74,6 +75,8 @@ final class SafeSizingCell: UICollectionViewCell {
         isStreamingAssistant = false
         invalidateStreamingHeightCache()
         cancelTimelinePreparationDemand()
+        // The arrival belongs to the landed row, not to whatever reuses the cell.
+        finishNavigationArrival()
         accessibilityIdentifier = nil
         accessibilityElementsHidden = false
         releaseToolHeaderAccessibility()
@@ -109,56 +112,78 @@ final class SafeSizingCell: UICollectionViewCell {
 
     private func configureNavigationHighlightOverlay() {
         navigationHighlightOverlay.isUserInteractionEnabled = false
+        // Hidden until a navigation arrival drives its alpha.
         navigationHighlightOverlay.alpha = 0
-        navigationHighlightOverlay.backgroundColor = UIColor(Color.themeBlue).withAlphaComponent(0.18)
-        navigationHighlightOverlay.layer.borderColor = UIColor(Color.themeBlue).withAlphaComponent(0.9).cgColor
-        navigationHighlightOverlay.layer.borderWidth = 2
+        navigationHighlightOverlay.backgroundColor = UIColor(Color.themeBlue).withAlphaComponent(0.22)
+        navigationHighlightOverlay.layer.borderColor = UIColor(Color.themeBlue).withAlphaComponent(0.55).cgColor
+        navigationHighlightOverlay.layer.borderWidth = 1
         navigationHighlightOverlay.layer.cornerRadius = 14
+        navigationHighlightOverlay.layer.cornerCurve = .continuous
         navigationHighlightOverlay.layer.zPosition = 10_000
         navigationHighlightOverlay.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(navigationHighlightOverlay)
+        // On the cell, not in `contentView`: setting a content configuration
+        // replaces `contentView`, which took an overlay inside it out of the
+        // window, so the highlight never drew.
+        addSubview(navigationHighlightOverlay)
         NSLayoutConstraint.activate([
-            navigationHighlightOverlay.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 2),
-            navigationHighlightOverlay.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -2),
-            navigationHighlightOverlay.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 2),
-            navigationHighlightOverlay.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -2),
+            navigationHighlightOverlay.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            navigationHighlightOverlay.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
+            navigationHighlightOverlay.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            navigationHighlightOverlay.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
         ])
     }
 
     func ensureNavigationHighlightOverlayFrontmost() {
-        contentView.bringSubviewToFront(navigationHighlightOverlay)
+        bringSubviewToFront(navigationHighlightOverlay)
     }
 
-    func performNavigationHighlight(token: UInt) {
-        navigationHighlightToken = token
+    /// Shows where an explicit jump landed: the row lifts slightly under a
+    /// soft accent tint, then settles back as the tint fades. Reduce Motion
+    /// keeps only the tint.
+    func performNavigationArrival(reduceMotion: Bool = UIAccessibility.isReduceMotionEnabled) {
         ensureNavigationHighlightOverlayFrontmost()
-        navigationHighlightOverlay.layer.removeAllAnimations()
-        navigationHighlightOverlay.alpha = 1
+        navigationArrival?.stop()
+        let driver = NavigationArrivalDriver(cell: self, lifts: !reduceMotion)
+        navigationArrival = driver
+        driver.start()
+    }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
-            guard let self, self.navigationHighlightToken == token else { return }
-            UIView.animate(
-                withDuration: 1.2,
-                delay: 0,
-                options: [.allowUserInteraction, .curveEaseOut]
-            ) {
-                self.navigationHighlightOverlay.alpha = 0
-            }
+    /// One frame of the arrival. `lift` and `tint` run 0...1.
+    fileprivate func setNavigationArrivalFrame(lift: CGFloat, tint: CGFloat) {
+        // 2% (about 4pt a side on a phone row), at most 8pt taller on a tall
+        // row: a lift you notice, not a bounce. No rise: the landed row sits
+        // just under the top chrome.
+        let scale = 1 + lift * min(0.02, 8 / max(bounds.height, 1))
+        navigationArrivalTransform = CGAffineTransform(scaleX: scale, y: scale)
+        transform = navigationArrivalTransform
+        navigationHighlightOverlay.alpha = tint
+    }
+
+    fileprivate func finishNavigationArrival() {
+        navigationArrival?.stop()
+        navigationArrival = nil
+        navigationArrivalTransform = .identity
+        transform = .identity
+        navigationHighlightOverlay.alpha = 0
+    }
+
+    /// UIKit resets the cell's transform from its layout attributes on every
+    /// layout pass; keep the arrival's lift through those passes.
+    override func apply(_ layoutAttributes: UICollectionViewLayoutAttributes) {
+        super.apply(layoutAttributes)
+        if navigationArrival != nil {
+            transform = navigationArrivalTransform
         }
     }
 
     #if DEBUG
         var isShowingNavigationHighlightForTesting: Bool {
-            navigationHighlightOverlay.alpha > 0.01
+            navigationArrival != nil
         }
 
+        /// In the window, above the current `contentView`.
         var isNavigationHighlightOverlayFrontmostForTesting: Bool {
-            let maxOtherZ = contentView.subviews
-                .filter { $0 !== navigationHighlightOverlay }
-                .map(\.layer.zPosition)
-                .max() ?? -.greatestFiniteMagnitude
-            return contentView.subviews.last === navigationHighlightOverlay
-                || navigationHighlightOverlay.layer.zPosition > maxOtherZ
+            navigationHighlightOverlay.window != nil && subviews.last === navigationHighlightOverlay
         }
     #endif
 
@@ -232,6 +257,66 @@ final class SafeSizingCell: UICollectionViewCell {
 
         attributes.size = CGSize(width: width, height: resolvedHeight)
         return attributes
+    }
+}
+
+/// Plays a cell's navigation arrival frame by frame. Snapshot applies strip
+/// in-flight layer animations from visible cells, and the chat applies them
+/// constantly, so a Core Animation lift would stop after one frame.
+@MainActor
+private final class NavigationArrivalDriver: NSObject {
+    private static let duration: CFTimeInterval = 0.9
+
+    private weak var cell: SafeSizingCell?
+    private let lifts: Bool
+    private var link: CADisplayLink?
+    private var startTime: CFTimeInterval?
+
+    init(cell: SafeSizingCell, lifts: Bool) {
+        self.cell = cell
+        self.lifts = lifts
+    }
+
+    func start() {
+        cell?.setNavigationArrivalFrame(lift: 0, tint: 0)
+        let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    func stop() {
+        link?.invalidate()
+        link = nil
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        guard let cell else {
+            stop()
+            return
+        }
+        let now = link.targetTimestamp
+        let start = startTime ?? now
+        startTime = start
+        let progress = CGFloat(min(max((now - start) / Self.duration, 0), 1))
+        guard progress < 1 else {
+            cell.finishNavigationArrival()
+            return
+        }
+        // Rise quickly, hold, then settle: tint 0-15% / 45-100%, lift 0-25% / 50-100%.
+        let tint = Self.envelope(progress, riseEnd: 0.15, fallStart: 0.45)
+        let lift = lifts ? Self.envelope(progress, riseEnd: 0.25, fallStart: 0.5) : 0
+        cell.setNavigationArrivalFrame(lift: lift, tint: tint)
+    }
+
+    /// 0 → 1 with an ease-out rise, a flat hold, and an ease-in-out fall to 0.
+    private static func envelope(_ t: CGFloat, riseEnd: CGFloat, fallStart: CGFloat) -> CGFloat {
+        if t < riseEnd {
+            let x = t / riseEnd
+            return 1 - (1 - x) * (1 - x) * (1 - x)
+        }
+        if t < fallStart { return 1 }
+        let x = (t - fallStart) / (1 - fallStart)
+        return 1 - x * x * (3 - 2 * x)
     }
 }
 
