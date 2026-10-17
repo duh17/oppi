@@ -5,15 +5,19 @@ import { fileURLToPath } from "node:url";
 import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-layer-rules.mjs";
 
 /**
- * UIKit-first ownership ratchet for the iOS app target (clients/apple/Oppi).
+ * UIKit-first ownership guard for the iOS app target (clients/apple/Oppi).
  *
- * UIKit owns iOS app structure, modal presentation, and new views. SwiftUI
- * app-structure constructs may remain in existing screens, but their per-file
- * counts can only go down. A file's count for a construct fails the guard when
- * it exceeds uikit-structure-baseline.json (files absent from the baseline have
- * baseline 0). Decreases pass. Policy: dev/architecture-client.md,
- * "UIKit and SwiftUI ownership".
+ * UIKit owns iOS app structure, modal presentation, and new views. Two rules:
  *
+ *  - Navigation and presentation constructs (NavigationStack, .sheet(, ...)
+ *    and UIHostingController( are disallowed in every file, debug previews and
+ *    harnesses included. The only exceptions are the commented entries in
+ *    `allowed` below.
+ *  - `import SwiftUI` is a ratchet: a file's count fails the guard when it
+ *    exceeds uikit-structure-baseline.json (files absent from the baseline
+ *    have baseline 0). Decreases pass.
+ *
+ * Policy: dev/architecture-client.md, "UIKit and SwiftUI ownership".
  * Comments and string literals are stripped before matching.
  *
  *   bun scripts/uikit-structure-guard.ts            check against the baseline
@@ -22,7 +26,7 @@ import { stripSwiftCommentsAndStrings } from "../server/scripts/architecture-lay
  *                                                   regeneration only)
  */
 
-type Construct = { name: string; pattern: RegExp };
+type Construct = { name: string; pattern: RegExp; disallowed: boolean };
 type Counts = Record<string, number>;
 type Baseline = Record<string, Counts>;
 type Hit = { file: string; line: number; construct: string };
@@ -33,16 +37,33 @@ const baselinePath = join(repoRoot, "scripts/uikit-structure-baseline.json");
 const guide = "dev/architecture-client.md, section \"UIKit and SwiftUI ownership\"";
 
 const constructs: Construct[] = [
-  { name: "NavigationStack", pattern: /\bNavigationStack\b/g },
-  { name: "NavigationSplitView", pattern: /\bNavigationSplitView\b/g },
-  { name: "NavigationLink", pattern: /\bNavigationLink\b/g },
-  { name: ".navigationDestination(", pattern: /\.navigationDestination\s*\(/g },
-  { name: ".sheet(", pattern: /\.sheet\s*\(/g },
-  { name: ".fullScreenCover(", pattern: /\.fullScreenCover\s*\(/g },
-  { name: ".popover(", pattern: /\.popover\s*\(/g },
-  { name: ".inspector(", pattern: /\.inspector\s*\(/g },
-  { name: "UIHostingController(", pattern: /\bUIHostingController\s*(?:<[^>(]*>)?\s*\(/g },
-  { name: "import SwiftUI", pattern: /^[ \t]*(?:@\w+[ \t]+)*import[ \t]+SwiftUI\b/gm },
+  { name: "NavigationStack", pattern: /\bNavigationStack\b/g, disallowed: true },
+  { name: "NavigationSplitView", pattern: /\bNavigationSplitView\b/g, disallowed: true },
+  { name: "NavigationLink", pattern: /\bNavigationLink\b/g, disallowed: true },
+  { name: ".navigationDestination(", pattern: /\.navigationDestination\s*\(/g, disallowed: true },
+  { name: ".sheet(", pattern: /\.sheet\s*\(/g, disallowed: true },
+  { name: ".fullScreenCover(", pattern: /\.fullScreenCover\s*\(/g, disallowed: true },
+  { name: ".popover(", pattern: /\.popover\s*\(/g, disallowed: true },
+  { name: ".inspector(", pattern: /\.inspector\s*\(/g, disallowed: true },
+  { name: "UIHostingController(", pattern: /\bUIHostingController\s*(?:<[^>(]*>)?\s*\(/g, disallowed: true },
+  { name: "import SwiftUI", pattern: /^[ \t]*(?:@\w+[ \t]+)*import[ \t]+SwiftUI\b/gm, disallowed: false },
+];
+
+/**
+ * Disallowed constructs that may stay, per file: the construct and how many
+ * uses. Every entry needs a reason; an entry nobody needs is deleted.
+ */
+const allowed: { file: string; construct: string; count: number; reason: string }[] = [
+  // Removed by S7a: these sheets stop owning a NavigationStack once every
+  // caller presents them through the router. The entries stay valid after that
+  // (an allowance above the actual count passes) and are deleted with it.
+  ...[
+    "clients/apple/Oppi/Features/Chat/Composer/ExpandedComposerView.swift",
+    "clients/apple/Oppi/Features/Chat/ReviewComments/ReviewCommentStashSheet.swift",
+    "clients/apple/Oppi/Features/Chat/Support/ModelPickerSheet.swift",
+    "clients/apple/Oppi/Features/Icons/IconPickerView.swift",
+    "clients/apple/Oppi/Features/Workspaces/WorkspaceCreateView.swift",
+  ].map((file) => ({ file, construct: "NavigationStack", count: 1, reason: "removed by S7a" })),
 ];
 
 function walkSwiftFiles(root: string): string[] {
@@ -101,10 +122,11 @@ function loadBaseline(): Baseline {
   return JSON.parse(readFileSync(baselinePath, "utf8")).files as Baseline;
 }
 
+const ratcheted = new Set(constructs.filter((c) => !c.disallowed).map((c) => c.name));
 const hits = scan();
 
 if (process.argv.includes("--update")) {
-  const files = countByFile(hits);
+  const files = countByFile(hits.filter((hit) => ratcheted.has(hit.construct)));
   writeFileSync(baselinePath, `${JSON.stringify({ version: 1, files }, null, 2)}\n`);
   console.log(`UIKit structure guard: baseline rewritten (${Object.keys(files).length} files).`);
   process.exit(0);
@@ -116,9 +138,12 @@ const failures: string[] = [];
 
 for (const [file, counts] of Object.entries(current)) {
   for (const [construct, count] of Object.entries(counts)) {
-    const allowed = baseline[file]?.[construct] ?? 0;
-    if (count <= allowed) continue;
-    failures.push(`- ${file}: ${construct} count ${count} exceeds baseline ${allowed}`);
+    const limit = ratcheted.has(construct)
+      ? (baseline[file]?.[construct] ?? 0)
+      : (allowed.find((entry) => entry.file === file && entry.construct === construct)?.count ?? 0);
+    if (count <= limit) continue;
+    const rule = ratcheted.has(construct) ? "baseline" : "allowed";
+    failures.push(`- ${file}: ${construct} count ${count} exceeds ${rule} ${limit}`);
     for (const hit of hits) {
       if (hit.file === file && hit.construct === construct) {
         failures.push(`    ${file}:${hit.line}: ${construct}`);
@@ -128,21 +153,22 @@ for (const [file, counts] of Object.entries(current)) {
 }
 
 if (failures.length === 0) {
-  console.log("UIKit structure guard: PASS — no SwiftUI structure constructs above baseline.");
+  console.log("UIKit structure guard: PASS — no disallowed SwiftUI structure constructs, import SwiftUI within baseline.");
   process.exit(0);
 }
 
-console.log("UIKit structure guard: FAIL — SwiftUI structure constructs exceed the ratchet baseline.\n");
+console.log("UIKit structure guard: FAIL — SwiftUI structure constructs the guard disallows or the import baseline exceeds.\n");
 for (const line of failures) console.log(line);
 console.log(`
-UIKit owns iOS app structure, modal presentation, and new views. New screens and
-views are UIKit view controllers/views; present and push through the router
-(routerModal, ScreenNavigator present/push/finish) and host SwiftUI only through
-HostFactory. See ${guide}.
-Existing SwiftUI screens change only when a trigger (crash/bug in the screen,
-substantive rewrite, router migration) moves them; name the trigger in the commit.
-Raising the baseline needs Chen's approval. Lowering it after a migration is
-expected: run \`bun scripts/uikit-structure-guard.ts --update\` and commit the
-reduced baseline with the migration. After a rename or move, --update is fine when
-the baseline diff only moves entries.`);
+UIKit owns iOS app structure, modal presentation, and new views, previews and
+harnesses included. Present and push through the router (routerModal,
+ScreenNavigator present/push/finish; previews host with RouterPreviewStack or
+RouterPreviewNavigation) and host SwiftUI only through HostFactory. See ${guide}.
+NavigationStack, NavigationSplitView, NavigationLink, .navigationDestination(,
+.sheet(, .fullScreenCover(, .popover(, .inspector(, and UIHostingController(
+have no baseline: an exception needs Chen's approval and a commented entry in
+the guard's allowed list. A new \`import SwiftUI\` raises that file's baseline,
+which also needs approval; \`bun scripts/uikit-structure-guard.ts --update\`
+lowers it after a migration. After a rename or move, --update is fine when the
+baseline diff only moves entries.`);
 process.exit(1);

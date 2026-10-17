@@ -226,7 +226,7 @@ struct FeatureEducationTipsPreview: View {
     ]
 
     var body: some View {
-        NavigationStack {
+        RouterPreviewNavigation {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     header
@@ -241,6 +241,7 @@ struct FeatureEducationTipsPreview: View {
             .background(Color.themeBg.ignoresSafeArea())
             .navigationTitle("Tips")
         }
+        .ignoresSafeArea()
         .tint(.themeBlue)
         .accessibilityIdentifier("screenshot.ready")
     }

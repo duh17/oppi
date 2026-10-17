@@ -2,41 +2,6 @@
 import SwiftUI
 import UIKit
 
-// MARK: - Global Audio Banner Preview
-
-struct GlobalAudioBannerPreview: View {
-    var body: some View {
-        TabView {
-            NavigationStack {
-                List {
-                    Section("Recent") {
-                        Label("Albert TTS plan", systemImage: "waveform")
-                        Label("Branch + fork UX", systemImage: "arrow.triangle.branch")
-                        Label("Release checklist", systemImage: "checklist")
-                    }
-                }
-                .scrollContentBackground(.hidden)
-                .background(Color.themeBg)
-                .navigationTitle("Workspaces")
-            }
-            .tabItem {
-                Label("Workspaces", systemImage: "square.grid.2x2")
-            }
-
-            NavigationStack {
-                Color.themeBg
-                    .navigationTitle("Settings")
-            }
-            .tabItem {
-                Label("Settings", systemImage: "gear")
-            }
-        }
-        .toolbarBackground(Color.themeBg, for: .tabBar)
-        .background(Color.themeBg.ignoresSafeArea())
-        .accessibilityIdentifier("screenshot.ready")
-    }
-}
-
 // MARK: - Script Reader Preview
 
 /// Speaker-tagged WebVTT in the full-screen player. Plays a generated silent clip,

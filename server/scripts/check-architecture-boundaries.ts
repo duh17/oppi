@@ -122,6 +122,10 @@ function runUiKitStructureGuard(repoRoot) {
   runRepoGuard(repoRoot, "uikit-structure-guard.ts");
 }
 
+function runScreenshotScreenGuard(repoRoot) {
+  runRepoGuard(repoRoot, "screenshot-screen-guard.ts");
+}
+
 function run(options) {
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   const repoRoot = path.resolve(scriptDir, "../..");
@@ -174,6 +178,7 @@ function run(options) {
       runThemeSurfaceGuard(repoRoot);
       runScrollOffsetGuard(repoRoot);
       runUiKitStructureGuard(repoRoot);
+      runScreenshotScreenGuard(repoRoot);
     }
     console.log(`Architecture boundary checks passed (scope: ${options.scope}).`);
     return;

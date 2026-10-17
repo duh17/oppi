@@ -3,10 +3,14 @@ import os
 import SwiftUI
 import UIKit
 
-/// Debug-only harness for profiling the workspace-list → timeline toolbar handoff.
+/// Debug-only harness for the chat Files control and Back handoff from a
+/// workspace list: a fixture workspace list, workspace page, and chat pushed
+/// through the router, as the app opens them.
 ///
 /// Launch with `--nav-chrome-profile` or `PI_NAV_CHROME_PROFILE=1` on Simulator.
-/// Add `PI_NAV_CHROME_AUTORUN=1` to push into the heavy timeline automatically.
+/// `--nav-chrome-chat-files-real-chat` shows the production chat;
+/// `--nav-chrome-chat-back-local-repro` stops at the workspace page, whose
+/// local chat pushes above it.
 enum NavigationChromeProfileConfig {
     private static let environment = ProcessInfo.processInfo.environment
     private static let arguments = ProcessInfo.processInfo.arguments
@@ -17,40 +21,6 @@ enum NavigationChromeProfileConfig {
 #else
         false
 #endif
-    }
-
-    static var autorun: Bool {
-        arguments.contains("--nav-chrome-profile-autorun") || environment["PI_NAV_CHROME_AUTORUN"] == "1"
-    }
-
-    static var repeatCount: Int {
-        guard let raw = environment["PI_NAV_CHROME_REPEAT"],
-              let value = Int(raw) else { return 1 }
-        return max(1, min(value, 10))
-    }
-
-    static var firstDelayMs: Int {
-        guard let raw = environment["PI_NAV_CHROME_FIRST_DELAY_MS"],
-              let value = Int(raw) else { return 1_200 }
-        return max(0, value)
-    }
-
-    static var dwellMs: Int {
-        guard let raw = environment["PI_NAV_CHROME_DWELL_MS"],
-              let value = Int(raw) else { return 3_200 }
-        return max(500, value)
-    }
-
-    static var lightDestination: Bool {
-        arguments.contains("--nav-chrome-light") || environment["PI_NAV_CHROME_LIGHT"] == "1"
-    }
-
-    static var heavyList: Bool {
-        arguments.contains("--nav-chrome-heavy-list") || environment["PI_NAV_CHROME_HEAVY_LIST"] == "1"
-    }
-
-    static var chatFilesRepro: Bool {
-        arguments.contains("--nav-chrome-chat-files-repro") || environment["PI_NAV_CHROME_CHAT_FILES_REPRO"] == "1"
     }
 
     static var chatFilesRealChatRepro: Bool {
@@ -102,250 +72,6 @@ enum NavigationChromeProfiler {
 
     private static func nowNs() -> UInt64 {
         DispatchTime.now().uptimeNanoseconds
-    }
-}
-
-@MainActor
-private final class NavigationChromeFrameProbe: NSObject {
-    private var displayLink: CADisplayLink?
-    private var lastTimestamp: CFTimeInterval?
-    private var sampleCount = 0
-    private var over34MsCount = 0
-    private var over50MsCount = 0
-    private var maxGapMs: Double = 0
-    private var label = ""
-
-    func start(label: String) {
-        stop(reason: "restart")
-        self.label = label
-        sampleCount = 0
-        over34MsCount = 0
-        over50MsCount = 0
-        maxGapMs = 0
-        lastTimestamp = nil
-
-        let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
-        link.add(to: .main, forMode: .common)
-        displayLink = link
-        NavigationChromeProfiler.mark("frame_probe_start", metadata: ["label": label])
-    }
-
-    func stop(reason: String) {
-        guard let displayLink else { return }
-        displayLink.invalidate()
-        self.displayLink = nil
-        NavigationChromeProfiler.mark(
-            "frame_probe_stop",
-            metadata: [
-                "label": label,
-                "reason": reason,
-                "samples": String(sampleCount),
-                "maxGapMs": String(format: "%.1f", maxGapMs),
-                "over34Ms": String(over34MsCount),
-                "over50Ms": String(over50MsCount),
-            ]
-        )
-    }
-
-    @objc private func tick(_ link: CADisplayLink) {
-        defer { lastTimestamp = link.timestamp }
-        guard let lastTimestamp else { return }
-
-        sampleCount += 1
-        let gapMs = (link.timestamp - lastTimestamp) * 1_000
-        maxGapMs = max(maxGapMs, gapMs)
-        if gapMs > 34 { over34MsCount += 1 }
-        if gapMs > 50 { over50MsCount += 1 }
-    }
-}
-
-struct NavigationChromeProfileHarnessView: View {
-    private static let heavyRows = NavigationChromeProfileListFixtures.makeRows(rootCount: 260, childrenPerRoot: 3)
-
-    @State private var path = NavigationPath()
-    @State private var frameProbe = NavigationChromeFrameProbe()
-    @State private var hasStartedAutorun = false
-
-    private var sourceRows: [NavigationChromeProfileListFixtures.RowSummary] {
-        guard NavigationChromeProfileConfig.heavyList else {
-            return [NavigationChromeProfileListFixtures.RowSummary(id: "timeline-manual", title: "Heavy timeline", detail: "Native NavigationLink path")]
-        }
-
-        let startNs = DispatchTime.now().uptimeNanoseconds
-        let rows = Self.heavyRows
-        var childrenByParent: [String: [NavigationChromeProfileListFixtures.Row]] = [:]
-        childrenByParent.reserveCapacity(rows.count / 2)
-        for row in rows {
-            guard let parentId = row.parentId else { continue }
-            childrenByParent[parentId, default: []].append(row)
-        }
-
-        let summaries = rows
-            .filter { $0.parentId == nil }
-            .sorted { lhs, rhs in
-                if lhs.lastActivity != rhs.lastActivity { return lhs.lastActivity > rhs.lastActivity }
-                return lhs.id < rhs.id
-            }
-            .map { row in
-                let children = childrenByParent[row.id] ?? []
-                let activeChildren = children.filter { $0.status != "stopped" }.count
-                let detail = "\(children.count) children • \(activeChildren) active • $\(String(format: "%.2f", row.cost + children.reduce(0) { $0 + $1.cost }))"
-                return NavigationChromeProfileListFixtures.RowSummary(
-                    id: row.id,
-                    title: row.title,
-                    detail: detail
-                )
-            }
-
-        let durationMs = Int((DispatchTime.now().uptimeNanoseconds &- startNs) / 1_000_000)
-        NavigationChromeProfiler.mark(
-            "source_list_compute",
-            metadata: ["durationMs": String(durationMs), "rows": String(rows.count), "roots": String(summaries.count)]
-        )
-        return summaries
-    }
-
-    var body: some View {
-        if NavigationChromeProfileConfig.chatFilesRepro {
-            NavigationChromeChatFilesReproHarnessView()
-        } else {
-            NavigationStack(path: $path) {
-                sessionList
-                    .navigationTitle("Profile Workspace")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbarVisibility(.hidden, for: .tabBar)
-                    .toolbarVisibility(.automatic, for: .bottomBar)
-                    .toolbar { bottomToolbar }
-                    .navigationDestination(for: String.self) { route in
-                        NavigationChromeProfileTimelineDestination(route: route)
-                    }
-            }
-            .onAppear {
-                NavigationChromeProfiler.reset(label: "nav_chrome_profile")
-                NavigationChromeProfiler.mark("harness_appear")
-            }
-            .task {
-                await runAutorunIfNeeded()
-            }
-            .onDisappear {
-                frameProbe.stop(reason: "harness_disappear")
-            }
-        }
-    }
-
-    private var sessionList: some View {
-        List {
-            Section("Your Turn") {
-                ForEach(sourceRows) { row in
-                    NavigationLink(value: row.id) {
-                        profileSessionRow(title: row.title, detail: row.detail)
-                    }
-                    .accessibilityIdentifier("navChrome.session.\(row.id)")
-                    .listRowBackground(Color.themeBg)
-                }
-            }
-
-            Section("Profiler") {
-                Button("Run profile push") {
-                    openTimeline(route: "timeline-button")
-                }
-                .accessibilityIdentifier("navChrome.run")
-                .listRowBackground(Color.themeBg)
-
-                Text("Autorun: \(NavigationChromeProfileConfig.autorun ? "on" : "off")")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-                    .listRowBackground(Color.themeBg)
-                Text("Heavy list: \(NavigationChromeProfileConfig.heavyList ? "on" : "off")")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-                    .listRowBackground(Color.themeBg)
-            }
-        }
-        .accessibilityIdentifier("navChrome.sessionList")
-        .listStyle(.insetGrouped)
-        .themedListSurface()
-    }
-
-    private var bottomToolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .bottomBar) {
-            Image(systemName: "folder")
-                .accessibilityIdentifier("navChrome.bottom.folder")
-            Text("3 skills")
-                .font(.caption2)
-                .accessibilityIdentifier("navChrome.bottom.skills")
-            Spacer()
-            Image(systemName: "lock.open.fill")
-                .accessibilityIdentifier("navChrome.bottom.policy")
-        }
-    }
-
-    private func profileSessionRow(title: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(.themeFg)
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(.themeComment)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 6)
-    }
-
-    private func runAutorunIfNeeded() async {
-        guard NavigationChromeProfileConfig.autorun, !hasStartedAutorun else { return }
-        hasStartedAutorun = true
-
-        try? await Task.sleep(for: .milliseconds(NavigationChromeProfileConfig.firstDelayMs))
-        for index in 1...NavigationChromeProfileConfig.repeatCount {
-            if Task.isCancelled { return }
-            openTimeline(route: "timeline-autorun-\(index)")
-            try? await Task.sleep(for: .milliseconds(NavigationChromeProfileConfig.dwellMs))
-            frameProbe.stop(reason: "dwell_complete")
-            if !path.isEmpty {
-                NavigationChromeProfiler.mark("path_remove_start", metadata: ["run": String(index)])
-                path.removeLast()
-                NavigationChromeProfiler.mark("path_remove_end", metadata: ["run": String(index)])
-            }
-            try? await Task.sleep(for: .milliseconds(700))
-        }
-    }
-
-    private func openTimeline(route: String) {
-        frameProbe.start(label: route)
-        NavigationChromeProfiler.mark("path_append_start", metadata: ["route": route])
-        path.append(route)
-        NavigationChromeProfiler.mark("path_append_end", metadata: ["route": route])
-    }
-}
-
-private struct NavigationChromeProfileTimelineDestination: View {
-    let route: String
-
-    var body: some View {
-        Group {
-            if NavigationChromeProfileConfig.lightDestination {
-                NavigationChromeProfileLightDestination(route: route)
-            } else {
-                NavigationChromeProfileHeavyTimelineDestination(route: route)
-            }
-        }
-        .navigationTitle("Profile Timeline")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarVisibility(.hidden, for: .bottomBar)
-        .onAppear {
-            NavigationChromeProfiler.mark(
-                "timeline_appear",
-                metadata: [
-                    "route": route,
-                    "mode": NavigationChromeProfileConfig.lightDestination ? "light" : "heavy",
-                ]
-            )
-        }
-        .onDisappear {
-            NavigationChromeProfiler.mark("timeline_disappear", metadata: ["route": route])
-        }
     }
 }
 
@@ -450,7 +176,18 @@ private struct NavigationChromeProfileHeavyTimelineDestination: View {
     }
 }
 
-private struct NavigationChromeChatFilesReproHarnessView: View {
+/// What the harness's pages share: each pushed page is its own SwiftUI graph,
+/// so the state they edit lives in one observable model.
+@MainActor @Observable
+private final class NavigationChromeReproState {
+    /// Pages the harness opened from the root list: the workspace page (and a
+    /// session above it), not the local chat a workspace page pushes.
+    var pathCount = 0
+    var isFilePanelVisible = false
+    var filesTapCount = 0
+}
+
+struct NavigationChromeProfileHarnessView: View {
     private static let workspace = Workspace(
         id: "nav-chrome-repro-workspace",
         name: "e2e-workspace",
@@ -471,40 +208,18 @@ private struct NavigationChromeChatFilesReproHarnessView: View {
     @State private var navigation = AppNavigation()
     @State private var connection = Self.makeConnection()
     @State private var quickCommentTemplateStore = QuickCommentTemplateStore(templates: [])
-    @State private var composerDraftStore = ComposerDraftStore()
-    @State private var didAutoOpen = false
-    @State private var isFilePanelVisible = false
-    @State private var filesTapCount = 0
-    @State private var localChatRoute: String?
-
-    private var workspaceTarget: WorkspaceNavTarget {
-        WorkspaceNavTarget(serverId: Self.serverId, workspace: Self.workspace)
-    }
-
-    private var sessionTarget: WorkspaceSessionNavTarget {
-        WorkspaceSessionNavTarget(
-            serverId: Self.serverId,
-            sessionId: Self.sessionId,
-            workspaceId: Self.workspace.id
-        )
-    }
+    @State private var state = NavigationChromeReproState()
 
     var body: some View {
-        @Bindable var nav = navigation
-
-        NavigationStack(path: $nav.workspacePath) {
-            rootList
-                .navigationTitle("Workspaces")
-                .navigationBarTitleDisplayMode(.inline)
-                .navigationDestination(for: WorkspaceNavTarget.self) { _ in
-                    workspaceDetail
-                }
-                .navigationDestination(for: WorkspaceSessionNavTarget.self) { _ in
-                    chatDestination
-                }
+        RouterPreviewNavigation {
+            NavigationChromeReproRoot(
+                state: state,
+                connection: connection,
+                navigation: navigation,
+                quickCommentTemplateStore: quickCommentTemplateStore
+            )
         }
-        .environment(navigation)
-        .environment(\.composerDraftStore, composerDraftStore)
+        .ignoresSafeArea()
         .overlay(alignment: .topLeading) {
             diagnosticsOverlay
         }
@@ -515,106 +230,20 @@ private struct NavigationChromeChatFilesReproHarnessView: View {
             NavigationChromeProfiler.reset(label: "chat_files_repro")
             NavigationChromeProfiler.mark("chat_files_repro_appear")
         }
-        .task {
-            await autoOpenChatIfNeeded()
-        }
-    }
-
-    private var rootList: some View {
-        List {
-            Section("Workspace") {
-                Button("Open e2e-workspace") {
-                    openFromRoot()
-                }
-                .accessibilityIdentifier("navChrome.repro.openWorkspace")
-            }
-        }
-        .accessibilityIdentifier("navChrome.repro.root")
-        .listStyle(.insetGrouped)
-        .themedListSurface()
-    }
-
-    private var workspaceDetail: some View {
-        List {
-            Section("Sessions") {
-                Button("Open Session") {
-                    navigation.openWorkspaceSession(sessionTarget, workspace: workspaceTarget)
-                }
-                .accessibilityIdentifier("navChrome.repro.openSession")
-
-                if NavigationChromeProfileConfig.chatBackLocalRepro {
-                    Button("Open Local Chat") {
-                        localChatRoute = Self.sessionId
-                    }
-                    .accessibilityIdentifier("navChrome.repro.openLocalChat")
-                }
-            }
-        }
-        .accessibilityIdentifier("navChrome.repro.workspace")
-        .listStyle(.insetGrouped)
-        .themedListSurface()
-        .navigationTitle("e2e-workspace")
-        .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(item: $localChatRoute) { sessionId in
-            ChatView(sessionId: sessionId, workspaceIdHint: Self.workspace.id)
-                .withServerScopedEnvironment(connection)
-                .environment(navigation)
-                .environment(quickCommentTemplateStore)
-        }
-    }
-
-    @ViewBuilder
-    private var chatDestination: some View {
-        if NavigationChromeProfileConfig.chatFilesRealChatRepro {
-            ChatView(
-                sessionId: Self.sessionId,
-                workspaceIdHint: Self.workspace.id,
-                ownsWorkspacePathBackNavigation: true
-            )
-            .withServerScopedEnvironment(connection)
-            .environment(navigation)
-            .environment(quickCommentTemplateStore)
-        } else {
-            NavigationChromeChatFilesReproChatView(
-                isFilePanelVisible: $isFilePanelVisible,
-                filesTapCount: $filesTapCount
-            )
-        }
     }
 
     private var diagnosticsOverlay: some View {
         VStack(spacing: 0) {
-            Text(String(navigation.workspacePath.count))
+            Text(String(state.pathCount))
                 .accessibilityIdentifier("navChrome.repro.pathCount")
-            Text(isFilePanelVisible ? "files" : "chat")
+            Text(state.isFilePanelVisible ? "files" : "chat")
                 .accessibilityIdentifier("navChrome.repro.surface")
-            Text(String(filesTapCount))
+            Text(String(state.filesTapCount))
                 .accessibilityIdentifier("navChrome.repro.filesTapCount")
         }
         .frame(width: 1, height: 1)
         .opacity(0.01)
         .allowsHitTesting(false)
-    }
-
-    private func autoOpenChatIfNeeded() async {
-        guard !didAutoOpen else { return }
-        didAutoOpen = true
-        try? await Task.sleep(for: .milliseconds(250))
-        guard navigation.workspacePath.isEmpty else { return }
-        openFromRoot()
-    }
-
-    private func openFromRoot() {
-        if NavigationChromeProfileConfig.chatBackLocalRepro {
-            navigation.openWorkspace(workspaceTarget)
-        } else {
-            openChat()
-        }
-    }
-
-    private func openChat() {
-        navigation.openWorkspace(workspaceTarget)
-        navigation.openWorkspaceSession(sessionTarget, workspace: workspaceTarget)
     }
 
     private static func makeConnection() -> ServerConnection {
@@ -652,17 +281,150 @@ private struct NavigationChromeChatFilesReproHarnessView: View {
     }
 }
 
+/// The workspace list, with the harness's pushes. It opens the workspace page
+/// (local chat repro) or the chat straight away.
+private struct NavigationChromeReproRoot: View {
+    let state: NavigationChromeReproState
+    let connection: ServerConnection
+    let navigation: AppNavigation
+    let quickCommentTemplateStore: QuickCommentTemplateStore
+    @Environment(\.screenNavigator) private var navigator
+    @State private var didAutoOpen = false
+
+    var body: some View {
+        List {
+            Section("Workspace") {
+                Button("Open e2e-workspace") {
+                    openFromRoot()
+                }
+                .accessibilityIdentifier("navChrome.repro.openWorkspace")
+            }
+        }
+        .accessibilityIdentifier("navChrome.repro.root")
+        .listStyle(.insetGrouped)
+        .themedListSurface()
+        .navigationTitle("Workspaces")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            guard !didAutoOpen else { return }
+            didAutoOpen = true
+            try? await Task.sleep(for: .milliseconds(250))
+            openFromRoot()
+        }
+    }
+
+    private func openFromRoot() {
+        state.pathCount += 1
+        if NavigationChromeProfileConfig.chatBackLocalRepro {
+            navigator.push { workspaceDetail }
+        } else {
+            state.pathCount += 1
+            navigator.push { chatDestination }
+        }
+    }
+
+    private var workspaceDetail: some View {
+        NavigationChromeReproWorkspace(
+            state: state,
+            connection: connection,
+            navigation: navigation,
+            quickCommentTemplateStore: quickCommentTemplateStore
+        )
+    }
+
+    private var chatDestination: some View {
+        NavigationChromeReproChat(
+            state: state,
+            connection: connection,
+            navigation: navigation,
+            quickCommentTemplateStore: quickCommentTemplateStore,
+            ownsBackNavigation: true
+        )
+    }
+}
+
+private struct NavigationChromeReproWorkspace: View {
+    let state: NavigationChromeReproState
+    let connection: ServerConnection
+    let navigation: AppNavigation
+    let quickCommentTemplateStore: QuickCommentTemplateStore
+    @Environment(\.screenNavigator) private var navigator
+
+    var body: some View {
+        List {
+            Section("Sessions") {
+                Button("Open Session") {
+                    state.pathCount += 1
+                    navigator.push {
+                        NavigationChromeReproChat(
+                            state: state,
+                            connection: connection,
+                            navigation: navigation,
+                            quickCommentTemplateStore: quickCommentTemplateStore,
+                            ownsBackNavigation: true
+                        )
+                    }
+                }
+                .accessibilityIdentifier("navChrome.repro.openSession")
+
+                if NavigationChromeProfileConfig.chatBackLocalRepro {
+                    Button("Open Local Chat") {
+                        navigator.push {
+                            NavigationChromeReproChat(
+                                state: state,
+                                connection: connection,
+                                navigation: navigation,
+                                quickCommentTemplateStore: quickCommentTemplateStore,
+                                ownsBackNavigation: false
+                            )
+                        }
+                    }
+                    .accessibilityIdentifier("navChrome.repro.openLocalChat")
+                }
+            }
+        }
+        .accessibilityIdentifier("navChrome.repro.workspace")
+        .listStyle(.insetGrouped)
+        .themedListSurface()
+        .navigationTitle("e2e-workspace")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// The production chat, or a stand-in with a Files control and panel.
+private struct NavigationChromeReproChat: View {
+    let state: NavigationChromeReproState
+    let connection: ServerConnection
+    let navigation: AppNavigation
+    let quickCommentTemplateStore: QuickCommentTemplateStore
+    let ownsBackNavigation: Bool
+
+    var body: some View {
+        if NavigationChromeProfileConfig.chatFilesRealChatRepro {
+            ChatView(
+                sessionId: "nav-chrome-repro-session",
+                workspaceIdHint: "nav-chrome-repro-workspace",
+                ownsWorkspacePathBackNavigation: ownsBackNavigation
+            )
+            .withServerScopedEnvironment(connection)
+            .environment(navigation)
+            .environment(quickCommentTemplateStore)
+        } else {
+            NavigationChromeChatFilesReproChatView(state: state)
+        }
+    }
+}
+
 private struct NavigationChromeChatFilesReproChatView: View {
-    @Environment(\.dismiss) private var dismiss
-    @Binding var isFilePanelVisible: Bool
-    @Binding var filesTapCount: Int
+    @Environment(\.screenNavigator) private var navigator
+    let state: NavigationChromeReproState
 
     var body: some View {
         ZStack(alignment: .trailing) {
             NavigationChromeProfileHeavyTimelineDestination(route: "chat-files-repro")
                 .accessibilityIdentifier("navChrome.repro.chat")
 
-            if isFilePanelVisible {
+            if state.isFilePanelVisible {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Files")
                         .font(.headline)
@@ -683,7 +445,7 @@ private struct NavigationChromeChatFilesReproChatView: View {
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .animation(.easeInOut(duration: 0.18), value: isFilePanelVisible)
+        .animation(.easeInOut(duration: 0.18), value: state.isFilePanelVisible)
         .navigationTitle("Session Repro")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
@@ -691,7 +453,7 @@ private struct NavigationChromeChatFilesReproChatView: View {
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 HStack(spacing: 10) {
-                    Button { dismiss() } label: {
+                    Button { navigator.finish() } label: {
                         Image(systemName: "chevron.left")
                             .font(.headline.weight(.semibold))
                             .frame(width: 36, height: 36)
@@ -702,71 +464,24 @@ private struct NavigationChromeChatFilesReproChatView: View {
                     .accessibilityIdentifier("navChrome.chat.back")
 
                     Button {
-                        filesTapCount += 1
-                        isFilePanelVisible.toggle()
+                        state.filesTapCount += 1
+                        state.isFilePanelVisible.toggle()
                         NavigationChromeProfiler.mark(
                             "chat_files_repro_files_tapped",
-                            metadata: ["visible": String(isFilePanelVisible), "tapCount": String(filesTapCount)]
+                            metadata: ["visible": String(state.isFilePanelVisible), "tapCount": String(state.filesTapCount)]
                         )
                     } label: {
-                        Image(systemName: isFilePanelVisible ? "folder.fill" : "folder")
+                        Image(systemName: state.isFilePanelVisible ? "folder.fill" : "folder")
                             .font(.subheadline)
                             .frame(width: 36, height: 36)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(isFilePanelVisible ? "Close chat files" : "Open chat files")
+                    .accessibilityLabel(state.isFilePanelVisible ? "Close chat files" : "Open chat files")
                     .accessibilityIdentifier("navChrome.chat.files")
                 }
             }
         }
-    }
-}
-
-private enum NavigationChromeProfileListFixtures {
-    struct Row: Identifiable {
-        let id: String
-        let parentId: String?
-        let title: String
-        let status: String
-        let lastActivity: Date
-        let cost: Double
-    }
-
-    struct RowSummary: Identifiable {
-        let id: String
-        let title: String
-        let detail: String
-    }
-
-    static func makeRows(rootCount: Int, childrenPerRoot: Int) -> [Row] {
-        var rows: [Row] = []
-        rows.reserveCapacity(rootCount * (childrenPerRoot + 1))
-        let now = Date(timeIntervalSince1970: 1_770_000_000)
-
-        for root in 0..<rootCount {
-            let rootId = "profile-root-\(root)"
-            rows.append(Row(
-                id: rootId,
-                parentId: nil,
-                title: "Profile session \(root)",
-                status: root.isMultiple(of: 9) ? "ready" : "busy",
-                lastActivity: now.addingTimeInterval(Double(-root * 37)),
-                cost: Double((root % 13) + 1) / 10
-            ))
-
-            for child in 0..<childrenPerRoot {
-                rows.append(Row(
-                    id: "\(rootId)-child-\(child)",
-                    parentId: rootId,
-                    title: "Profile child \(root).\(child)",
-                    status: child == 0 ? "busy" : "stopped",
-                    lastActivity: now.addingTimeInterval(Double(-(root * 37 + child * 11))),
-                    cost: Double(((root + child) % 7) + 1) / 20
-                ))
-            }
-        }
-        return rows
     }
 }
 
@@ -888,22 +603,6 @@ private enum NavigationChromeProfileTimelineFixtures {
         default:
             return "Thinking through route \(turn): measure whether frame drops happen before timeline_appear, during reducer load, collection apply, or UIKit toolbar animation."
         }
-    }
-}
-
-private struct NavigationChromeProfileLightDestination: View {
-    let route: String
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Text("Light destination")
-                .font(.headline)
-            Text(route)
-                .font(.caption.monospaced())
-                .foregroundStyle(.themeComment)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.themeBg)
     }
 }
 #endif

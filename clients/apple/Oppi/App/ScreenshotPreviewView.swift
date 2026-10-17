@@ -33,6 +33,27 @@ enum ScreenshotPreviewOrientation {
     }
 }
 
+/// Preview-only defaults in the argument domain: a preview reads them like
+/// real preferences, and nothing is written to the app's persistent defaults,
+/// which a simulator keeps across launches and test runs.
+enum ScreenshotVolatileDefaults {
+    static func apply(_ values: [String: Any]) {
+        let defaults = UserDefaults.standard
+        var arguments = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
+        arguments.merge(values) { _, new in new }
+        defaults.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
+    }
+
+    /// Call before `ThemeStore()`: its setters would persist the theme.
+    static func applyDarkTheme(_ enabled: Bool) {
+        guard enabled else { return }
+        apply([
+            "\(AppIdentifiers.subsystem).theme.mode": ThemeMode.manual.rawValue,
+            ThemeID.storageKey: ThemeID.dark.rawValue,
+        ])
+    }
+}
+
 // MARK: - Root Preview View
 
 /// Launches a standalone screen with mock data for screenshot capture in UI tests.
@@ -43,74 +64,12 @@ struct ScreenshotPreviewView: View {
             WorkspaceSettingsScreenshotPreview()
         case "onboarding":
             OnboardingScreenshotPreview()
-        case "tailscale-connection":
-            TailscaleConnectionScreenshotPreview()
-        case "ssh-terminal-settings", "settings":
-            // Real Settings/setup surfaces, not a mocked SSH connection. This
-            // makes enrollment/refusal QA reachable without pairing a server.
-            SettingsScreenshotPreview()
-        case "settings-appearance", "settings-chat-conversation":
-            SettingsScreenshotPreview()
-        case "chat-speaker-contrast-dark":
-            ChatSpeakerContrastPreview(themeID: .dark)
-        case "chat-speaker-contrast-oled":
-            ChatSpeakerContrastPreview(themeID: .oled)
-        case "chat-speaker-contrast-night":
-            ChatSpeakerContrastPreview(themeID: .night)
-        case "chat-speaker-contrast-light":
-            ChatSpeakerContrastPreview(themeID: .light)
-        case "chat-speaker-contrast-dark-increase-contrast":
-            ChatSpeakerContrastPreview(themeID: .dark, increasedContrast: true)
-        case "chat-speaker-contrast-light-increase-contrast":
-            ChatSpeakerContrastPreview(themeID: .light, increasedContrast: true)
-        case "chat-speaker-contrast-dark-differentiate-without-color":
-            ChatSpeakerContrastPreview(themeID: .dark, differentiateWithoutColor: true)
         case "settings-sweep":
             SettingsSweepScreenshotPreview()
         case "ssh-terminal":
             SSHTerminalScreenshotPreview()
-        case "ssh-terminal-status-working":
-            SSHTerminalScreenshotPreview(status: .working)
         case "ssh-terminal-status-blocked":
             SSHTerminalScreenshotPreview(status: .blocked)
-        case "ssh-terminal-status-done":
-            SSHTerminalScreenshotPreview(status: .done)
-        case "ssh-terminal-status-tree":
-            SSHTerminalScreenshotPreview(status: .tree)
-        case "ssh-terminal-status-sequence":
-            SSHTerminalScreenshotPreview(status: .sequence)
-        case "ssh-terminal-status-detail":
-            SSHTerminalScreenshotPreview(status: .detail)
-        case "ssh-terminal-notification":
-            SSHTerminalScreenshotPreview(status: .notification)
-        case "durable-sessions-settings":
-            DurableSessionsScreenshotPreview(surface: .settings)
-        case "durable-sessions-sidebar":
-            DurableSessionsScreenshotPreview(surface: .sidebar)
-        case "durable-sessions-sidebar-off":
-            DurableSessionsScreenshotPreview(surface: .sidebar, experimentEnabled: false)
-        case "durable-sessions-list":
-            DurableSessionsScreenshotPreview(surface: .list)
-        case "quick-session-overlay-durable-off":
-            DurableSessionsScreenshotPreview(surface: .quickSession, experimentEnabled: false)
-        case "durable-conversation":
-            DurableConversationScreenshotPreview(themeID: .dark)
-        case "durable-conversation-light":
-            DurableConversationScreenshotPreview(themeID: .light)
-        case "durable-conversation-running":
-            DurableConversationScreenshotPreview(themeID: .dark, scenario: .running)
-        case "durable-conversation-expanded":
-            DurableConversationScreenshotPreview(themeID: .dark, scenario: .expanded)
-        case "durable-conversation-pills":
-            DurableConversationPillStatesPreview(themeID: .dark)
-        case "durable-conversation-pills-light":
-            DurableConversationPillStatesPreview(themeID: .light)
-        case "scoped-locks":
-            ScopedLocksScreenshotPreview()
-        case "quick-session-overlay":
-            DurableSessionsScreenshotPreview(surface: .quickSession)
-        case "session-timeline-wide":
-            SessionTimelineWideContentPreview()
         case "review-comment-inline-draft":
             ReviewCommentInlineDraftScreenshotPreview()
                 .ignoresSafeArea()
@@ -130,20 +89,10 @@ struct ScreenshotPreviewView: View {
             RouterModalSitesPreview()
         case "chat-routes":
             ChatRoutesHarnessView()
+        case "ask-card-intent-regression":
+            AskCardIntentRegressionPreview()
         case "model-providers-quota-inline":
             ModelProvidersQuotaPreview()
-        case "inbox-provider-setup-empty":
-            InboxProviderSetupPreview(showsSessions: false)
-        case "inbox-provider-setup-with-sessions":
-            InboxProviderSetupPreview(showsSessions: true)
-        case "agent-icons":
-            AgentIconProofPreview()
-        case "agents-pi-row":
-            AgentManagementPiProofPreview()
-        case "agent-icon-title-bar-stress":
-            AgentIconTitleBarStressPreview()
-        case "agent-icons-save-failure":
-            AgentIconProofPreview(failsFirstSave: true)
         case "workspace-sidebar-git-status":
             WorkspaceSidebarGitStatusPreview()
         case "tool-call-document":
@@ -162,16 +111,8 @@ struct ScreenshotPreviewView: View {
             BuiltInToolFactsPreview(isEdit: true)
         case "chat-file-panel":
             ChatFileBrowserPanelPreview()
-        case "side-panel-files":
-            SidePanelScreenshotPreview(surface: .files)
-        case "side-panel-commit":
-            SidePanelScreenshotPreview(surface: .commit)
-        case "side-panel-review":
-            SidePanelScreenshotPreview(surface: .review)
         case "file-browser-motion":
             FileBrowserMotionPreview()
-        case "file-editor-save-status":
-            FileEditorSaveStatusScreenshotPreview()
         case "review-file-motion":
             ReviewFileMotionPreview()
         case "extension-widget":
@@ -206,16 +147,6 @@ struct ScreenshotPreviewView: View {
                 initialDelay: .milliseconds(400),
                 stepDelay: .milliseconds(900)
             )
-        case "ask-card-long-composer":
-            AskCardLongComposerPreview()
-        case "extension-dock-stress":
-            ExtensionDockStressPreview()
-        case "extension-dock-review-combined":
-            ExtensionDockReviewCombinedPreview()
-        case "extension-dock-scoped-agents":
-            ExtensionDockScopedAgentsPreview()
-        case "extension-dock-goal-detail":
-            ExtensionDockGoalDetailStandalonePreview()
         case "streaming-flicker":
             StreamingFlickerPreviewView()
         case "latex-rendering":
@@ -250,20 +181,6 @@ struct ScreenshotPreviewView: View {
             FullscreenHTMLChromePreview()
         case "fullscreen-svg":
             FullscreenSVGChromePreview()
-        case "ask-card":
-            AskCardPreview()
-        case "ask-card-multiselect-long":
-            AskCardMultiSelectLongOptionsPreview()
-        case "ask-card-long-unfocused":
-            AskCardLongUnfocusedComposerPreview()
-        case "ask-card-expanded-sheet":
-            AskCardExpandedSheetPreview()
-        case "ask-card-expanded-custom":
-            AskCardExpandedCustomPreview()
-        case "ask-card-intent-regression":
-            AskCardIntentRegressionPreview()
-        case "oppi-command-approval-inline":
-            OppiCommandApprovalInlinePreview()
         case "context-bar-overlap":
             ContextBarOverlapPreview()
         case "feature-tips":
@@ -272,28 +189,16 @@ struct ScreenshotPreviewView: View {
             FeatureEducationP0TipPreview()
         case "voice-message-expanded":
             VoiceMessageExpandedPreview()
-        case "global-audio-banner":
-            GlobalAudioBannerPreview()
         case "audio-file-player":
             AudioFilePlayerScreenshotPreview()
         case "audio-script-reader":
             AudioScriptReaderPreview()
-        case "share-redaction-report":
-            ShareRedactionReportPreview()
-        case "share-redaction-settings":
-            ShareRedactionSettingsPreview()
-        case "split-file-navigation-regression":
-            SplitFileNavigationRegressionPreview()
         case "live-activity-working":
             LiveActivityPreviewScreen(
                 title: "Live Activity — Working",
                 state: .workingPreview,
                 isStale: false
             )
-        case "session-status-inbox":
-            SessionStatusScreenshotPreview(screen: .inbox)
-        case "session-status-thread":
-            SessionStatusScreenshotPreview(screen: .thread)
         case "live-activity-blocked":
             LiveActivityPreviewScreen(
                 title: "Live Activity — Needs Approval",
@@ -320,8 +225,8 @@ struct ScreenshotPreviewView: View {
             )
         case "metal-orbs":
             MetalOrbScreenshotPreview()
-        case let screen where RailToolbarScreenshotPreview.screens.contains(screen):
-            RailToolbarScreenshotPreviewView(screen: screen)
+        case "workspace-shell":
+            WorkspaceShellScreenshotPreview()
         default:
             Text("Unknown screen: \(ScreenshotPreviewConfig.screen)")
         }
@@ -657,85 +562,6 @@ private struct OnboardingScreenshotPreview: View {
     }
 }
 
-/// Connected in-app Tailscale screen: one Mac ready to pair. The node snapshot
-/// is a preview fixture; it does not start TailscaleKit or dial the tailnet.
-private struct TailscaleConnectionScreenshotPreview: View {
-    private let coordinator = ConnectionCoordinator(serverStore: ServerStore())
-    private let studioID = "n-mac-studio"
-
-    init() {
-        TailnetNodeController.shared.applyPreviewSnapshot(
-            TailnetStatusSnapshot(
-                backendState: .running,
-                authURL: nil,
-                selfDNSName: "oppi-ios.tail1234.ts.net",
-                tailnetName: "chen@example.com",
-                peers: [
-                    TailnetPeer(
-                        id: studioID,
-                        hostName: "mac-studio",
-                        dnsName: "mac-studio.tail1234.ts.net",
-                        os: "macOS",
-                        tailscaleIPs: ["100.64.1.2"],
-                        isOnline: true
-                    ),
-                    TailnetPeer(
-                        id: "n-iphone",
-                        hostName: "iphone",
-                        dnsName: "iphone.tail1234.ts.net",
-                        os: "iOS",
-                        tailscaleIPs: ["100.64.1.3"],
-                        isOnline: true
-                    ),
-                ]
-            )
-        )
-    }
-
-    var body: some View {
-        NavigationStack {
-            TailnetSettingsView(previewProbes: [studioID: .ready])
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") {}
-                    }
-                }
-        }
-        .environment(coordinator)
-        .environment(coordinator.serverStore)
-        .environment(coordinator.activeConnection)
-        .environment(AppNavigation())
-        .environment(ThemeStore())
-        .accessibilityIdentifier("screenshot.ready")
-    }
-}
-
-/// Isolated editor chrome: production save-state glyph, fixed spacer, Preview, Done.
-private struct FileEditorSaveStatusScreenshotPreview: View {
-    var body: some View {
-        NavigationStack {
-            Color.themeBg
-                .ignoresSafeArea()
-                .navigationTitle("AGENTS.md — workspace deltas and a long filename")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        WorkspaceFileEditStatusIndicator(status: .saved)
-                    }
-                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button(String(localized: "Preview")) {}
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button(String(localized: "Done")) {}
-                            .fontWeight(.semibold)
-                    }
-                }
-        }
-        .accessibilityIdentifier("screenshot.ready")
-    }
-}
-
 private struct AudioFilePlayerScreenshotPreview: View {
     @State private var audioPlayer = AudioPlayerService()
 
@@ -886,6 +712,30 @@ struct RouterPreviewStack<Content: View>: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> RouterNavigationController {
         let screen = HostFactory.screen(root: root, bars: ScreenBars(showsToolbar: true), content: content)
         let navigation = RouterNavigationController(rootViewController: screen)
+        let themeStore = root.themeStore
+        navigation.interfaceStyle = { themeStore.userInterfaceStyle }
+        return navigation
+    }
+
+    func updateUIViewController(_ navigation: RouterNavigationController, context: Context) {}
+}
+
+/// A router screen at the root of a `RouterNavigationController`, the way the
+/// router presents a modal with `.inNavigation()`. Previews and harnesses of
+/// screens that rely on UIKit bars and the navigator host them here; the app
+/// root comes from the window. `content` runs in the screen's own graph: put
+/// its fixture environment on it, not on this view.
+struct RouterPreviewNavigation<Content: View>: UIViewControllerRepresentable {
+    @ViewBuilder let content: () -> Content
+    @Environment(\.appRootEnvironment) private var root
+
+    func makeUIViewController(context: Context) -> RouterNavigationController {
+        guard let root else {
+            preconditionFailure("RouterPreviewNavigation needs appRootEnvironment(_:) above it")
+        }
+        let navigation = RouterNavigationController(
+            rootViewController: HostFactory.screen(root: root, content: content)
+        )
         let themeStore = root.themeStore
         navigation.interfaceStyle = { themeStore.userInterfaceStyle }
         return navigation

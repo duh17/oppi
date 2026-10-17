@@ -8,10 +8,9 @@ import SwiftUI
 /// a host workspace. `SCREENSHOT_COLOR_SCHEME=dark` selects the dark theme.
 struct WorkspaceSettingsScreenshotPreview: View {
     private let connection: ServerConnection
-    private let coordinator: ConnectionCoordinator
+    private let root: AppRootEnvironment
     private let workspace: Workspace
     private let model: WorkspaceSettingsModel
-    @State private var navigation = AppNavigation()
     private let themeStore: ThemeStore
 
     private static let serverId = "preview-server"
@@ -89,8 +88,7 @@ struct WorkspaceSettingsScreenshotPreview: View {
         connection.workspaceStore.workspacesByServer[serverId] = [workspace]
         self.connection = connection
 
-        let coordinator = ConnectionCoordinator(serverStore: ServerStore())
-        self.coordinator = coordinator
+        root = .preview(coordinator: ConnectionCoordinator(serverStore: ServerStore()), themeStore: themeStore)
 
         let model = WorkspaceSettingsModel.screenshotFixture(
             workspace: workspace,
@@ -118,19 +116,12 @@ struct WorkspaceSettingsScreenshotPreview: View {
     }
 
     var body: some View {
-        NavigationStack {
-            page
-        }
-        .environment(coordinator)
-        .environment(coordinator.serverStore)
-        .withServerScopedEnvironment(connection)
-        .environment(navigation)
-        .environment(themeStore)
-        .environment(\.theme, themeStore.appTheme)
-        .environment(\.themeID, themeStore.activeThemeID)
-        .tint(.themeBlue)
-        .preferredColorScheme(themeStore.preferredColorScheme)
-        .accessibilityIdentifier("screenshot.ready")
+        RouterPreviewStack(root: root) { page.withServerScopedEnvironment(connection) }
+            .ignoresSafeArea()
+            .appRootEnvironment(root)
+            .publishesAppRootToWindow(root)
+            .preferredColorScheme(themeStore.preferredColorScheme)
+            .accessibilityIdentifier("screenshot.ready")
     }
 
     @ViewBuilder

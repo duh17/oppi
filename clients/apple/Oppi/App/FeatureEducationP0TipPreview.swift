@@ -49,7 +49,7 @@ struct FeatureEducationP0TipPreview: View {
     private let previewCase = FeatureEducationP0TipPreviewCase.current
 
     var body: some View {
-        NavigationStack {
+        RouterPreviewNavigation {
             VStack(alignment: .leading, spacing: 18) {
                 header
 
@@ -75,10 +75,11 @@ struct FeatureEducationP0TipPreview: View {
             .background(Color.themeBg.ignoresSafeArea())
             .navigationTitle("P0 tip")
             .navigationBarTitleDisplayMode(.inline)
+            .environment(connection.sessionStore)
+            .environment(connection.askRequestStore)
+            .environment(\.apiClient, connection.apiClient)
         }
-        .environment(connection.sessionStore)
-        .environment(connection.askRequestStore)
-        .environment(\.apiClient, connection.apiClient)
+        .ignoresSafeArea()
         .accessibilityIdentifier("screenshot.ready")
     }
 

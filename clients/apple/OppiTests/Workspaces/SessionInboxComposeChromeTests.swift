@@ -104,11 +104,6 @@ struct SessionInboxComposeChromeTests {
         let control = try appleSource("Oppi/Features/ControlSessions/GuidedControlSessionComposer.swift")
         #expect(control.contains("VoiceInputManager.shared"))
         #expect(!control.contains("VoiceInputManager()"))
-        let preview = try appleSource("Oppi/App/ScreenshotPreviews/InboxProviderSetupPreview.swift")
-        #expect(preview.contains("SessionInboxCompactComposeBar"))
-        #expect(preview.contains("SessionInboxFolderToolbarButton"))
-        #expect(!preview.contains("sharedBackgroundVisibility"))
-        #expect(!preview.contains("square.and.pencil"))
     }
 
     @Test func workspaceStartQuickSessionPassesSelectedWorktreeIdIntoLaunchContext() throws {
@@ -224,7 +219,6 @@ struct SessionInboxComposeChromeTests {
     @Test func bothSessionListToolbarsPutMessageLeadingAndFolderTrailing() throws {
         let inbox = try appleSource("Oppi/Features/Workspaces/SessionInboxView.swift")
         let workspace = try appleSource("Oppi/Features/Workspaces/WorkspaceDetailView.swift")
-        let preview = try appleSource("Oppi/App/ScreenshotPreviews/InboxProviderSetupPreview.swift")
         let inboxToolbar = try sourceSlice(
             inbox,
             start: "private func toolbarContent(railEdge: HorizontalEdge?) -> some ToolbarContent {",
@@ -239,12 +233,9 @@ struct SessionInboxComposeChromeTests {
         let inboxFolder = try #require(inboxToolbar.range(of: "inboxFolderButton"))
         let workspaceCompose = try #require(workspaceToolbar.range(of: "compactQuickSessionBar"))
         let workspaceFolder = try #require(workspaceToolbar.range(of: "workspaceFilesToolbarItem"))
-        let previewCompose = try #require(preview.range(of: "SessionInboxCompactComposeBar("))
-        let previewFolder = try #require(preview.range(of: "SessionInboxFolderToolbarButton("))
 
         #expect(inboxCompose.lowerBound < inboxFolder.lowerBound)
         #expect(workspaceCompose.lowerBound < workspaceFolder.lowerBound)
-        #expect(previewCompose.lowerBound < previewFolder.lowerBound)
     }
 
     @Test func compactComposeBarPlacesMicLeadingLikeChatInput() throws {

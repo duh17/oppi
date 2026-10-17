@@ -38,7 +38,7 @@ private struct ResourceCatalogPreview: View {
     @State private var search = ""
 
     var body: some View {
-        NavigationStack {
+        RouterPreviewNavigation {
             List {
                 Section {
                     Label("Preview Server", systemImage: "server.rack")
@@ -73,8 +73,9 @@ private struct ResourceCatalogPreview: View {
             .themedListSurface()
             .navigationTitle(kind.title)
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $search, prompt: kind.searchPrompt)
+            .routerSearchable(text: $search, prompt: kind.searchPrompt)
         }
+        .ignoresSafeArea()
         .accessibilityIdentifier("screenshot.ready")
     }
 

@@ -5,7 +5,7 @@ import SwiftUI
 /// real views over one fixture server, with API pages answered by
 /// `SettingsSweepFixtureURLProtocol`. `SCREENSHOT_SWEEP_PAGE` picks the page:
 /// `tailscale`, `ssh-preflight`, `ssh-preflight-result`, `ssh-preflight-mismatch`,
-/// `ssh-hosts`, `ssh-setup`, `share-redaction`, `mcp`, `mcp-workspace`,
+/// `ssh-hosts`, `ssh-setup`, `mcp`, `mcp-workspace`,
 /// `mcp-detail`, `mcp-add`, `quick-comments`, `quick-comment-editor`,
 /// `auto-title`, `theme-import`, `dictionary`, `dictionary-workspace`,
 /// `skills`, `skill-detail`, `extensions`, `extension-detail`,
@@ -183,8 +183,6 @@ struct SettingsSweepScreenshotPreview: View {
     @ViewBuilder
     private var content: some View {
         switch page {
-        case "share-redaction":
-            ShareRedactionSettingsPreview()
         case "workspace-create":
             WorkspaceCreateView(server: server)
         case "workspace-create-configure":
@@ -201,15 +199,10 @@ struct SettingsSweepScreenshotPreview: View {
         case "extensions":
             RouterPreviewStack(root: root) { ServerExtensionsView() }
                 .ignoresSafeArea()
-        // Pages that push through the router.
-        case "agents", "agents-pi", "agents-pi-file", "schedules", "mcp", "mcp-detail", "ssh-hosts", "ssh-setup",
-             "skill-file-review":
+        // Every other page is the root of a router stack, where its links push.
+        default:
             RouterPreviewStack(root: root) { pushedPage }
                 .ignoresSafeArea()
-        default:
-            NavigationStack {
-                pushedPage
-            }
         }
     }
 

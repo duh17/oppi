@@ -26,6 +26,27 @@ enum ChatOutlineColdHarnessConfig {
     }
 }
 
+@MainActor @Observable
+private final class ChatOutlineColdHarnessSession {
+    var id = ChatOutlineColdHarnessConfig.sessionA
+}
+
+private struct ChatOutlineColdHarnessChat: View {
+    let session: ChatOutlineColdHarnessSession
+    let workspaceId: String
+    let connection: ServerConnection
+    let navigation: AppNavigation
+    let quickCommentTemplateStore: QuickCommentTemplateStore
+
+    var body: some View {
+        ChatView(sessionId: session.id, workspaceIdHint: workspaceId)
+            .withServerScopedEnvironment(connection)
+            .environment(navigation)
+            .environment(quickCommentTemplateStore)
+            .id(session.id)
+    }
+}
+
 struct ChatOutlineColdHarnessView: View {
     private static let workspace = Workspace(
         id: "cold-outline-workspace",
@@ -46,56 +67,26 @@ struct ChatOutlineColdHarnessView: View {
     @State private var navigation = AppNavigation()
     @State private var connection = Self.makeConnection()
     @State private var quickCommentTemplateStore = QuickCommentTemplateStore(templates: [])
-    @State private var composerDraftStore = ComposerDraftStore()
-    @State private var sessionId = ChatOutlineColdHarnessConfig.sessionA
-    @State private var didAutoOpen = false
+    @State private var session = ChatOutlineColdHarnessSession()
     @State private var probe = ChatOutlineColdHarnessProbeState()
     @State private var pendingSeedSessionId: String?
     @State private var armStreamOnOutline = false
 
-    private var workspaceTarget: WorkspaceNavTarget {
-        WorkspaceNavTarget(serverId: Self.serverId, workspace: Self.workspace)
-    }
-
-    private var sessionTarget: WorkspaceSessionNavTarget {
-        WorkspaceSessionNavTarget(
-            serverId: Self.serverId,
-            sessionId: sessionId,
-            workspaceId: Self.workspace.id
-        )
-    }
+    private var sessionId: String { session.id }
 
     var body: some View {
-        @Bindable var nav = navigation
-
-        NavigationStack(path: $nav.workspacePath) {
-            List {
-                Button("Open Session") {
-                    openChat()
-                }
-                .accessibilityIdentifier("chat.outline.harness.openSession")
-            }
-            .accessibilityIdentifier("chat.outline.harness.root")
-            .navigationTitle("Workspaces")
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: WorkspaceNavTarget.self) { _ in
-                Text("Workspace")
-                    .navigationTitle("e2e-workspace")
-            }
-            .navigationDestination(for: WorkspaceSessionNavTarget.self) { _ in
-                ChatView(
-                    sessionId: sessionId,
-                    workspaceIdHint: Self.workspace.id,
-                    ownsWorkspacePathBackNavigation: true
-                )
-                .withServerScopedEnvironment(connection)
-                .environment(navigation)
-                .environment(quickCommentTemplateStore)
-                .id(sessionId)
-            }
+        // The production chat at the root of a router stack. Rebinding swaps
+        // the session through the model: the screen is its own graph.
+        RouterPreviewNavigation {
+            ChatOutlineColdHarnessChat(
+                session: session,
+                workspaceId: Self.workspace.id,
+                connection: connection,
+                navigation: navigation,
+                quickCommentTemplateStore: quickCommentTemplateStore
+            )
         }
-        .environment(navigation)
-        .environment(\.composerDraftStore, composerDraftStore)
+        .ignoresSafeArea()
         .overlay(alignment: .topLeading) {
             probeOverlay
         }
@@ -105,7 +96,6 @@ struct ChatOutlineColdHarnessView: View {
             navigation.workspaceNavigationPresentation = .stack
         }
         .task {
-            await autoOpenChatIfNeeded()
             while !Task.isCancelled {
                 refreshProbe()
                 tryPendingSeed()
@@ -126,7 +116,7 @@ struct ChatOutlineColdHarnessView: View {
                 refreshProbe()
             }
             probeButton("Rebind B", id: "chat.outline.harness.rebindB") {
-                sessionId = ChatOutlineColdHarnessConfig.sessionB
+                session.id = ChatOutlineColdHarnessConfig.sessionB
                 refreshProbe()
             }
             probeButton("Seed B", id: "chat.outline.harness.seedB") {
@@ -156,19 +146,6 @@ struct ChatOutlineColdHarnessView: View {
             .accessibilityIdentifier(id)
     }
 
-
-    private func autoOpenChatIfNeeded() async {
-        guard !didAutoOpen else { return }
-        didAutoOpen = true
-        try? await Task.sleep(for: .milliseconds(250))
-        guard navigation.workspacePath.isEmpty else { return }
-        openChat()
-    }
-
-    private func openChat() {
-        navigation.openWorkspace(workspaceTarget)
-        navigation.openWorkspaceSession(sessionTarget, workspace: workspaceTarget)
-    }
 
     private func tryPendingSeed() {
         guard let sessionId = pendingSeedSessionId,

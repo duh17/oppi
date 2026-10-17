@@ -37,6 +37,7 @@ struct SSHTerminalScreenshotPreview: View {
     var body: some View {
         Group {
             if let channel {
+                // The terminal at the root of a router stack, the way the app pushes it.
                 SSHTerminalPreviewHost(
                     channel: channel,
                     status: status,
@@ -170,7 +171,7 @@ private struct SSHTerminalPreviewHost: UIViewControllerRepresentable {
     let themeID: ThemeID
     let connection: ServerConnection
 
-    func makeUIViewController(context: Context) -> UINavigationController {
+    func makeUIViewController(context: Context) -> RouterNavigationController {
         let terminal = SSHTerminalViewController(
             channel: channel,
             reconnect: {},
@@ -181,12 +182,12 @@ private struct SSHTerminalPreviewHost: UIViewControllerRepresentable {
         terminal.presentsStatusDetailOnAppear = status == .detail
         let style: UIUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
         terminal.overrideUserInterfaceStyle = style
-        let nav = UINavigationController(rootViewController: terminal)
-        nav.overrideUserInterfaceStyle = style
-        return nav
+        let navigation = RouterNavigationController(rootViewController: terminal)
+        navigation.interfaceStyle = { style }
+        return navigation
     }
 
-    func updateUIViewController(_ controller: UINavigationController, context: Context) {}
+    func updateUIViewController(_ controller: RouterNavigationController, context: Context) {}
 }
 
 private actor PreviewConnection: SSHTerminalConnection {

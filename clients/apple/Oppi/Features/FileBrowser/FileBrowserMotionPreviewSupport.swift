@@ -35,7 +35,7 @@ struct FileBrowserMotionPreview: View {
     var body: some View {
         let files = FileBrowserMotionPreviewSupport.files
         let middle = files[1]
-        NavigationStack {
+        RouterPreviewNavigation {
             FileBrowserContentView(
                 workspaceId: FileBrowserMotionPreviewSupport.workspaceId,
                 filePath: middle.path,
@@ -48,8 +48,9 @@ struct FileBrowserMotionPreview: View {
                     }
                 )
             )
+            .environment(\.apiClient, apiClient)
         }
-        .environment(\.apiClient, apiClient)
+        .ignoresSafeArea()
         .preferredColorScheme(.dark)
         .overlay(alignment: .bottom) {
             FileBrowserMotionReduceMotionReadout(reduceMotion: reduceMotion)
@@ -78,19 +79,20 @@ struct ReviewFileMotionPreview: View {
                 selectedSessionTouched: true
             )
         }
-        NavigationStack {
+        RouterPreviewNavigation {
             WorkspaceReviewFileDetailView(
                 workspaceId: FileBrowserMotionPreviewSupport.workspaceId,
                 selectedSessionId: nil,
                 file: files[1],
                 navigationFiles: files
             )
+            // The review reads both; it pushes a quick-action chat with them.
+            .environment(connection)
+            .environment(navigation)
+            .environment(sessionStore)
+            .environment(\.apiClient, apiClient)
         }
-        // The review reads both; it pushes a quick-action chat with them.
-        .environment(connection)
-        .environment(navigation)
-        .environment(sessionStore)
-        .environment(\.apiClient, apiClient)
+        .ignoresSafeArea()
         .preferredColorScheme(.dark)
         .overlay(alignment: .bottom) {
             FileBrowserMotionReduceMotionReadout(reduceMotion: reduceMotion)

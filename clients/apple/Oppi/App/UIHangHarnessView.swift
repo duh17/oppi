@@ -302,7 +302,15 @@ enum UIHangHarnessConfig {
 
 // MARK: - Harness View
 
+/// The harness at the root of a router stack, where the chat reader pushes.
 struct UIHangHarnessView: View {
+    var body: some View {
+        RouterPreviewNavigation { UIHangHarnessContent() }
+            .ignoresSafeArea()
+    }
+}
+
+private struct UIHangHarnessContent: View {
     private enum HarnessSession: String, CaseIterable {
         case alpha
         case beta
@@ -624,7 +632,7 @@ struct UIHangHarnessView: View {
     @State private var streamTick = 0
 
     @State private var chatReaderPayloadStore = ChatReaderPayloadStore()
-    @State private var chatReaderRoute: ChatReaderNavTarget?
+    @Environment(\.screenNavigator) private var navigator
     @State private var harnessNavigation = AppNavigation()
     @State private var streamEnabled = !UIHangHarnessConfig.streamDisabled
     @State private var diagnosticsTask: Task<Void, Never>?
@@ -851,7 +859,6 @@ struct UIHangHarnessView: View {
     }
 
     var body: some View {
-        NavigationStack {
         VStack(spacing: 10) {
             Text("Harness Ready")
                 .font(.caption)
@@ -889,10 +896,7 @@ struct UIHangHarnessView: View {
                     sessionId: "harness-\(selectedSession.rawValue)",
                     workspaceId: "harness-workspace",
                     onFork: { _ in },
-                    onOpenChatReader: { payload in
-                        chatReaderPayloadStore.removeAll()
-                        chatReaderRoute = chatReaderPayloadStore.store(payload)
-                    },
+                    onOpenChatReader: openChatReader,
                     onBackSwipe: {},
                     onShowEarlier: {
                         renderWindow = min(currentItems.count, renderWindow + Self.renderWindowStep)
@@ -927,15 +931,9 @@ struct UIHangHarnessView: View {
         .padding()
         .background(Color.themeBg.ignoresSafeArea())
         .toolbarVisibility(.hidden, for: .navigationBar)
-        .navigationDestination(item: $chatReaderRoute) { route in
-            ChatReaderDestinationView(target: route, store: chatReaderPayloadStore)
-        }
         .environment(harnessNavigation)
         .environment(\.chatReaderPayloadStore, chatReaderPayloadStore)
-        .environment(\.openChatReader, ChatReaderOpenAction { payload in
-            chatReaderPayloadStore.removeAll()
-            chatReaderRoute = chatReaderPayloadStore.store(payload)
-        })
+        .environment(\.openChatReader, ChatReaderOpenAction { payload in openChatReader(payload) })
         .onAppear {
             originalThemeID = ThemeRuntimeState.currentThemeID()
             ThemeRuntimeState.setThemeID(themeID)
@@ -977,7 +975,13 @@ struct UIHangHarnessView: View {
             ThemeRuntimeState.setThemeID(newThemeID)
             heartbeat &+= 1
         }
-        }
+    }
+
+    private func openChatReader(_ payload: ChatReaderPayload) {
+        chatReaderPayloadStore.removeAll()
+        let route = chatReaderPayloadStore.store(payload)
+        let store = chatReaderPayloadStore
+        navigator.push { ChatReaderDestinationView(target: route, store: store) }
     }
 
     private var controlsBar: some View {
