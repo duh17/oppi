@@ -74,8 +74,8 @@ struct SessionTimelineNavigationTests {
         // an outline sheet covers the mounted, windowed SwiftUI timeline.
         // No pre-expansion, manual detach, scroll command, or highlight injection.
         var didLoadTarget = false
-        let outline = SessionOutlineView(
-            items: reducer.items, sessionId: manager.sessionId, workspaceId: nil,
+        let outline = SessionOutlineViewController(
+            items: reducer.items, toolArgsStore: reducer.toolArgsStore,
             onSelect: { selectedID in
                 ChatView.selectOutlineTimelineEntry(
                     selectedID, items: reducer.items, scrollController: scrollController
@@ -88,9 +88,7 @@ struct SessionTimelineNavigationTests {
             onClose: {}
         )
         // Hosted the way the router presents it (`.inNavigation()`), unanimated.
-        let sheet = RouterNavigationController(rootViewController: HostFactory.screen(root: makeTestAppRoot()) {
-            outline.environment(reducer.toolArgsStore)
-        })
+        let sheet = RouterNavigationController(rootViewController: outline)
         sheet.modalPresentationStyle = .pageSheet
         host.present(sheet, animated: false)
         #expect(host.presentedViewController === sheet)

@@ -9,7 +9,7 @@ import UIKit
 /// SwiftUI `.toolbar` outline/context controls are not exposed as UIView
 /// accessibility identifiers in this `UIHostingController` host. Dumps show
 /// `UIKitNavigationBar` without `chat.toolbar.outline`. Do not reintroduce a
-/// synthetic `SessionOutlineView` present/onSelect path as a substitute.
+/// synthetic `SessionOutlineViewController` present/onSelect path as a substitute.
 /// Drive the real toolbar, presented Session Outline, and row navigation with
 /// `OppiUITests/ChatOutlineColdStateUITests` (DEBUG ChatView harness, no model).
 @Suite("ChatView outline cold state", .serialized)

@@ -1,7 +1,7 @@
 import XCTest
 
 /// Deterministic ChatView toolbar/outline drive. Launches the DEBUG harness
-/// with production ChatView chrome. Does not construct SessionOutlineView,
+/// with production ChatView chrome. Does not construct SessionOutlineViewController,
 /// call onSelect, or use a local model.
 final class ChatOutlineColdStateUITests: XCTestCase {
     private let targetText = "COLD_OUTLINE_TARGET_ROW"

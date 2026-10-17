@@ -397,23 +397,6 @@ final class ScreenNavigator {
         Router.finish(controller)
     }
 
-    /// Ends an active search on this screen without animation, then runs
-    /// `completion`. Uses the screen's own `UISearchController` first: walking
-    /// navigation items can miss it while search is presenting. A modal or
-    /// column closed under an active search left its bar covering the chat
-    /// (iOS 27).
-    func endSearch(then completion: (() -> Void)? = nil) {
-        if let active = search?.searchController, active.isActive {
-            Router.endSearch(active, then: completion)
-            return
-        }
-        guard let controller else {
-            completion?()
-            return
-        }
-        Router.endSearch(in: controller.navigationController ?? controller, then: completion)
-    }
-
     /// Moves the sheet this screen sits in to `detent` (the selection half of
     /// SwiftUI `presentationDetents(_:selection:)`).
     func selectSheetDetent(_ detent: UISheetPresentationController.Detent.Identifier) {
@@ -476,6 +459,16 @@ extension EnvironmentValues {
 
 // MARK: - Declarative presentation
 
+/// The root screen of a router modal or trailing column: SwiftUI content
+/// hosted through `HostFactory.screen`, or a UIKit view controller that owns
+/// its `navigationItem` (title, bar items, search) itself. A UIKit root needs
+/// a navigation presentation (`.inNavigation()`). It is built once per
+/// presentation; when the presenter re-renders, only hosted content refreshes.
+enum RouterScreen {
+    case hosted(() -> AnyView)
+    case controller(() -> UIViewController)
+}
+
 extension View {
     /// A modal that UIKit presents, hosted through `HostFactory`.
     ///
@@ -494,12 +487,25 @@ extension View {
         onDismiss: (() -> Void)? = nil,
         @ViewBuilder content: @escaping (Item) -> ModalContent
     ) -> some View {
+        routerModal(item: item, presentation: presentation, onDismiss: onDismiss, screen: { item in
+            RouterScreen.hosted { AnyView(content(item)) }
+        })
+    }
+
+    /// `routerModal(item:presentation:onDismiss:content:)` whose root screen
+    /// may be a UIKit view controller (`RouterScreen.controller`).
+    func routerModal<Item: Identifiable>(
+        item: Binding<Item?>,
+        presentation: ModalPresentation = .sheet,
+        onDismiss: (() -> Void)? = nil,
+        screen: @escaping (Item) -> RouterScreen
+    ) -> some View {
         background {
             RouterModalAnchor(
                 item: item,
                 presentation: presentation,
                 onDismiss: onDismiss,
-                modalContent: content
+                screen: screen
             )
             .accessibilityHidden(true)
         }
@@ -572,7 +578,7 @@ private struct RouterModalFlagAnchor<ModalContent: View>: View {
             presentation: presentation,
             onDismiss: onDismiss
         ) { _ in
-            modalContent()
+            RouterScreen.hosted { AnyView(modalContent()) }
         }
     }
 }
@@ -608,11 +614,11 @@ final class RouterAnchorController: UIViewController {
 
 // MARK: Modal anchor
 
-private struct RouterModalAnchor<Item: Identifiable, ModalContent: View>: UIViewControllerRepresentable {
+private struct RouterModalAnchor<Item: Identifiable>: UIViewControllerRepresentable {
     @Binding var item: Item?
     let presentation: ModalPresentation
     let onDismiss: (() -> Void)?
-    let modalContent: (Item) -> ModalContent
+    let screen: (Item) -> RouterScreen
     @Environment(\.appRootEnvironment) private var root
 
     func makeCoordinator() -> RouterModalPresenter {
@@ -637,14 +643,12 @@ private struct RouterModalAnchor<Item: Identifiable, ModalContent: View>: UIView
             guard let root else {
                 preconditionFailure("routerModal needs appRootEnvironment(_:) above its presenter")
             }
-            let modalContent = modalContent
             presenter.request = RouterModalPresenter.Request(
                 id: AnyHashable(item.id),
                 presentation: presentation,
-                root: root
-            ) {
-                AnyView(modalContent(item))
-            }
+                root: root,
+                screen: screen(item)
+            )
         } else {
             presenter.request = nil
         }
@@ -678,7 +682,7 @@ final class RouterModalPresenter {
         let id: AnyHashable
         let presentation: ModalPresentation
         let root: AppRootEnvironment
-        let makeContent: () -> AnyView
+        let screen: RouterScreen
     }
 
     weak var anchor: UIViewController?
@@ -686,7 +690,9 @@ final class RouterModalPresenter {
     var onDismiss: (() -> Void)?
     var clearItem: (() -> Void)?
 
-    private var screen: HostedScreenController?
+    /// The presented root screen; `hostedScreen` too when it is SwiftUI.
+    private var screen: UIViewController?
+    private var hostedScreen: HostedScreenController?
     private var presentedID: AnyHashable?
     private var presentedPresentation: ModalPresentation?
     private var presentationCount = 0
@@ -722,7 +728,9 @@ final class RouterModalPresenter {
                 }
                 // The presenter re-rendered (it is still in the window under
                 // sheets and popovers): refresh the content it builds.
-                screen.setContent(request.makeContent)
+                if case .hosted(let makeContent) = request.screen {
+                    hostedScreen?.setContent(makeContent)
+                }
                 return
             }
             // Cleared, or replaced by another item: dismiss first. The
@@ -750,19 +758,36 @@ final class RouterModalPresenter {
         guard screen == nil, let request, let anchor, anchor.viewIfLoaded?.window != nil else { return }
         presentationCount += 1
         let count = presentationCount
-        screen = Router.present(
-            root: request.root,
-            presentation: request.presentation,
-            from: anchor,
-            sourceView: anchor.view,
-            onDismiss: { [weak self] in
-                // Only the presentation on screen: a late callback from an
-                // earlier one must not clear a newer item.
-                guard let self, count == self.presentationCount, self.screen != nil else { return }
-                self.screenDidDismiss()
-            },
-            content: request.makeContent
-        )
+        let onDismiss = { [weak self] in
+            // Only the presentation on screen: a late callback from an
+            // earlier one must not clear a newer item.
+            guard let self, count == self.presentationCount, self.screen != nil else { return }
+            self.screenDidDismiss()
+        }
+        switch request.screen {
+        case .hosted(let makeContent):
+            let hosted = Router.present(
+                root: request.root,
+                presentation: request.presentation,
+                from: anchor,
+                sourceView: anchor.view,
+                onDismiss: onDismiss,
+                content: makeContent
+            )
+            screen = hosted
+            hostedScreen = hosted
+        case .controller(let makeController):
+            let controller = makeController()
+            screen = controller
+            Router.present(
+                controller,
+                presentation: request.presentation,
+                from: anchor,
+                sourceView: anchor.view,
+                theme: request.root.themeStore,
+                onDismiss: onDismiss
+            )
+        }
         presentedID = request.id
         presentedPresentation = request.presentation
     }
@@ -772,6 +797,7 @@ final class RouterModalPresenter {
         let representing = isRepresenting
         isRepresenting = false
         screen = nil
+        hostedScreen = nil
         presentedID = nil
         presentedPresentation = nil
         if !representing {

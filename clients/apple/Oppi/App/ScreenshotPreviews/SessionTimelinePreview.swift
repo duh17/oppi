@@ -5,7 +5,6 @@ import SwiftUI
 
 struct SessionTimelinePreview: View {
     @State private var inspectionFixture = ToolInspectionPreviewFixture.makeReducer()
-    @State private var gitStatusStore = GitStatusStore()
     @State private var lastTreeNavigationCapture = "none"
     @Environment(\.appRootEnvironment) private var appRoot
 
@@ -92,7 +91,7 @@ struct SessionTimelinePreview: View {
     var body: some View {
         Group {
             if let appRoot {
-                RouterPreviewStack(root: appRoot) { outline }
+                SessionOutlinePreviewStack(root: appRoot, makeOutline: makeOutline)
                     .ignoresSafeArea()
             }
         }
@@ -108,12 +107,13 @@ struct SessionTimelinePreview: View {
         }
     }
 
-    private var outline: some View {
+    private func makeOutline() -> SessionOutlineViewController {
         let capture = $lastTreeNavigationCapture
-        return SessionOutlineView(
-            items: inspectionFixture.items,
-            sessionId: "preview-session",
-            workspaceId: "preview-workspace",
+        let fixture = inspectionFixture
+        return SessionOutlineViewController(
+            items: fixture.items,
+            toolArgsStore: fixture.toolArgsStore,
+            toolDetails: { fixture.toolDetailsStore.details(for: $0) },
             onSelect: { _ in },
             onFork: { _ in },
             onNavigateTreeNode: { request in
@@ -134,12 +134,24 @@ struct SessionTimelinePreview: View {
                 throw PreviewNavigationCaptureError(message: "Captured \(summary)")
             },
             initialTreeSnapshot: Self.previewTreeSnapshot,
-            toolDetails: { inspectionFixture.toolDetailsStore.details(for: $0) },
             onClose: {}
         )
-        .accessibilityIdentifier("screenshot.ready")
-        .environment(inspectionFixture.toolArgsStore)
-        .environment(gitStatusStore)
     }
+}
+
+/// The outline in a router navigation controller, as chat presents it.
+private struct SessionOutlinePreviewStack: UIViewControllerRepresentable {
+    let root: AppRootEnvironment
+    let makeOutline: () -> SessionOutlineViewController
+
+    func makeUIViewController(context: Context) -> RouterNavigationController {
+        let navigation = RouterNavigationController(rootViewController: makeOutline())
+        let themeStore = root.themeStore
+        navigation.interfaceStyle = { themeStore.userInterfaceStyle }
+        navigation.view.accessibilityIdentifier = "screenshot.ready"
+        return navigation
+    }
+
+    func updateUIViewController(_ navigation: RouterNavigationController, context: Context) {}
 }
 #endif

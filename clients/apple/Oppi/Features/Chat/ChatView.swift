@@ -873,16 +873,18 @@ struct ChatView: View {
     /// rendering under it, so the composer's model picker, which the chat
     /// presents, and the values the composer reads stay live. Outline, Files,
     /// and Context sit in a router navigation controller, as a modal here or
-    /// in the trailing column (`usesTrailingSidePanel`), and push through
-    /// their screen navigator.
+    /// in the trailing column (`usesTrailingSidePanel`). Files and Context
+    /// push through their screen navigator; the outline is a UIKit screen
+    /// that owns its bar and search.
     @ViewBuilder
     private func chatPresentation(railEdge: HorizontalEdge?) -> some View {
         let sidePanel = usesTrailingSidePanel
         configuredChatContent(railEdge: railEdge)
             .chatAuxiliaryPresentation(
                 isPresented: sidePanel ? .constant(false) : $showOutline,
-                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
-            ) { chatModalScope(outlineSheet) }
+                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation,
+                screen: { .controller(makeOutlineController) }
+            )
             .chatAuxiliaryPresentation(
                 isPresented: sidePanel ? .constant(false) : $isFilePanelVisible,
                 prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
@@ -1227,12 +1229,13 @@ struct ChatView: View {
         return nil
     }
 
-    @ViewBuilder
-    private func chatSidePanel(_ panel: ChatSidePanel) -> some View {
+    /// The outline is a UIKit screen; Files and Context are hosted SwiftUI
+    /// with the chat's own values (`chatModalScope`).
+    private func chatSidePanel(_ panel: ChatSidePanel) -> RouterScreen {
         switch panel {
-        case .files: filePanelSheet
-        case .outline: outlineSheet
-        case .context: contextInspectorSheet
+        case .files: .hosted { AnyView(chatModalScope(filePanelSheet)) }
+        case .outline: .controller(makeOutlineController)
+        case .context: .hosted { AnyView(chatModalScope(contextInspectorSheet)) }
         }
     }
 
@@ -1249,14 +1252,13 @@ struct ChatView: View {
             // A full-height UIKit column with its own bar beside the chat,
             // its bar, timeline, and composer. The panel runs in its own
             // screen, so the chat's own values go on explicitly
-            // (`chatModalScope`).
+            // (`chatSidePanel`).
             .routerTrailingColumn(
                 item: usesTrailingSidePanel ? activeSidePanel : nil,
                 minWidth: 320,
-                idealWidth: 400
-            ) { panel in
-                chatModalScope(chatSidePanel(panel))
-            }
+                idealWidth: 400,
+                screen: chatSidePanel
+            )
             // On the side rail the system draws the title as its own strip
             // above the timeline. The rail session menu carries the name.
             .navigationTitle(railEdge == nil ? sessionDisplayName : "")
@@ -2826,11 +2828,14 @@ struct ChatView: View {
 
     // MARK: - Sheets & Alerts
 
-    private var outlineSheet: some View {
-        SessionOutlineView(
+    /// Session Outline, built when it opens: it lists the timeline loaded
+    /// at that moment, then the server's full outline.
+    private func makeOutlineController() -> UIViewController {
+        let reducer = reducer
+        return SessionOutlineViewController(
             items: reducer.items,
-            sessionId: sessionId,
-            workspaceId: session?.workspaceId,
+            toolArgsStore: reducer.toolArgsStore,
+            toolDetails: { reducer.toolDetailsStore.details(for: $0) },
             onSelect: { targetID in
                 // A landed durable answer keeps its live row id.
                 Self.selectOutlineTimelineEntry(
@@ -2861,7 +2866,6 @@ struct ChatView: View {
                     sessionId: sessionId
                 )
             },
-            toolDetails: { reducer.toolDetailsStore.details(for: $0) },
             onClose: { showOutline = false }
         )
     }
@@ -2979,7 +2983,7 @@ struct ChatView: View {
     }
 
     @MainActor
-    private func navigateFromTree(_ request: SessionOutlineView.TreeNavigationRequest) async throws {
+    private func navigateFromTree(_ request: SessionTreeNavigationRequest) async throws {
         guard session?.status == .ready else {
             throw TreeNavigationError.sessionNotReady
         }
@@ -3271,11 +3275,26 @@ private extension View {
         onDismiss: (() -> Void)? = nil,
         @ViewBuilder content: @escaping () -> PresentedContent
     ) -> some View {
+        chatAuxiliaryPresentation(
+            isPresented: isPresented,
+            prefersFullScreen: prefersFullScreen,
+            onDismiss: onDismiss,
+            screen: { RouterScreen.hosted { AnyView(content()) } }
+        )
+    }
+
+    /// A chat panel whose root may be a UIKit screen (Session Outline).
+    func chatAuxiliaryPresentation(
+        isPresented: Binding<Bool>,
+        prefersFullScreen: Bool,
+        onDismiss: (() -> Void)? = nil,
+        screen: @escaping () -> RouterScreen
+    ) -> some View {
         modifier(ChatAuxiliaryPresentation(
             isPresented: isPresented,
             prefersFullScreen: prefersFullScreen,
             onDismiss: onDismiss,
-            panel: content
+            screen: screen
         ))
     }
 }
@@ -3283,11 +3302,11 @@ private extension View {
 /// Builds the item binding in its own body: `Binding(get:set:)` calls its
 /// getter when created, and created in the chat's body that read re-rendered
 /// the whole chat (its timeline included) on every panel open and close.
-private struct ChatAuxiliaryPresentation<Panel: View>: ViewModifier {
+private struct ChatAuxiliaryPresentation: ViewModifier {
     @Binding var isPresented: Bool
     let prefersFullScreen: Bool
     let onDismiss: (() -> Void)?
-    let panel: () -> Panel
+    let screen: () -> RouterScreen
 
     func body(content: Content) -> some View {
         // The style is part of the id, so a size-class change (rotation, a
@@ -3300,16 +3319,15 @@ private struct ChatAuxiliaryPresentation<Panel: View>: ViewModifier {
         ).inNavigation()
         let isPresented = $isPresented
         let prefersFullScreen = prefersFullScreen
-        let panel = panel
+        let screen = screen
         return content.routerModal(
             item: Binding(
                 get: { isPresented.wrappedValue ? ChatAuxiliaryModal(id: prefersFullScreen) : nil },
                 set: { isPresented.wrappedValue = $0 != nil }
             ),
             presentation: presentation,
-            onDismiss: onDismiss
-        ) { _ in
-            panel()
-        }
+            onDismiss: onDismiss,
+            screen: { _ in screen() }
+        )
     }
 }

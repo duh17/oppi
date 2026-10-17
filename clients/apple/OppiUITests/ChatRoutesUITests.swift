@@ -32,7 +32,8 @@ final class ChatRoutesUITests: XCTestCase {
         let search = outlineSearchField()
         search.tap()
         search.typeText("ROUTES_FILL_2")
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "ROUTES_FILL_2")).firstMatch
+        // Each outline row is one button whose label is its summary.
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "ROUTES_FILL_2")).firstMatch
             .waitForExistence(timeout: 5), "Search must keep the matching entry")
         attachScreenshot("outline-search")
         assertRunning()
@@ -490,7 +491,7 @@ final class ChatRoutesUITests: XCTestCase {
         XCTAssertTrue(outline.waitForExistence(timeout: 10), "Outline preview did not appear in a navigation bar")
         _ = outlineSearchField()
         app.buttons["Tree"].tap()
-        let node = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Ship list mode first")).firstMatch
+        let node = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Ship list mode first")).firstMatch
         XCTAssertTrue(node.waitForExistence(timeout: 5), "Tree rows missing")
         node.tap()
         let custom = app.buttons["Summarize with custom instructions"]

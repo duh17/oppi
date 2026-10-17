@@ -373,9 +373,6 @@
     "clients/apple/Oppi/Features/Chat/Support/SessionFiles/SessionTouchedFileContentView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Support/SessionOutlineView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Support/SessionToolbar.swift": {
       "import SwiftUI": 1
     },

@@ -22,9 +22,10 @@ extension View {
     /// `item` shows the column; nil hides it. The caller applies
     /// `TrailingSidePanelPolicy` and, at compact width, presents the same
     /// panel with `routerModal` instead. The panel is a `HostFactory` screen
-    /// at the root of the column's own `RouterNavigationController`, for its
-    /// title and bar items, level with this screen's bar; it pushes and
-    /// searches through its `ScreenNavigator`. A new `item.id` replaces the
+    /// (or a UIKit controller, `RouterScreen.controller`) at the root of the
+    /// column's own `RouterNavigationController`, for its title and bar items,
+    /// level with this screen's bar; a hosted panel pushes and searches
+    /// through its `ScreenNavigator`. A new `item.id` replaces the
     /// panel. The column sits on the navigation controller that holds this
     /// screen while the screen is on screen, and that controller's safe area
     /// makes room for it: this screen's bar items and content stay beside
@@ -45,16 +46,29 @@ extension View {
         idealWidth: CGFloat,
         @ViewBuilder content: @escaping (Item) -> Panel
     ) -> some View {
+        routerTrailingColumn(item: item, minWidth: minWidth, idealWidth: idealWidth, screen: { item in
+            RouterScreen.hosted { AnyView(content(item)) }
+        })
+    }
+
+    /// `routerTrailingColumn(item:minWidth:idealWidth:content:)` whose panel
+    /// may be a UIKit view controller (`RouterScreen.controller`), built once
+    /// per `item.id`.
+    func routerTrailingColumn<Item: Identifiable>(
+        item: Item?,
+        minWidth: CGFloat,
+        idealWidth: CGFloat,
+        screen: @escaping (Item) -> RouterScreen
+    ) -> some View {
         background {
             RouterTrailingColumnHost(
                 panel: item.map { item in
                     TrailingColumnController.Panel(
                         id: AnyHashable(item.id),
                         minWidth: minWidth,
-                        idealWidth: idealWidth
-                    ) {
-                        AnyView(content(item))
-                    }
+                        idealWidth: idealWidth,
+                        screen: screen(item)
+                    )
                 }
             )
             .frame(width: 0, height: 0)
@@ -88,7 +102,7 @@ private struct RouterTrailingColumnHost: UIViewControllerRepresentable {
 }
 
 /// UIKit owner of a trailing column: an invisible child of the screen that
-/// asked for it. The panel is one hosted screen at the root of the column's
+/// asked for it. The panel is one screen (hosted or UIKit) at the root of the column's
 /// own navigation controller, shown in a `TrailingColumnOverlayView` on top
 /// of the navigation controller that holds the screen (the screen's top
 /// ancestor outside one), whose child the column's controller becomes:
@@ -101,12 +115,13 @@ final class TrailingColumnController: UIViewController {
         let id: AnyHashable
         let minWidth: CGFloat
         let idealWidth: CGFloat
-        let makeContent: () -> AnyView
+        let screen: RouterScreen
     }
 
     private var panelID: AnyHashable?
     private var root: AppRootEnvironment?
-    private var screen: HostedScreenController?
+    /// Set when the panel is a hosted SwiftUI screen.
+    private var hostedScreen: HostedScreenController?
     private var container: RouterNavigationController?
     private var overlay: TrailingColumnOverlayView?
     /// The controller whose safe area makes room for the column, and the
@@ -124,19 +139,40 @@ final class TrailingColumnController: UIViewController {
 
     func show(_ panel: Panel?, root: AppRootEnvironment?) {
         guard let panel, let root else {
+            requested = nil
             removePanel()
             return
         }
         self.root = root
-        if panel.id == panelID, let screen {
+        requested = panel
+        if panel.id == panelID, container != nil, !isRemoving {
             // The presenter re-rendered: refresh the content it builds.
-            screen.setContent(panel.makeContent)
+            if case .hosted(let makeContent) = panel.screen {
+                hostedScreen?.setContent(makeContent)
+            }
             overlay?.widths = (panel.minWidth, panel.idealWidth)
             return
         }
         removePanel()
+    }
 
-        let screen = HostFactory.screen(root: root, content: panel.makeContent)
+    /// The panel the presenter asked for last; installed once any panel
+    /// being removed is gone.
+    private var requested: Panel?
+    /// True while a removed panel waits for its search to end.
+    private var isRemoving = false
+
+    private func installRequestedPanel() {
+        guard let panel = requested, let root, container == nil else { return }
+        let screen: UIViewController
+        switch panel.screen {
+        case .hosted(let makeContent):
+            let hosted = HostFactory.screen(root: root, content: makeContent)
+            hostedScreen = hosted
+            screen = hosted
+        case .controller(let makeController):
+            screen = makeController()
+        }
         let container = RouterNavigationController(rootViewController: screen)
         let themeStore = root.themeStore
         container.interfaceStyle = { themeStore.userInterfaceStyle }
@@ -154,7 +190,6 @@ final class TrailingColumnController: UIViewController {
         }
 
         panelID = panel.id
-        self.screen = screen
         self.container = container
         self.overlay = overlay
         setNeedsUpdateProperties()
@@ -271,12 +306,28 @@ final class TrailingColumnController: UIViewController {
         return maxX >= window.bounds.maxX - 0.5 ? window.safeAreaInsets.right : 0
     }
 
+    /// Removes the current panel, then installs the requested one. A panel
+    /// removed under an active search left its bar over the chat, as a
+    /// dismissed modal did (`Router.dismiss`), so the panel stays until the
+    /// search has ended; ending a presented search completes later.
     private func removePanel() {
-        detach()
-        container = nil
-        screen = nil
-        overlay = nil
-        panelID = nil
+        guard !isRemoving else { return }
+        guard let container else {
+            installRequestedPanel()
+            return
+        }
+        isRemoving = true
+        // Holds `self` until the panel is gone: a dismantled column must
+        // still take its overlay off the host.
+        Router.endSearch(in: container) { [self] in
+            self.detach()
+            self.container = nil
+            self.hostedScreen = nil
+            self.overlay = nil
+            self.panelID = nil
+            self.isRemoving = false
+            self.installRequestedPanel()
+        }
     }
 }
 
