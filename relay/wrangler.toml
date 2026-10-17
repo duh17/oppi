@@ -6,6 +6,8 @@ compatibility_date = "2026-10-01"
 
 # Custom domain on the account's chaosdonkey.dev zone; deploy creates its DNS record and certificate.
 routes = [{ pattern = "push.chaosdonkey.dev", custom_domain = true }]
+# Served only at that hostname, not also at a *.workers.dev address.
+workers_dev = false
 
 # The relay keeps no request logs: Workers Logs and invocation logs (method and URL) stay off.
 [observability]
