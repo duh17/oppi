@@ -141,6 +141,9 @@ enum ClientLogUploadService {
         // User-driven navigation breadcrumbs. A handful per minute, flushed
         // so a later crash still has the route that preceded it.
         "Navigation",
+        // One "Diff reader session" line per review diff visit: open time,
+        // scroll frames, hitches. Device smoothness evidence for the reader.
+        "DiffReader",
     ]
 
     private static func uploadLevel(for level: ClientLogLevel) -> ClientLogUploadLevel {
