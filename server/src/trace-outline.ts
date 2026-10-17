@@ -4,6 +4,8 @@ import { createInterface } from "node:readline";
 import { performance } from "node:perf_hooks";
 import { projectCustomEntry, type LiveEntryRendererSet, type SessionEntry } from "./trace.js";
 import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-renderer.js";
+import { canonicalAssistantBlockId } from "./canonical-message.js";
+import { projectAssistantContentRuns } from "./session-protocol.js";
 import type { ToolInputPresentation, ToolOutputPresentation, ToolDisplay } from "./types.js";
 
 export type TraceOutlineEntryKind =
@@ -643,21 +645,22 @@ function projectAssistantEntry(
     return;
   }
 
-  if (!Array.isArray(content)) return;
+  if (!Array.isArray(content) || !entry.message) return;
 
-  let traceGeneratedIndex = 0;
-
-  for (const block of content) {
-    const record = asRecord(block);
-    if (!record) continue;
-
-    if (isTextBlock(record)) {
-      const id = `${entry.id}-text-${traceGeneratedIndex}`;
-      traceGeneratedIndex += 1;
-      const summary = previewText(record.text);
+  // Rows must carry the trace's event IDs, or the app cannot find the row a
+  // jump targets: same text runs, same content indexes (empty thinking and
+  // tool calls count), same canonical block IDs as `trace.ts`.
+  for (const projected of projectAssistantContentRuns(entry.message)) {
+    if (projected.kind === "text") {
+      const summary = previewText(projected.text);
       if (!summary) continue;
       entries.push({
-        id,
+        id:
+          canonicalAssistantBlockId({
+            entryId: entry.id,
+            kind: "text",
+            contentIndex: projected.contentIndex,
+          }) ?? `${entry.id}-text-${projected.contentIndex}`,
         kind: "assistant",
         summary,
         timestamp,
@@ -668,17 +671,21 @@ function projectAssistantEntry(
       continue;
     }
 
+    const record = projected.block;
     if (
       record.type === "thinking" &&
       typeof record.thinking === "string" &&
       record.thinking.length > 0
     ) {
-      const id = `${entry.id}-think-${traceGeneratedIndex}`;
-      traceGeneratedIndex += 1;
       const summary = previewText(record.thinking);
       if (!summary) continue;
       entries.push({
-        id,
+        id:
+          canonicalAssistantBlockId({
+            entryId: entry.id,
+            kind: "thinking",
+            contentIndex: projected.contentIndex,
+          }) ?? `${entry.id}-think-${projected.contentIndex}`,
         kind: "thinking",
         summary,
         timestamp,
@@ -690,13 +697,17 @@ function projectAssistantEntry(
     }
 
     if (record.type === "toolCall") {
-      let id: string;
-      if (typeof record.id === "string" && record.id.length > 0) {
-        id = record.id;
-      } else {
-        id = `${entry.id}-tool-${traceGeneratedIndex}`;
-        traceGeneratedIndex += 1;
-      }
+      const toolCallId =
+        typeof record.id === "string" && record.id.length > 0 ? record.id : undefined;
+      const id =
+        canonicalAssistantBlockId({
+          entryId: entry.id,
+          kind: "tool",
+          contentIndex: projected.contentIndex,
+          toolCallId,
+        }) ??
+        toolCallId ??
+        `${entry.id}-tool-${projected.contentIndex}`;
       const tool = typeof record.name === "string" ? record.name : "unknown";
       const args = asRecord(record.arguments) ?? tryParseJsonObject(record.partialJson);
       const row: TraceOutlineEntry = {

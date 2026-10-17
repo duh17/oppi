@@ -310,6 +310,15 @@ describe("trace outline projection", () => {
           { type: "toolCall", name: "bash", arguments: { command: "pwd" } },
           { type: "text", text: "done" },
         ]),
+        // Encrypted reasoning arrives as an empty thinking block, tool calls
+        // carry their own IDs, and adjacent text blocks are one trace row.
+        messageEntry("a2", "a1", "assistant", [
+          { type: "thinking", thinking: "", thinkingSignature: "sealed" },
+          { type: "text", text: "checking" },
+          { type: "toolCall", id: "tc-9", name: "bash", arguments: { command: "ls" } },
+          { type: "text", text: "found " },
+          { type: "text", text: "it" },
+        ]),
       ],
     ]);
 
@@ -328,6 +337,9 @@ describe("trace outline projection", () => {
       "a1-text-2",
       "a1-tool-3",
       "a1-text-4",
+      "a2-text-1",
+      "tc-9",
+      "a2-text-3",
     ]);
     expect(outlineAssistantIDs).toEqual(traceAssistantIDs);
   });
