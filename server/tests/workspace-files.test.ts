@@ -9,6 +9,7 @@ import { createRouteHelpers } from "../src/routes/http.js";
 import { createHostFileRoutes } from "../src/routes/host-files.js";
 import { createWorkspaceFileRoutes } from "../src/routes/workspace-files.js";
 import type { RouteContext } from "../src/routes/types.js";
+import { HOST_GIT_TRUST } from "../src/git-safe.js";
 import { createWorkspaceWorktree } from "../src/worktrees.js";
 import type { Workspace } from "../src/types.js";
 import { makeResponse } from "./harness/route-test-helpers.js";
@@ -531,7 +532,7 @@ describe("getFileIndex", () => {
   });
 
   test("returns flat file paths for client-side search", async () => {
-    const result = await getFileIndex(tmpRoot);
+    const result = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
     expect(result.paths).toContain("README.md");
     expect(result.paths).toContain("src/index.ts");
     expect(result.paths).toContain("src/App.tsx");
@@ -540,7 +541,7 @@ describe("getFileIndex", () => {
   });
 
   test("skips files in ignored directories when walking", async () => {
-    const result = await getFileIndex(tmpRoot);
+    const result = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
     expect(result.paths).not.toContain("node_modules/dep/index.js");
   });
 
@@ -550,7 +551,7 @@ describe("getFileIndex", () => {
     writeFileSync(join(tmpRoot, ".pi", "private", "state.json"), "private");
     writeFileSync(join(tmpRoot, "src", ".pi", "notes", "user-note.md"), "note");
 
-    const result = await getFileIndex(tmpRoot);
+    const result = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
 
     expect(result.paths).not.toContain(".pi/private/state.json");
     expect(result.paths).toContain("src/.pi/notes/user-note.md");
@@ -562,7 +563,7 @@ describe("getFileIndex", () => {
     writeFileSync(join(tmpRoot, "config", "secrets", "server.pem"), "private key");
     writeFileSync(join(tmpRoot, "config", "secrets", ".netrc"), "machine example");
 
-    const result = await getFileIndex(tmpRoot);
+    const result = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
 
     expect(result.paths).toContain(".env");
     expect(result.paths).toContain("config/secrets/server.pem");
@@ -577,7 +578,7 @@ describe("getFileIndex", () => {
     }
     writeFileSync(join(tmpRoot, "nested", "visible.txt"), "visible");
 
-    const result = await getFileIndex(tmpRoot);
+    const result = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
 
     expect(result.paths).toContain("nested/visible.txt");
     for (const directory of SEARCH_IGNORE_DIRS) {
@@ -659,7 +660,7 @@ describe("workspace file symlink security", () => {
       symlinkSync("../.env", join(root, "notes", "report.md"));
       symlinkSync("safe.md", join(root, "notes", "safe-alias.md"));
 
-      const index = await getFileIndex(root);
+      const index = await getFileIndex(root, HOST_GIT_TRUST);
       expect(index.paths).toContain("notes/safe.md");
       expect(index.paths).toContain(".env");
       expect(index.paths).not.toContain("notes/report.md");
@@ -731,37 +732,49 @@ describe("getFileIndex with git repo", () => {
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  test("includes files ignored by Git", async () => {
-    const result = await getFileIndex(tmpRoot);
+  test("lists what Git sees and omits files ignored by Git", async () => {
+    writeFileSync(join(tmpRoot, "src", "new-feature.ts"), "export {}");
+
+    const result = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
+    expect([...result.paths].sort()).toEqual(
+      [".gitignore", "README.md", "src/app.ts", "src/new-feature.ts"].sort(),
+    );
+    expect(result.truncated).toBe(false);
+  });
+
+  test("omits tracked files that are no longer regular files in the working tree", async () => {
+    symlinkSync("README.md", join(tmpRoot, "readme-link.md"));
+    execSync("git add readme-link.md && git commit -m link", { cwd: tmpRoot, stdio: "ignore" });
+    rmSync(join(tmpRoot, "src", "app.ts"));
+
+    const result = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
+    expect(result.paths).not.toContain("readme-link.md");
+    expect(result.paths).not.toContain("src/app.ts");
+    expect(result.paths).toContain("README.md");
+  });
+
+  test("lists paths relative to a root below the repository top", async () => {
+    const result = await getFileIndex(join(tmpRoot, "src"), HOST_GIT_TRUST);
+    expect(result.paths).toEqual(["app.ts"]);
+  });
+
+  test("walks a sandbox workspace instead of running git", async () => {
+    const result = await getFileIndex(tmpRoot, { kind: "sandbox", root: tmpRoot });
     expect(result.paths).toContain("ignored-report.md");
     expect(result.paths).not.toContain("node_modules/dep/index.js");
   });
 
-  test("Git and non-Git workspaces use the same filesystem visibility", async () => {
+  test("walks a host workspace outside Git, including names a .gitignore lists", async () => {
     const nonGitRoot = mkdtempSync(join(tmpdir(), "oppi-ws-no-git-index-"));
     try {
-      mkdirSync(join(nonGitRoot, "src"), { recursive: true });
-      mkdirSync(join(nonGitRoot, "node_modules", "dep"), { recursive: true });
-      writeFileSync(join(nonGitRoot, "README.md"), "# Hello");
-      writeFileSync(join(nonGitRoot, "src", "app.ts"), "");
-      writeFileSync(join(nonGitRoot, "node_modules", "dep", "index.js"), "");
       writeFileSync(join(nonGitRoot, "ignored-report.md"), "ignored");
-      writeFileSync(join(nonGitRoot, ".gitignore"), "node_modules/\nignored-report.md\n");
+      writeFileSync(join(nonGitRoot, ".gitignore"), "ignored-report.md\n");
 
-      const gitResult = await getFileIndex(tmpRoot);
-      const nonGitResult = await getFileIndex(nonGitRoot);
-
-      expect(nonGitResult).toEqual(gitResult);
+      const result = await getFileIndex(nonGitRoot, HOST_GIT_TRUST);
+      expect(result.paths).toContain("ignored-report.md");
     } finally {
       rmSync(nonGitRoot, { recursive: true, force: true });
     }
-  });
-
-  test("includes untracked but non-ignored files", async () => {
-    writeFileSync(join(tmpRoot, "src", "new-feature.ts"), "export {}");
-
-    const result = await getFileIndex(tmpRoot);
-    expect(result.paths).toContain("src/new-feature.ts");
   });
 });
 
@@ -1016,7 +1029,7 @@ describe("getFileIndex", () => {
   });
 
   test("returns flat list of file paths", async () => {
-    const result = await getFileIndex(tmpRoot);
+    const result = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
     expect(result.paths.length).toBeGreaterThanOrEqual(4);
     expect(result.paths).toContain("README.md");
     expect(result.paths).toContain("src/index.ts");
@@ -1025,19 +1038,19 @@ describe("getFileIndex", () => {
   });
 
   test("skips files in ignored directories", async () => {
-    const result = await getFileIndex(tmpRoot);
+    const result = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
     const hasNodeModules = result.paths.some((p) => p.startsWith("node_modules/"));
     expect(hasNodeModules).toBe(false);
   });
 
   test("returns truncated: false for small file sets", async () => {
-    const result = await getFileIndex(tmpRoot);
+    const result = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
     expect(result.truncated).toBe(false);
   });
 
   test("returns consistent results on second call (cache hit)", async () => {
-    const first = await getFileIndex(tmpRoot);
-    const second = await getFileIndex(tmpRoot);
+    const first = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
+    const second = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
     expect(second.paths).toEqual(first.paths);
     expect(second.truncated).toBe(first.truncated);
   });
@@ -1052,7 +1065,7 @@ describe("getFileIndex", () => {
       writeFileSync(join(tmpRoot, name), name);
     }
 
-    const result = await getFileIndex(tmpRoot);
+    const result = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
     const compareCodeUnits = (lhs: string, rhs: string): number =>
       lhs === rhs ? 0 : lhs < rhs ? -1 : 1;
 
@@ -1064,7 +1077,7 @@ describe("getFileIndex", () => {
   });
 
   test("reports a filesystem read failure as truncated", async () => {
-    const result = await getFileIndex(join(tmpRoot, "does-not-exist"));
+    const result = await getFileIndex(join(tmpRoot, "does-not-exist"), HOST_GIT_TRUST);
 
     expect(result).toEqual({ paths: [], truncated: true });
   });
@@ -1080,7 +1093,7 @@ describe("getFileIndex", () => {
     }
     writeFileSync(join(currentDirectory, "too-deep.md"), "too deep");
 
-    const result = await getFileIndex(tmpRoot);
+    const result = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
 
     expect(result.truncated).toBe(true);
     expect(result.paths).not.toContain(`${pathParts.join("/")}/too-deep.md`);
@@ -1093,48 +1106,12 @@ describe("getFileIndex", () => {
     symlinkSync(tmpRoot, join(tmpRoot, "cycle-link"));
 
     try {
-      const result = await getFileIndex(tmpRoot);
+      const result = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
 
       expect(result.paths).not.toContain("outside-link/outside-secret.txt");
       expect(result.paths).not.toContain("cycle-link/README.md");
     } finally {
       rmSync(outsideDirectory, { recursive: true, force: true });
     }
-  });
-});
-
-describe("getFileIndex with git repo", () => {
-  let tmpRoot: string;
-
-  beforeEach(() => {
-    tmpRoot = mkdtempSync(join(tmpdir(), "oppi-ws-git-index-"));
-    execSync("git init", { cwd: tmpRoot, stdio: "ignore" });
-    execSync("git config user.email test@test.com", { cwd: tmpRoot, stdio: "ignore" });
-    execSync("git config user.name Test", { cwd: tmpRoot, stdio: "ignore" });
-
-    mkdirSync(join(tmpRoot, "src"), { recursive: true });
-    mkdirSync(join(tmpRoot, "node_modules", "dep"), { recursive: true });
-    writeFileSync(join(tmpRoot, "README.md"), "# Hello");
-    writeFileSync(join(tmpRoot, "src", "app.ts"), "");
-    writeFileSync(join(tmpRoot, "node_modules", "dep", "index.js"), "");
-    writeFileSync(join(tmpRoot, ".gitignore"), "node_modules/\n");
-    execSync("git add -A && git commit -m init", { cwd: tmpRoot, stdio: "ignore" });
-  });
-
-  afterEach(() => {
-    rmSync(tmpRoot, { recursive: true, force: true });
-  });
-
-  test("omits generic ignored directories in Git workspaces", async () => {
-    const result = await getFileIndex(tmpRoot);
-    const hasNodeModules = result.paths.some((p) => p.startsWith("node_modules/"));
-    expect(hasNodeModules).toBe(false);
-  });
-
-  test("includes tracked and untracked non-ignored files", async () => {
-    writeFileSync(join(tmpRoot, "src", "new.ts"), "");
-    const result = await getFileIndex(tmpRoot);
-    expect(result.paths).toContain("src/new.ts");
-    expect(result.paths).toContain("src/app.ts");
   });
 });

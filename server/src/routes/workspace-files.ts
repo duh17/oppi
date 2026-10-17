@@ -1,6 +1,6 @@
 import type { ServerResponse } from "node:http";
 import type { Dirent } from "node:fs";
-import { opendir } from "node:fs/promises";
+import { lstat, opendir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { resolveWorkspaceFileRoot } from "../current-file.js";
 import { listDirectoryEntries } from "../directory-listing.js";
@@ -9,6 +9,7 @@ import {
   SEARCH_IGNORE_DIRS,
   SEARCH_ROOT_IGNORE_DIRS,
 } from "../file-serving-policy.js";
+import { execGit, gitTrustForWorkspace, HOST_GIT_TRUST, type GitTrust } from "../git-safe.js";
 import type { DirectoryListingResponse, FileIndexResponse, Workspace } from "../types.js";
 import { resolveWorkspaceUserPath } from "../workspace-user-path.js";
 import type { RouteContext, RouteDispatcher, RouteHelpers } from "./types.js";
@@ -32,6 +33,10 @@ const MAX_INDEX_PATHS = 50_000;
 const MAX_WALK_DIRECTORIES = 10_000;
 const MAX_WALK_ENTRIES = 100_000;
 const MAX_WALK_ENTRIES_PER_DIRECTORY = MAX_WALK_ENTRIES;
+const GIT_LIST_TIMEOUT_MS = 10_000;
+// Room for MAX_INDEX_PATHS long paths; a larger listing fails and falls back to the walk.
+const GIT_LIST_MAX_BUFFER = 32 * 1024 * 1024;
+const LSTAT_BATCH = 256;
 
 interface SearchWalkResult {
   paths: string[];
@@ -50,7 +55,8 @@ function compareSearchNames(lhs: string, rhs: string): number {
 }
 
 /**
- * Walk the workspace filesystem without consulting Git's ignore rules.
+ * Walk the workspace filesystem without consulting Git's ignore rules. Used
+ * for sandbox workspaces and for host workspaces outside a Git repository.
  *
  * Directory streams are bounded before sorting, and both directory and entry
  * budgets include filtered/empty work. Entries read within the bound are
@@ -172,6 +178,53 @@ async function walkDirectoryForSearch(root: string): Promise<SearchWalkResult> {
   return { paths, truncated };
 }
 
+/** The walk's name rules, applied to a workspace-relative path. */
+function isIndexablePath(path: string): boolean {
+  const segments = path.split("/");
+  if (SEARCH_ROOT_IGNORE_DIRS.has(segments[0] ?? "")) return false;
+  for (let i = 0; i < segments.length - 1; i++) {
+    if (SEARCH_IGNORE_DIRS.has(segments[i] ?? "")) return false;
+  }
+  return segments[segments.length - 1] !== ".DS_Store";
+}
+
+/**
+ * Files Git sees under `root`: tracked plus untracked files that no ignore
+ * rule matches, the same set terminal Pi offers for `@`. Null when `root` is
+ * not inside a repository or git fails, so the caller walks instead.
+ *
+ * Host trust only: sandbox git may run a fixed set of read commands against a
+ * shadow git dir, and `ls-files` is not one of them.
+ */
+async function listGitVisibleFiles(root: string): Promise<SearchWalkResult | null> {
+  const { error, stdout } = await execGit(
+    HOST_GIT_TRUST,
+    root,
+    ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+    { timeout: GIT_LIST_TIMEOUT_MS, maxBuffer: GIT_LIST_MAX_BUFFER, encoding: "utf8" },
+  );
+  if (error) return null;
+
+  // A conflicted path is listed once per stage.
+  const candidates = [...new Set(String(stdout).split("\0"))]
+    .filter((path) => path.length > 0 && isIndexablePath(path))
+    .sort(compareSearchNames);
+
+  // Regular files only, like the walk. This also drops symlinks, submodule
+  // checkouts, and tracked files deleted from the working tree.
+  const paths: string[] = [];
+  for (let start = 0; start < candidates.length; start += LSTAT_BATCH) {
+    const batch = candidates.slice(start, start + LSTAT_BATCH);
+    const stats = await Promise.all(batch.map((path) => lstat(join(root, path)).catch(() => null)));
+    for (const [offset, stat] of stats.entries()) {
+      if (!stat?.isFile()) continue;
+      if (paths.length >= MAX_INDEX_PATHS) return { paths, truncated: true };
+      paths.push(batch[offset] as string);
+    }
+  }
+  return { paths, truncated: false };
+}
+
 // ─── File Index Cache ───
 
 const FILE_INDEX_TTL_MS = 30_000; // 30 seconds
@@ -184,14 +237,22 @@ interface CachedFileIndex {
 
 const fileIndexCache = new Map<string, CachedFileIndex>();
 
-/** Get file index for a workspace, using cache when fresh. */
-export async function getFileIndex(workspaceRoot: string): Promise<FileIndexResponse> {
+/**
+ * Get file index for a workspace, using cache when fresh. A host workspace in
+ * a Git repository lists what Git sees; anything else walks the filesystem.
+ */
+export async function getFileIndex(
+  workspaceRoot: string,
+  trust: GitTrust,
+): Promise<FileIndexResponse> {
   const cached = fileIndexCache.get(workspaceRoot);
   if (cached && Date.now() - cached.timestamp < FILE_INDEX_TTL_MS) {
     return { paths: cached.paths, truncated: cached.truncated };
   }
 
-  const result = await walkDirectoryForSearch(workspaceRoot);
+  const result =
+    (trust.kind === "host" ? await listGitVisibleFiles(workspaceRoot) : null) ??
+    (await walkDirectoryForSearch(workspaceRoot));
   fileIndexCache.set(workspaceRoot, { ...result, timestamp: Date.now() });
   return result;
 }
@@ -275,7 +336,7 @@ export function createWorkspaceFileRoutes(
       return;
     }
 
-    const response = await getFileIndex(mappedRoot);
+    const response = await getFileIndex(mappedRoot, gitTrustForWorkspace(workspace));
     helpers.json(res, response);
   }
 

@@ -68,14 +68,14 @@ Oppi resolves a wiki link when the user taps it. Workspace-relative candidates c
 
 An expanded, completed, successful text `write` row opens the current file directly on this navigation stack. Workspace sessions fetch it through the source session origin, which preserves the server, workspace, worktree or sandbox mapping, and exact structured path. Guest and worktree-relative children followed from that reader keep the same immutable session origin. A wiki link classified as a host file opens the authenticated host-origin current-file route from a session-origin reader only when workspace runtime is confirmed host; sandbox and unknown runtime keep the session origin even for that classification. Workspace-less control sessions use the session origin on the declared source server, with relative paths resolved from the server-owned control-session working directory. Oppi does not use the recorded write content or retry another origin when the current file is unavailable. Empty writes retain an expanded “Open current file” surface with the same double-tap, pinch, context-menu, and accessibility activation. Running, failed, and interrupted writes keep the tool-output viewer. Reads, edit diffs, generic extension output, terminal output, and stored media keep their existing viewer behavior.
 
-Fuzzy discovery uses a deterministic, bounded filesystem walk rather than Git's ignore rules. It includes safe Git-ignored files such as `.internal/**`, but excludes major VCS, dependency, build, generated, and cache directories, root `.pi` runtime state, and symlink aliases. An explicitly named existing file can still be checked by exact lookup; agents must not cite private `.pi` state, session stores, credentials, or configuration. Fuzzy `/paths` is not a secret-file ACL.
+Fuzzy discovery (`@` file suggestions and Files search) lists what Git sees in a host workspace inside a Git repository: tracked files and untracked files no ignore rule matches, the same set terminal Pi offers for `@`. Git-ignored files such as `.internal/**` are left out, but wiki links and folder browsing still open them. Sandbox workspaces, and host workspaces outside Git, use a deterministic, bounded filesystem walk that does not read ignore rules. Both exclude major VCS, dependency, build, generated, and cache directories, root `.pi` runtime state, and symlinks. An explicitly named existing file can still be checked by exact lookup; agents must not cite private `.pi` state, session stores, credentials, or configuration. Fuzzy `/paths` is not a secret-file ACL.
 
 The server enforces these limits:
 
 - Images, PDFs, and USDZ: 50 MB maximum.
 - Text and other non-streaming files: 10 MB maximum.
 - Audio, video, and HLS media: authenticated range streaming without the text/image size cap.
-- Exact parent-directory lookup: at most 1,000 entries. Resolution can fail when a candidate's directory has more than 1,000 siblings. Fuzzy search reports truncation when it reaches its traversal bounds.
+- Exact parent-directory lookup: at most 1,000 entries. Resolution can fail when a candidate's directory has more than 1,000 siblings. Fuzzy search lists at most 50,000 files and reports truncation when it reaches that or the walk's traversal bounds.
 
 ### Workspace and security boundary
 
