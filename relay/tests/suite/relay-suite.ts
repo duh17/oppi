@@ -143,10 +143,7 @@ export function liveActivity(
   sendToken: string,
   body: Record<string, unknown>,
 ): ReturnType<typeof call> {
-  return call(harness, "POST", "/v1/live-activity", {
-    bearer: sendToken,
-    body: { timestamp: Math.floor(Date.now() / 1000), ...body },
-  });
+  return call(harness, "POST", "/v1/live-activity", { bearer: sendToken, body });
 }
 
 /** A phone with a start token that lists one server's permission for the card `SLOT`. */
@@ -432,9 +429,11 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
 
     it("starts, updates, and ends a Live Activity from the fixed template", async () => {
       const { registration, sendToken } = await liveActivityPhone(harness);
-      const timestamp = Math.floor(Date.now() / 1000);
+      const before = Math.floor(Date.now() / 1000);
+      const timestampOf = (index: number) =>
+        (JSON.parse(harness.apnsRequests[index]?.payload ?? "{}") as { aps: { timestamp: number } }).aps.timestamp;
 
-      expect(await liveActivity(harness, sendToken, { event: "start", running: 3, needsYou: 1, timestamp })).toMatchObject({
+      expect(await liveActivity(harness, sendToken, { event: "start", running: 3, needsYou: 1 })).toMatchObject({
         status: 200,
         json: { ok: true },
       });
@@ -447,6 +446,10 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
         "apns-priority": "10",
       });
       expect(start?.headers).not.toHaveProperty("apns-collapse-id");
+      // The relay stamps the event's time.
+      const timestamp = timestampOf(0);
+      expect(timestamp).toBeGreaterThanOrEqual(before);
+      expect(timestamp).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
       expect(JSON.parse(start?.payload ?? "{}")).toEqual({
         aps: {
           timestamp,
@@ -471,24 +474,26 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
         }),
       ).toBe(204);
 
-      expect((await liveActivity(harness, sendToken, { event: "update", running: 2, needsYou: 0, timestamp })).status).toBe(200);
+      expect((await liveActivity(harness, sendToken, { event: "update", running: 2, needsYou: 0 })).status).toBe(200);
       const update = harness.apnsRequests[1];
       expect(update?.path).toBe(`/3/device/${ACTIVITY_TOKEN}`);
       expect(update?.headers["apns-priority"]).toBe("5");
+      expect(timestampOf(1)).toBeGreaterThan(timestamp);
       expect(JSON.parse(update?.payload ?? "{}")).toEqual({
-        aps: { timestamp, event: "update", "content-state": { running: 2, needsYou: 0 } },
+        aps: { timestamp: timestampOf(1), event: "update", "content-state": { running: 2, needsYou: 0 } },
       });
 
-      expect((await liveActivity(harness, sendToken, { event: "end", running: 0, needsYou: 0, timestamp })).status).toBe(200);
+      expect((await liveActivity(harness, sendToken, { event: "end", running: 0, needsYou: 0 })).status).toBe(200);
       const end = harness.apnsRequests[2];
       expect(end?.path).toBe(`/3/device/${ACTIVITY_TOKEN}`);
       expect(end?.headers["apns-priority"]).toBe("10");
+      expect(timestampOf(2)).toBeGreaterThan(timestampOf(1));
       expect(JSON.parse(end?.payload ?? "{}")).toEqual({
         aps: {
-          timestamp,
+          timestamp: timestampOf(2),
           event: "end",
           "content-state": { running: 0, needsYou: 0 },
-          "dismissal-date": timestamp + 30,
+          "dismissal-date": timestampOf(2) + 30,
         },
       });
       // The ended activity takes no more updates.
@@ -499,7 +504,6 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
     it("accepts only the fixed Live Activity schema", async () => {
       const { sendToken } = await liveActivityPhone(harness);
       const send = (body: Record<string, unknown>) => liveActivity(harness, sendToken, body);
-      const now = Math.floor(Date.now() / 1000);
       for (const body of [
         { event: "pause", running: 1, needsYou: 0 },
         { event: "start", running: 100, needsYou: 0 },
@@ -510,18 +514,22 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
         { event: "start", running: 0, needsYou: 0 },
         { event: "update", running: 0, needsYou: 0 },
         { event: "end", running: 1, needsYou: 0 },
-        { event: "start", running: 1, needsYou: 0, timestamp: now - 301 },
-        { event: "start", running: 1, needsYou: 0, timestamp: now + 301 },
-        { event: "start", running: 1, needsYou: 0, timestamp: (now + 0.5) },
-        { event: "start", running: 1, needsYou: 0, timestamp: String(now) },
       ]) {
         expect((await send(body)).json.error, JSON.stringify(body)).toBe("bad_request");
       }
-      for (const extra of [{ alert: { title: "Approve the deploy" } }, { title: "x" }, { slot: SLOT }, { priority: 10 }]) {
-        expect((await send({ event: "start", running: 1, needsYou: 0, ...extra })).json.error).toBe("unknown_field");
+      // The relay stamps the time itself: a server-sent timestamp is an unknown field.
+      for (const extra of [
+        { alert: { title: "Approve the deploy" } },
+        { title: "x" },
+        { slot: SLOT },
+        { priority: 10 },
+        { timestamp: Math.floor(Date.now() / 1000) },
+      ]) {
+        const response = await send({ event: "start", running: 1, needsYou: 0, ...extra });
+        expect(response).toMatchObject({ status: 400, json: { error: "unknown_field" } });
       }
       expect(harness.apnsRequests).toHaveLength(0);
-      expect((await call(harness, "POST", "/v1/live-activity", { body: { event: "end", running: 0, needsYou: 0, timestamp: now } })).status).toBe(401);
+      expect((await call(harness, "POST", "/v1/live-activity", { body: { event: "end", running: 0, needsYou: 0 } })).status).toBe(401);
     });
 
     it("answers 409 without charging when there is no token to push to", async () => {

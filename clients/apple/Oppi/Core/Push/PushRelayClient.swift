@@ -308,6 +308,14 @@ enum PushRelayRegistrationStore {
         SecItemDelete(query(account: account(relay: relay, environment: environment)) as CFDictionary)
     }
 
+    /// Forget `registration` while it is still the one stored for its relay and environment.
+    static func delete(_ registration: PushRelayClient.Registration) {
+        guard let relay = URL(string: registration.relay),
+              let environment = APNsEnvironment(rawValue: registration.environment),
+              load(relay: relay, environment: environment)?.registrationId == registration.registrationId else { return }
+        delete(relay: relay, environment: environment)
+    }
+
     /// Every stored registration, for calls that go to each relay this phone uses.
     static func all() -> [PushRelayClient.Registration] {
         let lookup: [String: Any] = [

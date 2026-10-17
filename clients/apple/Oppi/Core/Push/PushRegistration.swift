@@ -177,26 +177,6 @@ final class PushRegistration {
         try await sendToServer(api: api, serverId: serverId, deviceId: deviceId, relay: relay, sendToken: sendToken)
     }
 
-    /// The server's Live Activity setting changed: tell the server, re-sending the send token
-    /// it already holds. Registers afresh only when this phone has no current token for it.
-    @discardableResult
-    func liveActivityChanged(api: APIClient, serverId: String, deviceId: String, relay: URL) async -> Bool {
-        guard let environment = APNsEnvironment.current,
-              let stored = PushSendTokenStore.load(serverId: serverId), stored.deviceId == deviceId,
-              let permission = PushRelayClient.permission(ofSendToken: stored.sendToken),
-              PushRelayRegistrationStore.load(relay: relay, environment: environment)?.registrationId
-              == permission.registrationId else {
-            return await register(api: api, serverId: serverId, deviceId: deviceId, relay: relay)
-        }
-        do {
-            try await sendToServer(api: api, serverId: serverId, deviceId: deviceId, relay: relay, sendToken: stored.sendToken)
-            return true
-        } catch {
-            logger.error("Live Activity setting not sent to server \(serverId.prefix(16), privacy: .public): \(String(describing: error), privacy: .public)")
-            return false
-        }
-    }
-
     /// Give the server this phone's push key for it, `sendToken`, and whether this phone shows
     /// its Live Activity; then tell the relay, which learns the permission that may drive the
     /// card.

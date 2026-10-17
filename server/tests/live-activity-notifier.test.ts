@@ -105,24 +105,11 @@ describe("LiveActivityNotifier", () => {
     change({ running: 1, needsYou: 0 });
     await vi.advanceTimersByTimeAsync(0);
     expect(events()).toEqual(["start 1/0"]);
-    expect(sent[0]?.timestamp).toBe(Math.floor(Date.now() / 1000));
 
     await vi.advanceTimersByTimeAsync(60_000);
     change({ running: 0, needsYou: 0 });
     await vi.advanceTimersByTimeAsync(0);
     expect(events()).toEqual(["start 1/0", "end 0/0"]);
-  });
-
-  it("sends the current second after the clock steps back, not a timestamp the relay refuses", async () => {
-    leave();
-    change({ running: 1, needsYou: 0 });
-    await vi.advanceTimersByTimeAsync(0);
-    change({ running: 2, needsYou: 0 });
-    // The timer is already armed; the wall clock steps back an hour before it fires.
-    vi.setSystemTime(Date.now() - 3_600_000);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(events()).toEqual(["start 1/0", "update 2/0"]);
-    expect(sent[1]?.timestamp).toBe(Math.floor(Date.now() / 1000));
   });
 
   it("sends at most once a minute per device, and the latest counts win", async () => {
@@ -140,7 +127,6 @@ describe("LiveActivityNotifier", () => {
     expect(events()).toEqual(["start 1/0"]);
     await vi.advanceTimersByTimeAsync(1);
     expect(events()).toEqual(["start 1/0", "update 3/1"]);
-    expect(sent[1]?.timestamp).toBe(Math.floor(Date.now() / 1000));
   });
 
   it("sends nothing when the counts return to what the card shows before the minute is up", async () => {
@@ -231,7 +217,7 @@ describe("LiveActivityNotifier", () => {
     expect(events()).toEqual([...updates, "end 0/0", "start 1/0"]);
   });
 
-  it("restarts the card after Apple's 8 hours while work goes on, the start newer than the end", async () => {
+  it("restarts the card after Apple's 8 hours while work goes on", async () => {
     leave();
     change({ running: 1, needsYou: 0 });
     await vi.advanceTimersByTimeAsync(0);
@@ -239,7 +225,6 @@ describe("LiveActivityNotifier", () => {
     expect(events()).toEqual(["start 1/0"]);
     await vi.advanceTimersByTimeAsync(1);
     expect(events()).toEqual(["start 1/0", "end 0/0", "start 1/0"]);
-    expect(sent[2]!.timestamp).toBeGreaterThan(sent[1]!.timestamp);
   });
 
   it("restarts a card the app started before Apple's 8 hours run out", async () => {
@@ -253,7 +238,6 @@ describe("LiveActivityNotifier", () => {
     expect(sent).toEqual([]);
     await vi.advanceTimersByTimeAsync(1);
     expect(events()).toEqual(["end 0/0", "start 1/0"]);
-    expect(sent[1]!.timestamp).toBeGreaterThan(sent[0]!.timestamp);
     // And again 8 hours after that.
     await vi.advanceTimersByTimeAsync(LIVE_ACTIVITY_MAX_AGE_MS);
     expect(events()).toEqual(["end 0/0", "start 1/0", "end 0/0", "start 1/0"]);

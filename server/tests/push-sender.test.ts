@@ -297,7 +297,7 @@ describe("PushSender", () => {
 
   describe("Live Activity", () => {
     let clock: number;
-    const update = { event: "update" as const, running: 2, needsYou: 1, timestamp: 1_760_000_000 };
+    const update = { event: "update" as const, running: 2, needsYou: 1 };
 
     function liveActivitySender(fetchImpl: typeof fetch, liveActivity = true): PushSender {
       storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
@@ -308,7 +308,11 @@ describe("PushSender", () => {
         sendToken: "osp1.r_a.p_a.secret-a",
         ...(liveActivity ? { liveActivity: true } : {}),
       });
-      return new PushSender(storage, { signingKey: signing.privateKey, fetch: fetchImpl, now: () => clock });
+      return new PushSender(storage, {
+        signingKey: signing.privateKey,
+        fetch: fetchImpl,
+        now: () => clock,
+      });
     }
 
     beforeEach(() => {
@@ -323,10 +327,12 @@ describe("PushSender", () => {
 
       const push = liveActivitySender(fetchImpl);
       const extra = { ...update, title: "Deploy" } as typeof update;
-      expect(await push.sendLiveActivity(push.registrations()[0]!, extra)).toEqual({ status: "delivered" });
+      expect(await push.sendLiveActivity(push.registrations()[0]!, extra)).toEqual({
+        status: "delivered",
+      });
       expect(calls[0]?.url).toBe(`${PRIMARY}/v1/live-activity`);
       expect(calls[0]?.authorization).toBe("Bearer osp1.r_a.p_a.secret-a");
-      expect(calls[0]?.body).toEqual({ event: "update", running: 2, needsYou: 1, timestamp: 1_760_000_000 });
+      expect(calls[0]?.body).toEqual({ event: "update", running: 2, needsYou: 1 });
     });
 
     it("spends budget only on sends the relay counted", async () => {
@@ -372,9 +378,15 @@ describe("PushSender", () => {
         results.push((await push.sendLiveActivity(registration, update))?.status ?? "none");
       }
       expect(results.at(-1)).toBe("throttled");
-      expect(results.filter((status) => status === "delivered")).toHaveLength(LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay);
-      const end = { event: "end" as const, running: 0, needsYou: 0, timestamp: 1_760_000_000 };
-      for (let index = LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay; index < LIVE_ACTIVITY_DEVICE_BUDGET.perDay; index += 1) {
+      expect(results.filter((status) => status === "delivered")).toHaveLength(
+        LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay,
+      );
+      const end = { event: "end" as const, running: 0, needsYou: 0 };
+      for (
+        let index = LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay;
+        index < LIVE_ACTIVITY_DEVICE_BUDGET.perDay;
+        index += 1
+      ) {
         expect((await push.sendLiveActivity(registration, end))?.status).toBe("delivered");
       }
       expect((await push.sendLiveActivity(registration, end))?.status).toBe("throttled");

@@ -67,6 +67,13 @@ export interface RegistrationRecord {
   liveActivity?: LiveActivityState;
   /** Live Activity pushes, counted apart from alerts. Absent until the first one. */
   liveActivityQuota?: QuotaState;
+  /**
+   * Unix seconds of the last Live Activity event (`aps.timestamp`). Each event goes out
+   * later, so a start right after an end is the newer one: ActivityKit ignores an event no
+   * newer than the one before. One clock for all of the phone's cards, so turning a card off
+   * and on keeps it; the per-minute quota keeps it within seconds of the real time.
+   */
+  liveActivityTimestamp?: number;
 }
 
 export interface QuotaLimits {
@@ -119,6 +126,8 @@ export type LiveActivityAuthorization =
       target: LiveActivityTarget;
       slot: string;
       environment: ApnsEnvironment;
+      /** `aps.timestamp` for this event. */
+      timestamp: number;
       /**
        * For `start`: the slot's update token when it was authorized. The relay forgets it only
        * once APNs accepts the start, and only while it is still this token.
@@ -135,6 +144,8 @@ export type PushAuthorization =
   | { ok: false; reason: "quota"; retryAfterSeconds: number };
 
 export type AddPermissionResult = "ok" | "limit" | "gone";
+
+export type SetLiveActivityResult = "ok" | "stale" | "gone";
 
 export interface RelayStore {
   putChallenge(challenge: string, expiresAt: number): Promise<void>;
@@ -161,16 +172,21 @@ export interface RelayStore {
     secretHash: string,
     now: number,
   ): Promise<PushAuthorization>;
-  /** Replace the phone's Live Activity tokens. False when the registration is gone. */
+  /**
+   * Replace the phone's Live Activity tokens. For an attested registration, in the same
+   * atomic step, `assertionCounter` must exceed the stored App Attest counter and becomes it;
+   * otherwise nothing changes (`stale`), so an older upload never replaces a newer one.
+   */
   setLiveActivity(
     id: string,
     update: LiveActivityUpdate,
+    assertionCounter: number | null,
     now: number,
-  ): Promise<boolean>;
+  ): Promise<SetLiveActivityResult>;
   /**
    * Check the permission's secret and that the phone lists it for a card, find the token the
-   * event goes to, and charge one Live Activity push. An `end` also ends the card's
-   * dismissal, even when there is no token.
+   * event goes to, charge one Live Activity push, and stamp the event's time. An `end` also
+   * ends the card's dismissal, even when there is no token.
    */
   authorizeLiveActivity(
     id: string,
@@ -257,11 +273,16 @@ function chargeQuota(
   return { ok: true };
 }
 
+/** False, changing nothing, for an attested registration whose counter is not newer. */
 export function applySetLiveActivity(
   record: RegistrationRecord,
   update: LiveActivityUpdate,
+  assertionCounter: number | null,
   now: number,
-): void {
+): boolean {
+  if (record.attested && (assertionCounter === null || !applyAssertionCounter(record, assertionCounter))) {
+    return false;
+  }
   const previous = record.liveActivity?.activities ?? [];
   record.liveActivity = {
     ...(update.startToken ? { startToken: update.startToken } : {}),
@@ -276,6 +297,7 @@ export function applySetLiveActivity(
       };
     }),
   };
+  return true;
 }
 
 /**
@@ -338,6 +360,8 @@ export function applyAuthorizeLiveActivity(
     limits.liveActivityPerMinute,
   );
   if (!charged.ok) return { authorization: charged, changed };
+  const timestamp = Math.max(Math.floor(now / 1000), (record.liveActivityTimestamp ?? 0) + 1);
+  record.liveActivityTimestamp = timestamp;
   return {
     authorization: {
       ok: true,
@@ -345,6 +369,7 @@ export function applyAuthorizeLiveActivity(
       target,
       slot,
       environment: record.environment,
+      timestamp,
       ...(replacedToken ? { replacedToken } : {}),
     },
     changed: true,

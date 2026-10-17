@@ -199,6 +199,14 @@ struct PushSendPermissionTests {
                 }
                 status = 201
                 body = ["permissionId": permissionId, "sendToken": "osp1.\(registrationId).\(permissionId).secret"]
+            } else if request.httpMethod == "POST", path == "/v1/challenge" {
+                body = ["challenge": "challenge"]
+            } else if request.httpMethod == "POST", path == "/v1/registrations" {
+                status = 201
+                body = ["registrationId": "r_NEW", "registrationSecret": "secret"]
+            } else if request.httpMethod == "PUT", parts.count == 4, parts[3] == "live-activity" {
+                // The relay forgot every registration but the new one.
+                status = parts[2] == "r_NEW" ? 204 : 410
             } else if request.httpMethod == "DELETE", parts.count == 5, parts[3] == "permissions" {
                 lock.withLock { _deletedPermissions.append(String(parts[4])) }
                 status = 204
@@ -323,6 +331,34 @@ struct PushSendPermissionTests {
 
             #expect(backend.mints == ["r_A", "r_B"])
             #expect(backend.sentTokens == ["osp1.r_A.p_1.secret", "osp1.r_B.p_2.secret", "osp1.r_B.p_2.secret"])
+        }
+    }
+
+    @Test func aRegistrationTheRelayForgotGetsReplacedAtTheNextConnection() async throws {
+        try await withBackend {
+            try storeRelayRegistration("r_A")
+            try await connect()
+            // The Live Activity upload finds that the relay forgot the registration.
+            let defaultsName = "PushSendPermissionTests.\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: defaultsName)!
+            defer { defaults.removePersistentDomain(forName: defaultsName) }
+            let relay = relay
+            let configuration = configuration
+            let sync = LiveActivityRelaySync(
+                registrations: { [PushRelayRegistrationStore.load(relay: relay, environment: .sandbox)].compactMap { $0 } },
+                cards: { [.init(slot: "slot", registrationId: "r_A", permissionId: "p_1")] },
+                put: { state, registration in
+                    try await PushRelayClient(relay: relay, session: URLSession(configuration: configuration))
+                        .putLiveActivity(state, registration: registration)
+                },
+                sleep: { _ in },
+                defaults: defaults
+            )
+            await sync.publish().value
+            try await connect()
+
+            #expect(backend.mints == ["r_A", "r_NEW"])
+            #expect(backend.sentTokens == ["osp1.r_A.p_1.secret", "osp1.r_NEW.p_2.secret"])
         }
     }
 

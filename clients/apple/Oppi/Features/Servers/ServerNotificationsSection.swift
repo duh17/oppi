@@ -141,7 +141,7 @@ struct ServerNotificationsSection: View {
               let deviceId = connection.credentials?.deviceCredential?.deviceId else { return }
         liveActivityStatus = .working
         Task {
-            let updated = await PushRegistration.shared.liveActivityChanged(
+            let updated = await PushRegistration.shared.register(
                 api: api,
                 serverId: serverId,
                 deviceId: deviceId,

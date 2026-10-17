@@ -59,6 +59,7 @@ final class LiveActivityRelaySync {
     private let registrations: @MainActor () -> [PushRelayClient.Registration]
     private let cards: @MainActor () -> [Card]
     private let put: Put
+    private let forget: @MainActor (PushRelayClient.Registration) -> Void
     private let sleep: @MainActor (Duration) async throws -> Void
     private let defaults: UserDefaults
 
@@ -69,12 +70,14 @@ final class LiveActivityRelaySync {
             guard let relay = URL(string: registration.relay) else { return }
             try await PushRelayClient(relay: relay).putLiveActivity(state, registration: registration)
         },
+        forget: @escaping @MainActor (PushRelayClient.Registration) -> Void = { PushRelayRegistrationStore.delete($0) },
         sleep: @escaping @MainActor (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
         defaults: UserDefaults = .standard
     ) {
         self.registrations = registrations
         self.cards = cards
         self.put = put
+        self.forget = forget
         self.sleep = sleep
         self.defaults = defaults
         stored = defaults.data(forKey: Self.storedKey)
@@ -211,8 +214,10 @@ final class LiveActivityRelaySync {
                     try await put(state, registration)
                     stored.accepted[registration.registrationId] = state
                 } catch PushRelayClient.RelayError.gone {
-                    // A gone registration holds nothing and can start nothing; the next push
-                    // registration replaces it and publishes again.
+                    // A gone registration holds nothing and can start nothing. Forget it, so
+                    // the next push registration starts a new one, mints each server's
+                    // permission there, and publishes again.
+                    forget(registration)
                     stored.accepted[registration.registrationId] = state
                 } catch {
                     failed.append(registration)

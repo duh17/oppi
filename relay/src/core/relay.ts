@@ -53,8 +53,6 @@ const COLLAPSE_ID = /^[A-Za-z0-9_-]{22}$/;
 const LIVE_ACTIVITY_SLOT = /^[A-Za-z0-9_-]{22}$/;
 /** Live Activity counts are top-level sessions; more than this shows as this. */
 export const LIVE_ACTIVITY_MAX_COUNT = 99;
-/** How far a Live Activity `timestamp` may be from the relay clock. */
-const LIVE_ACTIVITY_TIMESTAMP_SKEW_SECONDS = 300;
 
 export interface RelayConfig {
   /** `<Team ID>.<bundle ID>`, the App Attest RP ID. */
@@ -306,6 +304,9 @@ export function createRelayHandler(deps: RelayDeps): (
       if (replaced) {
         record.quota = replaced.quota;
         if (replaced.liveActivityQuota) record.liveActivityQuota = replaced.liveActivityQuota;
+        if (replaced.liveActivityTimestamp !== undefined) {
+          record.liveActivityTimestamp = replaced.liveActivityTimestamp;
+        }
       }
       await store.deleteRegistration(replacedId);
       log("relay.registration_replaced");
@@ -324,20 +325,24 @@ export function createRelayHandler(deps: RelayDeps): (
     });
   }
 
-  /** Registration secret, plus an App Attest assertion for attested registrations. */
-  async function authenticateRegistration(
+  /**
+   * Registration secret, plus a valid App Attest assertion for attested registrations. The
+   * assertion's counter is not yet checked against the stored one: the caller does that in
+   * the same storage call as its write.
+   */
+  async function verifyRegistration(
     request: Request,
     registrationId: string,
     path: string,
     body: Uint8Array,
-  ): Promise<RegistrationRecord> {
+  ): Promise<{ record: RegistrationRecord; counter: number | null }> {
     const secret = bearer(request);
     const record = await store.getRegistration(registrationId);
     if (!record) throw new HttpError(410, "gone");
     if (!hashesEqual(record.secretHash, await secretHash(secret))) {
       throw new HttpError(401, "unauthorized");
     }
-    if (!record.attested) return record;
+    if (!record.attested) return { record, counter: null };
 
     const assertionHeader = request.headers.get("x-oppi-assertion");
     const assertion = assertionHeader ? base64Decode(assertionHeader) : null;
@@ -350,8 +355,23 @@ export function createRelayHandler(deps: RelayDeps): (
       publicKeySpki: publicKey,
       appId: deps.config.appId,
     });
-    if (!verified.ok || !(await store.advanceAssertionCounter(record.id, verified.counter))) {
-      log("relay.assertion_rejected", { reason: verified.ok ? "counter" : verified.reason });
+    if (!verified.ok) {
+      log("relay.assertion_rejected", { reason: verified.reason });
+      throw new HttpError(401, "assertion_invalid");
+    }
+    return { record, counter: verified.counter };
+  }
+
+  /** `verifyRegistration`, and the assertion's counter exceeds every earlier one. */
+  async function authenticateRegistration(
+    request: Request,
+    registrationId: string,
+    path: string,
+    body: Uint8Array,
+  ): Promise<RegistrationRecord> {
+    const { record, counter } = await verifyRegistration(request, registrationId, path, body);
+    if (counter !== null && !(await store.advanceAssertionCounter(record.id, counter))) {
+      log("relay.assertion_rejected", { reason: "counter" });
       throw new HttpError(401, "assertion_invalid");
     }
     return record;
@@ -444,7 +464,9 @@ export function createRelayHandler(deps: RelayDeps): (
   /**
    * The phone's whole Live Activity state; replaces what the relay held. Each entry names the
    * permission that may drive that server's card, so the phone alone decides which servers
-   * can: a server it leaves out gets `409 no_activity`.
+   * can: a server it leaves out gets `409 no_activity`. On an attested registration the
+   * assertion counter is checked in the write itself, so an older upload that arrives after
+   * a newer one is refused instead of replacing it.
    */
   async function putLiveActivity(
     request: Request,
@@ -483,10 +505,13 @@ export function createRelayHandler(deps: RelayDeps): (
       }
       parsed.push({ permissionId, slot, token, dismissed });
     }
-    const record = await authenticateRegistration(request, registrationId, path, body);
+    const { record, counter } = await verifyRegistration(request, registrationId, path, body);
     const update = { startToken, activities: parsed };
-    if (!(await store.setLiveActivity(record.id, update, now()))) {
-      throw new HttpError(410, "gone");
+    const result = await store.setLiveActivity(record.id, update, counter, now());
+    if (result === "gone") throw new HttpError(410, "gone");
+    if (result === "stale") {
+      log("relay.assertion_rejected", { reason: "counter" });
+      throw new HttpError(401, "assertion_invalid");
     }
     return noContent();
   }
@@ -502,12 +527,7 @@ export function createRelayHandler(deps: RelayDeps): (
       throw new HttpError(429, "rate_limited", { "retry-after": "60" });
     }
     const token = parseSendToken(bearer(request));
-    const { event, running, needsYou, timestamp } = parseObject(body, [
-      "event",
-      "running",
-      "needsYou",
-      "timestamp",
-    ]);
+    const { event, running, needsYou } = parseObject(body, ["event", "running", "needsYou"]);
     const isCount = (value: unknown): value is number =>
       typeof value === "number" &&
       Number.isInteger(value) &&
@@ -517,9 +537,6 @@ export function createRelayHandler(deps: RelayDeps): (
       (event !== "start" && event !== "update" && event !== "end") ||
       !isCount(running) ||
       !isCount(needsYou) ||
-      typeof timestamp !== "number" ||
-      !Number.isInteger(timestamp) ||
-      Math.abs(timestamp - now() / 1000) > LIVE_ACTIVITY_TIMESTAMP_SKEW_SECONDS ||
       // Nothing running or waiting is an end, and an end shows nothing running or waiting.
       (event === "end") !== (running + needsYou === 0)
     ) {
@@ -548,7 +565,7 @@ export function createRelayHandler(deps: RelayDeps): (
       event: event as LiveActivityEvent,
       running,
       needsYou,
-      timestamp,
+      timestamp: authorization.timestamp,
       slot: authorization.slot,
       now: now(),
     });

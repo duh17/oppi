@@ -33,12 +33,14 @@ expiration of at most an hour, and the payload
 
 Live Activity requests are fixed too: `apns-push-type: liveactivity`, topic
 `<bundle ID>.push-type.liveactivity`, priority 5 for updates and 10 for start and end, and an
-`aps` built only from the event, the two counts, the timestamp, and the phone's slot; `start`
+`aps` built only from the event, the two counts, the relay's own timestamp (always later than the
+registration's last one), and the phone's slot; `start`
 adds the fixed alert `Oppi` / `Agents are working.` that Apple requires. An APNs answer that
 retires a Live Activity token clears that token only; the registration stays. Only the send
 token whose permission the phone lists for a card can start, update, or end it; a permission the
-phone leaves out (an older one, or a server whose card the person turned off) gets
-`409 no_activity`. A card the phone lists as dismissed gets no `start` until a server sends
+phone leaves out (a server whose card the person turned off) gets `409 no_activity`. On an
+attested registration the state is written in the same atomic step that checks the App Attest
+counter, so an older upload that arrives late cannot replace a newer one. A card the phone lists as dismissed gets no `start` until a server sends
 `end` for it (its counts reached zero), and a card's update token is forgotten only once APNs
 accepts the `start` that replaces it.
 See spec §3.6.

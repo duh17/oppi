@@ -133,7 +133,7 @@ Push is relay-only and end to end encrypted ([protocol/push/spec.md](../protocol
 
 - `envelope.ts`: the only way to make a `SealedPushEnvelope` (HPKE to the device's X25519 push key, Ed25519 signature by the server identity key, fixed 512-byte padded plaintext).
 - `hpke.ts`: RFC 9180 base mode, single shot, for DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 / ChaCha20-Poly1305, composed from `node:crypto` primitives only; checked against RFC 9180 Appendix A.2.1. Push uses no third-party crypto package.
-- `relay-client.ts`: relay API v1 server calls. Alerts accept only a `SealedPushEnvelope`; Live Activity pushes are built field by field from the fixed schema (event, two counts, timestamp). It tries `[primary, standby]` and prunes only on a primary `410`.
+- `relay-client.ts`: relay API v1 server calls. Alerts accept only a `SealedPushEnvelope`; Live Activity pushes are built field by field from the fixed schema (event and two counts; the relay stamps the time). It tries `[primary, standby]` and prunes only on a primary `410`.
 - `push-sender.ts`: per-device sealing with a timestamp, collapse IDs, and best-effort permission release, plus `sendLiveActivity` with its own per-device budget. It keeps no per-push state and never writes config to send; the phone deduplicates on the envelope's HPKE `enc`.
 - `registration.ts`: `PUT /me/push-registration` checks; the device's enrolled P-256 key signs the push key and send token.
 - `relay-origin.ts`: parses and validates the `push.relays` origins (HTTPS, or HTTP on loopback; no path or credentials).

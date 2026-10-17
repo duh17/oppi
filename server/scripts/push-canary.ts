@@ -273,7 +273,47 @@ async function startCloudflareRelay(workDir: string): Promise<RelayUnderTest> {
 /** The phone's random name for this server's Live Activity. */
 const LIVE_ACTIVITY_SLOT = randomBytes(16).toString("base64url");
 
-async function mintSendToken(relay: string): Promise<string> {
+/** What the phone holds at the relay for this server. */
+interface PhoneAtRelay {
+  relay: string;
+  registrationId: string;
+  registrationSecret: string;
+  permissionId: string;
+  sendToken: string;
+}
+
+/** The phone's whole Live Activity state: this server's card listed (on) or not (off). */
+async function putLiveActivityState(
+  phone: PhoneAtRelay,
+  card: { on: boolean; token?: string },
+): Promise<void> {
+  const activities = card.on
+    ? [
+        {
+          permissionId: phone.permissionId,
+          slot: LIVE_ACTIVITY_SLOT,
+          token: card.token ?? null,
+          dismissed: false,
+        },
+      ]
+    : [];
+  const response = await fetch(
+    `${phone.relay}/v1/registrations/${phone.registrationId}/live-activity`,
+    {
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${phone.registrationSecret}`,
+        "content-type": "application/json",
+      },
+      // The start token goes only while a card is listed.
+      body: JSON.stringify({ startToken: card.on ? "5".repeat(160) : null, activities }),
+    },
+  );
+  if (response.status !== 204) fail(`relay refused Live Activity state: ${response.status}`);
+}
+
+/** Register with the relay, mint this server's permission, and list its card. */
+async function registerPhone(relay: string): Promise<PhoneAtRelay> {
   const challenge = (await (await fetch(`${relay}/v1/challenge`, { method: "POST" })).json()) as {
     challenge: string;
   };
@@ -300,26 +340,15 @@ async function mintSendToken(relay: string): Promise<string> {
     })
   ).json()) as { permissionId?: string; sendToken?: string };
   if (!permission.sendToken || !permission.permissionId) fail("relay did not mint a send token");
-  // The phone lets this permission drive the server's card.
-  const card = {
+  const phone = {
+    relay,
+    ...registration,
     permissionId: permission.permissionId,
-    slot: LIVE_ACTIVITY_SLOT,
-    token: null,
-    dismissed: false,
+    sendToken: permission.sendToken,
   };
-  const liveActivity = await fetch(
-    `${relay}/v1/registrations/${registration.registrationId}/live-activity`,
-    {
-      method: "PUT",
-      headers: {
-        authorization: `Bearer ${registration.registrationSecret}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ startToken: "5".repeat(160), activities: [card] }),
-    },
-  );
-  if (liveActivity.status !== 204) fail(`relay refused Live Activity tokens: ${liveActivity.status}`);
-  return permission.sendToken;
+  // The phone lets this permission drive the server's card.
+  await putLiveActivityState(phone, { on: true });
+  return phone;
 }
 
 // ─── Run ───
@@ -361,13 +390,16 @@ async function runCanary(
       recipient: { privateKey: string; publicKey: string; keyId: string };
     };
     storage.updateConfig({ push: { mode: "relay", relays: [proxy.url] } });
-    const register = async () =>
+    const register = async () => {
+      const phone = await registerPhone(proxy.url);
       storage.setPushRegistration({
         deviceId: enrolled.deviceId,
         keyId: vectors.recipient.keyId,
         publicKey: vectors.recipient.publicKey,
-        sendToken: await mintSendToken(proxy.url),
+        sendToken: phone.sendToken,
       });
+      return phone;
+    };
     await register();
     const session = storage.createSession(canaries.sessionName, undefined, {
       id: canaries.sessionId,
@@ -416,7 +448,7 @@ async function runCanary(
     // the phone registers the same push key again. The next push must still open on a phone
     // that already accepted the first two (Apple PushCanaryCaptureTests).
     storage.removePushRegistration(enrolled.deviceId);
-    await register();
+    const phoneNow = await register();
     const [reregistered] = storage.getPushRegistrations();
     if (!reregistered) fail(`${name}: re-registration missing`);
     const afterReregistration = await sender.send(reregistered, {
@@ -429,7 +461,9 @@ async function runCanary(
       body: "Waiting for your answer.",
     });
     if (afterReregistration?.status !== "delivered") {
-      fail(`${name}: push after re-registration not delivered: ${JSON.stringify(afterReregistration)}`);
+      fail(
+        `${name}: push after re-registration not delivered: ${JSON.stringify(afterReregistration)}`,
+      );
     }
 
     // Live Activity: a canary-named session works while the phone is away.
@@ -459,12 +493,73 @@ async function runCanary(
       fail(`${name}: expected 1 delivered Live Activity start, got ${JSON.stringify(liveResults)}`);
     }
 
+    // The card turned off and on, and the phone reconnected twice. Each connection re-sends
+    // the send token the server already holds, with the current setting; nothing is minted.
+    const reconnect = (liveActivityOn: boolean) =>
+      storage.setPushRegistration({ ...reregistered, liveActivity: liveActivityOn });
+    const liveCurrent = () => {
+      const [entry] = storage.getPushRegistrations();
+      if (!entry) fail(`${name}: push registration missing`);
+      return entry;
+    };
+    const update = { event: "update" as const, running: 2, needsYou: 0 };
+    await putLiveActivityState(phoneNow, { on: true, token: "e".repeat(160) });
+    reconnect(true);
+    // Off: the phone lists no card, so the relay refuses the server's send token for it.
+    await putLiveActivityState(phoneNow, { on: false });
+    reconnect(false);
+    if ((await sender.sendLiveActivity(liveCurrent(), update)) !== null) {
+      fail(`${name}: server drove a card the phone turned off`);
+    }
+    const refused = await fetch(`${proxy.url}/v1/live-activity`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${phoneNow.sendToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(update),
+    });
+    if (refused.status !== 409)
+      fail(`${name}: relay let a turned-off card update: ${refused.status}`);
+    // On again: the server starts a new card and keeps it current after another reconnect.
+    await putLiveActivityState(phoneNow, { on: true });
+    reconnect(true);
+    const restarted = await sender.sendLiveActivity(liveCurrent(), {
+      event: "start",
+      running: 1,
+      needsYou: 0,
+    });
+    await putLiveActivityState(phoneNow, { on: true, token: "f".repeat(160) });
+    reconnect(true);
+    const updated = await sender.sendLiveActivity(liveCurrent(), update);
+    if (restarted?.status !== "delivered" || updated?.status !== "delivered") {
+      fail(`${name}: card did not restart and update: ${JSON.stringify([restarted, updated])}`);
+    }
+    const mints =
+      proxy.input().split(`POST /v1/registrations/${phoneNow.registrationId}/permissions\n`)
+        .length - 1;
+    if (mints !== 1 || liveCurrent().sendToken !== phoneNow.sendToken) {
+      fail(`${name}: expected the relay to hold one permission for the server, saw ${mints} mints`);
+    }
+
     const all = relay.apns();
     const apns = all.filter((request) => request.headers["apns-push-type"] === "alert");
     const liveApns = all.filter((request) => request.headers["apns-push-type"] === "liveactivity");
     if (apns.length !== 3) fail(`${name}: expected 3 alert APNs requests, saw ${apns.length}`);
-    if (liveApns.length !== 1) {
-      fail(`${name}: expected 1 Live Activity APNs request, saw ${liveApns.length}`);
+    const livePaths = liveApns.map((request) => request.path.split("/").pop());
+    const expectedLivePaths = ["5".repeat(160), "5".repeat(160), "f".repeat(160)];
+    if (JSON.stringify(livePaths) !== JSON.stringify(expectedLivePaths)) {
+      fail(
+        `${name}: expected start, start, update Live Activity requests, saw ${livePaths.length}`,
+      );
+    }
+    const liveStamps = liveApns.map(
+      (request) => (JSON.parse(request.payload) as { aps: { timestamp: number } }).aps.timestamp,
+    );
+    if (liveStamps.some((stamp, index) => index > 0 && stamp <= (liveStamps[index - 1] ?? 0))) {
+      fail(
+        `${name}: Live Activity timestamps are not strictly increasing: ${liveStamps.join(", ")}`,
+      );
     }
     const liveAps = (JSON.parse(liveApns[0]?.payload ?? "{}") as { aps?: Record<string, unknown> })
       .aps;
@@ -525,7 +620,7 @@ async function runCanary(
       if (!decrypted.includes(canary)) fail(`${name}: ${label} canary did not survive encryption`);
     }
     console.log(
-      `PASS ${name}: 3 pushes (1 after re-registering the same key) and 1 counts-only Live Activity start; canaries absent from relay input (${surfaces["relay input"].length} B), logs (${surfaces["relay logs"].length} B), storage (${surfaces["relay storage"].length} B), APNs output (${surfaces["APNs output"].length} B); all 3 envelopes open to them`,
+      `PASS ${name}: 3 pushes (1 after re-registering the same key) and a counts-only Live Activity that started, turned off and on across two reconnects on one permission, and updated; canaries absent from relay input (${surfaces["relay input"].length} B), logs (${surfaces["relay logs"].length} B), storage (${surfaces["relay storage"].length} B), APNs output (${surfaces["APNs output"].length} B); all 3 envelopes open to them`,
     );
     return {
       canaries,

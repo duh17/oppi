@@ -23,8 +23,6 @@ export const LIVE_ACTIVITY_MAX_AGE_MS = 8 * 60 * 60 * 1000;
  * that time. A change this close before a device leaves gets pushed when it does.
  */
 const LEAVE_GRACE_MS = 120_000;
-/** How far a `timestamp` may be from the relay's clock. */
-const LIVE_ACTIVITY_TIMESTAMP_SKEW_SECONDS = 300;
 /** After a failed send (relay or network down), try once more after this. */
 const RETRY_AFTER_FAILURE_MS = 5 * 60_000;
 /**
@@ -80,8 +78,6 @@ interface DeviceState {
   shown?: LiveActivityCounts;
   /** Updates in a row that found no update token. */
   missedUpdates: number;
-  /** Unix seconds of the last event sent; each event goes out with a later one. */
-  lastTimestamp: number;
   lastSentAt: number;
   /** No send before this: a failure or a relay `429`. */
   retryAt: number;
@@ -212,7 +208,6 @@ export class LiveActivityNotifier {
       device = {
         activity: "unknown",
         missedUpdates: 0,
-        lastTimestamp: 0,
         lastSentAt: Number.NEGATIVE_INFINITY,
         retryAt: 0,
         sending: false,
@@ -398,28 +393,17 @@ export class LiveActivityNotifier {
     }
   }
 
-  /**
-   * Send one event. Failures set the device's retry time. Each event carries a later
-   * timestamp than the device's last one, so a start right after an end is the newer event:
-   * Apple ignores an event no newer than the one before. After the clock steps back, the
-   * next timestamp could sit beyond the relay's 300 s window and every event would be
-   * refused; then the current second goes instead.
-   */
+  /** Send one event. Failures set the device's retry time. The relay stamps its time. */
   private async send(
     registration: PushRegistration,
     device: DeviceState,
     event: LiveActivityPush["event"],
     counts: LiveActivityCounts,
   ): Promise<"delivered" | "no_activity" | "failed"> {
-    const nowSeconds = Math.floor(this.now() / 1000);
-    const next = Math.max(nowSeconds, device.lastTimestamp + 1);
-    const timestamp = next - nowSeconds > LIVE_ACTIVITY_TIMESTAMP_SKEW_SECONDS ? nowSeconds : next;
-    device.lastTimestamp = timestamp;
     const result = await this.push.sendLiveActivity(registration, {
       event,
       running: counts.running,
       needsYou: counts.needsYou,
-      timestamp,
     });
     switch (result?.status) {
       case "delivered":

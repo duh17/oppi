@@ -98,10 +98,12 @@ interface NodeHarness extends RelayHarness {
   advance(ms: number): void;
 }
 
-async function startHarness(options: { trustRootPem?: string; now?: number } = {}): Promise<NodeHarness> {
+async function startHarness(
+  options: { trustRootPem?: string; now?: number; store?: MemoryRelayStore } = {},
+): Promise<NodeHarness> {
   const apns = await startMockApns();
   const sender = new Http2ApnsSender({ keyP8: apnsKeyP8, keyId: "KEYID12345", teamId: "TESTTEAM01" }, apns.origins);
-  const store = new MemoryRelayStore();
+  const store = options.store ?? new MemoryRelayStore();
   const logs: string[] = [];
   let offset = 0;
   const base = options.now;
@@ -202,7 +204,7 @@ describe("node adapter", () => {
     const liveActivity = await call(harness, "POST", "/v1/live-activity", {
       address,
       bearer: madeUp,
-      body: { event: "update", running: 1, needsYou: 0, timestamp: Math.floor(Date.now() / 1000) },
+      body: { event: "update", running: 1, needsYou: 0 },
     });
     expect(liveActivity).toMatchObject({ status: 429, json: { error: "rate_limited" } });
     // The limit is the address's, not the token's: a real token from it waits too.
@@ -232,14 +234,8 @@ describe("node adapter", () => {
   it("stops an unattested phone's Live Activity pushes at their own daily limit while alerts keep going", async () => {
     harness = await startHarness({ now: Date.parse("2026-10-10T00:00:00Z") });
     const { sendToken } = await liveActivityPhone(harness);
-    // The relay checks timestamps against its own (advanced) clock.
-    const clock = { seconds: Date.parse("2026-10-10T00:00:00Z") / 1000 };
-    const start = () =>
-      liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0, timestamp: Math.floor(clock.seconds) });
-    const step = (ms: number) => {
-      harness.advance(ms);
-      clock.seconds += ms / 1000;
-    };
+    const start = () => liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 });
+    const step = (ms: number) => harness.advance(ms);
     for (let index = 0; index < DEFAULT_QUOTA_LIMITS.liveActivityUnattestedPerDay; index += 1) {
       if (index % DEFAULT_QUOTA_LIMITS.liveActivityPerMinute === 0) step(61_000);
       expect((await start()).status).toBe(200);
@@ -259,20 +255,43 @@ describe("node adapter", () => {
     const { registration, sendToken } = await liveActivityPhone(harness);
     const activities = [card(sendToken, { token: ACTIVITY_TOKEN })];
     expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities })).toBe(204);
-    const at = (ms: number) => Math.floor((base + ms) / 1000);
 
     harness.advance(8 * 3_600_000 - 60_000);
     // Sending the same token again keeps its age.
     expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities })).toBe(204);
-    expect((await liveActivity(harness, sendToken, { event: "update", running: 1, needsYou: 0, timestamp: at(8 * 3_600_000 - 60_000) })).status).toBe(200);
+    expect((await liveActivity(harness, sendToken, { event: "update", running: 1, needsYou: 0 })).status).toBe(200);
     harness.advance(60_000);
-    const late = at(8 * 3_600_000);
-    expect((await liveActivity(harness, sendToken, { event: "update", running: 2, needsYou: 0, timestamp: late })).json.error).toBe("no_activity");
-    expect((await liveActivity(harness, sendToken, { event: "end", running: 0, needsYou: 0, timestamp: late })).status).toBe(200);
+    expect((await liveActivity(harness, sendToken, { event: "update", running: 2, needsYou: 0 })).json.error).toBe("no_activity");
+    expect((await liveActivity(harness, sendToken, { event: "end", running: 0, needsYou: 0 })).status).toBe(200);
     expect(harness.apnsRequests.map((request) => request.path)).toEqual([
       `/3/device/${ACTIVITY_TOKEN}`,
       `/3/device/${ACTIVITY_TOKEN}`,
     ]);
+  });
+
+  it("stamps each Live Activity event later than the last, within one second too", async () => {
+    const base = Date.parse("2026-10-10T08:00:00Z");
+    harness = await startHarness({ now: base });
+    const { registration, sendToken } = await liveActivityPhone(harness);
+    const activities = [card(sendToken, { token: ACTIVITY_TOKEN })];
+    const stamps = () =>
+      harness.apnsRequests.map(
+        (request) => (JSON.parse(request.payload) as { aps: { timestamp: number } }).aps.timestamp,
+      );
+
+    expect((await liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 })).status).toBe(200);
+    expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities })).toBe(204);
+    harness.advance(61_000);
+    expect((await liveActivity(harness, sendToken, { event: "end", running: 0, needsYou: 0 })).status).toBe(200);
+    // A start in the same second as the end is still the newer event.
+    expect((await liveActivity(harness, sendToken, { event: "start", running: 2, needsYou: 0 })).status).toBe(200);
+    // Turning the card off and on again keeps the slot's clock.
+    expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities: [] })).toBe(204);
+    expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities })).toBe(204);
+    expect((await liveActivity(harness, sendToken, { event: "update", running: 1, needsYou: 0 })).status).toBe(200);
+
+    const second = Math.floor(base / 1000);
+    expect(stamps()).toEqual([second, second + 61, second + 62, second + 63]);
   });
 
   it("records the exact APNs request in capture mode instead of sending it", async () => {
@@ -461,5 +480,62 @@ describe("App Attest (node adapter with a test root)", () => {
       "assertion_invalid",
     );
     expect((await put({ "x-oppi-assertion": await assertionHeader(attestation.credential, "PUT", path, body, 2) })).status).toBe(204);
+  });
+
+  it("refuses an older Live Activity upload that lands after a newer one, keeping the newer state", async () => {
+    // Holds the first state write until released: the older upload has passed every check
+    // but has not written yet when the newer one lands.
+    class HeldStore extends MemoryRelayStore {
+      hold: { entered: () => void; release: Promise<void> } | null = null;
+      override async setLiveActivity(...args: Parameters<MemoryRelayStore["setLiveActivity"]>) {
+        const hold = this.hold;
+        this.hold = null;
+        if (hold) {
+          hold.entered();
+          await hold.release;
+        }
+        return super.setLiveActivity(...args);
+      }
+    }
+    const store = new HeldStore();
+    await harness.close();
+    harness = await startHarness({ trustRootPem: ca.rootPem, store });
+
+    const { response, attestation } = await attest("sandbox");
+    const registration = response.json as { registrationId: string; registrationSecret: string };
+    const mintPath = `/v1/registrations/${registration.registrationId}/permissions`;
+    const minted = await call(harness, "POST", mintPath, {
+      bearer: registration.registrationSecret,
+      rawBody: "{}",
+      headers: { "x-oppi-assertion": await assertionHeader(attestation.credential, "POST", mintPath, "{}", 1) },
+    });
+    const sendToken = minted.json.sendToken as string;
+
+    const path = `/v1/registrations/${registration.registrationId}/live-activity`;
+    const upload = async (state: unknown, counter: number) => {
+      const body = JSON.stringify(state);
+      const assertion = await assertionHeader(attestation.credential, "PUT", path, body, counter);
+      return call(harness, "PUT", path, {
+        bearer: registration.registrationSecret,
+        rawBody: body,
+        headers: { "x-oppi-assertion": assertion },
+      });
+    };
+
+    // The phone listed the card (counter 2), then the person turned it off (counter 3).
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => (entered = resolve));
+    let release!: () => void;
+    store.hold = { entered, release: new Promise<void>((resolve) => (release = resolve)) };
+    const older = upload({ startToken: START_TOKEN, activities: [card(sendToken)] }, 2);
+    await held;
+    expect((await upload({ startToken: null, activities: [] }, 3)).status).toBe(204);
+    release();
+    expect((await older).json.error).toBe("assertion_invalid");
+
+    // The turned-off state stands: the server cannot start the card.
+    const start = await liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 });
+    expect(start.json.error).toBe("no_activity");
+    expect(harness.apnsRequests).toHaveLength(0);
   });
 });

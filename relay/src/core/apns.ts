@@ -61,7 +61,7 @@ export function buildApnsRequest(input: {
 export const LIVE_ACTIVITY_ATTRIBUTES_TYPE = "OppiActivityAttributes";
 /** Apple requires an alert to start a Live Activity by push. Fixed text, like the fallback. */
 export const LIVE_ACTIVITY_START_ALERT = { title: "Oppi", body: "Agents are working." } as const;
-/** An ended card leaves the Lock Screen this long after the server's timestamp. */
+/** An ended card leaves the Lock Screen this long after the event's timestamp. */
 export const LIVE_ACTIVITY_DISMISSAL_SECONDS = 30;
 const LIVE_ACTIVITY_TTL_SECONDS = 3600;
 
@@ -77,6 +77,7 @@ export function buildLiveActivityRequest(input: {
   event: "start" | "update" | "end";
   running: number;
   needsYou: number;
+  /** Unix seconds, later than the slot's previous event (`applyAuthorizeLiveActivity`). */
   timestamp: number;
   slot: string;
   now: number;

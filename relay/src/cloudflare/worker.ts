@@ -34,6 +34,7 @@ import {
   type PushAuthorization,
   type RegistrationRecord,
   type RelayStore,
+  type SetLiveActivityResult,
 } from "../core/store.js";
 
 export interface Env {
@@ -101,12 +102,16 @@ export class RegistrationObject extends DurableObject<Env> {
     return result;
   }
 
-  async setLiveActivity(update: LiveActivityUpdate, now: number): Promise<boolean> {
+  async setLiveActivity(
+    update: LiveActivityUpdate,
+    assertionCounter: number | null,
+    now: number,
+  ): Promise<SetLiveActivityResult> {
     const record = await this.read();
-    if (!record) return false;
-    applySetLiveActivity(record, update, now);
+    if (!record) return "gone";
+    if (!applySetLiveActivity(record, update, assertionCounter, now)) return "stale";
     await this.ctx.storage.put(RECORD_KEY, record);
-    return true;
+    return "ok";
   }
 
   async authorizeLiveActivity(
@@ -242,8 +247,13 @@ class DurableObjectRelayStore implements RelayStore {
     return this.registration(id).authorizePush(permissionId, secretHash, now);
   }
 
-  setLiveActivity(id: string, update: LiveActivityUpdate, now: number): Promise<boolean> {
-    return this.registration(id).setLiveActivity(update, now);
+  setLiveActivity(
+    id: string,
+    update: LiveActivityUpdate,
+    assertionCounter: number | null,
+    now: number,
+  ): Promise<SetLiveActivityResult> {
+    return this.registration(id).setLiveActivity(update, assertionCounter, now);
   }
 
   authorizeLiveActivity(

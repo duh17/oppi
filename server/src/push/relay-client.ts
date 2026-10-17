@@ -27,14 +27,12 @@ export interface RelayPushRequest {
 
 /**
  * A Live Activity push (spec "Live Activity"): an event and two counts, nothing else. The
- * relay builds the APNs payload from a fixed template.
+ * relay builds the APNs payload from a fixed template and stamps the event's time.
  */
 export interface LiveActivityPush {
   event: "start" | "update" | "end";
   running: number;
   needsYou: number;
-  /** Unix seconds. */
-  timestamp: number;
 }
 
 export type LiveActivitySendResult =
@@ -100,7 +98,6 @@ export class RelayClient {
       event: push.event,
       running: push.running,
       needsYou: push.needsYou,
-      timestamp: push.timestamp,
     });
     let charged = false;
     for (const [index, origin] of this.origins.entries()) {

@@ -24,6 +24,7 @@ import {
   type QuotaLimits,
   type RegistrationRecord,
   type RelayStore,
+  type SetLiveActivityResult,
 } from "../core/store.js";
 
 interface Snapshot {
@@ -142,12 +143,17 @@ export class MemoryRelayStore implements RelayStore {
     return result;
   }
 
-  async setLiveActivity(id: string, update: LiveActivityUpdate, now: number): Promise<boolean> {
+  async setLiveActivity(
+    id: string,
+    update: LiveActivityUpdate,
+    assertionCounter: number | null,
+    now: number,
+  ): Promise<SetLiveActivityResult> {
     const record = this.registrations.get(id);
-    if (!record) return false;
-    applySetLiveActivity(record, update, now);
+    if (!record) return "gone";
+    if (!applySetLiveActivity(record, update, assertionCounter, now)) return "stale";
     this.persist();
-    return true;
+    return "ok";
   }
 
   async authorizeLiveActivity(
