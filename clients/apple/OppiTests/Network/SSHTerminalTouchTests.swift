@@ -33,17 +33,50 @@ struct SSHTerminalTouchTests {
         #expect(SSHTerminalDragTarget.resolve(mouseReporting: true) == .mouse)
     }
 
-    @Test func wheelScalingEmitsOneNotchPerFiveCellsAndKeepsRemainder() {
+    @Test func wheelScalingEmitsOneNotchPerThreeCellsAndKeepsRemainder() {
         var wheel = SSHTerminalWheelScaling.Accumulator()
         let cell: CGFloat = 17
-        // Finger down 5 cells: one wheel-up (negative steps).
-        #expect(wheel.steps(travel: 5 * cell, cellHeight: cell) == -1)
+        #expect(SSHTerminalWheelScaling.cellsPerEvent == 3)
+        // Finger down 3 cells: one wheel-up (negative steps).
+        #expect(wheel.steps(travel: 3 * cell, cellHeight: cell) == -1)
         // Another 2 cells: not yet a notch.
         #expect(wheel.steps(travel: 2 * cell, cellHeight: cell) == 0)
-        // 3 more: second notch.
-        #expect(wheel.steps(travel: 3 * cell, cellHeight: cell) == -1)
-        // Reverse 5 cells: one wheel-down.
-        #expect(wheel.steps(travel: -5 * cell, cellHeight: cell) == 1)
+        // 1 more: second notch.
+        #expect(wheel.steps(travel: 1 * cell, cellHeight: cell) == -1)
+        // Reverse 3 cells: one wheel-down.
+        #expect(wheel.steps(travel: -3 * cell, cellHeight: cell) == 1)
+    }
+
+    @Test func appScrollOffsetDeltaMatchesPanFingerTravelAndWheelSteps() {
+        let cell: CGFloat = 17
+        let travel = SSHTerminalAppScrollTranslation.fingerTravel(
+            previousOffset: 400, currentOffset: 400 - 3 * cell
+        )
+        #expect(travel == 3 * cell, "finger down decreases offset")
+        var wheel = SSHTerminalWheelScaling.Accumulator()
+        #expect(wheel.steps(travel: travel, cellHeight: cell) == -1)
+
+        var fling = SSHTerminalWheelScaling.Accumulator()
+        var total = 0
+        var offset: CGFloat = 800
+        // Decelerating offsets like a native fling (offset falling toward 0).
+        for delta in [50, 30, 18, 10, 6, 3, 1] as [CGFloat] {
+            let next = offset - delta
+            total += fling.steps(
+                travel: SSHTerminalAppScrollTranslation.fingerTravel(
+                    previousOffset: offset, currentOffset: next
+                ),
+                cellHeight: cell
+            )
+            offset = next
+        }
+        #expect(total < 0, "a downward fling keeps emitting wheel-up steps")
+        #expect(abs(total) >= 2, "the fling spans more than one notch")
+    }
+
+    @Test func scrollCoalescingConcatenatesOneWrite() {
+        #expect(SSHTerminalScrollCoalescing.encodeRepeated(0) { Data([1]) } == Data())
+        #expect(SSHTerminalScrollCoalescing.encodeRepeated(3) { Data([0x1B, 0x4D]) } == Data([0x1B, 0x4D, 0x1B, 0x4D, 0x1B, 0x4D]))
     }
 
     @Test func mode1007DefaultsOnAndFollowsGhosttyAltScrollRules() throws {

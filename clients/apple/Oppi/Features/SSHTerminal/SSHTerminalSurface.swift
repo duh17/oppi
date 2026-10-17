@@ -90,6 +90,10 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
     private var repeatingPress: UIPress?
     private var wheelRemainder = SSHTerminalWheelScaling.Accumulator()
     private var altRemainder: CGFloat = 0
+    private var lastAppScrollOffset: CGFloat = 0
+    private var pendingWheelSteps = 0
+    private var pendingAltRows = 0
+    private var pendingWheelCell: (column: Int, row: Int)?
     private var displayLink: CADisplayLink?
     private var displayLinkGeneration: UInt64 = 0
     private(set) var displayLinkTickCount: UInt64 = 0
@@ -97,7 +101,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
     private let metalHost = SSHTerminalMetalHostView()
     private let historyScroll = SSHTerminalHistoryScrollView()
     private let selectionOverlay = SSHTerminalSelectionOverlay()
-    private var appPan: UIPanGestureRecognizer?
+
     private var longPress: UILongPressGestureRecognizer?
     private var tapRecognizer: UITapGestureRecognizer?
     private var tapIgnore = SSHTerminalTapIgnore()
@@ -586,35 +590,6 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         super.pressesCancelled(presses, with: event)
     }
 
-    @objc private func appScrolled(_ gesture: UIPanGestureRecognizer) {
-        let travel = gesture.translation(in: self).y
-        gesture.setTranslation(.zero, in: self)
-        if gesture.state == .began {
-            wheelRemainder = SSHTerminalWheelScaling.Accumulator()
-            altRemainder = 0
-        }
-        switch channel.engine.scrollAction {
-        case .history:
-            return
-        case .mouseWheel:
-            let steps = wheelRemainder.steps(travel: travel, cellHeight: cellSize.height)
-            guard steps != 0 else { return }
-            let cell = self.cell(at: gesture.location(in: self))
-            for _ in 0..<abs(steps) {
-                channel.mouse(steps < 0 ? .wheelUp : .wheelDown, column: cell.column, row: cell.row)
-            }
-        case .alternateKeys:
-            altRemainder -= travel
-            let rows = Int(altRemainder / cellSize.height)
-            guard rows != 0 else { return }
-            altRemainder -= CGFloat(rows) * cellSize.height
-            let key: GhosttyKey = rows < 0 ? GHOSTTY_KEY_ARROW_UP : GHOSTTY_KEY_ARROW_DOWN
-            for _ in 0..<abs(rows) {
-                _ = channel.key(key)
-            }
-        }
-    }
-
     @objc private func longPressed(_ gesture: UILongPressGestureRecognizer) {
         let location = gesture.location(in: self)
         let cell = self.cell(at: location)
@@ -679,49 +654,35 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === historyScroll, !isSyncingHistoryScroll else { return }
-        guard channel.engine.scrollAction == .history else { return }
-        guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
-        let height = cellSize.height
-        guard height > 0 else { return }
-        let maxOffset = max(0, scrollView.contentSize.height - scrollView.bounds.height)
-        let y = scrollView.contentOffset.y
-        let bounce: CGFloat
-        if y < 0 {
-            bounce = -y
-            channel.engine.scrollToRow(0)
-        } else if y > maxOffset {
-            bounce = maxOffset - y
-            let bar = channel.engine.scrollbar
-            let last = max(0, Int(bar.total) - Int(bar.len))
-            channel.engine.scrollToRow(last)
-        } else {
-            bounce = 0
-            channel.engine.scrollToRow(Int((y / height).rounded()))
+        switch channel.engine.scrollAction {
+        case .history:
+            guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
+            applyHistoryScrollOffset()
+        case .mouseWheel, .alternateKeys:
+            consumeAppScrollOffset()
         }
-        let transform = CGAffineTransform(translationX: 0, y: bounce)
-        metalHost.transform = transform
-        selectionOverlay.transform = transform
-        publishFollowState()
-        needsPaint = true
         requestDisplayLink()
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         guard scrollView === historyScroll else { return }
+        if channel.engine.scrollAction != .history {
+            wheelRemainder = SSHTerminalWheelScaling.Accumulator()
+            altRemainder = 0
+            lastAppScrollOffset = scrollView.contentOffset.y
+        }
         requestDisplayLink()
         applyFrameRate(scrolling: true)
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
         guard scrollView === historyScroll, !decelerate else { return }
-        guard channel.engine.scrollAction == .history else { return }
-        settleHistoryScroll()
+        settleScroll()
     }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         guard scrollView === historyScroll else { return }
-        guard channel.engine.scrollAction == .history else { return }
-        settleHistoryScroll()
+        settleScroll()
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
@@ -755,29 +716,23 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         press.minimumPressDuration = 0.45
         press.allowableMovement = 12
         press.delegate = self
-        let pan = UIPanGestureRecognizer(target: self, action: #selector(appScrolled(_:)))
-        pan.delegate = self
         historyScroll.touchBegan = { [weak self] in self?.tapIgnore.touchBegan() }
         historyScroll.addGestureRecognizer(tap)
         historyScroll.addGestureRecognizer(doubleTap)
         historyScroll.addGestureRecognizer(press)
-        historyScroll.addGestureRecognizer(pan)
         tapRecognizer = tap
         longPress = press
-        appPan = pan
         updateTouchMode()
     }
 
     private func updateTouchMode() {
-        let history = channel.engine.scrollAction == .history && dragTarget == nil
-        historyScroll.isScrollEnabled = history
-        historyScroll.showsVerticalScrollIndicator = history
-        appPan?.isEnabled = !history && dragTarget == nil
+        let history = channel.engine.scrollAction == .history
+        historyScroll.isScrollEnabled = dragTarget == nil
+        historyScroll.showsVerticalScrollIndicator = history && dragTarget == nil
         if history {
             syncHistoryScrollFromEngine()
         } else {
-            metalHost.transform = .identity
-            selectionOverlay.transform = .identity
+            prepareAppScrollSurface()
             publishFollowState()
         }
     }
@@ -805,6 +760,104 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         if metalHost.transform != .identity {
             metalHost.transform = .identity
             selectionOverlay.transform = .identity
+        }
+    }
+
+    private func applyHistoryScrollOffset() {
+        let height = cellSize.height
+        guard height > 0 else { return }
+        let maxOffset = max(0, historyScroll.contentSize.height - historyScroll.bounds.height)
+        let y = historyScroll.contentOffset.y
+        let bounce: CGFloat
+        if y < 0 {
+            bounce = -y
+            channel.engine.scrollToRow(0)
+        } else if y > maxOffset {
+            bounce = maxOffset - y
+            let bar = channel.engine.scrollbar
+            let last = max(0, Int(bar.total) - Int(bar.len))
+            channel.engine.scrollToRow(last)
+        } else {
+            bounce = 0
+            channel.engine.scrollToRow(Int((y / height).rounded()))
+        }
+        let transform = CGAffineTransform(translationX: 0, y: bounce)
+        metalHost.transform = transform
+        selectionOverlay.transform = transform
+        publishFollowState()
+        needsPaint = true
+    }
+
+    private func consumeAppScrollOffset() {
+        let y = historyScroll.contentOffset.y
+        let travel = SSHTerminalAppScrollTranslation.fingerTravel(
+            previousOffset: lastAppScrollOffset, currentOffset: y
+        )
+        lastAppScrollOffset = y
+        let height = cellSize.height
+        guard height > 0, travel != 0 else { return }
+        switch channel.engine.scrollAction {
+        case .mouseWheel:
+            pendingWheelSteps += wheelRemainder.steps(travel: travel, cellHeight: height)
+            pendingWheelCell = cell(at: CGPoint(x: bounds.midX, y: bounds.midY))
+        case .alternateKeys:
+            altRemainder -= travel
+            let rows = Int(altRemainder / height)
+            guard rows != 0 else { return }
+            altRemainder -= CGFloat(rows) * height
+            pendingAltRows += rows
+        case .history:
+            break
+        }
+    }
+
+    private func prepareAppScrollSurface() {
+        let height = max(bounds.height, 1)
+        let contentHeight = height * 16
+        let mid = max(0, (contentHeight - height) / 2)
+        let dragging = historyScroll.isDragging || historyScroll.isDecelerating
+        isSyncingHistoryScroll = true
+        historyScroll.contentSize = CGSize(width: bounds.width, height: contentHeight)
+        if !dragging, abs(historyScroll.contentOffset.y - mid) > 1 {
+            historyScroll.contentOffset = CGPoint(x: 0, y: mid)
+            lastAppScrollOffset = mid
+        } else if !dragging {
+            lastAppScrollOffset = historyScroll.contentOffset.y
+        }
+        isSyncingHistoryScroll = false
+        metalHost.transform = .identity
+        selectionOverlay.transform = .identity
+    }
+
+    private func settleScroll() {
+        flushPendingAppScroll()
+        switch channel.engine.scrollAction {
+        case .history:
+            settleHistoryScroll()
+        case .mouseWheel, .alternateKeys:
+            prepareAppScrollSurface()
+        }
+    }
+
+    private func flushPendingAppScroll() {
+        if pendingWheelSteps != 0 {
+            let input: SSHTerminalEngine.MouseInput = pendingWheelSteps < 0 ? .wheelUp : .wheelDown
+            let n = abs(pendingWheelSteps)
+            pendingWheelSteps = 0
+            let target = pendingWheelCell ?? (0, 0)
+            let bytes = SSHTerminalScrollCoalescing.encodeRepeated(n) {
+                channel.engine.mouse(input, column: target.column, row: target.row)
+            }
+            _ = channel.send(bytes)
+        }
+        if pendingAltRows != 0 {
+            let key: GhosttyKey = pendingAltRows < 0 ? GHOSTTY_KEY_ARROW_UP : GHOSTTY_KEY_ARROW_DOWN
+            let n = abs(pendingAltRows)
+            pendingAltRows = 0
+            let bytes = SSHTerminalScrollCoalescing.encodeRepeated(n) {
+                channel.engine.key(key)
+            }
+            _ = channel.send(bytes)
         }
     }
 
@@ -1018,6 +1071,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         @objc func tick() {
             guard let view else { return }
             view.displayLinkTickCount &+= 1
+            view.flushPendingAppScroll()
             // A hold has a one-second deadline even if no more bytes arrive.
             let changes = view.channel.engine.changeCount
             let generation = view.displayLinkGeneration

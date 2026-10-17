@@ -29,15 +29,13 @@ enum SSHTerminalDragTarget: Equatable {
 
 /// Convert finger travel into wheel notches for mouse-reporting apps.
 ///
-/// tmux (the named case) scrolls five lines per wheel notch. Today's grid
-/// sent one notch per row of travel, so a one-row swipe jumped five tmux
-/// lines. Touch has no hardware notch, so one notch is five cell-rows of
-/// travel: tmux then moves about one line per cell of finger, like native
-/// scrolling. Remainder carries across events in one gesture. Sign matches
-/// the previous pan: finger down is wheel-up (earlier history / content
-/// follows the finger).
+/// One notch is three cell-rows of travel, matching the common 3-lines-per-notch
+/// default (xterm, vim, Herdr). Herdr content then tracks the finger 1:1.
+/// tmux (five lines per notch) runs a little ahead. Remainder carries across
+/// events in one gesture. Sign: finger down is wheel-up (content follows the
+/// finger).
 enum SSHTerminalWheelScaling {
-    static let cellsPerEvent: CGFloat = 5
+    static let cellsPerEvent: CGFloat = 3
 
     struct Accumulator {
         var remainder: CGFloat = 0
@@ -52,6 +50,28 @@ enum SSHTerminalWheelScaling {
             remainder -= CGFloat(count) * step
             return count
         }
+    }
+}
+
+/// UIScrollView offset to the same finger-travel sign as the old pan gesture
+/// (positive is finger down). Finger down decreases `contentOffset.y`.
+enum SSHTerminalAppScrollTranslation {
+    static func fingerTravel(previousOffset: CGFloat, currentOffset: CGFloat) -> CGFloat {
+        previousOffset - currentOffset
+    }
+}
+
+/// One SSH write for every notch or arrow produced in a frame, so a fling
+/// does not enqueue one write per event.
+enum SSHTerminalScrollCoalescing {
+    static func encodeRepeated(_ count: Int, encode: () -> Data) -> Data {
+        guard count > 0 else { return Data() }
+        var bytes = Data()
+        bytes.reserveCapacity(count * 8)
+        for _ in 0..<count {
+            bytes.append(encode())
+        }
+        return bytes
     }
 }
 
