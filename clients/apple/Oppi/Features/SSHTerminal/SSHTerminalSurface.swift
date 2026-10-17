@@ -183,6 +183,8 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
         }
         setNeedsLayout()
         sceneActive = window?.windowScene?.activationState == .foregroundActive
+        needsPaint = true
+        needsFullPaint = true
         startDisplayLinkIfNeeded()
         let center = NotificationCenter.default
         center.removeObserver(self, name: UIApplication.didBecomeActiveNotification, object: nil)
@@ -193,6 +195,8 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
 
     @objc private func sceneBecameActive() {
         sceneActive = true
+        needsPaint = true
+        needsFullPaint = true
         startDisplayLinkIfNeeded()
     }
 
@@ -266,20 +270,19 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
     }
 
     /// One display-link tick: snapshot the engine and encode the complete grid
-    /// when it changed. Skips when off-window, inactive, or every instance
-    /// buffer is still in flight.
-    func presentIfNeeded() {
-        guard window != nil, sceneActive, bounds.width > 0, bounds.height > 0 else { return }
-        guard let renderer = rendererIfReady() else { return }
-        if renderer.inFlightCount >= SSHTerminalMetalRenderer.ringSize {
-            _ = channel.engine.frame()
-            needsFullPaint = true
-            return
-        }
+    /// when it changed. Returns true only when the gate can be consumed: a
+    /// frame was submitted, or the snapshot had nothing new to draw. Every
+    /// other return leaves `needsPaint` set; paths that called `frame()` but
+    /// did not present also leave `needsFullPaint` so the cached grid retries.
+    @discardableResult
+    func presentIfNeeded() -> Bool {
+        guard window != nil, sceneActive, bounds.width > 0, bounds.height > 0 else { return false }
+        guard let renderer = rendererIfReady() else { return false }
+        if renderer.inFlightCount >= SSHTerminalMetalRenderer.ringSize { return false }
+        guard let metalLayer else { return false }
         let frame = channel.engine.frame()
         let shouldDraw = needsFullPaint || !frame.rebuiltRows.isEmpty
-        needsFullPaint = false
-        guard shouldDraw, let metalLayer else { return }
+        if !shouldDraw { return true }
         metalLayer.device = renderer.device
         let scale = max(traitCollection.displayScale, 1)
         if metalLayer.drawableSize.width < 1 {
@@ -288,13 +291,18 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
         }
         guard let drawable = metalLayer.nextDrawable() else {
             needsFullPaint = true
-            return
+            return false
         }
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         foreground.withAlphaComponent(0.65).getRed(&r, green: &g, blue: &b, alpha: &a)
         let cursor = SIMD4<Float>(Float(r), Float(g), Float(b), Float(a))
         let cost = renderer.encode(frame: frame, cursorColor: cursor, drawable: drawable)
-        if !cost.submitted { needsFullPaint = true }
+        if cost.submitted {
+            needsFullPaint = false
+            return true
+        }
+        needsFullPaint = true
+        return false
     }
 
     private func rendererIfReady() -> SSHTerminalMetalRenderer? {
@@ -657,10 +665,14 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
             guard let view else { return }
             // A hold has a one-second deadline even if no more bytes arrive.
             let changes = view.channel.engine.changeCount
+            // Consume the gate only after presentIfNeeded submits (or finds
+            // nothing to draw). A failed present leaves needsPaint set so an
+            // idle prompt still retries without a new byte.
             if view.needsPaint || view.paintedChangeCount != changes || view.channel.engine.renderHeld {
-                view.needsPaint = false
-                view.paintedChangeCount = changes
-                view.presentIfNeeded()
+                if view.presentIfNeeded() {
+                    view.needsPaint = false
+                    view.paintedChangeCount = changes
+                }
             }
         }
     }

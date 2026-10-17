@@ -64,9 +64,90 @@ struct SSHTerminalMetalTests {
         shot = try harness.render()
         #expect(!shot.hasInk(column: 0, row: 0), "invisible draws no ink")
 
+        harness.engine.receive(Data("\u{1b}[2J\u{1b}[H\u{1b}[8;4m \u{1b}[0m".utf8))
+        shot = try harness.render()
+        #expect(!shot.hasInk(column: 0, row: 0), "invisible plus underline draws no ink")
+
         harness.engine.receive(Data("\u{1b}[2J\u{1b}[H\u{E0B0}".utf8))
         shot = try harness.render()
         #expect(shot.hasInk(column: 0, row: 0), "Nerd Font symbol has ink")
+    }
+
+    @Test func cursorOutlineBlendsOverAColouredCell() throws {
+        let harness = try Harness(columns: 4, rows: 2)
+        defer { harness.finish() }
+        harness.engine.setColors(
+            foreground: .init(r: 255, g: 255, b: 255),
+            background: .init(r: 0, g: 0, b: 16),
+            dark: true
+        )
+        harness.engine.receive(Data("\u{1b}[?25h\u{1b}[1 q\u{1b}[2J\u{1b}[H\u{1b}[48;2;200;10;10m \u{1b}[0m\u{1b}[H".utf8))
+        let shot = try harness.render()
+        let p = shot.pixel(column: 0, row: 0, dx: 0.5, dy: 0.05)
+        // Source-over white 0.65 on rgb(200,10,10) is ~236,169,169, not raw white or raw red.
+        #expect(Int(p.r) > 210 && Int(p.r) < 250, "cursor red \(p)")
+        #expect(Int(p.g) > 80 && Int(p.g) < 220, "cursor green \(p)")
+        #expect(!(p.r > 240 && p.g > 240 && p.b > 240), "cursor must not replace with raw white")
+    }
+
+    @Test func atlasOverflowResetsAndRepacksOrRefuses() throws {
+        let metrics = SSHTerminalCellMetrics(
+            font: .monospacedSystemFont(ofSize: 13, weight: .regular),
+            boldFont: .monospacedSystemFont(ofSize: 13, weight: .bold)
+        )
+        let cellW = Int(metrics.cellSize.width.rounded(.up))
+        let cellH = Int(metrics.cellSize.height.rounded(.up))
+        let pipeline = try SSHTerminalMetalPipeline.shared()
+
+        let tight = try SSHTerminalMetalRenderer(
+            pipeline: pipeline, metrics: metrics, scale: 1, atlasSide: cellW * 2
+        )
+        let engine = try SSHTerminalEngine(geometry: .init(columns: 4, rows: 1, cellWidth: 8, cellHeight: 17)) { _ in }
+        engine.setColors(foreground: .init(r: 255, g: 255, b: 255), background: .init(r: 0, g: 0, b: 16), dark: true)
+        engine.receive(Data("\u{1b}[?25l\u{1b}[2J\u{1b}[HAB".utf8))
+        let first = try render(engine: engine, renderer: tight, metrics: metrics)
+        #expect(first.shot.hasInk(column: 0, row: 0))
+        #expect(first.shot.hasInk(column: 1, row: 0))
+
+        engine.receive(Data("\u{1b}[2J\u{1b}[HCD".utf8))
+        let second = try render(engine: engine, renderer: tight, metrics: metrics)
+        #expect(second.cost.submitted, "reset mid-pack still presents the complete new frame")
+        #expect(second.shot.hasInk(column: 0, row: 0), "first packed cell after reset")
+        #expect(second.shot.hasInk(column: 1, row: 0), "last packed cell after reset")
+
+        let tiny = try SSHTerminalMetalRenderer(
+            pipeline: pipeline, metrics: metrics, scale: 1, atlasSide: max(1, min(cellW, cellH) / 2)
+        )
+        engine.receive(Data("\u{1b}[2J\u{1b}[HX".utf8))
+        let frame = engine.frame()
+        let width = max(1, Int(metrics.cellSize.width * 4))
+        let height = max(1, Int(metrics.cellSize.height))
+        let texture = try #require(tiny.makeOffscreenTexture(width: width, height: height))
+        let refused = tiny.encodeOffscreen(
+            frame: frame, cursorColor: SIMD4(1, 1, 1, 0.65), texture: texture, waitUntilCompleted: true
+        )
+        #expect(!refused.submitted, "a glyph larger than the atlas is not presented")
+    }
+
+    private func render(
+        engine: SSHTerminalEngine,
+        renderer: SSHTerminalMetalRenderer,
+        metrics: SSHTerminalCellMetrics
+    ) throws -> (shot: Shot, cost: SSHTerminalMetalFrameCost) {
+        let frame = engine.frame()
+        let width = max(1, Int((metrics.cellSize.width * CGFloat(max(1, frame.rows.first?.count ?? 1))).rounded()))
+        let height = max(1, Int((metrics.cellSize.height * CGFloat(max(1, frame.rows.count))).rounded()))
+        let texture = try #require(renderer.makeOffscreenTexture(width: width, height: height))
+        let cost = renderer.encodeOffscreen(
+            frame: frame, cursorColor: SIMD4(1, 1, 1, 0.65), texture: texture, waitUntilCompleted: true
+        )
+        guard cost.completed else { throw TestError.encodeFailed(cost.errorDescription) }
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        bytes.withUnsafeMutableBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            texture.getBytes(base, bytesPerRow: width * 4, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
+        }
+        return (Shot(width: width, height: height, bytes: bytes, cell: metrics.cellSize), cost)
     }
 
     @Test func inFlightSlotIsNotRewrittenUntilCompletion() throws {

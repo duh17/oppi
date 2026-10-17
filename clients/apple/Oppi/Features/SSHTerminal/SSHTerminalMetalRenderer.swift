@@ -45,6 +45,7 @@ final class SSHTerminalMetalPipeline: @unchecked Sendable {
     let device: MTLDevice
     let queue: MTLCommandQueue
     let solid: MTLRenderPipelineState
+    let overlay: MTLRenderPipelineState
     let glyph: MTLRenderPipelineState
 
     private static let lock = NSLock()
@@ -136,22 +137,23 @@ final class SSHTerminalMetalPipeline: @unchecked Sendable {
         self.device = device
         self.queue = queue
         self.solid = try pipeline(solidFn, blending: false)
+        self.overlay = try pipeline(solidFn, blending: true)
         self.glyph = try pipeline(glyphFn, blending: true)
     }
 }
 
 /// Core Text glyphs rasterized once at device scale, keyed by grapheme + face.
-/// Grows by packing into unused atlas space; a full atlas resets when no
-/// command buffer is sampling it.
+/// CPU packing only: new ink reaches the private atlas through a blit in the
+/// same command buffer as the draw, so a later frame cannot CPU-write texels
+/// an earlier buffer is still sampling.
 final class SSHTerminalGlyphAtlas {
     static let side = 2048
     let texture: MTLTexture
+    let side: Int
     private var map = [GlyphKey: SIMD4<Float>]()
     private var x = 0
     private var y = 0
     private var rowHeight = 0
-    private(set) var pendingReset = false
-    private let side: Int
 
     struct GlyphKey: Hashable {
         var face: UInt8
@@ -159,94 +161,86 @@ final class SSHTerminalGlyphAtlas {
         var cluster: String
     }
 
-    init?(device: MTLDevice, side: Int = SSHTerminalGlyphAtlas.side) {
-        self.side = side
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .bgra8Unorm, width: side, height: side, mipmapped: false
-        )
-        descriptor.usage = [.shaderRead]
-        descriptor.storageMode = .shared
-        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
-        self.texture = texture
-        clear()
+    /// One new glyph to blit from a ring-slot staging texture into `texture`.
+    struct Upload {
+        var bytes: [UInt8]
+        var width: Int
+        var height: Int
+        var destX: Int
+        var destY: Int
+        var stagingX: Int = 0
+        var stagingY: Int = 0
+        var uv: SIMD4<Float>
     }
 
-    func reset() {
+    init?(device: MTLDevice, side: Int = SSHTerminalGlyphAtlas.side) {
+        self.side = max(1, side)
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm, width: self.side, height: self.side, mipmapped: false
+        )
+        // Blit destination + sample. Private: CPU never calls replace on it.
+        descriptor.usage = [.shaderRead, .shaderWrite]
+        descriptor.storageMode = .private
+        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+        self.texture = texture
+    }
+
+    func resetPacking() {
         map.removeAll(keepingCapacity: true)
         x = 0
         y = 0
         rowHeight = 0
-        pendingReset = false
-        clear()
     }
 
-    func markNeedsReset() {
-        pendingReset = true
+    func key(cell: SSHTerminalCell, face: UInt8) -> GlyphKey {
+        GlyphKey(face: face, scalar: cell.cluster == nil ? cell.scalar : 0, cluster: cell.cluster ?? "")
     }
 
-    func uv(
+    func cachedUV(_ key: GlyphKey) -> SIMD4<Float>? { map[key] }
+
+    /// Place and rasterize a glyph the map does not yet have. Nil if it cannot
+    /// fit in remaining space (caller may reset packing and try the whole frame).
+    func place(
         cell: SSHTerminalCell,
         face: UInt8,
         font: UIFont,
         cellSize: CGSize,
-        scale: CGFloat,
-        inFlight: Bool
-    ) -> SIMD4<Float>? {
-        let key = GlyphKey(face: face, scalar: cell.cluster == nil ? cell.scalar : 0, cluster: cell.cluster ?? "")
-        if let uv = map[key] { return uv }
+        scale: CGFloat
+    ) -> Upload? {
+        let key = key(cell: cell, face: face)
         let columns = max(1, cell.width)
         let pixelWidth = max(1, Int(ceil(cellSize.width * CGFloat(columns) * scale)))
         let pixelHeight = max(1, Int(ceil(cellSize.height * scale)))
-        if pixelWidth > side || pixelHeight > side { return nil }
-        if x + pixelWidth > side {
-            x = 0
-            y += rowHeight
-            rowHeight = 0
-        }
-        if y + pixelHeight > side {
-            // Do not wipe texels a command buffer is still sampling.
-            if inFlight {
-                pendingReset = true
-                return nil
-            }
-            reset()
-            if pixelWidth > side || pixelHeight > side { return nil }
-        }
+        guard let origin = placeRect(width: pixelWidth, height: pixelHeight) else { return nil }
         guard let bytes = Self.rasterize(
             text: cell.displayText, font: font,
             width: pixelWidth, height: pixelHeight,
             cellSize: cellSize, columns: columns, scale: scale
         ) else { return nil }
-        texture.replace(
-            region: MTLRegionMake2D(x, y, pixelWidth, pixelHeight),
-            mipmapLevel: 0,
-            withBytes: bytes,
-            bytesPerRow: pixelWidth * 4
-        )
         let s = Float(side)
         let uv = SIMD4<Float>(
-            Float(x) / s, Float(y) / s,
-            Float(x + pixelWidth) / s, Float(y + pixelHeight) / s
+            Float(origin.x) / s, Float(origin.y) / s,
+            Float(origin.x + pixelWidth) / s, Float(origin.y + pixelHeight) / s
         )
         map[key] = uv
-        x += pixelWidth
-        rowHeight = max(rowHeight, pixelHeight)
-        return uv
+        return Upload(
+            bytes: bytes, width: pixelWidth, height: pixelHeight,
+            destX: origin.x, destY: origin.y, uv: uv
+        )
     }
 
-    private func clear() {
-        let row = [UInt8](repeating: 0, count: side * 4)
-        for rowIndex in 0..<side {
-            row.withUnsafeBytes { raw in
-                guard let base = raw.baseAddress else { return }
-                texture.replace(
-                    region: MTLRegionMake2D(0, rowIndex, side, 1),
-                    mipmapLevel: 0,
-                    withBytes: base,
-                    bytesPerRow: side * 4
-                )
-            }
+    private func placeRect(width: Int, height: Int) -> (x: Int, y: Int)? {
+        if width > side || height > side { return nil }
+        if x + width > side {
+            x = 0
+            y += rowHeight
+            rowHeight = 0
         }
+        if y + height > side { return nil }
+        let origin = (x, y)
+        x += width
+        rowHeight = max(rowHeight, height)
+        return origin
     }
 
     /// Same draw as the old CPU painter: white ink at the cell origin, clipped
@@ -309,6 +303,7 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
     let device: MTLDevice
     private let queue: MTLCommandQueue
     private let solid: MTLRenderPipelineState
+    private let overlay: MTLRenderPipelineState
     private let glyph: MTLRenderPipelineState
     private let atlas: SSHTerminalGlyphAtlas
     private let lock = NSLock()
@@ -321,6 +316,9 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         var buffer: MTLBuffer
         var capacity: Int
         var inFlight: Bool
+        /// Shared staging for this slot's glyph blits. CPU-written only while
+        /// the slot is free, then sampled by that same command buffer.
+        var staging: MTLTexture?
     }
 
     enum RendererError: Error {
@@ -328,14 +326,22 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         case noAtlas
     }
 
-    init(pipeline: SSHTerminalMetalPipeline, metrics: SSHTerminalCellMetrics, scale: CGFloat) throws {
+    init(
+        pipeline: SSHTerminalMetalPipeline,
+        metrics: SSHTerminalCellMetrics,
+        scale: CGFloat,
+        atlasSide: Int = SSHTerminalGlyphAtlas.side
+    ) throws {
         self.device = pipeline.device
         self.queue = pipeline.queue
         self.solid = pipeline.solid
+        self.overlay = pipeline.overlay
         self.glyph = pipeline.glyph
         self.metrics = metrics
         self.scale = max(scale, 1)
-        guard let atlas = SSHTerminalGlyphAtlas(device: pipeline.device) else { throw RendererError.noAtlas }
+        guard let atlas = SSHTerminalGlyphAtlas(device: pipeline.device, side: atlasSide) else {
+            throw RendererError.noAtlas
+        }
         self.atlas = atlas
         var built: [Slot] = []
         built.reserveCapacity(Self.ringSize)
@@ -345,7 +351,7 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
                 length: initial * MemoryLayout<CellInstance>.stride,
                 options: .storageModeShared
             ) else { throw RendererError.noBuffer }
-            built.append(Slot(buffer: buffer, capacity: initial, inFlight: false))
+            built.append(Slot(buffer: buffer, capacity: initial, inFlight: false, staging: nil))
         }
         self.slots = built
     }
@@ -371,11 +377,9 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         self.metrics = metrics
         self.scale = scale
         faces.removeAll()
-        if inFlightCount == 0 {
-            atlas.reset()
-        } else {
-            atlas.markNeedsReset()
-        }
+        // Next encode re-packs and blits every glyph; prior command buffers
+        // keep sampling the old UVs until they complete.
+        atlas.resetPacking()
     }
 
     func encode(
@@ -429,26 +433,59 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         let failed = SSHTerminalMetalFrameCost(
             encodeNanos: 0, submitted: false, completed: false, status: .error, errorDescription: nil
         )
-        if atlas.pendingReset {
-            if inFlightCount > 0 {
-                var miss = failed
-                miss.errorDescription = "atlas reset waiting for in-flight frames"
-                return miss
-            }
-            atlas.reset()
-        }
         let encodeStart = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
-        let instances = pack(frame: frame, cursorColor: cursorColor)
-        guard let slotIndex = bind(instances.all) else {
+        guard let packed = pack(frame: frame, cursorColor: cursorColor) else {
+            var miss = failed
+            miss.errorDescription = "glyph atlas cannot fit this frame"
+            return miss
+        }
+        guard let slotIndex = bind(packed.all) else {
             var miss = failed
             miss.errorDescription = "no free Metal instance slot"
             return miss
         }
+        var uploads = packed.uploads
+        let staging: MTLTexture?
+        if uploads.isEmpty {
+            staging = nil
+        } else if let prepared = prepareStaging(slot: slotIndex, uploads: &uploads) {
+            staging = prepared
+        } else {
+            releaseSlot(slotIndex)
+            var miss = failed
+            miss.errorDescription = "no glyph staging texture"
+            return miss
+        }
+        markInFlight(slotIndex)
         guard let commandBuffer = queue.makeCommandBuffer() else {
             releaseSlot(slotIndex)
             var miss = failed
             miss.errorDescription = "makeCommandBuffer returned nil"
             return miss
+        }
+        if let staging, !uploads.isEmpty {
+            guard let blit = commandBuffer.makeBlitCommandEncoder() else {
+                releaseSlot(slotIndex)
+                var miss = failed
+                miss.errorDescription = "makeBlitCommandEncoder returned nil"
+                return miss
+            }
+            // Same queue as prior atlas samples: the blit waits for those reads,
+            // then this frame's draw samples the new texels.
+            for upload in uploads {
+                blit.copy(
+                    from: staging,
+                    sourceSlice: 0,
+                    sourceLevel: 0,
+                    sourceOrigin: MTLOrigin(x: upload.stagingX, y: upload.stagingY, z: 0),
+                    sourceSize: MTLSize(width: upload.width, height: upload.height, depth: 1),
+                    to: atlas.texture,
+                    destinationSlice: 0,
+                    destinationLevel: 0,
+                    destinationOrigin: MTLOrigin(x: upload.destX, y: upload.destY, z: 0)
+                )
+            }
+            blit.endEncoding()
         }
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = target
@@ -467,7 +504,6 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             return miss
         }
         var uniforms = Uniforms(viewportX: Float(target.width), viewportY: Float(target.height))
-        let packed = instances
         let backgrounds = packed.backgrounds
         let glyphs = packed.glyphs
         let overlays = packed.overlays
@@ -490,7 +526,7 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: glyphs.count)
         }
         if !overlays.isEmpty {
-            encoder.setRenderPipelineState(solid)
+            encoder.setRenderPipelineState(overlay)
             encoder.setVertexBuffer(
                 slots[slotIndex].buffer,
                 offset: (backgrounds.count + glyphs.count) * stride,
@@ -532,18 +568,25 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         var backgrounds: [CellInstance]
         var glyphs: [CellInstance]
         var overlays: [CellInstance]
+        var uploads: [SSHTerminalGlyphAtlas.Upload]
         var all: [CellInstance] { backgrounds + glyphs + overlays }
     }
 
-    private func pack(frame: SSHTerminalFrame, cursorColor: SIMD4<Float>) -> PackedInstances {
+    private func pack(frame: SSHTerminalFrame, cursorColor: SIMD4<Float>) -> PackedInstances? {
+        if let packed = packOnce(frame: frame, cursorColor: cursorColor) { return packed }
+        atlas.resetPacking()
+        return packOnce(frame: frame, cursorColor: cursorColor)
+    }
+
+    private func packOnce(frame: SSHTerminalFrame, cursorColor: SIMD4<Float>) -> PackedInstances? {
         let cell = metrics.cellSize
         let scale = scale
         let cellW = Float(cell.width * scale)
         let cellH = Float(cell.height * scale)
-        let inFlight = inFlightCount > 0
         var backgrounds = [CellInstance]()
         var glyphs = [CellInstance]()
         var overlays = [CellInstance]()
+        var uploads = [SSHTerminalGlyphAtlas.Upload]()
         backgrounds.reserveCapacity(max(1, frame.rows.count * (frame.rows.first?.count ?? 0)))
         let defaultBg = Self.rgba(frame.background)
         for (y, row) in frame.rows.enumerated() {
@@ -555,37 +598,97 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
                 if colors.bg != defaultBg {
                     backgrounds.append(CellInstance(origin: origin, size: size, color: colors.bg, uv: .zero, flags: 0))
                 }
+                // Invisible cells keep their background and draw nothing else,
+                // matching the old painter's early return.
+                guard !item.style.invisible else { continue }
+                var fg = colors.fg
+                if item.style.faint { fg = Self.premultiply(fg, alpha: 0.5) }
                 if item.style.underline != 0 {
                     let yOff = underlineY(scale: scale)
                     overlays.append(CellInstance(
                         origin: SIMD2(origin.x, origin.y + yOff.y),
                         size: SIMD2(size.x, yOff.h),
-                        color: colors.fg, uv: .zero, flags: 0
+                        color: fg, uv: .zero, flags: 0
                     ))
                 }
                 if item.style.strikethrough {
                     overlays.append(CellInstance(
                         origin: SIMD2(origin.x, origin.y + cellH * 0.5 - 1),
                         size: SIMD2(size.x, max(1, Float(scale))),
-                        color: colors.fg, uv: .zero, flags: 0
+                        color: fg, uv: .zero, flags: 0
                     ))
                 }
-                guard !item.style.invisible, item.hasInk else { continue }
+                guard item.hasInk else { continue }
                 let face = face(bold: item.style.bold, italic: item.style.italic, text: item)
-                if let uv = atlas.uv(
+                let key = atlas.key(cell: item, face: face.key)
+                let uv: SIMD4<Float>
+                if let cached = atlas.cachedUV(key) {
+                    uv = cached
+                } else if let upload = atlas.place(
                     cell: item, face: face.key, font: face.font,
-                    cellSize: cell, scale: scale, inFlight: inFlight
+                    cellSize: cell, scale: scale
                 ) {
-                    var fg = colors.fg
-                    if item.style.faint { fg.w *= 0.5; fg.x *= 0.5; fg.y *= 0.5; fg.z *= 0.5 }
-                    glyphs.append(CellInstance(origin: origin, size: size, color: fg, uv: uv, flags: Self.glyphFlag))
+                    uploads.append(upload)
+                    uv = upload.uv
+                } else {
+                    return nil
                 }
+                glyphs.append(CellInstance(origin: origin, size: size, color: fg, uv: uv, flags: Self.glyphFlag))
             }
         }
-        if let cursor = cursorQuad(frame: frame, color: cursorColor, cellW: cellW, cellH: cellH) {
+        if let cursor = cursorQuad(
+            frame: frame, color: Self.premultiply(cursorColor), cellW: cellW, cellH: cellH
+        ) {
             overlays.append(contentsOf: cursor)
         }
-        return PackedInstances(backgrounds: backgrounds, glyphs: glyphs, overlays: overlays)
+        return PackedInstances(backgrounds: backgrounds, glyphs: glyphs, overlays: overlays, uploads: uploads)
+    }
+
+    private func prepareStaging(slot: Int, uploads: inout [SSHTerminalGlyphAtlas.Upload]) -> MTLTexture? {
+        var x = 0, y = 0, rowHeight = 0, stagedWidth = 1, stagedHeight = 1
+        let shelf = max(uploads.map(\.width).max() ?? 1, 1)
+        for i in uploads.indices {
+            if x + uploads[i].width > shelf {
+                x = 0
+                y += rowHeight
+                rowHeight = 0
+            }
+            uploads[i].stagingX = x
+            uploads[i].stagingY = y
+            x += uploads[i].width
+            rowHeight = max(rowHeight, uploads[i].height)
+            stagedWidth = max(stagedWidth, x)
+            stagedHeight = max(stagedHeight, y + rowHeight)
+        }
+        lock.lock()
+        defer { lock.unlock() }
+        guard slots.indices.contains(slot) else { return nil }
+        let staging: MTLTexture
+        if let existing = slots[slot].staging,
+           existing.width >= stagedWidth, existing.height >= stagedHeight {
+            staging = existing
+        } else {
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: .bgra8Unorm, width: stagedWidth, height: stagedHeight, mipmapped: false
+            )
+            descriptor.usage = [.shaderRead]
+            descriptor.storageMode = .shared
+            guard let created = device.makeTexture(descriptor: descriptor) else { return nil }
+            slots[slot].staging = created
+            staging = created
+        }
+        for upload in uploads {
+            upload.bytes.withUnsafeBytes { raw in
+                guard let base = raw.baseAddress else { return }
+                staging.replace(
+                    region: MTLRegionMake2D(upload.stagingX, upload.stagingY, upload.width, upload.height),
+                    mipmapLevel: 0,
+                    withBytes: base,
+                    bytesPerRow: upload.width * 4
+                )
+            }
+        }
+        return staging
     }
 
     private func cursorQuad(
@@ -675,8 +778,15 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
                 slots[index].buffer.contents().copyMemory(from: base, byteCount: raw.count)
             }
         }
-        slots[index].inFlight = true
         return index
+    }
+
+    private func markInFlight(_ index: Int) {
+        lock.lock()
+        if slots.indices.contains(index) {
+            slots[index].inFlight = true
+        }
+        lock.unlock()
     }
 
     private func releaseSlot(_ index: Int) {
@@ -694,7 +804,12 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
     }
 
     static func rgba(_ rgb: GhosttyColorRgb, alpha: Float = 1) -> SIMD4<Float> {
-        SIMD4(Float(rgb.r) / 255, Float(rgb.g) / 255, Float(rgb.b) / 255, alpha)
+        premultiply(SIMD4(Float(rgb.r) / 255, Float(rgb.g) / 255, Float(rgb.b) / 255, 1), alpha: alpha)
+    }
+
+    static func premultiply(_ color: SIMD4<Float>, alpha: Float = 1) -> SIMD4<Float> {
+        let a = color.w * alpha
+        return SIMD4(color.x * a, color.y * a, color.z * a, a)
     }
 }
 
