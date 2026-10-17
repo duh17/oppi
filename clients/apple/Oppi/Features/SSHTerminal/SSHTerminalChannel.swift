@@ -178,6 +178,12 @@ final class SSHTerminalChannel {
     private(set) var copies = 0
     /// Characters in the latest remote copy.
     private(set) var lastCopyLength = 0
+    /// The registry closed this terminal because Oppi stayed in the background
+    /// past the grace period. A terminal on screen reconnects on return.
+    private(set) var closedForBackground = false
+    /// The connection's cancellation, so a caller that must finish before the
+    /// process suspends can wait for it.
+    @ObservationIgnored private(set) var teardown: Task<Void, Never>?
 
     /// A path change is a hint, not proof the SSH stream failed: one SSH round
     /// trip decides. A live connection clears the notice; a dead one closes
@@ -415,6 +421,14 @@ final class SSHTerminalChannel {
         }
     }
 
+    /// Close rather than silently losing bytes while the process is suspended.
+    /// Host tmux or Herdr preserves the remote work.
+    func closeForBackground() {
+        guard connected else { return }
+        closedForBackground = true
+        close(reason: "Oppi went to the background.")
+    }
+
     func close(reason: String) {
         connected = false
         connecting = false
@@ -426,7 +440,7 @@ final class SSHTerminalChannel {
         pump = nil
         resizeTask?.cancel()
         resizeTask = nil
-        if let connection { Task { await connection.cancel() } }
+        if let connection { teardown = Task { await connection.cancel() } }
         connection = nil
     }
 

@@ -3,6 +3,7 @@ import Foundation
 import LocalAuthentication
 import NIOSSH
 import Security
+import Synchronization
 
 /// A dedicated SSH user identity, unrelated to Oppi's pairing/device key.
 struct SSHIdentity: Sendable {
@@ -138,29 +139,43 @@ protocol SSHKeyPresenceContext: Sendable {
     func invalidate()
 }
 
+/// Approves through `SSHApprovalCache`: a sign-in the person approved within
+/// the cache's window signs again without a prompt.
 private final class DeviceSSHKeyPresenceContext: SSHKeyPresenceContext, @unchecked Sendable {
-    private let context = LAContext()
+    private let approvals: SSHApprovalCache
+    private let approved = Mutex<SSHIdentity?>(nil)
 
-    init() {
-        context.localizedReason = "Sign in to your SSH host"
-        context.touchIDAuthenticationAllowableReuseDuration = 0
+    init(approvals: SSHApprovalCache = .shared) {
+        self.approvals = approvals
     }
 
     func evaluate() async throws {
-        #if !targetEnvironment(simulator)
-        do {
-            try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: context.localizedReason)
-        } catch {
-            throw SSHIdentityKeyStoreError.authenticationFailed(error.localizedDescription)
-        }
-        #endif
-        // Reuse only this attempt's approval for the immediately following
-        // signature. Never let NIOSSH's synchronous signer present another UI.
-        context.touchIDAuthenticationAllowableReuseDuration = 30
-        context.interactionNotAllowed = true
+        let identity = try await approvals.approved(
+            for: .deviceKeySigning,
+            evaluate: { context in
+                try await SSHApprovalCache.evaluateDeviceOwner(context) {
+                    SSHIdentityKeyStoreError.authenticationFailed($0.localizedDescription)
+                }
+                // The signature right after this approval. Never let NIOSSH's
+                // synchronous signer present another UI: `interactionNotAllowed`
+                // stays set.
+                context.touchIDAuthenticationAllowableReuseDuration = 30
+            },
+            use: { try Self.signingIdentity(using: $0) }
+        )
+        approved.withLock { $0 = identity }
     }
 
     func identity() throws -> SSHIdentity {
+        guard let identity = approved.withLock({ $0 }) else { throw SSHIdentityKeyStoreError.authenticationExpired }
+        return identity
+    }
+
+    /// The approval cache dismisses its own prompt when the attempt is
+    /// cancelled. A cached approval is not this attempt's to cancel.
+    func invalidate() {}
+
+    private static func signingIdentity(using context: LAContext) throws -> SSHIdentity {
         let identity = try SSHIdentityKeyStore.loadOrCreate(authenticationContext: context)
         #if !targetEnvironment(simulator)
         // Prove the authenticated context can sign noninteractively before any
@@ -172,8 +187,6 @@ private final class DeviceSSHKeyPresenceContext: SSHKeyPresenceContext, @uncheck
         #endif
         return identity
     }
-
-    func invalidate() { context.invalidate() }
 }
 
 /// Physical devices fail closed without the enclave. The simulator uses an

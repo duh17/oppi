@@ -851,6 +851,27 @@ struct SSHTerminalTests {
         #expect(await fixture.sentBytes.isEmpty)
         channel.close(reason: "done")
     }
+
+    @Test func leavingTheScreenKeepsTheChannelOpenAndItsGrid() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        channel.event(.data(Data("kept-grid".utf8)))
+        let first = try MountedTerminalTestView(SSHTerminalView(channel: channel, reconnect: {}, editHost: {}))
+        await first.update()
+        first.dismiss()
+        await first.update()
+        #expect(channel.connected)
+        // The same channel and grid come back on the next screen.
+        let second = try MountedTerminalTestView(SSHTerminalView(channel: channel, reconnect: {}, editHost: {}))
+        defer { second.dismiss(); channel.close(reason: "done") }
+        await second.update()
+        #expect(channel.connected)
+        #expect(channel.engine.frame().rows[0].prefix(9).map(\.text).joined() == "kept-grid")
+        channel.send(Data("x".utf8))
+        var bytes = fixture.bytes.makeAsyncIterator()
+        #expect(await bytes.next() == Data("x".utf8))
+    }
 }
 
 @MainActor

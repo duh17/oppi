@@ -5,7 +5,9 @@ import Security
 /// The three Keychain operations the SSH profile store is allowed to perform.
 /// Callers name an account. Nothing here lists or matches other items.
 protocol SSHCredentialStoring: Sendable {
-    func load(account: String, requirePresence: Bool) throws -> Data?
+    /// `authenticationContext` is a context the person already approved. With
+    /// `requirePresence` and no context, the read asks for approval itself.
+    func load(account: String, requirePresence: Bool, authenticationContext: LAContext?) throws -> Data?
     func save(_ data: Data, account: String, requirePresence: Bool) throws
     func delete(account: String) throws
 }
@@ -25,16 +27,20 @@ struct SSHKeychain: Sendable {
          kSecAttrSynchronizable as String: false]
     }
 
-    func load(account: String, requirePresence: Bool = false) throws -> Data? {
+    func load(account: String, requirePresence: Bool = false, authenticationContext: LAContext? = nil) throws -> Data? {
         var query = query(account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         if requirePresence {
-            // A fresh context for every connect prevents cached Face ID approval
-            // from becoming silent password access on a later connection.
-            let context = LAContext()
-            context.localizedReason = "Sign in to your SSH host"
-            context.touchIDAuthenticationAllowableReuseDuration = 0
+            // Without an approved context, a fresh one asks every time: system
+            // biometric reuse must not become silent password access. Reuse is
+            // only what `SSHApprovalCache` keeps for this app's own approval.
+            let context = authenticationContext ?? {
+                let fresh = LAContext()
+                fresh.localizedReason = "Sign in to your SSH host"
+                fresh.touchIDAuthenticationAllowableReuseDuration = 0
+                return fresh
+            }()
             query[kSecUseAuthenticationContext as String] = context
         }
         var result: CFTypeRef?

@@ -28,8 +28,10 @@ struct SSHTerminalView: View {
     /// Focus the chat bar once the raw keyboard is down and the bar is mounted.
     @State private var focusComposerAfterRaw = false
     @State private var topBarHidden = false
-    /// The background closed a live terminal; returning reconnects it.
+    /// The background closed this terminal while it was on screen; returning
+    /// reconnects it.
     @State private var reconnectOnReturn = false
+    @State private var isOnScreen = false
     /// Floats over the grid: a row in the stack would resize the remote terminal.
     @State private var copyNotice: String?
     /// Which notice floats over the grid, and what the person folded away.
@@ -255,12 +257,19 @@ struct SSHTerminalView: View {
         // row count and resizes the remote terminal. Hide Bar and the top
         // handle are the only switches. A broken connection always shows it.
         .toolbarVisibility(topBarHidden && channel.connected ? .hidden : .visible, for: .navigationBar)
-        .task { await channel.watchNetwork() }
+        // Leaving the screen does not close the terminal: `SSHTerminalRegistry`
+        // owns the channel, and Disconnect or the host's lifecycle ends it.
+        .onAppear { isOnScreen = true }
         .onDisappear {
+            isOnScreen = false
             pasteNoticeTask?.cancel()
-            channel.close(reason: "Terminal dismissed.")
         }
-        .onChange(of: scenePhase) { _, phase in scenePhaseChanged(phase) }
+        .onChange(of: channel.closedForBackground) { _, closed in
+            if closed, isOnScreen { reconnectOnReturn = true }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { reconnectAfterReturn() }
+        }
         // App Lock's cover can come and go (cancel, leave again) before the
         // unlock that lets the reconnect run, so the flag waits for it here.
         .onChange(of: AppLockService.shared.isLocked) { _, locked in
@@ -324,28 +333,14 @@ struct SSHTerminalView: View {
         keyboardRequest += 1
     }
 
-    private func scenePhaseChanged(_ phase: ScenePhase) {
-        switch phase {
-        case .background:
-            // Close rather than silently losing bytes while suspended.
-            // Host tmux or Herdr preserves the remote work.
-            guard channel.connected else { return }
-            reconnectOnReturn = true
-            channel.close(reason: "Oppi went to the background.")
-        case .active:
-            reconnectAfterReturn()
-        default:
-            break
-        }
-    }
-
     private func showCopyNotice() {
         let count = channel.lastCopyLength
         copyNotice = "Copied \(count) \(count == 1 ? "character" : "characters")"
     }
 
-    /// A fresh sign-in, with the same Face ID or password approval as
-    /// Reconnect. The flag stays set until App Lock no longer covers Oppi.
+    /// A fresh sign-in, with the same approval as Reconnect: no prompt when the
+    /// person approved within the last few minutes. The flag stays set until
+    /// App Lock no longer covers Oppi.
     private func reconnectAfterReturn() {
         guard reconnectOnReturn, scenePhase == .active, !AppLockService.shared.requiresUnlock() else { return }
         reconnectOnReturn = false

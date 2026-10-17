@@ -185,6 +185,7 @@ struct SSHTerminalSetupView: View {
         do {
             session.cancel()
             try SSHTerminalProfileStore().delete(id: profile.id)
+            SSHTerminalRegistry.shared.close(profile.id, reason: "The host was deleted.")
             navigator.finish()
         } catch {
             session.failure = error.localizedDescription

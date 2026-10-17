@@ -236,7 +236,7 @@ private final class RecordingKeychain: SSHCredentialStoring, @unchecked Sendable
     var items: [String: Data] = [:]
     var calls: [Call] = []
 
-    func load(account: String, requirePresence: Bool) throws -> Data? {
+    func load(account: String, requirePresence: Bool, authenticationContext: LAContext?) throws -> Data? {
         calls.append(Call(kind: .load, account: account, requirePresence: requirePresence))
         return items[account]
     }

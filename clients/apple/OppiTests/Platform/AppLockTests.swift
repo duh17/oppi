@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Testing
 import UserNotifications
 @testable import Oppi
@@ -305,6 +306,18 @@ struct AppLockServiceTests {
         #expect(await on.service.unlock())
         #expect(await on.service.authorizeProtectedAction(reason: "Remove") == false)
         #expect(on.authenticator.calls == 2)
+    }
+
+    @Test func relockEndsAKeptSSHApproval() async {
+        let purpose = SSHApprovalCache.Purpose.savedPassword(account: "app-lock-test-\(UUID().uuidString)")
+        let harness = Harness(timeout: .immediately, outcomes: [.success])
+        #expect(await harness.service.unlock())
+        SSHApprovalCache.shared.store(LAContext(), for: purpose)
+        // Unlocking and being active again keep it.
+        #expect(SSHApprovalCache.shared.context(for: purpose) != nil)
+        harness.service.appDidEnterBackground() // Immediately: locks as the app backgrounds.
+        #expect(harness.service.isLocked)
+        #expect(SSHApprovalCache.shared.context(for: purpose) == nil)
     }
 
     @Test func timeoutPersistsInTheStoreTheShareExtensionReads() {

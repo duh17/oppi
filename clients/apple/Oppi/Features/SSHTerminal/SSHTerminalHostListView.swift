@@ -114,13 +114,16 @@ struct SSHTerminalHostListView: View {
                     }
                     Text(profile.startupLabel)
                         .font(.subheadline).foregroundStyle(.themeComment).lineLimit(1)
+                    if SSHTerminalRegistry.shared.isLive(profile.id) {
+                        Text("Connected").font(.subheadline).foregroundStyle(.themeGreen)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
             .disabled(session.connecting || session.passwordPrompt)
             .accessibilityIdentifier("sshTerminal.host.row.\(profile.id.uuidString)")
-            .accessibilityHint("Connect")
+            .accessibilityHint(SSHTerminalRegistry.shared.isLive(profile.id) ? "Open the connected terminal" : "Connect")
             Button("Edit") { openEditor(profileID: profile.id) }
                 .buttonStyle(.borderless)
                 .accessibilityIdentifier("sshTerminal.host.edit.\(profile.id.uuidString)")
@@ -152,6 +155,7 @@ struct SSHTerminalHostListView: View {
         do {
             if session.connectedProfile?.id == profile.id { session.cancel() }
             try SSHTerminalProfileStore().delete(id: profile.id)
+            SSHTerminalRegistry.shared.close(profile.id, reason: "The host was deleted.")
             reload()
         } catch {
             session.failure = error.localizedDescription

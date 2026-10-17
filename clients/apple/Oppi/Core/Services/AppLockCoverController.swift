@@ -121,6 +121,8 @@ final class AppLockCoverController {
         let contentWindows = cover.scene?.windows.filter { $0 !== cover.window } ?? []
         if visible {
             if cover.window.isHidden {
+                // A kept SSH sign-in approval does not outlive App Lock's cover.
+                SSHApprovalCache.shared.invalidateAll()
                 // The keyboard window sits above the cover, and its QuickType
                 // bar can echo typed text, so dismiss it on every cover.
                 contentWindows.forEach { $0.endEditing(true) }

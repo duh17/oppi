@@ -1,4 +1,6 @@
 import Foundation
+import LocalAuthentication
+import Security
 
 struct SSHTerminalProfile: Codable, Equatable, Sendable, Identifiable {
     enum Authentication: String, Codable, CaseIterable {
@@ -177,11 +179,35 @@ struct SSHTerminalProfileStore {
     }
 
     /// Must run off the main actor: Security may wait for user presence.
-    func password(for expected: SSHTerminalProfile) throws -> String? {
+    func password(for expected: SSHTerminalProfile, authenticationContext: LAContext? = nil) throws -> String? {
         guard expected.reusesSavedPassword(of: profile(id: expected.id)) else {
             throw SSHKeychainError.passwordRequired
         }
-        return try boundPassword(for: expected)
+        return try boundPassword(for: expected, authenticationContext: authenticationContext)
+    }
+
+    /// The saved password, behind the person's approval. An approval from the
+    /// last few minutes for this host's password is reused (`SSHApprovalCache`);
+    /// otherwise the system asks. The Keychain read runs off the main actor.
+    func approvedPassword(for expected: SSHTerminalProfile, approvals: SSHApprovalCache = .shared) async throws -> String? {
+        guard expected.reusesSavedPassword(of: profile(id: expected.id)) else {
+            throw SSHKeychainError.passwordRequired
+        }
+        let store = self
+        return try await approvals.approved(
+            for: .savedPassword(account: Self.passwordAccount(for: expected.id)),
+            evaluate: { context in
+                try await SSHApprovalCache.evaluateDeviceOwner(context) { error in
+                    switch (error as? LAError)?.code {
+                    case .userCancel, .appCancel, .systemCancel: SSHKeychainError.status(errSecUserCanceled)
+                    default: SSHKeychainError.status(errSecAuthFailed)
+                    }
+                }
+            },
+            use: { context in
+                try await Task.detached { try store.boundPassword(for: expected, authenticationContext: context) }.value
+            }
+        )
     }
 
     /// That profile and its saved password only. Does not remove the device
@@ -212,8 +238,11 @@ struct SSHTerminalProfileStore {
         try keychain.delete(account: Self.passwordAccount(for: id))
     }
 
-    private func boundPassword(for expected: SSHTerminalProfile) throws -> String? {
-        guard let data = try keychain.load(account: Self.passwordAccount(for: expected.id), requirePresence: true) else {
+    private func boundPassword(for expected: SSHTerminalProfile, authenticationContext: LAContext?) throws -> String? {
+        guard let data = try keychain.load(
+            account: Self.passwordAccount(for: expected.id), requirePresence: true,
+            authenticationContext: authenticationContext
+        ) else {
             return nil
         }
         guard let secret = try? JSONDecoder().decode(BoundPassword.self, from: data),
@@ -225,3 +254,6 @@ struct SSHTerminalProfileStore {
         return secret.password
     }
 }
+
+// Its members are a thread-safe `UserDefaults` and a `Sendable` Keychain wrapper.
+extension SSHTerminalProfileStore: @unchecked Sendable {}

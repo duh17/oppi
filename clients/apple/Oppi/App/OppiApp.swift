@@ -1811,6 +1811,7 @@ final class OppiApp {
             }
 
             backgroundKeepAlive.end()
+            SSHTerminalRegistry.shared.appDidBecomeActive()
 
             if shouldReconnect {
                 let reconnectInterval = lifecycleSignposter.beginInterval("foreground.reconnect")
@@ -1834,6 +1835,9 @@ final class OppiApp {
             }
 
         case .background:
+            // First, so the background task that keeps SSH terminals running
+            // for their grace period starts before anything else can take time.
+            SSHTerminalRegistry.shared.appDidEnterBackground()
             let draftFallbackInterval = lifecycleSignposter.beginInterval("scene.background.draft_fallback")
             composerDraftStore.saveQuickSessionLifecycleFallback()
             composerDraftStore.saveLifecycleFallback(activeComposerDraftRecord())

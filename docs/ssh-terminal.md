@@ -79,16 +79,28 @@ When any record is blocked, a card floats over the top of the terminal. It names
 
 A program can notify the terminal with OSC 9 (`ESC ] 9 ; text ST`, iTerm2) or OSC 777 (`ESC ] 777 ; notify ; title ; body ST`, rxvt and Ghostty). The same card shows it, headed **Notification**, with the program's title and text on their own line, and leaves after six seconds or when you tap it. Notifications less than a second apart are one notification whose text updates, so a program printing them in a loop cannot hold the card up or bring it back. A blocked program comes first: while its card shows, a notification waits behind it, and folding one card away never brings back the other. A new card of either kind gives a warning haptic, at most once a second. OSC 9;4 progress reports are not notifications. A bell (BEL) gives a light haptic and no card, since shells ring it for ordinary things such as a failed completion; bells within one second count once.
 
-The terminal hears these only while it is open: leaving it or Oppi closes the connection. Programs inside Herdr usually notify Herdr, not this terminal, and Herdr's own notifications use Kitty's OSC 99, which the terminal does not read yet.
+The terminal hears these while its connection is open, including after you leave its screen ([Keeping a terminal open](#keeping-a-terminal-open)); it hears nothing once the connection has closed. Programs inside Herdr usually notify Herdr, not this terminal, and Herdr's own notifications use Kitty's OSC 99, which the terminal does not read yet.
 
 ## Credentials and host trust
 
 - Profile metadata (host, port, username, sign-in choice, and Run on Connect) is stored in app preferences. Passwords are never stored there or logged. Each saved host has its own id. Changing that host’s hostname, port, username, or sign-in method cannot keep its password, and does not change another host’s password.
 - An unsaved password is used for one connection attempt. Reconnect asks for it again.
-- A saved password is in the app’s private Keychain, not the app group. It does not sync or migrate to another device. A device passcode is required to save it; reading it at connect requires Face ID, Touch ID, or device-passcode approval. The saved secret is bound to that host’s id, so copying one host’s secret onto another host’s item does not sign in.
-- On a physical device, the per-device P-256 SSH key is in the Secure Enclave. Signing requires user presence. The simulator uses an explicitly labelled software key. Selecting password sign-in does not create a key.
+- A saved password is in the app’s private Keychain, not the app group. It does not sync or migrate to another device. A device passcode is required to save it; reading it at connect requires Face ID, Touch ID, or device-passcode approval, which Oppi [reuses for 5 minutes](#approval-reuse). The saved secret is bound to that host’s id, so copying one host’s secret onto another host’s item does not sign in.
+- On a physical device, the per-device P-256 SSH key is in the Secure Enclave. Signing requires user presence, reused for 5 minutes ([Approval reuse](#approval-reuse)). The simulator uses an explicitly labelled software key. Selecting password sign-in does not create a key.
 - Trusted host keys are stored in the app-private, this-device-only Keychain, shared by SSH Terminal and Check a Machine. A changed host key blocks sign-in. **Forget Trusted Key** requires confirmation; independently verify why it changed before trusting its replacement.
 - **Delete Host**, including swipe delete on the list, deletes that saved host and its saved password. It does not remove the per-device key or trusted host keys. Trusted host keys stay keyed by host and port. The device key stays one per device. If the host list cannot be read, saving is blocked until **Reset Host List** removes the unreadable list; add the hosts again after that. Reset does not search the Keychain.
+
+## Keeping a terminal open
+
+While Oppi is in the foreground, a connected terminal stays connected when you leave its screen: Back, another tab, another session. Tap that host in the list again (it reads **Connected**) and you get the same live channel and grid, with no reconnect and no sign-in. Oppi keeps one terminal per saved host, so at most as many as you have saved hosts. Connecting a host that already has one shows that terminal; **Reconnect** and a connect after the shell ended open a new one.
+
+A terminal ends when you tap **Disconnect**, when the remote shell or command exits or the connection drops, when you save changes to the host or delete it, when you turn SSH Terminal off, or when the [background grace](#network-and-reconnect) ends. Saving the host without changing anything keeps it.
+
+While a terminal is off screen Oppi still reads its output and answers its terminal queries, and checks the connection after a network change. The Herdr list and program shortcuts load again when you return.
+
+## Approval reuse
+
+Face ID, Touch ID, or the passcode is asked when a sign-in needs your device key or a saved password. Oppi remembers that approval for 5 minutes, separately for the device key and for each host's saved password, so a reconnect in that window (**Reconnect**, or the automatic one on return) does not ask again. Oppi keeps its own approval for this; it does not widen the system's biometric reuse. The approval ends early when the 5 minutes pass, when App Lock locks or covers Oppi, and on any sign-in or approval failure; the next sign-in asks again. Approvals are never saved to disk, and a terminal that is already connected does not depend on them.
 
 ## Network and reconnect
 
@@ -96,7 +108,7 @@ When Oppi’s in-app Tailscale node is running, tailnet names (`*.ts.net` or `*.
 
 Oppi checks SSH round-trip liveness every 60 seconds by opening and closing an empty session channel, with a 15-second reply timeout. It requests no shell, command, or PTY on that probe. Direct TCP also uses kernel keepalive probes. Failure closes the connection and shows **Disconnected** with **Reconnect**.
 
-Entering the background disconnects the shell. When you return, a terminal that was connected reconnects on its own, with the same Face ID, Touch ID, or password approval as **Reconnect**; with App Lock on, after you unlock. If that sign-in is cancelled or fails, the terminal shows **Disconnected** with **Reconnect**. After a Wi-Fi or cellular path change, Oppi checks the connection with one SSH round trip: a live shell carries on, and a dead one shows **Disconnected** with **Reconnect**. Reconnect always opens a fresh shell; it does not replay input. Use `tmux` on the host if work must survive a disconnect.
+Entering the background keeps the shell running for about 25 seconds, still reading its output, under an iOS background task. Return within that time and nothing reconnects. Otherwise Oppi closes the connection before iOS can suspend it (also if iOS ends the background task earlier), with the reason **Oppi went to the background.** Closing is deliberate: a suspended app would silently lose the bytes the host sends. When you return, a terminal that was on screen reconnects on its own, signing in like **Reconnect** (see [Approval reuse](#approval-reuse)); with App Lock on, after you unlock. A terminal you had already left is not reconnected. If that sign-in is cancelled or fails, the terminal shows **Disconnected** with **Reconnect**. After a Wi-Fi or cellular path change, Oppi checks the connection with one SSH round trip: a live shell carries on, and a dead one shows **Disconnected** with **Reconnect**. Reconnect always opens a fresh shell; it does not replay input. Use `tmux` on the host if work must survive a disconnect.
 
 ## Limits
 

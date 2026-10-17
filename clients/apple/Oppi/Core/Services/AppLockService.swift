@@ -358,6 +358,8 @@ final class AppLockService {
         let before = machine
         change(&machine)
         guard machine != before else { return }
+        // A kept SSH sign-in approval ends when App Lock locks.
+        if !before.isLocked, machine.isLocked { SSHApprovalCache.shared.invalidateAll() }
         onLockStateChange?()
         if let deferred = deferredUntilUnlock, !requiresUnlock() {
             deferredUntilUnlock = nil

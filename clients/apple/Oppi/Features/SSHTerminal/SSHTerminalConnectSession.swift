@@ -3,6 +3,10 @@ import SwiftUI
 /// Trust, password, and dial path shared by the host list and the setup form.
 /// The view that starts Connect presents the password sheet and trust UI.
 /// Opening either surface must not call `connect` or `password(for:)`.
+///
+/// It is one presentation's connect attempt. An opened shell belongs to
+/// `SSHTerminalRegistry`, which keeps it when this session goes away; a later
+/// Connect for the same saved host attaches to it instead of dialing again.
 @MainActor @Observable
 final class SSHTerminalConnectSession {
     var connecting = false
@@ -20,6 +24,11 @@ final class SSHTerminalConnectSession {
     var devicePasscodeChanged = false
     private var task: Task<Void, Never>?
     private var runID = UUID()
+    @ObservationIgnored private let registry: SSHTerminalRegistry
+
+    init(registry: SSHTerminalRegistry = .shared) {
+        self.registry = registry
+    }
 
     func connect(
         profile: SSHTerminalProfile,
@@ -30,6 +39,18 @@ final class SSHTerminalConnectSession {
         guard experimentEnabled else { return }
         let value = profile.normalized()
         guard value.isConfigured else { return }
+        // Same host, same settings, shell still open: show it. No dial, no sign-in.
+        if let live = registry.terminal(for: value.id), live.profile == value {
+            cancel()
+            failure = nil
+            hostFailure = nil
+            connectedProfile = value
+            channel = live.channel
+            showsTerminal = true
+            return
+        }
+        // A lock that is due but not applied yet covers Oppi as well.
+        if AppLockService.shared.requiresUnlock() { SSHApprovalCache.shared.invalidateAll() }
         let old = SSHTerminalProfileStore().profile(id: value.id)
         if value.authentication == .password && suppliedPassword == nil
             && !(value.reusesSavedPassword(of: old) && value.savesPassword) {
@@ -42,6 +63,7 @@ final class SSHTerminalConnectSession {
             do {
                 try await Task.detached { try SSHTerminalProfileStore().save(value, password: suppliedPassword) }.value
                 guard !Task.isCancelled, runID == self.runID else { return }
+                registry.reconcile(saved: value)
                 onSaved?(value)
                 connectedProfile = value
                 let savedKey = try SSHKnownHosts().savedKey(host: value.host, port: value.port)
@@ -57,7 +79,7 @@ final class SSHTerminalConnectSession {
                             switch value.authentication {
                             case .password:
                                 if let suppliedPassword { return .password(suppliedPassword) }
-                                let stored = try await Task.detached { try SSHTerminalProfileStore().password(for: value) }.value
+                                let stored = try await SSHTerminalProfileStore().approvedPassword(for: value)
                                 guard let stored else { throw SSHKeychainError.passwordRequired }
                                 return .password(stored)
                             case .deviceKey:
@@ -70,11 +92,12 @@ final class SSHTerminalConnectSession {
                 } catch { queue.finish(); throw error }
                 guard !Task.isCancelled, runID == self.runID else { queue.finish(); await session.cancel(); return }
                 owner.opened(session, command: value.startupCommand)
+                // Sign-in's task (and its password capture) ends here. The
+                // registry's byte consumer owns no authentication material.
+                registry.adopt(owner, profile: value, queue: queue)
+                task = nil
                 connecting = false
                 showsTerminal = true
-                // Sign-in's task (and its password capture) ends here. The
-                // long-lived byte consumer owns no authentication material.
-                task = Task { await owner.consume(queue) }
             } catch {
                 guard runID == self.runID, !Task.isCancelled else { return }
                 noteFailure(error, profile: value)
@@ -105,6 +128,7 @@ final class SSHTerminalConnectSession {
                 // Never block SwiftUI's main actor on a Security call.
                 try await Task.detached { try SSHTerminalProfileStore().save(value, password: suppliedPassword) }.value
                 guard !Task.isCancelled, runID == self.runID else { return }
+                registry.reconcile(saved: value)
                 onSaved?(value)
             } catch {
                 guard !Task.isCancelled, runID == self.runID else { return }
@@ -146,12 +170,14 @@ final class SSHTerminalConnectSession {
         }
     }
 
+    /// Stops a connect in flight. A shell the registry owns is not this
+    /// session's to close: Disconnect and the host's lifecycle end it.
     func cancel() {
         runID = UUID()
         task?.cancel()
         task = nil
         password = ""
-        channel?.close(reason: "Closed by you.")
+        closeUnregisteredChannel(reason: "Closed by you.")
         connecting = false
         savingHostOnly = false
     }
@@ -166,7 +192,13 @@ final class SSHTerminalConnectSession {
 
     func handleExperimentDisabled() {
         cancel()
+        registry.closeAll(reason: "SSH Terminal was turned off.")
         showsTerminal = false
+    }
+
+    private func closeUnregisteredChannel(reason: String) {
+        guard let channel, !registry.holds(channel) else { return }
+        channel.close(reason: reason)
     }
 
     private func begin(_ profile: SSHTerminalProfile, savingHostOnly: Bool) {
@@ -186,14 +218,16 @@ final class SSHTerminalConnectSession {
         if (error as? SSHIdentityKeyStoreError) == .devicePasscodeChanged {
             devicePasscodeChanged = true
         }
+        // A credential failure ends any kept approval: the next attempt asks again.
+        if SSHApprovalCache.isAuthenticationFailure(error) { SSHApprovalCache.shared.invalidateAll() }
         hostFailure = error as? SSHConnectionError
         switch hostFailure {
         case .unknownHostKey, .hostKeyMismatch:
             failure = nil
-            channel?.close(reason: "Host trust needs review. Use Edit Host to compare the fingerprints.")
+            closeUnregisteredChannel(reason: "Host trust needs review. Use Edit Host to compare the fingerprints.")
         default:
             failure = SSHTerminalChannel.message(error)
-            channel?.close(reason: failure ?? "Connection failed.")
+            closeUnregisteredChannel(reason: failure ?? "Connection failed.")
         }
         connecting = false
         if let keychainError = error as? SSHKeychainError, keychainError == .passwordRequired {
@@ -272,7 +306,7 @@ private struct SSHTerminalConnectionModifier: ViewModifier {
                         } header: { Text(profile.endpointLabel) }
                         Section {
                             Toggle("Save Password", isOn: $profile.savesPassword)
-                            Text("Saving requires a device passcode. Face ID or passcode approval is required whenever Oppi reads it.")
+                            Text("Saving requires a device passcode. Face ID or passcode approval is required when Oppi reads it, except for 5 minutes after you approve.")
                                 .font(.footnote).foregroundStyle(.themeComment)
                         }
                     }
@@ -327,8 +361,8 @@ private struct SSHTerminalConnectionModifier: ViewModifier {
 }
 
 /// The terminal a connect pushed. It pops itself when the session stops
-/// showing it (Edit Host, the experiment turned off), and leaving it (Back,
-/// swipe) ends the session's terminal.
+/// showing it (Edit Host, the experiment turned off). Leaving it (Back, swipe)
+/// only leaves the screen: the registry keeps the shell.
 private struct SSHTerminalScreen: View {
     let session: SSHTerminalConnectSession
     let editHost: () -> Void
