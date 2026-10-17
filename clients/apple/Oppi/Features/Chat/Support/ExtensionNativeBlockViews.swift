@@ -302,6 +302,8 @@ final class ExtensionNativeBlockStackView: UIView {
         case .code: NativeCodeBlockView()
         case .divider: ExtensionNativeDividerView()
         case .spacer: ExtensionNativeSpacerView()
+        case .table: ExtensionNativeTableBlockView()
+        case .chart: ExtensionNativeChartBlockView()
         case .unsupported: nil
         }
     }
@@ -1067,6 +1069,210 @@ final class ExtensionNativeActivityRowView: UIView {
         case .inactive: "circle"
         case .neutral: "circle.fill"
         }
+    }
+}
+
+// MARK: - Table
+
+/// Query results reuse the chat's delimited-table grid. Height hugs the fitted
+/// row count so the drawer and full-screen reader can scroll the surface.
+final class ExtensionNativeTableBlockView: UIView, ExtensionNativeBlockRendering {
+    private var tableView: DelimitedTableRenderView?
+    private var heightConstraint: NSLayoutConstraint?
+    private var applied: (block: ExtensionUINativeBlock, signature: ExtensionNativeBlockContext.Signature)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setContentCompressionResistancePriority(.required, for: .vertical)
+        setContentHuggingPriority(.required, for: .vertical)
+        accessibilityIdentifier = "extension.native.table"
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func apply(_ block: ExtensionUINativeBlock, context: ExtensionNativeBlockContext) {
+        guard case .table(let base, let columns, let rows, let truncated) = block else { return }
+        if applied?.block == block, applied?.signature == context.signature { return }
+        applied = (block, context.signature)
+        let plan = Self.plan(columns: columns, rows: rows, truncated: truncated == true)
+        if let existing = tableView, existing.displays(plan) {
+            accessibilityLabel = base.accessibility?.label ?? "Table"
+            return
+        }
+        tableView?.removeFromSuperview()
+        let view = DelimitedTableRenderView(plan: plan, palette: context.palette)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(view)
+        let height = view.heightAnchor.constraint(equalToConstant: 1)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: topAnchor),
+            view.leadingAnchor.constraint(equalTo: leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: trailingAnchor),
+            view.bottomAnchor.constraint(equalTo: bottomAnchor),
+            height,
+        ])
+        tableView = view
+        heightConstraint = height
+        accessibilityLabel = base.accessibility?.label ?? "Table"
+        setNeedsLayout()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard let tableView else { return }
+        let width = bounds.width > 0 ? bounds.width : 360
+        let height = tableView.systemLayoutSizeFitting(
+            CGSize(width: width, height: 0),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        if abs((heightConstraint?.constant ?? 0) - height) > 0.5 {
+            heightConstraint?.constant = max(1, height)
+            invalidateExtensionNativeBlockHost()
+        }
+    }
+
+    private static func plan(
+        columns: [String],
+        rows: [[ExtensionUITableCell]],
+        truncated: Bool
+    ) -> DelimitedTableViewerPlan {
+        let table = DelimitedTable(
+            headers: columns,
+            rows: rows.map { $0.map(\.displayText) },
+            columnCount: columns.count,
+            totalRowCount: (columns.isEmpty && rows.isEmpty ? 0 : 1) + rows.count,
+            totalColumnCount: columns.count,
+            truncatedRows: truncated,
+            truncatedColumns: false,
+            truncatedCells: truncated
+        )
+        return DelimitedTableViewerPlan(kind: .csv, source: "", table: table)
+    }
+}
+
+// MARK: - Chart
+
+/// Charts reuse the Core Graphics Mermaid XY and pie renderers by building their
+/// diagram models directly. No Mermaid source, SwiftUI, or Swift Charts.
+final class ExtensionNativeChartBlockView: UIView, ExtensionNativeBlockRendering {
+    private let imageView: UIImageView = {
+        let view = UIImageView()
+        view.contentMode = .scaleAspectFit
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.isAccessibilityElement = true
+        return view
+    }()
+    private var heightConstraint: NSLayoutConstraint?
+    private var applied: (block: ExtensionUINativeBlock, signature: ExtensionNativeBlockContext.Signature, width: CGFloat)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        addSubview(imageView)
+        let height = imageView.heightAnchor.constraint(equalToConstant: 1)
+        NSLayoutConstraint.activate([
+            imageView.topAnchor.constraint(equalTo: topAnchor),
+            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            height,
+        ])
+        heightConstraint = height
+        accessibilityIdentifier = "extension.native.chart"
+        setContentCompressionResistancePriority(.required, for: .vertical)
+        setContentHuggingPriority(.required, for: .vertical)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func apply(_ block: ExtensionUINativeBlock, context: ExtensionNativeBlockContext) {
+        guard case .chart(let base, let kind, let title, _, _, _) = block else { return }
+        imageView.accessibilityLabel = base.accessibility?.label ?? title ?? "\(kind) chart"
+        rasterizeIfNeeded(block, context: context)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard let applied else { return }
+        rasterizeIfNeeded(applied.block, context: ExtensionNativeBlockContext(
+            themeID: applied.signature.themeID,
+            linkContext: applied.signature.linkContext
+        ))
+    }
+
+    private func rasterizeIfNeeded(_ block: ExtensionUINativeBlock, context: ExtensionNativeBlockContext) {
+        let width = max(bounds.width > 0 ? bounds.width : 360, 40)
+        if applied?.block == block,
+           applied?.signature == context.signature,
+           abs((applied?.width ?? 0) - width) < 0.5 {
+            return
+        }
+        applied = (block, context.signature, width)
+        guard let image = Self.rasterize(block, theme: context.palette.renderTheme, width: width) else {
+            imageView.image = nil
+            heightConstraint?.constant = 1
+            return
+        }
+        imageView.image = image
+        let height = image.size.height
+        if abs((heightConstraint?.constant ?? 0) - height) > 0.5 {
+            heightConstraint?.constant = max(1, height)
+            invalidateExtensionNativeBlockHost()
+        }
+    }
+
+    private static func rasterize(
+        _ block: ExtensionUINativeBlock,
+        theme: RenderTheme,
+        width: CGFloat
+    ) -> UIImage? {
+        guard case .chart(_, let kind, let title, let labels, let series, _) = block else { return nil }
+        let configuration = RenderConfiguration(
+            fontSize: 14,
+            maxWidth: width,
+            theme: theme,
+            displayMode: .inline
+        )
+        let layout: MermaidFlowchartRenderer.FlowchartLayout
+        if kind == "pie" {
+            let slices = labels.enumerated().compactMap { index, label -> PieSlice? in
+                guard let value = series.first?.values[safe: index] else { return nil }
+                return PieSlice(label: label, value: value)
+            }
+            layout = MermaidPieRenderer.layout(
+                PieDiagram(title: title, slices: slices, showData: true),
+                configuration: configuration
+            )
+        } else {
+            let seriesKind: XYChartSeriesKind = kind == "line" ? .line : .bar
+            layout = MermaidXYChartRenderer.layout(
+                XYChartDiagram(
+                    title: title,
+                    xAxis: .categorical(title: nil, categories: labels),
+                    yAxis: XYChartYAxis(title: nil, min: nil, max: nil),
+                    series: series.map {
+                        XYChartSeries(kind: seriesKind, name: $0.name, values: $0.values)
+                    },
+                    orientation: .vertical
+                ),
+                configuration: configuration
+            )
+        }
+        let size = layout.customSize ?? .zero
+        guard let draw = layout.customDraw, size.width > 0, size.height > 0 else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 2
+        return UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+            draw(ctx.cgContext, .zero)
+        }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
 

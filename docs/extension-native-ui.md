@@ -98,6 +98,20 @@ export type ExtensionUINativeBlock = ExtensionUIBlockBase &
     | { type: "code"; language?: string; text: string }
     | { type: "divider" }
     | { type: "spacer"; size?: "small" | "medium" | "large" }
+    | {
+        type: "table";
+        columns: string[];
+        rows: (string | number | null)[][];
+        truncated?: boolean;
+      }
+    | {
+        type: "chart";
+        kind: "bar" | "line" | "pie";
+        title?: string;
+        labels: string[];
+        series: Array<{ name?: string; values: number[] }>;
+        truncated?: boolean;
+      }
   );
 ```
 
@@ -537,6 +551,8 @@ Rules:
 | `Loader` / `CancellableLoader` / `BorderedLoader` | `progress`             | progress row/card                                                      |
 | overlay `custom(..., { overlay })`                | terminal fallback      | future native support requires explicit presentation and event routing |
 | arbitrary ANSI/box drawing                        | `terminal`             | monospaced selectable fallback card                                    |
+| tabular query results                             | `table`                | the existing delimited-table grid                                      |
+| categorical numeric series                        | `chart`                | Core Graphics bar, line, or pie (Mermaid chart models, not source)     |
 
 ## Apple design mapping
 
@@ -703,7 +719,7 @@ A client can claim one of these support levels:
 
 1. **Text fallback**: supports `fallback.text`, `fallback.lines`, and `terminal` blocks.
 2. **Prompt native**: supports standard Pi dialog mappings from `extension_ui_request`.
-3. **Surface native**: supports `text`, `markdown`, `section`, `activityList`, `progress`, `terminal`, `code`, `divider`, `spacer`, and persistent surface panels.
+3. **Surface native**: supports `text`, `markdown`, `section`, `activityList`, `progress`, `terminal`, `code`, `divider`, `spacer`, `table`, `chart`, and persistent surface panels.
 4. **Interactive native**: supports future field changes and non-blocking actions through an explicit event message.
 5. **Timeline native**: supports future native tool/message renderers.
 
@@ -772,7 +788,7 @@ Implementation should validate at least these fixtures:
 - collapsed strip height capped at one pill row, with horizontal overflow and hidden empty strips
 - one expanded drawer per placement, with tap-to-replace behavior across widgets in the same strip
 - working-row message, visibility, static indicator, animated indicator, hidden indicator, reset behavior, hidden-thinking source labels, and tool expansion state
-- display block mapping for text, markdown, progress, activity lists, terminal, and code
+- display block mapping for text, markdown, progress, activity lists, terminal, code, table, and chart
 - activity row links through generic `oppi://session/<id>` navigation
 - component widget with `renderNative()`
 - component widget without `renderNative()` terminal fallback
@@ -915,7 +931,7 @@ Apple implementations:
 - keep AskCard as the reference for standard Pi prompt requests
 - keep persistent widgets in generic extension strips and drawers
 - avoid extension-specific Swift UI for generic surfaces
-- on iOS, paint blocks with the same UIKit renderers the chat timeline uses: `markdown` through the chat Markdown view, `code` through the highlighted code block (its `language` drives highlighting), and `terminal` and widget lines as unwrapped, horizontally scrolling monospaced text
+- on iOS, paint blocks with the same UIKit renderers the chat timeline uses: `markdown` through the chat Markdown view, `code` through the highlighted code block (its `language` drives highlighting), `terminal` and widget lines as unwrapped, horizontally scrolling monospaced text, `table` through the delimited-table grid, and `chart` through the Core Graphics Mermaid bar/line/pie renderers (diagram models, not Mermaid source)
 
 ## Acceptance criteria
 

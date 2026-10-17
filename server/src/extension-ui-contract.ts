@@ -27,6 +27,11 @@ export const EXTENSION_UI_NATIVE_SURFACE_MAX_TEXT_BYTES = 32 * 1024;
 export const EXTENSION_UI_NATIVE_SURFACE_MAX_SPANS = 320;
 export const EXTENSION_UI_NATIVE_SURFACE_MAX_TERMINAL_LINES = 160;
 export const EXTENSION_UI_NATIVE_SURFACE_MAX_ACTIVITY_ROWS = 160;
+export const EXTENSION_UI_NATIVE_TABLE_MAX_COLUMNS = 32;
+export const EXTENSION_UI_NATIVE_TABLE_MAX_ROWS = 200;
+export const EXTENSION_UI_NATIVE_TABLE_MAX_CELL_CHARS = 200;
+export const EXTENSION_UI_NATIVE_CHART_MAX_LABELS = 48;
+export const EXTENSION_UI_NATIVE_CHART_MAX_SERIES = 8;
 export const EXTENSION_UI_WORKING_INDICATOR_MAX_FRAMES = 24;
 export const EXTENSION_UI_WORKING_INDICATOR_MAX_FRAME_CHARS = 16;
 export const EXTENSION_UI_WORKING_INDICATOR_MIN_INTERVAL_MS = 80;
@@ -128,6 +133,182 @@ export interface ExtensionUIAskResult {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isTableCell(value: unknown): value is string | number | null {
+  return (
+    value === null ||
+    typeof value === "string" ||
+    (typeof value === "number" && Number.isFinite(value))
+  );
+}
+
+function clipTableCellText(value: string): { value: string; truncated: boolean } {
+  if (value.length <= EXTENSION_UI_NATIVE_TABLE_MAX_CELL_CHARS) {
+    return { value, truncated: false };
+  }
+  return {
+    value: value.slice(0, EXTENSION_UI_NATIVE_TABLE_MAX_CELL_CHARS),
+    truncated: true,
+  };
+}
+
+function clipTableBlock(block: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (
+    !Array.isArray(block.columns) ||
+    !block.columns.every((column) => typeof column === "string")
+  ) {
+    return undefined;
+  }
+  if (
+    !Array.isArray(block.rows) ||
+    !block.rows.every((row) => Array.isArray(row) && row.every(isTableCell))
+  ) {
+    return undefined;
+  }
+  let truncated = block.truncated === true;
+  const columns = block.columns.map((column) => {
+    const clipped = clipTableCellText(column);
+    if (clipped.truncated) truncated = true;
+    return clipped.value;
+  });
+  const columnCount = Math.min(columns.length, EXTENSION_UI_NATIVE_TABLE_MAX_COLUMNS);
+  if (columns.length > EXTENSION_UI_NATIVE_TABLE_MAX_COLUMNS) truncated = true;
+  const clippedColumns = columns.slice(0, columnCount);
+  const maxRows = Math.min(block.rows.length, EXTENSION_UI_NATIVE_TABLE_MAX_ROWS);
+  if (block.rows.length > EXTENSION_UI_NATIVE_TABLE_MAX_ROWS) truncated = true;
+  const rows: Array<Array<string | number | null>> = [];
+  let textChars = clippedColumns.reduce((sum, column) => sum + column.length, 0);
+  const textBudget = Math.floor(EXTENSION_UI_NATIVE_SURFACE_MAX_TEXT_BYTES * 0.75);
+  for (let rowIndex = 0; rowIndex < maxRows; rowIndex += 1) {
+    const row = block.rows[rowIndex] as unknown[];
+    if (row.length > columnCount) truncated = true;
+    const cells: Array<string | number | null> = [];
+    for (let index = 0; index < columnCount; index += 1) {
+      const cell = row[index] ?? null;
+      if (typeof cell === "string") {
+        const clipped = clipTableCellText(cell);
+        if (clipped.truncated) truncated = true;
+        textChars += clipped.value.length;
+        cells.push(clipped.value);
+      } else {
+        cells.push(cell as string | number | null);
+      }
+    }
+    if (textChars > textBudget && rows.length > 0) {
+      truncated = true;
+      break;
+    }
+    rows.push(cells);
+  }
+  const clipped: Record<string, unknown> = {
+    ...block,
+    type: "table",
+    columns: clippedColumns,
+    rows,
+  };
+  if (truncated) clipped.truncated = true;
+  else delete clipped.truncated;
+  return clipped;
+}
+
+function clipChartBlock(block: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (block.kind !== "bar" && block.kind !== "line" && block.kind !== "pie") return undefined;
+  if (!Array.isArray(block.labels) || !block.labels.every((label) => typeof label === "string")) {
+    return undefined;
+  }
+  if (!Array.isArray(block.series)) return undefined;
+  const series: Array<{ name?: string; values: number[] }> = [];
+  for (const entry of block.series) {
+    if (!isRecord(entry) || !Array.isArray(entry.values)) return undefined;
+    if (!entry.values.every((value) => typeof value === "number" && Number.isFinite(value))) {
+      return undefined;
+    }
+    if (entry.name !== undefined && typeof entry.name !== "string") return undefined;
+    series.push({
+      ...(typeof entry.name === "string" ? { name: entry.name } : {}),
+      values: entry.values,
+    });
+  }
+  let truncated = block.truncated === true;
+  const labels = block.labels.map((label) => {
+    const clipped = clipTableCellText(label);
+    if (clipped.truncated) truncated = true;
+    return clipped.value;
+  });
+  if (labels.length > EXTENSION_UI_NATIVE_CHART_MAX_LABELS) truncated = true;
+  if (series.length > EXTENSION_UI_NATIVE_CHART_MAX_SERIES) truncated = true;
+  const clippedLabels = labels.slice(0, EXTENSION_UI_NATIVE_CHART_MAX_LABELS);
+  const clippedSeries = series.slice(0, EXTENSION_UI_NATIVE_CHART_MAX_SERIES).map((entry) => {
+    if (entry.values.length > clippedLabels.length) truncated = true;
+    const values = entry.values.slice(0, clippedLabels.length);
+    const name = typeof entry.name === "string" ? clipTableCellText(entry.name) : undefined;
+    if (name?.truncated) truncated = true;
+    return {
+      ...(name ? { name: name.value } : {}),
+      values,
+    };
+  });
+  if (clippedLabels.length === 0 || clippedSeries.length === 0) return undefined;
+  const clipped: Record<string, unknown> = {
+    ...block,
+    type: "chart",
+    kind: block.kind,
+    labels: clippedLabels,
+    series: clippedSeries,
+  };
+  if (typeof block.title === "string") {
+    const title = clipTableCellText(block.title);
+    if (title.truncated) truncated = true;
+    clipped.title = title.value;
+  } else if (block.title !== undefined) {
+    return undefined;
+  }
+  if (truncated) clipped.truncated = true;
+  else delete clipped.truncated;
+  return clipped;
+}
+
+function clipActivityRows(rows: unknown[]): unknown[] {
+  return rows.map((row) => {
+    if (!isRecord(row)) return row;
+    const next = { ...row };
+    if (Array.isArray(row.blocks)) next.blocks = clipNativeBlocks(row.blocks);
+    if (Array.isArray(row.children)) next.children = clipActivityRows(row.children);
+    return next;
+  });
+}
+
+function clipNativeBlocks(value: unknown): unknown[] {
+  if (!Array.isArray(value)) return [];
+  const blocks: unknown[] = [];
+  for (const block of value) {
+    if (!isRecord(block)) continue;
+    if (block.type === "table") {
+      const clipped = clipTableBlock(block);
+      if (clipped) blocks.push(clipped);
+      continue;
+    }
+    if (block.type === "chart") {
+      const clipped = clipChartBlock(block);
+      if (clipped) blocks.push(clipped);
+      continue;
+    }
+    if (block.type === "section" && Array.isArray(block.blocks)) {
+      blocks.push({ ...block, blocks: clipNativeBlocks(block.blocks) });
+      continue;
+    }
+    if (block.type === "activityList" && Array.isArray(block.rows)) {
+      blocks.push({ ...block, rows: clipActivityRows(block.rows) });
+      continue;
+    }
+    blocks.push(block);
+  }
+  return blocks;
+}
+
+function clipNativeSurface(value: Record<string, unknown>): Record<string, unknown> {
+  return { ...value, blocks: clipNativeBlocks(value.blocks) };
 }
 
 interface NativeSurfaceLimits {
@@ -326,6 +507,36 @@ function validateNativeBlock(
       return true;
     case "spacer":
       return addNativeSurfaceText(value.size, state, limits);
+    case "table": {
+      if (!Array.isArray(value.columns) || !Array.isArray(value.rows)) return false;
+      if (value.truncated !== undefined && typeof value.truncated !== "boolean") return false;
+      if (!value.columns.every((column) => addNativeSurfaceText(column, state, limits, true))) {
+        return false;
+      }
+      return value.rows.every(
+        (row) =>
+          Array.isArray(row) &&
+          row.every((cell) => {
+            if (cell === null) return true;
+            if (typeof cell === "number") return Number.isFinite(cell);
+            return addNativeSurfaceText(cell, state, limits, true);
+          }),
+      );
+    }
+    case "chart": {
+      if (value.kind !== "bar" && value.kind !== "line" && value.kind !== "pie") return false;
+      if (!Array.isArray(value.labels) || !Array.isArray(value.series)) return false;
+      if (value.truncated !== undefined && typeof value.truncated !== "boolean") return false;
+      if (!addNativeSurfaceText(value.title, state, limits)) return false;
+      if (!value.labels.every((label) => addNativeSurfaceText(label, state, limits, true))) {
+        return false;
+      }
+      return value.series.every((entry) => {
+        if (!isRecord(entry) || !Array.isArray(entry.values)) return false;
+        if (!addNativeSurfaceText(entry.name, state, limits)) return false;
+        return entry.values.every((item) => typeof item === "number" && Number.isFinite(item));
+      });
+    }
     default:
       return addNativeSurfaceText(value.type, state, limits);
   }
@@ -395,11 +606,12 @@ export function normalizeExtensionUINativeSurface(
   if (!Array.isArray(value.blocks)) return undefined;
 
   const limits = nativeSurfaceLimits(options);
-  if (!validateNativeSurfaceShape(value, limits)) return undefined;
+  const clipped = clipNativeSurface(value);
+  if (!validateNativeSurfaceShape(clipped, limits)) return undefined;
 
   let json: string;
   try {
-    json = JSON.stringify(value);
+    json = JSON.stringify(clipped);
   } catch {
     return undefined;
   }

@@ -203,6 +203,51 @@ struct ExtensionNativeBlockViewsTests {
         #expect(longHeight == 200)
     }
 
+    @Test func tableAndChartBlocksPaintThroughReusedRenderers() {
+        let stack = layout(.blocks([fixtureTable(), fixtureChart()]), context: context())
+        stack.frame = CGRect(x: 0, y: 0, width: 360, height: 800)
+        stack.layoutIfNeeded()
+        #expect(subviews(of: DelimitedTableRenderView.self, in: stack).count == 1)
+        #expect(subviews(of: ExtensionNativeChartBlockView.self, in: stack).count == 1)
+        #expect(subviews(of: UIImageView.self, in: stack).contains { $0.image != nil })
+    }
+
+    @Test func tableAndChartDrawerAndReaderScreenshots() throws {
+        let surface = fixtureSurface()
+        let reports = try reportsDirectory()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let host = UIViewController()
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        let drawer = ExtensionNativeBlockScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 320))
+        host.view.addSubview(drawer)
+        drawer.update(
+            content: ExtensionNativeBlockContent(surface: surface),
+            context: context(),
+            sizing: .capped(maxHeight: ExtensionNativeSurfaceLayout.expandedMaxHeight),
+            contentInsets: NSDirectionalEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10),
+            spacing: 10,
+            accessibilityIdentifier: "extension-native-surface-data-drawer",
+            onDoubleTap: nil
+        )
+        drawer.layoutIfNeeded()
+        try writeSnapshot(drawer, to: reports.appendingPathComponent("sql-explorer-widget-drawer.png"))
+
+        let sheet = UIHostingController(rootView: ExtensionNativeSurfaceDetailSheet(
+            surface: surface,
+            identifierSuffix: "data",
+            title: "sales.db",
+            subtitle: "3 rows · 12ms",
+            statusText: nil
+        ))
+        window.rootViewController = sheet
+        sheet.view.frame = window.bounds
+        sheet.view.layoutIfNeeded()
+        try writeSnapshot(sheet.view, to: reports.appendingPathComponent("sql-explorer-fullscreen-reader.png"))
+    }
+
     @Test func widgetLinesKeepTerminalHeaderAndActivityConventions() {
         typealias Presentation = ExtensionNativeBlockPresentation
         #expect(Presentation.widgetLineStyle("● Agents") == .header(title: "Agents", isActive: true))
@@ -236,6 +281,61 @@ struct ExtensionNativeBlockViewsTests {
 
     private func context(onOpenURL: ((URL) -> Bool)? = nil) -> ExtensionNativeBlockContext {
         ExtensionNativeBlockContext(themeID: .dark, linkContext: linkContext, onOpenURL: onOpenURL)
+    }
+
+    private func fixtureTable() -> ExtensionUINativeBlock {
+        .table(
+            base: base("result"),
+            columns: ["name", "amount"],
+            rows: [
+                [.string("apples"), .number(12)],
+                [.string("bananas"), .number(9)],
+                [.string("cherries"), .number(4)],
+            ],
+            truncated: false
+        )
+    }
+
+    private func fixtureChart() -> ExtensionUINativeBlock {
+        .chart(
+            base: base("chart"),
+            kind: "bar",
+            title: "Sales",
+            labels: ["apples", "bananas", "cherries"],
+            series: [ExtensionUIChartSeries(name: "amount", values: [12, 9, 4])],
+            truncated: nil
+        )
+    }
+
+    private func fixtureSurface() -> ExtensionUINativeSurface {
+        ExtensionUINativeSurface(
+            version: 1,
+            id: "widget:data",
+            source: "widget",
+            presentation: ExtensionUINativePresentation(
+                style: "surfacePanel",
+                title: "sales.db",
+                subtitle: "3 rows · 12ms"
+            ),
+            blocks: [fixtureTable(), fixtureChart()],
+            fallback: ExtensionUINativeFallback(text: nil, lines: ["sales.db", "3 rows"])
+        )
+    }
+
+    private func reportsDirectory() throws -> URL {
+        // Unit tests run in the simulator; /tmp is reachable via `simctl spawn` afterward.
+        let reports = URL(fileURLWithPath: "/tmp/oppi-screenshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: reports, withIntermediateDirectories: true)
+        return reports
+    }
+
+    private func writeSnapshot(_ view: UIView, to url: URL) throws {
+        view.layoutIfNeeded()
+        let renderer = UIGraphicsImageRenderer(bounds: view.bounds)
+        let image = renderer.image { _ in
+            view.drawHierarchy(in: view.bounds, afterScreenUpdates: true)
+        }
+        try #require(image.pngData()).write(to: url)
     }
 
     private func terminal(id: String, line: String) -> ExtensionUINativeBlock {

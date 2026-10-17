@@ -1940,6 +1940,8 @@ describe("server durable managed runtime", () => {
       "grep",
       "ask",
       "background_job",
+      "sqlite_schema",
+      "sqlite_query",
       "subagent",
     ]);
     const settled = await (

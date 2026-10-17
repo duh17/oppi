@@ -34,6 +34,7 @@ const PINNED = {
         "working-words",
         "background-jobs",
         "project-context",
+        "sql-explorer",
         "oppi.sessions",
       ],
       extensions: [
@@ -42,9 +43,20 @@ const PINNED = {
         "working-words",
         "background-jobs",
         "project-context",
+        "sql-explorer",
         "oppi.sessions",
       ],
-      tools: ["read", "write", "edit", "bash", "ask", "background_job", "subagent"],
+      tools: [
+        "read",
+        "write",
+        "edit",
+        "bash",
+        "ask",
+        "background_job",
+        "sqlite_schema",
+        "sqlite_query",
+        "subagent",
+      ],
       sections: [
         "ask-guidelines",
         "background-jobs",
@@ -56,7 +68,14 @@ const PINNED = {
     },
     reattached: {
       stored: {
-        add: ["ask", "working-words", "background-jobs", "oppi.sessions", "project-context"],
+        add: [
+          "ask",
+          "working-words",
+          "background-jobs",
+          "oppi.sessions",
+          "project-context",
+          "sql-explorer",
+        ],
       },
       extensions: [
         "coding-tools",
@@ -66,8 +85,19 @@ const PINNED = {
         "background-jobs",
         "oppi.sessions",
         "project-context",
+        "sql-explorer",
       ],
-      tools: ["read", "write", "edit", "bash", "ask", "background_job", "subagent"],
+      tools: [
+        "read",
+        "write",
+        "edit",
+        "bash",
+        "ask",
+        "background_job",
+        "sqlite_schema",
+        "sqlite_query",
+        "subagent",
+      ],
       sections: [
         "ask-guidelines",
         "background-jobs",
@@ -87,6 +117,7 @@ const PINNED = {
         "working-words",
         "background-jobs",
         "project-context",
+        "sql-explorer",
         "oppi.sessions",
       ],
       extensions: [
@@ -96,6 +127,7 @@ const PINNED = {
         "working-words",
         "background-jobs",
         "project-context",
+        "sql-explorer",
         "oppi.sessions",
       ],
       tools: [
@@ -108,6 +140,8 @@ const PINNED = {
         "grep",
         "ask",
         "background_job",
+        "sqlite_schema",
+        "sqlite_query",
         "subagent",
       ],
       sections: [
@@ -121,7 +155,14 @@ const PINNED = {
     },
     reattached: {
       stored: {
-        add: ["ask", "working-words", "background-jobs", "oppi.sessions", "project-context"],
+        add: [
+          "ask",
+          "working-words",
+          "background-jobs",
+          "oppi.sessions",
+          "project-context",
+          "sql-explorer",
+        ],
       },
       extensions: [
         "coding-tools",
@@ -131,6 +172,7 @@ const PINNED = {
         "background-jobs",
         "oppi.sessions",
         "project-context",
+        "sql-explorer",
       ],
       tools: [
         "read",
@@ -142,6 +184,8 @@ const PINNED = {
         "grep",
         "ask",
         "background_job",
+        "sqlite_schema",
+        "sqlite_query",
         "subagent",
       ],
       sections: [
@@ -156,14 +200,37 @@ const PINNED = {
   },
   child: {
     created: {
-      stored: ["coding-tools", "ask", "working-words", "background-jobs", "project-context"],
-      extensions: ["coding-tools", "ask", "working-words", "background-jobs", "project-context"],
-      tools: ["read", "write", "edit", "bash", "ask", "background_job"],
+      stored: [
+        "coding-tools",
+        "ask",
+        "working-words",
+        "background-jobs",
+        "project-context",
+        "sql-explorer",
+      ],
+      extensions: [
+        "coding-tools",
+        "ask",
+        "working-words",
+        "background-jobs",
+        "project-context",
+        "sql-explorer",
+      ],
+      tools: [
+        "read",
+        "write",
+        "edit",
+        "bash",
+        "ask",
+        "background_job",
+        "sqlite_schema",
+        "sqlite_query",
+      ],
       sections: ["ask-guidelines", "background-jobs", "project_context", "skills", "instructions"],
     },
     reattached: {
       stored: {
-        add: ["ask", "working-words", "background-jobs", "project-context"],
+        add: ["ask", "working-words", "background-jobs", "project-context", "sql-explorer"],
         remove: ["oppi.sessions"],
       },
       extensions: [
@@ -173,8 +240,18 @@ const PINNED = {
         "working-words",
         "background-jobs",
         "project-context",
+        "sql-explorer",
       ],
-      tools: ["read", "write", "edit", "bash", "ask", "background_job"],
+      tools: [
+        "read",
+        "write",
+        "edit",
+        "bash",
+        "ask",
+        "background_job",
+        "sqlite_schema",
+        "sqlite_query",
+      ],
       sections: ["ask-guidelines", "background-jobs", "project_context", "skills", "instructions"],
     },
   },

@@ -317,7 +317,7 @@ private struct MacExtensionNativeBlockView: View {
             Divider()
         case .spacer(_, let size):
             Color.clear.frame(height: spacerHeight(size))
-        case .unsupported:
+        case .table, .chart, .unsupported:
             EmptyView()
         }
     }

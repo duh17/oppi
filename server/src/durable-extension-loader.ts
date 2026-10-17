@@ -211,6 +211,7 @@ const BUNDLED_PACKAGES = [
   "background-jobs",
   "sessions",
   "project-context",
+  "sql-explorer",
   "control",
 ] as const;
 

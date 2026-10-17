@@ -87,6 +87,50 @@ struct ExtensionUIBlockBase: Sendable, Equatable {
     let accessibility: ExtensionUIAccessibility?
 }
 
+enum ExtensionUITableCell: Sendable, Equatable, Decodable {
+    case string(String)
+    case number(Double)
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+            return
+        }
+        if let number = try? container.decode(Double.self) {
+            self = .number(number)
+            return
+        }
+        if let boolean = try? container.decode(Bool.self) {
+            self = .string(boolean ? "true" : "false")
+            return
+        }
+        self = .string((try? container.decode(String.self)) ?? "")
+    }
+
+    var displayText: String {
+        switch self {
+        case .null:
+            return ""
+        case .string(let value):
+            return value
+        case .number(let value):
+            if value.rounded() == value,
+               value >= Double(Int.min),
+               value <= Double(Int.max) {
+                return String(Int(value))
+            }
+            return String(value)
+        }
+    }
+}
+
+struct ExtensionUIChartSeries: Sendable, Equatable, Decodable {
+    let name: String?
+    let values: [Double]
+}
+
 enum ExtensionUINativeBlock: Sendable, Equatable, Decodable, Identifiable {
     case text(base: ExtensionUIBlockBase, spans: [ExtensionUITextSpan])
     case markdown(base: ExtensionUIBlockBase, markdown: String)
@@ -99,6 +143,15 @@ enum ExtensionUINativeBlock: Sendable, Equatable, Decodable, Identifiable {
     case code(base: ExtensionUIBlockBase, language: String?, text: String)
     case divider(base: ExtensionUIBlockBase)
     case spacer(base: ExtensionUIBlockBase, size: String?)
+    case table(base: ExtensionUIBlockBase, columns: [String], rows: [[ExtensionUITableCell]], truncated: Bool?)
+    case chart(
+        base: ExtensionUIBlockBase,
+        kind: String,
+        title: String?,
+        labels: [String],
+        series: [ExtensionUIChartSeries],
+        truncated: Bool?
+    )
     case unsupported(base: ExtensionUIBlockBase, type: String?)
 
     var id: String {
@@ -112,6 +165,8 @@ enum ExtensionUINativeBlock: Sendable, Equatable, Decodable, Identifiable {
              .code(let base, _, _),
              .divider(let base),
              .spacer(let base, _),
+             .table(let base, _, _, _),
+             .chart(let base, _, _, _, _, _),
              .unsupported(let base, _):
             return base.id ?? fallbackIdentity
         }
@@ -128,6 +183,8 @@ enum ExtensionUINativeBlock: Sendable, Equatable, Decodable, Identifiable {
         case .code: return "code"
         case .divider: return "divider"
         case .spacer: return "spacer"
+        case .table: return "table"
+        case .chart: return "chart"
         case .unsupported(_, let type): return type ?? "unsupported"
         }
     }
@@ -143,6 +200,8 @@ enum ExtensionUINativeBlock: Sendable, Equatable, Decodable, Identifiable {
              .code(let base, _, _),
              .divider(let base),
              .spacer(let base, _),
+             .table(let base, _, _, _),
+             .chart(let base, _, _, _, _, _),
              .unsupported(let base, _):
             return base.accessibility
         }
@@ -197,6 +256,7 @@ enum ExtensionUINativeBlock: Sendable, Equatable, Decodable, Identifiable {
         case spans, markdown, title, subtitle, blocks
         case rows, label, value, indeterminate, lines
         case language, text, size
+        case columns, truncated, kind, labels, series
     }
 
     init(from decoder: Decoder) throws {
@@ -243,6 +303,22 @@ enum ExtensionUINativeBlock: Sendable, Equatable, Decodable, Identifiable {
             self = .divider(base: base)
         case "spacer":
             self = .spacer(base: base, size: try c.decodeIfPresent(String.self, forKey: .size))
+        case "table":
+            self = .table(
+                base: base,
+                columns: (try? c.decode([String].self, forKey: .columns)) ?? [],
+                rows: (try? c.decode([[ExtensionUITableCell]].self, forKey: .rows)) ?? [],
+                truncated: try c.decodeIfPresent(Bool.self, forKey: .truncated)
+            )
+        case "chart":
+            self = .chart(
+                base: base,
+                kind: (try? c.decode(String.self, forKey: .kind)) ?? "",
+                title: try c.decodeIfPresent(String.self, forKey: .title),
+                labels: (try? c.decode([String].self, forKey: .labels)) ?? [],
+                series: (try? c.decode([ExtensionUIChartSeries].self, forKey: .series)) ?? [],
+                truncated: try c.decodeIfPresent(Bool.self, forKey: .truncated)
+            )
         default:
             self = .unsupported(base: base, type: type)
         }

@@ -17,6 +17,11 @@ import {
   EXTENSION_UI_NATIVE_SURFACE_MAX_SPANS,
   EXTENSION_UI_NATIVE_SURFACE_MAX_TERMINAL_LINES,
   EXTENSION_UI_NATIVE_SURFACE_MAX_TEXT_BYTES,
+  EXTENSION_UI_NATIVE_TABLE_MAX_CELL_CHARS,
+  EXTENSION_UI_NATIVE_TABLE_MAX_COLUMNS,
+  EXTENSION_UI_NATIVE_TABLE_MAX_ROWS,
+  EXTENSION_UI_NATIVE_CHART_MAX_LABELS,
+  EXTENSION_UI_NATIVE_CHART_MAX_SERIES,
   EXTENSION_UI_STATUS_TEXT_MAX_CHARS,
   EXTENSION_UI_WORKING_INDICATOR_MAX_FRAMES,
   EXTENSION_UI_WORKING_INDICATOR_MAX_FRAME_CHARS,
@@ -944,5 +949,120 @@ describe("extension UI contract", () => {
 
     expect(parseExtensionUITextResponse({ id: "input-1", value: "typed text" })).toBe("typed text");
     expect(parseExtensionUITextResponse({ id: "input-1", cancelled: true })).toBeUndefined();
+  });
+
+  it("clips over-limit table and chart blocks and drops malformed ones", () => {
+    const envelope = (blocks: unknown[]) => ({
+      version: 1,
+      id: "widget:data",
+      source: "widget",
+      presentation: { style: "surfacePanel", title: "sales.db" },
+      blocks,
+    });
+
+    const clippedTable = normalizeExtensionUINativeSurface(
+      envelope([
+        {
+          type: "table",
+          id: "result",
+          columns: Array.from(
+            { length: EXTENSION_UI_NATIVE_TABLE_MAX_COLUMNS + 2 },
+            (_, i) => `c${i}`,
+          ),
+          rows: Array.from({ length: EXTENSION_UI_NATIVE_TABLE_MAX_ROWS + 5 }, (_, row) => [
+            row === 0 ? "x".repeat(EXTENSION_UI_NATIVE_TABLE_MAX_CELL_CHARS + 8) : `r${row}`,
+            row,
+            null,
+          ]),
+        },
+      ]),
+    );
+    expect(clippedTable?.blocks[0]).toMatchObject({
+      type: "table",
+      truncated: true,
+    });
+    const table = clippedTable?.blocks[0] as {
+      columns: string[];
+      rows: unknown[][];
+    };
+    expect(table.columns).toHaveLength(EXTENSION_UI_NATIVE_TABLE_MAX_COLUMNS);
+    expect(table.rows).toHaveLength(EXTENSION_UI_NATIVE_TABLE_MAX_ROWS);
+    expect(table.rows[0]?.[0]).toHaveLength(EXTENSION_UI_NATIVE_TABLE_MAX_CELL_CHARS);
+
+    const clippedChart = normalizeExtensionUINativeSurface(
+      envelope([
+        {
+          type: "chart",
+          kind: "bar",
+          labels: Array.from(
+            { length: EXTENSION_UI_NATIVE_CHART_MAX_LABELS + 3 },
+            (_, i) => `l${i}`,
+          ),
+          series: Array.from({ length: EXTENSION_UI_NATIVE_CHART_MAX_SERIES + 2 }, (_, i) => ({
+            name: `s${i}`,
+            values: Array.from({ length: EXTENSION_UI_NATIVE_CHART_MAX_LABELS + 3 }, () => i),
+          })),
+        },
+      ]),
+    );
+    expect(clippedChart?.blocks[0]).toMatchObject({ type: "chart", kind: "bar", truncated: true });
+    const chart = clippedChart?.blocks[0] as {
+      labels: string[];
+      series: unknown[];
+    };
+    expect(chart.labels).toHaveLength(EXTENSION_UI_NATIVE_CHART_MAX_LABELS);
+    expect(chart.series).toHaveLength(EXTENSION_UI_NATIVE_CHART_MAX_SERIES);
+
+    const dropped = normalizeExtensionUINativeSurface(
+      envelope([
+        { type: "text", spans: [{ text: "kept" }] },
+        { type: "table", columns: "nope", rows: [] },
+        { type: "chart", kind: "radar", labels: ["a"], series: [{ values: [1] }] },
+        { type: "chart", kind: "bar", labels: ["a"], series: [{ values: ["x"] }] },
+      ]),
+    );
+    expect(dropped?.blocks).toEqual([{ type: "text", spans: [{ text: "kept" }] }]);
+
+    const nested = normalizeExtensionUINativeSurface(
+      envelope([
+        {
+          type: "activityList",
+          rows: [
+            {
+              id: "parent",
+              title: "parent",
+              children: [
+                {
+                  id: "child",
+                  title: "child",
+                  blocks: [
+                    { type: "text", spans: [{ text: "kept" }] },
+                    { type: "table", columns: "nope", rows: [] },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ]),
+    );
+    expect(nested?.blocks).toEqual([
+      {
+        type: "activityList",
+        rows: [
+          {
+            id: "parent",
+            title: "parent",
+            children: [
+              {
+                id: "child",
+                title: "child",
+                blocks: [{ type: "text", spans: [{ text: "kept" }] }],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
   });
 });

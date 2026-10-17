@@ -310,6 +310,20 @@ export type ExtensionUINativeBlock =
   | ({ id?: string; accessibility?: ExtensionUIAccessibility } & {
       type: "spacer";
       size?: "small" | "medium" | "large";
+    })
+  | ({ id?: string; accessibility?: ExtensionUIAccessibility } & {
+      type: "table";
+      columns: string[];
+      rows: (string | number | null)[][];
+      truncated?: boolean;
+    })
+  | ({ id?: string; accessibility?: ExtensionUIAccessibility } & {
+      type: "chart";
+      kind: "bar" | "line" | "pie";
+      title?: string;
+      labels: string[];
+      series: Array<{ name?: string; values: number[] }>;
+      truncated?: boolean;
     });
 
 export interface ExtensionUINativePresentation {

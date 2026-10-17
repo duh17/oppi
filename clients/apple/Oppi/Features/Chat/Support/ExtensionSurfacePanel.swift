@@ -606,6 +606,11 @@ private enum ExtensionSurfaceStripEntry: Equatable, Identifiable {
                 if let text, !text.isEmpty { return text }
             case .code(_, let language, _):
                 return language?.trimmedNonEmpty ?? "Code"
+            case .table(_, let columns, let rows, _):
+                if let first = columns.first?.trimmedNonEmpty { return first }
+                return rows.isEmpty ? "Table" : "\(rows.count) rows"
+            case .chart(_, let kind, let title, let labels, _, _):
+                return title?.trimmedNonEmpty ?? "\(kind) · \(labels.count)"
             case .divider, .spacer, .unsupported:
                 continue
             }

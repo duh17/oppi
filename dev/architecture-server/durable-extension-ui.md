@@ -96,6 +96,10 @@ SIGKILL cannot run environment cleanup. A host shell process can outlive the kil
 
 The opt-in crash runner is `node --import tsx scripts/durable-background-jobs-smoke.ts` after `npm run build`. Run it through the credential-approved tool. It starts a throwaway server through the local API socket, selects `anthropic/claude-haiku-4-5`, confirms shell execution, kills the server, and verifies one interrupted follow-up and one durable receipt after restart. It copies credentials into private temporary storage and preserves its receipt and server logs.
 
+## SQLite explorer
+
+The bundled `sql-explorer` package (`server/extensions/durable/sql-explorer/`) is selected in host and sandbox durable sessions. It offers read-only `sqlite_schema` and `sqlite_query` (`replay: "safe"`). Every query runs through `api.env.exec` as `sqlite3 -readonly -safe -noinit -json -- <path> <sql>` (`-noinit` is required because `~/.sqliterc` is processed before `-safe`) with argv quoting, a timeout, and an output byte cap — never `node:fs`, `node:child_process`, or in-process SQLite. A missing `sqlite3` binary is a tool error. Each successful result replaces the `data` widget slot (`history: "latest"`) with a `nativeSurface` whose title is the database file name. The surface carries a `table` block and, when the caller asked for a chart, a `chart` block. No tap events, write queries, HTTP routes, classic-session support, or Mac UI.
+
 ## Proof commands
 
 From `server/`, run `npm run check:server`, `npm test`, and `npm run check:pack-contents` after a build. The durable integration suite covers SDK request-field parity, first-answer-wins, all blocking methods, reconnect, pending restart, the answer/memo crash window, one ask per turn, Abort/Stop, working state, and generic native widgets.

@@ -873,6 +873,102 @@ struct ServerMessageTests {
         #expect(notification.nativeSurface?.fallbackDisplayLines == ["Unsupported extension surface: form, settingsList"])
     }
 
+    @Test func extensionUINativeTableAndChartBlocksDecode() throws {
+        let json = """
+        {
+          "type": "extension_ui_notification",
+          "method": "setWidget",
+          "widgetKey": "data",
+          "nativeSurface": {
+            "version": 1,
+            "id": "widget:data",
+            "source": "widget",
+            "presentation": { "style": "surfacePanel", "title": "sales.db", "subtitle": "3 rows" },
+            "blocks": [
+              {
+                "type": "table",
+                "id": "result",
+                "columns": ["name", "amount"],
+                "rows": [["apples", 12], ["bananas", 9], [null, 0]],
+                "truncated": true
+              },
+              {
+                "type": "chart",
+                "id": "chart",
+                "kind": "bar",
+                "title": "Sales",
+                "labels": ["apples", "bananas"],
+                "series": [{ "name": "amount", "values": [12, 9] }]
+              }
+            ]
+          }
+        }
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .extensionUINotification(let notification) = msg,
+              let blocks = notification.nativeSurface?.nativeDisplayBlocks,
+              blocks.count == 2 else {
+            Issue.record("Expected table and chart native blocks")
+            return
+        }
+        guard case .table(_, let columns, let rows, let truncated) = blocks[0] else {
+            Issue.record("Expected table block")
+            return
+        }
+        #expect(columns == ["name", "amount"])
+        #expect(truncated == true)
+        #expect(rows[0][0].displayText == "apples")
+        #expect(rows[0][1].displayText == "12")
+        #expect(rows[2][0].displayText == "")
+        guard case .chart(_, let kind, let title, let labels, let series, _) = blocks[1] else {
+            Issue.record("Expected chart block")
+            return
+        }
+        #expect(kind == "bar")
+        #expect(title == "Sales")
+        #expect(labels == ["apples", "bananas"])
+        #expect(series.first?.name == "amount")
+        #expect(series.first?.values == [12, 9])
+    }
+
+    @Test func unknownExtensionUINativeBlockStillFallsBackWhenTableAndChartExist() throws {
+        let json = """
+        {
+          "type": "extension_ui_notification",
+          "method": "setWidget",
+          "widgetKey": "data",
+          "nativeSurface": {
+            "version": 1,
+            "id": "widget:data",
+            "source": "widget",
+            "presentation": { "style": "surfacePanel" },
+            "blocks": [
+              { "type": "table", "columns": ["n"], "rows": [[1]] },
+              { "type": "futureChart", "id": "x" }
+            ],
+            "fallback": { "lines": ["fallback"] }
+          }
+        }
+        """
+        let msg = try ServerMessage.decode(from: json)
+        guard case .extensionUINotification(let notification) = msg,
+              let blocks = notification.nativeSurface?.blocks,
+              blocks.count == 2 else {
+            Issue.record("Expected mixed native blocks")
+            return
+        }
+        guard case .table = blocks[0] else {
+            Issue.record("Expected table block")
+            return
+        }
+        guard case .unsupported(_, let type) = blocks[1] else {
+            Issue.record("Expected unsupported fallback")
+            return
+        }
+        #expect(type == "futureChart")
+        #expect(notification.nativeSurface?.nativeDisplayBlocks.count == 1)
+    }
+
     // MARK: - Malformed / Edge Cases
 
     @Test func missingTypeFieldThrows() {
