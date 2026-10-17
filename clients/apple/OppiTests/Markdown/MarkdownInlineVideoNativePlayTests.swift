@@ -191,6 +191,102 @@ struct MarkdownInlineVideoNativePlayTests {
         }
         #expect(afterDismissAdvanced, "play() after fullscreen-ownership dismiss did not advance: \(playbackProbe(player))")
     }
+
+    @MainActor
+    @Test("timeline scroll builds no player before tap; one tap builds one playing player; each still loads once")
+    func timelineScrollBuildsNoPlayerUntilTap() async throws {
+        let body = try Data(contentsOf: try knownGoodH264URL())
+        let server = try AuthenticatedRangeHTTPServer(body: body, token: "Bearer sk_test")
+        defer { server.stop() }
+        let base = try #require(URL(string: "http://127.0.0.1:\(server.url.port ?? 0)"))
+
+        let previousStore = InlineVideoStillFrameStore.shared
+        let store = InlineVideoStillFrameStore()
+        InlineVideoStillFrameStore.installForTesting(store)
+        defer { InlineVideoStillFrameStore.installForTesting(previousStore) }
+
+        let timeline = makeWindowedTimelineHarness(sessionId: "s-video-scroll")
+        defer { timeline.window.isHidden = true }
+        // AVKit containment needs a view controller above the collection view.
+        let host = UIViewController()
+        timeline.window.rootViewController = host
+        host.view.addSubview(timeline.collectionView)
+        timeline.collectionView.frame = host.view.bounds
+        timeline.window.makeKeyAndVisible()
+        timeline.connection.setAPIClientForTesting(
+            APIClient(baseURL: base, token: "sk_test", configuration: .ephemeral)
+        )
+
+        let videoCount = 8
+        let timestamp = Date(timeIntervalSince1970: 0)
+        let rows: [ChatItem] = (0..<videoCount).map { index in
+            .assistantMessage(
+                id: "a\(index)",
+                text: "Clip \(index)\n\n![[v\(index).mp4]]\n\nafter \(index)",
+                timestamp: timestamp
+            )
+        }
+        timeline.applyItems(rows, isBusy: false, streamingID: nil)
+
+        var seen: [NativeMarkdownVideoView] = []
+        func sampleVideos() -> [NativeMarkdownVideoView] {
+            let videos = timelineAllViews(in: timeline.collectionView).compactMap { $0 as? NativeMarkdownVideoView }
+            for video in videos where !seen.contains(where: { $0 === video }) { seen.append(video) }
+            return videos
+        }
+        func expectNoPlayerAnywhere(_ label: String) {
+            for video in sampleVideos() {
+                #expect(!video.debugHasPlayerForTesting, "\(label): player controller mounted before tap")
+                #expect(video.debugPlaybackModelForTesting.player == nil, "\(label): AVPlayer built before tap")
+            }
+        }
+
+        let maxOffset = timeline.collectionView.contentSize.height - timeline.collectionView.bounds.height
+        #expect(maxOffset > 0)
+        for pass in 0..<2 {
+            var offset: CGFloat = 0
+            while offset < maxOffset {
+                offset = min(offset + 120, maxOffset)
+                timeline.collectionView.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
+                timeline.collectionView.layoutIfNeeded()
+                try? await Task.sleep(for: .milliseconds(120))
+                expectNoPlayerAnywhere("pass \(pass) down")
+            }
+            while offset > 0 {
+                offset = max(offset - 120, 0)
+                timeline.collectionView.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
+                timeline.collectionView.layoutIfNeeded()
+                try? await Task.sleep(for: .milliseconds(120))
+                expectNoPlayerAnywhere("pass \(pass) up")
+            }
+        }
+
+        // Cells were recycled across the passes; no row ever built a player.
+        #expect(seen.count > videoCount, "scroll never recycled a video cell")
+        let onScreenStills = await waitUntil(timeout: .seconds(8)) {
+            let visible = sampleVideos().filter { $0.window != nil }
+            return !visible.isEmpty && visible.allSatisfy { $0.debugStillImageForTesting != nil }
+        }
+        #expect(onScreenStills, "visible rows never showed their still frame")
+        // One generation per video identity across every re-entry.
+        #expect(store.debugGenerationCountForTesting == videoCount)
+
+        let visible = sampleVideos().filter { $0.window != nil && timelineViewIsVisible($0) }
+        let target = try #require(visible.first)
+        let model = target.debugPlaybackModelForTesting
+        #expect(target.debugPlayButtonForTesting.accessibilityIdentifier == "markdown-video-play")
+        target.debugTapPlayForTesting()
+        let playing = await waitUntil(timeout: .seconds(10)) {
+            model.player?.timeControlStatus == .playing
+        }
+        #expect(playing, "tap did not reach playing: \(model.debugPlaybackProbeForTesting)")
+        let withPlayers = sampleVideos().filter { $0.debugHasPlayerForTesting }
+        #expect(withPlayers.count == 1)
+        #expect(withPlayers.first === target)
+        #expect(sampleVideos().filter { $0 !== target }.allSatisfy { $0.debugPlaybackModelForTesting.player == nil })
+        #expect(store.debugGenerationCountForTesting == videoCount)
+        target.prepareForRemoval()
+    }
 }
 
 @MainActor
@@ -223,6 +319,7 @@ private func makeHostedMarkdownVideo(source: AuthenticatedMediaSource) throws ->
         preferredDisplayWidth: 320
     )
     parent.view.layoutIfNeeded()
+    video.debugTapPlayForTesting()
     return HostedMarkdownVideo(window: window, video: video)
 }
 

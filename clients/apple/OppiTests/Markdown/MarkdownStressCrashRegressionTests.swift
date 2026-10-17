@@ -50,6 +50,7 @@ struct MarkdownStressCrashRegressionTests {
         defer { window.isHidden = true }
 
         video.setPlaybackVisible(true)
+        video.debugTapPlayForTesting()
         #expect(await waitUntil { video.debugHasPlayerForTesting })
         try expectPlayerScrollsWithHost(video, screenParent: parent)
     }
@@ -87,8 +88,12 @@ struct MarkdownStressCrashRegressionTests {
         #expect(await waitUntil {
             navigation.transitionCoordinator == nil && reader.view.window != nil
         }, "push did not finish")
+        #expect(await waitUntil { visibleVideo(in: reader) != nil }, "no visible reader video")
+        let tapped = try #require(visibleVideo(in: reader))
+        #expect(!tapped.debugHasPlayerForTesting, "appearance alone must not mount a player")
+        tapped.debugTapPlayForTesting()
         #expect(await waitUntil { visibleVideo(in: reader)?.debugHasPlayerForTesting == true },
-                "visible reader video never mounted its player after appearance")
+                "visible reader video never mounted its player after the play tap")
         let video = try #require(visibleVideo(in: reader))
         try expectPlayerContained(in: video, reader: reader)
     }
@@ -144,6 +149,7 @@ struct MarkdownStressCrashRegressionTests {
             renderingMode: .live,
             preferredDisplayWidth: 320
         )
+        video.debugTapPlayForTesting()
         for _ in 0..<40 where resume == nil {
             await Task.yield()
         }

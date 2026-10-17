@@ -139,7 +139,7 @@ Inline Markdown video uses bang-embed syntax. `![]()` and `![[]]` both embed an 
 ![[/tmp/oppi-demo.mov]]
 ```
 
-`![[video-file]]` and `![label](video-file)` render a native, non-autoplaying player in assistant messages and the full-screen Markdown reader. `[[video-file]]` remains an ordinary file link. Eligible files use existing authenticated workspace, worktree, session-file, or exact owner host-file routes. Remote video sites, arbitrary URLs, HTML video, `data:`, and attachment IDs remain readable fallback text and never start a new network route. Export uses a static video card and does not modify the source. See [Markdown inline video](attachment-rendering.md#markdown-inline-video).
+`![[video-file]]` and `![label](video-file)` render a still frame with a play button in assistant messages and the full-screen Markdown reader; tapping play starts the native player. `[[video-file]]` remains an ordinary file link. Eligible files use existing authenticated workspace, worktree, session-file, or exact owner host-file routes. Remote video sites, arbitrary URLs, HTML video, `data:`, and attachment IDs remain readable fallback text and never start a new network route. Export uses a static video card and does not modify the source. See [Markdown inline video](attachment-rendering.md#markdown-inline-video).
 
 `![[audio-file]]` and `![label](audio-file)` render a compact non-autoplaying player strip. `[[audio-file]]` remains an ordinary file link and opens the lyrics-first full-screen audio player. Remote URLs, HTML audio, `data:`, and attachment IDs are not embeds. See [Markdown inline audio](attachment-rendering.md#markdown-inline-audio).
 

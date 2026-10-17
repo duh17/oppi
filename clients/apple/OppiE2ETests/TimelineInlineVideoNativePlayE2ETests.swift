@@ -477,7 +477,15 @@ final class TimelineInlineVideoNativePlayE2ETests: E2ETestCase {
     }
 
     @discardableResult
+    /// Inline video rows build their player only after the play control is tapped.
+    private func startInlinePlaybackIfNeeded() {
+        let play = app.buttons["markdown-video-play"]
+        guard !presentedNativePlayer().exists, play.waitForExistence(timeout: 8) else { return }
+        tap(play, named: "inline video play control")
+    }
+
     private func revealNativePlayer() -> XCUIElement {
+        startInlinePlaybackIfNeeded()
         let timeline = timelineElement()
         var player = presentedNativePlayer()
         if player.exists, player.isHittable {

@@ -205,9 +205,8 @@ struct MarkdownInlineVideoTests {
         #expect(Array(appended.identities.prefix(initial.identities.count)) == initial.identities)
     }
 
-    @Test("fallback video geometry is deterministic and playback is opt-in")
-    func deterministicGeometryAndPlaybackPolicy() {
-        #expect(!MarkdownInlineVideoLayout.autoplay)
+    @Test("fallback video geometry is deterministic")
+    func deterministicGeometry() {
         #expect(abs(MarkdownInlineVideoLayout.fallbackAspectRatio - (16.0 / 9.0)) < 0.000_001)
         #expect(MarkdownInlineVideoLayout.reservedHeight(forWidth: 320) == 180)
         #expect(MarkdownInlineVideoLayout.reservedHeight(forWidth: 369) == 208)
@@ -823,6 +822,7 @@ struct MarkdownInlineVideoTests {
             renderingMode: .live,
             preferredDisplayWidth: 320
         )
+        video.debugTapPlayForTesting()
         var installed = false
         for _ in 0..<40 {
             if video.debugHasPlayerForTesting {
@@ -833,6 +833,7 @@ struct MarkdownInlineVideoTests {
         }
         #expect(installed)
         try expectPlayerScrollsWithHost(video, screenParent: parent)
+        #expect(video.debugIsPlayerAboveStillForTesting)
         let controller = try #require(video.debugPlayerControllerForTesting)
         #expect(controller.player === video.debugPlaybackModelForTesting.player)
         #expect(controller.showsPlaybackControls)
@@ -877,6 +878,7 @@ struct MarkdownInlineVideoTests {
             preferredDisplayWidth: 320,
             sidecarProvider: { _, _, _ in .init(tracks: tracks, selectedIndex: 1) }
         )
+        video.debugTapPlayForTesting()
         let ready = await waitForTimelineCondition(timeoutMs: 1_400) { @MainActor in
             let overlay = video.debugPlayerControllerForTesting?.contentOverlayView
             return overlay?.viewWithTag(TimedTextCaptionOverlay.languageTag)?.isHidden == false
@@ -1001,6 +1003,157 @@ struct MarkdownInlineVideoTests {
     }
 
     @MainActor
+    @Test("before tap the row is a placeholder with a play control and no player; the tap and recycle round-trip")
+    func preTapRowHasPlayControlAndNoPlayer() async throws {
+        let previousStore = InlineVideoStillFrameStore.shared
+        // No frame can be produced: the row must stay a placeholder, not an error.
+        InlineVideoStillFrameStore.installForTesting(InlineVideoStillFrameStore(generator: { _, _ in nil }))
+        defer { InlineVideoStillFrameStore.installForTesting(previousStore) }
+
+        let embed = try makeEmbed("![[movie.mp4]]")
+        let source = dummyMediaSource()
+        let parent = UIViewController()
+        let video = NativeMarkdownVideoView()
+        parent.view.addSubview(video)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+
+        func apply() {
+            video.apply(
+                embed: embed,
+                sourceProvider: { _ in source },
+                renderingMode: .live,
+                preferredDisplayWidth: 320
+            )
+        }
+        apply()
+        video.layoutIfNeeded()
+        for _ in 0..<40 where !video.debugHasCurrentSourceForTesting { await Task.yield() }
+        try await Task.sleep(for: .milliseconds(50))
+
+        let play = video.debugPlayButtonForTesting
+        #expect(video.debugHasCurrentSourceForTesting)
+        #expect(!video.debugHasPlayerForTesting)
+        #expect(video.debugPlaybackModelForTesting.player == nil)
+        #expect(parent.children.isEmpty)
+        #expect(video.debugStillImageForTesting == nil)
+        #expect(!play.isHidden)
+        #expect(video.debugOpenButtonIsHiddenForTesting, "a missing still is a placeholder, not an error")
+        #expect(video.debugReservedHeightForTesting == MarkdownInlineVideoLayout.reservedHeight(forWidth: 320))
+        #expect(play.accessibilityIdentifier == "markdown-video-play")
+        #expect(play.accessibilityTraits.contains(.button))
+        #expect(play.accessibilityLabel?.contains(embed.displayLabel) == true)
+        #expect(play.bounds.width >= 44 && play.bounds.height >= 44)
+
+        // Accessibility activation reaches the same owner action as a touch.
+        #expect(play.accessibilityActivate())
+        #expect(video.debugIsPlayRequestedForTesting)
+        for _ in 0..<80 where !video.debugHasPlayerForTesting { await Task.yield() }
+        #expect(video.debugHasPlayerForTesting)
+        #expect(play.isHidden)
+        #expect(video.debugPlayerControllerForTesting?.view.accessibilityIdentifier == "videoPlayer.native")
+
+        // Recycle returns the row to the pre-tap state.
+        video.prepareForRemoval()
+        #expect(!video.debugHasPlayerForTesting)
+        apply()
+        for _ in 0..<40 where !video.debugHasCurrentSourceForTesting { await Task.yield() }
+        #expect(!video.debugHasPlayerForTesting)
+        #expect(!video.debugIsPlayRequestedForTesting)
+        #expect(!play.isHidden)
+    }
+
+    @MainActor
+    @Test("a tap before the source resolves builds the player once the source lands")
+    func tapBeforeSourceResolvesPlaysWhenReady() async throws {
+        let embed = try makeEmbed("![[movie.mp4]]")
+        let parent = UIViewController()
+        let video = NativeMarkdownVideoView()
+        parent.view.addSubview(video)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        defer { video.prepareForRemoval(); window.isHidden = true }
+
+        var resume: CheckedContinuation<AuthenticatedMediaSource, Error>?
+        video.apply(
+            embed: embed,
+            sourceProvider: { _ in try await withCheckedThrowingContinuation { resume = $0 } },
+            renderingMode: .live,
+            preferredDisplayWidth: 320
+        )
+        for _ in 0..<40 where resume == nil { await Task.yield() }
+        let pending = try #require(resume)
+        video.debugTapPlayForTesting()
+        #expect(!video.debugHasPlayerForTesting)
+        #expect(video.debugPlayButtonForTesting.isHidden)
+
+        pending.resume(returning: dummyMediaSource())
+        for _ in 0..<80 where !video.debugHasPlayerForTesting { await Task.yield() }
+        #expect(video.debugHasPlayerForTesting)
+    }
+
+    @MainActor
+    @Test("still store shares one generation per key, caches hits, backs off failures, and clears on memory warning")
+    func stillStoreCachesAndClears() async throws {
+        let center = NotificationCenter()
+        let counter = StillGenerationCounter()
+        let store = InlineVideoStillFrameStore(
+            generator: { source, _ in
+                await counter.record()
+                try? await Task.sleep(for: .milliseconds(30))
+                return source.sourceFileExtension == "bad" ? nil : Self.solidImage()
+            },
+            notificationCenter: center
+        )
+        let good = dummyMediaSource(fileName: "good.mp4")
+        let size = CGSize(width: 640, height: 360)
+
+        // Two rows asking at once share one generation.
+        async let first = store.image(for: good, maxPixelSize: size)
+        async let second = store.image(for: good, maxPixelSize: size)
+        let images = await (first, second)
+        #expect(images.0 != nil && images.1 != nil)
+        #expect(await counter.count == 1)
+
+        // Re-entry is a synchronous cache hit.
+        #expect(store.cachedImage(for: good, maxPixelSize: size) != nil)
+        _ = await store.image(for: good, maxPixelSize: size)
+        #expect(await counter.count == 1)
+
+        // A different display size is a different key.
+        _ = await store.image(for: good, maxPixelSize: CGSize(width: 320, height: 180))
+        #expect(await counter.count == 2)
+
+        // A failed key is not refetched on every re-entry.
+        let bad = AuthenticatedMediaSource(
+            url: URL(fileURLWithPath: "/tmp/bad.mp4"),
+            authorizationHeaderValue: "Bearer test",
+            tlsCertFingerprint: nil,
+            contentTypeHint: "video/mp4",
+            sourceFileExtension: "bad"
+        )
+        #expect(await store.image(for: bad, maxPixelSize: size) == nil)
+        #expect(await store.image(for: bad, maxPixelSize: size) == nil)
+        #expect(await counter.count == 3)
+
+        center.post(name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
+        for _ in 0..<20 where store.cachedImage(for: good, maxPixelSize: size) != nil { await Task.yield() }
+        #expect(store.cachedImage(for: good, maxPixelSize: size) == nil)
+        _ = await store.image(for: good, maxPixelSize: size)
+        #expect(await counter.count == 4)
+    }
+
+    private static func solidImage() -> UIImage {
+        UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        }
+    }
+
+    @MainActor
     @Test("reuse teardown removes the hosted player unless a later apply reinstalls it")
     func reuseTeardownRemovesHostedPlayer() async throws {
         let embed = try makeEmbed("![[movie.mp4]]")
@@ -1019,6 +1172,7 @@ struct MarkdownInlineVideoTests {
             renderingMode: .live,
             preferredDisplayWidth: 320
         )
+        video.debugTapPlayForTesting()
         for _ in 0..<40 where !video.debugHasPlayerForTesting {
             await Task.yield()
         }
@@ -1054,6 +1208,7 @@ struct MarkdownInlineVideoTests {
             renderingMode: .live,
             preferredDisplayWidth: 320
         )
+        video.debugTapPlayForTesting()
         for _ in 0..<80 where !video.debugHasActivePlayerForTesting {
             await Task.yield()
         }
@@ -1266,6 +1421,7 @@ struct MarkdownInlineVideoTests {
             renderingMode: .live,
             preferredDisplayWidth: 320
         )
+        video.debugTapPlayForTesting()
         for _ in 0..<40 where !video.debugHasPlayerForTesting {
             await Task.yield()
         }
@@ -1369,6 +1525,7 @@ struct MarkdownInlineVideoTests {
         var videos: [NativeMarkdownVideoView] = []
         for _ in 0..<40 {
             videos = timelineAllViews(in: markdown).compactMap { $0 as? NativeMarkdownVideoView }
+            for video in videos where !video.debugIsPlayRequestedForTesting { video.debugTapPlayForTesting() }
             if videos.count == 3, videos.allSatisfy(\.debugHasPlayerForTesting) { break }
             await Task.yield()
         }
@@ -1428,6 +1585,7 @@ struct MarkdownInlineVideoTests {
             renderingMode: .live,
             preferredDisplayWidth: 320
         )
+        video.debugTapPlayForTesting()
         for _ in 0..<40 where !video.debugHasPlayerForTesting {
             await Task.yield()
         }
@@ -1537,10 +1695,12 @@ struct MarkdownInlineVideoTests {
 
         var installed = false
         for _ in 0..<40 {
-            if let video = timelineFirstView(ofType: NativeMarkdownVideoView.self, in: view),
-               video.debugHasPlayerForTesting {
-                installed = true
-                break
+            if let video = timelineFirstView(ofType: NativeMarkdownVideoView.self, in: view) {
+                if !video.debugIsPlayRequestedForTesting { video.debugTapPlayForTesting() }
+                if video.debugHasPlayerForTesting {
+                    installed = true
+                    break
+                }
             }
             await Task.yield()
         }
@@ -1670,8 +1830,12 @@ struct MarkdownInlineVideoTests {
 
         var video: NativeMarkdownVideoView?
         for _ in 0..<80 {
-            if let found = timelineFirstView(ofType: NativeMarkdownVideoView.self, in: view),
-               found.debugHasActivePlayerForTesting {
+            if let found = timelineFirstView(ofType: NativeMarkdownVideoView.self, in: view) {
+                if !found.debugIsPlayRequestedForTesting { found.debugTapPlayForTesting() }
+                guard found.debugHasActivePlayerForTesting else {
+                    await Task.yield()
+                    continue
+                }
                 video = found
                 break
             }
@@ -2099,4 +2263,9 @@ private final class HangingHTTPServer: @unchecked Sendable {
             condition.unlock()
         }
     }
+}
+
+private actor StillGenerationCounter {
+    private(set) var count = 0
+    func record() { count += 1 }
 }

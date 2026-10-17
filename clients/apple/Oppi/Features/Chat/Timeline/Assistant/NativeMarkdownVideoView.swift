@@ -9,7 +9,6 @@ typealias MarkdownVideoMediaSourceProvider = (
 ) async throws -> AuthenticatedMediaSource
 
 enum MarkdownInlineVideoLayout {
-    static let autoplay = false
     static let fallbackAspectRatio: CGFloat = 16.0 / 9.0
     private static let fallbackWidth: CGFloat = 320
 
@@ -23,13 +22,23 @@ enum MarkdownInlineVideoLayout {
 /// Native inline player host for Oppi wiki-file video embeds.
 ///
 /// Source resolution can run in the full-screen reader's render-ahead runway,
-/// but the final fallback geometry is installed synchronously. Playback remains
-/// user initiated and delegates byte loading, controls, full-screen, and PiP to
-/// AVKit / `AuthenticatedMediaPlaybackSession`.
+/// but the final fallback geometry is installed synchronously. Before the user
+/// taps play the row is a still frame (or the placeholder when none can be
+/// produced) with a play control: no `AVPlayer`, playback session, or
+/// `AVPlayerViewController` exists. The tap builds the player and starts
+/// playback; byte loading, controls, full-screen, and PiP then belong to
+/// AVKit / `AuthenticatedMediaPlaybackSession`. Recycle or removal returns the
+/// row to the still frame.
 @MainActor
 final class NativeMarkdownVideoView: UIView {
     private let statusLabel = UILabel()
     private let openButton = UIButton(type: .system)
+    private let stillImageView = UIImageView()
+    private let playButton = InlineVideoPlayButton(type: .custom)
+    private var stillTask: Task<Void, Never>?
+    /// The user asked to play; the player is built once a source and a window exist.
+    private var isPlayRequested = false
+    private var displayWidth: CGFloat = 320
     private var heightConstraint: NSLayoutConstraint?
     /// Slot-sized parent so AVKit chrome follows the cell, not ChatView.
     private var slotController: InlineVideoSlotController?
@@ -77,6 +86,7 @@ final class NativeMarkdownVideoView: UIView {
     deinit {
         resolutionTask?.cancel()
         sidecarTask?.cancel()
+        stillTask?.cancel()
     }
 
     /// Recycle / identity-change teardown. Do not call from `willMove(toSuperview:)`;
@@ -87,6 +97,8 @@ final class NativeMarkdownVideoView: UIView {
         resolutionTask = nil
         sidecarTask?.cancel()
         sidecarTask = nil
+        stillTask?.cancel()
+        stillTask = nil
         captions.setTimedText(.empty)
         currentIdentity = nil
         removePlayer()
@@ -107,6 +119,7 @@ final class NativeMarkdownVideoView: UIView {
             String(describing: renderingMode),
         ].joined(separator: "|")
         let nextHeight = MarkdownInlineVideoLayout.reservedHeight(forWidth: width)
+        displayWidth = width
 
         if identity == currentIdentity {
             applyReservedHeight(nextHeight)
@@ -124,6 +137,9 @@ final class NativeMarkdownVideoView: UIView {
         hasCommittedRevealGeometry = shouldCommitRevealGeometry(renderingMode: renderingMode)
         applyReservedHeight(nextHeight)
         resolutionTask?.cancel()
+        stillTask?.cancel()
+        stillTask = nil
+        stillImageView.image = nil
         removePlayer()
 
         if renderingMode == .export {
@@ -137,7 +153,7 @@ final class NativeMarkdownVideoView: UIView {
         }
 
         isStaticFallback = false
-        showLoading(embed: embed)
+        showPlayPrompt(embed: embed)
         guard let sourceProvider else {
             showFallback(
                 title: String(localized: "Video unavailable"),
@@ -154,6 +170,7 @@ final class NativeMarkdownVideoView: UIView {
                 // Probes and parked cells may still be in a window. Store the
                 // resolved source; the first-mount attempt rechecks visibility.
                 self.currentSource = source
+                self.loadStillFrameIfNeeded()
                 self.scheduleFirstMount()
             } catch {
                 guard let self, !Task.isCancelled, self.currentIdentity == identity else { return }
@@ -174,6 +191,7 @@ final class NativeMarkdownVideoView: UIView {
                 // Mounted player returning from AVKit fullscreen/PiP: reattach now.
                 attachPlayerHost()
             } else {
+                loadStillFrameIfNeeded()
                 scheduleFirstMount()
             }
         }
@@ -209,14 +227,45 @@ final class NativeMarkdownVideoView: UIView {
         openButton.addTarget(self, action: #selector(openReference), for: .touchUpInside)
         applyDynamicTypeFonts(for: traitCollection.preferredContentSizeCategory)
 
+        stillImageView.translatesAutoresizingMaskIntoConstraints = false
+        stillImageView.contentMode = .scaleAspectFit
+        stillImageView.clipsToBounds = true
+        stillImageView.isHidden = true
+        stillImageView.isAccessibilityElement = false
+
+        var playConfiguration = UIButton.Configuration.filled()
+        playConfiguration.image = UIImage(systemName: "play.fill")
+        playConfiguration.cornerStyle = .capsule
+        playConfiguration.baseBackgroundColor = UIColor.black.withAlphaComponent(0.6)
+        playConfiguration.baseForegroundColor = .white
+        playConfiguration.contentInsets = NSDirectionalEdgeInsets(top: 18, leading: 20, bottom: 18, trailing: 16)
+        playConfiguration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
+            font: .systemFont(ofSize: 22, weight: .bold)
+        )
+        playButton.configuration = playConfiguration
+        playButton.translatesAutoresizingMaskIntoConstraints = false
+        playButton.accessibilityIdentifier = "markdown-video-play"
+        playButton.isHidden = true
+        playButton.addTarget(self, action: #selector(playTapped), for: .touchUpInside)
+
+        addSubview(stillImageView)
         addSubview(statusLabel)
         addSubview(openButton)
+        addSubview(playButton)
         let heightConstraint = heightAnchor.constraint(
             equalToConstant: MarkdownInlineVideoLayout.reservedHeight(forWidth: .nan)
         )
         self.heightConstraint = heightConstraint
         NSLayoutConstraint.activate([
             heightConstraint,
+            stillImageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stillImageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stillImageView.topAnchor.constraint(equalTo: topAnchor),
+            stillImageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            playButton.centerXAnchor.constraint(equalTo: centerXAnchor),
+            playButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            playButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            playButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             statusLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             statusLabel.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -22),
             statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
@@ -228,11 +277,25 @@ final class NativeMarkdownVideoView: UIView {
         ])
     }
 
-    private func showLoading(embed: MarkdownVideoEmbed) {
+    /// Pre-tap state: placeholder background (or still frame) plus the play control.
+    private func showPlayPrompt(embed: MarkdownVideoEmbed) {
         backgroundColor = UIColor(ThemeRuntimeState.currentPalette().bgHighlight)
+        statusLabel.isHidden = true
+        openButton.isHidden = true
+        stillImageView.isHidden = stillImageView.image == nil
+        playButton.isHidden = false
+        playButton.accessibilityLabel = String(format: String(localized: "Play video: %@"), embed.displayLabel)
+        playButton.accessibilityTraits = [.button]
+        isAccessibilityElement = false
+        accessibilityLabel = nil
+        accessibilityTraits = []
+    }
+
+    /// Tap landed before the source resolved; the player follows as soon as it does.
+    private func showPreparing(embed: MarkdownVideoEmbed) {
+        playButton.isHidden = true
         statusLabel.text = String(format: String(localized: "Preparing video: %@"), embed.displayLabel)
         statusLabel.isHidden = false
-        openButton.isHidden = true
         isAccessibilityElement = true
         accessibilityLabel = String(format: String(localized: "Preparing video: %@"), embed.displayLabel)
         accessibilityTraits = [.updatesFrequently]
@@ -240,6 +303,8 @@ final class NativeMarkdownVideoView: UIView {
 
     private func showFallback(title: String, detail: String, actionable: Bool) {
         removePlayer()
+        playButton.isHidden = true
+        stillImageView.isHidden = true
         backgroundColor = UIColor(ThemeRuntimeState.currentPalette().bgHighlight)
         statusLabel.text = "\(title)\n\(detail)"
         statusLabel.isHidden = false
@@ -263,14 +328,16 @@ final class NativeMarkdownVideoView: UIView {
     private func installPlayer(source: AuthenticatedMediaSource, embed: MarkdownVideoEmbed) {
         statusLabel.isHidden = true
         openButton.isHidden = true
+        playButton.isHidden = true
         isAccessibilityElement = false
         accessibilityLabel = nil
         backgroundColor = .clear
 
         playbackModel.setVisible(isPlaybackVisible)
+        // The tap is the playback intent.
         playbackModel.prepare(
             source: source,
-            autoplay: MarkdownInlineVideoLayout.autoplay,
+            autoplay: true,
             telemetrySource: "markdown_inline_video",
             telemetryMode: "inline",
             telemetrySessionId: embed.reference.sourceSessionID,
@@ -340,6 +407,7 @@ final class NativeMarkdownVideoView: UIView {
         // only request the deferred first mount here.
         if currentSource != nil, playerController == nil {
             isPlaybackVisible = true
+            loadStillFrameIfNeeded()
             scheduleFirstMount()
             return
         }
@@ -350,7 +418,7 @@ final class NativeMarkdownVideoView: UIView {
         guard let source = currentSource else { return }
         playbackModel.prepare(
             source: source,
-            autoplay: MarkdownInlineVideoLayout.autoplay,
+            autoplay: false,
             telemetrySource: "markdown_inline_video",
             telemetryMode: "inline",
             telemetrySessionId: currentEmbed?.reference.sourceSessionID,
@@ -358,13 +426,14 @@ final class NativeMarkdownVideoView: UIView {
         )
     }
 
-    /// Source-ready, reveal, and window-arrival all funnel here. Installing
+    /// A play tap, source-ready, reveal, and window-arrival all funnel here; only
+    /// a play request builds the player. Installing
     /// AVKit containment synchronously from a collection-view data-source or
     /// layout pass during a navigation transition aborts in UIKit, so the whole
     /// first install runs later, once, after enclosing transitions settle.
     /// Mounted-player reattachment (fullscreen/PiP return) never comes here.
     private func scheduleFirstMount() {
-        guard playerController == nil, currentSource != nil, !isFirstMountQueued else { return }
+        guard isPlayRequested, playerController == nil, currentSource != nil, !isFirstMountQueued else { return }
         isFirstMountQueued = true
         let generation = firstMountGeneration
         DispatchQueue.main.async { [weak self] in
@@ -382,7 +451,8 @@ final class NativeMarkdownVideoView: UIView {
         isFirstMountQueued = false
         // Everything is re-read now; nothing captured at schedule time is trusted.
         // A later reveal or window arrival schedules again if any check fails.
-        guard playerController == nil,
+        guard isPlayRequested,
+              playerController == nil,
               isPlaybackVisible,
               let source = currentSource,
               let embed = currentEmbed,
@@ -432,6 +502,7 @@ final class NativeMarkdownVideoView: UIView {
             lastAppliedPlayer = playbackModel.player
             backgroundColor = failed ? UIColor(ThemeRuntimeState.currentPalette().bgHighlight) : .clear
             playerController.view.isHidden = failed
+            stillImageView.isHidden = failed || stillImageView.image == nil
             statusLabel.isHidden = !failed
             openButton.isHidden = !failed
             if failed {
@@ -449,6 +520,62 @@ final class NativeMarkdownVideoView: UIView {
 #endif
     }
 
+    @objc private func playTapped() {
+        guard !isStaticFallback, playerController == nil, let embed = currentEmbed else { return }
+        isPlayRequested = true
+        if currentSource == nil {
+            showPreparing(embed: embed)
+        } else {
+            playButton.isHidden = true
+        }
+        scheduleFirstMount()
+    }
+
+    /// Pixel box the still is downsampled to: the 16:9 slot at this screen's scale,
+    /// width quantized so a row re-entering at a marginally different width still
+    /// hits the cache.
+    private func stillPixelSize() -> CGSize {
+        let measured = bounds.width > 0 ? bounds.width : displayWidth
+        let width = max(16, (measured / 16).rounded() * 16)
+        let scale = window?.screen.scale ?? traitCollection.displayScale
+        let pixelScale = scale > 0 ? scale : 2
+        return CGSize(
+            width: (width * pixelScale).rounded(),
+            height: (MarkdownInlineVideoLayout.reservedHeight(forWidth: width) * pixelScale).rounded()
+        )
+    }
+
+    /// Fetches (or finds cached) the pre-tap still once the row is on screen.
+    /// Failure keeps the placeholder background; it is never an error state.
+    private func loadStillFrameIfNeeded() {
+        guard stillImageView.image == nil,
+              stillTask == nil,
+              playerController == nil,
+              !isStaticFallback,
+              window != nil,
+              let source = currentSource,
+              let identity = currentIdentity else { return }
+        let size = stillPixelSize()
+        let store = InlineVideoStillFrameStore.shared
+        if let cached = store.cachedImage(for: source, maxPixelSize: size) {
+            applyStill(cached)
+            return
+        }
+        stillTask = Task { [weak self] in
+            let image = await store.image(for: source, maxPixelSize: size)
+            guard let self, !Task.isCancelled, self.currentIdentity == identity else { return }
+            self.stillTask = nil
+            if let image { self.applyStill(image) }
+        }
+    }
+
+    private func applyStill(_ image: UIImage) {
+        guard playerController == nil else { return }
+        stillImageView.image = image
+        stillImageView.isHidden = false
+        backgroundColor = .black
+    }
+
     private func loadSidecar(for embed: MarkdownVideoEmbed) {
         sidecarTask?.cancel()
         guard let sidecarProvider else { return }
@@ -462,6 +589,7 @@ final class NativeMarkdownVideoView: UIView {
     }
 
     private func removePlayer() {
+        isPlayRequested = false
         playbackObservation = nil
         captions.setPlayer(nil)
         playbackModel.teardown()
@@ -487,14 +615,16 @@ final class NativeMarkdownVideoView: UIView {
 
     private func attachPlayerHost() {
         guard let slot = slotController, let host = playerController else { return }
+        // The player sits above the still frame, which stays visible until AVKit
+        // paints the first video frame, and below the status and play controls.
         if slot.parent == nil, let parent = nearestViewController() {
             parent.addChild(slot)
             if slot.view.superview != self {
-                insertSubview(slot.view, at: 0)
+                insertSubview(slot.view, aboveSubview: stillImageView)
             }
             slot.didMove(toParent: parent)
         } else if slot.view.superview != self {
-            insertSubview(slot.view, at: 0)
+            insertSubview(slot.view, aboveSubview: stillImageView)
         }
         if host.parent == nil {
             slot.addChild(host)
@@ -553,6 +683,15 @@ final class NativeMarkdownVideoView: UIView {
     }
 }
 
+/// Play control whose accessibility activation takes the same path as a touch,
+/// so VoiceOver / automation and a finger share one owner action.
+private final class InlineVideoPlayButton: UIButton {
+    override func accessibilityActivate() -> Bool {
+        sendActions(for: .touchUpInside)
+        return true
+    }
+}
+
 /// AVKit lays out playback chrome against its parent view controller.
 /// That parent must be this slot, whose view lives in the timeline cell.
 /// Parenting `AVPlayerViewController` to ChatView pins the picture to the
@@ -580,6 +719,19 @@ extension NativeMarkdownVideoView {
     var debugPlayerParentForTesting: UIViewController? { playerController?.parent }
     var debugPlayerSlotForTesting: UIViewController? { slotController }
     var debugPlaybackModelForTesting: AuthenticatedMediaPlayerModel { playbackModel }
+    var debugPlayButtonForTesting: UIButton { playButton }
+    /// Drives the play control's own touch action, the same owner an accessibility
+    /// activation reaches.
+    func debugTapPlayForTesting() { playButton.sendActions(for: .touchUpInside) }
+    var debugStillImageForTesting: UIImage? { stillImageView.image }
+    /// A player below the still would be hidden by it for the whole playback.
+    var debugIsPlayerAboveStillForTesting: Bool {
+        guard let slot = slotController,
+              let slotIndex = subviews.firstIndex(of: slot.view),
+              let stillIndex = subviews.firstIndex(of: stillImageView) else { return false }
+        return slotIndex > stillIndex
+    }
+    var debugIsPlayRequestedForTesting: Bool { isPlayRequested }
     var debugFailureHitAreaForTesting: CGSize { openButton.bounds.size }
     var debugStatusLabelAdjustsFontForTesting: Bool { statusLabel.adjustsFontForContentSizeCategory }
     var debugOpenButtonIsHiddenForTesting: Bool { openButton.isHidden }

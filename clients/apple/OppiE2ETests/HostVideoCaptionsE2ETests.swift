@@ -75,6 +75,8 @@ final class HostVideoCaptionsE2ETests: E2ETestCase {
         try sendE2EHarnessMessage(sessionId: sessionId, ["type": "agent_settled"])
 
         // Inline chat player: bare sidecar auto-picked at t=0, language control present.
+        // The row stays a still frame until its play control is tapped.
+        tap(app.buttons["markdown-video-play"], named: "inline video play control", timeout: 20)
         let inlinePlayer = app.otherElements.matching(identifier: "videoPlayer.native").element(boundBy: 0)
         XCTAssertTrue(inlinePlayer.waitForExistence(timeout: 20), "Inline host video did not appear")
         XCTAssertTrue(

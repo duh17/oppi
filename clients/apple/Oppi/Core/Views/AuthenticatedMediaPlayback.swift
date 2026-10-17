@@ -315,7 +315,7 @@ enum AuthenticatedMediaResponseBody {
 /// token in the URL. AVPlayer talks to an `oppi-media://` URL; this loader
 /// turns AVFoundation byte-range requests into normal HTTP requests with the
 /// `Authorization` header.
-private final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVAssetResourceLoaderDelegate, URLSessionDataDelegate {
+final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVAssetResourceLoaderDelegate, URLSessionDataDelegate {
     private final class LoadingContext {
         let loadingRequest: AVAssetResourceLoadingRequest
         var requestedRange: AuthenticatedMediaRequestedRange?
@@ -1191,7 +1191,7 @@ final class AuthenticatedMediaPlaybackSession {
         )
     }
 
-    private static func makeAssetURL() -> URL {
+    nonisolated static func makeAssetURL() -> URL {
         var components = URLComponents()
         components.scheme = AuthenticatedMediaPlaybackConstants.scheme
         components.host = "stream"

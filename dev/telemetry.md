@@ -163,7 +163,7 @@ The front page should focus on metrics that directly map to user experience. Kee
 | Metric                         | Why it matters                                                                         |
 | ------------------------------ | -------------------------------------------------------------------------------------- |
 | `chat.ask_response_ms`         | How long the visible ask card blocked the agent before answer or ignore.               |
-| `chat.media_playback_start_ms` | Time from media preview/player setup to playable video or audio.                       |
+| `chat.media_playback_start_ms` | Time from player setup to playable video or audio. Inline Markdown video sets up the player on the play tap, so it measures tap to ready. |
 | `chat.media_playback_error`    | User-visible media preview/player failures by media kind and phase.                    |
 | Client logs: `MediaPlayback`   | Playback/source failures with privacy-safe kind, source, phase, mode, and error class. |
 
