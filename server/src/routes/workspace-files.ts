@@ -37,6 +37,8 @@ const GIT_LIST_TIMEOUT_MS = 10_000;
 // Room for MAX_INDEX_PATHS long paths; a larger listing fails and falls back to the walk.
 const GIT_LIST_MAX_BUFFER = 32 * 1024 * 1024;
 const LSTAT_BATCH = 256;
+// Far deeper than real trees. Also bounds the parent-directory check below.
+const MAX_INDEX_PATH_SEGMENTS = 64;
 
 interface SearchWalkResult {
   paths: string[];
@@ -181,10 +183,12 @@ async function walkDirectoryForSearch(root: string): Promise<SearchWalkResult> {
 /**
  * The walk's name rules, applied to a path from the Git index. The index is
  * repository data, not a listing: a crafted one can hold `../x` or `/x`, which
- * `git ls-files` prints as is. Only plain relative segments pass.
+ * `git ls-files` prints as is, or a name thousands of segments deep. Only
+ * plain relative segments pass, at most MAX_INDEX_PATH_SEGMENTS of them.
  */
 function isIndexablePath(path: string): boolean {
   const segments = path.split("/");
+  if (segments.length > MAX_INDEX_PATH_SEGMENTS) return false;
   if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
     return false;
   }

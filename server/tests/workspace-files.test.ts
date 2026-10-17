@@ -725,7 +725,8 @@ function writeRawGitIndex(repo: string, names: string[]): void {
     fixed.writeUInt32BE(0o100644, 24);
     emptyBlob.copy(fixed, 40);
     const nameBytes = Buffer.from(name);
-    fixed.writeUInt16BE(nameBytes.length, 60);
+    // 12-bit length; longer names say 0xfff and end at their NUL padding.
+    fixed.writeUInt16BE(Math.min(nameBytes.length, 0xfff), 60);
     return [fixed, nameBytes, Buffer.alloc(8 - ((62 + nameBytes.length) % 8))];
   });
   const body = Buffer.concat([header, ...entries]);
@@ -795,6 +796,14 @@ describe("getFileIndex with git repo", () => {
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }
+  });
+
+  test("skips an implausibly deep index name and still lists the rest", async () => {
+    writeRawGitIndex(tmpRoot, ["README.md", `${"a/".repeat(9000)}deep.txt`]);
+
+    const result = await getFileIndex(tmpRoot, HOST_GIT_TRUST);
+    expect(result.paths).toContain("README.md");
+    expect(result.paths.filter((path) => path.endsWith("deep.txt"))).toEqual([]);
   });
 
   test("lists paths relative to a root below the repository top", async () => {
