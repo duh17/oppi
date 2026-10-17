@@ -17,6 +17,7 @@ import {
   ftruncateSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -544,6 +545,49 @@ describe("Classic sandbox Skills through the workspace VM", { timeout: 120_000 }
     await expect(
       classicSession({ skillPaths: [join(agentDir, "skills", "global-skill")] }),
     ).rejects.toMatchObject({ code: "agent_skills_unavailable" });
+  });
+
+  it("SAFE: /skill: does not put a SKILL.md symlink to a shadowed file into the prompt", async () => {
+    if (!qemuAvailable) return;
+
+    const backend = await classicSession();
+    expect(skillNames(backend)).toContain("ok-skill");
+    const hostFile = join(hostDir, ".agents", "skills", "ok", "SKILL.md");
+    const original = readFileSync(hostFile, "utf8");
+    rmSync(hostFile);
+    symlinkSync("../../.env", hostFile);
+    const session = backend.session as typeof backend.session & {
+      _expandSkillCommand: (text: string) => string;
+    };
+    const expandOnHost = session._expandSkillCommand.bind(session);
+    const loader = session.resourceLoader;
+    const getSkills = loader.getSkills.bind(loader);
+    // Guest path is `/workspace/<slug>/...`. Point Pi's host expander at the swapped
+    // workspace file so a fallthrough `readFileSync` is the `.env` symlink, as when
+    // the sandbox folder itself is `/workspace/<slug>`.
+    loader.getSkills = () => {
+      const loaded = getSkills();
+      return {
+        ...loaded,
+        skills: loaded.skills.map((entry) =>
+          entry.name === "ok-skill" ? { ...entry, filePath: hostFile } : entry,
+        ),
+      };
+    };
+    const prompts: string[] = [];
+    session._expandSkillCommand = (text: string) => {
+      const result = expandOnHost(text);
+      prompts.push(result);
+      return result;
+    };
+    try {
+      await session.prompt("/skill:ok-skill go").catch(() => undefined);
+      expect(prompts.join("\n")).not.toContain("WORKSPACE_ENV_SECRET");
+      expect(JSON.stringify(session.messages)).not.toContain("WORKSPACE_ENV_SECRET");
+    } finally {
+      rmSync(hostFile);
+      writeFileSync(hostFile, original);
+    }
   });
 
   it("SAFE: a .agents/skills SKILL.md linked to a shadowed file adds no Skill or description", async () => {

@@ -537,8 +537,10 @@ function keepSandboxSkillDiscoveryOffHost(loader: DefaultResourceLoader): void {
  * A classic sandbox's `/skill:name args`, expanded through its workspace VM. Pi's own
  * expansion reads the Skill's (guest) path on the host; this `input` handler runs before it,
  * for prompts, steers, follow-ups, and extension-sent messages alike, and inline factories
- * load after file extensions, so it sees their transforms. An unreadable Skill fails the handler:
- * Pi reports the extension error and passes the command through, as for a host Skill.
+ * load after file extensions, so it sees their transforms. An unreadable Skill is `handled`
+ * here: throwing would only be caught by `emitInput`, after which `_expandSkillCommand`
+ * `readFileSync`s that guest path on the host (a `SKILL.md` swapped for a symlink to a
+ * VM-hidden `.env` would reach the prompt when the sandbox folder is `/workspace/<slug>`).
  */
 function createSandboxSkillCommandExtension(
   expand: (text: string) => Promise<string>,
@@ -548,8 +550,15 @@ function createSandboxSkillCommandExtension(
     factory: (pi) => {
       pi.on("input", async (event) => {
         if (!event.text.startsWith("/skill:")) return { action: "continue" };
-        const text = await expand(event.text);
-        return text === event.text ? { action: "continue" } : { action: "transform", text };
+        try {
+          const text = await expand(event.text);
+          return text === event.text ? { action: "continue" } : { action: "transform", text };
+        } catch (error) {
+          log.warn("sdk.sandbox_skill_command_unreadable", {
+            error: safeErrorMessage(error),
+          });
+          return { action: "handled" };
+        }
       });
     },
   };
