@@ -45,6 +45,8 @@ struct SSHTerminalMetalFrameCost: Sendable {
     var status: MTLCommandBufferStatus
     var errorDescription: String?
     var miss: SSHTerminalMetalEncodeMiss? = nil
+    var rebuiltRowCount: Int = 0
+    var reusedRowCount: Int = 0
 }
 
 /// Process-wide pipeline from the precompiled metallib. Built off the main
@@ -151,17 +153,18 @@ final class SSHTerminalMetalPipeline: @unchecked Sendable {
 }
 
 /// Core Text glyphs rasterized once at device scale, keyed by grapheme + face.
-/// CPU packing only: new ink reaches the private atlas through a blit in the
-/// same command buffer as the draw, so a later frame cannot CPU-write texels
-/// an earlier buffer is still sampling.
+/// Coverage glyphs live in an R8 atlas; color emoji in BGRA. CPU packing only:
+/// new ink reaches the private atlas through a blit in the same command buffer
+/// as the draw, so a later frame cannot CPU-write texels an earlier buffer is
+/// still sampling.
 final class SSHTerminalGlyphAtlas {
     static let side = 2048
-    let texture: MTLTexture
+    let textTexture: MTLTexture
+    let colorTexture: MTLTexture
     let side: Int
-    private var map = [GlyphKey: SIMD4<Float>]()
-    private var x = 0
-    private var y = 0
-    private var rowHeight = 0
+    private var map = [GlyphKey: CachedGlyph]()
+    private var textPack = Packer()
+    private var colorPack = Packer()
 
     struct GlyphKey: Hashable {
         var face: UInt8
@@ -169,7 +172,12 @@ final class SSHTerminalGlyphAtlas {
         var cluster: String
     }
 
-    /// One new glyph to blit from a ring-slot staging texture into `texture`.
+    struct CachedGlyph {
+        var uv: SIMD4<Float>
+        var color: Bool
+    }
+
+    /// One new glyph to blit from a ring-slot staging texture into the matching atlas.
     struct Upload {
         var bytes: [UInt8]
         var width: Int
@@ -179,32 +187,63 @@ final class SSHTerminalGlyphAtlas {
         var stagingX: Int = 0
         var stagingY: Int = 0
         var uv: SIMD4<Float>
+        var color: Bool
+    }
+
+    private struct Packer {
+        var x = 0
+        var y = 0
+        var rowHeight = 0
+
+        mutating func reset() {
+            x = 0
+            y = 0
+            rowHeight = 0
+        }
+
+        mutating func place(width: Int, height: Int, side: Int) -> (x: Int, y: Int)? {
+            if width > side || height > side { return nil }
+            if x + width > side {
+                x = 0
+                y += rowHeight
+                rowHeight = 0
+            }
+            if y + height > side { return nil }
+            let origin = (x, y)
+            x += width
+            rowHeight = max(rowHeight, height)
+            return origin
+        }
     }
 
     init?(device: MTLDevice, side: Int = SSHTerminalGlyphAtlas.side) {
-        self.side = max(1, side)
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .bgra8Unorm, width: self.side, height: self.side, mipmapped: false
-        )
-        // Blit destination + sample. Private: CPU never calls replace on it.
-        descriptor.usage = [.shaderRead, .shaderWrite]
-        descriptor.storageMode = .private
-        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
-        self.texture = texture
+        let atlasSide = max(1, side)
+        self.side = atlasSide
+        func makeTexture(pixelFormat: MTLPixelFormat) -> MTLTexture? {
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: pixelFormat, width: atlasSide, height: atlasSide, mipmapped: false
+            )
+            descriptor.usage = [.shaderRead, .shaderWrite]
+            descriptor.storageMode = .private
+            return device.makeTexture(descriptor: descriptor)
+        }
+        guard let textTexture = makeTexture(pixelFormat: .r8Unorm),
+              let colorTexture = makeTexture(pixelFormat: .bgra8Unorm) else { return nil }
+        self.textTexture = textTexture
+        self.colorTexture = colorTexture
     }
 
     func resetPacking() {
         map.removeAll(keepingCapacity: true)
-        x = 0
-        y = 0
-        rowHeight = 0
+        textPack.reset()
+        colorPack.reset()
     }
 
     func key(cell: SSHTerminalCell, face: UInt8) -> GlyphKey {
         GlyphKey(face: face, scalar: cell.cluster == nil ? cell.scalar : 0, cluster: cell.cluster ?? "")
     }
 
-    func cachedUV(_ key: GlyphKey) -> SIMD4<Float>? { map[key] }
+    func cached(_ key: GlyphKey) -> CachedGlyph? { map[key] }
 
     /// Place and rasterize a glyph the map does not yet have. Nil if it cannot
     /// fit in remaining space (caller may reset packing and try the whole frame).
@@ -219,107 +258,116 @@ final class SSHTerminalGlyphAtlas {
         let columns = max(1, cell.width)
         let pixelWidth = max(1, Int(ceil(cellSize.width * CGFloat(columns) * scale)))
         let pixelHeight = max(1, Int(ceil(cellSize.height * scale)))
-        guard let origin = placeRect(width: pixelWidth, height: pixelHeight) else { return nil }
-        guard let bytes = Self.rasterize(
+        guard let glyph = Self.rasterizeGlyph(
             text: cell.displayText, font: font,
             width: pixelWidth, height: pixelHeight,
             cellSize: cellSize, columns: columns, scale: scale
         ) else { return nil }
+        let origin: (x: Int, y: Int)?
+        if glyph.color {
+            origin = colorPack.place(width: pixelWidth, height: pixelHeight, side: side)
+        } else {
+            origin = textPack.place(width: pixelWidth, height: pixelHeight, side: side)
+        }
+        guard let origin else { return nil }
         let s = Float(side)
         let uv = SIMD4<Float>(
             Float(origin.x) / s, Float(origin.y) / s,
             Float(origin.x + pixelWidth) / s, Float(origin.y + pixelHeight) / s
         )
-        map[key] = uv
+        map[key] = CachedGlyph(uv: uv, color: glyph.color)
+        let bytes = glyph.color ? glyph.bytes : Self.coverage(fromBGRA: glyph.bytes)
         return Upload(
             bytes: bytes, width: pixelWidth, height: pixelHeight,
-            destX: origin.x, destY: origin.y, uv: uv
+            destX: origin.x, destY: origin.y, uv: uv, color: glyph.color
         )
     }
 
-    private func placeRect(width: Int, height: Int) -> (x: Int, y: Int)? {
-        if width > side || height > side { return nil }
-        if x + width > side {
-            x = 0
-            y += rowHeight
-            rowHeight = 0
+    private static func coverage(fromBGRA bytes: [UInt8]) -> [UInt8] {
+        let pixels = bytes.count / 4
+        var out = [UInt8](repeating: 0, count: pixels)
+        var i = 0
+        while i < pixels {
+            out[i] = bytes[i * 4 + 3]
+            i += 1
         }
-        if y + height > side { return nil }
-        let origin = (x, y)
-        x += width
-        rowHeight = max(rowHeight, height)
-        return origin
+        return out
     }
 
-    /// White ink at device scale. Covered glyphs and cascade fallbacks
-    /// (PingFang, Menlo, STIX, box-drawing) still draw at the cell origin and
-    /// clip. Only a text-presentation substitute or a remaining color-emoji
-    /// run may scale-to-fit.
+    /// White coverage at device scale, or native color for remaining emoji.
+    /// Covered glyphs and cascade fallbacks (PingFang, Menlo, STIX, box-drawing)
+    /// still draw at the cell origin and clip. Only a text-presentation
+    /// substitute or a remaining color-emoji run may scale-to-fit. Each glyph
+    /// is Core Text-drawn once.
     static func rasterize(
         text: String, font: UIFont,
         width: Int, height: Int,
         cellSize: CGSize, columns: Int, scale: CGFloat
     ) -> [UInt8]? {
+        rasterizeGlyph(
+            text: text, font: font, width: width, height: height,
+            cellSize: cellSize, columns: columns, scale: scale
+        )?.bytes
+    }
+
+    struct RasterizedGlyph {
+        var bytes: [UInt8]
+        var color: Bool
+    }
+
+    static func rasterizeGlyph(
+        text: String, font: UIFont,
+        width: Int, height: Int,
+        cellSize: CGSize, columns: Int, scale: CGFloat
+    ) -> RasterizedGlyph? {
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
         format.opaque = false
         let points = CGSize(width: cellSize.width * CGFloat(columns), height: cellSize.height)
         let plan = planDraw(text: text, font: font, columns: columns)
         let area = CGRect(origin: .zero, size: points)
-        let constrainedInk: CGRect? = plan.constrain ? measureInk(
-            text: plan.text, font: plan.font,
-            canvas: CGSize(width: max(area.width * 3, area.width + 1), height: max(area.height * 2, area.height + 1)),
-            scale: scale
-        ) : nil
-        let image = UIGraphicsImageRenderer(size: points, format: format).image { ctx in
-            ctx.cgContext.clip(to: area)
-            if plan.constrain {
-                drawConstrainedGlyph(
-                    text: plan.text, font: plan.font,
-                    ink: constrainedInk, in: area, scale: scale, context: ctx.cgContext
-                )
-            } else {
-                (plan.text as NSString).draw(at: area.origin, withAttributes: [
-                    .font: plan.font,
-                    .foregroundColor: UIColor.white,
-                ])
+        var attributes: [NSAttributedString.Key: Any] = [.font: plan.font]
+        if !plan.color {
+            attributes[.foregroundColor] = UIColor.white
+        }
+        let image: UIImage
+        if plan.constrain {
+            image = rasterizeConstrained(
+                text: plan.text, attributes: attributes,
+                area: area, scale: scale, format: format
+            )
+        } else {
+            image = UIGraphicsImageRenderer(size: points, format: format).image { ctx in
+                ctx.cgContext.clip(to: area)
+                (plan.text as NSString).draw(at: area.origin, withAttributes: attributes)
             }
         }
-        guard let cgImage = image.cgImage else { return nil }
-        var bytes = [UInt8](repeating: 0, count: width * height * 4)
-        let space = CGColorSpaceCreateDeviceRGB()
-        let ok = bytes.withUnsafeMutableBytes { raw -> Bool in
-            guard let bitmap = CGContext(
-                data: raw.baseAddress, width: width, height: height, bitsPerComponent: 8,
-                bytesPerRow: width * 4, space: space,
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-            ) else { return false }
-            bitmap.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-            return true
-        }
-        return ok ? bytes : nil
+        guard let bytes = bgraBytes(image, width: width, height: height) else { return nil }
+        return RasterizedGlyph(bytes: bytes, color: plan.color)
     }
 
-    /// Text-presentation only for a width-1 single-scalar color-emoji cell.
-    /// Multi-scalar clusters keep their bytes and may only scale if they are
-    /// still emoji. Cascade box-drawing, blocks, and CJK never constrain.
+    /// Text-presentation for a width-1 color-emoji cell whose only remaining
+    /// scalar after stripping U+FE0E/U+FE0F is one base. Multi-scalar clusters
+    /// keep their bytes and may only scale if they are still emoji. Cascade
+    /// box-drawing, blocks, and CJK never constrain.
     private static func planDraw(
         text: String, font: UIFont, columns: Int
-    ) -> (text: String, font: UIFont, constrain: Bool) {
+    ) -> (text: String, font: UIFont, constrain: Bool, color: Bool) {
         if sshTerminalFontCovers(font, text) {
-            return (text, font, false)
+            return (text, font, false, false)
         }
         let emoji = resolvedFontLooksLikeColorEmoji(text: text, font: font)
-        guard emoji else { return (text, font, false) }
-        let scalars = Array(text.unicodeScalars)
-        if columns == 1, scalars.count == 1 {
+        guard emoji else { return (text, font, false, false) }
+        let bases = Array(text.unicodeScalars.filter { $0.value != 0xFE0E && $0.value != 0xFE0F })
+        if columns == 1, bases.count == 1 {
+            let base = String(bases[0])
             if let symbols = UIFont(name: "AppleSymbols", size: font.pointSize),
-               sshTerminalFontCovers(symbols, text) {
-                return (text, symbols, true)
+               sshTerminalFontCovers(symbols, base) {
+                return (base, symbols, true, false)
             }
-            return (text + "\u{FE0E}", font, true)
+            return (base + "\u{FE0E}", font, true, false)
         }
-        return (text, font, true)
+        return (text, font, true, true)
     }
 
     private static func resolvedFontLooksLikeColorEmoji(text: String, font: UIFont) -> Bool {
@@ -339,53 +387,50 @@ final class SSHTerminalGlyphAtlas {
         return false
     }
 
-    private static func drawConstrainedGlyph(
-        text: String, font: UIFont, ink: CGRect?, in area: CGRect, scale: CGFloat, context: CGContext
-    ) {
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: UIColor.white,
-        ]
-        guard let ink else {
-            (text as NSString).draw(at: area.origin, withAttributes: attributes)
-            return
-        }
-        let fits = ink.minX >= -0.5 && ink.minY >= -0.5
-            && ink.maxX <= area.width + 0.5 && ink.maxY <= area.height + 0.5
-        if fits {
-            (text as NSString).draw(at: area.origin, withAttributes: attributes)
-            return
-        }
-        // 1px inset so a fitted glyph is strictly inside the cell, not flush-clipped.
-        let pad = 1 / max(scale, 1)
-        let avail = CGRect(
-            x: pad, y: pad,
-            width: max(area.width - 2 * pad, pad),
-            height: max(area.height - 2 * pad, pad)
+    /// One Core Text draw into an oversized canvas, then a bitmap blit into the
+    /// cell. Scale-to-fit is a blit, not a second text draw.
+    private static func rasterizeConstrained(
+        text: String,
+        attributes: [NSAttributedString.Key: Any],
+        area: CGRect,
+        scale: CGFloat,
+        format: UIGraphicsImageRendererFormat
+    ) -> UIImage {
+        let canvas = CGSize(
+            width: max(area.width * 3, area.width + 1),
+            height: max(area.height * 2, area.height + 1)
         )
-        let s = min(1, avail.width / max(ink.width, 0.001), avail.height / max(ink.height, 0.001))
-        let fitted = CGSize(width: ink.width * s, height: ink.height * s)
-        let tx = avail.minX + (avail.width - fitted.width) / 2 - ink.minX * s
-        let ty = avail.minY + (avail.height - fitted.height) / 2 - ink.minY * s
-        context.saveGState()
-        context.translateBy(x: tx, y: ty)
-        context.scaleBy(x: s, y: s)
-        (text as NSString).draw(at: .zero, withAttributes: attributes)
-        context.restoreGState()
+        let loose = UIGraphicsImageRenderer(size: canvas, format: format).image { _ in
+            (text as NSString).draw(at: .zero, withAttributes: attributes)
+        }
+        return UIGraphicsImageRenderer(size: area.size, format: format).image { ctx in
+            ctx.cgContext.clip(to: area)
+            guard let ink = inkBounds(of: loose, scale: scale) else { return }
+            let fits = ink.minX >= -0.5 && ink.minY >= -0.5
+                && ink.maxX <= area.width + 0.5 && ink.maxY <= area.height + 0.5
+            if fits {
+                loose.draw(at: .zero)
+                return
+            }
+            let pad = 1 / max(scale, 1)
+            let avail = CGRect(
+                x: pad, y: pad,
+                width: max(area.width - 2 * pad, pad),
+                height: max(area.height - 2 * pad, pad)
+            )
+            let s = min(1, avail.width / max(ink.width, 0.001), avail.height / max(ink.height, 0.001))
+            let fitted = CGSize(width: ink.width * s, height: ink.height * s)
+            let tx = avail.minX + (avail.width - fitted.width) / 2 - ink.minX * s
+            let ty = avail.minY + (avail.height - fitted.height) / 2 - ink.minY * s
+            ctx.cgContext.saveGState()
+            ctx.cgContext.translateBy(x: tx, y: ty)
+            ctx.cgContext.scaleBy(x: s, y: s)
+            loose.draw(at: .zero)
+            ctx.cgContext.restoreGState()
+        }
     }
 
-    private static func measureInk(
-        text: String, font: UIFont, canvas: CGSize, scale: CGFloat
-    ) -> CGRect? {
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = scale
-        format.opaque = false
-        let image = UIGraphicsImageRenderer(size: canvas, format: format).image { _ in
-            (text as NSString).draw(at: .zero, withAttributes: [
-                .font: font,
-                .foregroundColor: UIColor.white,
-            ])
-        }
+    private static func inkBounds(of image: UIImage, scale: CGFloat) -> CGRect? {
         guard let cgImage = image.cgImage else { return nil }
         let w = cgImage.width, h = cgImage.height
         var bytes = [UInt8](repeating: 0, count: w * h * 4)
@@ -419,6 +464,22 @@ final class SSHTerminalGlyphAtlas {
             height: CGFloat(maxY - minY + 1) / scale
         )
     }
+
+    private static func bgraBytes(_ image: UIImage, width: Int, height: Int) -> [UInt8]? {
+        guard let cgImage = image.cgImage else { return nil }
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let space = CGColorSpaceCreateDeviceRGB()
+        let ok = bytes.withUnsafeMutableBytes { raw -> Bool in
+            guard let bitmap = CGContext(
+                data: raw.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                bytesPerRow: width * 4, space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return false }
+            bitmap.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        return ok ? bytes : nil
+    }
 }
 
 private func sshTerminalFontCovers(_ font: UIFont, _ text: String) -> Bool {
@@ -433,6 +494,7 @@ private func sshTerminalFontCovers(_ font: UIFont, _ text: String) -> Bool {
 final class SSHTerminalMetalRenderer: @unchecked Sendable {
     static let ringSize = 3
     static let glyphFlag: UInt32 = 1
+    static let colorGlyphFlag: UInt32 = 2
 
     struct CellInstance {
         var origin: SIMD2<Float>
@@ -459,6 +521,7 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
     private let lock = NSLock()
     private var slots: [Slot]
     private var faces = [UInt8: UIFont]()
+    private var rowCache: [RowInstances] = []
     var metrics: SSHTerminalCellMetrics
     var scale: CGFloat
 
@@ -468,7 +531,14 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         var inFlight: Bool
         /// Shared staging for this slot's glyph blits. CPU-written only while
         /// the slot is free, then sampled by that same command buffer.
-        var staging: MTLTexture?
+        var textStaging: MTLTexture?
+        var colorStaging: MTLTexture?
+    }
+
+    private struct RowInstances {
+        var backgrounds: [CellInstance] = []
+        var glyphs: [CellInstance] = []
+        var overlays: [CellInstance] = []
     }
 
     enum RendererError: Error {
@@ -501,7 +571,10 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
                 length: initial * MemoryLayout<CellInstance>.stride,
                 options: .storageModeShared
             ) else { throw RendererError.noBuffer }
-            built.append(Slot(buffer: buffer, capacity: initial, inFlight: false, staging: nil))
+            built.append(Slot(
+                buffer: buffer, capacity: initial, inFlight: false,
+                textStaging: nil, colorStaging: nil
+            ))
         }
         self.slots = built
     }
@@ -530,19 +603,26 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         // Next encode re-packs and blits every glyph; prior command buffers
         // keep sampling the old UVs until they complete.
         atlas.resetPacking()
+        invalidateRowCache()
+    }
+
+    private func invalidateRowCache() {
+        rowCache.removeAll(keepingCapacity: true)
     }
 
     func encode(
         frame: SSHTerminalFrame,
         cursorColor: SIMD4<Float>,
-        drawable: CAMetalDrawable
+        drawable: CAMetalDrawable,
+        fullRebuild: Bool = true
     ) -> SSHTerminalMetalFrameCost {
         encode(
             frame: frame,
             cursorColor: cursorColor,
             target: drawable.texture,
             drawable: drawable,
-            waitUntilCompleted: false
+            waitUntilCompleted: false,
+            fullRebuild: fullRebuild
         )
     }
 
@@ -550,14 +630,16 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         frame: SSHTerminalFrame,
         cursorColor: SIMD4<Float>,
         texture: MTLTexture,
-        waitUntilCompleted: Bool
+        waitUntilCompleted: Bool,
+        fullRebuild: Bool = true
     ) -> SSHTerminalMetalFrameCost {
         encode(
             frame: frame,
             cursorColor: cursorColor,
             target: texture,
             drawable: nil,
-            waitUntilCompleted: waitUntilCompleted
+            waitUntilCompleted: waitUntilCompleted,
+            fullRebuild: fullRebuild
         )
     }
 
@@ -578,7 +660,8 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         cursorColor: SIMD4<Float>,
         target: MTLTexture,
         drawable: CAMetalDrawable?,
-        waitUntilCompleted: Bool
+        waitUntilCompleted: Bool,
+        fullRebuild: Bool
     ) -> SSHTerminalMetalFrameCost {
         let failed = SSHTerminalMetalFrameCost(
             encodeNanos: 0, submitted: false, completed: false, status: .error,
@@ -595,14 +678,17 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             reason: String
         ) -> SSHTerminalMetalFrameCost {
             if let slot { releaseSlot(slot) }
-            if !uploads.isEmpty { atlas.resetPacking() }
+            if !uploads.isEmpty {
+                atlas.resetPacking()
+                invalidateRowCache()
+            }
             var cost = failed
             cost.miss = miss
             cost.errorDescription = reason
             return cost
         }
         let encodeStart = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
-        guard let packed = pack(frame: frame, cursorColor: cursorColor) else {
+        guard let packed = pack(frame: frame, cursorColor: cursorColor, fullRebuild: fullRebuild) else {
             return abort(miss: .deterministic, reason: "glyph atlas cannot fit this frame")
         }
         guard let slotIndex = bind(packed.all) else {
@@ -611,9 +697,9 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             )
         }
         var uploads = packed.uploads
-        let staging: MTLTexture?
+        let staging: StagingPair
         if uploads.isEmpty {
-            staging = nil
+            staging = StagingPair(text: nil, color: nil)
         } else if let prepared = prepareStaging(slot: slotIndex, uploads: &uploads) {
             staging = prepared
         } else {
@@ -629,7 +715,7 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
                 miss: .transient, reason: "makeCommandBuffer returned nil"
             )
         }
-        if let staging, !uploads.isEmpty {
+        if !uploads.isEmpty {
             guard let blit = commandBuffer.makeBlitCommandEncoder() else {
                 return abort(
                     slot: slotIndex, uploads: uploads,
@@ -639,13 +725,16 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             // Same queue as prior atlas samples: the blit waits for those reads,
             // then this frame's draw samples the new texels.
             for upload in uploads {
+                let source = upload.color ? staging.color : staging.text
+                let destination = upload.color ? atlas.colorTexture : atlas.textTexture
+                guard let source else { continue }
                 blit.copy(
-                    from: staging,
+                    from: source,
                     sourceSlice: 0,
                     sourceLevel: 0,
                     sourceOrigin: MTLOrigin(x: upload.stagingX, y: upload.stagingY, z: 0),
                     sourceSize: MTLSize(width: upload.width, height: upload.height, depth: 1),
-                    to: atlas.texture,
+                    to: destination,
                     destinationSlice: 0,
                     destinationLevel: 0,
                     destinationOrigin: MTLOrigin(x: upload.destX, y: upload.destY, z: 0)
@@ -688,7 +777,8 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
                 index: 0
             )
             encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-            encoder.setFragmentTexture(atlas.texture, index: 0)
+            encoder.setFragmentTexture(atlas.textTexture, index: 0)
+            encoder.setFragmentTexture(atlas.colorTexture, index: 1)
             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: glyphs.count)
         }
         if !overlays.isEmpty {
@@ -718,7 +808,9 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
                 submitted: true,
                 completed: commandBuffer.status == .completed,
                 status: commandBuffer.status,
-                errorDescription: commandBuffer.error.map(String.init(describing:))
+                errorDescription: commandBuffer.error.map(String.init(describing:)),
+                rebuiltRowCount: packed.rebuiltRowCount,
+                reusedRowCount: packed.reusedRowCount
             )
         }
         return SSHTerminalMetalFrameCost(
@@ -726,7 +818,9 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             submitted: true,
             completed: false,
             status: commandBuffer.status,
-            errorDescription: nil
+            errorDescription: nil,
+            rebuiltRowCount: packed.rebuiltRowCount,
+            reusedRowCount: packed.reusedRowCount
         )
     }
 
@@ -735,92 +829,199 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         var glyphs: [CellInstance]
         var overlays: [CellInstance]
         var uploads: [SSHTerminalGlyphAtlas.Upload]
+        var rebuiltRowCount: Int
+        var reusedRowCount: Int
         var all: [CellInstance] { backgrounds + glyphs + overlays }
     }
 
-    private func pack(frame: SSHTerminalFrame, cursorColor: SIMD4<Float>) -> PackedInstances? {
-        if let packed = packOnce(frame: frame, cursorColor: cursorColor) { return packed }
+    private func pack(
+        frame: SSHTerminalFrame, cursorColor: SIMD4<Float>, fullRebuild: Bool
+    ) -> PackedInstances? {
+        if let packed = packOnce(frame: frame, cursorColor: cursorColor, fullRebuild: fullRebuild) {
+            return packed
+        }
         atlas.resetPacking()
-        if let packed = packOnce(frame: frame, cursorColor: cursorColor) { return packed }
+        invalidateRowCache()
+        if let packed = packOnce(frame: frame, cursorColor: cursorColor, fullRebuild: true) {
+            return packed
+        }
         // Second pack still missed: drop keys place() already inserted so a
         // later frame cannot treat un-uploaded texels as resident.
         atlas.resetPacking()
+        invalidateRowCache()
         return nil
     }
 
-    private func packOnce(frame: SSHTerminalFrame, cursorColor: SIMD4<Float>) -> PackedInstances? {
+    private func packOnce(
+        frame: SSHTerminalFrame, cursorColor: SIMD4<Float>, fullRebuild: Bool
+    ) -> PackedInstances? {
         let cell = metrics.cellSize
         let scale = scale
         let cellW = Float(cell.width * scale)
         let cellH = Float(cell.height * scale)
+        let rowCount = frame.rows.count
+        var uploads = [SSHTerminalGlyphAtlas.Upload]()
+        let rebuildAll = fullRebuild || rowCache.count != rowCount
+        if rowCache.count != rowCount {
+            rowCache = Array(repeating: RowInstances(), count: rowCount)
+        }
+        var dirty = IndexSet()
+        if rebuildAll {
+            dirty = IndexSet(integersIn: 0..<rowCount)
+        } else {
+            for y in frame.rebuiltRows where y >= 0 && y < rowCount {
+                dirty.insert(y)
+            }
+        }
+        let defaultBg = Self.rgba(frame.background)
+        for y in dirty {
+            guard let packed = packRow(
+                y: y, row: frame.rows[y], defaultBg: defaultBg,
+                cell: cell, cellW: cellW, cellH: cellH, uploads: &uploads
+            ) else { return nil }
+            rowCache[y] = packed
+        }
         var backgrounds = [CellInstance]()
         var glyphs = [CellInstance]()
         var overlays = [CellInstance]()
-        var uploads = [SSHTerminalGlyphAtlas.Upload]()
-        backgrounds.reserveCapacity(max(1, frame.rows.count * (frame.rows.first?.count ?? 0)))
-        let defaultBg = Self.rgba(frame.background)
-        for (y, row) in frame.rows.enumerated() {
-            for (x, item) in row.enumerated() {
-                guard item.width > 0 else { continue }
-                let origin = SIMD2<Float>(Float(x) * cellW, Float(y) * cellH)
-                let size = SIMD2<Float>(Float(item.width) * cellW, cellH)
-                let colors = Self.paintColors(item)
-                if colors.bg != defaultBg {
-                    backgrounds.append(CellInstance(origin: origin, size: size, color: colors.bg, uv: .zero, flags: 0))
-                }
-                // Invisible cells keep their background and draw nothing else,
-                // matching the old painter's early return.
-                guard !item.style.invisible else { continue }
-                var fg = colors.fg
-                if item.style.faint { fg = Self.premultiply(fg, alpha: 0.5) }
-                if item.style.underline != 0 {
-                    let yOff = underlineY(scale: scale)
-                    overlays.append(CellInstance(
-                        origin: SIMD2(origin.x, origin.y + yOff.y),
-                        size: SIMD2(size.x, yOff.h),
-                        color: fg, uv: .zero, flags: 0
-                    ))
-                }
-                if item.style.strikethrough {
-                    overlays.append(CellInstance(
-                        origin: SIMD2(origin.x, origin.y + cellH * 0.5 - 1),
-                        size: SIMD2(size.x, max(1, Float(scale))),
-                        color: fg, uv: .zero, flags: 0
-                    ))
-                }
-                guard item.hasInk else { continue }
-                let face = face(bold: item.style.bold, italic: item.style.italic, text: item)
-                let key = atlas.key(cell: item, face: face.key)
-                let uv: SIMD4<Float>
-                if let cached = atlas.cachedUV(key) {
-                    uv = cached
-                } else if let upload = atlas.place(
-                    cell: item, face: face.key, font: face.font,
-                    cellSize: cell, scale: scale
-                ) {
-                    uploads.append(upload)
-                    uv = upload.uv
-                } else {
-                    return nil
-                }
-                glyphs.append(CellInstance(origin: origin, size: size, color: fg, uv: uv, flags: Self.glyphFlag))
-            }
+        backgrounds.reserveCapacity(max(1, rowCount * (frame.rows.first?.count ?? 0)))
+        for row in rowCache {
+            backgrounds.append(contentsOf: row.backgrounds)
+            glyphs.append(contentsOf: row.glyphs)
+            overlays.append(contentsOf: row.overlays)
         }
         if let cursor = cursorQuad(
             frame: frame, color: Self.premultiply(cursorColor), cellW: cellW, cellH: cellH
         ) {
             overlays.append(contentsOf: cursor)
         }
-        return PackedInstances(backgrounds: backgrounds, glyphs: glyphs, overlays: overlays, uploads: uploads)
+        return PackedInstances(
+            backgrounds: backgrounds, glyphs: glyphs, overlays: overlays, uploads: uploads,
+            rebuiltRowCount: dirty.count, reusedRowCount: max(0, rowCount - dirty.count)
+        )
     }
 
-    private func prepareStaging(slot: Int, uploads: inout [SSHTerminalGlyphAtlas.Upload]) -> MTLTexture? {
-        var x = 0, y = 0, rowHeight = 0, stagedWidth = 1, stagedHeight = 1
+    private func packRow(
+        y: Int,
+        row: [SSHTerminalCell],
+        defaultBg: SIMD4<Float>,
+        cell: CGSize,
+        cellW: Float,
+        cellH: Float,
+        uploads: inout [SSHTerminalGlyphAtlas.Upload]
+    ) -> RowInstances? {
+        var packed = RowInstances()
+        for (x, item) in row.enumerated() {
+            guard item.width > 0 else { continue }
+            let origin = SIMD2<Float>(Float(x) * cellW, Float(y) * cellH)
+            let size = SIMD2<Float>(Float(item.width) * cellW, cellH)
+            let colors = Self.paintColors(item)
+            if colors.bg != defaultBg {
+                packed.backgrounds.append(
+                    CellInstance(origin: origin, size: size, color: colors.bg, uv: .zero, flags: 0)
+                )
+            }
+            // Invisible cells keep their background and draw nothing else,
+            // matching the old painter's early return.
+            guard !item.style.invisible else { continue }
+            var fg = colors.fg
+            if item.style.faint { fg = Self.premultiply(fg, alpha: 0.5) }
+            if item.style.underline != 0 {
+                let yOff = underlineY(scale: scale)
+                packed.overlays.append(CellInstance(
+                    origin: SIMD2(origin.x, origin.y + yOff.y),
+                    size: SIMD2(size.x, yOff.h),
+                    color: fg, uv: .zero, flags: 0
+                ))
+            }
+            if item.style.strikethrough {
+                packed.overlays.append(CellInstance(
+                    origin: SIMD2(origin.x, origin.y + cellH * 0.5 - 1),
+                    size: SIMD2(size.x, max(1, Float(scale))),
+                    color: fg, uv: .zero, flags: 0
+                ))
+            }
+            guard item.hasInk else { continue }
+            let face = face(bold: item.style.bold, italic: item.style.italic, text: item)
+            let key = atlas.key(cell: item, face: face.key)
+            let uv: SIMD4<Float>
+            var colorGlyph = false
+            if let cached = atlas.cached(key) {
+                uv = cached.uv
+                colorGlyph = cached.color
+            } else if let upload = atlas.place(
+                cell: item, face: face.key, font: face.font,
+                cellSize: cell, scale: scale
+            ) {
+                uploads.append(upload)
+                uv = upload.uv
+                colorGlyph = upload.color
+            } else {
+                return nil
+            }
+            var flags = Self.glyphFlag
+            if colorGlyph { flags |= Self.colorGlyphFlag }
+            packed.glyphs.append(
+                CellInstance(origin: origin, size: size, color: fg, uv: uv, flags: flags)
+            )
+        }
+        return packed
+    }
+
+    private struct StagingPair {
+        var text: MTLTexture?
+        var color: MTLTexture?
+    }
+
+    private func prepareStaging(
+        slot: Int, uploads: inout [SSHTerminalGlyphAtlas.Upload]
+    ) -> StagingPair? {
         // Same shelf as the atlas: a set of glyphs that packed into the atlas
         // packs into staging. Never exceed the device 2D cap (simulator Metal
         // validation is 8192; Apple GPUs in this app are 16384).
         let shelf = min(atlas.side, 8192)
-        for i in uploads.indices {
+        let textSize = layoutStaging(&uploads, color: false, shelf: shelf)
+        let colorSize = layoutStaging(&uploads, color: true, shelf: shelf)
+        lock.lock()
+        defer { lock.unlock() }
+        guard slots.indices.contains(slot) else { return nil }
+        let hasText = uploads.contains { !$0.color }
+        let hasColor = uploads.contains { $0.color }
+        let pair = StagingPair(
+            text: hasText ? ensureStaging(
+                existing: slots[slot].textStaging,
+                width: textSize.width, height: textSize.height, color: false
+            ) : nil,
+            color: hasColor ? ensureStaging(
+                existing: slots[slot].colorStaging,
+                width: colorSize.width, height: colorSize.height, color: true
+            ) : nil
+        )
+        if hasText { slots[slot].textStaging = pair.text }
+        if hasColor { slots[slot].colorStaging = pair.color }
+        if hasText && pair.text == nil { return nil }
+        if hasColor && pair.color == nil { return nil }
+        for upload in uploads {
+            let staging = upload.color ? pair.color : pair.text
+            guard let staging else { continue }
+            upload.bytes.withUnsafeBytes { raw in
+                guard let base = raw.baseAddress else { return }
+                staging.replace(
+                    region: MTLRegionMake2D(upload.stagingX, upload.stagingY, upload.width, upload.height),
+                    mipmapLevel: 0,
+                    withBytes: base,
+                    bytesPerRow: upload.color ? upload.width * 4 : upload.width
+                )
+            }
+        }
+        return pair
+    }
+
+    private func layoutStaging(
+        _ uploads: inout [SSHTerminalGlyphAtlas.Upload], color: Bool, shelf: Int
+    ) -> (width: Int, height: Int) {
+        var x = 0, y = 0, rowHeight = 0, stagedWidth = 1, stagedHeight = 1
+        for i in uploads.indices where uploads[i].color == color {
             if x + uploads[i].width > shelf {
                 x = 0
                 y += rowHeight
@@ -833,35 +1034,22 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             stagedWidth = max(stagedWidth, x)
             stagedHeight = max(stagedHeight, y + rowHeight)
         }
-        lock.lock()
-        defer { lock.unlock() }
-        guard slots.indices.contains(slot) else { return nil }
-        let staging: MTLTexture
-        if let existing = slots[slot].staging,
-           existing.width >= stagedWidth, existing.height >= stagedHeight {
-            staging = existing
-        } else {
-            let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-                pixelFormat: .bgra8Unorm, width: stagedWidth, height: stagedHeight, mipmapped: false
-            )
-            descriptor.usage = [.shaderRead]
-            descriptor.storageMode = .shared
-            guard let created = device.makeTexture(descriptor: descriptor) else { return nil }
-            slots[slot].staging = created
-            staging = created
+        return (stagedWidth, stagedHeight)
+    }
+
+    private func ensureStaging(
+        existing: MTLTexture?, width: Int, height: Int, color: Bool
+    ) -> MTLTexture? {
+        if let existing, existing.width >= width, existing.height >= height {
+            return existing
         }
-        for upload in uploads {
-            upload.bytes.withUnsafeBytes { raw in
-                guard let base = raw.baseAddress else { return }
-                staging.replace(
-                    region: MTLRegionMake2D(upload.stagingX, upload.stagingY, upload.width, upload.height),
-                    mipmapLevel: 0,
-                    withBytes: base,
-                    bytesPerRow: upload.width * 4
-                )
-            }
-        }
-        return staging
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: color ? .bgra8Unorm : .r8Unorm,
+            width: width, height: height, mipmapped: false
+        )
+        descriptor.usage = [.shaderRead]
+        descriptor.storageMode = .shared
+        return device.makeTexture(descriptor: descriptor)
     }
 
     private func cursorQuad(

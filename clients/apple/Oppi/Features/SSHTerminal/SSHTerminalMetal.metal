@@ -57,9 +57,14 @@ fragment float4 ssh_terminal_solid(VertexOut in [[stage_in]]) {
 
 fragment float4 ssh_terminal_glyph(
     VertexOut in [[stage_in]],
-    texture2d<float> atlas [[texture(0)]]
+    texture2d<float> textAtlas [[texture(0)]],
+    texture2d<float> colorAtlas [[texture(1)]]
 ) {
     constexpr sampler nearest(mag_filter::nearest, min_filter::nearest, address::clamp_to_edge);
-    float coverage = atlas.sample(nearest, in.uv).a;
+    if (in.flags & 2u) {
+        float4 sample = colorAtlas.sample(nearest, in.uv);
+        return sample * in.color.a;
+    }
+    float coverage = textAtlas.sample(nearest, in.uv).r;
     return float4(in.color.rgb * coverage, in.color.a * coverage);
 }

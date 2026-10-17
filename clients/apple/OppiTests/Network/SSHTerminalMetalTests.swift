@@ -176,6 +176,28 @@ struct SSHTerminalMetalTests {
         #expect(!shot.hasInk(column: 1, row: 0), "width-1 U+23FA must not spill into the next cell")
     }
 
+    @Test func variationSelectorsDoNotBlockTextPresentationFallback() throws {
+        let metrics = SSHTerminalCellMetrics(
+            font: .monospacedSystemFont(ofSize: 13, weight: .regular),
+            boldFont: .monospacedSystemFont(ofSize: 13, weight: .bold)
+        )
+        let scale: CGFloat = 2
+        let font = metrics.font
+        let record = "\u{23FA}"
+        let selected = "\u{23FA}\u{FE0F}"
+        let recordBytes = try rasterize(record, font: font, metrics: metrics, columns: 1, scale: scale)
+        let selectedBytes = try rasterize(selected, font: font, metrics: metrics, columns: 1, scale: scale)
+        let chopped = originClippedRasterize(selected, font: font, metrics: metrics, columns: 1, scale: scale)
+        #expect(recordBytes.bytes == selectedBytes.bytes, "U+FE0F must not skip the text-presentation path")
+        #expect(
+            selectedBytes.bytes != chopped.bytes,
+            "U+23FA U+FE0F must not be the origin-clipped Apple Color Emoji overflow"
+        )
+        let ink = try #require(atlasInk(selectedBytes.bytes, width: selectedBytes.width, height: selectedBytes.height))
+        #expect(ink.minX > 0 && ink.maxX < selectedBytes.width - 1)
+        #expect(ink.minY > 0 && ink.maxY < selectedBytes.height - 1)
+    }
+
     @Test func cursorOutlineBlendsOverAColouredCell() throws {
         let harness = try Harness(columns: 4, rows: 2)
         defer { harness.finish() }
@@ -398,6 +420,102 @@ struct SSHTerminalMetalTests {
         #expect(cost.completed)
         #expect(harness.renderer.freeSlotCount == before)
         #expect(harness.renderer.inFlightCount == 0)
+    }
+
+    @Test func dirtyRowReusesCachedInstancesUntilResizeScrollThemeOrFont() throws {
+        let metrics = SSHTerminalCellMetrics(
+            font: .monospacedSystemFont(ofSize: 13, weight: .regular),
+            boldFont: .monospacedSystemFont(ofSize: 13, weight: .bold)
+        )
+        let pipeline = try SSHTerminalMetalPipeline.shared()
+        let renderer = try SSHTerminalMetalRenderer(pipeline: pipeline, metrics: metrics, scale: 1)
+        let engine = try SSHTerminalEngine(
+            geometry: .init(columns: 40, rows: 10, cellWidth: 8, cellHeight: 17)
+        ) { _ in }
+        engine.setColors(
+            foreground: .init(r: 255, g: 255, b: 255),
+            background: .init(r: 0, g: 0, b: 16),
+            dark: true
+        )
+        let line = String(repeating: "abcdefghij", count: 4)
+        engine.receive(Data((Array(repeating: line, count: 10).joined(separator: "\r\n") + "\u{1b}[5;1H").utf8))
+        let width = max(1, Int((metrics.cellSize.width * 40).rounded()))
+        let height = max(1, Int((metrics.cellSize.height * 10).rounded()))
+        let texture = try #require(renderer.makeOffscreenTexture(width: width, height: height))
+
+        let first = renderer.encodeOffscreen(
+            frame: engine.frame(), cursorColor: SIMD4(1, 1, 1, 0.65),
+            texture: texture, waitUntilCompleted: true, fullRebuild: true
+        )
+        #expect(first.submitted)
+        #expect(first.reusedRowCount == 0)
+        #expect(first.rebuiltRowCount == 10)
+
+        engine.receive(Data("x".utf8))
+        let dirty = renderer.encodeOffscreen(
+            frame: engine.frame(), cursorColor: SIMD4(1, 1, 1, 0.65),
+            texture: texture, waitUntilCompleted: true, fullRebuild: false
+        )
+        #expect(dirty.submitted)
+        #expect(dirty.rebuiltRowCount == 1, "only the edited row repacks")
+        #expect(dirty.reusedRowCount == 9)
+
+        renderer.setMetrics(
+            SSHTerminalCellMetrics(
+                font: .monospacedSystemFont(ofSize: 17, weight: .regular),
+                boldFont: .monospacedSystemFont(ofSize: 17, weight: .bold)
+            ),
+            scale: 1
+        )
+        engine.receive(Data("y".utf8))
+        let afterFont = renderer.encodeOffscreen(
+            frame: engine.frame(), cursorColor: SIMD4(1, 1, 1, 0.65),
+            texture: texture, waitUntilCompleted: true, fullRebuild: true
+        )
+        #expect(afterFont.submitted)
+        #expect(afterFont.reusedRowCount == 0, "font change must drop the row cache")
+
+        engine.scroll(rows: -1)
+        let scrolled = renderer.encodeOffscreen(
+            frame: engine.frame(), cursorColor: SIMD4(1, 1, 1, 0.65),
+            texture: texture, waitUntilCompleted: true, fullRebuild: false
+        )
+        #expect(scrolled.submitted)
+        #expect(scrolled.reusedRowCount == 0, "scroll rebuilds every row")
+        #expect(scrolled.rebuiltRowCount == 10)
+
+        engine.resize(.init(columns: 40, rows: 8, cellWidth: 8, cellHeight: 17))
+        let resized = renderer.encodeOffscreen(
+            frame: engine.frame(), cursorColor: SIMD4(1, 1, 1, 0.65),
+            texture: texture, waitUntilCompleted: true, fullRebuild: false
+        )
+        #expect(resized.submitted)
+        #expect(resized.reusedRowCount == 0, "resize rebuilds every row")
+        #expect(resized.rebuiltRowCount == 8)
+    }
+
+    @Test func colorEmojiKeepsChrominanceAndRecordGlyphStaysInOneCell() throws {
+        let harness = try Harness(columns: 8, rows: 2, scale: 2)
+        defer { harness.finish() }
+        harness.engine.setColors(
+            foreground: .init(r: 255, g: 255, b: 255),
+            background: .init(r: 0, g: 0, b: 16),
+            dark: true
+        )
+        harness.engine.receive(Data("\u{1b}[?25l\u{1b}[2J\u{1b}[H\u{1F600}\u{23FA}".utf8))
+        let frame = harness.engine.frame()
+        let emojiWidth = frame.rows[0][0].width
+        let recordColumn = emojiWidth
+        let shot = try harness.render()
+        #expect(emojiWidth >= 1)
+        #expect(shot.hasInk(column: 0, row: 0), "emoji has ink")
+        let chroma = shot.chroma(column: 0, row: 0)
+        #expect(chroma > 20, "color emoji must not be an fg-tinted silhouette (chroma \(chroma))")
+        #expect(shot.hasInk(column: recordColumn, row: 0), "U+23FA has ink")
+        #expect(
+            !shot.hasInk(column: recordColumn + 1, row: 0),
+            "width-1 U+23FA after emoji must not spill"
+        )
     }
 
     @MainActor
@@ -676,6 +794,17 @@ struct SSHTerminalMetalTests {
         func maxChannel(column: Int, row: Int) -> Int {
             let p = pixel(column: column, row: row)
             return max(Int(p.r), Int(p.g), Int(p.b))
+        }
+
+        func chroma(column: Int, row: Int) -> Int {
+            let samples: [(CGFloat, CGFloat)] = [
+                (0.5, 0.45), (0.4, 0.5), (0.6, 0.5), (0.5, 0.35), (0.35, 0.4),
+            ]
+            return samples.map { dx, dy in
+                let p = pixel(column: column, row: row, dx: dx, dy: dy)
+                let r = Int(p.r), g = Int(p.g), b = Int(p.b)
+                return max(r, g, b) - min(r, g, b)
+            }.max() ?? 0
         }
     }
 }

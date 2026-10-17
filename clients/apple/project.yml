@@ -215,6 +215,9 @@ targets:
         OPPIGitCommit: OPPI_GIT_COMMIT_VALUE
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        # ProMotion: CADisplayLink may request up to 120 Hz while the SSH
+        # terminal is scrolling. Idle and typing stay at the normal range.
+        CADisableMinimumFrameDurationOnPhone: true
     preBuildScripts:
       - script: |
           "$SRCROOT/scripts/stamp-git-commit.sh"

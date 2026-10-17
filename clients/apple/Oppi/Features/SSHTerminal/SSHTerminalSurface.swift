@@ -1,4 +1,5 @@
 import GhosttyVt
+import QuartzCore
 import UIKit
 import UniformTypeIdentifiers
 
@@ -24,6 +25,30 @@ enum SSHTerminalTapAction: Equatable {
         if otherInputFocused { return .dismissOtherInput }
         if appWantsClicks { return .mouseClick }
         return .focusChatBar
+    }
+}
+
+/// When the grid display link runs, and whether it may request 120 Hz.
+struct SSHTerminalDisplayLinkPolicy: Equatable {
+    var running: Bool
+    var highFrameRate: Bool
+
+    static let normalRate = CAFrameRateRange(minimum: 15, maximum: 60, preferred: 60)
+    static let scrollingRate = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+
+    static func resolve(
+        hasWindow: Bool,
+        sceneActive: Bool,
+        needsFullPaint: Bool,
+        pictureChanged: Bool,
+        renderHeld: Bool,
+        scrolling: Bool
+    ) -> Self {
+        guard hasWindow, sceneActive else {
+            return .init(running: false, highFrameRate: false)
+        }
+        let work = needsFullPaint || pictureChanged || renderHeld || scrolling
+        return .init(running: work, highFrameRate: scrolling)
     }
 }
 
@@ -66,6 +91,9 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
     private var wheelRemainder = SSHTerminalWheelScaling.Accumulator()
     private var altRemainder: CGFloat = 0
     private var displayLink: CADisplayLink?
+    private var displayLinkGeneration: UInt64 = 0
+    private(set) var displayLinkTickCount: UInt64 = 0
+    var isDisplayLinkRunning: Bool { displayLink.map { !$0.isPaused } ?? false }
     private let metalHost = SSHTerminalMetalHostView()
     private let historyScroll = SSHTerminalHistoryScrollView()
     private let selectionOverlay = SSHTerminalSelectionOverlay()
@@ -114,6 +142,11 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         installGestures()
         bar = makeAccessoryBar()
         applyTheme(ThemeRuntimeState.currentThemeID())
+        channel.engine.onPictureChange = { [weak self] in
+            guard let self else { return }
+            self.needsPaint = true
+            self.requestDisplayLink()
+        }
         NotificationCenter.default.addObserver(self, selector: #selector(fontPreferencesChanged),
                                                name: FontPreferences.didChangeNotification, object: nil)
     }
@@ -127,6 +160,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         renderer?.setMetrics(metrics, scale: max(traitCollection.displayScale, 1))
         needsFullPaint = true
         needsPaint = true
+        requestDisplayLink()
         setNeedsLayout()
     }
     override var canBecomeFirstResponder: Bool { true }
@@ -152,7 +186,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         sceneActive = window?.windowScene?.activationState == .foregroundActive
         needsPaint = true
         needsFullPaint = true
-        startDisplayLinkIfNeeded()
+        requestDisplayLink()
         let center = NotificationCenter.default
         center.removeObserver(self, name: UIApplication.didBecomeActiveNotification, object: nil)
         center.removeObserver(self, name: UIApplication.willResignActiveNotification, object: nil)
@@ -164,7 +198,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         sceneActive = true
         needsPaint = true
         needsFullPaint = true
-        startDisplayLinkIfNeeded()
+        requestDisplayLink()
     }
 
     @objc private func sceneResignedActive() {
@@ -172,17 +206,53 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         stopDisplayLink()
     }
 
+    func requestDisplayLink() {
+        displayLinkGeneration &+= 1
+        startDisplayLinkIfNeeded()
+        displayLink?.isPaused = false
+        publishDisplayLinkDebug()
+    }
+
     private func startDisplayLinkIfNeeded() {
-        guard window != nil, sceneActive, displayLink == nil else { return }
+        guard window != nil, sceneActive else { return }
+        if let displayLink {
+            displayLink.isPaused = false
+            return
+        }
         let link = CADisplayLink(target: DisplayTarget(self), selector: #selector(DisplayTarget.tick))
-        link.preferredFrameRateRange = .init(minimum: 15, maximum: 60, preferred: 60)
+        link.preferredFrameRateRange = SSHTerminalDisplayLinkPolicy.normalRate
         link.add(to: .main, forMode: .common)
         displayLink = link
+    }
+
+    private func pauseDisplayLink() {
+        displayLink?.isPaused = true
+        publishDisplayLinkDebug()
     }
 
     private func stopDisplayLink() {
         displayLink?.invalidate()
         displayLink = nil
+        publishDisplayLinkDebug()
+    }
+
+    private var isHistoryScrolling: Bool {
+        historyScroll.isTracking || historyScroll.isDragging || historyScroll.isDecelerating
+    }
+
+    private func applyFrameRate(scrolling: Bool) {
+        let desired = scrolling
+            ? SSHTerminalDisplayLinkPolicy.scrollingRate
+            : SSHTerminalDisplayLinkPolicy.normalRate
+        displayLink?.preferredFrameRateRange = desired
+    }
+
+    private func publishDisplayLinkDebug() {
+        #if DEBUG
+        accessibilityValue = isDisplayLinkRunning
+            ? "display-link running ticks \(displayLinkTickCount)"
+            : "display-link stopped ticks \(displayLinkTickCount)"
+        #endif
     }
 
     override func layoutSubviews() {
@@ -195,6 +265,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
             paintedSize = bounds.size
             needsFullPaint = true
             needsPaint = true
+            requestDisplayLink()
         }
         // Zero until the view has a window; a zero scale would size the PTY and
         // the grid at zero pixels. didMoveToWindow queues another layout pass.
@@ -207,6 +278,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
                 metalLayer.drawableSize = drawable
                 needsFullPaint = true
                 needsPaint = true
+                requestDisplayLink()
             }
         }
         renderer?.setMetrics(metrics, scale: scale)
@@ -241,6 +313,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         historyScroll.indicatorStyle = themeID.preferredColorScheme == .light ? .black : .white
         needsFullPaint = true
         needsPaint = true
+        requestDisplayLink()
     }
 
     /// One display-link tick: snapshot the engine and encode the complete grid
@@ -272,7 +345,9 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         foreground.withAlphaComponent(0.65).getRed(&r, green: &g, blue: &b, alpha: &a)
         let cursor = SIMD4<Float>(Float(r), Float(g), Float(b), Float(a))
-        let cost = renderer.encode(frame: frame, cursorColor: cursor, drawable: drawable)
+        let cost = renderer.encode(
+            frame: frame, cursorColor: cursor, drawable: drawable, fullRebuild: needsFullPaint
+        )
         if cost.submitted {
             needsFullPaint = false
             return true
@@ -628,6 +703,13 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         selectionOverlay.transform = transform
         publishFollowState()
         needsPaint = true
+        requestDisplayLink()
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard scrollView === historyScroll else { return }
+        requestDisplayLink()
+        applyFrameRate(scrolling: true)
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
@@ -935,8 +1017,12 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         init(_ view: SSHTerminalGridView) { self.view = view }
         @objc func tick() {
             guard let view else { return }
+            view.displayLinkTickCount &+= 1
             // A hold has a one-second deadline even if no more bytes arrive.
             let changes = view.channel.engine.changeCount
+            let generation = view.displayLinkGeneration
+            let scrolling = view.isHistoryScrolling
+            view.applyFrameRate(scrolling: scrolling)
             // Consume the gate after presentIfNeeded submits, finds nothing
             // to draw, or hits a deterministic encode miss. Transient misses
             // leave needsPaint set so the next tick retries without a new byte.
@@ -948,6 +1034,21 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
                     view.paintedChangeCount = changes
                 }
             }
+            let still = SSHTerminalDisplayLinkPolicy.resolve(
+                hasWindow: view.window != nil,
+                sceneActive: view.sceneActive,
+                needsFullPaint: view.needsFullPaint,
+                pictureChanged: view.needsPaint
+                    || view.paintedChangeCount != view.channel.engine.changeCount,
+                renderHeld: view.channel.engine.renderHeld,
+                scrolling: view.isHistoryScrolling
+            )
+            if still.running {
+                view.applyFrameRate(scrolling: still.highFrameRate)
+            } else if view.displayLinkGeneration == generation {
+                view.pauseDisplayLink()
+            }
+            view.publishDisplayLinkDebug()
         }
     }
 }

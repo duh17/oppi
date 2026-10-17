@@ -78,6 +78,9 @@ final class SSHTerminalEngine {
     /// Bumped by anything that can change the picture. The display link repaints
     /// when it moved, so output never invalidates SwiftUI.
     private(set) var changeCount = 0
+    /// Starts the grid display link. Without this, an idle-paused link never
+    /// sees PTY output, scroll, or resize.
+    var onPictureChange: (() -> Void)?
     var dark = true
     var renderHeld: Bool { heldSince != nil }
     /// Viewport rows from the last `frame()`. Dirty rows replace one entry.
@@ -132,9 +135,14 @@ final class SSHTerminalEngine {
         programStatus.processEnded()
     }
 
+    private func notePictureChange() {
+        changeCount &+= 1
+        onPictureChange?()
+    }
+
     func receive(_ bytes: Data) {
         guard live else { return }
-        changeCount &+= 1
+        notePictureChange()
         bytes.withUnsafeBytes { buffer in
             ghostty_terminal_vt_write(terminal, buffer.bindMemory(to: UInt8.self).baseAddress, bytes.count)
         }
@@ -161,7 +169,7 @@ final class SSHTerminalEngine {
 
     func resize(_ value: SSHTerminalGeometry) {
         geometry = value
-        changeCount &+= 1
+        notePictureChange()
         forceFullRebuild = true
         ghostty_terminal_resize(terminal, UInt16(value.columns), UInt16(value.rows),
                                 UInt32(value.cellWidth), UInt32(value.cellHeight))
@@ -178,7 +186,7 @@ final class SSHTerminalEngine {
 
     func scroll(rows: Int) {
         following = false // A drag, not output, owns follow state.
-        changeCount &+= 1
+        notePictureChange()
         forceFullRebuild = true
         var value = GhosttyTerminalScrollViewportValue()
         value.delta = rows
@@ -187,7 +195,7 @@ final class SSHTerminalEngine {
 
     /// Absolute row in the same space as `scrollbar.offset`.
     func scrollToRow(_ row: Int) {
-        changeCount &+= 1
+        notePictureChange()
         forceFullRebuild = true
         var value = GhosttyTerminalScrollViewportValue()
         value.row = max(0, row)
@@ -199,7 +207,7 @@ final class SSHTerminalEngine {
 
     func backToLive() {
         following = true
-        changeCount &+= 1
+        notePictureChange()
         forceFullRebuild = true
         ghostty_terminal_scroll_viewport(terminal, .init(tag: GHOSTTY_SCROLL_VIEWPORT_BOTTOM, value: .init()))
     }
