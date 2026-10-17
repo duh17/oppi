@@ -92,7 +92,7 @@ struct UnifiedDiffView: View {
                     let build = DiffAttributedStringBuilder.buildResult(
                         hunks: h,
                         filePath: fp,
-                        options: .init(includeStats: false, includeGapSummary: true)
+                        options: .init(includeStats: false, includeGapSummary: true, paintsRowBackgrounds: true)
                     )
                     let measured = build.attributedText.boundingRect(
                         with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),

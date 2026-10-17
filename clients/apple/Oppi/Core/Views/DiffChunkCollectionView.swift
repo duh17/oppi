@@ -1,33 +1,42 @@
-import SwiftUI
 import UIKit
 
 /// TextKit background painter shared by the small-document and chunked paths.
+///
+/// Text for this painter is built with `paintsRowBackgrounds`, so rows carry
+/// no `.backgroundColor`. Layers, bottom to top: the text-extent tint (from the
+/// line fragment's used rect), word highlights (TextKit), the full-width row
+/// tint, and the change bar. This is the same stack the attribute-tinted text
+/// produced, without TextKit sizing attribute runs across long lines.
 final class DiffBackgroundLayoutManager: NSLayoutManager {
     nonisolated(unsafe) var viewportWidth: CGFloat = 0
     nonisolated(unsafe) var measuredContentWidth: CGFloat = 0
 
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
-        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
-        guard let storage = textStorage else { return }
-
+        guard let storage = textStorage, glyphsToShow.length > 0 else {
+            super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+            return
+        }
+        // TextKit calls this once per dirty tile. Scan only the rows being painted;
+        // scanning the whole document made every tile cost O(document).
+        let paintRange = NSIntersectionRange(
+            characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil),
+            NSRange(location: 0, length: storage.length)
+        )
         let fillWidth = max(measuredContentWidth, viewportWidth)
-        let addedBackground = UIColor(Color.themeDiffAdded.opacity(0.10))
-        let removedBackground = UIColor(Color.themeDiffRemoved.opacity(0.08))
-        let headerBackground = UIColor(Color.themeBgHighlight)
-        let addedBar = UIColor(Color.themeDiffAdded)
-        let removedBar = UIColor(Color.themeDiffRemoved)
+        let colors = DiffAttributedStringBuilder.painterColors()
+        var bars: [(CGRect, UIColor)] = []
 
-        storage.enumerateAttribute(
-            diffLineKindAttributeKey,
-            in: NSRange(location: 0, length: storage.length)
-        ) { value, attributeRange, _ in
+        var rows: [(rect: CGRect, color: UIColor)] = []
+
+        storage.enumerateAttribute(diffLineKindAttributeKey, in: paintRange) { value, attributeRange, _ in
             guard let kind = value as? String else { return }
-            let background: UIColor
+            let text: UIColor?
+            let row: UIColor
             let bar: UIColor?
             switch kind {
-            case "added": background = addedBackground; bar = addedBar
-            case "removed": background = removedBackground; bar = removedBar
-            case "header": background = headerBackground; bar = nil
+            case "added": text = colors.addedText; row = colors.addedRow; bar = colors.addedBar
+            case "removed": text = colors.removedText; row = colors.removedRow; bar = colors.removedBar
+            case "header": text = nil; row = colors.header; bar = nil
             default: return
             }
 
@@ -35,20 +44,32 @@ final class DiffBackgroundLayoutManager: NSLayoutManager {
                 forCharacterRange: attributeRange,
                 actualCharacterRange: nil
             )
-            self.enumerateLineFragments(forGlyphRange: glyphRange) { rect, _, _, _, _ in
-                var fillRect = rect
-                fillRect.origin.x = origin.x
-                fillRect.origin.y += origin.y
-                fillRect.size.width = fillWidth
-                background.setFill()
-                UIRectFillUsingBlendMode(fillRect, .normal)
+            self.enumerateLineFragments(forGlyphRange: glyphRange) { rect, usedRect, _, _, _ in
+                if let text {
+                    var textRect = usedRect
+                    textRect.origin.x += origin.x
+                    textRect.origin.y = rect.origin.y + origin.y
+                    textRect.size.height = rect.height
+                    text.setFill()
+                    UIRectFillUsingBlendMode(textRect, .normal)
+                }
+                var rowRect = rect
+                rowRect.origin.x = origin.x
+                rowRect.origin.y += origin.y
+                rowRect.size.width = fillWidth
+                rows.append((rowRect, row))
                 if let bar {
-                    var barRect = fillRect
+                    var barRect = rowRect
                     barRect.size.width = 2.5
-                    bar.setFill()
-                    UIRectFillUsingBlendMode(barRect, .normal)
+                    bars.append((barRect, bar))
                 }
             }
+        }
+
+        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+        for (rect, color) in rows + bars {
+            color.setFill()
+            UIRectFillUsingBlendMode(rect, .normal)
         }
     }
 }

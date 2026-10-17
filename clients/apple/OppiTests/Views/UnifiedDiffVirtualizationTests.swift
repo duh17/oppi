@@ -182,7 +182,12 @@ struct UnifiedDiffVirtualizationTests {
                 ]
             ),
         ]
-        let options = DiffAttributedStringBuilder.Options(includeStats: true, includeGapSummary: true)
+        // Both review renderers draw through DiffBackgroundLayoutManager.
+        let options = DiffAttributedStringBuilder.Options(
+            includeStats: true,
+            includeGapSummary: true,
+            paintsRowBackgrounds: true
+        )
         let built = await Task.detached(priority: .userInitiated) {
             (
                 SendableNSAttributedString(DiffAttributedStringBuilder.buildResult(

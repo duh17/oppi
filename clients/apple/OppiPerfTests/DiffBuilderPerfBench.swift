@@ -152,6 +152,86 @@ struct DiffBuilderPerfBench {
         #expect(us < 500_000, "diffBuild plain 500 lines: \(us)μs")
     }
 
+    // MARK: - Long-line prose rewrite (CHANGELOG-shaped)
+
+    /// One 262-line hunk of long markdown paragraphs: 131 removed then 92 added,
+    /// lines up to ~1,900 characters. This is the shape of a changelog trim and
+    /// stays on the single-document path (under the chunking thresholds).
+    static let proseRewriteHunks: [WorkspaceReviewDiffHunk] = {
+        let words = ["Client", "Server", "session", "durable", "opens", "the", "diff", "a",
+                     "workspace", "shows", "no", "longer", "review", "file", "changes", "with"]
+        func paragraph(_ seed: Int) -> String {
+            let wordCount = 40 + (seed * 37) % 260
+            let body = (0..<wordCount).map { words[($0 * 7 + seed * 13) % words.count] }
+            return "- **Client:** " + body.joined(separator: " ") + "."
+        }
+        var lines: [WorkspaceReviewDiffLine] = []
+        for index in 0..<3 {
+            lines.append(.init(kind: .context, text: paragraph(index), oldLine: index + 1, newLine: index + 1, spans: nil))
+        }
+        for index in 0..<131 {
+            lines.append(.init(kind: .removed, text: paragraph(100 + index), oldLine: 4 + index, newLine: nil, spans: nil))
+        }
+        for index in 0..<92 {
+            let text = paragraph(500 + index)
+            // Paired edits carry a few word spans; rewritten lines carry none.
+            let spans: [WorkspaceReviewDiffSpan]? = index.isMultiple(of: 4)
+                ? [.init(start: 14, end: 20, kind: .changed), .init(start: 40, end: 52, kind: .changed)]
+                : nil
+            lines.append(.init(kind: .added, text: text, oldLine: nil, newLine: 4 + index, spans: spans))
+        }
+        for index in 0..<36 {
+            lines.append(.init(kind: .context, text: paragraph(900 + index), oldLine: 135 + index, newLine: 96 + index, spans: nil))
+        }
+        return [WorkspaceReviewDiffHunk(oldStart: 1, oldCount: 170, newStart: 1, newCount: 131, lines: lines)]
+    }()
+
+    /// Same options as the review diff reader (`UnifiedDiffView`).
+    private static let reviewReaderOptions = DiffAttributedStringBuilder.Options(
+        includeStats: false,
+        includeGapSummary: true,
+        paintsRowBackgrounds: true
+    )
+
+    @Test("Benchmark: prose rewrite build + one viewport paint")
+    func proseRewriteViewportPaint() {
+        let built = DiffAttributedStringBuilder.buildResult(
+            hunks: Self.proseRewriteHunks,
+            filePath: "CHANGELOG.md",
+            options: Self.reviewReaderOptions
+        ).attributedText
+        let storage = NSTextStorage(attributedString: built)
+        let layoutManager = DiffBackgroundLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        container.lineBreakMode = .byClipping
+        layoutManager.addTextContainer(container)
+        storage.addLayoutManager(layoutManager)
+        layoutManager.ensureLayout(for: container)
+        layoutManager.viewportWidth = 402
+        layoutManager.measuredContentWidth = layoutManager.usedRect(for: container).width
+
+        // One phone-sized tile, the unit TextKit repaints while scrolling.
+        let viewport = CGRect(x: 0, y: 0, width: 402, height: 874)
+        let glyphs = layoutManager.glyphRange(forBoundingRect: viewport, in: container)
+        let renderer = UIGraphicsImageRenderer(size: viewport.size)
+        let paintUs = Self.measureUs {
+            _ = renderer.image { _ in
+                layoutManager.drawBackground(forGlyphRange: glyphs, at: .zero)
+            }
+        }
+        let buildUs = Self.measureUs {
+            _ = DiffAttributedStringBuilder.buildResult(
+                hunks: Self.proseRewriteHunks,
+                filePath: "CHANGELOG.md",
+                options: Self.reviewReaderOptions
+            )
+        }
+        print("METRIC diffBuild_prose_rewrite=\(buildUs)")
+        print("METRIC diffPaint_prose_rewrite_viewport=\(paintUs)")
+        #expect(paintUs < 500_000, "viewport paint: \(paintUs)μs")
+    }
+
     // MARK: - SyntaxHighlighter benchmarks (secondary metrics)
 
     static let swiftSource500 = RenderStrategyPerfTests.syntheticSwiftSource(lineCount: 500)

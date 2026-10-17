@@ -28,20 +28,14 @@ enum DiffAttributedStringBuilder {
         let headerAttrs: [NSAttributedString.Key: Any]
         let sectionHeaderBlockAttrs: [NSAttributedString.Key: Any]
         let gapSummaryAttrs: [NSAttributedString.Key: Any]
-        let gutterAddedAttrs: [NSAttributedString.Key: Any]
-        let gutterRemovedAttrs: [NSAttributedString.Key: Any]
-        let gutterContextAttrs: [NSAttributedString.Key: Any]
-        let lineNumAttrs: [NSAttributedString.Key: Any]
-        let lineNumAddedAttrs: [NSAttributedString.Key: Any]
-        let lineNumRemovedAttrs: [NSAttributedString.Key: Any]
         let codeDefaultAttrs: [NSAttributedString.Key: Any]
-        let codeDimAttrs: [NSAttributedString.Key: Any]
-        let codeAddedAttrs: [NSAttributedString.Key: Any]
-        let codeRemovedAttrs: [NSAttributedString.Key: Any]
+        /// Row tints as `.backgroundColor` attributes, for plain TextKit consumers.
+        let attributeRows: RowStyle
+        /// Row tints left to `DiffBackgroundLayoutManager`.
+        let paintedRows: RowStyle
+        let painterColors: PainterColors
 
         let fgColor: UIColor
-        let wordAddedBg: UIColor
-        let wordRemovedBg: UIColor
 
         // Syntax token colors
         // Array indexed by TokenKind.rawValue for O(1) lookup (no dictionary hash)
@@ -107,6 +101,43 @@ enum DiffAttributedStringBuilder {
             let wordAddedBg = UIColor(palette.toolDiffAdded.opacity(0.35))
             let wordRemovedBg = UIColor(palette.toolDiffRemoved.opacity(0.35))
 
+            // Painter-backed readers draw the text-extent tint themselves (cheap
+            // line-fragment rects instead of TextKit's per-run attribute rects),
+            // then word backgrounds, then the full-width row tint. A word
+            // background now lands on top of the text tint instead of replacing
+            // it, so its alpha is reduced to give the same pixel:
+            // 1 - (1 - text)(1 - word') = 0.35. Same hue, so this is exact.
+            let paintedWordAddedBg = UIColor(palette.toolDiffAdded.opacity(1 - (1 - 0.35) / (1 - 0.12)))
+            let paintedWordRemovedBg = UIColor(palette.toolDiffRemoved.opacity(1 - (1 - 0.35) / (1 - 0.10)))
+
+            func rows(
+                addedBackground: UIColor?,
+                removedBackground: UIColor?,
+                wordAdded: UIColor,
+                wordRemoved: UIColor
+            ) -> RowStyle {
+                func tinted(
+                    _ attrs: [NSAttributedString.Key: Any],
+                    _ background: UIColor?
+                ) -> [NSAttributedString.Key: Any] {
+                    guard let background else { return attrs }
+                    return attrs.merging([.backgroundColor: background]) { _, new in new }
+                }
+                return RowStyle(
+                    gutterAdded: tinted([.font: gutterFont, .foregroundColor: addedAccent, .paragraphStyle: paragraph, diffLineKindAttributeKey: "added"], addedBackground),
+                    gutterRemoved: tinted([.font: gutterFont, .foregroundColor: removedAccent, .paragraphStyle: paragraph, diffLineKindAttributeKey: "removed"], removedBackground),
+                    gutterContext: [.font: gutterFont, .foregroundColor: contextDim, .paragraphStyle: paragraph],
+                    numberAdded: tinted([.font: lineNumFont, .foregroundColor: lineNumColor, .paragraphStyle: paragraph, diffLineKindAttributeKey: "added"], addedBackground),
+                    numberRemoved: tinted([.font: lineNumFont, .foregroundColor: lineNumColor, .paragraphStyle: paragraph, diffLineKindAttributeKey: "removed"], removedBackground),
+                    numberContext: [.font: lineNumFont, .foregroundColor: lineNumColor, .paragraphStyle: paragraph],
+                    codeAdded: tinted([.font: codeFont, .foregroundColor: fgColor, .paragraphStyle: paragraph, diffLineKindAttributeKey: "added", diffCodeColumnAttributeKey: true], addedBackground),
+                    codeRemoved: tinted([.font: codeFont, .foregroundColor: fgColor, .paragraphStyle: paragraph, diffLineKindAttributeKey: "removed", diffCodeColumnAttributeKey: true], removedBackground),
+                    codeContext: [.font: codeFont, .foregroundColor: fgDimColor, .paragraphStyle: paragraph, diffCodeColumnAttributeKey: true],
+                    wordAdded: wordAdded,
+                    wordRemoved: wordRemoved
+                )
+            }
+
             // Cache iOS painter colors once per theme. Keep the array for O(1)
             // lookup; do not convert palette colors per token.
             var syntaxColorArray: [UIColor?] = Array(repeating: nil, count: 9)
@@ -124,19 +155,29 @@ enum DiffAttributedStringBuilder {
                 headerAttrs: [.font: headerFont, .foregroundColor: headerColor, .paragraphStyle: paragraph, diffLineKindAttributeKey: "header"],
                 sectionHeaderBlockAttrs: [.paragraphStyle: paragraph, diffLineKindAttributeKey: "header"],
                 gapSummaryAttrs: [.font: AppFont.systemSmall, .foregroundColor: gapSummaryColor, .paragraphStyle: paragraph],
-                gutterAddedAttrs: [.font: gutterFont, .foregroundColor: addedAccent, .paragraphStyle: paragraph, .backgroundColor: lineAddedBg, diffLineKindAttributeKey: "added"],
-                gutterRemovedAttrs: [.font: gutterFont, .foregroundColor: removedAccent, .paragraphStyle: paragraph, .backgroundColor: lineRemovedBg, diffLineKindAttributeKey: "removed"],
-                gutterContextAttrs: [.font: gutterFont, .foregroundColor: contextDim, .paragraphStyle: paragraph],
-                lineNumAttrs: [.font: lineNumFont, .foregroundColor: lineNumColor, .paragraphStyle: paragraph],
-                lineNumAddedAttrs: [.font: lineNumFont, .foregroundColor: lineNumColor, .paragraphStyle: paragraph, .backgroundColor: lineAddedBg, diffLineKindAttributeKey: "added"],
-                lineNumRemovedAttrs: [.font: lineNumFont, .foregroundColor: lineNumColor, .paragraphStyle: paragraph, .backgroundColor: lineRemovedBg, diffLineKindAttributeKey: "removed"],
                 codeDefaultAttrs: [.font: codeFont, .foregroundColor: fgColor, .paragraphStyle: paragraph],
-                codeDimAttrs: [.font: codeFont, .foregroundColor: fgDimColor, .paragraphStyle: paragraph, diffCodeColumnAttributeKey: true],
-                codeAddedAttrs: [.font: codeFont, .foregroundColor: fgColor, .paragraphStyle: paragraph, .backgroundColor: lineAddedBg, diffLineKindAttributeKey: "added", diffCodeColumnAttributeKey: true],
-                codeRemovedAttrs: [.font: codeFont, .foregroundColor: fgColor, .paragraphStyle: paragraph, .backgroundColor: lineRemovedBg, diffLineKindAttributeKey: "removed", diffCodeColumnAttributeKey: true],
+                attributeRows: rows(
+                    addedBackground: lineAddedBg,
+                    removedBackground: lineRemovedBg,
+                    wordAdded: wordAddedBg,
+                    wordRemoved: wordRemovedBg
+                ),
+                paintedRows: rows(
+                    addedBackground: nil,
+                    removedBackground: nil,
+                    wordAdded: paintedWordAddedBg,
+                    wordRemoved: paintedWordRemovedBg
+                ),
+                painterColors: PainterColors(
+                    addedText: lineAddedBg,
+                    removedText: lineRemovedBg,
+                    addedRow: UIColor(palette.toolDiffAdded.opacity(0.10)),
+                    removedRow: UIColor(palette.toolDiffRemoved.opacity(0.08)),
+                    header: UIColor(palette.bgHighlight),
+                    addedBar: addedAccent,
+                    removedBar: removedAccent
+                ),
                 fgColor: fgColor,
-                wordAddedBg: wordAddedBg,
-                wordRemovedBg: wordRemovedBg,
                 syntaxColorArray: syntaxColorArray,
                 addedAccentColor: addedAccent,
                 removedAccentColor: removedAccent,
@@ -144,6 +185,52 @@ enum DiffAttributedStringBuilder {
             )
         }
 
+    }
+
+    /// Segment attributes for one row kind under one background strategy.
+    private struct RowStyle {
+        let gutterAdded: [NSAttributedString.Key: Any]
+        let gutterRemoved: [NSAttributedString.Key: Any]
+        let gutterContext: [NSAttributedString.Key: Any]
+        let numberAdded: [NSAttributedString.Key: Any]
+        let numberRemoved: [NSAttributedString.Key: Any]
+        let numberContext: [NSAttributedString.Key: Any]
+        let codeAdded: [NSAttributedString.Key: Any]
+        let codeRemoved: [NSAttributedString.Key: Any]
+        let codeContext: [NSAttributedString.Key: Any]
+        let wordAdded: UIColor
+        let wordRemoved: UIColor
+
+        func segments(
+            for kind: WorkspaceReviewDiffLine.Kind
+        ) -> (gutter: [NSAttributedString.Key: Any], number: [NSAttributedString.Key: Any], code: [NSAttributedString.Key: Any]) {
+            switch kind {
+            case .added: (gutterAdded, numberAdded, codeAdded)
+            case .removed: (gutterRemoved, numberRemoved, codeRemoved)
+            case .context: (gutterContext, numberContext, codeContext)
+            }
+        }
+
+        func wordBackground(for kind: WorkspaceReviewDiffLine.Kind) -> UIColor {
+            kind == .removed ? wordRemoved : wordAdded
+        }
+    }
+
+    /// Row colors drawn by `DiffBackgroundLayoutManager`, cached per theme.
+    struct PainterColors {
+        /// Behind the row's text (what the row `.backgroundColor` attribute covers).
+        let addedText: UIColor
+        let removedText: UIColor
+        /// Across the full content width, over everything else.
+        let addedRow: UIColor
+        let removedRow: UIColor
+        let header: UIColor
+        let addedBar: UIColor
+        let removedBar: UIColor
+    }
+
+    static func painterColors() -> PainterColors {
+        StyleAttrs.current().painterColors
     }
 
     /// Per-line metadata tracked during assembly.
@@ -219,6 +306,11 @@ enum DiffAttributedStringBuilder {
     struct Options: Sendable {
         var includeStats = false
         var includeGapSummary = true
+        /// The text will be drawn by `DiffBackgroundLayoutManager`, which paints
+        /// full-width row tints itself. Leaving row `.backgroundColor` attributes
+        /// out matters for long lines: TextKit sizes attribute backgrounds across
+        /// the whole line, which cost ~22 ms per tile on a 2,000-character diff.
+        var paintsRowBackgrounds = false
     }
 
     struct BuildResult {
@@ -396,25 +488,9 @@ enum DiffAttributedStringBuilder {
             result.addAttribute(.font, value: AppFont.systemSmall, range: stats.totalRange)
         }
 
+        let rows = options.paintsRowBackgrounds ? style.paintedRows : style.attributeRows
         for info in lineInfos {
-            let gutterAttrs: [NSAttributedString.Key: Any]
-            let numAttrs: [NSAttributedString.Key: Any]
-            let codeAttrs: [NSAttributedString.Key: Any]
-
-            switch info.kind {
-            case .added:
-                gutterAttrs = style.gutterAddedAttrs
-                numAttrs = style.lineNumAddedAttrs
-                codeAttrs = style.codeAddedAttrs
-            case .removed:
-                gutterAttrs = style.gutterRemovedAttrs
-                numAttrs = style.lineNumRemovedAttrs
-                codeAttrs = style.codeRemovedAttrs
-            case .context:
-                gutterAttrs = style.gutterContextAttrs
-                numAttrs = style.lineNumAttrs
-                codeAttrs = style.codeDimAttrs
-            }
+            let (gutterAttrs, numAttrs, codeAttrs) = rows.segments(for: info.kind)
 
             let rowRange = NSRange(location: info.gutterStart, length: info.rowEnd - info.gutterStart)
 
@@ -435,7 +511,7 @@ enum DiffAttributedStringBuilder {
 
         for info in lineInfos {
             guard let spans = info.spans, !spans.isEmpty else { continue }
-            let wordBg = info.kind == .removed ? style.wordRemovedBg : style.wordAddedBg
+            let wordBg = rows.wordBackground(for: info.kind)
             for span in spans {
                 let length = span.end - span.start
                 guard span.start >= 0, length > 0 else { continue }
@@ -722,26 +798,15 @@ enum DiffAttributedStringBuilder {
         style: StyleAttrs,
         to result: NSMutableAttributedString
     ) {
-        let gutterAttrs: [NSAttributedString.Key: Any]
-        let numberAttrs: [NSAttributedString.Key: Any]
-        let codeAttrs: [NSAttributedString.Key: Any]
+        // Chunks only render inside `DiffChunkCollectionView`, whose layout
+        // manager paints the row tints.
+        let rows = style.paintedRows
+        let (gutterAttrs, numberAttrs, codeAttrs) = rows.segments(for: row.line.kind)
         let marker: String
         switch row.line.kind {
-        case .added:
-            gutterAttrs = style.gutterAddedAttrs
-            numberAttrs = style.lineNumAddedAttrs
-            codeAttrs = style.codeAddedAttrs
-            marker = " + "
-        case .removed:
-            gutterAttrs = style.gutterRemovedAttrs
-            numberAttrs = style.lineNumRemovedAttrs
-            codeAttrs = style.codeRemovedAttrs
-            marker = " - "
-        case .context:
-            gutterAttrs = style.gutterContextAttrs
-            numberAttrs = style.lineNumAttrs
-            codeAttrs = style.codeDimAttrs
-            marker = "   "
+        case .added: marker = " + "
+        case .removed: marker = " - "
+        case .context: marker = "   "
         }
 
         let rowStart = result.length
@@ -772,7 +837,7 @@ enum DiffAttributedStringBuilder {
             )
         }
         if let spans = row.line.spans, !spans.isEmpty {
-            let background = row.line.kind == .removed ? style.wordRemovedBg : style.wordAddedBg
+            let background = rows.wordBackground(for: row.line.kind)
             for span in spans {
                 let length = span.end - span.start
                 guard span.start >= 0, length > 0, span.end <= code.utf16.count else { continue }
