@@ -464,6 +464,42 @@ struct SSHTerminalTouchTests {
         )
     }
 
+    @Test func modeChangeDuringDragDoesNotEmitInTheNewMode() throws {
+        let channel = try SSHTerminalChannel()
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        let mounted = try MountedTouchGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let engine = channel.engine
+        engine.receive(Data((1...300).map { "line \($0)\r\n" }.joined().utf8))
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        let scroll = try #require(grid.subviews.compactMap { $0 as? UIScrollView }.first)
+        let began = scroll.contentOffset.y
+        #expect(began > 200, "live history offset must be large enough to inject")
+        #expect(channel.inputNotice.isEmpty)
+
+        grid.scrollViewWillBeginDragging(scroll)
+        scroll.setContentOffset(CGPoint(x: 0, y: began - 80), animated: false)
+        grid.scrollViewDidScroll(scroll)
+
+        engine.receive(Data("\u{1b}[?1000h\u{1b}[?1006h".utf8))
+        #expect(engine.scrollAction == .mouseWheel)
+        grid.scrollViewDidScroll(scroll)
+
+        // UIScrollView can write the drag-began offset back after a mode
+        // switch, then keep applying the same finger. That delta must not
+        // become wheel steps; the next touch starts fresh.
+        scroll.setContentOffset(CGPoint(x: 0, y: began), animated: false)
+        grid.scrollViewDidScroll(scroll)
+        scroll.setContentOffset(CGPoint(x: 0, y: max(0, began - 240)), animated: false)
+        grid.scrollViewDidScroll(scroll)
+        grid.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        #expect(
+            !channel.inputNotice.contains("Not sent"),
+            "a drag that crosses a mode change must not emit wheel steps: \(channel.inputNotice)"
+        )
+    }
+
     @Test func historyFlingDoesNotBecomeKeysWhenTheRemoteEntersAltOrMouse() throws {
         let channel = try SSHTerminalChannel()
         let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })

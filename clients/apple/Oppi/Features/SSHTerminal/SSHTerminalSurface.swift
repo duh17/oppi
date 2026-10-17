@@ -654,9 +654,9 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
             requestDisplayLink()
             return
         }
+        guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
         switch channel.engine.scrollAction {
         case .history:
-            guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
             applyHistoryScrollOffset()
         case .mouseWheel, .alternateKeys:
             consumeAppScrollOffset()
@@ -750,9 +750,10 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         }
     }
 
-    /// Stop a coasting fling and reseed offsets when the remote changes what
-    /// a vertical finger move means. Returns true when this callback must not
-    /// consume the previous surface's coordinates as finger travel.
+    /// Stop a coasting fling and drop an in-flight drag when the remote
+    /// changes what a vertical finger move means. Returns true when this
+    /// callback must not consume the previous surface's coordinates as finger
+    /// travel. The next touch starts fresh.
     @discardableResult
     private func reconcileScrollAction() -> Bool {
         let action = channel.engine.scrollAction
@@ -768,6 +769,13 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         case .mouseWheel, .alternateKeys:
             prepareAppScrollSurface(forceReseed: true)
         }
+        // Cancel the pan so UIScrollView cannot write the drag-began offset
+        // back on the next move and have that delta consumed in the new mode.
+        isSyncingHistoryScroll = true
+        let pan = historyScroll.panGestureRecognizer
+        pan.isEnabled = false
+        pan.isEnabled = true
+        isSyncingHistoryScroll = false
         return true
     }
 
