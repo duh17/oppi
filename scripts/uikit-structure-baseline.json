@@ -140,7 +140,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/ScreenshotPreviews/SSHTerminalScreenshotPreview.swift": {
-      "NavigationStack": 1,
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/App/ScreenshotPreviews/ScopedLocksScreenshotPreview.swift": {
@@ -639,13 +638,7 @@
     "clients/apple/Oppi/Features/Review/WorkspaceReviewFileDetailView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/SSHTerminal/HerdrAgentsView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalArrowControl.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalAttention.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalComposer.swift": {
@@ -657,19 +650,10 @@
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalHostListView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalNoticeCard.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalSetupView.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalStatusGlyph.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalSurface.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalView.swift": {
+    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalViewController.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Schedules/ScheduleManagementView.swift": {

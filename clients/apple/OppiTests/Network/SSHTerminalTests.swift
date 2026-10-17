@@ -436,10 +436,10 @@ struct SSHTerminalTests {
             let fixture = TerminalConnectionFixture()
             let channel = try SSHTerminalChannel()
             channel.opened(fixture)
-            let mounted = try MountedTerminalTestView(SSHTerminalView(channel: channel, reconnect: {}, editHost: {}))
+            let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+            let mounted = try MountedTerminalTestGrid(grid)
             defer { mounted.dismiss(); channel.close(reason: "done") }
-            let grid = try #require(mounted.find { $0 is UIKeyInput && !($0 is UITextView) })
-            let keyboard = try #require(grid as? UIKeyInput)
+            let keyboard = grid as UIKeyInput
             let accessory = try #require(grid.inputAccessoryView)
             let modifierButton = try #require(mounted.find(in: accessory) {
                 $0.accessibilityIdentifier == (modifier == GhosttyMods(GHOSTTY_MODS_CTRL) ? "sshTerminal.control" : "sshTerminal.alt")
@@ -512,6 +512,33 @@ struct SSHTerminalTests {
         #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: 10, height: 80)) == .show)
         #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: 0, height: -44)) == .hide)
         #expect(SSHTerminalTopBarGesture.action(translation: CGSize(width: -8, height: -70)) == .hide)
+    }
+
+    @Test func floatingNoticesDoNotResizeTheGrid() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture())
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        mounted.host.view.layoutIfNeeded()
+        let grid = try #require(mounted.controller.gridView)
+        let before = grid.bounds.size
+        #expect(before.width > 0 && before.height > 0)
+
+        channel.event(.eof)
+        channel.modifierLatch.toggle(GhosttyMods(GHOSTTY_MODS_CTRL))
+        #expect(!channel.key(GHOSTTY_KEY_C, text: "c"))
+        #expect(channel.inputNotice.contains("Not sent"))
+        mounted.host.view.setNeedsLayout()
+        mounted.host.view.layoutIfNeeded()
+        #expect(grid.bounds.size == before)
+
+        UIPasteboard.general.string = nil
+        grid.requestPaste(nil)
+        mounted.host.view.setNeedsLayout()
+        mounted.host.view.layoutIfNeeded()
+        #expect(grid.bounds.size == before)
     }
 
     @Test func terminalBarsShareOneShotModifiersAndEncodeAllBaseKeys() async throws {
@@ -874,20 +901,97 @@ struct SSHTerminalTests {
         let channel = try SSHTerminalChannel()
         channel.opened(fixture)
         channel.event(.data(Data("kept-grid".utf8)))
-        let first = try MountedTerminalTestView(SSHTerminalView(channel: channel, reconnect: {}, editHost: {}))
-        await first.update()
+        let first = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
+        )
+        first.host.view.layoutIfNeeded()
         first.dismiss()
-        await first.update()
         #expect(channel.connected)
         // The same channel and grid come back on the next screen.
-        let second = try MountedTerminalTestView(SSHTerminalView(channel: channel, reconnect: {}, editHost: {}))
+        let second = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
+        )
         defer { second.dismiss(); channel.close(reason: "done") }
-        await second.update()
+        second.host.view.layoutIfNeeded()
         #expect(channel.connected)
         #expect(channel.engine.frame().rows[0].prefix(9).map(\.text).joined() == "kept-grid")
         channel.send(Data("x".utf8))
         var bytes = fixture.bytes.makeAsyncIterator()
         #expect(await bytes.next() == Data("x".utf8))
+    }
+}
+
+@MainActor
+private final class MountedTerminalTestGrid {
+    let host: UIViewController
+    let window: UIWindow
+
+    init(_ grid: SSHTerminalGridView) throws {
+        let host = UIViewController()
+        self.host = host
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        host.view.addSubview(grid)
+        NSLayoutConstraint.activate([
+            grid.topAnchor.constraint(equalTo: host.view.topAnchor),
+            grid.bottomAnchor.constraint(equalTo: host.view.bottomAnchor),
+            grid.leadingAnchor.constraint(equalTo: host.view.leadingAnchor),
+            grid.trailingAnchor.constraint(equalTo: host.view.trailingAnchor),
+        ])
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.layoutIfNeeded()
+    }
+
+    func dismiss() {
+        window.isHidden = true
+        window.rootViewController = nil
+    }
+
+    func find(in view: UIView, matching predicate: (UIView) -> Bool) -> UIView? {
+        if predicate(view) { return view }
+        for child in view.subviews {
+            if let match = find(in: child, matching: predicate) { return match }
+        }
+        return nil
+    }
+}
+
+@MainActor
+private final class MountedTerminalTestController {
+    let controller: SSHTerminalViewController
+    let host: UIViewController
+    let window: UIWindow
+
+    init(_ controller: SSHTerminalViewController) throws {
+        self.controller = controller
+        let nav = UINavigationController(rootViewController: controller)
+        host = nav
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = nav
+        window.makeKeyAndVisible()
+        nav.view.layoutIfNeeded()
+    }
+
+    func dismiss() {
+        window.isHidden = true
+        window.rootViewController = nil
+    }
+
+    func find(_ predicate: (UIView) -> Bool) -> UIView? {
+        find(in: host.view, matching: predicate)
+    }
+
+    func find(in view: UIView, matching predicate: (UIView) -> Bool) -> UIView? {
+        if predicate(view) { return view }
+        for child in view.subviews {
+            if let match = find(in: child, matching: predicate) { return match }
+        }
+        return nil
     }
 }
 

@@ -383,6 +383,13 @@ final class ScreenNavigator {
         return screen
     }
 
+    /// Pushes a UIKit screen onto the same stack. The SSH terminal is one:
+    /// it owns its `navigationItem` and does not go through `HostFactory.screen`.
+    func push(_ screen: UIViewController) {
+        guard let controller else { return unattached("push") }
+        Router.push(screen, from: controller)
+    }
+
     /// Closes this screen: pops it when pushed, otherwise dismisses the modal
     /// it is the root of. The presenter's `onDismiss` runs afterwards.
     func finish() {

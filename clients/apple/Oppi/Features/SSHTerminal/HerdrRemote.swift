@@ -5,7 +5,7 @@ import Observation
 /// terminal's agent overview shows. Herdr owns the state; Oppi only reads it
 /// through `herdr api snapshot` on the terminal's SSH connection.
 struct HerdrSnapshot: Decodable, Equatable, Sendable {
-    enum Status: String, Decodable, Sendable {
+    enum Status: String, Decodable, Sendable, Hashable {
         case idle, working, blocked, done, unknown
 
         init(from decoder: any Decoder) throws {

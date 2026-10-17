@@ -1,5 +1,6 @@
 #if DEBUG
 import SwiftUI
+import UIKit
 
 /// Which OSC 7501 reports (or, for `notification`, which OSC 777) this preview
 /// feeds through the real terminal engine.
@@ -34,13 +35,19 @@ struct SSHTerminalScreenshotPreview: View {
     }
 
     var body: some View {
-        NavigationStack {
+        Group {
             if let channel {
-                SSHTerminalView(channel: channel, reconnect: {}, editHost: {}, hostLabel: hostLabel)
-                    .environment(\.presentProgramStatusDetail, status == .detail)
-                    .task { await play(on: channel) }
+                SSHTerminalPreviewHost(
+                    channel: channel,
+                    status: status,
+                    hostLabel: hostLabel,
+                    themeID: themeID,
+                    connection: connection
+                )
+                .task { await play(on: channel) }
             }
         }
+        .ignoresSafeArea()
         .environment(connection)
         .environment(\.themeID, themeID)
         .environment(\.theme, themeID.appTheme)
@@ -154,6 +161,32 @@ struct SSHTerminalScreenshotPreview: View {
     private func osc(_ body: String) -> Data { Data("\u{1b}]7501;\(body)\u{1b}\\".utf8) }
 
     private func b64(_ text: String) -> String { Data(text.utf8).base64EncodedString() }
+}
+
+private struct SSHTerminalPreviewHost: UIViewControllerRepresentable {
+    let channel: SSHTerminalChannel
+    let status: SSHTerminalScreenshotStatus
+    let hostLabel: String
+    let themeID: ThemeID
+    let connection: ServerConnection
+
+    func makeUIViewController(context: Context) -> UINavigationController {
+        let terminal = SSHTerminalViewController(
+            channel: channel,
+            reconnect: {},
+            editHost: {},
+            hostLabel: hostLabel,
+            composerConnection: connection
+        )
+        terminal.presentsStatusDetailOnAppear = status == .detail
+        let style: UIUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
+        terminal.overrideUserInterfaceStyle = style
+        let nav = UINavigationController(rootViewController: terminal)
+        nav.overrideUserInterfaceStyle = style
+        return nav
+    }
+
+    func updateUIViewController(_ controller: UINavigationController, context: Context) {}
 }
 
 private actor PreviewConnection: SSHTerminalConnection {

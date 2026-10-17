@@ -1,13 +1,13 @@
 import GhosttyVt
-import SwiftUI
+import UIKit
 
 /// One program-status symbol for the terminal toolbar, the blocked card,
 /// Herdr rows, and the status list.
 ///
 /// The toolbar copy is a button that opens the record list. Settle timing for a
-/// just-finished root lives here, so the timer does not invalidate
-/// `SSHTerminalView` or resize the terminal grid.
-struct SSHTerminalStatusGlyph: View {
+/// just-finished root lives here, so the timer does not invalidate the terminal
+/// screen or resize the grid.
+final class SSHTerminalStatusMarkView: UIView {
     enum Style {
         /// Navigation bar: entry effects, and variable colour while working.
         case toolbar
@@ -19,130 +19,155 @@ struct SSHTerminalStatusGlyph: View {
         case detail
     }
 
-    let status: SessionStatusKind
-    var style: Style = .toolbar
-    /// The root record's state and revision. Toolbar only; drives the settle hold.
-    var root: SSHTerminalStatusHold.Root?
-    /// The roll-up's chip line, without the root. Spoken after the shown state.
-    var summary: String = ""
-    var hostLabel: String = ""
-    var rows: [SSHTerminalStatusRow] = []
-    /// Toolbar only: where the blocked card collapses to.
-    var frameBox: SSHTerminalGlyphFrame?
+    let style: Style
+    private let imageView = UIImageView()
+    private var hold: SSHTerminalStatusHold?
+    private var holdTask: Task<Void, Never>?
+    private var checkTask: Task<Void, Never>?
+    private var headline: SessionStatusKind = .idle
+    private var shown: SessionStatusKind = .idle
+    private var checkDrawn = false
+    private var reduceMotion = false
+    private var lastRoot: SSHTerminalStatusHold.Root?
+    private var themeID: ThemeID?
 
-    @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.presentProgramStatusDetail) private var presentDetail
-    @State private var showsDetail = false
-    @State private var hold: SSHTerminalStatusHold?
-    @State private var bounceToken = 0
-    @State private var wiggleToken = 0
-    /// False while a new Done waits to draw in.
-    @State private var checkDrawn = false
+    init(style: Style) {
+        self.style = style
+        super.init(frame: .zero)
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.contentMode = .scaleAspectFit
+        addSubview(imageView)
+        NSLayoutConstraint.activate([
+            imageView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            imageView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            widthAnchor.constraint(greaterThanOrEqualToConstant: style == .toolbar ? 44 : 20),
+            heightAnchor.constraint(greaterThanOrEqualToConstant: style == .toolbar ? 44 : 20),
+        ])
+        isAccessibilityElement = false
+    }
 
-    /// A held outcome, else the resolved headline. Never a captured value.
-    private var shown: SessionStatusKind { hold?.kind ?? status }
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
 
-    var body: some View {
-        Group {
-            if style == .toolbar {
-                Button { showsDetail = true } label: {
-                    // The symbol is small; the tap target is a full bar item.
-                    mark.frame(minWidth: 44, minHeight: 44).contentShape(.rect)
+    func apply(
+        status: SessionStatusKind,
+        themeID: ThemeID,
+        reduceMotion: Bool,
+        root: SSHTerminalStatusHold.Root? = nil
+    ) {
+        self.reduceMotion = reduceMotion
+        self.themeID = themeID
+        headline = status
+        let nextHold = SSHTerminalStatusHold.next(
+            hold, from: lastRoot, to: root, headline: status
+        )
+        lastRoot = root
+        if nextHold != hold {
+            hold = nextHold
+            holdTask?.cancel()
+            if let hold {
+                holdTask = Task { [weak self] in
+                    try? await Task.sleep(for: hold.duration)
+                    guard !Task.isCancelled else { return }
+                    self?.hold = nil
+                    self?.render()
                 }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("sshTerminal.programStatus")
-                    .routerModal(isPresented: $showsDetail, presentation: .popover.keepsPopoverInCompactWidth()) {
-                        SSHTerminalStatusDetail(hostLabel: hostLabel, rows: rows)
-                    }
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frameBox?.rect = $0 }
-            } else {
-                mark
             }
         }
-        .onAppear { if presentDetail, style == .toolbar { showsDetail = true } }
-        .onChange(of: SSHTerminalStatusHold.Input(root: root, headline: status)) { old, new in
-            hold = SSHTerminalStatusHold.next(hold, from: old.root, to: new.root, headline: new.headline)
-        }
-        .onChange(of: shown, initial: true) { _, new in noteEntry(of: new) }
-        // A new or cleared hold cancels the old wait, so a late wake never
-        // overwrites a newer state. On wake the headline shows as it is now.
-        .task(id: hold) {
-            guard let hold else { return }
-            try? await Task.sleep(for: hold.duration)
-            guard !Task.isCancelled else { return }
-            withAnimation(.smooth) { self.hold = nil }
-        }
-        // A new Done mounts undrawn; one beat later it draws in.
-        .task(id: drawsCheck) {
-            guard drawsCheck else { checkDrawn = false; return }
-            try? await Task.sleep(for: .milliseconds(60))
-            if !Task.isCancelled { checkDrawn = true }
-        }
+        render()
     }
 
-    private var mark: some View {
-        Group {
-            if drawsCheck {
-                // Its own view, so it starts undrawn instead of being replaced
-                // in fully drawn and then erased. Draw On hides while active.
-                Image(systemName: SessionStatusKind.done.terminalSymbol)
-                    .symbolEffect(.drawOn, isActive: !checkDrawn)
-            } else {
-                Image(systemName: shown.terminalSymbol)
-                    .contentTransition(.symbolEffect(.replace))
-                    .symbolEffect(
-                        .variableColor.iterative,
-                        options: .repeating,
-                        isActive: shown == .working && !reduceMotion && (style == .toolbar || style == .row)
-                    )
-                    .symbolEffect(.bounce, value: bounceToken)
-                    .symbolEffect(.wiggle, value: wiggleToken)
-                    .symbolEffect(
-                        .wiggle,
-                        options: .repeat(.periodic(delay: 3)),
-                        isActive: style == .banner && !reduceMotion
-                    )
+    private func render() {
+        guard let themeID else { return }
+        let next = hold?.kind ?? headline
+        let previous = shown
+        shown = next
+        if previous != next { noteEntry(of: next) }
+
+        let drawsCheck = style == .toolbar && shown == .done && !reduceMotion
+        imageView.tintColor = UIColor(shown.tint(themeID.appTheme))
+        let scale: UIImage.SymbolScale = shown == .idle && style == .toolbar ? .small : .medium
+        imageView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body, scale: scale)
+        imageView.removeAllSymbolEffects()
+
+        if drawsCheck {
+            imageView.image = UIImage(systemName: SessionStatusKind.done.terminalSymbol)
+            imageView.addSymbolEffect(.drawOn, options: .nonRepeating, animated: !checkDrawn)
+            checkTask?.cancel()
+            if !checkDrawn {
+                checkTask = Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(60))
+                    guard !Task.isCancelled else { return }
+                    self?.checkDrawn = true
+                    self?.imageView.addSymbolEffect(.drawOn, options: .nonRepeating, animated: false)
+                }
+            }
+        } else {
+            checkDrawn = false
+            checkTask?.cancel()
+            imageView.image = UIImage(systemName: shown.terminalSymbol)
+            if shown == .working && !reduceMotion && (style == .toolbar || style == .row) {
+                imageView.addSymbolEffect(.variableColor.iterative, options: .repeating, animated: true)
+            }
+            if style == .banner && !reduceMotion {
+                imageView.addSymbolEffect(.wiggle, options: .repeat(.periodic(delay: 3)), animated: true)
             }
         }
-        .font(.body)
-        .imageScale(shown == .idle && style == .toolbar ? .small : .medium)
-        .foregroundStyle(shown.tint(theme))
-        .modifier(GlyphAccessibility(style: style, label: accessibilityValue))
     }
 
-    /// Every new Done on the toolbar draws in; Reduce Motion shows it plainly.
-    private var drawsCheck: Bool { style == .toolbar && shown == .done && !reduceMotion }
-
-    private var accessibilityValue: String {
-        summary.isEmpty ? shown.label : "\(shown.label), \(summary)"
-    }
-
-    /// One-shot entry effects belong to the toolbar glyph only.
     private func noteEntry(of kind: SessionStatusKind) {
         guard style == .toolbar, !reduceMotion else { return }
-        if kind.isBlocked { bounceToken += 1 }
-        if kind == .error { wiggleToken += 1 }
+        if kind.isBlocked {
+            imageView.addSymbolEffect(.bounce, options: .nonRepeating, animated: true)
+        }
+        if kind == .error {
+            imageView.addSymbolEffect(.wiggle, options: .nonRepeating, animated: true)
+        }
     }
 }
 
-/// The toolbar glyph is the control VoiceOver reads. Elsewhere the row or
-/// card around it already speaks the state.
-private struct GlyphAccessibility: ViewModifier {
-    let style: SSHTerminalStatusGlyph.Style
-    let label: String
+/// Toolbar control: 44 pt hit target, system bar-item press, opens the list.
+final class SSHTerminalStatusGlyphButton: UIButton {
+    let mark = SSHTerminalStatusMarkView(style: .toolbar)
+    var onOpen: () -> Void = {}
+    let glyphFrame = SSHTerminalGlyphFrame()
 
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if style == .toolbar {
-            content
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Program status")
-                .accessibilityValue(label)
-                .accessibilityHint("Shows each program's status")
-        } else {
-            content.accessibilityHidden(true)
-        }
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        addSubview(mark)
+        mark.translatesAutoresizingMaskIntoConstraints = false
+        mark.isUserInteractionEnabled = false
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 44),
+            heightAnchor.constraint(equalToConstant: 44),
+            mark.centerXAnchor.constraint(equalTo: centerXAnchor),
+            mark.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        addAction(UIAction { [weak self] _ in self?.onOpen() }, for: .touchUpInside)
+        accessibilityIdentifier = "sshTerminal.programStatus"
+        accessibilityLabel = "Program status"
+        accessibilityHint = "Shows each program's status"
+        showsMenuAsPrimaryAction = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        glyphFrame.rect = convert(bounds, to: nil)
+    }
+
+    func apply(
+        status: SessionStatusKind,
+        summary: String,
+        themeID: ThemeID,
+        reduceMotion: Bool,
+        root: SSHTerminalStatusHold.Root?
+    ) {
+        mark.apply(status: status, themeID: themeID, reduceMotion: reduceMotion, root: root)
+        accessibilityValue = summary.isEmpty ? status.label : "\(status.label), \(summary)"
     }
 }
 
@@ -178,7 +203,6 @@ struct SSHTerminalStatusHold: Equatable {
         default: nil
         }
         guard let outcome else { return nil }
-        // The same done or error again, or a headline-only change: keep it.
         if let hold, hold.kind == outcome { return hold }
         let wasRunning = old?.state == GHOSTTY_PROGRAM_STATUS_STATE_WORKING
             || old?.state == GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED
@@ -194,53 +218,97 @@ final class SSHTerminalGlyphFrame {
 }
 
 /// The text the toolbar glyph keeps off the bar.
-struct SSHTerminalStatusDetail: View {
-    @Environment(\.theme) private var theme
+final class SSHTerminalStatusDetailController: UIViewController, RouterModalContainer,
+    UICollectionViewDelegate {
+    var onDismissed: (() -> Void)?
 
-    let hostLabel: String
-    let rows: [SSHTerminalStatusRow]
+    private let hostLabel: String
+    private var rows: [SSHTerminalStatusRow]
+    private let themeID: ThemeID
+    private let collectionView: UICollectionView
+    private var dataSource: UICollectionViewDiffableDataSource<Int, String>?
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Program status")
-                        .font(.headline)
-                        .foregroundStyle(.themeFg)
-                    Label(SSHTerminalProgramStatusPresentation.hostCaption(hostLabel), systemImage: "network")
-                        .font(.caption)
-                        .foregroundStyle(.themeComment)
-                        .lineLimit(1)
-                }
-                ForEach(rows) { row in
-                    HStack(alignment: .top, spacing: 8) {
-                        SSHTerminalStatusGlyph(status: row.status, style: .detail)
-                            .padding(.top, 2)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(row.title)
-                                .font(.subheadline)
-                                .foregroundStyle(.themeFg)
-                                .lineLimit(1)
-                            if !row.message.isEmpty {
-                                Text(row.message)
-                                    .font(.footnote)
-                                    .foregroundStyle(.themeComment)
-                                    .lineLimit(2)
-                            }
-                            Text(row.status.label)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(row.status.tint(theme))
-                        }
-                    }
-                    .padding(.leading, CGFloat(row.depth) * 16)
-                    .accessibilityElement(children: .combine)
-                }
-            }
-            .padding(16)
-            .frame(minWidth: 280, alignment: .leading)
+    init(hostLabel: String, rows: [SSHTerminalStatusRow], themeID: ThemeID) {
+        self.hostLabel = hostLabel
+        self.rows = rows
+        self.themeID = themeID
+        var config = UICollectionLayoutListConfiguration(appearance: .plain)
+        config.headerMode = .supplementary
+        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
+        view.backgroundColor = UIColor(themeID.palette.bg)
+        collectionView.backgroundColor = UIColor(themeID.palette.bg)
+        collectionView.translatesAutoresizingMaskIntoConstraints = false
+        collectionView.delegate = self
+        collectionView.backgroundColor = UIColor(themeID.palette.bg)
+        collectionView.accessibilityIdentifier = "sshTerminal.programStatusDetail"
+        view.addSubview(collectionView)
+        NSLayoutConstraint.activate([
+            collectionView.topAnchor.constraint(equalTo: view.topAnchor),
+            collectionView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+
+        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(
+            elementKind: UICollectionView.elementKindSectionHeader
+        ) { [weak self] cell, _, _ in
+            guard let self else { return }
+            var content = UIListContentConfiguration.groupedHeader()
+            content.text = "Program status"
+            content.secondaryText = SSHTerminalProgramStatusPresentation.hostCaption(self.hostLabel)
+            content.textProperties.color = UIColor(self.themeID.palette.fg)
+            content.secondaryTextProperties.color = UIColor(self.themeID.palette.comment)
+            content.image = UIImage(systemName: "network")
+            content.imageProperties.tintColor = UIColor(self.themeID.palette.comment)
+            cell.contentConfiguration = content
         }
-        .frame(maxHeight: 360)
-        .accessibilityIdentifier("sshTerminal.programStatusDetail")
+        let cell = UICollectionView.CellRegistration<UICollectionViewListCell, SSHTerminalStatusRow> {
+            [weak self] cell, _, row in
+            guard let self else { return }
+            var content = UIListContentConfiguration.subtitleCell()
+            content.text = row.title
+            content.secondaryText = [row.message, row.status.label].filter { !$0.isEmpty }.joined(separator: "\n")
+            content.textProperties.color = UIColor(self.themeID.palette.fg)
+            content.secondaryTextProperties.color = UIColor(row.status.tint(self.themeID.appTheme))
+            content.image = UIImage(systemName: row.status.terminalSymbol)
+            content.imageProperties.tintColor = UIColor(row.status.tint(self.themeID.appTheme))
+            content.directionalLayoutMargins.leading = 16 + CGFloat(row.depth) * 16
+            content.textProperties.numberOfLines = 1
+            content.secondaryTextProperties.numberOfLines = 3
+            cell.contentConfiguration = content
+            cell.accessories = []
+            cell.isUserInteractionEnabled = false
+        }
+        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, id in
+            let row = self.rows.first { $0.id == id }
+            guard let row else { return nil }
+            return collectionView.dequeueConfiguredReusableCell(using: cell, for: indexPath, item: row)
+        }
+        dataSource?.supplementaryViewProvider = { collectionView, _, indexPath in
+            collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
+        }
+        var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
+        snapshot.appendSections([0])
+        snapshot.appendItems(rows.map(\.id), toSection: 0)
+        dataSource?.apply(snapshot, animatingDifferences: false)
+        preferredContentSize = CGSize(width: 320, height: min(360, 72 + CGFloat(rows.count) * 56))
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isBeingDismissed || presentingViewController == nil, let onDismissed {
+            self.onDismissed = nil
+            onDismissed()
+        }
     }
 }
 
@@ -275,17 +343,5 @@ extension SSHTerminalProgramStatusPresentation {
                 depth: record.id.isEmpty ? 0 : record.id.split(separator: "/").count
             )
         }
-    }
-}
-
-private struct PresentProgramStatusDetailKey: EnvironmentKey {
-    static let defaultValue = false
-}
-
-extension EnvironmentValues {
-    /// Screenshot preview only. A normal launch never sets this.
-    var presentProgramStatusDetail: Bool {
-        get { self[PresentProgramStatusDetailKey.self] }
-        set { self[PresentProgramStatusDetailKey.self] = newValue }
     }
 }

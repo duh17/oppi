@@ -1,6 +1,6 @@
 import Foundation
 import Observation
-import SwiftUI
+import UIKit
 
 // What a host program raises for the person in this terminal, from every
 // source, and which of it floats over the grid.
@@ -172,31 +172,52 @@ struct SSHTerminalAttention {
 /// What the person feels and how long a notice stays: a warning haptic for
 /// each new card, a light tap for a bell, and a one-shot notice folding itself
 /// away after its lifetime. A blocked card stays while the program waits.
-struct SSHTerminalAttentionFeedback: ViewModifier {
-    let notice: SSHTerminalNotice?
-    let bell: SSHTerminalAlert?
-    let expire: (SSHTerminalNotice.Key) -> Void
+@MainActor
+final class SSHTerminalAttentionFeedback {
+    private let warning = UINotificationFeedbackGenerator()
+    private let impact = UIImpactFeedbackGenerator(style: .light)
+    private var expireTask: Task<Void, Never>?
+    private var lastWarning: ContinuousClock.Instant?
+    private var lastNoticeKey: SSHTerminalNotice.Key?
+    private var lastBellID: UInt64?
 
-    @State private var warnings = 0
-    @State private var lastWarning: ContinuousClock.Instant?
+    func prepare() {
+        warning.prepare()
+        impact.prepare()
+    }
 
-    func body(content: Content) -> some View {
-        content
-            .task(id: notice?.key) {
-                guard let notice, let lifetime = notice.lifetime else { return }
-                try? await Task.sleep(for: lifetime)
-                if !Task.isCancelled { expire(notice.key) }
+    func cancel() {
+        expireTask?.cancel()
+        expireTask = nil
+    }
+
+    func apply(
+        notice: SSHTerminalNotice?,
+        bell: SSHTerminalAlert?,
+        expire: @escaping (SSHTerminalNotice.Key) -> Void
+    ) {
+        if notice?.key != lastNoticeKey {
+            lastNoticeKey = notice?.key
+            expireTask?.cancel()
+            expireTask = nil
+            if let notice, let lifetime = notice.lifetime {
+                expireTask = Task {
+                    try? await Task.sleep(for: lifetime)
+                    if !Task.isCancelled { expire(notice.key) }
+                }
             }
-            // A program that blocks and unblocks in a loop raises a new card
-            // each time; the haptic still repeats no faster than one burst.
-            .onChange(of: notice?.key) { _, key in
+            if notice != nil {
                 let now = ContinuousClock.now
-                guard key != nil else { return }
-                if let lastWarning, lastWarning.duration(to: now) < SSHTerminalNotice.burstInterval { return }
-                lastWarning = now
-                warnings += 1
+                let silenced = lastWarning.map { $0.duration(to: now) < SSHTerminalNotice.burstInterval } ?? false
+                if !silenced {
+                    lastWarning = now
+                    warning.notificationOccurred(.warning)
+                }
             }
-            .sensoryFeedback(.warning, trigger: warnings)
-            .sensoryFeedback(.impact(weight: .light), trigger: bell) { _, new in new != nil }
+        }
+        if let bell, bell.id != lastBellID {
+            lastBellID = bell.id
+            impact.impactOccurred()
+        }
     }
 }

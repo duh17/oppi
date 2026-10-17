@@ -382,48 +382,17 @@ private struct SSHTerminalConnectionModifier: ViewModifier {
         let editHost = editHost
         let hostLabel = profile.endpointLabel
         DispatchQueue.main.async { [navigator] in
-            guard session.showsTerminal else { return }
-            navigator.push {
-                SSHTerminalScreen(session: session, editHost: editHost, hostLabel: hostLabel)
-            }
-        }
-    }
-}
-
-/// The terminal a connect pushed. It pops itself when the session stops
-/// showing it (Edit Host, the experiment turned off). Leaving it (Back, swipe)
-/// only leaves the screen: the registry keeps the shell.
-private struct SSHTerminalScreen: View {
-    let session: SSHTerminalConnectSession
-    let editHost: () -> Void
-    let hostLabel: String
-    @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var experimentEnabled = false
-    @Environment(\.screenNavigator) private var navigator
-    @State private var isOnScreen = false
-
-    var body: some View {
-        Group {
-            // Reconnecting opens a new channel and a fresh terminal for it.
-            if let channel = session.channel {
-                SSHTerminalView(
-                    channel: channel,
-                    reconnect: { session.reconnect(experimentEnabled: experimentEnabled) },
-                    editHost: editHost,
-                    hostLabel: hostLabel
-                )
-                .id(ObjectIdentifier(channel))
-            }
-        }
-        .onAppear { isOnScreen = true }
-        .onDisappear {
-            isOnScreen = false
-            session.showsTerminal = false
-        }
-        .onChange(of: session.showsTerminal) { _, visible in
-            if !visible, isOnScreen { navigator.finish() }
-        }
-        .onChange(of: experimentEnabled) { _, enabled in
-            if !enabled { session.handleExperimentDisabled() }
+            guard session.showsTerminal, let channel = session.channel else { return }
+            // The UIKit screen pops itself when the session stops showing it
+            // (Edit Host, the experiment turned off). Leaving it (Back, swipe)
+            // only leaves the screen: the registry keeps the shell.
+            navigator.push(SSHTerminalViewController(
+                channel: channel,
+                reconnect: { session.reconnect(experimentEnabled: AppPreferences.Experiments.sshTerminalEnabled) },
+                editHost: editHost,
+                hostLabel: hostLabel,
+                session: session
+            ))
         }
     }
 }

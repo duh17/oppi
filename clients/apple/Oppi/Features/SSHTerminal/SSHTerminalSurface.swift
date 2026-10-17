@@ -1,5 +1,4 @@
 import GhosttyVt
-import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
@@ -25,53 +24,6 @@ enum SSHTerminalTapAction: Equatable {
         if otherInputFocused { return .dismissOtherInput }
         if appWantsClicks { return .mouseClick }
         return .focusChatBar
-    }
-}
-
-/// The SwiftUI bridge to the UIKit grid: the screen drives it with request
-/// counters and hears back through callbacks.
-struct SSHTerminalSurface: UIViewRepresentable {
-    let channel: SSHTerminalChannel
-    let themeID: ThemeID
-    /// Bumped to open the raw keyboard. A mouse-reporting app would otherwise
-    /// treat a tap as a click, so the chat bar's keyboard button cannot be a tap.
-    let keyboardRequest: Int
-    /// Bumped to put the raw keyboard down.
-    let resignRequest: Int
-    /// Direct typing: a tap opens the raw keyboard instead of the chat bar.
-    let tapTypesInTerminal: Bool
-    let keyActions: [SSHTerminalKeyAction]
-    /// Clipboard text to send; nil when there was none or iOS refused it.
-    let paste: (String?) -> Void
-    let followChanged: (Bool) -> Void
-    let rawKeyboardChanged: (Bool) -> Void
-    let focusComposer: () -> Void
-    let useChatBar: () -> Void
-
-    func makeUIView(context: Context) -> SSHTerminalGridView {
-        let view = SSHTerminalGridView(channel: channel, paste: paste, followChanged: followChanged)
-        view.rawKeyboardChanged = rawKeyboardChanged
-        view.focusComposer = focusComposer
-        view.useChatBar = useChatBar
-        view.keyboardRequest = keyboardRequest
-        view.resignRequest = resignRequest
-        return view
-    }
-
-    func updateUIView(_ view: SSHTerminalGridView, context: Context) {
-        view.applyTheme(themeID)
-        view.needsPaint = true
-        view.tapTypesInTerminal = tapTypesInTerminal
-        view.setKeyActions(keyActions)
-        view.showModifiers()
-        if view.keyboardRequest != keyboardRequest {
-            view.keyboardRequest = keyboardRequest
-            view.becomeFirstResponder()
-        }
-        if view.resignRequest != resignRequest {
-            view.resignRequest = resignRequest
-            _ = view.resignFirstResponder()
-        }
     }
 }
 
@@ -119,7 +71,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
     private var keyActions: [SSHTerminalKeyAction] = []
     private var keyActionButtons: [UIButton] = []
     private var pasteControl: UIPasteControl?
-    private var foreground = UIColor(Color.themeFg)
+    private var foreground = UIColor.label
 
     override class var layerClass: AnyClass { CAMetalLayer.self }
     private var metalLayer: CAMetalLayer? { layer as? CAMetalLayer }
@@ -251,7 +203,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
         }
     }
 
-    /// Called on every SwiftUI update; only a different theme changes colors.
+    /// Only a different theme changes colors.
     /// The new default background then repaints the whole grid.
     func applyTheme(_ themeID: ThemeID) {
         guard themeID != appliedTheme else { return }
@@ -384,7 +336,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
 
     override func becomeFirstResponder() -> Bool {
         let became = super.becomeFirstResponder()
-        // Deferred: this can run inside a SwiftUI update (updateUIView).
+        // Deferred: this can run inside a layout or observation pass.
         if became { Task { @MainActor [rawKeyboardChanged] in rawKeyboardChanged(true) } }
         return became
     }

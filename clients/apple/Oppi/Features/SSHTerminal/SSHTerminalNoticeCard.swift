@@ -1,4 +1,4 @@
-import SwiftUI
+import UIKit
 
 /// Floating notice over the top of the terminal grid: a blocked program or a
 /// one-shot notification.
@@ -8,152 +8,224 @@ import SwiftUI
 /// cannot dress its message up as Oppi's. Floating keeps the grid's row count
 /// stable, so a notice does not resize the remote PTY. A tap or an upward
 /// swipe folds it into the toolbar glyph, so the prompt under it can be read.
-struct SSHTerminalNoticeCard: View {
-    @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+final class SSHTerminalNoticeCardView: UIView {
+    var onDismiss: () -> Void = {}
+    var onFrameChange: (CGRect) -> Void = { _ in }
 
-    let notice: SSHTerminalNotice
-    let hostLabel: String
-    /// The padded card's layout frame, for the collapse anchor.
-    let frameChanged: (CGRect) -> Void
-    let dismiss: () -> Void
+    private let material = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+    private let fill = UIView()
+    private let stroke = UIView()
+    private let symbolView = SSHTerminalStatusMarkView(style: .banner)
+    private let bellView = UIImageView()
+    private let headlineLabel = UILabel()
+    private let hostLabel = UILabel()
+    private let hostIcon = UIImageView()
+    private let remoteLabel = UILabel()
+    private var dragOffset: CGFloat = 0
+    private var reduceMotion = false
+    private var notice: SSHTerminalNotice?
 
-    @State private var drag: CGFloat = 0
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        material.translatesAutoresizingMaskIntoConstraints = false
+        material.layer.cornerRadius = 14
+        material.clipsToBounds = true
+        addSubview(material)
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                symbol
-                Text(headline)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(tint)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                Label(SSHTerminalProgramStatusPresentation.hostCaption(hostLabel), systemImage: "network")
-                    .font(.caption)
-                    .foregroundStyle(.themeComment)
-                    .lineLimit(1)
-            }
-            if !remoteText.isEmpty {
-                Text(remoteText)
-                    .font(.footnote)
-                    .foregroundStyle(.themeFg)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(theme.bg.primary.opacity(0.72))
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.regularMaterial)
-            }
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(tint, lineWidth: 0.5)
-        }
-        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .offset(y: drag)
-        .onTapGesture(perform: dismiss)
-        .gesture(swipeUp)
-        .padding(.horizontal, 10)
-        // The padded card's layout frame. `.offset` above is a render effect
-        // inside it, so a drag never changes this frame or writes `cardFrame`.
-        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }, action: frameChanged)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(headline), \(SSHTerminalProgramStatusPresentation.hostCaption(hostLabel))")
-        .accessibilityValue(remoteText)
-        .accessibilityAction(named: "Dismiss", dismiss)
-        .accessibilityIdentifier(accessibilityID)
+        fill.translatesAutoresizingMaskIntoConstraints = false
+        fill.isUserInteractionEnabled = false
+        material.contentView.addSubview(fill)
+
+        stroke.translatesAutoresizingMaskIntoConstraints = false
+        stroke.isUserInteractionEnabled = false
+        stroke.layer.cornerRadius = 14
+        stroke.layer.borderWidth = 0.5
+        stroke.backgroundColor = .clear
+        addSubview(stroke)
+
+        let header = UIStackView()
+        header.axis = .horizontal
+        header.alignment = .firstBaseline
+        header.spacing = 8
+        header.translatesAutoresizingMaskIntoConstraints = false
+
+        symbolView.translatesAutoresizingMaskIntoConstraints = false
+        bellView.translatesAutoresizingMaskIntoConstraints = false
+        bellView.image = UIImage(systemName: "bell.badge")
+        bellView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .body)
+        bellView.setContentHuggingPriority(.required, for: .horizontal)
+        symbolView.setContentHuggingPriority(.required, for: .horizontal)
+
+        headlineLabel.font = .preferredFont(forTextStyle: .subheadline).withWeight(.semibold)
+        headlineLabel.adjustsFontForContentSizeCategory = true
+        headlineLabel.lineBreakMode = .byTruncatingTail
+        headlineLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        hostIcon.image = UIImage(systemName: "network")
+        hostIcon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(textStyle: .caption1)
+        hostIcon.setContentHuggingPriority(.required, for: .horizontal)
+        hostLabel.font = .preferredFont(forTextStyle: .caption1)
+        hostLabel.adjustsFontForContentSizeCategory = true
+        hostLabel.lineBreakMode = .byTruncatingTail
+        hostLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let host = UIStackView(arrangedSubviews: [hostIcon, hostLabel])
+        host.axis = .horizontal
+        host.spacing = 4
+        host.alignment = .center
+        host.setContentHuggingPriority(.required, for: .horizontal)
+
+        header.addArrangedSubview(symbolView)
+        header.addArrangedSubview(bellView)
+        header.addArrangedSubview(headlineLabel)
+        header.addArrangedSubview(UIView())
+        header.addArrangedSubview(host)
+
+        remoteLabel.font = .preferredFont(forTextStyle: .footnote)
+        remoteLabel.adjustsFontForContentSizeCategory = true
+        remoteLabel.numberOfLines = 2
+
+        let column = UIStackView(arrangedSubviews: [header, remoteLabel])
+        column.axis = .vertical
+        column.spacing = 4
+        column.translatesAutoresizingMaskIntoConstraints = false
+        material.contentView.addSubview(column)
+
+        NSLayoutConstraint.activate([
+            material.topAnchor.constraint(equalTo: topAnchor),
+            material.bottomAnchor.constraint(equalTo: bottomAnchor),
+            material.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            material.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            fill.topAnchor.constraint(equalTo: material.contentView.topAnchor),
+            fill.bottomAnchor.constraint(equalTo: material.contentView.bottomAnchor),
+            fill.leadingAnchor.constraint(equalTo: material.contentView.leadingAnchor),
+            fill.trailingAnchor.constraint(equalTo: material.contentView.trailingAnchor),
+            stroke.topAnchor.constraint(equalTo: material.topAnchor),
+            stroke.bottomAnchor.constraint(equalTo: material.bottomAnchor),
+            stroke.leadingAnchor.constraint(equalTo: material.leadingAnchor),
+            stroke.trailingAnchor.constraint(equalTo: material.trailingAnchor),
+            column.topAnchor.constraint(equalTo: material.contentView.topAnchor, constant: 12),
+            column.bottomAnchor.constraint(equalTo: material.contentView.bottomAnchor, constant: -12),
+            column.leadingAnchor.constraint(equalTo: material.contentView.leadingAnchor, constant: 12),
+            column.trailingAnchor.constraint(equalTo: material.contentView.trailingAnchor, constant: -12),
+        ])
+
+        let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
+        addGestureRecognizer(tap)
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(panned(_:)))
+        pan.minimumNumberOfTouches = 1
+        addGestureRecognizer(pan)
+
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        accessibilityHint = "Dismisses the notice"
+        accessibilityCustomActions = [
+            UIAccessibilityCustomAction(name: "Dismiss") { [weak self] _ in
+                self?.onDismiss()
+                return true
+            },
+        ]
     }
 
-    // Each source's copy. A new `SSHTerminalNotice` case adds its arm here.
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
 
-    @ViewBuilder
-    private var symbol: some View {
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Layout frame, not the drag transform, so a swipe never writes cardFrame.
+        onFrameChange(convert(bounds, to: nil))
+    }
+
+    func apply(notice: SSHTerminalNotice, hostCaption: String, themeID: ThemeID, reduceMotion: Bool) {
+        self.notice = notice
+        self.reduceMotion = reduceMotion
+        let palette = themeID.palette
+        let theme = themeID.appTheme
+        let tint: UIColor
+        let headline: String
+        let remote: String
         switch notice {
         case .blocked(let blocked):
-            SSHTerminalStatusGlyph(status: blocked.kind, style: .banner)
-        case .alert:
-            Image(systemName: "bell.badge")
-                .font(.body)
-                .foregroundStyle(tint)
-                .accessibilityHidden(true)
+            tint = UIColor(blocked.kind.tint(theme))
+            headline = blocked.kind.label
+            remote = blocked.remoteText
+            symbolView.isHidden = false
+            bellView.isHidden = true
+            symbolView.apply(status: blocked.kind, themeID: themeID, reduceMotion: reduceMotion)
+            accessibilityIdentifier = "sshTerminal.programStatusBanner"
+        case .alert(let alert):
+            tint = UIColor(palette.blue)
+            headline = "Notification"
+            remote = [alert.title, alert.body].filter { !$0.isEmpty }.joined(separator: ": ")
+            symbolView.isHidden = true
+            bellView.isHidden = false
+            bellView.tintColor = tint
+            accessibilityIdentifier = "sshTerminal.notificationBanner"
         }
+        let host = SSHTerminalProgramStatusPresentation.hostCaption(hostCaption)
+        headlineLabel.text = headline
+        headlineLabel.textColor = tint
+        hostLabel.text = host
+        hostLabel.textColor = UIColor(palette.comment)
+        hostIcon.tintColor = UIColor(palette.comment)
+        remoteLabel.text = remote
+        remoteLabel.isHidden = remote.isEmpty
+        remoteLabel.textColor = UIColor(palette.fg)
+        fill.backgroundColor = UIColor(palette.bg).withAlphaComponent(0.72)
+        stroke.layer.borderColor = tint.cgColor
+        accessibilityLabel = "\(headline), \(host)"
+        accessibilityValue = remote
     }
 
-    /// Oppi's words, never the program's.
-    private var headline: String {
-        switch notice {
-        case .blocked(let blocked): blocked.kind.label
-        case .alert: "Notification"
-        }
+    @objc private func tapped() {
+        onDismiss()
     }
 
-    private var remoteText: String {
-        switch notice {
-        case .blocked(let blocked): blocked.remoteText
-        case .alert(let alert): [alert.title, alert.body].filter { !$0.isEmpty }.joined(separator: ": ")
-        }
-    }
-
-    private var tint: Color {
-        switch notice {
-        case .blocked(let blocked): blocked.kind.tint(theme)
-        case .alert: .themeBlue
-        }
-    }
-
-    private var accessibilityID: String {
-        switch notice {
-        case .blocked: "sshTerminal.programStatusBanner"
-        case .alert: "sshTerminal.notificationBanner"
-        }
-    }
-
-    /// Follows the finger up; downward pull resists. A short lift or an upward
-    /// flick dismisses, anything else settles back.
-    private var swipeUp: some Gesture {
-        DragGesture(minimumDistance: 6)
-            .onChanged { value in
-                let dy = value.translation.height
-                drag = dy < 0 ? dy : dy / 6
-            }
-            .onEnded { value in
-                if value.translation.height < -24 || value.predictedEndTranslation.height < -80 {
-                    // Settle the offset in the same animation as the removal, so
-                    // the card shrinks from where the finger left it into the
-                    // glyph rather than toward a point shifted by the drag.
-                    withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .smooth) {
-                        drag = 0
-                        dismiss()
-                    }
-                } else {
-                    withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .smooth) { drag = 0 }
+    @objc private func panned(_ gesture: UIPanGestureRecognizer) {
+        let dy = gesture.translation(in: self).y
+        switch gesture.state {
+        case .changed:
+            dragOffset = dy < 0 ? dy : dy / 6
+            transform = CGAffineTransform(translationX: 0, y: dragOffset)
+        case .ended, .cancelled:
+            let velocity = gesture.velocity(in: self).y
+            if dy < -24 || velocity < -400 {
+                let duration: TimeInterval = reduceMotion ? 0.2 : 0.35
+                UIView.animate(withDuration: duration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+                    self.transform = .identity
                 }
+                onDismiss()
+            } else {
+                let duration: TimeInterval = reduceMotion ? 0.2 : 0.35
+                UIView.animate(withDuration: duration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+                    self.transform = .identity
+                }
+                dragOffset = 0
             }
+        default:
+            break
+        }
     }
 
     /// In from the top. Out into the toolbar glyph: the card shrinks toward the
-    /// glyph's centre, which sits above it in the bar, whether it was dismissed
-    /// or the program moved on. Reduce Motion fades both ways. Applied by the
-    /// caller: a transition only counts on the view that is inserted or removed.
-    static func transition(card: CGRect, glyph: CGRect, reduceMotion: Bool) -> AnyTransition {
-        guard !reduceMotion else { return .opacity }
-        return .asymmetric(
-            insertion: .move(edge: .top).combined(with: .opacity),
-            removal: .scale(scale: 0.08, anchor: collapseAnchor(card: card, glyph: glyph)).combined(with: .opacity)
-        )
+    /// glyph's centre. Reduce Motion fades both ways.
+    static func collapseTransform(card: CGRect, glyph: CGRect) -> CGAffineTransform {
+        let target: CGPoint
+        if glyph == .zero || card.width <= 0 || card.height <= 0 {
+            target = CGPoint(x: card.midX, y: card.minY)
+        } else {
+            target = CGPoint(x: glyph.midX, y: glyph.midY)
+        }
+        return CGAffineTransform(translationX: target.x - card.midX, y: target.y - card.midY)
+            .scaledBy(x: 0.08, y: 0.08)
     }
+}
 
-    /// The glyph's centre in the card's unit space; y is negative. Before
-    /// either frame is known, shrink toward the top edge.
-    static func collapseAnchor(card: CGRect, glyph: CGRect) -> UnitPoint {
-        guard card.width > 0, card.height > 0, glyph != .zero else { return .top }
-        return UnitPoint(x: (glyph.midX - card.minX) / card.width, y: (glyph.midY - card.minY) / card.height)
+private extension UIFont {
+    func withWeight(_ weight: UIFont.Weight) -> UIFont {
+        let descriptor = fontDescriptor.addingAttributes([
+            .traits: [UIFontDescriptor.TraitKey.weight: weight],
+        ])
+        return UIFont(descriptor: descriptor, size: pointSize)
     }
 }
