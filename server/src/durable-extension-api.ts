@@ -118,6 +118,8 @@ export type SubagentRequest = {
 export interface ResolvedSubagent {
   /** The saved Agent's name, for `list`. */
   agent?: string;
+  /** The saved Agent's emoji icon, for the subagent pill's row title. */
+  icon?: string;
   /**
    * Configure the new child inside its creating commit: its agent (`configure`), runtime, and
    * `oppi.agent` documents, so it never exists unconfigured.

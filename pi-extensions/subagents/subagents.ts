@@ -133,7 +133,7 @@ export function applyWaitReading(
 	reading: {
 		settled: Array<{ id: string; status?: string }>;
 		attention: Array<{ id: string }>;
-		running: Array<{ id: string }>;
+		running: Array<{ id: string; status?: string }>;
 	},
 ): Subagent[] {
 	const byId = new Map<string, Subagent["state"]>();

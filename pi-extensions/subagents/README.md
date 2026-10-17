@@ -6,6 +6,8 @@ Reference Pi extension. Not a product feature. Copy it if you want a `subagent` 
 
 A row uses the general activity-row link, `oppi://session/<id>`. Oppi already opens that. This package does not add a screen. A saved-agent emoji from `launch.agentIcon` is prefixed on the title. The activity row has no icon slot, so SF Symbol and genmoji icons are not drawn here. The pill title is the count; the subtitle is working/done, not another copy of that count. In a terminal the same children are a compact band: a state mark, the name, and status, model, and context when they fit. The raw session URL is not printed there. Each expanded phone row shows a snapshot of the child's model and context usage from `oppi session get`, with a progress bar when the window is known. The snapshot is taken when a child is launched or the parent session loads; it does not update continuously while the child works. Working, attention, and Done still update through `oppi session wait`. A widget get is not a parent model turn. Neither is the observation timeout.
 
+Durable sessions draw the same pill from the built-in `oppi.sessions` extension, which imports this package's `subagents.ts` row helpers (`server/extensions/durable/sessions/subagents.ts` is a symlink). A change to those helpers changes both pills.
+
 ## How it finds them
 
 There is no children-list API. `parentSessionId` is stored on create, and `oppi session list` cannot filter by parent. Scanning that list would read every session.

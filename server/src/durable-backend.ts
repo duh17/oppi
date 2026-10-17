@@ -88,6 +88,11 @@ import {
   WORKING_WORDS_TASK,
   ensureWorkingWords,
 } from "../extensions/durable/working-words/contract.js";
+import {
+  SUBAGENT_WIDGET_TASK,
+  Subagents,
+  ensureSubagentWidget,
+} from "../extensions/durable/sessions/contract.js";
 import { DurableUIProjection } from "./durable-ui-projection.js";
 import type { ExtensionUIResponsePayload } from "./extension-ui-contract.js";
 import { DurableMcp } from "./durable-mcp.js";
@@ -550,6 +555,16 @@ export class DurableBackend implements AgentBackend {
       (tx) => ensureWorkingWords(tx, conversation.id, words),
       BACKGROUND_CONTEXT,
     );
+    // The subagent pill's watcher is a ticker: an idle store retires it and a Stop fence
+    // aborts it. A conversation with children gets it back here.
+    const subagents = await harness.snapshot(Subagents, conversation.id, BACKGROUND_CONTEXT);
+    if (Object.keys(subagents?.children ?? {}).length > 0) {
+      const widget = host.runtime.installedTask(SUBAGENT_WIDGET_TASK);
+      await conversation.commit(
+        (tx) => ensureSubagentWidget(tx, conversation.id, widget),
+        BACKGROUND_CONTEXT,
+      );
+    }
     mcp?.attach(conversation);
     const view = await conversation.viewState(BACKGROUND_CONTEXT);
     try {

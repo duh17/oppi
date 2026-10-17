@@ -23,6 +23,8 @@ import {
   type ToolExecutionApi,
 } from "@earendil-works/pi-durable";
 import { createDurableSessions } from "../extensions/durable/sessions/durable.js";
+import { Subagents } from "../extensions/durable/sessions/contract.js";
+import { DurableUI } from "../extensions/durable/durable-ui.js";
 import { OppiAgentDoc } from "../src/durable-agent.js";
 import {
   DurableHarness,
@@ -534,6 +536,111 @@ describe("durable-native threads", () => {
         ),
       "the report after Stop",
     );
+  });
+
+  it("shows children in a pill that links to each child and follows its runs, also after the watcher retires", async () => {
+    const childGate = gate();
+    const againGate = gate();
+    const f = await fixture(
+      model(async ({ last, text, signal }) => {
+        if (text.includes("[session")) return fauxAssistantMessage("NOTED");
+        if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
+        if (text.includes("Delegate")) return spawnCall({ task: "CHILD_TASK pill", name: "Scout" });
+        await (text.includes("CHILD_TASK pill") ? childGate : againGate).wait(signal);
+        return fauxAssistantMessage("PILL_ANSWER");
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    const parentEvents = observe(f.manager, f.parent.id);
+    await f.manager.sendPrompt(f.parent.id, "Delegate in the background");
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    await until(() => f.storage.listSessions().length === 2, "the child session");
+    const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+    const pill = async () =>
+      (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
+        "widget:subagents"
+      ]?.nativeSurface as
+        | {
+            presentation: { title: string; subtitle?: string };
+            blocks: Array<{ rows: Array<Record<string, unknown>> }>;
+          }
+        | undefined;
+    const row = async () => (await pill())?.blocks[0]?.rows[0];
+
+    await until(async () => (await row())?.state === "running", "a working row");
+    expect((await pill())?.presentation).toMatchObject({
+      title: "1 subagent",
+      subtitle: "Working",
+    });
+    expect(await row()).toMatchObject({
+      id: child.id,
+      title: "Scout",
+      link: `oppi://session/${child.id}`,
+      subtitle: "Working · faux-1",
+    });
+    // The client receives it through the generic widget projection.
+    await until(
+      () =>
+        parentEvents.messages.some(
+          (message) =>
+            message.type === "extension_ui_notification" &&
+            message.widgetKey === "subagents" &&
+            message.nativeSurface?.presentation?.subtitle === "Working",
+        ),
+      "the projected widget",
+    );
+
+    childGate.open();
+    await until(async () => (await row())?.state === "success", "a done row");
+    expect((await pill())?.presentation).toMatchObject({ title: "1 subagent", subtitle: "Done" });
+    expect(await row()).toMatchObject({ subtitle: "Done · faux-1" });
+    await (await harness.conversation(parentConversation, context))!.waitForIdle(context);
+
+    // An idle store retires the watcher as a ticker (here: aborted directly); attaching the
+    // parent again brings it back.
+    const widgetTask = async () =>
+      (await harness.snapshot(Subagents, parentConversation, context))?.widget;
+    const retired = await widgetTask();
+    await harness.abortTask(retired!, context);
+    await f.manager.stopSession(f.parent.id);
+    await f.manager.startSession(f.parent.id, f.workspace);
+    await until(async () => (await widgetTask()) !== retired, "a new watcher");
+    await f.manager.sendPrompt(child.id, "Once more");
+    await until(
+      async () => (await row())?.state === "running",
+      "the new watcher follows the child",
+    );
+    againGate.open();
+    await until(async () => (await row())?.state === "success", "done again");
+  });
+
+  it("shows a child stopped before its first answer as done, not working", async () => {
+    const f = await fixture(
+      model(async ({ last, text, signal }) => {
+        if (last.role === "toolResult") return fauxAssistantMessage("STARTED");
+        if (text.includes("Delegate"))
+          return spawnCall({ task: "CHILD_TASK quiet", name: "Quiet" });
+        await gate().wait(signal);
+        return fauxAssistantMessage("NEVER");
+      }),
+    );
+    await f.manager.startSession(f.parent.id, f.workspace);
+    await f.manager.sendPrompt(f.parent.id, "Delegate in the background");
+    const harness = await f.harness();
+    const parentConversation = conversationOf(f.storage, f.parent);
+    await until(() => f.storage.listSessions().length === 2, "the child session");
+    const child = f.storage.listSessions().find((session) => session.id !== f.parent.id)!;
+    const state = async () =>
+      (
+        (await harness.snapshot(DurableUI, parentConversation, context))?.notifications[
+          "widget:subagents"
+        ]?.nativeSurface as { blocks: Array<{ rows: Array<{ state: string }> }> } | undefined
+      )?.blocks[0]?.rows[0]?.state;
+    await until(async () => (await state()) === "running", "a working row");
+
+    await f.manager.sendAbort(child.id);
+    await until(async () => (await state()) === "success", "a done row");
   });
 
   it("resumes a running child after a restart because its Session keeps it in resumeIds", async () => {

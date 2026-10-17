@@ -122,7 +122,7 @@ Durable sessions appear in All Sessions like any other session, with a small **â
 
 From the CLI, `oppi session create --workspace <id> --prompt <text> --engine durable` starts a durable session; it fails while the server flag is off. Add `--agent <name>` to start it as a saved Agent, or use `oppi schedule create --engine durable` for a schedule. An Agent Extension that has no durable version fails the launch and names the Extension.
 
-A durable session can start helper sessions of its own with its `subagent` tool. Each one is a child session you can open from the tool row, listed in All Sessions. It reports its answer back to the session that started it. A child can start its own children only when its parent allows it.
+A durable session can start helper sessions of its own with its `subagent` tool. Each one is a child session you can open from the tool row or the Subagents pill above the composer, listed in All Sessions. The pill shows each child as Working, Needs attention, Done, or Error, with its model and context use as of its last answer. It reports its answer back to the session that started it. A child can start its own children only when its parent allows it.
 
 ## Live Remote Screen experiment
 

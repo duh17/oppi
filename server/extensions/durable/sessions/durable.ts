@@ -7,7 +7,6 @@ import {
   AgentDoc,
   AssistantEntry,
   LiveDoc,
-  defineDoc,
   defineExtension,
   defineTask,
   defineTool,
@@ -15,7 +14,6 @@ import {
   type ConversationId,
   type EntryId,
   type Extension,
-  type TaskId,
   type ToolExecutionApi,
   type ToolExecutionResult,
 } from "@earendil-works/pi-durable";
@@ -26,6 +24,8 @@ import {
   type SessionSender,
 } from "oppi/durable";
 import { agentMessageEntry, type MessageOrigin } from "./agent-message.js";
+import { Subagents, ensureSubagentWidget, type Child } from "./contract.js";
+import { SubagentWidget } from "./widget.js";
 
 type Sender = SessionSender;
 
@@ -38,31 +38,6 @@ function sentBy(
     ? { entry: agentMessageEntry({ kind: "session", ...sender, intent }, textOffset) }
     : {};
 }
-
-type Child = {
-  conversationId: ConversationId;
-  sessionId?: string;
-  /** The saved Agent it was spawned as. */
-  agent?: string;
-  /** Owned by an anchor: its answer comes back as a follow-up. Else owned by the spawning call. */
-  background: boolean;
-  /** Hands a background child its task and reports the answer. */
-  reporter?: TaskId;
-};
-
-/** The children of a conversation by name, and which spawn call made which, so a rerun finds it. */
-const Subagents = defineDoc<{
-  children: Record<string, Child>;
-  calls: Record<string, string>;
-}>({
-  kind: "oppi.subagents",
-  version: 1,
-  scope: "conversation",
-  history: "latest",
-  // A fork of the parent starts without its children.
-  fork: "initial",
-  initial: () => ({ children: {}, calls: {} }),
-});
 
 /**
  * Owner of a background child. It finishes at once; being a background task it is the
@@ -414,6 +389,8 @@ export function createDurableSessions(
       if (earlier) return earlier.conversationId;
       if (!resolved) throw new Error(`Subagent ${name} spawn record disappeared`);
       if (Object.hasOwn(state.children, name)) throw new Error(`${name} already exists; use send.`);
+      // First: it reads the task table, which a commit cannot do after a table write.
+      await ensureSubagentWidget(tx, api.conversationId, SubagentWidget);
       // Foreground: the child belongs to this call, so aborting the call aborts it and the
       // parent stays busy until it is idle. Background: an anchor owns it.
       const owner = foreground
@@ -428,6 +405,7 @@ export function createDurableSessions(
         conversationId: child.id,
         background: !foreground,
         ...(resolved.agent ? { agent: resolved.agent } : {}),
+        ...(resolved.icon ? { icon: resolved.icon } : {}),
       };
       state.calls[call] = name;
       return child.id;
@@ -484,7 +462,7 @@ export function createDurableSessions(
   return defineExtension({
     name: "oppi.sessions",
     tools: [subagent],
-    tasks: [Anchor, Reporter],
+    tasks: [Anchor, Reporter, SubagentWidget],
     sections: [section("sessions", () => GUIDANCE)],
   });
 }

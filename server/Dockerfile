@@ -49,6 +49,7 @@ COPY pi-extensions/background-jobs/contract.ts /opt/pi-extensions/background-job
 COPY pi-extensions/background-jobs/package.json /opt/pi-extensions/background-jobs/package.json
 COPY pi-extensions/background-jobs/jobs.ts /opt/pi-extensions/background-jobs/jobs.ts
 COPY pi-extensions/background-jobs/delivery.ts /opt/pi-extensions/background-jobs/delivery.ts
+COPY pi-extensions/subagents/subagents.ts /opt/pi-extensions/subagents/subagents.ts
 RUN npm run build \
     && ln -sf /opt/server/dist/src/cli.js /usr/local/bin/oppi
 

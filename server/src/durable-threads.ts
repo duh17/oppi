@@ -190,8 +190,10 @@ export class DurableThreads {
           }
         : {}),
     });
+    const icon = saved?.definition.icon;
     return {
       ...(saved ? { agent: saved.definition.name } : {}),
+      ...(icon?.kind === "emoji" ? { icon: icon.value } : {}),
       apply: async (tx, child) => {
         await configure(tx, child, change);
         // The child runs where its parent runs.
