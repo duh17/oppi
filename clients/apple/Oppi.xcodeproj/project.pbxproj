@@ -1658,6 +1658,7 @@
 		C85B5A423917106A7BAB3BFB /* QAVerificationNegativeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5FBAE35B3DAA02D1F26E0B2 /* QAVerificationNegativeUITests.swift */; };
 		C88654E9BB42913457EA3B20 /* ConversationReplica.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EDF3C0F51B095FEE2896ACB /* ConversationReplica.swift */; };
 		C89651109E13D6FE58806727 /* MermaidGanttParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A258A67AF49D572F6ACDA472 /* MermaidGanttParser.swift */; };
+		C8B359703EA276B0037CFCE6 /* OppiNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 4AA2EB1A02F7F48FE7EC165A /* OppiNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C8E4998A0077B8A0B6903314 /* WebSocketClientSubscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 742844DD73D5A735763825D2 /* WebSocketClientSubscriptionTests.swift */; };
 		C8FE60D5A96E038BE23507E8 /* JSONUnpairedSurrogateRepair.swift in Sources */ = {isa = PBXBuildFile; fileRef = 408FF5C27B794D214CD842EE /* JSONUnpairedSurrogateRepair.swift */; };
 		C92662C28B6E66F349E4D687 /* ChatFocusOwnershipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5798FD637A227DD071255EBD /* ChatFocusOwnershipTests.swift */; };
@@ -2147,6 +2148,13 @@
 			remoteGlobalIDString = 0787AE6D14F92203EAD13D1A;
 			remoteInfo = OppiControlWidget;
 		};
+		2157A9F54AA5D58B2EAE5784 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 719AC05877AC66A339D15A75 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A2E69274543EE6BB1DBA2606;
+			remoteInfo = OppiNotificationService;
+		};
 		604D8257A33CF21EF0FC808E /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 719AC05877AC66A339D15A75 /* Project object */;
@@ -2201,6 +2209,7 @@
 				B66CF43E5E1688A412FABD52 /* OppiActivityExtension.appex in Embed Foundation Extensions */,
 				FB5084396B1E56EAC31F2684 /* OppiControlWidget.appex in Embed Foundation Extensions */,
 				6AF5FF104141E817E12A9076 /* OppiShareExtension.appex in Embed Foundation Extensions */,
+				C8B359703EA276B0037CFCE6 /* OppiNotificationService.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -7212,6 +7221,7 @@
 				C4C91F1ED0ACA0B1DDCC0874 /* PBXTargetDependency */,
 				1124660CA237509C363B4B06 /* PBXTargetDependency */,
 				B833F69570C21FD393AD3A1E /* PBXTargetDependency */,
+				5B058147EC99A4D2DDA5D0C0 /* PBXTargetDependency */,
 			);
 			name = Oppi;
 			packageProductDependencies = (
@@ -9656,6 +9666,11 @@
 			isa = PBXTargetDependency;
 			target = F43B4526F2243911AC8188B9 /* Oppi */;
 			targetProxy = 04DCCFDF48B1FC2B6F72718C /* PBXContainerItemProxy */;
+		};
+		5B058147EC99A4D2DDA5D0C0 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A2E69274543EE6BB1DBA2606 /* OppiNotificationService */;
+			targetProxy = 2157A9F54AA5D58B2EAE5784 /* PBXContainerItemProxy */;
 		};
 		83580EA874D654FB726EB033 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;

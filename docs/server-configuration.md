@@ -101,7 +101,7 @@ oppi server restart
 
 Restart the server after changing `push`. In relay mode, `/server/info` advertises `capabilities.pushNotifications` with the primary relay. Each user still opts in per server on the phone (**Server Settings → Push Notifications**, off by default); only then does the app register with APNs and the relay, ask for notification permission, and send this server its push key.
 
-Current Oppi app builds do not carry the Push Notifications capability or the extension that decrypts pushes yet, so they cannot register even with relay mode on. There is no hosted Oppi relay yet either. You can run the relay in `relay/` yourself (Node, or Cloudflare Workers); it needs an APNs key from the Apple Developer team that signs your app, so it works for the Oppi builds of that team only. See [relay/README.md](../relay/README.md).
+There is no hosted Oppi relay yet. You can run the relay in `relay/` yourself (Node, or Cloudflare Workers); it needs an APNs key from the Apple Developer team that signs your app, so it works for the Oppi builds of that team only. See [relay/README.md](../relay/README.md).
 
 What the server does:
 

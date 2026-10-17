@@ -73,7 +73,7 @@ Example:
 - **Server:** `--idempotency-key` on `oppi agent create` and `oppi schedule create`, and `--turn-id` on `oppi session send`, make retries safe.
 - **Server:** Durable sessions load extensions from Pi packages that declare a durable entry in `package.json`, and `oppi extensions reload` swaps in new code without a restart. A package that fails to load keeps its previous code. See [Durable extensions](docs/extensions.md#durable-extensions).
 - **Client/Server:** Messages between durable sessions (a child's task, its report, a sent message) show as a card naming the sending session instead of as your own message.
-- **Server/Relay:** Groundwork for end-to-end-encrypted push through a relay ([spec](protocol/push/spec.md)). No device receives push yet.
+- **Client/Server/Relay:** End-to-end-encrypted push through a relay you run ([spec](protocol/push/spec.md)): turn on **Server Settings → Push Notifications** after the server sets `push.mode relay`. See [Push notifications](docs/server-configuration.md#push-notifications).
 
 ### Changed
 

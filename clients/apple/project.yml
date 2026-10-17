@@ -151,6 +151,9 @@ targets:
         # keep-alive) can still write new files after lock. Stores that set a
         # class explicitly use the same one. See LocalDataProtection.swift.
         com.apple.developer.default-data-protection: NSFileProtectionCompleteUnlessOpen
+        # Relay push (protocol/push/spec.md). Distribution export rewrites this to
+        # production; APNsEnvironment reads the signed value to pick the relay environment.
+        aps-environment: development
     info:
       path: Oppi/Resources/Info.plist
       properties:
@@ -384,6 +387,8 @@ targets:
         embed: true
       - target: OppiShareExtension
         embed: true
+      - target: OppiNotificationService
+        embed: true
 
   OppiActivityExtension:
     type: app-extension
@@ -550,11 +555,7 @@ targets:
         DEVELOPMENT_TEAM: AZAQMY4SPZ
         CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION: "YES"
 
-  # Opens end-to-end-encrypted pushes (protocol/push/spec.md). Not embedded in Oppi yet: its
-  # App ID (dev.chenda.Oppi.NotificationService, App Groups: group.oppi) and the app's
-  # Push Notifications capability must exist in the Apple Developer portal first, or
-  # automatic signing would register them on the next device or TestFlight build.
-  # Build-check it alone with the OppiNotificationService scheme on a simulator.
+  # Opens end-to-end-encrypted pushes (protocol/push/spec.md) on the phone.
   OppiNotificationService:
     type: app-extension
     platform: iOS
