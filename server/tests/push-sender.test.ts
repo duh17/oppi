@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SealedPushEnvelope } from "../src/push/envelope.js";
-import { PushSender } from "../src/push/push-sender.js";
+import { PUSH_DEVICE_BUDGET, PushSender } from "../src/push/push-sender.js";
 import { RelayClient } from "../src/push/relay-client.js";
 import { Storage } from "../src/storage.js";
 import { openPushEnvelopeForTest } from "./helpers/push-envelope-open.js";
@@ -200,6 +200,95 @@ describe("PushSender", () => {
       error: "quota_exceeded",
     });
     expect(quota.calls).toHaveLength(1);
+  });
+
+  describe("per-device budget", () => {
+    const done = { ...notification, event: "done" as const, kind: undefined };
+    let clock: number;
+
+    function budgeted(fetchImpl: typeof fetch): PushSender {
+      storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+      return new PushSender(storage, {
+        signingKey: signing.privateKey,
+        fetch: fetchImpl,
+        now: () => clock,
+      });
+    }
+
+    async function sendMany(
+      push: PushSender,
+      count: number,
+      alert: typeof notification | typeof done,
+    ): Promise<string[]> {
+      const [registration] = push.registrations();
+      if (!registration) throw new Error("missing registration");
+      const results: string[] = [];
+      for (let index = 0; index < count; index += 1) {
+        results.push((await push.send(registration, alert))?.status ?? "none");
+      }
+      return results;
+    }
+
+    beforeEach(() => {
+      clock = Date.parse("2026-10-17T12:00:00Z");
+    });
+
+    it("keeps per-minute room for approvals that routine alerts cannot use", async () => {
+      const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
+      const push = budgeted(fetchImpl);
+
+      const routine = await sendMany(push, PUSH_DEVICE_BUDGET.routinePerMinute + 1, done);
+      expect(routine.at(-1)).toBe("throttled");
+      const reserve = PUSH_DEVICE_BUDGET.perMinute - PUSH_DEVICE_BUDGET.routinePerMinute;
+      expect(await sendMany(push, reserve + 1, notification)).toEqual([
+        ...Array<string>(reserve).fill("delivered"),
+        "throttled",
+      ]);
+      expect(calls).toHaveLength(PUSH_DEVICE_BUDGET.perMinute);
+
+      clock += 60_000;
+      expect(await sendMany(push, 1, done)).toEqual(["delivered"]);
+    });
+
+    it("keeps daily room for approvals and resets on the next UTC day", async () => {
+      const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
+      const push = budgeted(fetchImpl);
+      const perMinute = PUSH_DEVICE_BUDGET.routinePerMinute;
+
+      for (let sent = 0; sent < PUSH_DEVICE_BUDGET.routinePerDay; sent += perMinute) {
+        clock += 60_000;
+        await sendMany(push, Math.min(perMinute, PUSH_DEVICE_BUDGET.routinePerDay - sent), done);
+      }
+      clock += 60_000;
+      expect(await sendMany(push, 1, done)).toEqual(["throttled"]);
+      expect(await sendMany(push, 1, notification)).toEqual(["delivered"]);
+      expect(calls).toHaveLength(PUSH_DEVICE_BUDGET.routinePerDay + 1);
+
+      clock = Date.parse("2026-10-18T00:00:00Z");
+      expect(await sendMany(push, 1, done)).toEqual(["delivered"]);
+    });
+
+    it("stops asking the relay until its quota Retry-After passes", async () => {
+      let refuse = true;
+      const { fetchImpl, calls } = relayFetch({
+        [PRIMARY]: () =>
+          refuse
+            ? new Response(JSON.stringify({ error: "quota_exceeded" }), {
+                status: 429,
+                headers: { "retry-after": "30" },
+              })
+            : ok(),
+      });
+      const push = budgeted(fetchImpl);
+
+      expect(await sendMany(push, 1, notification)).toEqual(["rejected"]);
+      refuse = false;
+      clock += 29_000;
+      expect(await sendMany(push, 1, notification)).toEqual(["throttled"]);
+      expect(calls).toHaveLength(1);
+      clock += 1_000;
+      expect(await sendMany(push, 1, notification)).toEqual(["delivered"]);
+    });
   });
 });
 

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { requestClientData, registrationClientData } from "../src/core/relay.js";
 import { CaptureApnsSender, Http2ApnsSender } from "../src/node/apns-http2.js";
 import { MemoryRelayStore } from "../src/node/memory-store.js";
+import { DEFAULT_QUOTA_LIMITS } from "../src/core/store.js";
 import { startNodeRelay } from "../src/node/server.js";
 import {
   createAssertion,
@@ -174,12 +175,12 @@ describe("node adapter", () => {
     expect((await register()).status).toBe(201);
   });
 
-  it("stops an unattested registration at 100 pushes a UTC day", async () => {
+  it("stops an unattested registration at its daily limit until the next UTC day", async () => {
     harness = await startHarness({ now: Date.parse("2026-10-10T00:00:00Z") });
     const sendToken = await mintSendToken(harness, await registerUnattested(harness));
     const push = () => call(harness, "POST", "/v1/push", { bearer: sendToken, body: { envelope: fakeEnvelope() } });
-    for (let index = 0; index < 100; index += 1) {
-      if (index % 30 === 0) harness.advance(61_000);
+    for (let index = 0; index < DEFAULT_QUOTA_LIMITS.unattestedPerDay; index += 1) {
+      if (index % DEFAULT_QUOTA_LIMITS.perMinute === 0) harness.advance(61_000);
       expect((await push()).status).toBe(200);
     }
     harness.advance(61_000);
@@ -273,7 +274,10 @@ describe("App Attest (node adapter with a test root)", () => {
   it("registers an attested development key for sandbox with the higher limit", async () => {
     const { response } = await attest("sandbox");
     expect(response.status).toBe(201);
-    expect(response.json).toMatchObject({ attested: true, limits: { pushesPerDay: 500 } });
+    expect(response.json).toMatchObject({
+      attested: true,
+      limits: { pushesPerDay: DEFAULT_QUOTA_LIMITS.attestedPerDay },
+    });
   });
 
   it("registers an attested production key for production", async () => {

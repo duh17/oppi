@@ -120,7 +120,7 @@ export class MemoryRelayStore implements RelayStore {
       now,
       this.options.limits ?? DEFAULT_QUOTA_LIMITS,
     );
-    this.persist();
+    if (result.ok) this.persist();
     return result;
   }
 }

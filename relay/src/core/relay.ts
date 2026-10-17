@@ -19,6 +19,7 @@ import {
   utf8,
 } from "./bytes.js";
 import {
+  DEFAULT_QUOTA_LIMITS,
   emptyQuota,
   type ApnsEnvironment,
   type RegistrationRecord,
@@ -265,7 +266,11 @@ export function createRelayHandler(deps: RelayDeps): (
       registrationId: record.id,
       registrationSecret,
       attested: record.attested,
-      limits: { pushesPerDay: record.attested ? 500 : 100 },
+      limits: {
+        pushesPerDay: record.attested
+          ? DEFAULT_QUOTA_LIMITS.attestedPerDay
+          : DEFAULT_QUOTA_LIMITS.unattestedPerDay,
+      },
     });
   }
 

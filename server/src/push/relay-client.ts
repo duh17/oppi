@@ -14,8 +14,8 @@ export type RelaySendResult =
   | { status: "delivered" }
   /** The relay holds no such permission or registration. `prune`: the primary said so. */
   | { status: "gone"; prune: boolean }
-  /** A deterministic refusal (bad request, quota): no failover. */
-  | { status: "rejected"; httpStatus: number; error?: string }
+  /** A deterministic refusal (bad request, quota): no failover. `retryAfterSeconds` on a quota. */
+  | { status: "rejected"; httpStatus: number; error?: string; retryAfterSeconds?: number }
   /** No relay accepted the push (network, timeout, 5xx). */
   | { status: "unavailable" };
 
@@ -59,7 +59,15 @@ export class RelayClient {
       if (!response || response.status >= 500) continue;
       if (response.status === 200) return { status: "delivered" };
       if (response.status === 410) return { status: "gone", prune: index === 0 };
-      return { status: "rejected", httpStatus: response.status, error: await errorCode(response) };
+      const retryAfterSeconds = Number(response.headers.get("retry-after") ?? "");
+      return {
+        status: "rejected",
+        httpStatus: response.status,
+        error: await errorCode(response),
+        ...(response.status === 429 && Number.isInteger(retryAfterSeconds) && retryAfterSeconds > 0
+          ? { retryAfterSeconds }
+          : {}),
+      };
     }
     return { status: "unavailable" };
   }

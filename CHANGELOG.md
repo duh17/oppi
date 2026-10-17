@@ -73,7 +73,7 @@ Example:
 - **Server:** `--idempotency-key` on `oppi agent create` and `oppi schedule create`, and `--turn-id` on `oppi session send`, make retries safe.
 - **Server:** Durable sessions load extensions from Pi packages that declare a durable entry in `package.json`, and `oppi extensions reload` swaps in new code without a restart. A package that fails to load keeps its previous code. See [Durable extensions](docs/extensions.md#durable-extensions).
 - **Client/Server:** Messages between durable sessions (a child's task, its report, a sent message) show as a card naming the sending session instead of as your own message.
-- **Client/Server/Relay:** End-to-end-encrypted push through a relay you run ([spec](protocol/push/spec.md)): turn on **Server Settings → Push Notifications** after the server sets `push.mode relay`. See [Push notifications](docs/server-configuration.md#push-notifications).
+- **Client/Server/Relay:** End-to-end-encrypted push through Oppi's relay at `push.chaosdonkey.dev` ([spec](protocol/push/spec.md)): turn on **Server Settings → Push Notifications** after the server sets `push.mode relay`. Each device gets at most 200 alerts a day and 10 a minute, with room always kept for approvals. See [Push notifications](docs/server-configuration.md#push-notifications) and the updated [Privacy Policy](docs/privacy.md#push-notifications).
 
 ### Changed
 
@@ -85,12 +85,13 @@ Example:
 - **Client:** Settings, Server Settings, and Workspace Settings are short indexes with one page per topic. Workspace toggles apply right away, so there is no global Save. Settings → Network is gone, and Customize Rows moved to **Settings → Sessions → Session Rows**. Destructive actions ask first.
 - **Client:** "Require Face ID" is now **Confirm New Servers**, and MCP transports are named HTTP and stdio.
 - **Client:** Durable Sessions experiment: new sessions start Classic; the composer's pill switches one launch to Durable, and **Start Sessions as Durable** makes Durable the default. Durable sessions show ∞ in All Sessions, and the sidebar's Durable list is gone.
-- **Server:** Durable sessions support share, HTML export, auto-retry, auto-compaction, sandbox MCP servers, and saved Agents (`engine: "durable"` in `oppi session create --agent` and schedules; the app still starts saved Agents Classic). They manage children with one `subagent` tool instead of four `session_*` tools.
+- **Server:** Durable sessions support share, HTML export, auto-retry, auto-compaction, sandbox MCP servers, and saved Agents (`engine: "durable"` in `oppi session create --agent` and schedules; the app still starts saved Agents Classic). They manage children with one `subagent` tool instead of four `session_*` tools, and list them in a Subagents pill above the composer, as the subagents example extension does; tap a row to open that child.
 - **Client/Server:** A host workspace with an empty folder now gets its own folder under `<dataDir>/workspaces/` instead of using your home folder, and a workspace whose folder is the home folder or above it is refused. Existing workspaces without a folder get one when the server starts.
 - **Client:** The SSH terminal no longer runs `ps` on the host every two seconds. The chat bar appears when an agent reports itself (OSC 7501) or Run on Connect starts `herdr`; otherwise use **Use Chat Bar**.
 - **Client:** Layout follows the window instead of the device. Any regular-width window, including the iPhone Duo inner display, gets the workspace sidebar, readable widths, and side-by-side file lists, and folding or rotating keeps your place and draft. On iOS 27.1, iPhones with a side rail put toolbar controls on it.
 - **Client:** Sheets follow your light, dark, or system theme, and a sheet opened from a navigation page shows its own title and buttons.
 - **Client:** On iPad, Outline, Files, and Context open in a column beside the chat instead of full screen.
+- **Client:** A server Skill's files open faster, in the same reader as other host files, so images, PDFs, and images inside Skill Markdown show too. Its file list opens without reloading the Skill.
 - **Client:** Back on a pushed screen is a chevron only, so titles and bar buttons keep their room, and search in All Sessions, a workspace, Files, Skills, and Extensions uses the system search bar.
 - **Server:** Embedded Pi runtime 1.0.4 → 1.3.0. Durable sessions keep their system prompt and tools after compaction, Claude Opus 5 and Haiku 5.5 can run with thinking off, more provider outages retry, and a tool call with malformed JSON fails instead of running with partial arguments.
 - **Server:** `npm i -g oppi-server` installs the exact dependency tree Oppi was tested with, so a later Pi release cannot break a fresh install as it did for 0.51.0.

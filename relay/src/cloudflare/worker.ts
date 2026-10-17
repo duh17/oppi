@@ -87,7 +87,8 @@ export class RegistrationObject extends DurableObject<Env> {
     const record = await this.read();
     if (!record) return { ok: false, reason: "gone" };
     const result = applyAuthorizePush(record, permissionId, secretHash, now);
-    await this.ctx.storage.put(RECORD_KEY, record);
+    // A refused push changes no count worth keeping; skipping the write saves free-plan rows.
+    if (result.ok) await this.ctx.storage.put(RECORD_KEY, record);
     return result;
   }
 }

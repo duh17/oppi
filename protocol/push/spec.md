@@ -239,7 +239,7 @@ accepted only with `environment` `sandbox`.
   "registrationId": "r_<base64url 16 bytes>",
   "registrationSecret": "<base64url 32 bytes>",
   "attested": true,
-  "limits": { "pushesPerDay": 500 }
+  "limits": { "pushesPerDay": 200 }
 }
 ```
 
@@ -292,8 +292,11 @@ first); `429 quota_exceeded` with `Retry-After`; `502 apns_unavailable` for APNs
 
 ### 3.3 Quotas
 
-Per registration and UTC day: 500 pushes when attested, 100 when not. Per registration:
-at most 30 pushes per minute. Unattested registrations: at most 5 per client address per
+Per registration and UTC day: 200 pushes when attested, 50 when not. Per registration:
+at most 10 pushes per minute. These fit normal use within the Cloudflare Workers Free plan:
+a push costs one Worker request, one Durable Object request, and one row written, of
+100,000 each a day, so 200 phones at the daily cap use 40,000. A refused push writes
+nothing. Unattested registrations: at most 5 per client address per
 hour (in memory).
 
 ### 3.4 Relay storage
@@ -359,6 +362,11 @@ any field from a push that failed a check. Without Apple's
   the relay to delete its permission.
 - Revoking a device or rotating the owner token removes its registration in the same
   write and asks the relay to delete the permission.
+- Per-device budget, in memory: 200 pushes per UTC day and 10 per minute for each device,
+  matching the relay's quota so the server stops before the relay refuses. Routine events
+  (`done`, `error`, `ended`, `device_enrolled`) stop at 180 a day and 8 a minute; the rest
+  is kept for `blocked` and `pairing_approval`, which wait on the user. A relay `429` with
+  `Retry-After` pauses that device's pushes until it passes.
 - Events: `blocked` and `done` on program-status transitions, at most once a minute per
   session and kind, skipping devices that hold a live stream; `done` only for top-level
   sessions; `error` and `ended` on lifecycle events; `pairing_approval` when a pairing waits

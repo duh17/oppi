@@ -43,10 +43,15 @@ export interface QuotaLimits {
   perMinute: number;
 }
 
+/**
+ * Sized for normal use within the Workers Free plan: each push costs one Worker request, one
+ * Durable Object request, and one row written (100,000 a day each). 200 phones at the daily
+ * cap use 40,000 a day. An Oppi server keeps its own per-device budget below these.
+ */
 export const DEFAULT_QUOTA_LIMITS: QuotaLimits = {
-  attestedPerDay: 500,
-  unattestedPerDay: 100,
-  perMinute: 30,
+  attestedPerDay: 200,
+  unattestedPerDay: 50,
+  perMinute: 10,
 };
 
 export const MAX_PERMISSIONS_PER_REGISTRATION = 16;

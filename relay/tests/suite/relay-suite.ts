@@ -6,6 +6,7 @@
 
 import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DEFAULT_QUOTA_LIMITS } from "../../src/core/store.js";
 
 export interface CapturedApnsRequest {
   host: string;
@@ -141,7 +142,10 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
         body: { challenge, apnsToken: APNS_TOKEN, environment: "production", attestation: null },
       });
       expect(response.status).toBe(201);
-      expect(response.json).toMatchObject({ attested: false, limits: { pushesPerDay: 100 } });
+      expect(response.json).toMatchObject({
+        attested: false,
+        limits: { pushesPerDay: DEFAULT_QUOTA_LIMITS.unattestedPerDay },
+      });
       expect(response.json.registrationId).toMatch(/^r_[A-Za-z0-9_-]{22}$/);
       expect(response.json.registrationSecret).toMatch(/^[A-Za-z0-9_-]{43}$/);
     });
@@ -286,9 +290,10 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
       expect((await push()).status).toBe(200);
     });
 
-    it("limits a registration to 30 pushes a minute with Retry-After", async () => {
+    it("limits a registration's pushes per minute with Retry-After", async () => {
+      const perMinute = DEFAULT_QUOTA_LIMITS.perMinute;
       const sendToken = await mintSendToken(harness, await registerUnattested(harness));
-      for (let index = 0; index < 30; index += 1) {
+      for (let index = 0; index < perMinute; index += 1) {
         expect((await call(harness, "POST", "/v1/push", { bearer: sendToken, body: { envelope: fakeEnvelope() } })).status).toBe(200);
       }
       const limited = await call(harness, "POST", "/v1/push", { bearer: sendToken, body: { envelope: fakeEnvelope() } });
@@ -296,7 +301,7 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
       const retryAfter = Number(limited.headers.get("retry-after"));
       expect(retryAfter).toBeGreaterThanOrEqual(1);
       expect(retryAfter).toBeLessThanOrEqual(60);
-      expect(harness.apnsRequests).toHaveLength(30);
+      expect(harness.apnsRequests).toHaveLength(perMinute);
     });
 
     it("lets a server release its own permission, idempotently", async () => {

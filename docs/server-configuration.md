@@ -89,7 +89,7 @@ Push is off by default. When you turn it on, the server sends end-to-end-encrypt
 Turn it on with the relay's origin, and optionally a standby. Set the relays first: relay mode without them is rejected.
 
 ```bash
-oppi config set push.relays '["https://push.example.com"]'
+oppi config set push.relays '["https://push.chaosdonkey.dev"]'
 oppi config set push.mode relay
 oppi server restart
 ```
@@ -101,12 +101,13 @@ oppi server restart
 
 Restart the server after changing `push`. In relay mode, `/server/info` advertises `capabilities.pushNotifications` with the primary relay. Each user still opts in per server on the phone (**Server Settings → Push Notifications**, off by default); only then does the app register with APNs and the relay, ask for notification permission, and send this server its push key.
 
-There is no hosted Oppi relay yet. You can run the relay in `relay/` yourself (Node, or Cloudflare Workers); it needs an APNs key from the Apple Developer team that signs your app, so it works for the Oppi builds of that team only. See [relay/README.md](../relay/README.md).
+`https://push.chaosdonkey.dev` is Oppi's relay, and the only one that reaches App Store and TestFlight builds: a relay needs an APNs key from the Apple Developer team that signs the app. If you build and sign Oppi yourself, run the relay in `relay/` (Node, or Cloudflare Workers) with your team's key. See [relay/README.md](../relay/README.md).
 
 What the server does:
 
 - **Registrations:** each paired device that opts in sends its X25519 push public key and a relay send token, signed by its pairing key (`PUT /me/push-registration`). The server stores them with that device (`pushRegistrations` in `config.json`; `oppi config show` redacts them). Revoking the device or rotating the owner credential removes them and asks the relay to release the send token. A relay `410` from the primary removes them too.
 - **Encryption:** each push is a fixed-size envelope (HPKE with X25519, ChaCha20-Poly1305, built on Node's `crypto` module with no third-party crypto package) signed with the server's Ed25519 identity key, with a timestamp. The phone checks the signature and the timestamp, and rejects a repeat of any push it accepted in the last 70 minutes. The server keeps no per-push state and does not write `config.json` to send. A device without a push key gets nothing; there is no unencrypted fallback.
+- **Limits:** each device gets at most 200 pushes a UTC day and 10 a minute from this server, the same as the relay's per-phone quota. Session Done, error, ended, and new-device alerts stop at 180 a day and 8 a minute, so approvals, questions, and sign-ins always have room. Pushes over the limit are dropped and logged as `push.device_budget_exhausted`; the budget restarts with the server.
 - **Relays:** pushes go to the primary. Network errors, timeouts, and `5xx` move to the standby. A standby must accept the primary's send tokens, for example the same Worker on a second hostname.
 - **Events:** **Needs Approval**, **Question**, or **Sign-in Needed** when a session enters `blocked`; **Session Done** when a top-level session enters `done`; ended and error alerts.
 - **Presence:** `blocked` and `done` skip any device that holds an open app-event or session stream, because that device already shows the change. Other devices still get the push, so an open Mac or iPad does not silence the phone. An iPhone that stays connected in the background while an agent works posts its own **Session Done** notification instead. A stream that was never closed, because the app was suspended or lost its network, keeps its device present until the server's ping timeout drops it, up to about 90 seconds; a `blocked` or `done` in that window is not pushed to that device.

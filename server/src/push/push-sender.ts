@@ -17,6 +17,65 @@ const log = createLogger({ base: { component: "push" } });
 /** Alerts expire at the relay's maximum TTL. */
 const PUSH_TTL_SECONDS = 3600;
 
+/**
+ * Pushes one device may get from this server (protocol/push/spec.md §5). Matches the relay's
+ * per-phone quota, so the server stops asking before the relay refuses. Routine alerts stop
+ * at the lower numbers; the rest is kept for alerts that wait on the user (`blocked`,
+ * `pairing_approval`), so a busy day of finished runs never hides an approval.
+ */
+export const PUSH_DEVICE_BUDGET = {
+  perDay: 200,
+  perMinute: 10,
+  routinePerDay: 180,
+  routinePerMinute: 8,
+} as const;
+
+type DeviceUsage = {
+  /** UTC day `YYYY-MM-DD`, the relay's quota day. */
+  day: string;
+  dayCount: number;
+  minuteStart: number;
+  minuteCount: number;
+  /** No sends before this time: the relay answered 429 with Retry-After. */
+  pausedUntil: number;
+};
+
+/** In memory only: a restart starts a fresh budget, and the relay still enforces its own. */
+class DeviceBudget {
+  private readonly usage = new Map<string, DeviceUsage>();
+
+  take(deviceId: string, waitsOnUser: boolean, now: number): boolean {
+    const day = new Date(now).toISOString().slice(0, 10);
+    let usage = this.usage.get(deviceId);
+    if (!usage) {
+      usage = { day, dayCount: 0, minuteStart: now, minuteCount: 0, pausedUntil: 0 };
+      this.usage.set(deviceId, usage);
+    }
+    if (now < usage.pausedUntil) return false;
+    if (usage.day !== day) {
+      usage.day = day;
+      usage.dayCount = 0;
+    }
+    if (now - usage.minuteStart >= 60_000) {
+      usage.minuteStart = now;
+      usage.minuteCount = 0;
+    }
+    const perDay = waitsOnUser ? PUSH_DEVICE_BUDGET.perDay : PUSH_DEVICE_BUDGET.routinePerDay;
+    const perMinute = waitsOnUser
+      ? PUSH_DEVICE_BUDGET.perMinute
+      : PUSH_DEVICE_BUDGET.routinePerMinute;
+    if (usage.dayCount >= perDay || usage.minuteCount >= perMinute) return false;
+    usage.dayCount += 1;
+    usage.minuteCount += 1;
+    return true;
+  }
+
+  pause(deviceId: string, until: number): void {
+    const usage = this.usage.get(deviceId);
+    if (usage) usage.pausedUntil = Math.max(usage.pausedUntil, until);
+  }
+}
+
 /** What one push says, before its timestamp. */
 export type PushNotification = {
   title: string;
@@ -113,6 +172,7 @@ function pushPlaintext(notification: PushNotification, ts: number): PushPlaintex
 
 export class PushSender {
   private readonly now: () => number;
+  private readonly budget = new DeviceBudget();
 
   constructor(
     private readonly storage: PushSenderStorage,
@@ -132,13 +192,13 @@ export class PushSender {
   }
 
   /**
-   * Seal and send to one device. Prunes the registration when the primary relay answers
-   * `410`. Never throws.
+   * Seal and send to one device within its budget. Prunes the registration when the primary
+   * relay answers `410`. Never throws.
    */
   async send(
     registration: PushRegistration,
     notification: PushNotification,
-  ): Promise<RelaySendResult | { status: "failed" } | null> {
+  ): Promise<RelaySendResult | { status: "failed" } | { status: "throttled" } | null> {
     const relays = this.relays();
     if (!relays) return null;
     // A device revoked or re-registered since the caller listed registrations gets nothing.
@@ -152,6 +212,13 @@ export class PushSender {
       );
     if (!current) return null;
     const startedAt = this.now();
+    const waitsOnUser =
+      notification.event === "blocked" || notification.event === "pairing_approval";
+    if (!this.budget.take(registration.deviceId, waitsOnUser, startedAt)) {
+      log.info("push.device_budget_exhausted", { alert: notification.event });
+      this.options.metrics?.record("server.push_result", 1, { result: "throttled" });
+      return { status: "throttled" };
+    }
 
     let result: RelaySendResult | { status: "failed" };
     try {
@@ -173,6 +240,9 @@ export class PushSender {
       result = { status: "failed" };
     }
 
+    if (result.status === "rejected" && result.retryAfterSeconds !== undefined) {
+      this.budget.pause(registration.deviceId, this.now() + result.retryAfterSeconds * 1000);
+    }
     if (result.status === "gone" && result.prune) {
       this.storage.removePushRegistration(registration.deviceId, registration.sendToken);
       log.info("push.registration_pruned", { device: registration.deviceId });
