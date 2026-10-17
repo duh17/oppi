@@ -367,6 +367,201 @@ struct SSHTerminalTouchTests {
         #expect(label.text == "error")
         #expect(sent.isEmpty)
     }
+
+    @Test func modeSwitchDropsOldOffsetAsTravel() {
+        var acc = SSHTerminalAppScrollAccumulator()
+        acc.lastOffset = 0
+        let cell: CGFloat = 17
+        acc.consume(offset: 5000, cellHeight: cell, action: .alternateKeys, wheelCell: nil)
+        #expect(acc.pendingAltRows != 0, "a stale history offset would inject arrows")
+        acc.reseed(offset: 400)
+        #expect(acc.takeFlush(action: .alternateKeys).altRows == 0)
+        acc.consume(offset: 400, cellHeight: cell, action: .alternateKeys, wheelCell: nil)
+        #expect(acc.takeFlush(action: .alternateKeys).altRows == 0)
+
+        acc.lastOffset = 0
+        acc.consume(offset: 5000, cellHeight: cell, action: .mouseWheel, wheelCell: (4, 4))
+        #expect(acc.pendingWheelSteps != 0)
+        acc.reseed(offset: 400)
+        #expect(acc.takeFlush(action: .mouseWheel).wheelSteps == 0)
+    }
+
+    @Test func flushDropsQueuedStepsWhenTheActionChanged() {
+        var acc = SSHTerminalAppScrollAccumulator()
+        acc.pendingAltRows = 40
+        acc.pendingWheelSteps = -12
+        acc.pendingWheelCell = (column: 3, row: 5)
+        let asHistory = acc.takeFlush(action: .history)
+        #expect(asHistory.altRows == 0)
+        #expect(asHistory.wheelSteps == 0)
+
+        acc.pendingAltRows = 40
+        acc.pendingWheelSteps = -12
+        acc.pendingWheelCell = (column: 3, row: 5)
+        let asWheel = acc.takeFlush(action: .mouseWheel)
+        #expect(asWheel.wheelSteps == -12)
+        #expect(asWheel.altRows == 0)
+        #expect(asWheel.wheelCell.column == 3)
+        #expect(asWheel.wheelCell.row == 5)
+
+        acc.pendingAltRows = 7
+        acc.pendingWheelSteps = 4
+        let asAlt = acc.takeFlush(action: .alternateKeys)
+        #expect(asAlt.altRows == 7)
+        #expect(asAlt.wheelSteps == 0)
+    }
+
+    @Test func wheelCellSticksThroughDeceleration() {
+        var acc = SSHTerminalAppScrollAccumulator()
+        acc.lastOffset = 800
+        acc.consume(offset: 749, cellHeight: 17, action: .mouseWheel, wheelCell: (1, 2))
+        acc.consume(offset: 700, cellHeight: 17, action: .mouseWheel, wheelCell: nil)
+        #expect(acc.pendingWheelCell?.column == 1)
+        #expect(acc.pendingWheelCell?.row == 2)
+        let flush = acc.takeFlush(action: .mouseWheel)
+        #expect(flush.wheelCell.column == 1)
+        #expect(flush.wheelCell.row == 2)
+    }
+
+    @Test func touchDownClearsQueuedFlingSteps() {
+        var acc = SSHTerminalAppScrollAccumulator()
+        acc.pendingWheelSteps = 4
+        acc.pendingAltRows = -3
+        acc.cancelQueuedSteps()
+        #expect(acc.takeFlush(action: .mouseWheel).wheelSteps == 0)
+        acc.pendingAltRows = -3
+        acc.cancelQueuedSteps()
+        #expect(acc.takeFlush(action: .alternateKeys).altRows == 0)
+    }
+
+    @Test func panSlopSeedsUncountedFingerTravel() {
+        #expect(
+            SSHTerminalAppScrollSlop.uncountedTravel(
+                panTranslationY: 10, firstTouchY: 20, panLocationY: 30
+            ) == 10
+        )
+        #expect(
+            SSHTerminalAppScrollSlop.uncountedTravel(
+                panTranslationY: 0, firstTouchY: 20, panLocationY: 32
+            ) == 12
+        )
+        #expect(
+            SSHTerminalAppScrollSlop.uncountedTravel(
+                panTranslationY: 0, firstTouchY: nil, panLocationY: 32
+            ) == 0
+        )
+        let cell: CGFloat = 17
+        var acc = SSHTerminalAppScrollAccumulator()
+        let offset: CGFloat = 400
+        let slop = SSHTerminalAppScrollSlop.uncountedTravel(
+            panTranslationY: 10, firstTouchY: nil, panLocationY: 0
+        )
+        acc.reseed(offset: offset + slop)
+        acc.consume(offset: offset - 41, cellHeight: cell, action: .alternateKeys, wheelCell: nil)
+        #expect(
+            acc.takeFlush(action: .alternateKeys).altRows == -3,
+            "10 pt slop plus 41 pt tracked is three rows, not two"
+        )
+    }
+
+    @Test func historyFlingDoesNotBecomeKeysWhenTheRemoteEntersAltOrMouse() throws {
+        let channel = try SSHTerminalChannel()
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        let mounted = try MountedTouchGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let engine = channel.engine
+        engine.receive(Data((1...300).map { "line \($0)\r\n" }.joined().utf8))
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        let scroll = try #require(grid.subviews.compactMap { $0 as? UIScrollView }.first)
+        #expect(scroll.contentOffset.y > 200, "live history offset must be large enough to inject")
+        let liveOffset = engine.scrollbar.offset
+        #expect(channel.inputNotice.isEmpty)
+
+        engine.receive(Data("\u{1b}[?1049h".utf8))
+        #expect(engine.scrollAction == .alternateKeys)
+        grid.scrollViewDidScroll(scroll)
+        grid.scrollViewDidEndDecelerating(scroll)
+        #expect(
+            !channel.inputNotice.contains("Not sent"),
+            "history fling must not become arrows: \(channel.inputNotice)"
+        )
+
+        engine.receive(Data("\u{1b}[?1049l".utf8))
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        #expect(engine.scrollAction == .history)
+        #expect(engine.scrollbar.offset == liveOffset, "leaving less restores the same history row")
+        engine.receive(Data("\u{1b}[?1000h\u{1b}[?1006h".utf8))
+        #expect(engine.scrollAction == .mouseWheel)
+        grid.scrollViewDidScroll(scroll)
+        grid.scrollViewDidEndDecelerating(scroll)
+        #expect(
+            !channel.inputNotice.contains("Not sent"),
+            "history fling must not become wheel reports: \(channel.inputNotice)"
+        )
+        #expect(engine.scrollbar.offset == liveOffset, "mouse mode must not rewrite history")
+    }
+
+    @Test func quittingAltOrMouseMidFlingDoesNotJumpHistory() throws {
+        let channel = try SSHTerminalChannel()
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        let mounted = try MountedTouchGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let engine = channel.engine
+        engine.receive(Data((1...300).map { "line \($0)\r\n" }.joined().utf8))
+        engine.scrollToRow(0)
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        let scroll = try #require(grid.subviews.compactMap { $0 as? UIScrollView }.first)
+        #expect(engine.scrollbar.offset == 0)
+
+        engine.receive(Data("\u{1b}[?1049h".utf8))
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        #expect(engine.scrollAction == .alternateKeys)
+        #expect(scroll.contentSize.height > scroll.bounds.height * 8)
+        engine.receive(Data("\u{1b}[?1049l".utf8))
+        #expect(engine.scrollAction == .history)
+        grid.scrollViewDidScroll(scroll)
+        grid.scrollViewDidEndDecelerating(scroll)
+        #expect(engine.scrollbar.offset == 0, "quitting less must not jump history")
+        #expect(
+            !channel.inputNotice.contains("Not sent"),
+            "pending arrows must not reach the shell: \(channel.inputNotice)"
+        )
+
+        engine.receive(Data("\u{1b}[?1000h\u{1b}[?1006h".utf8))
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        #expect(engine.scrollAction == .mouseWheel)
+        engine.receive(Data("\u{1b}[?1000l".utf8))
+        #expect(engine.scrollAction == .history)
+        grid.scrollViewDidScroll(scroll)
+        grid.scrollViewDidEndDecelerating(scroll)
+        #expect(engine.scrollbar.offset == 0, "leaving mouse reporting must not jump history")
+        #expect(!channel.inputNotice.contains("Not sent"))
+    }
+
+    @Test func touchDownDropsQueuedFlingStepsBeforeFlush() throws {
+        let channel = try SSHTerminalChannel()
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        let mounted = try MountedTouchGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        channel.engine.receive(Data("\u{1b}[?1049h".utf8))
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        let scroll = try #require(grid.subviews.compactMap { $0 as? UIScrollView }.first)
+        let mid = scroll.contentOffset.y
+        scroll.setContentOffset(CGPoint(x: 0, y: max(0, mid - 200)), animated: false)
+        grid.scrollViewDidScroll(scroll)
+        grid.scrollViewWillBeginDragging(scroll)
+        grid.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        #expect(
+            !channel.inputNotice.contains("Not sent"),
+            "touch-down must drop queued arrows: \(channel.inputNotice)"
+        )
+    }
 }
 
 @MainActor

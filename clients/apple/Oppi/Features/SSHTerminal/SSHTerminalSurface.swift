@@ -88,12 +88,8 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
     /// UIKit does not repeat pressesBegan for a held key, so repeats are ours.
     private let keyRepeater = SSHTerminalKeyRepeater()
     private var repeatingPress: UIPress?
-    private var wheelRemainder = SSHTerminalWheelScaling.Accumulator()
-    private var altRemainder: CGFloat = 0
-    private var lastAppScrollOffset: CGFloat = 0
-    private var pendingWheelSteps = 0
-    private var pendingAltRows = 0
-    private var pendingWheelCell: (column: Int, row: Int)?
+    private var appScroll = SSHTerminalAppScrollAccumulator()
+    private var appliedScrollAction = SSHTerminalScrollAction.history
     private var displayLink: CADisplayLink?
     private var displayLinkGeneration: UInt64 = 0
     private(set) var displayLinkTickCount: UInt64 = 0
@@ -654,6 +650,10 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === historyScroll, !isSyncingHistoryScroll else { return }
+        if reconcileScrollAction() {
+            requestDisplayLink()
+            return
+        }
         switch channel.engine.scrollAction {
         case .history:
             guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
@@ -666,10 +666,18 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         guard scrollView === historyScroll else { return }
+        appScroll.cancelQueuedSteps()
+        appScroll.wheelRemainder = SSHTerminalWheelScaling.Accumulator()
+        appScroll.altRemainder = 0
         if channel.engine.scrollAction != .history {
-            wheelRemainder = SSHTerminalWheelScaling.Accumulator()
-            altRemainder = 0
-            lastAppScrollOffset = scrollView.contentOffset.y
+            let pan = scrollView.panGestureRecognizer
+            let slop = SSHTerminalAppScrollSlop.uncountedTravel(
+                panTranslationY: pan.translation(in: scrollView).y,
+                firstTouchY: historyScroll.firstTouchY,
+                panLocationY: pan.location(in: scrollView).y
+            )
+            appScroll.lastOffset = scrollView.contentOffset.y + slop
+            appScroll.pendingWheelCell = cell(at: pan.location(in: self))
         }
         requestDisplayLink()
         applyFrameRate(scrolling: true)
@@ -716,7 +724,11 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         press.minimumPressDuration = 0.45
         press.allowableMovement = 12
         press.delegate = self
-        historyScroll.touchBegan = { [weak self] in self?.tapIgnore.touchBegan() }
+        historyScroll.touchBegan = { [weak self] in
+            guard let self else { return }
+            self.tapIgnore.touchBegan()
+            self.appScroll.cancelQueuedSteps()
+        }
         historyScroll.addGestureRecognizer(tap)
         historyScroll.addGestureRecognizer(doubleTap)
         historyScroll.addGestureRecognizer(press)
@@ -726,6 +738,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
     }
 
     private func updateTouchMode() {
+        reconcileScrollAction()
         let history = channel.engine.scrollAction == .history
         historyScroll.isScrollEnabled = dragTarget == nil
         historyScroll.showsVerticalScrollIndicator = history && dragTarget == nil
@@ -737,10 +750,35 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         }
     }
 
+    /// Stop a coasting fling and reseed offsets when the remote changes what
+    /// a vertical finger move means. Returns true when this callback must not
+    /// consume the previous surface's coordinates as finger travel.
+    @discardableResult
+    private func reconcileScrollAction() -> Bool {
+        let action = channel.engine.scrollAction
+        guard action != appliedScrollAction else { return false }
+        isSyncingHistoryScroll = true
+        historyScroll.setContentOffset(historyScroll.contentOffset, animated: false)
+        isSyncingHistoryScroll = false
+        appScroll.resetGesture()
+        appliedScrollAction = action
+        switch action {
+        case .history:
+            applyEngineHistoryOffset()
+        case .mouseWheel, .alternateKeys:
+            prepareAppScrollSurface(forceReseed: true)
+        }
+        return true
+    }
+
     private func syncHistoryScrollFromEngine() {
         guard channel.engine.scrollAction == .history else { return }
         publishFollowState()
         guard !historyScroll.isDragging, !historyScroll.isDecelerating else { return }
+        applyEngineHistoryOffset()
+    }
+
+    private func applyEngineHistoryOffset() {
         let height = cellSize.height
         guard height > 0, bounds.height > 0 else { return }
         let bar = channel.engine.scrollbar
@@ -789,40 +827,30 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
     }
 
     private func consumeAppScrollOffset() {
-        let y = historyScroll.contentOffset.y
-        let travel = SSHTerminalAppScrollTranslation.fingerTravel(
-            previousOffset: lastAppScrollOffset, currentOffset: y
+        let tracking = historyScroll.isTracking || historyScroll.isDragging
+        let wheelCell = tracking
+            ? cell(at: historyScroll.panGestureRecognizer.location(in: self))
+            : nil
+        appScroll.consume(
+            offset: historyScroll.contentOffset.y,
+            cellHeight: cellSize.height,
+            action: channel.engine.scrollAction,
+            wheelCell: wheelCell
         )
-        lastAppScrollOffset = y
-        let height = cellSize.height
-        guard height > 0, travel != 0 else { return }
-        switch channel.engine.scrollAction {
-        case .mouseWheel:
-            pendingWheelSteps += wheelRemainder.steps(travel: travel, cellHeight: height)
-            pendingWheelCell = cell(at: CGPoint(x: bounds.midX, y: bounds.midY))
-        case .alternateKeys:
-            altRemainder -= travel
-            let rows = Int(altRemainder / height)
-            guard rows != 0 else { return }
-            altRemainder -= CGFloat(rows) * height
-            pendingAltRows += rows
-        case .history:
-            break
-        }
     }
 
-    private func prepareAppScrollSurface() {
+    private func prepareAppScrollSurface(forceReseed: Bool = false) {
         let height = max(bounds.height, 1)
         let contentHeight = height * 16
         let mid = max(0, (contentHeight - height) / 2)
         let dragging = historyScroll.isDragging || historyScroll.isDecelerating
         isSyncingHistoryScroll = true
         historyScroll.contentSize = CGSize(width: bounds.width, height: contentHeight)
-        if !dragging, abs(historyScroll.contentOffset.y - mid) > 1 {
-            historyScroll.contentOffset = CGPoint(x: 0, y: mid)
-            lastAppScrollOffset = mid
-        } else if !dragging {
-            lastAppScrollOffset = historyScroll.contentOffset.y
+        if forceReseed || !dragging {
+            if abs(historyScroll.contentOffset.y - mid) > 1 {
+                historyScroll.contentOffset = CGPoint(x: 0, y: mid)
+            }
+            appScroll.reseed(offset: historyScroll.contentOffset.y)
         }
         isSyncingHistoryScroll = false
         metalHost.transform = .identity
@@ -840,20 +868,19 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
     }
 
     private func flushPendingAppScroll() {
-        if pendingWheelSteps != 0 {
-            let input: SSHTerminalEngine.MouseInput = pendingWheelSteps < 0 ? .wheelUp : .wheelDown
-            let n = abs(pendingWheelSteps)
-            pendingWheelSteps = 0
-            let target = pendingWheelCell ?? (0, 0)
+        let flush = appScroll.takeFlush(action: channel.engine.scrollAction)
+        if flush.wheelSteps != 0 {
+            let input: SSHTerminalEngine.MouseInput = flush.wheelSteps < 0 ? .wheelUp : .wheelDown
+            let n = abs(flush.wheelSteps)
+            let target = flush.wheelCell
             let bytes = SSHTerminalScrollCoalescing.encodeRepeated(n) {
                 channel.engine.mouse(input, column: target.column, row: target.row)
             }
             _ = channel.send(bytes)
         }
-        if pendingAltRows != 0 {
-            let key: GhosttyKey = pendingAltRows < 0 ? GHOSTTY_KEY_ARROW_UP : GHOSTTY_KEY_ARROW_DOWN
-            let n = abs(pendingAltRows)
-            pendingAltRows = 0
+        if flush.altRows != 0 {
+            let key: GhosttyKey = flush.altRows < 0 ? GHOSTTY_KEY_ARROW_UP : GHOSTTY_KEY_ARROW_DOWN
+            let n = abs(flush.altRows)
             let bytes = SSHTerminalScrollCoalescing.encodeRepeated(n) {
                 channel.engine.key(key)
             }
@@ -1111,13 +1138,16 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
 /// can clear before the next independent tap is recognized.
 private final class SSHTerminalHistoryScrollView: UIScrollView {
     var touchBegan: (() -> Void)?
+    var firstTouchY: CGFloat?
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        firstTouchY = touches.first.map { $0.location(in: self).y }
         touchBegan?()
         super.touchesBegan(touches, with: event)
     }
 
     override func touchesShouldBegin(_ touches: Set<UITouch>, with event: UIEvent?, in view: UIView) -> Bool {
+        firstTouchY = touches.first.map { $0.location(in: self).y }
         touchBegan?()
         return super.touchesShouldBegin(touches, with: event, in: view)
     }

@@ -61,6 +61,104 @@ enum SSHTerminalAppScrollTranslation {
     }
 }
 
+/// In-flight wheel and arrow emission. A remote mode change reseeds this so a
+/// history offset cannot become PTY input, and a fake app-surface offset cannot
+/// jump local history.
+struct SSHTerminalAppScrollAccumulator {
+    var wheelRemainder = SSHTerminalWheelScaling.Accumulator()
+    var altRemainder: CGFloat = 0
+    var lastOffset: CGFloat = 0
+    var pendingWheelSteps = 0
+    var pendingAltRows = 0
+    var pendingWheelCell: (column: Int, row: Int)?
+
+    mutating func cancelQueuedSteps() {
+        pendingWheelSteps = 0
+        pendingAltRows = 0
+    }
+
+    mutating func resetGesture() {
+        wheelRemainder = SSHTerminalWheelScaling.Accumulator()
+        altRemainder = 0
+        pendingWheelSteps = 0
+        pendingAltRows = 0
+        pendingWheelCell = nil
+    }
+
+    mutating func reseed(offset: CGFloat) {
+        resetGesture()
+        lastOffset = offset
+    }
+
+    mutating func consume(
+        offset: CGFloat,
+        cellHeight: CGFloat,
+        action: SSHTerminalScrollAction,
+        wheelCell: (column: Int, row: Int)?
+    ) {
+        let travel = SSHTerminalAppScrollTranslation.fingerTravel(
+            previousOffset: lastOffset, currentOffset: offset
+        )
+        lastOffset = offset
+        guard cellHeight > 0, travel != 0 else { return }
+        switch action {
+        case .mouseWheel:
+            pendingWheelSteps += wheelRemainder.steps(travel: travel, cellHeight: cellHeight)
+            if let wheelCell {
+                pendingWheelCell = wheelCell
+            }
+        case .alternateKeys:
+            altRemainder -= travel
+            let rows = Int(altRemainder / cellHeight)
+            guard rows != 0 else { return }
+            altRemainder -= CGFloat(rows) * cellHeight
+            pendingAltRows += rows
+        case .history:
+            break
+        }
+    }
+
+    mutating func takeFlush(action: SSHTerminalScrollAction) -> Flush {
+        let wheel = action == .mouseWheel ? pendingWheelSteps : 0
+        let alt = action == .alternateKeys ? pendingAltRows : 0
+        pendingWheelSteps = 0
+        pendingAltRows = 0
+        return Flush(
+            wheelSteps: wheel,
+            altRows: alt,
+            wheelCell: pendingWheelCell ?? (column: 0, row: 0)
+        )
+    }
+
+    struct Flush: Equatable {
+        var wheelSteps: Int
+        var altRows: Int
+        var wheelCell: (column: Int, row: Int)
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.wheelSteps == rhs.wheelSteps
+                && lhs.altRows == rhs.altRows
+                && lhs.wheelCell.column == rhs.wheelCell.column
+                && lhs.wheelCell.row == rhs.wheelCell.row
+        }
+    }
+}
+
+/// Travel the pan already recognized before UIScrollView starts tracking.
+/// Prefer the pan translation at `.began`; if that is still zero, use the
+/// delta from the first touch to the current pan location.
+enum SSHTerminalAppScrollSlop {
+    static func uncountedTravel(
+        panTranslationY: CGFloat,
+        firstTouchY: CGFloat?,
+        panLocationY: CGFloat
+    ) -> CGFloat {
+        if panTranslationY != 0 { return panTranslationY }
+        guard let firstTouchY else { return 0 }
+        return panLocationY - firstTouchY
+    }
+}
+
 /// One SSH write for every notch or arrow produced in a frame, so a fling
 /// does not enqueue one write per event.
 enum SSHTerminalScrollCoalescing {
