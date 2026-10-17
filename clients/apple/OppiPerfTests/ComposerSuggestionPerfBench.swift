@@ -7,10 +7,10 @@ import Testing
 /// Runs in the OppiPerfTests Debug configuration (`-Onone`). Numbers are a
 /// simulator regression signal, not device Release.
 ///
-/// Slice A: precomputed `FileSuggestionIndex`, cached empty-query order,
-/// off-main ranking, slash cache. Follow-up: incremental narrowing on a
-/// `FileSuggestionRanker` for extending queries, and literal match positions
-/// only for the final top-N.
+/// Slice A: precomputed `FileSuggestionIndex`, lazy empty-query order,
+/// `FileSuggestionRanker`, off-main ranking. Slash scenarios time
+/// `SlashCommandSuggestionIndex.suggestions` (uncached). `slash_body_reeval`
+/// is the last-query cache hit path.
 ///
 /// Index size matches the server cap `MAX_INDEX_PATHS` (50,000) in
 /// `server/src/routes/workspace-files.ts`.
@@ -33,6 +33,7 @@ struct ComposerSuggestionPerfBench {
     private static let paths: [String] = generatePaths(count: pathCount)
     private static let fileIndex = FileSuggestionIndex(paths: paths)
     private static let commands: [SlashCommand] = generateCommands()
+    private static let slashIndex = SlashCommandSuggestionIndex(commands: commands)
 
     // MARK: - Scenarios
 
@@ -79,9 +80,8 @@ struct ComposerSuggestionPerfBench {
 
     @Test("METRIC composer_suggest_slash_empty")
     func slashEmptyQuery() {
-        let commands = Self.commands
         let sample = Self.measure {
-            Self.blackHole(Self.rankSlash(query: "", commands: commands))
+            Self.blackHole(Self.rankSlashUncached(query: ""))
         }
         Self.report(scenario: "slash_empty", sample: sample)
         #expect(sample.medianMs >= 0)
@@ -89,10 +89,9 @@ struct ComposerSuggestionPerfBench {
 
     @Test("METRIC composer_suggest_slash_typed_sequence")
     func slashTypedSequence() {
-        let commands = Self.commands
         for query in Self.slashQueries where !query.isEmpty {
             let sample = Self.measure {
-                Self.blackHole(Self.rankSlash(query: query, commands: commands))
+                Self.blackHole(Self.rankSlashUncached(query: query))
             }
             Self.report(scenario: "slash_query_\(query)", sample: sample)
             #expect(sample.medianMs >= 0)
@@ -100,7 +99,7 @@ struct ComposerSuggestionPerfBench {
 
         let sequence = Self.measure {
             for query in Self.slashQueries {
-                Self.blackHole(Self.rankSlash(query: query, commands: commands))
+                Self.blackHole(Self.rankSlashUncached(query: query))
             }
         }
         Self.report(scenario: "slash_typed_sequence", sample: sequence)
@@ -114,7 +113,7 @@ struct ComposerSuggestionPerfBench {
         // when the command list and query have not changed.
         let sample = Self.measure {
             for _ in 0..<20 {
-                Self.blackHole(Self.rankSlash(query: "co", commands: commands))
+                Self.blackHole(Self.rankSlashCached(query: "co", commands: commands))
             }
         }
         Self.report(scenario: "slash_body_reeval_x20", sample: sample)
@@ -129,8 +128,13 @@ struct ComposerSuggestionPerfBench {
         FileSuggestionRanker(index: fileIndex).ranked(query: query, limit: limit)
     }
 
+    /// Uncached `/command` ranking against a prebuilt index.
+    private static func rankSlashUncached(query: String) -> [SlashCommand] {
+        slashIndex.suggestions(query: query)
+    }
+
     /// Production `/command` ranking. Cached per command list + last query.
-    private static func rankSlash(query: String, commands: [SlashCommand]) -> [SlashCommand] {
+    private static func rankSlashCached(query: String, commands: [SlashCommand]) -> [SlashCommand] {
         ComposerAutocomplete.slashSuggestions(query: query, commands: commands)
     }
 
@@ -170,7 +174,7 @@ struct ComposerSuggestionPerfBench {
         print(String(format: "METRIC composer_suggest_\(scenario)_p95_ms=%.3f", sample.p95Ms))
     }
 
-    private static let rankingSource = "FileSuggestionIndex.ranked+ComposerAutocomplete.slashSuggestions"
+    private static let rankingSource = "FileSuggestionRanker + slash cache"
 
     private static func ms(_ value: Double) -> String {
         String(format: "%.3f", value)

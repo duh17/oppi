@@ -14,10 +14,12 @@ extension ServerConnection {
         let generation = chatState.fileSuggestionGeneration
 
         guard let ranker = fileIndexStore.suggestionRanker, !ranker.index.isEmpty else {
+            chatState.pendingFileSuggestionQuery = query
             chatState.fileSuggestions = []
             return
         }
 
+        chatState.pendingFileSuggestionQuery = nil
         let limit = ComposerAutocomplete.maxSuggestions
 
         if query.isEmpty {
@@ -42,10 +44,18 @@ extension ServerConnection {
         }
     }
 
+    /// Replay the query that arrived before the ranker existed. A newer keystroke
+    /// still wins because `fetchFileSuggestions` bumps `fileSuggestionGeneration`.
+    func replayPendingFileSuggestionQuery() {
+        guard let query = chatState.pendingFileSuggestionQuery else { return }
+        fetchFileSuggestions(query: query)
+    }
+
     func clearFileSuggestions() {
         chatState.fileSuggestionTask?.cancel()
         chatState.fileSuggestionTask = nil
         chatState.fileSuggestionGeneration &+= 1
+        chatState.pendingFileSuggestionQuery = nil
         chatState.fileSuggestions = []
     }
 

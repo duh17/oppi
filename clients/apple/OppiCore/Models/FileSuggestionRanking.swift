@@ -51,7 +51,8 @@ struct FileSuggestionIndex: Sendable {
     let entries: [Entry]
     let paths: [String]
     /// Indices of `entries` sorted by path length (shortest first).
-    private let emptyOrder: [Int]
+    /// Built on the first empty query so non-empty-only callers skip the 50k sort.
+    private let emptyOrder = EmptyOrderCache()
     private let entryByPath: [String: Int]
 
     var isEmpty: Bool { entries.isEmpty }
@@ -88,7 +89,6 @@ struct FileSuggestionIndex: Sendable {
         self.entries = entries
         self.paths = paths
         self.entryByPath = entryByPath
-        self.emptyOrder = entries.indices.sorted { entries[$0].pathCount < entries[$1].pathCount }
     }
 
     func ranked(
@@ -105,7 +105,7 @@ struct FileSuggestionIndex: Sendable {
 
     fileprivate func emptySuggestions(limit: Int) -> [FileSuggestion] {
         guard limit > 0, !entries.isEmpty else { return [] }
-        return emptyOrder.prefix(limit).map { index in
+        return emptyOrder.order(for: entries).prefix(limit).map { index in
             let entry = entries[index]
             return FileSuggestion(path: entry.path, isDirectory: entry.isDirectory)
         }
@@ -134,6 +134,21 @@ struct FileSuggestionIndex: Sendable {
                 matchPositions: scored.positions
             )
         }
+    }
+}
+
+/// Lazily sorts path-length order once, the first time an empty query needs it.
+private final class EmptyOrderCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cached: [Int]?
+
+    func order(for entries: [FileSuggestionIndex.Entry]) -> [Int] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached { return cached }
+        let computed = entries.indices.sorted { entries[$0].pathCount < entries[$1].pathCount }
+        cached = computed
+        return computed
     }
 }
 

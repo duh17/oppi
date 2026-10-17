@@ -52,6 +52,10 @@ final class FileIndexStore {
     /// Ranking owner with incremental narrowing. Replaced on every index load.
     @ObservationIgnored private(set) var suggestionRanker: FileSuggestionRanker?
 
+    /// Fired on the main actor after a ranker is installed so hosts can replay a
+    /// pending `@file` query without each view observing the store.
+    @ObservationIgnored var onSuggestionRankerInstalled: (() -> Void)?
+
     /// True while the initial fetch is in-flight.
     private(set) var isLoading = false
 
@@ -187,6 +191,7 @@ final class FileIndexStore {
         self.paths = paths
         self.suggestionIndex = index
         self.suggestionRanker = FileSuggestionRanker(index: index)
+        onSuggestionRankerInstalled?()
     }
 
     private func normalizeWorktreeId(_ value: String?) -> String? {

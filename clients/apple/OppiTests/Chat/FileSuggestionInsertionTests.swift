@@ -161,6 +161,37 @@ struct FileSuggestionInsertionTests {
         #expect(conn.chatState.fileSuggestionTask == nil)
     }
 
+    @Test func fetchRemembersPendingQueryUntilRankerInstallsAndNewerQueryWins() async {
+        let (pendingConn, _) = makeTestConnection()
+        pendingConn.fetchFileSuggestions(query: "src")
+        #expect(pendingConn.chatState.fileSuggestions.isEmpty)
+        #expect(pendingConn.chatState.pendingFileSuggestionQuery == "src")
+
+        pendingConn.fileIndexStore.setPathsForTesting([
+            "src/index.ts",
+            "README.md",
+        ])
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            pendingConn.chatState.fileSuggestions.contains { $0.path == "src/index.ts" }
+        })
+        #expect(pendingConn.chatState.pendingFileSuggestionQuery == nil)
+
+        let (newerConn, _) = makeTestConnection()
+        newerConn.fetchFileSuggestions(query: "src")
+        newerConn.fetchFileSuggestions(query: "read")
+        #expect(newerConn.chatState.pendingFileSuggestionQuery == "read")
+
+        newerConn.fileIndexStore.setPathsForTesting([
+            "src/index.ts",
+            "README.md",
+        ])
+        #expect(await waitForMainActorCondition(timeout: .milliseconds(500)) {
+            newerConn.chatState.fileSuggestions.contains { $0.path == "README.md" }
+                && !newerConn.chatState.fileSuggestions.contains { $0.path.contains("src") }
+        })
+        #expect(newerConn.chatState.pendingFileSuggestionQuery == nil)
+    }
+
     @Test func fetchPopulatesSuggestionsFromLocalIndex() async {
         let (conn, _) = makeTestConnection()
         conn.fileIndexStore.setPathsForTesting([

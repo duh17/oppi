@@ -282,9 +282,15 @@ final class ServerConnection {
     let workspaceStore = WorkspaceStore()
     let serverResourceStore = ServerResourceStore()
     let gitStatusStore = GitStatusStore(environment: .app)
-    @ObservationIgnored private(set) lazy var fileIndexStore = FileIndexStore(
-        environment: .app(serverId: { [weak self] in self?.currentServerId })
-    )
+    @ObservationIgnored private(set) lazy var fileIndexStore: FileIndexStore = {
+        let store = FileIndexStore(
+            environment: .app(serverId: { [weak self] in self?.currentServerId })
+        )
+        store.onSuggestionRankerInstalled = { [weak self] in
+            self?.replayPendingFileSuggestionQuery()
+        }
+        return store
+    }()
     let messageQueueStore = MessageQueueStore(telemetry: .appMetrics)
 
     /// Session content access for assistant/tool rows. It reads this connection's

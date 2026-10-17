@@ -53,6 +53,8 @@ final class ChatSessionState {
     var fileSuggestionTask: Task<Void, Never>?
     /// Bumped on every keystroke / clear so a stale ranking never lands.
     @ObservationIgnored var fileSuggestionGeneration: UInt64 = 0
+    /// Last `@file` query issued while `suggestionRanker` was nil. Replayed when a ranker is installed.
+    @ObservationIgnored var pendingFileSuggestionQuery: String?
 
     // MARK: - Model Cache
 
@@ -78,6 +80,7 @@ final class ChatSessionState {
         fileSuggestionTask?.cancel()
         fileSuggestionTask = nil
         fileSuggestionGeneration &+= 1
+        pendingFileSuggestionQuery = nil
         modelPrefetchTask?.cancel()
         modelPrefetchTask = nil
     }
