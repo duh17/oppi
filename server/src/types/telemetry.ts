@@ -412,7 +412,7 @@ export const CHAT_METRIC_REGISTRY = {
   "device.cpu_pct": {
     unit: "count",
     description:
-      "Device CPU usage percentage (0-100+) computed from Mach task_info deltas over 10s window.",
+      "App CPU usage percentage of one core (0-100+ across cores) over a 10s window, from getrusage across all threads. Tags: screen, stream, agents (running|idle), voice (on|off) at sample time.",
   },
   "device.memory_mb": {
     unit: "count",

@@ -21,6 +21,7 @@ final class ScreenAwakeController {
     typealias SleepFunction = @Sendable (Duration) async throws -> Void
 
     private static let voiceInputReason = "voice-input"
+    private static let sessionReasonPrefix = "session::"
 
     private let timeoutProvider: TimeoutProvider
     private let idleTimerSetter: IdleTimerSetter
@@ -30,6 +31,14 @@ final class ScreenAwakeController {
     private var releaseTask: Task<Void, Never>?
 
     private(set) var isPreventingSleep = false
+
+    var isVoiceInputActive: Bool {
+        activeReasons.contains(Self.voiceInputReason)
+    }
+
+    var hasRunningSession: Bool {
+        activeReasons.contains { $0.hasPrefix(Self.sessionReasonPrefix) }
+    }
 
     init(
         timeoutProvider: @escaping TimeoutProvider = { AppPreferences.ScreenAwake.keepAwakeDuration },
@@ -70,7 +79,7 @@ final class ScreenAwakeController {
     }
 
     private func sessionReason(for sessionId: String) -> String {
-        "session::\(sessionId)"
+        "\(Self.sessionReasonPrefix)\(sessionId)"
     }
 
     private func reevaluateLockState() {

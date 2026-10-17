@@ -194,7 +194,7 @@ The front page should focus on metrics that directly map to user experience. Kee
 
 | Metric or source                                    | Why it matters                                                                                                                 |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `device.cpu_pct`                                    | Client CPU usage during real interaction.                                                                                      |
+| `device.cpu_pct`                                    | Client CPU (all threads) during real interaction, tagged by screen, stream, agents, and voice to locate steady cost.           |
 | `device.memory_mb`                                  | Client memory footprint.                                                                                                       |
 | `device.memory_available_mb`                        | Headroom before jetsam; low is bad.                                                                                            |
 | `device.thermal_state`                              | Thermal pressure that can make the app feel slow.                                                                              |

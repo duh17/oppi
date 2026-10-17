@@ -7,6 +7,9 @@ private let samplerLog = Logger(subsystem: AppIdentifiers.subsystem, category: "
 
 /// Samples CPU, memory, and thermal metrics every 10 seconds while the app is
 /// foregrounded. All sampling and uploads are gated by `TelemetrySettings`.
+///
+/// CPU samples carry the app state at sample time (`screen`, `stream`,
+/// `agents`, `voice`) so a steady CPU cost can be traced to what was on screen.
 @MainActor
 final class DeviceResourceSampler {
     static let shared = DeviceResourceSampler()
@@ -23,8 +26,7 @@ final class DeviceResourceSampler {
 
     private struct CPUSample {
         let timestamp: ContinuousClock.Instant
-        let userSeconds: Double
-        let systemSeconds: Double
+        let cpuSeconds: Double
     }
 
     private init() {}
@@ -113,13 +115,15 @@ final class DeviceResourceSampler {
             let wallSeconds = Double(wallDelta.components.seconds)
                 + Double(wallDelta.components.attoseconds) / 1e18
             if wallSeconds > 0 {
-                let cpuDelta = (cur.userSeconds - prev.userSeconds)
-                    + (cur.systemSeconds - prev.systemSeconds)
-                let cpuPct = (cpuDelta / wallSeconds) * 100.0
+                let cpuPct = ((cur.cpuSeconds - prev.cpuSeconds) / wallSeconds) * 100.0
                 await ChatMetricsService.shared.record(
                     metric: .deviceCpuPct,
                     value: cpuPct,
-                    unit: .count
+                    unit: .count,
+                    tags: Self.cpuSampleTags(
+                        context: MetricKitCrashContextStore.snapshot(),
+                        screenAwake: ScreenAwakeController.shared
+                    )
                 )
             }
         }
@@ -157,30 +161,38 @@ final class DeviceResourceSampler {
         )
     }
 
-    // MARK: - Mach API helpers
+    /// App state when a CPU sample is taken. A 10 s window that spans a
+    /// change is tagged with the state at its end.
+    static func cpuSampleTags(
+        context: MetricKitCrashContext?,
+        screenAwake: ScreenAwakeController
+    ) -> [String: String] {
+        [
+            "screen": context?.screen ?? "unknown",
+            "stream": context?.streamState ?? "unknown",
+            "agents": screenAwake.hasRunningSession ? "running" : "idle",
+            "voice": screenAwake.isVoiceInputActive ? "on" : "off",
+        ]
+    }
+
+    // MARK: - System API helpers
 
     private func readCPUSample() -> CPUSample? {
-        var info = mach_task_basic_info()
-        var count = mach_msg_type_number_t(
-            MemoryLayout<mach_task_basic_info>.size / MemoryLayout<integer_t>.size
-        )
-        let result = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
-            }
-        }
-        guard result == KERN_SUCCESS else { return nil }
+        guard let cpuSeconds = Self.processCPUSeconds() else { return nil }
+        return CPUSample(timestamp: .now, cpuSeconds: cpuSeconds)
+    }
 
-        let userSec = Double(info.user_time.seconds)
-            + Double(info.user_time.microseconds) / 1_000_000
-        let sysSec = Double(info.system_time.seconds)
-            + Double(info.system_time.microseconds) / 1_000_000
+    /// User plus system CPU time of every thread in the process, live or exited.
+    /// `mach_task_basic_info` reports only exited threads, which left the main
+    /// thread out entirely.
+    nonisolated static func processCPUSeconds() -> Double? {
+        var usage = rusage()
+        guard getrusage(RUSAGE_SELF, &usage) == 0 else { return nil }
+        return seconds(usage.ru_utime) + seconds(usage.ru_stime)
+    }
 
-        return CPUSample(
-            timestamp: .now,
-            userSeconds: userSec,
-            systemSeconds: sysSec
-        )
+    private nonisolated static func seconds(_ time: timeval) -> Double {
+        Double(time.tv_sec) + Double(time.tv_usec) / 1_000_000
     }
 
     private func readMemoryFootprintMB() -> Double? {
