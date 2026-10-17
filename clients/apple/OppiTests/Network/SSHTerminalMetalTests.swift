@@ -74,6 +74,111 @@ struct SSHTerminalMetalTests {
         #expect(shot.hasInk(column: 0, row: 0), "Nerd Font symbol has ink")
     }
 
+    @Test func fallbackGlyphsFitInsideTheirCellWithoutMovingCoveredGlyphs() throws {
+        let metrics = SSHTerminalCellMetrics(
+            font: .monospacedSystemFont(ofSize: 13, weight: .regular),
+            boldFont: .monospacedSystemFont(ofSize: 13, weight: .bold)
+        )
+        let scale: CGFloat = 2
+        let font = metrics.font
+        let record = "\u{23FA}"
+        let box = "\u{2500}"
+        let powerline = "\u{E0B0}"
+        let wide = "\u{4E2D}"
+
+        #expect(!fontCovers(font, record), "primary code font must not cover U+23FA")
+        #expect(!NerdFontSymbols.isPrivateUse(Unicode.Scalar(0x23FA)!), "U+23FA is not PUA")
+        #expect(fontCovers(font, "M"), "M is a covered code-font glyph")
+
+        let fallback = resolvedRunFont(text: record, font: font)
+        let cell = metrics.cellSize
+        let unclipped = originDrawInk(
+            text: record, font: font, canvas: CGSize(width: cell.width * 3, height: cell.height * 2), scale: scale
+        )
+        let appleSymbolsName = UIFont(name: "AppleSymbols", size: 13)?.fontName ?? "nil"
+        let nerdCoversRecord = NerdFontSymbols.font(size: 13).map { fontCovers($0, record) } ?? false
+        print(
+            "FALLBACK_DIAGNOSIS primary=\(font.fontName) ps=\(font.fontDescriptor.postscriptName) " +
+            "covers23FA=false resolved=\(fallback) cellW=\(cell.width) cellH=\(cell.height) " +
+            "unclippedInk=\(unclipped.bounds) unclippedMaxX=\(unclipped.maxX) " +
+            "appleSymbols=\(appleSymbolsName) coversBox=\(fontCovers(font, box)) " +
+            "coversWide=\(fontCovers(font, wide)) nerdCovers23FA=\(nerdCoversRecord)"
+        )
+        #expect(
+            unclipped.maxX > cell.width + 0.5,
+            "U+23FA with the primary font must overflow a width-1 cell (resolved \(fallback), ink \(unclipped.bounds))"
+        )
+
+        let recordBytes = try rasterize(record, font: font, metrics: metrics, columns: 1, scale: scale)
+        let chopped = originClippedRasterize(record, font: font, metrics: metrics, columns: 1, scale: scale)
+        let recordInk = atlasInk(recordBytes.bytes, width: recordBytes.width, height: recordBytes.height)
+        try writeAtlas(recordBytes, name: "atlas-23fa.png")
+        try writeAtlas(chopped, name: "atlas-23fa-origin-clipped.png")
+
+        let harness = try Harness(columns: 20, rows: 3, scale: scale)
+        defer { harness.finish() }
+        harness.engine.setColors(
+            foreground: .init(r: 255, g: 255, b: 255),
+            background: .init(r: 0, g: 0, b: 16),
+            dark: true
+        )
+        harness.engine.receive(Data("\u{1b}[?25l\u{1b}[2J\u{1b}[H\u{23FA} Bash(x)\r\n\u{23FA} Read(y)".utf8))
+        let frame = harness.engine.frame()
+        let recordWidth = frame.rows[0][0].width
+        let shot = try harness.render()
+        try writeShot(shot, name: "grid-record-glyph.png")
+
+        #expect(recordInk != nil && recordInk!.count > 0, "U+23FA must have ink")
+        #expect(
+            recordBytes.bytes != chopped.bytes,
+            "U+23FA must not be the origin-clipped overflow (cut at the cell edge)"
+        )
+        if let recordInk {
+            let cutAtEdge = recordInk.maxX >= recordBytes.width - 1
+            #expect(
+                !(unclipped.maxX > cell.width + 0.5 && cutAtEdge && recordBytes.bytes == chopped.bytes),
+                "rightmost ink at the clip boundary with overflow beyond it (ink=\(recordInk), width=\(recordBytes.width))"
+            )
+        }
+
+        let wideBytes = try rasterize(wide, font: font, metrics: metrics, columns: 2, scale: scale)
+        let wideInk = atlasInk(wideBytes.bytes, width: wideBytes.width, height: wideBytes.height)
+        #expect(wideInk != nil && wideInk!.count > 0, "width-2 CJK must have ink")
+        if let wideInk {
+            #expect(wideInk.maxX <= wideBytes.width - 1, "width-2 ink stays inside the 2-cell bitmap")
+            let wideUnclipped = originDrawInk(
+                text: wide, font: font,
+                canvas: CGSize(width: cell.width * 4, height: cell.height * 2), scale: scale
+            )
+            let wideChopped = originClippedRasterize(wide, font: font, metrics: metrics, columns: 2, scale: scale)
+            if wideUnclipped.maxX > cell.width * 2 + 0.5 {
+                #expect(
+                    wideBytes.bytes != wideChopped.bytes,
+                    "width-2 overflow must be fitted, not clipped"
+                )
+            }
+        }
+
+        for (glyph, label, glyphFont) in [
+            ("M", "Latin M", font),
+            (box, "box drawing", font),
+            (powerline, "Nerd PUA", NerdFontSymbols.font(size: font.pointSize) ?? font),
+        ] as [(String, String, UIFont)] {
+            let product = try rasterize(glyph, font: glyphFont, metrics: metrics, columns: 1, scale: scale)
+            let origin = originClippedRasterize(glyph, font: glyphFont, metrics: metrics, columns: 1, scale: scale)
+            #expect(
+                product.bytes == origin.bytes,
+                "\(label) must keep origin-clipped code-font metrics"
+            )
+        }
+
+        #expect(recordWidth == 1, "libghostty-vt width of U+23FA is 1, got \(recordWidth)")
+        #expect(shot.hasInk(column: 0, row: 0), "rendered U+23FA has ink")
+        if frame.rows[0][1].displayText == " " {
+            #expect(!shot.hasInk(column: 1, row: 0), "width-1 U+23FA must not spill into the next cell")
+        }
+    }
+
     @Test func cursorOutlineBlendsOverAColouredCell() throws {
         let harness = try Harness(columns: 4, rows: 2)
         defer { harness.finish() }
@@ -303,24 +408,29 @@ struct SSHTerminalMetalTests {
         let engine: SSHTerminalEngine
         let metrics: SSHTerminalCellMetrics
         let renderer: SSHTerminalMetalRenderer
-        let scale: CGFloat = 1
+        let scale: CGFloat
 
-        init(columns: Int, rows: Int) throws {
+        init(columns: Int, rows: Int, scale: CGFloat = 1) throws {
             engine = try SSHTerminalEngine(geometry: .init(columns: columns, rows: rows, cellWidth: 8, cellHeight: 17)) { _ in }
             metrics = SSHTerminalCellMetrics(
                 font: .monospacedSystemFont(ofSize: 13, weight: .regular),
                 boldFont: .monospacedSystemFont(ofSize: 13, weight: .bold)
             )
+            self.scale = max(scale, 1)
             let pipeline = try SSHTerminalMetalPipeline.shared()
-            renderer = try SSHTerminalMetalRenderer(pipeline: pipeline, metrics: metrics, scale: 1)
+            renderer = try SSHTerminalMetalRenderer(pipeline: pipeline, metrics: metrics, scale: self.scale)
         }
 
         func finish() {}
 
         func render() throws -> Shot {
             let frame = engine.frame()
-            let width = max(1, Int((metrics.cellSize.width * CGFloat(max(1, frame.rows.first?.count ?? 1))).rounded()))
-            let height = max(1, Int((metrics.cellSize.height * CGFloat(max(1, frame.rows.count))).rounded()))
+            let cell = CGSize(
+                width: metrics.cellSize.width * scale,
+                height: metrics.cellSize.height * scale
+            )
+            let width = max(1, Int((cell.width * CGFloat(max(1, frame.rows.first?.count ?? 1))).rounded()))
+            let height = max(1, Int((cell.height * CGFloat(max(1, frame.rows.count))).rounded()))
             guard let texture = renderer.makeOffscreenTexture(width: width, height: height) else {
                 throw TestError.noTexture
             }
@@ -333,8 +443,165 @@ struct SSHTerminalMetalTests {
                 guard let base = raw.baseAddress else { return }
                 texture.getBytes(base, bytesPerRow: width * 4, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
             }
-            return Shot(width: width, height: height, bytes: bytes, cell: metrics.cellSize)
+            return Shot(width: width, height: height, bytes: bytes, cell: cell)
         }
+    }
+
+    private func rasterize(
+        _ text: String, font: UIFont, metrics: SSHTerminalCellMetrics, columns: Int, scale: CGFloat
+    ) throws -> (bytes: [UInt8], width: Int, height: Int) {
+        let width = max(1, Int(ceil(metrics.cellSize.width * CGFloat(columns) * scale)))
+        let height = max(1, Int(ceil(metrics.cellSize.height * scale)))
+        let bytes = try #require(SSHTerminalGlyphAtlas.rasterize(
+            text: text, font: font, width: width, height: height,
+            cellSize: metrics.cellSize, columns: columns, scale: scale
+        ))
+        return (bytes, width, height)
+    }
+
+    private func originClippedRasterize(
+        _ text: String, font: UIFont, metrics: SSHTerminalCellMetrics, columns: Int, scale: CGFloat
+    ) -> (bytes: [UInt8], width: Int, height: Int) {
+        let width = max(1, Int(ceil(metrics.cellSize.width * CGFloat(columns) * scale)))
+        let height = max(1, Int(ceil(metrics.cellSize.height * scale)))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        format.opaque = false
+        let points = CGSize(width: metrics.cellSize.width * CGFloat(columns), height: metrics.cellSize.height)
+        let image = UIGraphicsImageRenderer(size: points, format: format).image { ctx in
+            let area = CGRect(origin: .zero, size: points)
+            ctx.cgContext.clip(to: area)
+            (text as NSString).draw(at: area.origin, withAttributes: [
+                .font: font,
+                .foregroundColor: UIColor.white,
+            ])
+        }
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        if let cgImage = image.cgImage {
+            let space = CGColorSpaceCreateDeviceRGB()
+            _ = bytes.withUnsafeMutableBytes { raw -> Bool in
+                guard let bitmap = CGContext(
+                    data: raw.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                    bytesPerRow: width * 4, space: space,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                ) else { return false }
+                bitmap.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+                return true
+            }
+        }
+        return (bytes, width, height)
+    }
+
+    private func originDrawInk(
+        text: String, font: UIFont, canvas: CGSize, scale: CGFloat
+    ) -> (bounds: CGRect, maxX: CGFloat) {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        format.opaque = false
+        let image = UIGraphicsImageRenderer(size: canvas, format: format).image { _ in
+            (text as NSString).draw(at: .zero, withAttributes: [
+                .font: font,
+                .foregroundColor: UIColor.white,
+            ])
+        }
+        guard let cgImage = image.cgImage else { return (.null, 0) }
+        let w = cgImage.width, h = cgImage.height
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        let space = CGColorSpaceCreateDeviceRGB()
+        _ = bytes.withUnsafeMutableBytes { raw -> Bool in
+            guard let bitmap = CGContext(
+                data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8,
+                bytesPerRow: w * 4, space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return false }
+            bitmap.draw(cgImage, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard let ink = atlasInk(bytes, width: w, height: h) else { return (.null, 0) }
+        let bounds = CGRect(
+            x: CGFloat(ink.minX) / scale,
+            y: CGFloat(ink.minY) / scale,
+            width: CGFloat(ink.maxX - ink.minX + 1) / scale,
+            height: CGFloat(ink.maxY - ink.minY + 1) / scale
+        )
+        return (bounds, bounds.maxX)
+    }
+
+    private func atlasInk(_ bytes: [UInt8], width: Int, height: Int) -> (
+        minX: Int, maxX: Int, minY: Int, maxY: Int, count: Int
+    )? {
+        var minX = width, maxX = -1, minY = height, maxY = -1, count = 0
+        for y in 0..<height {
+            for x in 0..<width {
+                if bytes[(y * width + x) * 4 + 3] > 8 {
+                    minX = min(minX, x)
+                    maxX = max(maxX, x)
+                    minY = min(minY, y)
+                    maxY = max(maxY, y)
+                    count += 1
+                }
+            }
+        }
+        if count == 0 { return nil }
+        return (minX, maxX, minY, maxY, count)
+    }
+
+    private func fontCovers(_ font: UIFont, _ text: String) -> Bool {
+        let units = Array(text.utf16)
+        var glyphs = [CGGlyph](repeating: 0, count: units.count)
+        return CTFontGetGlyphsForCharacters(font as CTFont, units, &glyphs, units.count)
+    }
+
+    private func resolvedRunFont(text: String, font: UIFont) -> String {
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font]))
+        guard let runs = CTLineGetGlyphRuns(line) as? [CTRun], let run = runs.first else {
+            return font.fontName
+        }
+        let attrs = CTRunGetAttributes(run) as NSDictionary
+        if let runFont = attrs[kCTFontAttributeName] as? UIFont {
+            return runFont.fontName
+        }
+        if let runFont = attrs[kCTFontAttributeName] {
+            return String(describing: runFont)
+        }
+        return font.fontName
+    }
+
+    private func writeShot(_ shot: Shot, name: String) throws {
+        var dir = URL(fileURLWithPath: #filePath)
+        while dir.path != "/", !FileManager.default.fileExists(atPath: dir.appendingPathComponent("clients/apple").path) {
+            dir.deleteLastPathComponent()
+        }
+        let evidence = dir.appendingPathComponent(".pi/ui-validate/fallback-glyph-fit")
+        try FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        var bytes = shot.bytes
+        let image: CGImage = try bytes.withUnsafeMutableBytes { raw in
+            guard let ctx = CGContext(
+                data: raw.baseAddress,
+                width: shot.width,
+                height: shot.height,
+                bitsPerComponent: 8,
+                bytesPerRow: shot.width * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+            ), let image = ctx.makeImage() else {
+                throw TestError.encodeFailed("png")
+            }
+            return image
+        }
+        let url = evidence.appendingPathComponent(name)
+        guard let data = UIImage(cgImage: image).pngData() else { throw TestError.encodeFailed("png") }
+        try data.write(to: url)
+    }
+
+    private func writeAtlas(
+        _ atlas: (bytes: [UInt8], width: Int, height: Int), name: String
+    ) throws {
+        try writeShot(
+            Shot(width: atlas.width, height: atlas.height, bytes: atlas.bytes, cell: CGSize(width: atlas.width, height: atlas.height)),
+            name: name
+        )
     }
 
     private static func uniqueCoveredScalars(font: UIFont, count: Int) -> [Unicode.Scalar] {

@@ -251,9 +251,10 @@ final class SSHTerminalGlyphAtlas {
         return origin
     }
 
-    /// Same draw as the old CPU painter: white ink at the cell origin, clipped
-    /// to the cell, at device scale, so atlas coverage matches today's look.
-    private static func rasterize(
+    /// White ink at device scale. Covered code-font glyphs still draw at the
+    /// cell origin and clip to the cell. Uncovered fallbacks prefer a text
+    /// face over Apple Color Emoji, then scale-to-fit when ink would clip.
+    static func rasterize(
         text: String, font: UIFont,
         width: Int, height: Int,
         cellSize: CGSize, columns: Int, scale: CGFloat
@@ -262,13 +263,29 @@ final class SSHTerminalGlyphAtlas {
         format.scale = scale
         format.opaque = false
         let points = CGSize(width: cellSize.width * CGFloat(columns), height: cellSize.height)
+        let covered = sshTerminalFontCovers(font, text)
+        let planned = covered
+            ? (text: text, font: font)
+            : preferredFallback(text: text, font: font, columns: columns)
+        let area = CGRect(origin: .zero, size: points)
+        let uncoveredInk: CGRect? = covered ? nil : measureInk(
+            text: planned.text, font: planned.font,
+            canvas: CGSize(width: max(area.width * 3, area.width + 1), height: max(area.height * 2, area.height + 1)),
+            scale: scale
+        )
         let image = UIGraphicsImageRenderer(size: points, format: format).image { ctx in
-            let area = CGRect(origin: .zero, size: points)
             ctx.cgContext.clip(to: area)
-            (text as NSString).draw(at: area.origin, withAttributes: [
-                .font: font,
-                .foregroundColor: UIColor.white,
-            ])
+            if covered {
+                (planned.text as NSString).draw(at: area.origin, withAttributes: [
+                    .font: planned.font,
+                    .foregroundColor: UIColor.white,
+                ])
+            } else {
+                drawUncoveredGlyph(
+                    text: planned.text, font: planned.font,
+                    ink: uncoveredInk, in: area, context: ctx.cgContext
+                )
+            }
         }
         guard let cgImage = image.cgImage else { return nil }
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
@@ -284,6 +301,121 @@ final class SSHTerminalGlyphAtlas {
         }
         return ok ? bytes : nil
     }
+
+    /// Width-1 cells that CoreText would send to a color-emoji face use Apple
+    /// Symbols or U+FE0E instead. Other uncovered text keeps the primary font
+    /// so CJK and box-drawing cascade stays as it is.
+    private static func preferredFallback(
+        text: String, font: UIFont, columns: Int
+    ) -> (text: String, font: UIFont) {
+        guard columns == 1, resolvedFontLooksLikeColorEmoji(text: text, font: font) else {
+            return (text, font)
+        }
+        let stripped = String(text.unicodeScalars.filter { $0.value != 0xFE0E && $0.value != 0xFE0F })
+        if let symbols = UIFont(name: "AppleSymbols", size: font.pointSize),
+           sshTerminalFontCovers(symbols, stripped) {
+            return (stripped, symbols)
+        }
+        return (stripped + "\u{FE0E}", font)
+    }
+
+    private static func resolvedFontLooksLikeColorEmoji(text: String, font: UIFont) -> Bool {
+        let line = CTLineCreateWithAttributedString(
+            NSAttributedString(string: text, attributes: [.font: font])
+        )
+        guard let runs = CTLineGetGlyphRuns(line) as? [CTRun], let run = runs.first else {
+            return font.fontName.lowercased().contains("emoji")
+        }
+        let attrs = CTRunGetAttributes(run) as NSDictionary
+        if let runFont = attrs[kCTFontAttributeName] as? UIFont {
+            return runFont.fontName.lowercased().contains("emoji")
+        }
+        if let runFont = attrs[kCTFontAttributeName] {
+            return String(describing: runFont).lowercased().contains("emoji")
+        }
+        return false
+    }
+
+    private static func drawUncoveredGlyph(
+        text: String, font: UIFont, ink: CGRect?, in area: CGRect, context: CGContext
+    ) {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: UIColor.white,
+        ]
+        guard let ink else {
+            (text as NSString).draw(at: area.origin, withAttributes: attributes)
+            return
+        }
+        let fits = ink.minX >= -0.5 && ink.minY >= -0.5
+            && ink.maxX <= area.width + 0.5 && ink.maxY <= area.height + 0.5
+        if fits {
+            (text as NSString).draw(at: area.origin, withAttributes: attributes)
+            return
+        }
+        let s = min(1, area.width / max(ink.width, 0.001), area.height / max(ink.height, 0.001))
+        let fitted = CGSize(width: ink.width * s, height: ink.height * s)
+        let tx = (area.width - fitted.width) / 2 - ink.minX * s
+        let ty = (area.height - fitted.height) / 2 - ink.minY * s
+        context.saveGState()
+        context.translateBy(x: tx, y: ty)
+        context.scaleBy(x: s, y: s)
+        (text as NSString).draw(at: .zero, withAttributes: attributes)
+        context.restoreGState()
+    }
+
+    private static func measureInk(
+        text: String, font: UIFont, canvas: CGSize, scale: CGFloat
+    ) -> CGRect? {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        format.opaque = false
+        let image = UIGraphicsImageRenderer(size: canvas, format: format).image { _ in
+            (text as NSString).draw(at: .zero, withAttributes: [
+                .font: font,
+                .foregroundColor: UIColor.white,
+            ])
+        }
+        guard let cgImage = image.cgImage else { return nil }
+        let w = cgImage.width, h = cgImage.height
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        let space = CGColorSpaceCreateDeviceRGB()
+        let ok = bytes.withUnsafeMutableBytes { raw -> Bool in
+            guard let bitmap = CGContext(
+                data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8,
+                bytesPerRow: w * 4, space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return false }
+            bitmap.draw(cgImage, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard ok else { return nil }
+        var minX = w, maxX = -1, minY = h, maxY = -1
+        for y in 0..<h {
+            for x in 0..<w {
+                if bytes[(y * w + x) * 4 + 3] > 8 {
+                    minX = min(minX, x)
+                    maxX = max(maxX, x)
+                    minY = min(minY, y)
+                    maxY = max(maxY, y)
+                }
+            }
+        }
+        guard maxX >= 0 else { return nil }
+        return CGRect(
+            x: CGFloat(minX) / scale,
+            y: CGFloat(minY) / scale,
+            width: CGFloat(maxX - minX + 1) / scale,
+            height: CGFloat(maxY - minY + 1) / scale
+        )
+    }
+}
+
+private func sshTerminalFontCovers(_ font: UIFont, _ text: String) -> Bool {
+    let units = Array(text.utf16)
+    guard !units.isEmpty else { return true }
+    var glyphs = [CGGlyph](repeating: 0, count: units.count)
+    return CTFontGetGlyphsForCharacters(font as CTFont, units, &glyphs, units.count)
 }
 
 /// Instanced cell quads. Three instance-buffer slots; a slot is not rewritten
@@ -775,19 +907,13 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         // SF Mono ignores cascade lists, so uncovered private-use icons use the
         // symbols face, matching the old CPU painter.
         if text.needsSymbols,
-           !Self.covers(styled, text.displayText),
+           !sshTerminalFontCovers(styled, text.displayText),
            let symbols = NerdFontSymbols.font(size: metrics.font.pointSize) {
             if let cached = faces[4] { return (4, cached) }
             faces[4] = symbols
             return (4, symbols)
         }
         return (key, styled)
-    }
-
-    private static func covers(_ font: UIFont, _ text: String) -> Bool {
-        let units = Array(text.utf16)
-        var glyphs = [CGGlyph](repeating: 0, count: units.count)
-        return CTFontGetGlyphsForCharacters(font as CTFont, units, &glyphs, units.count)
     }
 
     private func bind(_ instances: [CellInstance]) -> Int? {
