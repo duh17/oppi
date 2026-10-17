@@ -369,13 +369,15 @@ private struct NavigationChromeReproWorkspace: View {
 
                 if NavigationChromeProfileConfig.chatBackLocalRepro {
                     Button("Open Local Chat") {
+                        // Router push, not an AppNavigation path hop. Chat back
+                        // must finish this push; SwiftUI dismiss() cannot pop it.
                         navigator.push {
                             NavigationChromeReproChat(
                                 state: state,
                                 connection: connection,
                                 navigation: navigation,
                                 quickCommentTemplateStore: quickCommentTemplateStore,
-                                ownsBackNavigation: false
+                                ownsBackNavigation: true
                             )
                         }
                     }
