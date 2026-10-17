@@ -102,7 +102,6 @@ struct PushAlertPresentation: Equatable, Sendable {
             }
         case .done: (String(localized: "Session Done"), String(localized: "The run finished."))
         case .error: (String(localized: "Session Error"), String(localized: "Open Oppi to review the session error."))
-        case .ended: (String(localized: "Session Ended"), String(localized: "The session ended."))
         case .pairingApproval:
             (String(localized: "Approve New Device?"), String(localized: "A new device is waiting for your approval."))
         case .deviceEnrolled:
@@ -113,7 +112,7 @@ struct PushAlertPresentation: Equatable, Sendable {
     private static func category(for event: PushPlaintext.Event) -> String {
         switch event {
         case .blocked: SessionNotificationCategory.sessionBlocked
-        case .done, .ended: SessionNotificationCategory.sessionDone
+        case .done: SessionNotificationCategory.sessionDone
         case .error: SessionNotificationCategory.sessionError
         case .pairingApproval: SessionNotificationCategory.pairingApproval
         case .deviceEnrolled: SessionNotificationCategory.deviceEnrolled
@@ -124,9 +123,13 @@ struct PushAlertPresentation: Equatable, Sendable {
         switch event {
         case .blocked, .pairingApproval: .timeSensitive
         case .error, .deviceEnrolled: .active
-        case .done, .ended: .passive
+        case .done: .passive
         }
     }
+
+    /// One Notification Center stack for every finished run, so a night of agent work is one
+    /// stack instead of one per session. Shared with the app's local `done` banner.
+    static let sessionDoneThreadIdentifier = "session-done"
 
     private static func threadIdentifier(for plaintext: PushPlaintext) -> String {
         switch plaintext.event {
@@ -134,7 +137,9 @@ struct PushAlertPresentation: Equatable, Sendable {
             plaintext.approvalId.map { "pairing:\($0)" } ?? ""
         case .deviceEnrolled:
             plaintext.deviceId.map { "device:\($0)" } ?? ""
-        case .blocked, .done, .error, .ended:
+        case .done:
+            sessionDoneThreadIdentifier
+        case .blocked, .error:
             plaintext.sessionId ?? ""
         }
     }

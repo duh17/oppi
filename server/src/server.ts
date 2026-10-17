@@ -586,6 +586,7 @@ export class Server {
     this.authModule = new AuthModule(config.auth?.module);
     this.sessionPushNotifier = new SessionPushNotifier(this.push, this.storage, {
       isDevicePresent: (deviceId) => this.isDevicePresent(deviceId),
+      hasWorkingChild: (sessionId) => this.sessions.hasWorkingChild(sessionId),
     });
     this.sessions = new SessionManager(storage, this.opsMetrics);
     this.sessions.contextWindowResolver = (modelId: string) =>

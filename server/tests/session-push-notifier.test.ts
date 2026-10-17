@@ -65,6 +65,7 @@ function makeNotifier(
   const present = new Set(options.presentDevices ?? []);
   return new SessionPushNotifier(push, storage, {
     isDevicePresent: (deviceId) => present.has(deviceId),
+    hasWorkingChild: () => false,
     ...(options.now ? { now: options.now } : {}),
   });
 }
@@ -94,56 +95,37 @@ function change(
 }
 
 describe("SessionPushNotifier", () => {
-  it("seals a session-ended alert separately for every registered device", () => {
+  it("seals an error alert with a fixed body separately for every registered device", () => {
     const push = makePush(["phone", "ipad"]);
-    const storage = makeStorage(makeSession({ name: "Deploy fix" }));
-    const notifier = makeNotifier(push, storage);
-
-    notifier.handleSessionEvent(event("s1", { type: "session_ended", reason: "completed" }));
-
-    const expected: PushNotification = {
-      event: "ended",
-      title: "Session Ended",
-      body: "completed",
-      sessionId: "s1",
-      workspaceId: "w1",
-      subtitle: "Deploy fix",
-    };
-    expect(push.send.mock.calls).toEqual([
-      [target("phone"), expected],
-      [target("ipad"), expected],
-    ]);
-  });
-
-  it("uses a fixed body when a session ends without a reason", () => {
-    const push = makePush(["phone"]);
-    const notifier = makeNotifier(push, makeStorage(makeSession()));
-
-    notifier.handleSessionEvent(event("s1", { type: "session_ended", reason: "" }));
-
-    expect(push.send).toHaveBeenCalledWith(
-      target("phone"),
-      expect.objectContaining({ body: "The session ended." }),
-    );
-  });
-
-  it("replaces non-retry error text with a fixed body", () => {
-    const push = makePush(["phone"]);
     const notifier = makeNotifier(push, makeStorage(makeSession({ name: "Bug hunt" })));
     const rawError =
       "model crashed while reading /Users/alice/.ssh/id_rsa with bearer token sk_secret";
 
     notifier.handleSessionEvent(event("s1", { type: "error", error: rawError }));
 
-    expect(push.send).toHaveBeenCalledWith(
-      target("phone"),
-      expect.objectContaining({
-        event: "error",
-        title: "Session Error",
-        body: "Open Oppi to review the session error.",
-      }),
-    );
+    const expected: PushNotification = {
+      event: "error",
+      title: "Session Error",
+      body: "Open Oppi to review the session error.",
+      sessionId: "s1",
+      workspaceId: "w1",
+      subtitle: "Bug hunt",
+    };
+    expect(push.send.mock.calls).toEqual([
+      [target("phone"), expected],
+      [target("ipad"), expected],
+    ]);
     expect(JSON.stringify(push.send.mock.calls)).not.toContain(rawError);
+  });
+
+  it("pushes nothing when a session ends", () => {
+    const push = makePush(["phone"]);
+    const storage = makeStorage();
+    const notifier = makeNotifier(push, storage);
+
+    notifier.handleSessionEvent(event("s1", { type: "session_ended", reason: "stopped" }));
+
+    expect(push.send).not.toHaveBeenCalled();
   });
 
   it("ignores retry errors without loading the session", () => {
@@ -162,7 +144,7 @@ describe("SessionPushNotifier", () => {
     const storage = makeStorage();
     const notifier = makeNotifier(push, storage);
 
-    notifier.handleSessionEvent(event("s1", { type: "session_ended", reason: "done" }));
+    notifier.handleSessionEvent(event("s1", { type: "error", error: "boom" }));
 
     expect(storage.getSession).not.toHaveBeenCalled();
     expect(push.send).not.toHaveBeenCalled();
@@ -263,6 +245,25 @@ describe("SessionPushNotifier", () => {
       );
     });
 
+    it("holds a lead's done while a child works, and pushes the done after its last child", () => {
+      const push = makePush(["phone"]);
+      const lead = makeSession();
+      const working = new Set(["s1"]);
+      const notifier = new SessionPushNotifier(push, makeStorage(lead), {
+        isDevicePresent: () => false,
+        hasWorkingChild: (sessionId) => working.has(sessionId),
+      });
+      const toDone = change({ state: "working" }, { state: "done" });
+
+      notifier.handleProgramStatusChange(lead, toDone);
+      expect(push.send).not.toHaveBeenCalled();
+
+      // A held done starts no throttle: the lead's final done right after still pushes.
+      working.clear();
+      notifier.handleProgramStatusChange(lead, toDone);
+      expect(push.send).toHaveBeenCalledTimes(1);
+    });
+
     it("still pushes done for a top-level session that has launch metadata", () => {
       const push = makePush(["phone"]);
       const session = makeSession({ launch: { status: "created", requestedAt: 1 } });
@@ -322,6 +323,7 @@ describe("SessionPushNotifier", () => {
       const present = new Set(["dev-phone"]);
       const notifier = new SessionPushNotifier(push, makeStorage(session), {
         isDevicePresent: (deviceId) => present.has(deviceId),
+        hasWorkingChild: () => false,
       });
       const toDone = change({ state: "working" }, { state: "done" });
 
@@ -334,11 +336,11 @@ describe("SessionPushNotifier", () => {
       expect(push.send).toHaveBeenCalledTimes(1);
     });
 
-    it("keeps sending ended and error alerts while the device is present", () => {
+    it("keeps sending error alerts while the device is present", () => {
       const push = makePush(["phone"]);
       const notifier = makeNotifier(push, makeStorage(), { presentDevices: ["dev-phone"] });
 
-      notifier.handleSessionEvent(event("s1", { type: "session_ended", reason: "completed" }));
+      notifier.handleSessionEvent(event("s1", { type: "error", error: "boom" }));
 
       expect(push.send).toHaveBeenCalledTimes(1);
     });

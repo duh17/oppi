@@ -216,7 +216,10 @@ export class PushSender {
       notification.event === "blocked" || notification.event === "pairing_approval";
     if (!this.budget.take(registration.deviceId, waitsOnUser, startedAt)) {
       log.info("push.device_budget_exhausted", { alert: notification.event });
-      this.options.metrics?.record("server.push_result", 1, { result: "throttled" });
+      this.options.metrics?.record("server.push_result", 1, {
+        result: "throttled",
+        event: notification.event,
+      });
       return { status: "throttled" };
     }
 
@@ -257,7 +260,10 @@ export class PushSender {
     this.options.metrics?.record("server.push_send_ms", this.now() - startedAt, {
       result: result.status,
     });
-    this.options.metrics?.record("server.push_result", 1, { result: result.status });
+    this.options.metrics?.record("server.push_result", 1, {
+      result: result.status,
+      event: notification.event,
+    });
     return result;
   }
 

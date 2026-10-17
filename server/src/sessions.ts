@@ -1101,6 +1101,19 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return this.active.get(this.sessionKey(sessionId))?.session;
   }
 
+  /** True while a session launched by `parentSessionId` is still starting or working. */
+  hasWorkingChild(parentSessionId: string): boolean {
+    for (const { session } of this.active.values()) {
+      if (
+        session.launch?.parentSessionId === parentSessionId &&
+        (session.status === "starting" || session.status === "busy")
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Return replayable extension UI notifications and pending dialogs for stream re-subscribe. */
   getPendingUIRequestMessages(sessionId: string): ServerMessage[] {
     return buildPendingExtensionUIRequestMessages(this.active.get(this.sessionKey(sessionId)));

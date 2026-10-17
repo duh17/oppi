@@ -176,7 +176,7 @@ export const SERVER_METRIC_REGISTRY = {
   "server.push_result": {
     unit: "count",
     description:
-      "Encrypted push results. Tagged by result (delivered, gone, rejected, unavailable, failed, throttled).",
+      "Encrypted push results. Tagged by result (delivered, gone, rejected, unavailable, failed, throttled) and event (blocked, done, error, pairing_approval, device_enrolled).",
   },
   "server.broadcast_fanout": {
     unit: "count",

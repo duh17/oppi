@@ -46,13 +46,13 @@ enum PushEnvelopeRejection: String, Error, Equatable, Sendable {
 /// Decrypted push content (spec §2.4).
 struct PushPlaintext: Decodable, Equatable, Sendable {
     enum Event: String, Decodable, Sendable {
-        case blocked, done, error, ended
+        case blocked, done, error
         case pairingApproval = "pairing_approval"
         case deviceEnrolled = "device_enrolled"
 
         var isSessionEvent: Bool {
             switch self {
-            case .blocked, .done, .error, .ended: true
+            case .blocked, .done, .error: true
             case .pairingApproval, .deviceEnrolled: false
             }
         }
@@ -135,7 +135,7 @@ struct PushPlaintext: Decodable, Equatable, Sendable {
             case .deviceEnrolled:
                 deviceId = try Self.decodeRequiredNonEmpty(c, key: .deviceId)
                 approvalId = try Self.decodeOptionalNonEmpty(c, key: .approvalId)
-            case .blocked, .done, .error, .ended:
+            case .blocked, .done, .error:
                 approvalId = nil
                 deviceId = nil
             }

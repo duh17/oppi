@@ -53,12 +53,22 @@ struct RemotePushTests {
 
     @Test func onlyATopLevelSessionEnteringDoneCounts() {
         let session = working()
-        #expect(AttentionNotificationPolicy.enteredDone(previous: session, current: finished(session)))
-        #expect(!AttentionNotificationPolicy.enteredDone(previous: finished(session), current: finished(session)))
-        #expect(!AttentionNotificationPolicy.enteredDone(previous: nil, current: finished(session)))
+        #expect(AttentionNotificationPolicy.enteredDone(previous: session, current: finished(session), sessions: []))
+        #expect(!AttentionNotificationPolicy.enteredDone(previous: finished(session), current: finished(session), sessions: []))
+        #expect(!AttentionNotificationPolicy.enteredDone(previous: nil, current: finished(session), sessions: []))
 
         let child = working("child", parent: "s1")
-        #expect(!AttentionNotificationPolicy.enteredDone(previous: child, current: finished(child)))
+        #expect(!AttentionNotificationPolicy.enteredDone(previous: child, current: finished(child), sessions: []))
+    }
+
+    @Test func aLeadIsNotDoneWhileAChildStillWorks() {
+        let lead = working()
+        let child = working("child", parent: "s1")
+        #expect(!AttentionNotificationPolicy.enteredDone(previous: lead, current: finished(lead), sessions: [child]))
+        #expect(AttentionNotificationPolicy.enteredDone(previous: lead, current: finished(lead), sessions: [finished(child)]))
+        // Another lead's working child does not hold this one.
+        let otherChild = working("other-child", parent: "s2")
+        #expect(AttentionNotificationPolicy.enteredDone(previous: lead, current: finished(lead), sessions: [otherChild]))
     }
 
     /// Delivers the request a `working -> done` app-event summary schedules, or nil.

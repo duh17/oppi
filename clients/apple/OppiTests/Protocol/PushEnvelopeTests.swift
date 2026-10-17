@@ -307,11 +307,15 @@ struct PushEnvelopeTests {
         #expect(alert.subtitle.hasPrefix("名"))
     }
 
-    @Test func doneIsPassiveAndSilent() throws {
+    @Test func doneIsPassiveAndSilentInTheSharedFinishedStack() throws {
         let alert = try present("done-no-workspace", redaction: PushRedactionSnapshot(appLockEnabled: false, lockedScopes: []))
         #expect(alert.interruption == .passive)
         #expect(!alert.playsSound)
         #expect(alert.categoryIdentifier == AttentionNotificationPolicy.sessionDoneCategoryId)
+        // Every session's done shares one stack; a tap still opens this session.
+        #expect(alert.threadIdentifier == PushAlertPresentation.sessionDoneThreadIdentifier)
+        #expect(alert.targetContentIdentifier == alert.userInfo["sessionId"])
+        #expect(alert.userInfo["sessionId"] != nil)
     }
 
     @Test func aPushWithoutAnEnvelopeShowsOnlyTheFixedText() {

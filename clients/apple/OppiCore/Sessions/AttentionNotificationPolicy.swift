@@ -6,7 +6,7 @@ import Foundation
 /// background on a server that pushes: that server skips its push to a device
 /// holding a live stream. `SESSION_DONE` / `SESSION_ERROR` / `SESSION_BLOCKED`
 /// are also the tap-routing categories for remote session-event payloads
-/// (ended, done, error, blocked).
+/// (done, error, blocked).
 enum AttentionNotificationPolicy: Sendable {
     static let askCategoryId = SessionNotificationCategory.ask
     static let sessionDoneCategoryId = SessionNotificationCategory.sessionDone
@@ -53,10 +53,14 @@ enum AttentionNotificationPolicy: Sendable {
     }
 
     /// A store update that moves a top-level session into `done`, matching the server's
-    /// `done` push rule: delegated sessions report to their parent, and a first-seen status
-    /// is not a transition.
-    static func enteredDone(previous: Session?, current: Session) -> Bool {
+    /// `done` push rule: delegated sessions report to their parent, a lead is not done while
+    /// one of its children (in `sessions`) still starts or works, and a first-seen status is
+    /// not a transition.
+    static func enteredDone(previous: Session?, current: Session, sessions: [Session]) -> Bool {
         guard current.parentSessionId == nil,
+              !sessions.contains(where: {
+                  $0.parentSessionId == current.id && ($0.status == .starting || $0.status == .busy)
+              }),
               current.programStatus?.state == .done,
               let previousState = previous?.programStatus?.state else {
             return false
@@ -84,7 +88,7 @@ enum AttentionNotificationPolicy: Sendable {
                 "event": "done",
                 "sessionId": sessionId,
             ],
-            threadIdentifier: sessionId,
+            threadIdentifier: PushAlertPresentation.sessionDoneThreadIdentifier,
             targetContentIdentifier: sessionId
         )
     }

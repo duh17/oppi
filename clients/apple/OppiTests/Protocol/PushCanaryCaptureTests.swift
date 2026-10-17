@@ -104,7 +104,7 @@ struct PushCanaryCaptureTests {
     }
 
     @Test func theRelayCarriedOnlyTheFixedTemplate() throws {
-        #expect(capture.apnsPayloads.count == 5)
+        #expect(capture.apnsPayloads.count == 4)
         for payload in capture.apnsPayloads {
             let aps = try #require(try userInfo(payload)["aps"] as? [String: Any])
             let alert = try #require(aps["alert"] as? [String: String])
@@ -120,12 +120,11 @@ struct PushCanaryCaptureTests {
         try withOpener { open in
             let alerts = try capture.apnsPayloads.map { open(try userInfo($0)) }
             let name = try #require(capture.canaries["sessionName"])
-            // The first four sends ran concurrently, so APNs saw them in any order.
-            #expect(Set(alerts.prefix(4).map(\.title)) == ["Needs Approval", "Session Done", "Session Error", "Session Ended"])
+            // The first three sends ran concurrently, so APNs saw them in any order.
+            #expect(Set(alerts.prefix(3).map(\.title)) == ["Needs Approval", "Session Done", "Session Error"])
             #expect(alerts.allSatisfy { $0.subtitle == name })
             #expect(alerts.allSatisfy { $0.userInfo["sessionId"] == capture.canaries["sessionId"] })
             #expect(alerts.allSatisfy { $0.userInfo["workspaceId"] == capture.canaries["workspaceId"] })
-            #expect(alerts.first { $0.title == "Session Ended" }?.body == capture.canaries["endedReason"])
         }
     }
 
@@ -134,7 +133,7 @@ struct PushCanaryCaptureTests {
         // whenever it recreated a registration, while the phone kept the key and its window.
         try withOpener { open in
             let payloads = try capture.apnsPayloads.map { try userInfo($0) }
-            for payload in payloads.prefix(4) { #expect(open(payload) != .fallback) }
+            for payload in payloads.prefix(3) { #expect(open(payload) != .fallback) }
             let afterReregistration = try #require(payloads.last)
             #expect(open(afterReregistration).title == "Question")
             #expect(open(afterReregistration) == .fallback)

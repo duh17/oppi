@@ -28,17 +28,22 @@ type PushEventContent = {
 export interface SessionPushNotifierOptions {
   /** True while this paired device holds a live app-event or focused session stream. */
   isDevicePresent: (deviceId: string) => boolean;
+  /** True while a session this one launched is still starting or working. */
+  hasWorkingChild: (sessionId: string) => boolean;
   now?: () => number;
 }
 
 /**
  * Sends end-to-end-encrypted session alerts through the push relay (protocol/push/spec.md).
  *
- * `ended` and `error` fire on their lifecycle events. `blocked` and `done` fire on program
- * status transitions, at most once a minute per session and kind, and skip each device that
- * is present (holds a live stream, so the app already shows the change or posts its own
+ * `error` fires on its lifecycle event. `blocked` and `done` fire on program status
+ * transitions, at most once a minute per session and kind, and skip each device that is
+ * present (holds a live stream, so the app already shows the change or posts its own
  * banner). An open Mac or iPad never silences the phone. `done` is for top-level sessions
- * only; delegated sessions report to their parent, but their `blocked` still pushes.
+ * only, and not while one of their children still works: a lead's turns between child
+ * results are not the finished run. Delegated sessions report to their parent, but their
+ * `blocked` still pushes. A session ending pushes nothing: it ends after `done`, on an idle
+ * timeout, or because someone stopped it, and none of those needs the user.
  * Each device gets its own sealed envelope; a device without a push key gets nothing.
  */
 export class SessionPushNotifier {
@@ -66,7 +71,12 @@ export class SessionPushNotifier {
     const { previous, current } = change;
     if (!previous || previous.state === current.state) return;
     if (current.state !== "blocked" && current.state !== "done") return;
-    if (current.state === "done" && session.launch?.parentSessionId) return;
+    if (
+      current.state === "done" &&
+      (session.launch?.parentSessionId || this.options.hasWorkingChild(session.id))
+    ) {
+      return;
+    }
 
     const throttleKey = `${session.id}:${current.state}`;
     const now = this.now();
@@ -126,20 +136,9 @@ export class SessionPushNotifier {
   private contentForEvent(payload: SessionBroadcastEvent): PushEventContent | null {
     const { event } = payload;
 
-    switch (event.type) {
-      case "session_ended":
-        return {
-          event: "ended",
-          title: "Session Ended",
-          body: event.reason || "The session ended.",
-        };
-      case "error":
-        if (event.error.startsWith("Retrying (")) {
-          return null;
-        }
-        return { event: "error", title: "Session Error", body: GENERIC_SESSION_ERROR_REASON };
-      default:
-        return null;
+    if (event.type !== "error" || event.error.startsWith("Retrying (")) {
+      return null;
     }
+    return { event: "error", title: "Session Error", body: GENERIC_SESSION_ERROR_REASON };
   }
 }

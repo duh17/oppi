@@ -106,7 +106,7 @@ bytes `[0, 577)`. The signature covers the version, `kid`, `enc`, and `ct`.
 | --- | --- |
 | `v` | `1` |
 | `ts` | Server time in Unix milliseconds when sealed. |
-| `event` | `blocked`, `done`, `error`, `ended`, `pairing_approval`, or `device_enrolled` |
+| `event` | `blocked`, `done`, `error`, `pairing_approval`, or `device_enrolled` |
 | `kind` | `blocked` only: `permission`, `question`, or `auth` |
 | `sessionId` | Session the push is about; omitted for `pairing_approval` and `device_enrolled` |
 | `workspaceId` | Present when the session has a workspace |
@@ -190,7 +190,6 @@ plaintext.
 | `blocked`/`auth` | Sign-in Needed | Waiting for you to sign in. |
 | `done` | Session Done | The run finished. |
 | `error` | Session Error | Open Oppi to review the session error. |
-| `ended` | Session Ended | The session ended. |
 | `pairing_approval` | Approve New Device? | A new device is waiting for your approval. |
 | `device_enrolled` | New Device Paired | A new device was paired with your server. |
 
@@ -321,7 +320,9 @@ The relay accepts no APNs headers or payload fields from callers.
 ```
 
 There is no outer sound, thread ID, category, or interruption level. The extension sets
-those after decrypting, so urgency and session grouping stay inside the ciphertext.
+those after decrypting, so urgency and session grouping stay inside the ciphertext. It
+stacks every `done` in one Notification Center thread; other session events stack per
+session.
 
 ## 4. Fallback
 
@@ -364,12 +365,13 @@ any field from a push that failed a check. Without Apple's
   write and asks the relay to delete the permission.
 - Per-device budget, in memory: 200 pushes per UTC day and 10 per minute for each device,
   matching the relay's quota so the server stops before the relay refuses. Routine events
-  (`done`, `error`, `ended`, `device_enrolled`) stop at 180 a day and 8 a minute; the rest
+  (`done`, `error`, `device_enrolled`) stop at 180 a day and 8 a minute; the rest
   is kept for `blocked` and `pairing_approval`, which wait on the user. A relay `429` with
   `Retry-After` pauses that device's pushes until it passes.
 - Events: `blocked` and `done` on program-status transitions, at most once a minute per
   session and kind, skipping devices that hold a live stream; `done` only for top-level
-  sessions; `error` and `ended` on lifecycle events; `pairing_approval` when a pairing waits
+  sessions with no child session still starting or working; `error` on its lifecycle event.
+  A session ending pushes nothing. `pairing_approval` when a pairing waits
   for approval and `device_enrolled` after each enrollment (never to the new device). See
   [onboarding](../../docs/onboarding.md) for when pairing needs approval.
 - Sends go to the primary; network errors, timeouts, and `5xx` move to the standby. A `410`
@@ -464,7 +466,7 @@ checked against RFC 9180 Appendix A.2.1, the official vector for this suite in b
 
 `cd server && npm run push:canary` (needs `npm ci` in `relay/`) runs real server sealing
 through the real relay, both the Node adapter in capture mode and the Cloudflare adapter in
-the local Workers runtime, to a mock APNs. Session name, session ID, workspace ID, and ended
-reason are canary strings. The run fails if any canary appears, raw or base64, base64url,
+the local Workers runtime, to a mock APNs. Session name, session ID, and workspace ID are
+canary strings. The run fails if any canary appears, raw or base64, base64url,
 hex, UTF-16, or JSON-escaped, in the relay's input, logs, storage, or APNs output, or if any
 captured envelope does not open back to them. It does not contact real APNs or Cloudflare.

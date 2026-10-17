@@ -32,7 +32,11 @@ extension ServerConnection {
     func notifySessionDoneIfEntered(previous: Session?, current: Session) {
         guard ReleaseFeatures.localAttentionNotificationsEnabled,
               pushNotificationsAvailable,
-              AttentionNotificationPolicy.enteredDone(previous: previous, current: current) else { return }
+              AttentionNotificationPolicy.enteredDone(
+                  previous: previous,
+                  current: current,
+                  sessions: sessionStore.sessions
+              ) else { return }
         AttentionNotificationService.shared.notifySessionDoneIfNeeded(
             sessionId: current.id,
             sessionName: current.name,
