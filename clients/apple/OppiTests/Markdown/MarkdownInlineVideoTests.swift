@@ -1106,6 +1106,15 @@ struct MarkdownInlineVideoTests {
         #expect(!video.debugHasPlayerForTesting)
         #expect(!video.debugPlayButtonForTesting.isHidden, "the only control must not vanish before a player exists")
         #expect(video.debugIsPlayProgressShownForTesting)
+        #expect(
+            video.debugPlayButtonForTesting.accessibilityLabel == "Preparing video: \(embed.displayLabel)",
+            "the busy state must be spoken, not only drawn"
+        )
+        // A press dims the control; release restores it.
+        video.debugPlayButtonForTesting.isHighlighted = true
+        #expect(video.debugPlayButtonForTesting.subviews.first?.alpha ?? 1 < 1)
+        video.debugPlayButtonForTesting.isHighlighted = false
+        #expect(video.debugPlayButtonForTesting.subviews.first?.alpha == 1)
 
         // A second tap while still pending changes nothing; once a window exists the
         // request lands and exactly one player is built.
@@ -1116,6 +1125,7 @@ struct MarkdownInlineVideoTests {
         #expect(video.debugHasPlayerForTesting)
         #expect(video.debugPlayButtonForTesting.isHidden)
         #expect(!video.debugIsPlayProgressShownForTesting)
+        #expect(video.debugPlayButtonForTesting.accessibilityLabel == "Play video: \(embed.displayLabel)")
         let installed = video.debugPlaybackModelForTesting.player
         video.debugTapPlayForTesting()
         #expect(video.debugPlaybackModelForTesting.player === installed)

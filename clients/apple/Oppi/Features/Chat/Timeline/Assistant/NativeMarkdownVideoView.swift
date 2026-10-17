@@ -276,8 +276,8 @@ final class NativeMarkdownVideoView: UIView {
         openButton.isHidden = true
         stillImageView.isHidden = stillImageView.image == nil
         playButton.isHidden = false
+        playButton.videoLabel = embed.displayLabel
         playButton.showsProgress = false
-        playButton.accessibilityLabel = String(format: String(localized: "Play video: %@"), embed.displayLabel)
         playButton.accessibilityTraits = [.button]
         isAccessibilityElement = false
         accessibilityLabel = nil
@@ -372,6 +372,9 @@ final class NativeMarkdownVideoView: UIView {
             host.view.topAnchor.constraint(equalTo: slot.view.topAnchor),
             host.view.bottomAnchor.constraint(equalTo: slot.view.bottomAnchor),
         ])
+        // The play control just left the hierarchy; move VoiceOver focus to the
+        // player (`videoPlayer.native`) instead of leaving it on a dead element.
+        UIAccessibility.post(notification: .layoutChanged, argument: host.view)
     }
 
     func setPlaybackVisible(_ visible: Bool) {
@@ -678,7 +681,28 @@ private final class InlineVideoPlayButton: UIControl {
         didSet {
             glyph.isHidden = showsProgress
             if showsProgress { spinner.startAnimating() } else { spinner.stopAnimating() }
+            refreshAccessibilityLabel()
+            if showsProgress, !oldValue {
+                UIAccessibility.post(notification: .announcement, argument: accessibilityLabel)
+            }
         }
+    }
+
+    /// The embed's display label; the spoken label says whether the control plays or is busy.
+    var videoLabel = "" {
+        didSet { refreshAccessibilityLabel() }
+    }
+
+    private func refreshAccessibilityLabel() {
+        accessibilityLabel = String(
+            format: showsProgress ? String(localized: "Preparing video: %@") : String(localized: "Play video: %@"),
+            videoLabel
+        )
+    }
+
+    /// Dims the disc while a finger is down so the press is visible.
+    override var isHighlighted: Bool {
+        didSet { disc.alpha = isHighlighted ? 0.55 : 1 }
     }
 
     override init(frame: CGRect) {

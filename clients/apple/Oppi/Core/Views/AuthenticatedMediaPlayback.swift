@@ -411,12 +411,18 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
             lifetimeRecord.noteCancelRetainedSelf()
 #endif
         }
+        // Cancelled contexts never reach `finishLoading` in didComplete. A caller
+        // still awaiting an asset load would wait on these forever, so fail them here.
+        let outstanding = contextsByTaskId.values.map(\.loadingRequest)
         contextsByTaskId.removeAll()
         tasksByRequestId.removeAll()
         lock.unlock()
 
         for task in tasks {
             task.cancel()
+        }
+        for loadingRequest in outstanding {
+            failIfOutstanding(loadingRequest)
         }
 
         if !shouldRetain {
@@ -469,6 +475,7 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
                 return
             }
             if self.isAbandoned(loadingRequest) {
+                self.failIfOutstanding(loadingRequest)
                 return
             }
             var request = URLRequest(url: url)
@@ -494,6 +501,7 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
                 task.resume()
             } else {
                 task.cancel()
+                self.failIfOutstanding(loadingRequest)
             }
         }
         return true
@@ -812,6 +820,13 @@ final class AuthenticatedMediaResourceLoader: NSObject, @unchecked Sendable, AVA
             return true
         }
         return lock.withLock { isInvalidated }
+    }
+
+    /// Fail a request AVFoundation has not cancelled or finished, so a pending
+    /// `AVAsset.load` or image request errors out instead of waiting indefinitely.
+    private func failIfOutstanding(_ loadingRequest: AVAssetResourceLoadingRequest) {
+        guard !loadingRequest.isCancelled, !loadingRequest.isFinished else { return }
+        loadingRequest.finishLoading(with: mediaError("Media loading cancelled"))
     }
 
     private func finishLoadingIfActive(_ loadingRequest: AVAssetResourceLoadingRequest, error: Error) {

@@ -18,6 +18,8 @@ final class AuthenticatedRangeHTTPServer: @unchecked Sendable {
     private let redirectLocation: String?
     private let failureStatus: Int?
     private var stopped = false
+    private var stalled = false
+    private var stalledCount = 0
     private var clientFDs: [Int32] = []
     private var recordedRangesStorage: [String] = []
     private var recordedParsedStorage: [RecordedRange] = []
@@ -86,6 +88,14 @@ final class AuthenticatedRangeHTTPServer: @unchecked Sendable {
         lock.withLock { recordedParsedStorage }
     }
 
+    /// While stalled, requests are read and recorded but never answered, and the
+    /// socket stays open. Requests already stalled stay stalled until `stop()`.
+    func setStalled(_ value: Bool) {
+        lock.withLock { stalled = value }
+    }
+
+    var stalledRequestCount: Int { lock.withLock { stalledCount } }
+
     func stop() {
         lock.lock()
         let alreadyStopped = stopped
@@ -128,7 +138,8 @@ final class AuthenticatedRangeHTTPServer: @unchecked Sendable {
     }
 
     private func handle(_ client: Int32) {
-        defer { closeClient(client) }
+        var holdOpen = false
+        defer { if !holdOpen { closeClient(client) } }
         guard let raw = readHeaders(from: client) else { return }
         let lines = raw.split(whereSeparator: \.isNewline).map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -162,7 +173,10 @@ final class AuthenticatedRangeHTTPServer: @unchecked Sendable {
             )
         )
         let recordedIndex = recordedParsedStorage.count - 1
+        holdOpen = stalled
+        if holdOpen { stalledCount += 1 }
         lock.unlock()
+        if holdOpen { return }
 
         if let redirectLocation {
             write(
