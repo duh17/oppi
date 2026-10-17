@@ -289,6 +289,38 @@ struct FileSuggestionInsertionTests {
                 "No match positions for empty query")
     }
 
+    @Test func narrowedRankingMatchesFullRankingAlongTypedSequenceAndBackspace() {
+        let paths = [
+            "README.md",
+            "package.json",
+            "clients/apple/Oppi/Features/Chat/ChatView.swift",
+            "clients/apple/Oppi/Features/Chat/Composer/ChatInputBar.swift",
+            "clients/apple/OppiCore/Models/ChatMessage.swift",
+            "clients/apple/OppiTests/Chat/ChatViewTests.swift",
+            "server/src/chat.ts",
+            "server/src/routes/chat.ts",
+            "server/src/routes/workspace-files.ts",
+            "server/src/routes/workspace-files.test.ts",
+            "server/docker-compose.yml",
+            "docs/images/chat-icon.png",
+            "clients/apple/Oppi/Core/Networking/ServerConnection.swift",
+            "clients/apple/OppiTests/Network/ServerConnectionTests.swift",
+            "clients/apple/Oppi/Core/Models/FuzzyMatch.swift",
+        ]
+        let index = FileSuggestionIndex(paths: paths)
+        let ranker = FileSuggestionRanker(index: index)
+        let sequence = ["c", "ch", "cha", "chat", "chatv"]
+
+        for query in sequence {
+            let narrowed = ranker.ranked(query: query)
+            let full = index.ranked(query: query)
+            #expect(narrowed == full, "narrowed ranking diverged at query \(query)")
+        }
+
+        let afterBackspace = ranker.ranked(query: "chat")
+        #expect(afterBackspace == index.ranked(query: "chat"))
+    }
+
     @Test func newerKeystrokeDiscardsStaleRankingResults() async {
         let (conn, _) = makeTestConnection()
         conn.fileIndexStore.setPathsForTesting([

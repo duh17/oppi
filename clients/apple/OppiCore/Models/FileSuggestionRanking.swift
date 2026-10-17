@@ -95,16 +95,39 @@ struct FileSuggestionIndex: Sendable {
         query: String,
         limit: Int = ComposerAutocomplete.maxSuggestions
     ) -> [FileSuggestion] {
+        suggestions(query: query, candidateIndices: nil, limit: limit)
+    }
+
+    func entry(for path: String) -> Entry? {
+        guard let index = entryByPath[path] else { return nil }
+        return entries[index]
+    }
+
+    fileprivate func emptySuggestions(limit: Int) -> [FileSuggestion] {
+        guard limit > 0, !entries.isEmpty else { return [] }
+        return emptyOrder.prefix(limit).map { index in
+            let entry = entries[index]
+            return FileSuggestion(path: entry.path, isDirectory: entry.isDirectory)
+        }
+    }
+
+    fileprivate func suggestions(
+        query: String,
+        candidateIndices: [Int]?,
+        limit: Int
+    ) -> [FileSuggestion] {
         guard limit > 0, !entries.isEmpty else { return [] }
 
         if query.isEmpty {
-            return emptyOrder.prefix(limit).map { index in
-                let entry = entries[index]
-                return FileSuggestion(path: entry.path, isDirectory: entry.isDirectory)
-            }
+            return emptySuggestions(limit: limit)
         }
 
-        return rankFileSuggestionPaths(query: query, index: self, limit: limit).map { scored in
+        return rankFileSuggestionPaths(
+            query: query,
+            index: self,
+            candidateIndices: candidateIndices,
+            limit: limit
+        ).map { scored in
             FileSuggestion(
                 path: scored.path,
                 isDirectory: entry(for: scored.path)?.isDirectory ?? scored.path.hasSuffix("/"),
@@ -112,10 +135,68 @@ struct FileSuggestionIndex: Sendable {
             )
         }
     }
+}
 
-    func entry(for path: String) -> Entry? {
-        guard let index = entryByPath[path] else { return nil }
-        return entries[index]
+/// Ranking owner for `@file` suggestions. Keeps the previous query's matching
+/// candidate set so an extending keystroke only ranks over that subset.
+/// Literal containment and fuzzy subsequence are monotone under extension.
+///
+/// Reset on index reload (new instance) or a non-extending edit (backspace,
+/// paste, another token). UI-framework-free; C1 should hold one of these.
+final class FileSuggestionRanker: @unchecked Sendable {
+    let index: FileSuggestionIndex
+
+    private let lock = NSLock()
+    private var ticket: UInt64 = 0
+    private var lastQuery: String?
+    /// Indices into `index.entries` that matched `lastQuery`. Nil means the
+    /// full index (empty query or a reset).
+    private var lastPool: [Int]?
+
+    init(index: FileSuggestionIndex) {
+        self.index = index
+    }
+
+    func ranked(
+        query: String,
+        limit: Int = ComposerAutocomplete.maxSuggestions
+    ) -> [FileSuggestion] {
+        lock.lock()
+        ticket &+= 1
+        let ticketSnapshot = ticket
+        let previousQuery = lastQuery
+        let previousPool = lastPool
+        lock.unlock()
+
+        if query.isEmpty {
+            let results = index.emptySuggestions(limit: limit)
+            install(ticket: ticketSnapshot, query: "", pool: nil)
+            return results
+        }
+
+        let extending = previousQuery.map { !$0.isEmpty && query.hasPrefix($0) } ?? false
+        let startPool = extending ? previousPool : nil
+        let queryLower = query.lowercased()
+        var nextPool: [Int] = []
+        nextPool.reserveCapacity(startPool?.count ?? min(index.entries.count, 1_024))
+
+        forEachCandidate(index: index, candidateIndices: startPool) { offset, entry in
+            if hasSubsequence(queryLower: queryLower, pathLower: entry.pathLower) {
+                nextPool.append(offset)
+            }
+        }
+
+        let results = index.suggestions(query: query, candidateIndices: nextPool, limit: limit)
+        install(ticket: ticketSnapshot, query: query, pool: nextPool)
+        return results
+    }
+
+    private func install(ticket expected: UInt64, query: String, pool: [Int]?) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard ticket == expected else { return }
+        lastQuery = query
+        lastPool = pool
     }
 }
 
@@ -133,7 +214,6 @@ private enum LiteralMatchClass: Int {
 private struct PrecisionLiteralCandidate {
     let path: String
     let index: Int
-    let positions: [Int]
     let literalClass: LiteralMatchClass
     let fileNameLength: Int
     let isCodeFile: Bool
@@ -144,17 +224,29 @@ private struct PrecisionLiteralCandidate {
 private func rankFileSuggestionPaths(
     query: String,
     index: FileSuggestionIndex,
+    candidateIndices: [Int]?,
     limit: Int
 ) -> [FuzzyMatch.ScoredPath] {
     // Precision-first: prefer literal filename/path matches for @mentions.
-    let literal = precisionLiteralMatches(query: query, index: index, limit: limit)
+    let literal = precisionLiteralMatches(
+        query: query,
+        index: index,
+        candidateIndices: candidateIndices,
+        limit: limit
+    )
     if literal.count >= limit {
         return literal
     }
 
     // Fuzzy fallback for abbreviation-style queries.
-    let preLimit = min(index.paths.count, max(limit * 8, 64))
-    let fuzzy = FuzzyMatch.search(query: query, candidates: index.paths, limit: preLimit)
+    let candidates: [String]
+    if let candidateIndices {
+        candidates = candidateIndices.map { index.entries[$0].path }
+    } else {
+        candidates = index.paths
+    }
+    let preLimit = min(candidates.count, max(limit * 8, 64))
+    let fuzzy = FuzzyMatch.search(query: query, candidates: candidates, limit: preLimit)
     let rerankedFuzzy = rerankFileSuggestions(query: query, results: fuzzy, index: index, limit: preLimit)
     return mergeSuggestions(primary: literal, secondary: rerankedFuzzy, limit: limit)
 }
@@ -194,6 +286,7 @@ private func mergeSuggestions(
 private func precisionLiteralMatches(
     query: String,
     index: FileSuggestionIndex,
+    candidateIndices: [Int]?,
     limit: Int
 ) -> [FuzzyMatch.ScoredPath] {
     guard limit > 0 else { return [] }
@@ -205,25 +298,22 @@ private func precisionLiteralMatches(
     let prefersTests = queryLower.contains("test")
 
     var literalCandidates: [PrecisionLiteralCandidate] = []
-    literalCandidates.reserveCapacity(min(index.entries.count, 256))
+    literalCandidates.reserveCapacity(min(candidateIndices?.count ?? index.entries.count, 256))
 
-    for (offset, entry) in index.entries.enumerated() {
+    forEachCandidate(index: index, candidateIndices: candidateIndices) { offset, entry in
         let literalClass = literalMatchClass(
             queryLower: queryLower,
             pathLower: entry.pathLower,
             fileNameLower: entry.basenameLower
         )
         if literalClass == .none {
-            continue
+            return
         }
-
-        let positions = literalMatchPositions(query: query, path: entry.path, literalClass: literalClass)
 
         literalCandidates.append(
             PrecisionLiteralCandidate(
                 path: entry.path,
                 index: offset,
-                positions: positions,
                 literalClass: literalClass,
                 fileNameLength: entry.basenameScalarCount,
                 isCodeFile: entry.isCodeFile,
@@ -284,9 +374,41 @@ private func precisionLiteralMatches(
             FuzzyMatch.ScoredPath(
                 path: candidate.path,
                 score: (candidate.literalClass.rawValue * 10_000) - rank,
-                positions: candidate.positions
+                positions: literalMatchPositions(
+                    query: query,
+                    path: candidate.path,
+                    literalClass: candidate.literalClass
+                )
             )
         }
+}
+
+private func forEachCandidate(
+    index: FileSuggestionIndex,
+    candidateIndices: [Int]?,
+    _ body: (Int, FileSuggestionIndex.Entry) -> Void
+) {
+    if let candidateIndices {
+        for offset in candidateIndices {
+            body(offset, index.entries[offset])
+        }
+        return
+    }
+    for (offset, entry) in index.entries.enumerated() {
+        body(offset, entry)
+    }
+}
+
+private func hasSubsequence(queryLower: String, pathLower: String) -> Bool {
+    if queryLower.isEmpty { return true }
+    let queryBytes = Array(queryLower.utf8)
+    var qi = 0
+    for byte in pathLower.utf8 {
+        if qi < queryBytes.count, byte == queryBytes[qi] {
+            qi += 1
+        }
+    }
+    return qi == queryBytes.count
 }
 
 private func literalMatchClass(

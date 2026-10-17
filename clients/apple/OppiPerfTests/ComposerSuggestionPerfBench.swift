@@ -4,11 +4,13 @@ import Testing
 
 /// Keystroke-to-ranked-list microbench for `@file` and `/command` suggestions.
 ///
-/// Before slice A, `@` ranking walks the raw path array on every keystroke
-/// (`FileSuggestion.ranked(query:paths:)`) and `/` ranking re-dedupes and
-/// sorts inside `ComposerAutocomplete.slashSuggestions` on every call (the
-/// SwiftUI body path). After slice A, the same scenarios use a precomputed
-/// `FileSuggestionIndex` and a per-command-list slash cache.
+/// Runs in the OppiPerfTests Debug configuration (`-Onone`). Numbers are a
+/// simulator regression signal, not device Release.
+///
+/// Slice A: precomputed `FileSuggestionIndex`, cached empty-query order,
+/// off-main ranking, slash cache. Follow-up: incremental narrowing on a
+/// `FileSuggestionRanker` for extending queries, and literal match positions
+/// only for the final top-N.
 ///
 /// Index size matches the server cap `MAX_INDEX_PATHS` (50,000) in
 /// `server/src/routes/workspace-files.ts`.
@@ -66,8 +68,9 @@ struct ComposerSuggestionPerfBench {
         }
 
         let sequence = Self.measure {
+            let ranker = FileSuggestionRanker(index: Self.fileIndex)
             for query in Self.atQueries {
-                Self.blackHole(Self.rankFiles(query: query, paths: paths))
+                Self.blackHole(ranker.ranked(query: query, limit: Self.limit))
             }
         }
         Self.report(scenario: "at_typed_sequence", sample: sequence)
@@ -120,9 +123,10 @@ struct ComposerSuggestionPerfBench {
 
     // MARK: - Ranking under test
 
-    /// Production `@file` ranking after slice A: reused precomputed index.
+    /// First-keystroke `@file` ranking (fresh ranker, no prior pool).
+    /// `at_typed_sequence` uses one `FileSuggestionRanker` across queries.
     private static func rankFiles(query: String, paths _: [String]) -> [FileSuggestion] {
-        fileIndex.ranked(query: query, limit: limit)
+        FileSuggestionRanker(index: fileIndex).ranked(query: query, limit: limit)
     }
 
     /// Production `/command` ranking. Cached per command list + last query.

@@ -13,7 +13,7 @@ extension ServerConnection {
         chatState.fileSuggestionGeneration &+= 1
         let generation = chatState.fileSuggestionGeneration
 
-        guard let index = fileIndexStore.suggestionIndex, !index.isEmpty else {
+        guard let ranker = fileIndexStore.suggestionRanker, !ranker.index.isEmpty else {
             chatState.fileSuggestions = []
             return
         }
@@ -22,14 +22,14 @@ extension ServerConnection {
 
         if query.isEmpty {
             // Cached empty-query top-N: O(limit) prefix, safe on main.
-            chatState.fileSuggestions = index.ranked(query: query, limit: limit)
+            chatState.fileSuggestions = ranker.ranked(query: query, limit: limit)
             chatState.fileSuggestionTask = nil
             return
         }
 
         chatState.fileSuggestionTask = Task { @MainActor [weak self] in
             let ranked = await Task.detached(priority: .userInitiated) {
-                index.ranked(query: query, limit: limit)
+                ranker.ranked(query: query, limit: limit)
             }.value
 
             guard let self,

@@ -49,6 +49,9 @@ final class FileIndexStore {
     /// UI-framework-free; C1 can read this and call `ranked`.
     @ObservationIgnored private(set) var suggestionIndex: FileSuggestionIndex?
 
+    /// Ranking owner with incremental narrowing. Replaced on every index load.
+    @ObservationIgnored private(set) var suggestionRanker: FileSuggestionRanker?
+
     /// True while the initial fetch is in-flight.
     private(set) var isLoading = false
 
@@ -82,6 +85,7 @@ final class FileIndexStore {
         if self.workspaceId != workspaceId || self.worktreeId != normalizedWorktreeId {
             paths = nil
             suggestionIndex = nil
+            suggestionRanker = nil
         }
         self.workspaceId = workspaceId
         self.worktreeId = normalizedWorktreeId
@@ -106,7 +110,8 @@ final class FileIndexStore {
     // periphery:ignore - used by tests via @testable import
     /// Set paths directly for unit tests. Not for production use.
     func setPathsForTesting(_ paths: [String]) {
-        applyPaths(paths)
+        // Test fixtures are small; production loads always pass a prebuilt index.
+        applyPaths(paths, index: FileSuggestionIndex(paths: paths))
         self.dirty = false
     }
 
@@ -170,7 +175,7 @@ final class FileIndexStore {
                       self.worktreeId == worktreeId
                 else { return }
                 if self.paths == nil {
-                    self.applyPaths([])
+                    self.applyPaths([], index: FileSuggestionIndex(paths: []))
                 }
                 self.isLoading = false
                 self.environment.logWarning("Failed to load file index: \(error.localizedDescription)")
@@ -178,9 +183,10 @@ final class FileIndexStore {
         }
     }
 
-    private func applyPaths(_ paths: [String], index: FileSuggestionIndex? = nil) {
+    private func applyPaths(_ paths: [String], index: FileSuggestionIndex) {
         self.paths = paths
-        self.suggestionIndex = index ?? FileSuggestionIndex(paths: paths)
+        self.suggestionIndex = index
+        self.suggestionRanker = FileSuggestionRanker(index: index)
     }
 
     private func normalizeWorktreeId(_ value: String?) -> String? {
