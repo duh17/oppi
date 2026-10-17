@@ -397,6 +397,23 @@ final class ScreenNavigator {
         Router.finish(controller)
     }
 
+    /// Ends an active search on this screen without animation, then runs
+    /// `completion`. Uses the screen's own `UISearchController` first: walking
+    /// navigation items can miss it while search is presenting. A modal or
+    /// column closed under an active search left its bar covering the chat
+    /// (iOS 27).
+    func endSearch(then completion: (() -> Void)? = nil) {
+        if let active = search?.searchController, active.isActive {
+            Router.endSearch(active, then: completion)
+            return
+        }
+        guard let controller else {
+            completion?()
+            return
+        }
+        Router.endSearch(in: controller.navigationController ?? controller, then: completion)
+    }
+
     /// Moves the sheet this screen sits in to `detent` (the selection half of
     /// SwiftUI `presentationDetents(_:selection:)`).
     func selectSheetDetent(_ detent: UISheetPresentationController.Detent.Identifier) {

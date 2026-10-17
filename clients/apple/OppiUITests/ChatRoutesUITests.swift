@@ -81,7 +81,15 @@ final class ChatRoutesUITests: XCTestCase {
             let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "echo LONG_BASH_\(turn) &&")).firstMatch
             XCTAssertTrue(row.waitForExistence(timeout: 5), "Search must list bash \(turn)")
             row.tap()
+            XCTAssertTrue(
+                waitForDisappearance(of: search),
+                "Selecting a search hit must dismiss the outline search field so the chat is visible"
+            )
             XCTAssertTrue(waitForDisappearance(of: outline), "Selecting a row must close the outline")
+            XCTAssertTrue(
+                waitFor(outlineButton.isHittable),
+                "The chat must be visible after a search jump (outline toolbar hittable): usesSheets=\(usesSheets) width=\(app.windows.firstMatch.frame.width)"
+            )
             let target = "long-bash-\(turn)"
             // The row lights up once the outline is gone, not under it.
             XCTAssertTrue(

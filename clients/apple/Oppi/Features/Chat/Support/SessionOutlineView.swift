@@ -35,10 +35,12 @@ struct SessionOutlineView: View {
 
     @Environment(ToolArgsStore.self) private var toolArgsStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.screenNavigator) private var navigator
     @Environment(\.themeID) private var themeID
 
     @State private var outlineLayout: OutlineLayout = .timeline
     @State private var searchText = ""
+    @State private var isSearchPresented = false
     @State private var debouncedSearchText = ""
     @State private var filter: OutlineFilter = .all
 
@@ -105,6 +107,7 @@ struct SessionOutlineView: View {
             // search did: its search bar has no Cancel to end the search.
             .routerSearchable(
                 text: $searchText,
+                isPresented: $isSearchPresented,
                 prompt: searchPrompt,
                 hidesNavigationBarDuringPresentation: UIDevice.current.userInterfaceIdiom != .pad
             )
@@ -595,12 +598,21 @@ struct SessionOutlineView: View {
         )
     }
 
+    /// Ends search, then closes so the chat is visible. Closing the outline
+    /// under an active `UISearchController` left its bar covering the timeline
+    /// (iOS 27); `Router.dismiss` ends search too, but a search-then-jump never
+    /// waited for that before `onClose`.
+    private func closeRevealingChat() {
+        isSearchPresented = false
+        navigator.endSearch(then: onClose)
+    }
+
     private func handleTreeNodeSelection(_ nodeId: String) {
         treeNavigateErrorMessage = nil
 
         guard onNavigateTreeNode != nil else {
             onSelect(nodeId)
-            onClose()
+            closeRevealingChat()
             return
         }
 
@@ -653,7 +665,7 @@ struct SessionOutlineView: View {
 
         guard let onNavigateTreeNode else {
             onSelect(request.targetId)
-            onClose()
+            closeRevealingChat()
             return
         }
 
@@ -666,7 +678,7 @@ struct SessionOutlineView: View {
             do {
                 try await onNavigateTreeNode(request)
                 guard !Task.isCancelled else { return }
-                onClose()
+                closeRevealingChat()
             } catch {
                 guard !Task.isCancelled else { return }
                 treeNavigateErrorMessage = error.localizedDescription
@@ -801,7 +813,7 @@ struct SessionOutlineView: View {
                             // applies the jump on the turn `onSelect` queued,
                             // so the outline slides away from the landed row
                             // instead of revealing the old spot, then a jump.
-                            DispatchQueue.main.async { onClose() }
+                            DispatchQueue.main.async { closeRevealingChat() }
                         } label: {
                             OutlineRow(
                                 item: entry.item,

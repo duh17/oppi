@@ -322,12 +322,28 @@ enum Router {
         let activeSearch = screens
             .compactMap(\.navigationItem.searchController)
             .first { $0.isActive }
-        guard let activeSearch, activeSearch.presentingViewController != nil else {
-            activeSearch?.isActive = false
+        guard let activeSearch else {
             completion?()
             return
         }
-        activeSearch.dismiss(animated: false, completion: completion)
+        endSearch(activeSearch, then: completion)
+    }
+
+    /// Ends `search` without animation, then runs `completion`.
+    static func endSearch(_ search: UISearchController, then completion: (() -> Void)? = nil) {
+        guard search.isActive else {
+            completion?()
+            return
+        }
+        guard search.presentingViewController != nil else {
+            search.isActive = false
+            completion?()
+            return
+        }
+        search.dismiss(animated: false) {
+            search.isActive = false
+            completion?()
+        }
     }
 
     /// Pops `screen` and anything pushed above it. Returns false when `screen`
