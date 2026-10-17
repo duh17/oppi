@@ -91,31 +91,29 @@ export const LIVE_ACTIVITY_DEVICE_BUDGET = {
   updatesPerDay: 32,
 } as const;
 
-/** In memory, like `DeviceBudget`; the relay enforces its own quota as well. */
+/**
+ * In memory, like `DeviceBudget`; the relay enforces its own quota as well. A send counts
+ * only once the relay has counted it (it reached APNs, or the relay says the quota is full),
+ * so a relay that was unreachable or refused before APNs costs nothing. The notifier sends one
+ * Live Activity push per device at a time, so checking before and counting after cannot race.
+ */
 class LiveActivityBudget {
   private readonly usage = new Map<
     string,
     { day: string; dayCount: number; pausedUntil: number }
   >();
 
-  take(deviceId: string, isUpdate: boolean, now: number): boolean {
-    const day = new Date(now).toISOString().slice(0, 10);
-    let usage = this.usage.get(deviceId);
-    if (!usage) {
-      usage = { day, dayCount: 0, pausedUntil: 0 };
-      this.usage.set(deviceId, usage);
-    }
+  allows(deviceId: string, isUpdate: boolean, now: number): boolean {
+    const usage = this.current(deviceId, now);
     if (now < usage.pausedUntil) return false;
-    if (usage.day !== day) {
-      usage.day = day;
-      usage.dayCount = 0;
-    }
     const limit = isUpdate
       ? LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay
       : LIVE_ACTIVITY_DEVICE_BUDGET.perDay;
-    if (usage.dayCount >= limit) return false;
-    usage.dayCount += 1;
-    return true;
+    return usage.dayCount < limit;
+  }
+
+  charge(deviceId: string, now: number): void {
+    this.current(deviceId, now).dayCount += 1;
   }
 
   pause(deviceId: string, until: number): void {
@@ -123,10 +121,35 @@ class LiveActivityBudget {
     if (usage) usage.pausedUntil = Math.max(usage.pausedUntil, until);
   }
 
-  /** Give back a send the relay refused before APNs (`409 no_activity`): it charged nothing. */
-  refund(deviceId: string): void {
-    const usage = this.usage.get(deviceId);
-    if (usage && usage.dayCount > 0) usage.dayCount -= 1;
+  private current(
+    deviceId: string,
+    now: number,
+  ): { day: string; dayCount: number; pausedUntil: number } {
+    const day = new Date(now).toISOString().slice(0, 10);
+    let usage = this.usage.get(deviceId);
+    if (!usage) {
+      usage = { day, dayCount: 0, pausedUntil: 0 };
+      this.usage.set(deviceId, usage);
+    }
+    if (usage.day !== day) {
+      usage.day = day;
+      usage.dayCount = 0;
+    }
+    return usage;
+  }
+}
+
+/** The relay counted this send against the phone's Live Activity quota, or says it is full. */
+function relayCountedLiveActivity(result: LiveActivitySendResult | { status: "failed" }): boolean {
+  switch (result.status) {
+    case "delivered":
+      return true;
+    case "unavailable":
+      return result.charged;
+    case "rejected":
+      return result.httpStatus === 429;
+    default:
+      return false;
   }
 }
 
@@ -307,7 +330,9 @@ export class PushSender {
     if (!relays || !registration.liveActivity || !this.isCurrent(registration)) return null;
     const startedAt = this.now();
     const event = `live_activity_${push.event}`;
-    if (!this.liveActivityBudget.take(registration.deviceId, push.event === "update", startedAt)) {
+    if (
+      !this.liveActivityBudget.allows(registration.deviceId, push.event === "update", startedAt)
+    ) {
       log.info("push.device_budget_exhausted", { alert: event });
       this.options.metrics?.record("server.push_result", 1, { result: "throttled", event });
       return { status: "throttled" };
@@ -322,7 +347,9 @@ export class PushSender {
       log.warn("push.seal_or_send_failed", { error: safeErrorMessage(err) });
       result = { status: "failed" };
     }
-    if (result.status === "no_activity") this.liveActivityBudget.refund(registration.deviceId);
+    if (relayCountedLiveActivity(result)) {
+      this.liveActivityBudget.charge(registration.deviceId, startedAt);
+    }
     if (result.status === "rejected" && result.retryAfterSeconds !== undefined) {
       this.liveActivityBudget.pause(
         registration.deviceId,
@@ -348,7 +375,7 @@ export class PushSender {
   /** Prune on a primary `410`, log what was not delivered, and record the result. */
   private settle(
     registration: PushRegistration,
-    result: LiveActivitySendResult | { status: "failed" },
+    result: RelaySendResult | LiveActivitySendResult | { status: "failed" },
     startedAt: number,
     event: string,
   ): void {

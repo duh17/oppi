@@ -30,6 +30,7 @@ import {
   MAX_PERMISSIONS_PER_REGISTRATION,
   type ApnsEnvironment,
   type LiveActivityEvent,
+  type LiveActivityUpdate,
   type RegistrationRecord,
   type RelayStore,
 } from "./store.js";
@@ -145,6 +146,19 @@ function parseObject(bytes: Uint8Array, allowed: readonly string[]): Record<stri
     if (!allowed.includes(key)) throw new HttpError(400, "unknown_field");
   }
   return parsed as Record<string, unknown>;
+}
+
+/** A nested object whose keys must all be present and known. */
+function parseEntry(entry: unknown, keys: readonly string[]): Record<string, unknown> {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    throw new HttpError(400, "bad_request");
+  }
+  for (const key of Object.keys(entry)) {
+    if (!keys.includes(key)) throw new HttpError(400, "unknown_field");
+  }
+  const fields = entry as Record<string, unknown>;
+  if (keys.some((key) => !(key in fields))) throw new HttpError(400, "bad_request");
+  return fields;
 }
 
 function bearer(request: Request): string {
@@ -344,20 +358,13 @@ export function createRelayHandler(deps: RelayDeps): (
   }
 
   async function postPermission(request: Request, registrationId: string, path: string, body: Uint8Array) {
-    const { liveActivitySlot } = parseObject(body, ["liveActivitySlot"]);
-    if (
-      liveActivitySlot !== undefined &&
-      (typeof liveActivitySlot !== "string" || !LIVE_ACTIVITY_SLOT.test(liveActivitySlot))
-    ) {
-      throw new HttpError(400, "bad_request");
-    }
+    parseObject(body, []);
     const record = await authenticateRegistration(request, registrationId, path, body);
     const permissionId = randomId("p_");
     const secret = base64urlEncode(randomBytes(32));
     const result = await store.addPermission(record.id, {
       id: permissionId,
       secretHash: await secretHash(secret),
-      ...(typeof liveActivitySlot === "string" ? { liveActivitySlot } : {}),
     });
     if (result === "gone") throw new HttpError(410, "gone");
     if (result === "limit") throw new HttpError(409, "too_many_permissions");
@@ -434,62 +441,50 @@ export function createRelayHandler(deps: RelayDeps): (
     throw new HttpError(502, "apns_unavailable");
   }
 
-  /** The phone's whole Live Activity token state; replaces what the relay held. */
+  /**
+   * The phone's whole Live Activity state; replaces what the relay held. Each entry names the
+   * permission that may drive that server's card, so the phone alone decides which servers
+   * can: a server it leaves out gets `409 no_activity`.
+   */
   async function putLiveActivity(
     request: Request,
     registrationId: string,
     path: string,
     body: Uint8Array,
   ): Promise<Response> {
-    const { startToken, activities, dismissed } = parseObject(body, [
-      "startToken",
-      "activities",
-      "dismissed",
-    ]);
+    const { startToken, activities } = parseObject(body, ["startToken", "activities"]);
     if (
       (startToken !== null && (typeof startToken !== "string" || !APNS_TOKEN.test(startToken))) ||
       !Array.isArray(activities) ||
-      activities.length > MAX_PERMISSIONS_PER_REGISTRATION ||
-      !Array.isArray(dismissed) ||
-      dismissed.length > MAX_PERMISSIONS_PER_REGISTRATION
+      activities.length > MAX_PERMISSIONS_PER_REGISTRATION
     ) {
       throw new HttpError(400, "bad_request");
     }
-    const parsed: Array<{ slot: string; token: string }> = [];
+    const parsed: LiveActivityUpdate["activities"] = [];
     for (const entry of activities as unknown[]) {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-        throw new HttpError(400, "bad_request");
-      }
-      for (const key of Object.keys(entry)) {
-        if (key !== "slot" && key !== "token") throw new HttpError(400, "unknown_field");
-      }
-      const { slot, token } = entry as Record<string, unknown>;
+      const { permissionId, slot, token, dismissed } = parseEntry(entry, [
+        "permissionId",
+        "slot",
+        "token",
+        "dismissed",
+      ]);
       if (
+        typeof permissionId !== "string" ||
+        !PERMISSION_ID.test(permissionId) ||
         typeof slot !== "string" ||
         !LIVE_ACTIVITY_SLOT.test(slot) ||
-        typeof token !== "string" ||
-        !APNS_TOKEN.test(token) ||
-        parsed.some((item) => item.slot === slot)
+        (token !== null && (typeof token !== "string" || !APNS_TOKEN.test(token))) ||
+        typeof dismissed !== "boolean" ||
+        // A dismissed card is gone from the phone, so it has no update token.
+        (dismissed && token !== null) ||
+        parsed.some((item) => item.slot === slot || item.permissionId === permissionId)
       ) {
         throw new HttpError(400, "bad_request");
       }
-      parsed.push({ slot, token });
-    }
-    // A dismissed slot has no card, so it has no update token either.
-    const dismissedSlots: string[] = [];
-    for (const slot of dismissed as unknown[]) {
-      if (
-        typeof slot !== "string" ||
-        !LIVE_ACTIVITY_SLOT.test(slot) ||
-        dismissedSlots.includes(slot) ||
-        parsed.some((item) => item.slot === slot)
-      ) {
-        throw new HttpError(400, "bad_request");
-      }
-      dismissedSlots.push(slot);
+      parsed.push({ permissionId, slot, token, dismissed });
     }
     const record = await authenticateRegistration(request, registrationId, path, body);
-    const update = { startToken, activities: parsed, dismissed: dismissedSlots };
+    const update = { startToken, activities: parsed };
     if (!(await store.setLiveActivity(record.id, update, now()))) {
       throw new HttpError(410, "gone");
     }

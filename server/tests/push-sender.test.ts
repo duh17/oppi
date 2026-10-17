@@ -329,26 +329,37 @@ describe("PushSender", () => {
       expect(calls[0]?.body).toEqual({ event: "update", running: 2, needsYou: 1, timestamp: 1_760_000_000 });
     });
 
-    it("reads a relay 409 no_activity as no card, not a refusal, and spends no budget on it", async () => {
-      let noActivity = true;
-      const { fetchImpl } = relayFetch({
-        [PRIMARY]: () =>
-          noActivity
-            ? new Response(JSON.stringify({ error: "no_activity" }), { status: 409 })
-            : new Response(JSON.stringify({ ok: true }), { status: 200 }),
-      });
+    it("spends budget only on sends the relay counted", async () => {
+      let relay: (() => Response) | undefined = () =>
+        new Response(JSON.stringify({ error: "no_activity" }), { status: 409 });
+      const { fetchImpl } = relayFetch({ [PRIMARY]: () => (relay ? relay() : ok()) });
       const push = liveActivitySender(fetchImpl);
       const [registration] = push.registrations();
       if (!registration) throw new Error("missing registration");
-      expect(await push.sendLiveActivity(registration, update)).toEqual({ status: "no_activity" });
-      expect(storage.getPushRegistrations()).toHaveLength(1);
+      const sendAll = async () => {
+        const results = new Set<string>();
+        for (let index = 0; index < LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay; index += 1) {
+          results.add(JSON.stringify(await push.sendLiveActivity(registration, update)));
+        }
+        return [...results];
+      };
 
-      // The relay charged nothing for those, so neither does the server.
-      for (let index = 0; index < LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay; index += 1) {
-        await push.sendLiveActivity(registration, update);
-      }
-      noActivity = false;
-      expect((await push.sendLiveActivity(registration, update))?.status).toBe("delivered");
+      // No card at the relay: no refusal, and nothing charged.
+      expect(await sendAll()).toEqual([JSON.stringify({ status: "no_activity" })]);
+      expect(storage.getPushRegistrations()).toHaveLength(1);
+      // The relay could not be reached, or failed before looking at the send: nothing charged.
+      relay = () => {
+        throw new TypeError("fetch failed");
+      };
+      expect(await sendAll()).toEqual([JSON.stringify({ status: "unavailable", charged: false })]);
+      relay = () => new Response("{}", { status: 503 });
+      expect(await sendAll()).toEqual([JSON.stringify({ status: "unavailable", charged: false })]);
+
+      // The relay counted it, then APNs failed: the server counts it too.
+      relay = () => new Response(JSON.stringify({ error: "apns_unavailable" }), { status: 502 });
+      expect(await sendAll()).toEqual([JSON.stringify({ status: "unavailable", charged: true })]);
+      relay = undefined;
+      expect((await push.sendLiveActivity(registration, update))?.status).toBe("throttled");
     });
 
     it("spends its own daily budget, keeping room to start and end, apart from alerts", async () => {

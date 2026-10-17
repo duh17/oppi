@@ -19,9 +19,12 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Push
 /// 5. checks the server's Ed25519 key against the fingerprint pinned at pairing and stores
 ///    it with the private key for the Notification Service Extension.
 ///
-/// With the server's Live Activity also on (`LiveActivitySettings`), the permission carries
-/// the card's slot and the server learns `liveActivity: true`, so it can drive the card while
-/// Oppi is closed; `LiveActivityRelaySync` then gives the relay the tokens.
+/// The server also learns whether this phone shows its Live Activity (`LiveActivitySettings`),
+/// so it knows whether to drive the card while Oppi is closed. Whether it can is the phone's
+/// call alone: the phone keeps the send token and names its permission in the Live Activity
+/// state it gives the relay (`LiveActivityRelaySync`), which lets no other permission drive a
+/// card. Turning the card on or off re-sends the same token with the new setting; it mints
+/// nothing.
 ///
 /// The relay sees the APNs token, never a push key or push content.
 @MainActor
@@ -117,8 +120,10 @@ final class PushRegistration {
     ) async throws {
         var relayRegistration = PushRelayRegistrationStore.load(relay: relay, environment: environment)
         if let existing = relayRegistration, existing.apnsToken != apnsToken {
-            // A new APNs token needs a new relay registration; the old one is useless.
-            try? await client.deleteRegistration(existing)
+            // A new APNs token needs a new relay registration. The old one goes first, with
+            // its permissions.
+            try await client.deleteRegistration(existing)
+            PushRelayRegistrationStore.delete(relay: relay, environment: environment)
             relayRegistration = nil
         }
         let registration: PushRelayClient.Registration
@@ -129,7 +134,6 @@ final class PushRegistration {
             try PushRelayRegistrationStore.save(registration, relay: relay, environment: environment)
         }
 
-        let liveActivity = LiveActivitySettings.isEnabled(serverId: serverId)
         // Each connection re-sends the permission this phone already gave the server: minting
         // on every connection would leak one permission each time, and a full registration
         // takes every server's alerts down with it (below). A token is reused only on the
@@ -148,16 +152,13 @@ final class PushRegistration {
                     // have released it.
                     try? await client.deletePermission(storedPermission.permissionId, registration: registration)
                 }
-                sendToken = try await client.mintSendToken(
-                    registration,
-                    liveActivitySlot: liveActivity ? LiveActivitySettings.slot(serverId: serverId) : nil
-                ).sendToken
+                sendToken = try await client.mintSendToken(registration).sendToken
             } catch PushRelayClient.RelayError.gone, PushRelayClient.RelayError.tooManyPermissions
                 where retryWithNewRelayRegistration {
                 // The relay forgot this device (APNs retired the token), or permissions leaked
                 // before this phone reused them filled it: start over with a fresh
                 // registration, once. Every server mints again on its next connection.
-                try? await client.deleteRegistration(registration)
+                try await client.deleteRegistration(registration)
                 PushRelayRegistrationStore.delete(relay: relay, environment: environment)
                 try await register(
                     api: api, serverId: serverId, deviceId: deviceId, relay: relay,
@@ -173,7 +174,40 @@ final class PushRegistration {
                 serverId: serverId
             )
         }
+        try await sendToServer(api: api, serverId: serverId, deviceId: deviceId, relay: relay, sendToken: sendToken)
+    }
 
+    /// The server's Live Activity setting changed: tell the server, re-sending the send token
+    /// it already holds. Registers afresh only when this phone has no current token for it.
+    @discardableResult
+    func liveActivityChanged(api: APIClient, serverId: String, deviceId: String, relay: URL) async -> Bool {
+        guard let environment = APNsEnvironment.current,
+              let stored = PushSendTokenStore.load(serverId: serverId), stored.deviceId == deviceId,
+              let permission = PushRelayClient.permission(ofSendToken: stored.sendToken),
+              PushRelayRegistrationStore.load(relay: relay, environment: environment)?.registrationId
+              == permission.registrationId else {
+            return await register(api: api, serverId: serverId, deviceId: deviceId, relay: relay)
+        }
+        do {
+            try await sendToServer(api: api, serverId: serverId, deviceId: deviceId, relay: relay, sendToken: stored.sendToken)
+            return true
+        } catch {
+            logger.error("Live Activity setting not sent to server \(serverId.prefix(16), privacy: .public): \(String(describing: error), privacy: .public)")
+            return false
+        }
+    }
+
+    /// Give the server this phone's push key for it, `sendToken`, and whether this phone shows
+    /// its Live Activity; then tell the relay, which learns the permission that may drive the
+    /// card.
+    private func sendToServer(
+        api: APIClient,
+        serverId: String,
+        deviceId: String,
+        relay: URL,
+        sendToken: String
+    ) async throws {
+        let liveActivity = LiveActivitySettings.isEnabled(serverId: serverId)
         let key = try currentOrNewKey(serverId: serverId)
         let publicKey = key.privateKey.publicKey.rawRepresentation
         let keyId = PushEnvelope.keyId(forPublicKey: publicKey).base64URLEncodedString
@@ -214,17 +248,20 @@ final class PushRegistration {
             createdAt: key.createdAt
         ))
         pruneKeys(serverId: serverId, keeping: 2)
-        // A new relay registration starts without Live Activity tokens.
+        // The relay learns this permission for the card, or that a new registration has one.
         LiveActivityRelaySync.shared.publish()
     }
 
     /// Turn push off for a server: the server forgets this device's key and token, the relay
-    /// the permission, and this phone the keys and token.
+    /// the permission, and this phone the keys and token, so the relay lists the server's
+    /// card no more.
     func disable(serverId: String, api: APIClient?, relay: URL?) async {
         Self.setEnabled(false, serverId: serverId)
         let permission = PushSendTokenStore.load(serverId: serverId)
             .flatMap { PushRelayClient.permission(ofSendToken: $0.sendToken) }
+        // First, so the relay stops listing the card even if the calls below fail.
         PushSendTokenStore.delete(serverId: serverId)
+        LiveActivityRelaySync.shared.publish()
         try? await api?.deletePushRegistration()
         if let relay, let permission, let environment = APNsEnvironment.current,
            let registration = PushRelayRegistrationStore.load(relay: relay, environment: environment),

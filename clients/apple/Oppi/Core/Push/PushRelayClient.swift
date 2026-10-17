@@ -64,19 +64,11 @@ struct PushRelayClient: Sendable {
         )
     }
 
-    /// `liveActivitySlot` names this server's Live Activity at the relay; without one the
-    /// server can push alerts but cannot start or update the card.
-    func mintSendToken(
-        _ registration: Registration,
-        liveActivitySlot: String?
-    ) async throws -> (permissionId: String, sendToken: String) {
+    func mintSendToken(_ registration: Registration) async throws -> (permissionId: String, sendToken: String) {
         struct Response: Decodable { let permissionId: String; let sendToken: String }
         let path = "/v1/registrations/\(registration.registrationId)/permissions"
-        let body = try JSONSerialization.data(
-            withJSONObject: liveActivitySlot.map { ["liveActivitySlot": $0] } ?? [:]
-        )
         let response: Response = try await decode(
-            sendAuthenticated("POST", path: path, body: body, registration: registration)
+            sendAuthenticated("POST", path: path, body: Data("{}".utf8), registration: registration)
         )
         return (response.permissionId, response.sendToken)
     }
@@ -89,28 +81,45 @@ struct PushRelayClient: Sendable {
         return (String(parts[1]), String(parts[2]))
     }
 
-    /// The phone's whole Live Activity token state; the relay replaces what it held.
-    struct LiveActivityState: Encodable, Equatable, Sendable {
-        struct Activity: Encodable, Equatable, Sendable {
+    /// The phone's whole Live Activity state at one registration; the relay replaces what it
+    /// held. Each entry names the permission that may drive that server's card: a server the
+    /// phone leaves out cannot start, update, or end one.
+    struct LiveActivityState: Codable, Equatable, Sendable {
+        struct Activity: Codable, Equatable, Sendable {
+            let permissionId: String
             let slot: String
-            let token: String
+            /// The live card's update token; nil while there is no card.
+            let token: String?
+            /// The person dismissed the card: the relay starts none until a server ends it.
+            let dismissed: Bool
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(permissionId, forKey: .permissionId)
+                try container.encode(slot, forKey: .slot)
+                // The relay requires the key, with null for no card.
+                try container.encode(token, forKey: .token)
+                try container.encode(dismissed, forKey: .dismissed)
+            }
+
+            private enum CodingKeys: String, CodingKey { case permissionId, slot, token, dismissed }
         }
 
         let startToken: String?
         let activities: [Activity]
-        /// Slots whose card the person dismissed: the relay starts none for them until a
-        /// server ends it.
-        let dismissed: [String]
+
+        var dismissedSlots: Set<String> {
+            Set(activities.filter(\.dismissed).map(\.slot))
+        }
 
         func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             // The relay requires the key, with null to clear.
             try container.encode(startToken, forKey: .startToken)
             try container.encode(activities, forKey: .activities)
-            try container.encode(dismissed, forKey: .dismissed)
         }
 
-        private enum CodingKeys: String, CodingKey { case startToken, activities, dismissed }
+        private enum CodingKeys: String, CodingKey { case startToken, activities }
     }
 
     func putLiveActivity(_ state: LiveActivityState, registration: Registration) async throws {
@@ -120,13 +129,9 @@ struct PushRelayClient: Sendable {
         _ = try await sendAuthenticated("PUT", path: path, body: encoder.encode(state), registration: registration)
     }
 
-    /// Returns once the relay no longer holds the permission: deleted, or its registration is
-    /// gone, which takes its permissions with it.
     func deletePermission(_ permissionId: String, registration: Registration) async throws {
         let path = "/v1/registrations/\(registration.registrationId)/permissions/\(permissionId)"
-        do {
-            _ = try await sendAuthenticated("DELETE", path: path, body: Data(), registration: registration)
-        } catch RelayError.gone {}
+        _ = try await sendAuthenticated("DELETE", path: path, body: Data(), registration: registration)
     }
 
     /// Returns once the relay no longer holds the registration or its permissions.
@@ -210,7 +215,8 @@ struct DeviceAppAttest: AppAttestProviding {
 }
 
 /// The send token this phone gave each paired server, in this app's keychain, so the next
-/// connection re-sends it instead of minting another permission.
+/// connection re-sends it instead of minting another permission. The phone also names the
+/// server's permission in its Live Activity state (`LiveActivityRelaySync`).
 enum PushSendTokenStore {
     struct Entry: Codable, Equatable, Sendable {
         let sendToken: String

@@ -108,32 +108,60 @@ struct LiveActivitySettingsTests {
         #expect(LiveActivitySettings.serverId(forSlot: b, defaults: defaults) == "sha256:b")
 
         LiveActivitySettings.setEnabled(true, serverId: "sha256:b", defaults: defaults)
-        #expect(LiveActivitySettings.enabledSlots(defaults: defaults) == [b])
+        #expect(LiveActivitySettings.enabledServers(defaults: defaults) == ["sha256:b": b])
+        // Turning a card on gives its server a slot the relay can list.
+        LiveActivitySettings.setEnabled(true, serverId: "sha256:c", defaults: defaults)
+        #expect(LiveActivitySettings.enabledServers(defaults: defaults)["sha256:c"] != nil)
     }
 
-    @Test @MainActor func relayGetsTokensAndDismissalsOnlyForServersWhoseCardIsOn() {
+    @Test @MainActor func eachRegistrationListsOnlyItsOwnServersCardsWithTheirPermissions() {
+        let cards = [
+            LiveActivityRelaySync.Card(slot: "on", registrationId: "r_A", permissionId: "p_on"),
+            LiveActivityRelaySync.Card(slot: "gone", registrationId: "r_A", permissionId: "p_gone"),
+            LiveActivityRelaySync.Card(slot: "other", registrationId: "r_B", permissionId: "p_other"),
+        ]
         let state = LiveActivityRelaySync.state(
             startToken: "5555",
-            activityTokens: ["on": "aaaa", "off": "bbbb"],
+            activityTokens: ["on": "aaaa", "gone": "bbbb", "off": "cccc"],
             dismissedSlots: ["gone", "off"],
-            enabledSlots: ["on", "gone"]
+            cards: cards,
+            registrationId: "r_A"
         )
-        #expect(state == .init(
+        #expect(state == .init(startToken: "5555", activities: [
+            // A dismissed card has no token.
+            .init(permissionId: "p_gone", slot: "gone", token: nil, dismissed: true),
+            .init(permissionId: "p_on", slot: "on", token: "aaaa", dismissed: false),
+        ]))
+        // A registration that lists no card gets no start token, so it can start nothing.
+        let none = LiveActivityRelaySync.state(
             startToken: "5555",
-            activities: [.init(slot: "on", token: "aaaa")],
-            dismissed: ["gone"]
-        ))
-        // No card on anywhere: the relay can start nothing.
-        let none = LiveActivityRelaySync.state(startToken: "5555", activityTokens: ["off": "bbbb"], enabledSlots: [])
-        #expect(none == .init(startToken: nil, activities: [], dismissed: []))
+            activityTokens: ["off": "cccc"],
+            dismissedSlots: [],
+            cards: cards,
+            registrationId: "r_C"
+        )
+        #expect(none == .init(startToken: nil, activities: []))
     }
 
-    @Test func relayBodyCarriesANullStartTokenToClearIt() throws {
-        let body = try JSONEncoder().encode(PushRelayClient.LiveActivityState(startToken: nil, activities: [], dismissed: []))
+    @Test func relayBodyCarriesNullsForNoStartTokenAndNoCard() throws {
+        let body = try JSONEncoder().encode(PushRelayClient.LiveActivityState(
+            startToken: nil,
+            activities: [.init(permissionId: "p_a", slot: "s", token: nil, dismissed: false)]
+        ))
         let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(Set(json.keys) == ["startToken", "activities"])
         #expect(json["startToken"] is NSNull)
-        #expect((json["activities"] as? [Any])?.isEmpty == true)
-        #expect((json["dismissed"] as? [Any])?.isEmpty == true)
+        let activity = try #require((json["activities"] as? [[String: Any]])?.first)
+        #expect(Set(activity.keys) == ["permissionId", "slot", "token", "dismissed"])
+        #expect(activity["token"] is NSNull)
+    }
+
+    @Test func sendTokenNamesItsRegistrationAndPermission() {
+        let parsed = PushRelayClient.permission(ofSendToken: "osp1.r_AAA.p_BBB.secret")
+        #expect(parsed?.registrationId == "r_AAA")
+        #expect(parsed?.permissionId == "p_BBB")
+        #expect(PushRelayClient.permission(ofSendToken: "osp1.r_AAA.p_BBB") == nil)
+        #expect(PushRelayClient.permission(ofSendToken: "osp2.r_AAA.p_BBB.secret") == nil)
     }
 }
 
@@ -149,18 +177,32 @@ struct LiveActivityRelayUploadTests {
         appAttestKeyId: nil
     )
 
+    private static func defaults() -> UserDefaults {
+        let name = "LiveActivityRelayUploadTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
+
     /// What the fake relay saw.
     @MainActor private final class Relay {
         var answers: [Error?]
         var sent: [PushRelayClient.LiveActivityState] = []
         var pauses: [Duration] = []
+        let defaults: UserDefaults
 
-        init(answers: [Error?]) { self.answers = answers }
+        init(answers: [Error?], defaults: UserDefaults = LiveActivityRelayUploadTests.defaults()) {
+            self.answers = answers
+            self.defaults = defaults
+        }
 
+        /// A sync as the app builds it at launch; a second call is the app after a relaunch.
         func sync() -> LiveActivityRelaySync {
             LiveActivityRelaySync(
                 registrations: { [LiveActivityRelayUploadTests.registration] },
-                enabledSlots: { ["slot"] },
+                cards: {
+                    [.init(slot: "slot", registrationId: LiveActivityRelayUploadTests.registration.registrationId, permissionId: "p_A")]
+                },
                 put: { [self] state, _ in
                     sent.append(state)
                     let answer: Error? = answers.isEmpty ? URLError(.cannotConnectToHost) : answers.removeFirst()
@@ -170,7 +212,8 @@ struct LiveActivityRelayUploadTests {
                 sleep: { [self] in
                     try Task.checkCancellation()
                     pauses.append($0)
-                }
+                },
+                defaults: defaults
             )
         }
     }
@@ -183,9 +226,51 @@ struct LiveActivityRelayUploadTests {
         await sync.publish().value
 
         #expect(relay.sent.count == 3)
-        #expect(relay.sent.allSatisfy { $0.dismissed == ["slot"] })
         #expect(relay.pauses == [Duration.seconds(1)] + LiveActivityRelaySync.retryDelays.prefix(2))
+        #expect(relay.sent.allSatisfy { $0.dismissedSlots == ["slot"] && $0.activities.map(\.permissionId) == ["p_A"] })
         #expect(sync.relayHoldsDismissal("slot"))
+    }
+
+    @Test func aFreshDismissalIsNotHeldUntilTheRelayAcceptsIt() async {
+        let relay = Relay(answers: [nil])
+        let sync = relay.sync()
+        sync.setDismissed(["slot"])
+        await sync.publish().value
+        #expect(sync.relayHoldsDismissal("slot"))
+
+        // The counts reached zero; the relay never accepts that state.
+        sync.setDismissed([])
+        await sync.publish().value
+        #expect(!sync.relayHoldsDismissal("slot"))
+        // The person dismissed the next card: what the relay accepted last is not this.
+        sync.setDismissed(["slot"])
+        #expect(!sync.relayHoldsDismissal("slot"), "an upload is in flight")
+    }
+
+    @Test func aStateTheRelayNeverAcceptedIsSentAgainAfterARelaunch() async {
+        let relay = Relay(answers: [])
+        let first = relay.sync()
+        first.setDismissed(["slot"])
+        await first.publish().value
+        #expect(relay.sent.count == LiveActivityRelaySync.retryDelays.count + 1)
+        #expect(!first.relayHoldsDismissal("slot"))
+
+        // The app was killed. At launch the same state goes out again, until accepted.
+        relay.sent = []
+        relay.answers = [nil]
+        let relaunched = relay.sync()
+        relaunched.setDismissed(["slot"])
+        await relaunched.publish().value
+        #expect(relay.sent.map(\.dismissedSlots) == [["slot"]])
+        #expect(relaunched.relayHoldsDismissal("slot"))
+
+        // Accepted state survives a relaunch too: nothing to send, and the dismissal is held.
+        relay.sent = []
+        let again = relay.sync()
+        again.setDismissed(["slot"])
+        await again.publish().value
+        #expect(relay.sent.isEmpty)
+        #expect(again.relayHoldsDismissal("slot"))
     }
 
     @Test func stopsRetryingWhenTheRelayForgotTheRegistration() async {
@@ -194,13 +279,76 @@ struct LiveActivityRelayUploadTests {
         await sync.publish().value
         #expect(relay.sent.count == 1)
     }
+}
 
-    @Test func givesUpAfterTheLastRetry() async {
-        let relay = Relay(answers: [])
-        let sync = relay.sync()
-        sync.setDismissed(["slot"])
+@Suite("Live Activity dismissals", .serialized)
+@MainActor
+struct LiveActivityDismissalTests {
+    private typealias Card = LiveActivityManager.ListedCard
+
+    private func defaults() -> UserDefaults {
+        let name = "LiveActivityDismissalTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
+
+    @Test func aListedCardDismissedWhileItShowedWorkIsADismissal() {
+        let working = LiveActivityManager.Counts(running: 1, needsYou: 0)
+        let listed = [
+            Card(id: "dismissed", slot: "a", state: .dismissed, counts: working),
+            // Ended at zero by the app or a server, then removed: not the person's doing.
+            Card(id: "ended-at-zero", slot: "b", state: .dismissed, counts: LiveActivityManager.noCounts),
+            // Counted already, before the app was killed.
+            Card(id: "counted", slot: "c", state: .dismissed, counts: working),
+            // A live card for the slot came after the dismissed one.
+            Card(id: "old", slot: "d", state: .dismissed, counts: working),
+            Card(id: "new", slot: "d", state: .active, counts: working),
+            Card(id: "ended", slot: "e", state: .ended, counts: working),
+        ]
+        #expect(LiveActivityManager.uncountedDismissals(in: listed, counted: ["counted"]).map(\.id) == ["dismissed"])
+    }
+
+    @Test func aDismissalSurvivesTheAppBeingKilledUntilTheCountsReachZero() async {
+        let defaults = defaults()
+        LiveActivitySettings.setEnabled(true, serverId: "sha256:srv", defaults: defaults)
+        let slot = LiveActivitySettings.slot(serverId: "sha256:srv", defaults: defaults)
+        var sent: [PushRelayClient.LiveActivityState] = []
+        func launch() -> (LiveActivityManager, LiveActivityRelaySync) {
+            let sync = LiveActivityRelaySync(
+                registrations: {
+                    [PushRelayClient.Registration(
+                        relay: "https://relay.example", environment: "sandbox",
+                        apnsToken: String(repeating: "a", count: 64), registrationId: "r_A",
+                        registrationSecret: "secret", appAttestKeyId: nil
+                    )]
+                },
+                cards: { [.init(slot: slot, registrationId: "r_A", permissionId: "p_A")] },
+                put: { state, _ in sent.append(state) },
+                sleep: { _ in try Task.checkCancellation() },
+                defaults: defaults
+            )
+            let manager = LiveActivityManager(
+                isEnabled: { $0 == "sha256:srv" },
+                serverDrivesCard: { _ in true },
+                relaySync: sync,
+                defaults: defaults
+            )
+            return (manager, sync)
+        }
+
+        let (first, _) = launch()
+        first.recordDismissal(slot: slot, activityId: "card-1")
+
+        // Relaunched: the dismissal holds before any card is requested, and the relay hears it.
+        let (second, sync) = launch()
+        #expect(second.dismissedSlots == [slot])
         await sync.publish().value
-        #expect(relay.sent.count == LiveActivityRelaySync.retryDelays.count + 1)
-        #expect(!sync.relayHoldsDismissal("slot"))
+        #expect(sent.last?.dismissedSlots == [slot])
+
+        // The counts reached zero: the dismissal is over, and stays over after a relaunch.
+        second.sync(connectionId: "sha256:srv", sessions: [])
+        let (third, _) = launch()
+        #expect(third.dismissedSlots.isEmpty)
     }
 }

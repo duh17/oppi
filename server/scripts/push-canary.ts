@@ -296,10 +296,17 @@ async function mintSendToken(relay: string): Promise<string> {
         authorization: `Bearer ${registration.registrationSecret}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ liveActivitySlot: LIVE_ACTIVITY_SLOT }),
+      body: "{}",
     })
-  ).json()) as { sendToken?: string };
-  if (!permission.sendToken) fail("relay did not mint a send token");
+  ).json()) as { permissionId?: string; sendToken?: string };
+  if (!permission.sendToken || !permission.permissionId) fail("relay did not mint a send token");
+  // The phone lets this permission drive the server's card.
+  const card = {
+    permissionId: permission.permissionId,
+    slot: LIVE_ACTIVITY_SLOT,
+    token: null,
+    dismissed: false,
+  };
   const liveActivity = await fetch(
     `${relay}/v1/registrations/${registration.registrationId}/live-activity`,
     {
@@ -308,7 +315,7 @@ async function mintSendToken(relay: string): Promise<string> {
         authorization: `Bearer ${registration.registrationSecret}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ startToken: "5".repeat(160), activities: [], dismissed: [] }),
+      body: JSON.stringify({ startToken: "5".repeat(160), activities: [card] }),
     },
   );
   if (liveActivity.status !== 204) fail(`relay refused Live Activity tokens: ${liveActivity.status}`);

@@ -23,6 +23,8 @@ export const LIVE_ACTIVITY_MAX_AGE_MS = 8 * 60 * 60 * 1000;
  * that time. A change this close before a device leaves gets pushed when it does.
  */
 const LEAVE_GRACE_MS = 120_000;
+/** How far a `timestamp` may be from the relay's clock. */
+const LIVE_ACTIVITY_TIMESTAMP_SKEW_SECONDS = 300;
 /** After a failed send (relay or network down), try once more after this. */
 const RETRY_AFTER_FAILURE_MS = 5 * 60_000;
 /**
@@ -399,7 +401,9 @@ export class LiveActivityNotifier {
   /**
    * Send one event. Failures set the device's retry time. Each event carries a later
    * timestamp than the device's last one, so a start right after an end is the newer event:
-   * Apple ignores an event no newer than the one before.
+   * Apple ignores an event no newer than the one before. After the clock steps back, the
+   * next timestamp could sit beyond the relay's 300 s window and every event would be
+   * refused; then the current second goes instead.
    */
   private async send(
     registration: PushRegistration,
@@ -407,7 +411,9 @@ export class LiveActivityNotifier {
     event: LiveActivityPush["event"],
     counts: LiveActivityCounts,
   ): Promise<"delivered" | "no_activity" | "failed"> {
-    const timestamp = Math.max(Math.floor(this.now() / 1000), device.lastTimestamp + 1);
+    const nowSeconds = Math.floor(this.now() / 1000);
+    const next = Math.max(nowSeconds, device.lastTimestamp + 1);
+    const timestamp = next - nowSeconds > LIVE_ACTIVITY_TIMESTAMP_SKEW_SECONDS ? nowSeconds : next;
     device.lastTimestamp = timestamp;
     const result = await this.push.sendLiveActivity(registration, {
       event,

@@ -28,6 +28,7 @@ import {
   APP_ID,
   BUNDLE_ID,
   call,
+  card,
   defineRelaySuite,
   fakeEnvelope,
   liveActivity,
@@ -36,7 +37,6 @@ import {
   nextAddress,
   putLiveActivity,
   registerUnattested,
-  SLOT,
   START_TOKEN,
   type ApnsAnswer,
   type CapturedApnsRequest,
@@ -257,13 +257,13 @@ describe("node adapter", () => {
     const base = Date.parse("2026-10-10T08:00:00Z");
     harness = await startHarness({ now: base });
     const { registration, sendToken } = await liveActivityPhone(harness);
-    const activities = [{ slot: SLOT, token: ACTIVITY_TOKEN }];
-    expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities, dismissed: [] })).toBe(204);
+    const activities = [card(sendToken, { token: ACTIVITY_TOKEN })];
+    expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities })).toBe(204);
     const at = (ms: number) => Math.floor((base + ms) / 1000);
 
     harness.advance(8 * 3_600_000 - 60_000);
     // Sending the same token again keeps its age.
-    expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities, dismissed: [] })).toBe(204);
+    expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities })).toBe(204);
     expect((await liveActivity(harness, sendToken, { event: "update", running: 1, needsYou: 0, timestamp: at(8 * 3_600_000 - 60_000) })).status).toBe(200);
     harness.advance(60_000);
     const late = at(8 * 3_600_000);
@@ -453,7 +453,7 @@ describe("App Attest (node adapter with a test root)", () => {
     const { response, attestation } = await attest("sandbox");
     const { registrationId, registrationSecret } = response.json as { registrationId: string; registrationSecret: string };
     const path = `/v1/registrations/${registrationId}/live-activity`;
-    const body = JSON.stringify({ startToken: START_TOKEN, activities: [], dismissed: [] });
+    const body = JSON.stringify({ startToken: START_TOKEN, activities: [] });
     const put = (headers: Record<string, string> = {}) =>
       call(harness, "PUT", path, { bearer: registrationSecret, rawBody: body, headers });
     expect((await put()).json.error).toBe("assertion_invalid");

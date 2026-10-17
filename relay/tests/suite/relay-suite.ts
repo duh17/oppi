@@ -99,11 +99,10 @@ export async function registerUnattested(
 export async function mintSendToken(
   harness: RelayHarness,
   registration: { registrationId: string; registrationSecret: string },
-  liveActivitySlot?: string,
 ): Promise<string> {
   const response = await call(harness, "POST", `/v1/registrations/${registration.registrationId}/permissions`, {
     bearer: registration.registrationSecret,
-    body: liveActivitySlot ? { liveActivitySlot } : {},
+    body: {},
   });
   expect(response.status).toBe(201);
   return response.json.sendToken as string;
@@ -112,6 +111,19 @@ export async function mintSendToken(
 export const SLOT = "S".repeat(22);
 export const START_TOKEN = "5".repeat(160);
 export const ACTIVITY_TOKEN = "e".repeat(160);
+
+/** The phone's entry for one server's card, naming the permission that may drive it. */
+export function card(
+  sendToken: string,
+  options: { token?: string | null; dismissed?: boolean; slot?: string } = {},
+): { permissionId: string; slot: string; token: string | null; dismissed: boolean } {
+  return {
+    permissionId: sendToken.split(".")[2] ?? "",
+    slot: options.slot ?? SLOT,
+    token: options.token ?? null,
+    dismissed: options.dismissed ?? false,
+  };
+}
 
 export async function putLiveActivity(
   harness: RelayHarness,
@@ -137,14 +149,14 @@ export function liveActivity(
   });
 }
 
-/** A phone with a start token, one server's permission naming `SLOT`, and that send token. */
+/** A phone with a start token that lists one server's permission for the card `SLOT`. */
 export async function liveActivityPhone(
   harness: RelayHarness,
   apnsToken = APNS_TOKEN,
 ): Promise<{ registration: { registrationId: string; registrationSecret: string }; sendToken: string }> {
   const registration = await registerUnattested(harness, "sandbox", apnsToken);
-  const sendToken = await mintSendToken(harness, registration, SLOT);
-  expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities: [], dismissed: [] })).toBe(204);
+  const sendToken = await mintSendToken(harness, registration);
+  expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities: [card(sendToken)] })).toBe(204);
   return { registration, sendToken };
 }
 
@@ -455,8 +467,7 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
       expect(
         await putLiveActivity(harness, registration, {
           startToken: START_TOKEN,
-          activities: [{ slot: SLOT, token: ACTIVITY_TOKEN }],
-          dismissed: [],
+          activities: [card(sendToken, { token: ACTIVITY_TOKEN })],
         }),
       ).toBe(204);
 
@@ -514,13 +525,12 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
     });
 
     it("answers 409 without charging when there is no token to push to", async () => {
-      const noSlot = await mintSendToken(harness, await registerUnattested(harness));
-      expect((await liveActivity(harness, noSlot, { event: "start", running: 1, needsYou: 0 })).json.error).toBe("no_activity");
-
       const registration = await registerUnattested(harness);
-      const sendToken = await mintSendToken(harness, registration, SLOT);
+      const sendToken = await mintSendToken(harness, registration);
+      // The phone has sent no Live Activity state yet.
       expect((await liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 })).json.error).toBe("no_activity");
-      expect(await putLiveActivity(harness, registration, { startToken: null, activities: [], dismissed: [] })).toBe(204);
+      // A card listed, but no start token or update token.
+      expect(await putLiveActivity(harness, registration, { startToken: null, activities: [card(sendToken)] })).toBe(204);
       for (const event of ["start", "update"]) {
         expect((await liveActivity(harness, sendToken, { event, running: 1, needsYou: 0 })).status).toBe(409);
       }
@@ -528,10 +538,42 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
       expect(harness.apnsRequests).toHaveLength(0);
 
       // None of those spent the Live Activity quota.
-      expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities: [], dismissed: [] })).toBe(204);
+      expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities: [card(sendToken)] })).toBe(204);
       for (let index = 0; index < DEFAULT_QUOTA_LIMITS.liveActivityPerMinute; index += 1) {
         expect((await liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 })).status).toBe(200);
       }
+    });
+
+    it("lets only the permission the phone lists drive that server's card", async () => {
+      const registration = await registerUnattested(harness);
+      const older = await mintSendToken(harness, registration);
+      const current = await mintSendToken(harness, registration);
+      const state = (activities: unknown[]) =>
+        putLiveActivity(harness, registration, { startToken: START_TOKEN, activities });
+      const send = (sendToken: string, event: string) =>
+        liveActivity(harness, sendToken, event === "end" ? { event, running: 0, needsYou: 0 } : { event, running: 1, needsYou: 0 });
+
+      expect(await state([card(current, { token: ACTIVITY_TOKEN })])).toBe(204);
+      // A permission the phone minted before, which its server may still hold, drives nothing.
+      for (const event of ["start", "update", "end"]) {
+        expect((await send(older, event)).json.error, event).toBe("no_activity");
+      }
+      expect(harness.apnsRequests).toHaveLength(0);
+      expect((await send(current, "update")).status).toBe(200);
+
+      // The person turned this server's card off: the phone lists it no more, and the same
+      // permission can no longer start, update, or end a card.
+      expect(await state([])).toBe(204);
+      for (const event of ["start", "update", "end"]) {
+        expect((await send(current, event)).json.error, event).toBe("no_activity");
+      }
+      expect(harness.apnsRequests).toHaveLength(1);
+      // Its alerts are untouched.
+      expect((await call(harness, "POST", "/v1/push", { bearer: current, body: { envelope: fakeEnvelope() } })).status).toBe(200);
+
+      // Turned back on: the same permission drives the card again.
+      expect(await state([card(current)])).toBe(204);
+      expect((await send(current, "start")).status).toBe(200);
     });
 
     it("counts Live Activity pushes apart from alerts", async () => {
@@ -576,8 +618,7 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
       expect(
         await putLiveActivity(harness, registration, {
           startToken: START_TOKEN,
-          activities: [{ slot: SLOT, token: ACTIVITY_TOKEN }],
-          dismissed: [],
+          activities: [card(sendToken, { token: ACTIVITY_TOKEN })],
         }),
       ).toBe(204);
       harness.respondApns(() => ({ status, reason }));
@@ -597,8 +638,7 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
       const tokens = (activityToken: string) =>
         putLiveActivity(harness, registration, {
           startToken: START_TOKEN,
-          activities: [{ slot: SLOT, token: activityToken }],
-          dismissed: [],
+          activities: [card(sendToken, { token: activityToken })],
         });
       expect(await tokens(ACTIVITY_TOKEN)).toBe(204);
 
@@ -619,8 +659,7 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
       const tokens = (activityToken: string) =>
         putLiveActivity(harness, registration, {
           startToken: START_TOKEN,
-          activities: [{ slot: SLOT, token: activityToken }],
-          dismissed: [],
+          activities: [card(sendToken, { token: activityToken })],
         });
       const newCard = "f".repeat(160);
       expect(await tokens(ACTIVITY_TOKEN)).toBe(204);
@@ -636,26 +675,26 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
 
     it("starts no card for a dismissed slot until a server ends it", async () => {
       const { registration, sendToken } = await liveActivityPhone(harness);
-      const state = (dismissed: string[]) =>
-        putLiveActivity(harness, registration, { startToken: START_TOKEN, activities: [], dismissed });
+      const state = (dismissed: boolean) =>
+        putLiveActivity(harness, registration, { startToken: START_TOKEN, activities: [card(sendToken, { dismissed })] });
       const start = () => liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 });
       const end = () => liveActivity(harness, sendToken, { event: "end", running: 0, needsYou: 0 });
 
-      expect(await state([SLOT])).toBe(204);
+      expect(await state(true)).toBe(204);
       expect((await start()).json.error).toBe("no_activity");
       expect(harness.apnsRequests).toHaveLength(0);
       // Counts reached zero: the dismissed card has no token, but the dismissal is over.
       expect((await end()).json.error).toBe("no_activity");
-      // The phone listing the slot again, from before it learned that, changes nothing.
-      expect(await state([SLOT])).toBe(204);
+      // The phone listing the card as dismissed again, from before it learned that, changes nothing.
+      expect(await state(true)).toBe(204);
       expect((await start()).status).toBe(200);
 
-      // A new dismissal: the phone stopped listing the slot, then listed it again.
-      expect(await state([])).toBe(204);
-      expect(await state([SLOT])).toBe(204);
+      // A new dismissal: the phone stopped listing the card as dismissed, then listed it again.
+      expect(await state(false)).toBe(204);
+      expect(await state(true)).toBe(204);
       expect((await start()).json.error).toBe("no_activity");
-      // The phone drops the slot (it saw the counts reach zero): starts go again.
-      expect(await state([])).toBe(204);
+      // The phone clears the dismissal (it saw the counts reach zero): starts go again.
+      expect(await state(false)).toBe(204);
       expect((await start()).status).toBe(200);
       // None of the refusals spent the Live Activity quota.
       expect((await start()).status).toBe(200);
@@ -665,37 +704,42 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
     it("takes the phone's Live Activity tokens only in the fixed shape, with its secret", async () => {
       const registration = await registerUnattested(harness);
       const put = (body: unknown) => putLiveActivity(harness, registration, body);
-      expect(await put({ startToken: START_TOKEN, activities: [{ slot: SLOT, token: ACTIVITY_TOKEN }], dismissed: [] })).toBe(204);
-      const other = "D".repeat(22);
+      const entry = { permissionId: `p_${"P".repeat(22)}`, slot: SLOT, token: ACTIVITY_TOKEN, dismissed: false };
+      const other = { permissionId: `p_${"Q".repeat(22)}`, slot: "D".repeat(22), token: null, dismissed: false };
+      expect(await put({ startToken: START_TOKEN, activities: [entry, other] })).toBe(204);
+      const { token: _token, ...withoutToken } = entry;
       for (const body of [
-        { startToken: START_TOKEN, dismissed: [] },
-        { activities: [], dismissed: [] },
-        { startToken: START_TOKEN, activities: [] },
-        { startToken: "XYZ", activities: [], dismissed: [] },
-        { startToken: START_TOKEN, activities: [{ slot: "short", token: ACTIVITY_TOKEN }], dismissed: [] },
-        { startToken: START_TOKEN, activities: [{ slot: SLOT, token: "nothex" }], dismissed: [] },
-        { startToken: START_TOKEN, activities: [{ slot: SLOT, token: ACTIVITY_TOKEN }, { slot: SLOT, token: START_TOKEN }], dismissed: [] },
-        { startToken: START_TOKEN, activities: Array.from({ length: 17 }, (_, index) => ({ slot: `${String(index).padStart(2, "0")}${"S".repeat(20)}`, token: ACTIVITY_TOKEN })), dismissed: [] },
-        { startToken: START_TOKEN, activities: [], dismissed: ["short"] },
-        { startToken: START_TOKEN, activities: [], dismissed: [other, other] },
+        { startToken: START_TOKEN },
+        { activities: [] },
+        { startToken: "XYZ", activities: [] },
+        { startToken: START_TOKEN, activities: [{ ...entry, slot: "short" }] },
+        { startToken: START_TOKEN, activities: [{ ...entry, permissionId: "p_short" }] },
+        { startToken: START_TOKEN, activities: [{ ...entry, token: "nothex" }] },
+        { startToken: START_TOKEN, activities: [{ ...entry, dismissed: "no" }] },
+        { startToken: START_TOKEN, activities: [withoutToken] },
+        { startToken: START_TOKEN, activities: [entry, { ...other, slot: SLOT }] },
+        { startToken: START_TOKEN, activities: [entry, { ...other, permissionId: entry.permissionId }] },
+        { startToken: START_TOKEN, activities: Array.from({ length: 17 }, (_, index) => ({ ...entry, permissionId: `p_${String(index).padStart(22, "P")}`, slot: `${String(index).padStart(2, "0")}${"S".repeat(20)}` })) },
         // A dismissed card has no update token.
-        { startToken: START_TOKEN, activities: [{ slot: SLOT, token: ACTIVITY_TOKEN }], dismissed: [SLOT] },
+        { startToken: START_TOKEN, activities: [{ ...entry, dismissed: true }] },
       ]) {
         expect(await put(body), JSON.stringify(body).slice(0, 80)).toBe(400);
       }
-      expect(await put({ startToken: null, activities: [{ slot: SLOT, token: ACTIVITY_TOKEN, name: "x" }], dismissed: [] })).toBe(400);
+      expect(await put({ startToken: null, activities: [{ ...entry, name: "x" }] })).toBe(400);
+      expect(await put({ startToken: null, activities: [], dismissed: [] })).toBe(400);
       expect(
         (await call(harness, "PUT", `/v1/registrations/${registration.registrationId}/live-activity`, {
           bearer: "wrong",
-          body: { startToken: null, activities: [], dismissed: [] },
+          body: { startToken: null, activities: [] },
         })).status,
       ).toBe(401);
+      // A permission names no card: the phone's state does.
       expect(
         (await call(harness, "POST", `/v1/registrations/${registration.registrationId}/permissions`, {
           bearer: registration.registrationSecret,
-          body: { liveActivitySlot: "not a slot" },
-        })).status,
-      ).toBe(400);
+          body: { liveActivitySlot: SLOT },
+        })).json.error,
+      ).toBe("unknown_field");
     });
 
     it("stores and logs no envelope, send token, or client address", async () => {

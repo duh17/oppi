@@ -261,8 +261,7 @@ checks `rpIdHash`, and requires the counter to exceed the stored counter, then s
 Failures: `401 unauthorized`, `401 assertion_invalid`, `410 gone` for an unknown
 registration.
 
-- **`POST /v1/registrations/{id}/permissions`**, body `{}` or
-  `{"liveActivitySlot": "<22 base64url chars>"}` (section 3.6) → `201 {"permissionId":
+- **`POST /v1/registrations/{id}/permissions`**, body `{}` → `201 {"permissionId":
   "p_<base64url 16 bytes>", "sendToken": "osp1.<registrationId>.<permissionId>.<base64url 32
   bytes>"}`. At most 16 permissions per registration (`409 too_many_permissions`). The app
   hands the token to one paired server, which treats it as opaque. The app keeps the token
@@ -271,8 +270,8 @@ registration.
   ids route the request to the registration's storage.
 - **`DELETE /v1/registrations/{id}/permissions/{permissionId}`** → `204`, idempotent.
 - **`DELETE /v1/registrations/{id}`** → `204`. Deletes its permissions.
-- **`PUT /v1/registrations/{id}/live-activity`**: the phone's Live Activity tokens
-  (section 3.6), `204`.
+- **`PUT /v1/registrations/{id}/live-activity`**: the phone's Live Activity state, which
+  names the permission that may drive each server's card (section 3.6), `204`.
 
 ### 3.2 Server calls
 
@@ -322,10 +321,11 @@ spend theirs; registering again keeps both. A Live Activity push refused before 
 
 Per registration: id, `SHA-256(registrationSecret)`, APNs token, environment, attested
 flag, App Attest public key and counter, creation time, permissions (id and
-`SHA-256(secret)`, and the Live Activity slot when given), and quota counters. With Live
-Activities (3.6): the ActivityKit push-to-start token, each live card's update token with
-its slot and the time the relay first saw it, the slots whose card the person dismissed
-(and whether a server has ended each since), and the Live Activity quota counters. Per
+`SHA-256(secret)`), and quota counters. With Live Activities (3.6): the ActivityKit
+push-to-start token; for each server whose card is on, the permission id that may drive it,
+its slot, the live card's update token and the time the relay first saw it, and whether the
+person dismissed it (and whether a server has ended it since); and the Live Activity quota
+counters. Per
 APNs token, the id of its current registration (the Cloudflare adapter keys this by the
 token and stores only the id). Challenges until used or expired. No envelopes, no Live
 Activity counts, no client addresses, no request logs.
@@ -357,36 +357,51 @@ ActivityKit payloads, so this path carries two integers, a timestamp, and a rand
 never text. It is not encrypted; there is nothing in it to encrypt beyond the counts.
 
 **Slot.** The phone makes a random 16-byte value per server (22 base64url characters,
-kept on the phone) and sends it as `liveActivitySlot` when it mints that server's
-permission, only while the card is on for that server. It names the card
-(`attributes.slot`) and keys its update token, and survives the phone minting a new
-permission for the same server. A permission without a slot gets `409 no_activity`.
+kept on the phone). It names the card (`attributes.slot`) and keys its update token, and
+survives the phone minting a new permission for the same server. Servers never see it.
+
+**Which servers may drive a card.** The phone alone decides, through the state below: each
+entry names the permission (by id) whose send token may start, update, and end that server's
+card. A send token whose permission no entry names gets `409 no_activity` for every event: a
+permission minted before the current one, a server whose card the person turned off, or a
+server with push off. Turning a server's card off or on changes only this state; it mints
+and deletes no permission. The phone keeps each server's send token (keychain,
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`) to name its permission, and to re-send
+the same token to the server with a new `liveActivity` value (section 5) when the setting
+changes.
 
 **`PUT /v1/registrations/{id}/live-activity`** (registration-authenticated, App Attest
 assertion when attested):
 
 ```json
-{ "startToken": "<hex>" , "activities": [{ "slot": "<22 chars>", "token": "<hex>" }], "dismissed": ["<22 chars>"] }
+{ "startToken": "<hex>", "activities": [{ "permissionId": "p_...", "slot": "<22 chars>", "token": "<hex>", "dismissed": false }] }
 ```
 
-All three keys are required; `startToken` may be `null`. Tokens are lowercase hex, 64-200
-characters; at most 16 activities with distinct slots. `dismissed` lists at most 16 distinct
-slots whose card the person dismissed and that have had no card since; a slot in
-`dismissed` cannot also be in `activities`. The body replaces what the relay held. The
-relay keeps, per slot, when it first saw that token (`tokenAt`); sending the same token
-again keeps it. `204`; `400 bad_request`, `400 unknown_field`, `401`, `410 gone`.
-The phone sends its whole state whenever ActivityKit gives it a push-to-start or update
-token, a card ends or is dismissed, or a server's card setting changes, and sends it again
-after 5 s, 15 s, 1 min, 5 min, and 5 min while a relay fails to accept it. It sends
-`startToken: null` while no server's card is on, and only the update tokens and dismissed
-slots of servers whose card is on.
+Both keys are required; `startToken` may be `null`. Each entry needs all four keys:
+`permissionId` in the relay's `p_` format; `slot`; `token`, the live card's update token or
+`null` while there is none; and `dismissed`, a boolean, true when the person dismissed the
+card and it has had no card since (then `token` must be `null`). Tokens are lowercase hex,
+64-200 characters; at most 16 entries, with distinct permission ids and distinct slots. The
+relay does not check that a listed permission exists; one that does not exist drives
+nothing. The body replaces what the relay held. The relay keeps, per slot, when it first saw
+that token (`tokenAt`); sending the same token again keeps it. `204`; `400 bad_request`,
+`400 unknown_field`, `401`, `410 gone`.
 
-**Dismissal.** A slot the phone lists in `dismissed` gets no `start` (`409 no_activity`)
+Each registration gets only the entries of servers whose send token it minted, and
+`startToken: null` when it gets none. The phone sends its state whenever ActivityKit gives it
+a push-to-start or update token, a card ends or is dismissed, a server's card or push setting
+changes, or it registers with a server; again after 5 s, 15 s, 1 min, 5 min, and 5 min while a
+relay fails to accept it; and at launch and on each return to the foreground while a relay
+has not accepted the current state. The state and what each registration last accepted
+survive the app being killed; a registration that already accepted the current state is not
+sent it again.
+
+**Dismissal.** An entry listed with `dismissed: true` gets no `start` (`409 no_activity`)
 until a server sends `end` for it, which says that server's counts reached zero; the relay
 records that even when there is no token to end. The record lasts while the phone keeps
-listing the slot, so a phone that has not yet learned of the `end` cannot dismiss the next
-card by listing the slot again; once the phone stops listing the slot, listing it again is a
-new dismissal.
+listing the card as dismissed, so a phone that has not yet learned of the `end` cannot
+dismiss the next card by listing it again; once the phone lists it as not dismissed (or not
+at all), listing it as dismissed again is a new dismissal.
 
 **`POST /v1/live-activity`** (Bearer send token):
 
@@ -401,8 +416,8 @@ new dismissal.
 | `timestamp` | integer Unix seconds within 300 s of the relay clock |
 
 No other field is accepted (`400 unknown_field`). Results: `200 {"ok": true}`; `409
-no_activity` when the permission has no slot, `start` finds no start token or a dismissed
-slot, `update` or `end` finds no update token for the slot, or `update` finds one at least
+no_activity` when the phone lists no card for the permission, `start` finds no start token or
+a dismissed card, `update` or `end` finds no update token for the card, or `update` finds one at least
 8 hours old (Apple has ended that card; `end` still goes, to take it off the Lock Screen);
 `410 gone` as for `/v1/push`; `429 quota_exceeded` with `Retry-After`; `502
 apns_unavailable`. Once APNs accepts a `start`, the relay forgets the slot's previous update
@@ -432,9 +447,16 @@ relay template's keys. The app drives each card itself while it runs, requesting
 `pushType: .token`, and ends it 30 s after the counts reach zero. It adopts a card the relay
 started (same slot); a newer card for a slot replaces the older one. A card the person
 dismissed stays away until that server's counts reach zero: the app starts none, and lists
-the slot in `dismissed` until it sees the counts reach zero or adopts a card the relay
-started after every relay accepted the dismissal (which means a server ended it at zero). A
-card the relay starts before it has accepted the dismissal is ended at once.
+the card as dismissed until it sees the counts reach zero or adopts a card a relay started
+while every relay holds the dismissal (which means a server ended it at zero). Every relay
+holds it when no upload is in flight and the dismissed cards each registration last accepted
+are the ones the phone lists now; a card a relay starts at any other time is ended at once.
+Dismissals survive the app being killed and are restored before the app requests any card.
+When the app comes back, a card ActivityKit still lists as dismissed counts as a dismissal if
+it showed nonzero counts (the app and the relay end cards at zero), no live card for the
+slot came after it, and the app has not counted that card before; the app keeps the ids of the
+dismissed cards it counted while ActivityKit still lists them. On the same pass it forgets
+update tokens of cards ActivityKit no longer lists.
 
 **Server.** See section 5.
 
@@ -476,8 +498,9 @@ any field from a push that failed a check. Without Apple's
   storing it for the extension. In `off` mode the route answers `409 push_disabled`.
   `liveActivity` (optional boolean, `400` otherwise) says the phone shows this server's
   Live Activity; it is outside the signature on purpose: a proxy that sets it only gets
-  `409 no_activity` from the relay, which holds the real tokens, and one that clears it
-  only withholds the card, as dropping the request would.
+  `409 no_activity` from the relay, which follows the phone's own list (3.6), and one that
+  clears it only withholds the card, as dropping the request would. The phone sends the same
+  request again, with the send token the server already holds, when the setting changes.
 - **`DELETE /me/push-registration`** forgets the calling device's registration and asks
   the relay to delete its permission.
 - Revoking a device or rotating the owner token removes its registration in the same
@@ -524,13 +547,16 @@ any field from a push that failed a check. Without Apple's
   started it; for an unknown card, the latest of the time the counts last rose from zero,
   this server's last start, and 8 hours before the server lost track (so a card left from
   before a restart is restarted at the reconcile). Each event to a device carries a later
-  `timestamp` than the one before, so the `start` after an `end` is the newer event. When a
+  `timestamp` than the one before, so the `start` after an `end` is the newer event, unless
+  that would put it more than 300 s ahead of the server's clock (the clock stepped back), when
+  it carries the current second. When a
   device leaves, the server assumes its card shows the current counts, unless they changed in
   the 2 minutes before (a suspended app may have missed that), and then sends. A minute after
   startup it reconciles each device once. Network failures retry after 5 minutes; a `429`
   waits out `Retry-After`. Budget: 40 per device and UTC day, apart from alerts; `update`
-  stops at 32 so `start` and `end` keep room; a `409 no_activity`, which the relay does not
-  charge, does not count.
+  stops at 32 so `start` and `end` keep room. Only sends the relay counted use it: delivered,
+  `502 apns_unavailable` (APNs failed after the relay charged it), and `429`; a network
+  failure, a timeout, another `5xx`, or a `409 no_activity` does not count.
 
 ## 6. Threat model
 
@@ -585,10 +611,11 @@ forging it would need a quantum computer at the time of the attack, so there is 
 harvest.
 
 **Live Activity metadata, by design:** the relay sees each Live Activity push's counts
-and timing (not stored), the phone's push-to-start and update tokens, the per-server slots,
-and when each update token arrived; Apple sees the counts, timing, slot, and the fixed
-start alert. Nobody else's text is in it. A stolen send token can set a phone's card to
-false counts, within the Live Activity quota, for the server it was minted for.
+and timing (not stored), the phone's push-to-start and update tokens, the per-server slots
+and which permission may drive each, and when each update token arrived; Apple sees the
+counts, timing, slot, and the fixed start alert. Nobody else's text is in it. A stolen send
+token can set a phone's card to false counts, within the Live Activity quota, for the server
+it was minted for, while the phone lists its permission for that card.
 
 **Out of scope for v1:** notification rules, a delivery log, a standby on
 another cloud, and the independent cryptographic review.

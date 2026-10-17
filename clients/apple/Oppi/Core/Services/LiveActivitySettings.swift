@@ -18,6 +18,8 @@ enum LiveActivitySettings {
 
     static func setEnabled(_ enabled: Bool, serverId: String, defaults: UserDefaults = .standard) {
         defaults.set(enabled, forKey: enabledKey(serverId: serverId))
+        // The relay learns the card by its slot, so an enabled server always has one.
+        if enabled { _ = slot(serverId: serverId, defaults: defaults) }
     }
 
     /// The card's random name for this server, made on first use and kept: 16 random bytes,
@@ -40,11 +42,9 @@ enum LiveActivitySettings {
         return slots.first { $0.value == slot }?.key
     }
 
-    /// Slots of servers whose card is on.
-    static func enabledSlots(defaults: UserDefaults = .standard) -> Set<String> {
+    /// The slot of each server whose card is on, by server ID.
+    static func enabledServers(defaults: UserDefaults = .standard) -> [String: String] {
         let slots = defaults.dictionary(forKey: slotsKey) as? [String: String] ?? [:]
-        return Set(slots.compactMap { serverId, slot in
-            isEnabled(serverId: serverId, defaults: defaults) ? slot : nil
-        })
+        return slots.filter { isEnabled(serverId: $0.key, defaults: defaults) }
     }
 }

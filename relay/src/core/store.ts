@@ -12,40 +12,34 @@ export interface PermissionRecord {
   id: string;
   /** base64url SHA-256 of the send token's secret part. */
   secretHash: string;
-  /**
-   * The phone's random name for this server's Live Activity (22 base64url characters). It
-   * names the activity a `start` creates and keys its update token, and survives the phone
-   * minting a new permission for the same server.
-   */
-  liveActivitySlot?: string;
-}
-
-/** Update token of one live activity on the phone. */
-export interface LiveActivityTokenRecord {
-  slot: string;
-  /** Lowercase hex ActivityKit push token. */
-  token: string;
-  /** When the relay first saw this token for this slot: the activity's start, near enough. */
-  tokenAt: number;
 }
 
 /**
- * A slot whose card the person dismissed. `start` stays refused for it until a server sends
- * `end` for the slot (its counts reached zero), which sets `ended`. The entry lasts while the
- * phone keeps listing the slot, so a stale listing cannot dismiss it again.
+ * One server's card, as the phone last listed it. Only the send token of `permissionId` may
+ * start, update, or end it; the phone names that permission, so a permission it does not
+ * list (an older one, or one whose card the person turned off) drives nothing.
  */
-export interface LiveActivityDismissalRecord {
+export interface LiveActivityRecord {
+  permissionId: string;
+  /** The phone's random name for the card (22 base64url characters), never the server's. */
   slot: string;
-  ended: boolean;
+  /** Lowercase hex ActivityKit update token of the live card; absent while there is none. */
+  token?: string;
+  /** When the relay first saw `token` for this slot: the card's start, near enough. */
+  tokenAt?: number;
+  /**
+   * The person dismissed the card. `start` stays refused until a server sends `end` (its
+   * counts reached zero), which sets `ended`. It lasts while the phone keeps listing the card
+   * as dismissed, so a stale listing cannot dismiss it again.
+   */
+  dismissal?: { ended: boolean };
 }
 
-/** The phone's Live Activity tokens. */
+/** The phone's Live Activity state. */
 export interface LiveActivityState {
   /** ActivityKit push-to-start token, lowercase hex. */
   startToken?: string;
-  activities: LiveActivityTokenRecord[];
-  /** Absent when no card is dismissed. */
-  dismissed?: LiveActivityDismissalRecord[];
+  activities: LiveActivityRecord[];
 }
 
 export interface QuotaState {
@@ -111,9 +105,8 @@ export type LiveActivityEvent = "start" | "update" | "end";
 /** The phone's whole Live Activity state, as `PUT .../live-activity` sends it. */
 export interface LiveActivityUpdate {
   startToken: string | null;
-  activities: Array<{ slot: string; token: string }>;
-  /** Slots whose card the person dismissed and that have no card since. */
-  dismissed: string[];
+  /** One per server whose card is on. A dismissed card has no token. */
+  activities: Array<{ permissionId: string; slot: string; token: string | null; dismissed: boolean }>;
 }
 
 /** Which token a Live Activity push goes to: the phone's start token or one slot's activity. */
@@ -175,8 +168,9 @@ export interface RelayStore {
     now: number,
   ): Promise<boolean>;
   /**
-   * Check the permission's secret, find the token the event goes to, and charge one Live
-   * Activity push. An `end` also ends the slot's dismissal, even when there is no token.
+   * Check the permission's secret and that the phone lists it for a card, find the token the
+   * event goes to, and charge one Live Activity push. An `end` also ends the card's
+   * dismissal, even when there is no token.
    */
   authorizeLiveActivity(
     id: string,
@@ -268,17 +262,19 @@ export function applySetLiveActivity(
   update: LiveActivityUpdate,
   now: number,
 ): void {
-  const previous = record.liveActivity;
-  const dismissed = update.dismissed.map(
-    (slot) => previous?.dismissed?.find((entry) => entry.slot === slot) ?? { slot, ended: false },
-  );
+  const previous = record.liveActivity?.activities ?? [];
   record.liveActivity = {
     ...(update.startToken ? { startToken: update.startToken } : {}),
-    activities: update.activities.map(({ slot, token }) => {
-      const kept = previous?.activities.find((entry) => entry.slot === slot && entry.token === token);
-      return { slot, token, tokenAt: kept?.tokenAt ?? now };
+    activities: update.activities.map(({ permissionId, slot, token, dismissed }) => {
+      const held = previous.find((entry) => entry.slot === slot);
+      const tokenAt = held?.token === token ? held?.tokenAt : undefined;
+      return {
+        permissionId,
+        slot,
+        ...(token ? { token, tokenAt: tokenAt ?? now } : {}),
+        ...(dismissed ? { dismissal: held?.dismissal ?? { ended: false } } : {}),
+      };
     }),
-    ...(dismissed.length > 0 ? { dismissed } : {}),
   };
 }
 
@@ -298,12 +294,15 @@ export function applyAuthorizeLiveActivity(
   if (!permission || !hashesEqual(permission.secretHash, secretHash)) {
     return { authorization: { ok: false, reason: "gone" }, changed: false };
   }
-  const slot = permission.liveActivitySlot;
   const state = record.liveActivity;
-  if (!slot || !state) return { authorization: { ok: false, reason: "no_activity" }, changed: false };
+  // The phone names the permission that may drive each card; any other drives none.
+  const activity = state?.activities.find((entry) => entry.permissionId === permissionId);
+  if (!state || !activity) {
+    return { authorization: { ok: false, reason: "no_activity" }, changed: false };
+  }
+  const { slot, dismissal } = activity;
 
   // The work the dismissed card counted is over; the next work may show a card again.
-  const dismissal = state.dismissed?.find((entry) => entry.slot === slot);
   let changed = false;
   if (event === "end" && dismissal && !dismissal.ended) {
     dismissal.ended = true;
@@ -317,12 +316,14 @@ export function applyAuthorizeLiveActivity(
     // The person dismissed this server's card: no new one until its counts reach zero.
     if (!dismissal || dismissal.ended) token = state.startToken;
     target = { kind: "start" };
-    replacedToken = state.activities.find((entry) => entry.slot === slot)?.token;
+    replacedToken = activity.token;
   } else {
-    const activity = state.activities.find((entry) => entry.slot === slot);
     // Apple has ended an activity this old; an update would land nowhere. An `end` still
     // goes, to take the ended card off the Lock Screen.
-    if (activity && (event === "end" || now - activity.tokenAt < LIVE_ACTIVITY_MAX_AGE_MS)) {
+    if (
+      activity.token &&
+      (event === "end" || now - (activity.tokenAt ?? now) < LIVE_ACTIVITY_MAX_AGE_MS)
+    ) {
       token = activity.token;
     }
     target = { kind: "activity", slot };
@@ -362,9 +363,11 @@ export function applyClearLiveActivityToken(
     delete state.startToken;
     return true;
   }
-  const before = state.activities.length;
-  state.activities = state.activities.filter(
-    (entry) => entry.slot !== target.slot || entry.token !== token,
+  const activity = state.activities.find(
+    (entry) => entry.slot === target.slot && entry.token === token,
   );
-  return state.activities.length !== before;
+  if (!activity) return false;
+  delete activity.token;
+  delete activity.tokenAt;
+  return true;
 }

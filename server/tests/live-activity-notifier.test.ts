@@ -113,6 +113,18 @@ describe("LiveActivityNotifier", () => {
     expect(events()).toEqual(["start 1/0", "end 0/0"]);
   });
 
+  it("sends the current second after the clock steps back, not a timestamp the relay refuses", async () => {
+    leave();
+    change({ running: 1, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    change({ running: 2, needsYou: 0 });
+    // The timer is already armed; the wall clock steps back an hour before it fires.
+    vi.setSystemTime(Date.now() - 3_600_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events()).toEqual(["start 1/0", "update 2/0"]);
+    expect(sent[1]?.timestamp).toBe(Math.floor(Date.now() / 1000));
+  });
+
   it("sends at most once a minute per device, and the latest counts win", async () => {
     leave();
     change({ running: 1, needsYou: 0 });

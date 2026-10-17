@@ -73,10 +73,8 @@ struct ServerNotificationsSection: View {
                 ProgressView()
                     .accessibilityIdentifier("server.liveActivity.working")
             }
-            if liveActivityStatus == .failed {
-                Text(liveActivityEnabled
-                    ? "Couldn't let this server update the Live Activity while Oppi is closed. Oppi tries again when it reconnects."
-                    : "Couldn't confirm with the relay that this server can no longer start the Live Activity. Oppi tries again when it reconnects.")
+            if liveActivityStatus == .failed, liveActivityEnabled {
+                Text("Couldn't let this server update the Live Activity while Oppi is closed. Oppi tries again when it reconnects.")
                     .foregroundStyle(.themeOrange)
                     .accessibilityIdentifier("server.liveActivity.error")
             }
@@ -136,20 +134,20 @@ struct ServerNotificationsSection: View {
         liveActivityEnabled = enabled
         LiveActivityManager.shared.settingsChanged(serverId: serverId)
         connection?.syncLiveActivityState()
-        // The server learns the change, and the relay the card's slot, with a fresh registration,
-        // which deletes the permission that named the slot before minting the next.
+        // The relay already follows the phone's state (settingsChanged sent it); the server
+        // learns whether to drive the card. Turning it off takes effect at the relay either way.
         liveActivityStatus = .idle
         guard pushEnabled, let connection, let relay = connection.pushRelay, let api = connection.apiClient,
               let deviceId = connection.credentials?.deviceCredential?.deviceId else { return }
         liveActivityStatus = .working
         Task {
-            let registered = await PushRegistration.shared.register(
+            let updated = await PushRegistration.shared.liveActivityChanged(
                 api: api,
                 serverId: serverId,
                 deviceId: deviceId,
                 relay: relay
             )
-            liveActivityStatus = registered ? .idle : .failed
+            liveActivityStatus = updated ? .idle : .failed
         }
     }
 

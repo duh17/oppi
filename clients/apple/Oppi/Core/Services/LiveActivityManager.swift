@@ -15,7 +15,8 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Live
 ///
 /// A card the person dismissed stays away until that server's counts reach zero: this app
 /// starts none for it, and the relay, told through `LiveActivityRelaySync`, lets no server
-/// start one until the server ends it at zero.
+/// start one until the server ends it at zero. Dismissals survive the app being killed, and a
+/// dismissed card that ActivityKit still lists when Oppi comes back counts as one.
 @MainActor @Observable
 final class LiveActivityManager {
     static let shared = LiveActivityManager()
@@ -33,20 +34,80 @@ final class LiveActivityManager {
     /// Token and state watchers, by activity ID.
     private var watchers: [String: Task<Void, Never>] = [:]
     private var systemObservers: [Task<Void, Never>] = []
-    /// Slots whose card the person dismissed: no new card until the counts reach zero.
-    @ObservationIgnored private var dismissedSlots: Set<String> = [] {
-        didSet { LiveActivityRelaySync.shared.setDismissed(dismissedSlots) }
+    @ObservationIgnored private var dismissals: Dismissals {
+        didSet {
+            guard dismissals != oldValue else { return }
+            dismissals.save(to: defaults)
+            relaySync.setDismissed(dismissals.slots)
+        }
     }
+
+    /// Slots whose card the person dismissed: no new card until the counts reach zero.
+    var dismissedSlots: Set<String> { dismissals.slots }
 
     private let isEnabled: @MainActor (String) -> Bool
     private let serverDrivesCard: @MainActor (String) -> Bool
+    private let relaySync: LiveActivityRelaySync
+    private let defaults: UserDefaults
 
     init(
         isEnabled: @escaping @MainActor (String) -> Bool = { LiveActivitySettings.isEnabled(serverId: $0) },
-        serverDrivesCard: @escaping @MainActor (String) -> Bool = { PushRegistration.isEnabled(serverId: $0) }
+        serverDrivesCard: @escaping @MainActor (String) -> Bool = { PushRegistration.isEnabled(serverId: $0) },
+        relaySync: LiveActivityRelaySync = .shared,
+        defaults: UserDefaults = .standard
     ) {
         self.isEnabled = isEnabled
         self.serverDrivesCard = serverDrivesCard
+        self.relaySync = relaySync
+        self.defaults = defaults
+        // Before any card is requested: a dismissal from before the app was killed holds.
+        dismissals = Dismissals.load(from: defaults)
+        relaySync.setDismissed(dismissals.slots)
+    }
+
+    // MARK: - Dismissals
+
+    /// Dismissed slots, and the IDs of the dismissed cards already counted, so a dismissed card
+    /// ActivityKit still lists counts once.
+    struct Dismissals: Codable, Equatable {
+        var slots: Set<String> = []
+        var activityIds: Set<String> = []
+
+        private static let key = "\(AppIdentifiers.subsystem).liveActivity.dismissals"
+
+        static func load(from defaults: UserDefaults) -> Dismissals {
+            defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(Dismissals.self, from: $0) } ?? Dismissals()
+        }
+
+        func save(to defaults: UserDefaults) {
+            guard let data = try? JSONEncoder().encode(self) else { return }
+            defaults.set(data, forKey: Self.key)
+        }
+    }
+
+    /// A card as ActivityKit lists it.
+    struct ListedCard: Equatable {
+        let id: String
+        let slot: String
+        let state: ActivityState
+        let counts: Counts
+    }
+
+    /// Listed cards the person dismissed that this app has not counted yet: dismissed while
+    /// they showed work (this app and the relay end a card at zero), with no live card for
+    /// the slot since.
+    static func uncountedDismissals(in listed: [ListedCard], counted: Set<String>) -> [ListedCard] {
+        let live = Set(listed.filter { $0.state == .active || $0.state == .stale }.map(\.slot))
+        return listed.filter { card in
+            card.state == .dismissed && card.counts != noCounts
+                && !live.contains(card.slot) && !counted.contains(card.id)
+        }
+    }
+
+    /// The person dismissed the card `activityId` for `slot`.
+    func recordDismissal(slot: String, activityId: String) {
+        dismissals.slots.insert(slot)
+        dismissals.activityIds.insert(activityId)
     }
 
     // MARK: - Counts
@@ -93,7 +154,7 @@ final class LiveActivityManager {
             countsByServer.removeValue(forKey: serverId)
             endCard(serverId: serverId)
         }
-        LiveActivityRelaySync.shared.publish()
+        relaySync.publish()
     }
 
     /// Watch for cards the relay starts and for the push-to-start token. Call once at launch,
@@ -106,26 +167,31 @@ final class LiveActivityManager {
                 self?.adopt(activity)
             }
         })
+        let relaySync = relaySync
         systemObservers.append(Task {
             for await token in Activity<OppiActivityAttributes>.pushToStartTokenUpdates {
-                LiveActivityRelaySync.shared.setStartToken(token)
+                relaySync.setStartToken(token)
             }
         })
+        // A state a relay had not accepted when the app was killed.
+        relaySync.publish()
     }
 
-    /// Back in the foreground: pick up cards started or ended while away.
+    /// Back in the foreground: pick up cards started, ended, or dismissed while away, and send
+    /// the relay any state it has not accepted.
     func recoverIfNeeded() {
         adoptExisting()
         for serverId in countsByServer.keys { apply(serverId: serverId) }
+        relaySync.publish()
     }
 
     // MARK: - ActivityKit
 
     private func apply(serverId: String) {
         guard let counts = countsByServer[serverId] else { return }
-        let slot = LiveActivitySettings.slot(serverId: serverId)
+        let slot = LiveActivitySettings.slot(serverId: serverId, defaults: defaults)
         if counts == Self.noCounts {
-            dismissedSlots.remove(slot)
+            dismissals.slots.remove(slot)
             endCard(serverId: serverId)
             return
         }
@@ -135,7 +201,7 @@ final class LiveActivityManager {
             Task { await detached.update(ActivityContent(state: counts, staleDate: nil)) }
             return
         }
-        guard !dismissedSlots.contains(slot), ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        guard !dismissals.slots.contains(slot), ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         do {
             let activity = try Activity.request(
                 attributes: OppiActivityAttributes(slot: slot),
@@ -149,10 +215,10 @@ final class LiveActivityManager {
     }
 
     private func endCard(serverId: String) {
-        let slot = LiveActivitySettings.slot(serverId: serverId)
+        let slot = LiveActivitySettings.slot(serverId: serverId, defaults: defaults)
         guard let activity = activities.removeValue(forKey: slot) else { return }
         end(activity, dismissal: .after(Date().addingTimeInterval(Self.dismissalDelay)))
-        LiveActivityRelaySync.shared.removeActivity(slot: slot)
+        relaySync.removeActivity(slot: slot)
     }
 
     private func end(_ activity: Activity<OppiActivityAttributes>, dismissal: ActivityUIDismissalPolicy) {
@@ -160,10 +226,24 @@ final class LiveActivityManager {
         Task { await detached.end(ActivityContent(state: Self.noCounts, staleDate: nil), dismissalPolicy: dismissal) }
     }
 
+    /// Adopt every live card ActivityKit lists, count the dismissals that happened while Oppi
+    /// was not running, and forget update tokens of cards that are gone.
     private func adoptExisting() {
-        for activity in Activity<OppiActivityAttributes>.activities {
+        let listed = Activity<OppiActivityAttributes>.activities
+        for activity in listed {
             adopt(activity)
         }
+        let cards = listed.map {
+            ListedCard(id: $0.id, slot: $0.attributes.slot, state: $0.activityState, counts: $0.content.state)
+        }
+        for card in Self.uncountedDismissals(in: cards, counted: dismissals.activityIds)
+            where LiveActivitySettings.serverId(forSlot: card.slot, defaults: defaults).map(isEnabled) == true {
+            logger.info("Live Activity dismissed while Oppi was not running")
+            recordDismissal(slot: card.slot, activityId: card.id)
+        }
+        // Only cards ActivityKit still lists can come back through it.
+        dismissals.activityIds.formIntersection(cards.map(\.id))
+        relaySync.keepActivities(slots: Set(activities.keys))
     }
 
     /// Track a card. A newer card for the same server replaces the one held: it is the one
@@ -171,22 +251,22 @@ final class LiveActivityManager {
     private func adopt(_ activity: Activity<OppiActivityAttributes>) {
         guard activity.activityState == .active || activity.activityState == .stale else { return }
         let slot = activity.attributes.slot
-        guard LiveActivitySettings.serverId(forSlot: slot).map(isEnabled) == true else {
+        guard LiveActivitySettings.serverId(forSlot: slot, defaults: defaults).map(isEnabled) == true else {
             // A card for a server whose card is off, or one this phone no longer knows.
             end(activity, dismissal: .immediate)
             return
         }
         let held = activities[slot]
         if held?.id == activity.id { return }
-        if dismissedSlots.contains(slot) {
-            guard LiveActivityRelaySync.shared.relayHoldsDismissal(slot) else {
-                // The relay started it before it learned of the dismissal.
+        if dismissals.slots.contains(slot) {
+            guard relaySync.relayHoldsDismissal(slot) else {
+                // A relay started it before it held the dismissal, or while it may be changing.
                 end(activity, dismissal: .immediate)
                 return
             }
             // The relay starts no card for a dismissed slot until a server ends it at zero:
             // this card is for new work.
-            dismissedSlots.remove(slot)
+            dismissals.slots.remove(slot)
         }
         if let held { end(held, dismissal: .immediate) }
         activities[slot] = activity
@@ -195,10 +275,11 @@ final class LiveActivityManager {
 
     private func watch(_ activity: Activity<OppiActivityAttributes>, slot: String) {
         guard watchers[activity.id] == nil else { return }
+        let relaySync = relaySync
         watchers[activity.id] = Task { [weak self] in
             let tokens = Task {
                 for await token in activity.pushTokenUpdates {
-                    LiveActivityRelaySync.shared.setActivityToken(token, slot: slot)
+                    relaySync.setActivityToken(token, slot: slot)
                 }
             }
             defer { tokens.cancel() }
@@ -214,13 +295,13 @@ final class LiveActivityManager {
         watchers.removeValue(forKey: activity.id)
         guard activities[slot]?.id == activity.id else { return }
         activities.removeValue(forKey: slot)
-        LiveActivityRelaySync.shared.removeActivity(slot: slot)
+        relaySync.removeActivity(slot: slot)
         logger.info("Live Activity ended (state=\(String(describing: state), privacy: .public))")
         // Apple's 8 hours ran out while work goes on: start a new card. A dismissed card
         // stays away until the work it counted is over.
         if state == .dismissed {
-            dismissedSlots.insert(slot)
-        } else if let serverId = LiveActivitySettings.serverId(forSlot: slot) {
+            recordDismissal(slot: slot, activityId: activity.id)
+        } else if let serverId = LiveActivitySettings.serverId(forSlot: slot, defaults: defaults) {
             apply(serverId: serverId)
         }
     }

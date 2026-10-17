@@ -38,8 +38,13 @@ export interface LiveActivityPush {
 }
 
 export type LiveActivitySendResult =
-  | RelaySendResult
-  /** The relay holds no token for this event: no slot, start token, or live activity. */
+  | Exclude<RelaySendResult, { status: "unavailable" }>
+  /**
+   * No relay delivered it. `charged`: a relay counted it against the phone's quota before APNs
+   * failed (`502 apns_unavailable`); a network failure or timeout charged nothing.
+   */
+  | { status: "unavailable"; charged: boolean }
+  /** The relay holds no token for this event, or the phone lists no card for this server. */
   | { status: "no_activity" };
 
 export interface RelayClientOptions {
@@ -97,9 +102,16 @@ export class RelayClient {
       needsYou: push.needsYou,
       timestamp: push.timestamp,
     });
+    let charged = false;
     for (const [index, origin] of this.origins.entries()) {
       const response = await this.request(origin, "/v1/live-activity", "POST", sendToken, body);
-      if (!response || response.status >= 500) continue;
+      if (!response) continue;
+      if (response.status >= 500) {
+        if (response.status === 502 && (await errorCode(response)) === "apns_unavailable") {
+          charged = true;
+        }
+        continue;
+      }
       if (response.status === 200) return { status: "delivered" };
       if (response.status === 410) return { status: "gone", prune: index === 0 };
       const error = await errorCode(response);
@@ -114,7 +126,7 @@ export class RelayClient {
           : {}),
       };
     }
-    return { status: "unavailable" };
+    return { status: "unavailable", charged };
   }
 
   /** Best effort: release a permission this server no longer uses. */
