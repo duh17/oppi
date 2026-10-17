@@ -196,7 +196,7 @@ Turning off diagnostics stops new diagnostic uploads and clears the client-side 
 
 ## Contact and reporting
 
-Oppi is developed by Da Chen (Chaos Donkey), who also operates the push relay and is responsible for the data it holds. Oppi has no hosted account or central data-request system. For data held by a paired server, contact the person who operates that server or use its local filesystem and provider controls.
+Oppi is developed by Da Chen, who also operates the push relay and is responsible for the data it holds. Oppi has no hosted account or central data-request system. For data held by a paired server, contact the person who operates that server or use its local filesystem and provider controls.
 
 For product support, privacy questions, and deletion help, email [duh@chaosdonkey.dev](mailto:duh@chaosdonkey.dev) or use the [Oppi Support page](support.md). For security reports, read [SECURITY.md](../SECURITY.md). Send sensitive details by email, not through a public issue.
 
