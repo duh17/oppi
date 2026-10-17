@@ -47,8 +47,7 @@ import {
   sessionAttachmentDetailsForToolCall,
   sessionAttachmentMediaDetailsForToolResult,
 } from "./session-attachments.js";
-import { canonicalAssistantBlockId } from "./canonical-message.js";
-import { projectAssistantContentRuns } from "./session-protocol.js";
+import { projectAssistantContentRuns, projectAssistantTimelineBlocks } from "./session-protocol.js";
 
 export type TraceViewMode = "context" | "full";
 
@@ -960,79 +959,49 @@ function emitMessageEvents(
       });
     }
   } else if (role === "assistant") {
-    if (Array.isArray(content)) {
-      let runOrdinal = 0;
-      for (const projected of projectAssistantContentRuns(msg)) {
-        if (projected.kind === "text") {
+    let runOrdinal = 0;
+    for (const block of projectAssistantTimelineBlocks(msg, entry.id)) {
+      switch (block.kind) {
+        case "text":
+          // A string-content message stays one plain row, as it always was.
+          events.push(
+            typeof content === "string"
+              ? { id: block.id, type: "assistant", timestamp, text: block.text }
+              : {
+                  id: block.id,
+                  type: "assistant",
+                  timestamp,
+                  text: block.text,
+                  contentIndex: block.contentIndex,
+                  runOrdinal: runOrdinal++,
+                },
+          );
+          break;
+        case "thinking":
+          events.push({ id: block.id, type: "thinking", timestamp, thinking: block.thinking });
+          break;
+        case "tool":
           events.push({
-            id:
-              canonicalAssistantBlockId({
-                entryId: entry.id,
-                kind: "text",
-                contentIndex: projected.contentIndex,
-              }) ?? `${entry.id}-text-${projected.contentIndex}`,
-            type: "assistant",
-            timestamp,
-            text: projected.text,
-            contentIndex: projected.contentIndex,
-            runOrdinal: runOrdinal++,
-          });
-          continue;
-        }
-
-        const b = projected.block;
-        const subIdx = projected.contentIndex;
-        if (b.type === "thinking" && typeof b.thinking === "string" && b.thinking.length > 0) {
-          events.push({
-            id:
-              canonicalAssistantBlockId({
-                entryId: entry.id,
-                kind: "thinking",
-                contentIndex: subIdx,
-              }) ?? `${entry.id}-think-${subIdx}`,
-            type: "thinking",
-            timestamp,
-            thinking: b.thinking,
-          });
-        } else if (b.type === "toolCall") {
-          const toolCallId = typeof b.id === "string" && b.id.length > 0 ? b.id : undefined;
-          events.push({
-            id:
-              canonicalAssistantBlockId({
-                entryId: entry.id,
-                kind: "tool",
-                contentIndex: subIdx,
-                toolCallId,
-              }) ??
-              toolCallId ??
-              `${entry.id}-tool-${subIdx}`,
+            id: block.id,
             type: "toolCall",
             timestamp,
-            tool: (b.name as string) || "unknown",
-            args: (b.arguments as Record<string, unknown>) || tryParseJson(b.partialJson),
+            tool: (block.block.name as string) || "unknown",
+            args:
+              (block.block.arguments as Record<string, unknown>) ||
+              tryParseJson(block.block.partialJson),
           });
-        } else if (b.type && !KNOWN_BLOCK_TYPES.has(b.type as string)) {
-          // Unknown content block type — log so new API formats don't
-          // silently vanish from the timeline.
-          log.warn("trace.unknown_assistant_block_type", {
-            entryId: entry.id,
-            blockType: b.type as string,
-          });
-        }
+          break;
+        case "boundary":
+          if (block.block.type && !KNOWN_BLOCK_TYPES.has(block.block.type as string)) {
+            // Unknown content block type — log so new API formats don't
+            // silently vanish from the timeline.
+            log.warn("trace.unknown_assistant_block_type", {
+              entryId: entry.id,
+              blockType: block.block.type as string,
+            });
+          }
+          break;
       }
-    } else if (typeof content === "string" && content) {
-      events.push({
-        id:
-          canonicalAssistantBlockId({
-            entryId: entry.id,
-            kind: "text",
-            contentIndex: 0,
-            stringContent: true,
-          }) ?? entry.id,
-        type: "assistant",
-        timestamp,
-        text: content,
-      });
     }
   } else if (role === "toolResult") {
     // pi's ToolResultMessage carries structured details (expandedText,

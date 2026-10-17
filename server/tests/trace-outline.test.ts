@@ -1,11 +1,13 @@
 import { MobileRendererRegistry } from "../src/mobile-renderer.js";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 import { readSessionTraceFromFiles } from "../src/trace.js";
 import { readSessionTraceOutlineFromFiles } from "../src/trace-outline.js";
 import { readSessionTracePageFromFiles } from "../src/trace-paging.js";
+import { projectAssistantMessageContent } from "../src/session-protocol.js";
+import type { PiMessage } from "../src/pi-events.js";
 
 const timestamp = "2026-01-01T00:00:00.000Z";
 let tmpDir: string | undefined;
@@ -299,11 +301,12 @@ describe("trace outline projection", () => {
     expect(result.metrics.outlineEntryCount).toBe(4);
   });
 
-  it("uses trace event-compatible IDs for mixed assistant blocks", async () => {
+  it("names assistant rows the same in the outline, history, and live stream", async () => {
     const paths = tempJsonlFiles([
       [
         messageEntry("u1", null, "user", "prompt"),
-        messageEntry("a1", "u1", "assistant", [
+        messageEntry("a0", "u1", "assistant", "plain reply"),
+        messageEntry("a1", "a0", "assistant", [
           { type: "text", text: "intro" },
           { type: "thinking", thinking: "plan" },
           { type: "text", text: "answer" },
@@ -332,6 +335,7 @@ describe("trace outline projection", () => {
     const traceAssistantIDs = trace.filter((entry) => entry.id !== "u1").map((entry) => entry.id);
 
     expect(traceAssistantIDs).toEqual([
+      "a0",
       "a1-text-0",
       "a1-think-1",
       "a1-text-2",
@@ -342,6 +346,19 @@ describe("trace outline projection", () => {
       "a2-text-3",
     ]);
     expect(outlineAssistantIDs).toEqual(traceAssistantIDs);
+    // The live `message_end` names the same rows, so a row streamed in a
+    // session and the same row loaded from history are one row.
+    const liveIDs = paths
+      .flatMap((path) => readFileSync(path, "utf8").trim().split("\n"))
+      .map((line) => JSON.parse(line) as { id: string; message?: PiMessage })
+      .flatMap((entry) =>
+        entry.message?.role === "assistant"
+          ? projectAssistantMessageContent(entry.message, { entryId: entry.id }).flatMap((part) =>
+              part.id ? [part.id] : [],
+            )
+          : [],
+      );
+    expect(liveIDs).toEqual(traceAssistantIDs);
   });
 
   it("projects only the current branch so outline entries are jumpable", async () => {

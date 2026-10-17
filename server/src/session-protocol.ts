@@ -384,6 +384,65 @@ export function projectAssistantTextRuns(message: Pick<PiMessage, "content">): s
   return projectAssistantTextProjections(message).map((run) => run.text);
 }
 
+export type AssistantTimelineBlock =
+  | { kind: "text"; id: string; contentIndex: number; text: string }
+  | { kind: "thinking"; id: string; contentIndex: number; thinking: string }
+  | {
+      kind: "tool";
+      id: string;
+      contentIndex: number;
+      toolCallId?: string;
+      block: Record<string, unknown>;
+    }
+  | { kind: "boundary"; contentIndex: number; block: Record<string, unknown> };
+
+/**
+ * The one rule for which rows an assistant message becomes and what each row
+ * is called. The live stream (`message_end`), history pages (`trace.ts`), and
+ * Session Outline all use it, for SDK and durable sessions alike, so an ID one
+ * of them hands the app names a row the others show; an outline tap on an ID
+ * the timeline never emitted jumps nowhere. Empty (encrypted) thinking, media,
+ * and unknown blocks are boundaries: no row, but they split text runs and
+ * keep their content index.
+ */
+export function projectAssistantTimelineBlocks(
+  message: Pick<PiMessage, "content">,
+  entryId: string,
+): AssistantTimelineBlock[] {
+  const stringContent = typeof message.content === "string";
+  return projectAssistantContentRuns(message).map((part): AssistantTimelineBlock => {
+    const { contentIndex } = part;
+    if (part.kind === "text") {
+      const id =
+        canonicalAssistantBlockId({ entryId, kind: "text", contentIndex, stringContent }) ??
+        entryId;
+      return { kind: "text", id, contentIndex, text: part.text };
+    }
+
+    const block = part.block;
+    if (
+      block.type === "thinking" &&
+      typeof block.thinking === "string" &&
+      block.thinking.length > 0
+    ) {
+      const id =
+        canonicalAssistantBlockId({ entryId, kind: "thinking", contentIndex }) ??
+        `${entryId}-think-${contentIndex}`;
+      return { kind: "thinking", id, contentIndex, thinking: block.thinking };
+    }
+
+    if (block.type === "toolCall") {
+      const toolCallId = typeof block.id === "string" && block.id.length > 0 ? block.id : undefined;
+      const id =
+        canonicalAssistantBlockId({ entryId, kind: "tool", contentIndex, toolCallId }) ??
+        `${entryId}-tool-${contentIndex}`;
+      return { kind: "tool", id, contentIndex, ...(toolCallId ? { toolCallId } : {}), block };
+    }
+
+    return { kind: "boundary", contentIndex, block };
+  });
+}
+
 /**
  * Ordered assistant structure carried alongside the historical aggregate text.
  * Tool markers reference the already-broadcast tool row; media, malformed, and
@@ -394,59 +453,31 @@ export function projectAssistantMessageContent(
   options?: { entryId?: string },
 ): AssistantMessageContentPart[] {
   const entryId = options?.entryId;
-  const stringContent = typeof message.content === "string";
-  return projectAssistantContentRuns(message).map((part) => {
-    const withId = <T extends AssistantMessageContentPart>(
-      projected: T,
-      toolCallId?: string,
-    ): T => {
-      if (!entryId) {
-        return projected;
+  return projectAssistantTimelineBlocks(message, entryId ?? "").map(
+    (block): AssistantMessageContentPart => {
+      const id = entryId && block.kind !== "boundary" ? { id: block.id } : {};
+      switch (block.kind) {
+        case "text":
+          return { kind: "text", content: block.text, contentIndex: block.contentIndex, ...id };
+        case "thinking":
+          return {
+            kind: "thinking",
+            content: block.thinking,
+            contentIndex: block.contentIndex,
+            ...id,
+          };
+        case "tool":
+          return {
+            kind: "tool",
+            contentIndex: block.contentIndex,
+            ...(block.toolCallId ? { toolCallId: block.toolCallId } : {}),
+            ...id,
+          };
+        case "boundary":
+          return { kind: "boundary", contentIndex: block.contentIndex };
       }
-      const id = canonicalAssistantBlockId({
-        entryId,
-        kind: projected.kind,
-        contentIndex: projected.contentIndex,
-        toolCallId,
-        stringContent,
-      });
-      return id ? { ...projected, id } : projected;
-    };
-
-    if (part.kind === "text") {
-      return withId({
-        kind: "text",
-        content: part.text,
-        contentIndex: part.contentIndex,
-      });
-    }
-
-    if (part.block.type === "thinking" && typeof part.block.thinking === "string") {
-      if (part.block.thinking.length === 0) {
-        return withId({ kind: "boundary", contentIndex: part.contentIndex });
-      }
-      return withId({
-        kind: "thinking",
-        content: part.block.thinking,
-        contentIndex: part.contentIndex,
-      });
-    }
-
-    if (part.block.type === "toolCall") {
-      const toolCallId =
-        typeof part.block.id === "string" && part.block.id.length > 0 ? part.block.id : undefined;
-      return withId(
-        {
-          kind: "tool",
-          contentIndex: part.contentIndex,
-          ...(toolCallId ? { toolCallId } : {}),
-        },
-        toolCallId,
-      );
-    }
-
-    return withId({ kind: "boundary", contentIndex: part.contentIndex });
-  });
+    },
+  );
 }
 
 export function extractAssistantText(message: PiMessage): string {

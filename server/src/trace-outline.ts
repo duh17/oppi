@@ -4,8 +4,7 @@ import { createInterface } from "node:readline";
 import { performance } from "node:perf_hooks";
 import { projectCustomEntry, type LiveEntryRendererSet, type SessionEntry } from "./trace.js";
 import { resolveToolDisplay, type MobileRendererRegistry } from "./mobile-renderer.js";
-import { canonicalAssistantBlockId } from "./canonical-message.js";
-import { projectAssistantContentRuns } from "./session-protocol.js";
+import { projectAssistantTimelineBlocks } from "./session-protocol.js";
 import type { ToolInputPresentation, ToolOutputPresentation, ToolDisplay } from "./types.js";
 
 export type TraceOutlineEntryKind =
@@ -629,85 +628,29 @@ function projectAssistantEntry(
   mobileRenderers: MobileRendererRegistry,
   metadataBudget: OutlineMetadataBudget,
 ): void {
-  const content = entry.message?.content;
-  if (typeof content === "string") {
-    const summary = previewText(content);
-    if (!summary) return;
-    entries.push({
-      id: entry.id,
-      kind: "assistant",
-      summary,
-      timestamp,
-      isMessage: true,
-      isTool: false,
-      passesAllFilter: true,
-    });
-    return;
-  }
+  if (!entry.message) return;
 
-  if (!Array.isArray(content) || !entry.message) return;
-
-  // Rows must carry the trace's event IDs, or the app cannot find the row a
-  // jump targets: same text runs, same content indexes (empty thinking and
-  // tool calls count), same canonical block IDs as `trace.ts`.
-  for (const projected of projectAssistantContentRuns(entry.message)) {
-    if (projected.kind === "text") {
-      const summary = previewText(projected.text);
+  // Same rows and IDs as the timeline (`projectAssistantTimelineBlocks`), or
+  // an outline tap targets a row the app does not have.
+  for (const block of projectAssistantTimelineBlocks(entry.message, entry.id)) {
+    if (block.kind === "text" || block.kind === "thinking") {
+      const summary = previewText(block.kind === "text" ? block.text : block.thinking);
       if (!summary) continue;
+      const isMessage = block.kind === "text";
       entries.push({
-        id:
-          canonicalAssistantBlockId({
-            entryId: entry.id,
-            kind: "text",
-            contentIndex: projected.contentIndex,
-          }) ?? `${entry.id}-text-${projected.contentIndex}`,
-        kind: "assistant",
+        id: block.id,
+        kind: isMessage ? "assistant" : "thinking",
         summary,
         timestamp,
-        isMessage: true,
+        isMessage,
         isTool: false,
         passesAllFilter: true,
       });
       continue;
     }
 
-    const record = projected.block;
-    if (
-      record.type === "thinking" &&
-      typeof record.thinking === "string" &&
-      record.thinking.length > 0
-    ) {
-      const summary = previewText(record.thinking);
-      if (!summary) continue;
-      entries.push({
-        id:
-          canonicalAssistantBlockId({
-            entryId: entry.id,
-            kind: "thinking",
-            contentIndex: projected.contentIndex,
-          }) ?? `${entry.id}-think-${projected.contentIndex}`,
-        kind: "thinking",
-        summary,
-        timestamp,
-        isMessage: false,
-        isTool: false,
-        passesAllFilter: true,
-      });
-      continue;
-    }
-
-    if (record.type === "toolCall") {
-      const toolCallId =
-        typeof record.id === "string" && record.id.length > 0 ? record.id : undefined;
-      const id =
-        canonicalAssistantBlockId({
-          entryId: entry.id,
-          kind: "tool",
-          contentIndex: projected.contentIndex,
-          toolCallId,
-        }) ??
-        toolCallId ??
-        `${entry.id}-tool-${projected.contentIndex}`;
+    if (block.kind === "tool") {
+      const { id, block: record } = block;
       const tool = typeof record.name === "string" ? record.name : "unknown";
       const args = asRecord(record.arguments) ?? tryParseJsonObject(record.partialJson);
       const row: TraceOutlineEntry = {
