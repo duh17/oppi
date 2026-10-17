@@ -276,9 +276,7 @@ enum IconSymbolCatalog {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return options.filter {
             isAvailable($0.symbolName)
-                && (trimmed.isEmpty
-                    || $0.label.localizedCaseInsensitiveContains(trimmed)
-                    || $0.symbolName.localizedCaseInsensitiveContains(trimmed))
+                && FuzzyMatch.matchesAny(query: trimmed, fields: [$0.label, $0.symbolName])
         }
     }
 
@@ -451,9 +449,7 @@ struct UnifiedIconPickerView<Value: Equatable & Sendable>: View {
         let query = submittedSymbolSearch.trimmingCharacters(in: .whitespacesAndNewlines)
         return symbols.filter {
             symbolAvailability($0.symbolName)
-                && (query.isEmpty
-                    || $0.label.localizedCaseInsensitiveContains(query)
-                    || $0.symbolName.localizedCaseInsensitiveContains(query))
+                && FuzzyMatch.matchesAny(query: query, fields: [$0.label, $0.symbolName])
         }
     }
 

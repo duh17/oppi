@@ -81,14 +81,14 @@ struct ServerExtensionListPresentation: Sendable, Equatable {
 
     private static func matches(_ resource: ServerExtensionSummary, query: String) -> Bool {
         guard !query.isEmpty else { return true }
-        return [
+        return FuzzyMatch.matchesAny(query: query, fields: [
             resource.name,
             resource.description,
             resource.packageName,
             resource.provenance.label,
             kindLabel(for: resource.kind),
             stateLabel(for: resource.state),
-        ].compactMap { $0 }.contains { $0.localizedCaseInsensitiveContains(query) }
+        ])
     }
 
     private static func sortedBuiltIns(_ resources: [ServerExtensionSummary]) -> [ServerExtensionSummary] {

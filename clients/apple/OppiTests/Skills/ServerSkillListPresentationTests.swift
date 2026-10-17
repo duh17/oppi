@@ -24,11 +24,11 @@ struct ServerSkillListPresentationTests {
     @Test func searchMatchesNameDescriptionProvenanceAndStateText() {
         let rows = [
             skill(id: "release", name: "Release", description: "Checks shipping readiness", state: .enabled),
-            skill(id: "reddit", name: "Reddit", provenance: "~/.agents/skills", state: .disabled),
+            skill(id: "reddit", name: "Reddit", provenance: "~/.claude/skills", state: .disabled),
         ]
 
         #expect(ServerSkillListPresentation(skills: rows, query: "shipping").visibleSkills.map(\.id) == ["release"])
-        #expect(ServerSkillListPresentation(skills: rows, query: ".agents").visibleSkills.map(\.id) == ["reddit"])
+        #expect(ServerSkillListPresentation(skills: rows, query: ".claude").visibleSkills.map(\.id) == ["reddit"])
         #expect(ServerSkillListPresentation(skills: rows, query: "disabled").visibleSkills.map(\.id) == ["reddit"])
     }
 

@@ -31,17 +31,12 @@ enum SessionListSearchPresentation {
         let normalized = normalizedQuery(query)
         guard !normalized.isEmpty else { return true }
 
-        let candidates = ([
+        return FuzzyMatch.matchesAny(query: normalized, fields: [
             session.displayTitle,
             session.workspaceName,
             session.model,
             session.id,
-        ] + extraCandidates).compactMap { candidate -> String? in
-            let trimmed = candidate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return trimmed.isEmpty ? nil : trimmed
-        }
-
-        return candidates.contains { FuzzyMatch.match(query: normalized, candidate: $0) != nil }
+        ] + extraCandidates)
     }
 
     static func flattenedMatches(

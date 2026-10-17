@@ -615,10 +615,9 @@ private struct TimeZonePickerView: View {
 
     private var identifiers: [String] {
         guard !searchText.isEmpty else { return TimeZone.knownTimeZoneIdentifiers }
+        // `_` is a word separator for the matcher, so "new york" finds America/New_York.
         return TimeZone.knownTimeZoneIdentifiers.filter {
-            $0.localizedCaseInsensitiveContains(searchText)
-                || $0.replacingOccurrences(of: "_", with: " ")
-                    .localizedCaseInsensitiveContains(searchText)
+            FuzzyMatch.matchesAny(query: searchText, fields: [$0])
         }
     }
 

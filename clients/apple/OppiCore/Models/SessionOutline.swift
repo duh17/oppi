@@ -47,7 +47,7 @@ enum SessionOutlineProjection {
         filter: SessionOutlineFilter,
         query: String
     ) -> [SessionOutlineEntrySnapshot] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prepared = FuzzyMatch.Query(query)
         return entries.filter { entry in
             switch filter {
             case .all:
@@ -58,11 +58,8 @@ enum SessionOutlineProjection {
                 entry.isTool
             }
         }.filter { entry in
-            guard !trimmed.isEmpty else { return true }
-            if entry.summary.localizedCaseInsensitiveContains(trimmed) {
-                return true
-            }
-            return entry.tool?.localizedCaseInsensitiveContains(trimmed) == true
+            guard let prepared else { return true }
+            return FuzzyMatch.bestScore(prepared, fields: [entry.summary, entry.tool]) != nil
         }
     }
 }

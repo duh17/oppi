@@ -50,14 +50,15 @@ struct ModelPickerSheet: View {
             filtered = models.filter { !recentSet.contains(fullId($0)) }
         } else {
             // Fuzzy search across name, id, and provider — take best score
-            let query = searchText
             var scored: [(model: ModelInfo, score: Int)] = []
-            for model in models {
-                let candidates = [model.name, model.id, model.provider]
-                let bestScore = candidates.compactMap { FuzzyMatch.match(query: query, candidate: $0)?.score }.max()
-                if let score = bestScore {
-                    scored.append((model, score))
+            if let query = FuzzyMatch.Query(searchText) {
+                for model in models {
+                    if let score = FuzzyMatch.bestScore(query, fields: [model.name, model.id, model.provider]) {
+                        scored.append((model, score))
+                    }
                 }
+            } else {
+                scored = models.map { ($0, 0) }
             }
             scored.sort { $0.score > $1.score }
             filtered = scored.map(\.model)

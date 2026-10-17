@@ -76,7 +76,7 @@ struct ServerSkillListPresentation: Sendable, Equatable {
         if let packageName = skill.packageName {
             searchableFields.append(packageName)
         }
-        return searchableFields.contains { $0.localizedCaseInsensitiveContains(query) }
+        return FuzzyMatch.matchesAny(query: query, fields: searchableFields)
     }
 
     private static func sorted(_ skills: [ServerSkillSummary]) -> [ServerSkillSummary] {

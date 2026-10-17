@@ -98,10 +98,12 @@ Example:
 - **Server:** Embedded Pi runtime 1.0.4 → 1.3.0. Durable sessions keep their system prompt and tools after compaction, Claude Opus 5 and Haiku 5.5 can run with thinking off, more provider outages retry, and a tool call with malformed JSON fails instead of running with partial arguments.
 - **Server:** `npm i -g oppi-server` installs the exact dependency tree Oppi was tested with, so a later Pi release cannot break a fresh install as it did for 0.51.0.
 - **Server:** Sandbox runtime Gondolin 0.13.0: long-running sandbox VMs no longer leak file descriptors, and sandboxes no longer need Node.js 23.6.
+- **Client:** Every search field matches the same way: the session timeline and tree, Files, `@` file and `/` command suggestions, models, sessions, Skills, Extensions, icons, and time zones. Words can come in any order, case and accents are ignored, and abbreviations such as `wf` for `web_fetch` or `fbv` for `FileBrowserView` work, without matching letters scattered across a paragraph.
 
 ### Fixed
 
 - **Client:** Tapping a row in Session Outline, including a search hit, closes the outline so the chat is visible, lands on exactly that row just below the top bar, and keeps it there while rows above it finish loading. After the outline closes, the row lifts slightly with a soft tint and a light tap (the tap follows Settings > Haptic Feedback; Reduce Motion keeps only the tint).
+- **Client:** Session timeline search highlights the letters that match what you typed. Before, rows could keep highlights from an earlier keystroke or show none, and equally good matches came back out of order; they now stay in timeline order.
 - **Server:** Commit, Changes, and session file diffs now match `git diff --minimal` line for line. Before, about a third of file diffs could show a blank line that was not in the file and shift the line numbers after it.
 - **Client/Server:** Word highlights in diffs mark only lines that were actually edited, not unrelated lines that happen to sit side by side in a rewrite, and long edited lines highlight the changed words instead of the whole line. Diffs of rewritten prose, such as a trimmed changelog, open and scroll faster, and commit file diffs no longer download both full copies of the file.
 - **Client:** Commit file diffs and the Changes review scroll smoothly on long diffs and long lines, and have the same Viewing Options as full-screen diffs: text size and Wrap Text, shared with them.

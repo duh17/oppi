@@ -4,10 +4,9 @@ import SwiftUI
 ///
 /// Shows a scannable timeline of session entries, filterable by type.
 ///
-/// **Performance:** Pre-computes per-item summaries and lowercased search text
-/// on appear. Filtering uses pre-lowercased `String.contains` instead of
-/// `localizedCaseInsensitiveContains`. Search is debounced at 200ms. A render
-/// window limits ForEach scope to ~200 visible items with auto-expand on scroll.
+/// **Performance:** Pre-computes per-item summaries on appear. Search uses the
+/// shared `FuzzyMatch` matcher and is debounced at 200ms. A render window
+/// limits ForEach scope to ~200 visible items with auto-expand on scroll.
 struct SessionOutlineView: View {
     let items: [ChatItem]
     let sessionId: String
@@ -314,12 +313,8 @@ struct SessionOutlineView: View {
         }
 
         if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let summaries = filtered.map(\.summary)
-            let matches = TextSearchMatch.search(
-                query: query,
-                candidates: summaries,
-                limit: filtered.count
-            )
+            // Best matches first; equal matches stay in timeline order.
+            let matches = FuzzyMatch.rank(query: query, candidates: filtered.map(\.summary))
             filtered = matches.map { match in
                 var entry = filtered[match.index]
                 entry.matchPositions = match.positions
@@ -507,7 +502,9 @@ struct SessionOutlineView: View {
         if query.isEmpty {
             treeFilteredNodes = baseNodes
         } else {
+            let prepared = FuzzyMatch.Query(query)
             treeFilteredNodes = baseNodes.filter { node in
+                guard let prepared else { return true }
                 let candidate = [
                     node.textPreview,
                     node.label,
@@ -518,7 +515,7 @@ struct SessionOutlineView: View {
                     .compactMap { $0 }
                     .joined(separator: " ")
 
-                return TextSearchMatch.match(query: query, candidate: candidate) != nil
+                return FuzzyMatch.score(prepared, candidate: candidate) != nil
             }
         }
 
@@ -805,8 +802,13 @@ struct SessionOutlineView: View {
                 }
 
                 LazyVStack(spacing: 0) {
-                    ForEach(0..<visibleCount, id: \.self) { index in
-                        let entry = displayedEntries[index]
+                    // Rows are keyed by entry, not position: an index-keyed lazy
+                    // row kept its first render and showed highlights from an
+                    // earlier query after the results changed.
+                    ForEach(
+                        Array(displayedEntries.prefix(visibleCount).enumerated()),
+                        id: \.element.id
+                    ) { index, entry in
                         Button {
                             onSelect(entry.id)
                             // Close one main-queue turn later: the timeline
@@ -1145,7 +1147,7 @@ private struct OutlineEntry: Identifiable {
     let isTool: Bool
     let isError: Bool
 
-    /// Unicode scalar positions of literal search matches (populated during search).
+    /// Unicode scalar positions of search matches (populated during search).
     var matchPositions: [Int] = []
 }
 

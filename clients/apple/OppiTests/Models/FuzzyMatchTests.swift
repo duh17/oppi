@@ -426,6 +426,67 @@ struct FuzzyMatchTests {
         #expect(highlighted == ["r", "e", "a", "d", "m", "e"])
     }
 
+    // MARK: - Prose and Multi-Term Queries
+
+    @Test func scatteredLettersAcrossProseDoNotMatch() {
+        #expect(FuzzyMatch.match(query: "web", candidate: "we should be careful here") == nil)
+        #expect(FuzzyMatch.match(
+            query: "session",
+            candidate: "**Searching OSLogStore** | I need to use the devdoc command"
+        ) == nil)
+    }
+
+    @Test func abbreviationsMatchAcrossWordsAndTypos() {
+        let cases: [(query: String, candidate: String, highlighted: String)] = [
+            ("wf", "web_fetch https://example.com", "wf"),
+            ("wf", "web fetch the page", "wf"),
+            ("cmpct", "compact", "cmpct"),
+            ("sessionview", "SessionOutlineView.swift", "SessionView"),
+            ("oppichatview", "clients/apple/Oppi/Features/Chat/ChatView.swift", "OppiChatView"),
+        ]
+        for (query, candidate, highlighted) in cases {
+            let result = FuzzyMatch.match(query: query, candidate: candidate)
+            #expect(result != nil, "'\(query)' should match '\(candidate)'")
+            guard let result else { continue }
+            let scalars = Array(candidate.unicodeScalars)
+            #expect(String(String.UnicodeScalarView(result.positions.map { scalars[$0] })) == highlighted)
+        }
+    }
+
+    @Test func allTermsMustMatchInAnyOrder() {
+        #expect(FuzzyMatch.match(query: "logs server", candidate: "server process emitted JSONL logs") != nil)
+        #expect(FuzzyMatch.match(query: "server logs", candidate: "server route handler") == nil)
+    }
+
+    @Test func phraseRanksAboveSeparatedTerms() {
+        let phrase = FuzzyMatch.match(query: "server logs", candidate: "**Evaluating server logs** | JSONL format")
+        let separated = FuzzyMatch.match(query: "server logs", candidate: "server process emitted JSONL logs")
+        #expect(phrase != nil && separated != nil)
+        if let phrase, let separated {
+            #expect(phrase.score > separated.score)
+            #expect(phrase.positions == Array(13..<24))
+        }
+    }
+
+    @Test func caseAndDiacriticsFoldForNonASCIIText() {
+        let result = FuzzyMatch.match(query: "cafe", candidate: "Le CAFÉ du coin")
+        #expect(result?.positions == [3, 4, 5, 6])
+        #expect(FuzzyMatch.match(query: "日志", candidate: "查看服务器日志")?.positions == [5, 6])
+    }
+
+    @Test func rankKeepsInputOrderForEqualMatches() {
+        let candidates = [
+            "web_fetch https://www.youtube.com/watch?v=BLRReTwV8Fc",
+            "user said we should be careful",
+            "web_search \"Finn Voorhees Pelican app\"",
+            "web_fetch https://www.lookonchain.com/feeds/76594",
+            "read the web docs",
+        ]
+        let ranked = FuzzyMatch.rank(query: "web", candidates: candidates)
+        #expect(ranked.map(\.index) == [0, 2, 3, 4])
+        #expect(ranked.first?.positions == [0, 1, 2])
+    }
+
     /// ASCII paths should still work (fast path — no conversion needed).
     @Test func asciiPathPositionsUnchanged() {
         let candidate = "src/components/Button.tsx"
