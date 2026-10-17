@@ -138,7 +138,7 @@ Push notifications are off by default. They work only when the paired server's o
 
 What this does not cover: someone who holds the relay's Apple key, or controls the relay's hosting account, can send a notification with any text that never reaches the extension, so it shows as sent. Tapping an Oppi notification only opens the session it names. Notifications have no Approve, Deny, or Reply actions, so a forged one can mislead you but cannot act for you; approve or answer from inside the app.
 
-**The push relay.** Apple delivers pushes only from the developer team that signs the app, so a relay holds that team's Apple key and forwards your server's encrypted alerts to Apple. Your server names the relay. Oppi's relay is `push.oppi.chaosdonkey.dev`, operated by Chaos Donkey; it is the relay for App Store and TestFlight builds, because it holds the Apple key of the team that signs them. It runs on Cloudflare Workers with Cloudflare's request logging turned off. Cloudflare runs the relay's HTTPS endpoint, so Cloudflare handles everything listed below in transit, along with the relay's stored data; Cloudflare's privacy policy applies. The relay code is in the Oppi repository (`relay/`), and its protocol and threat model are in `protocol/push/spec.md`.
+**The push relay.** Apple delivers pushes only from the developer team that signs the app, so a relay holds that team's Apple key and forwards your server's encrypted alerts to Apple. Your server names the relay. Oppi's relay is `push.oppi.chaosdonkey.dev`, operated by Oppi's developer (see [Contact and reporting](#contact-and-reporting)); it is the relay for App Store and TestFlight builds, because it holds the Apple key of the team that signs them. It runs on Cloudflare Workers with Cloudflare's request logging turned off. Cloudflare runs the relay's HTTPS endpoint, so Cloudflare handles everything listed below in transit, along with the relay's stored data; Cloudflare's privacy policy applies. The relay code is in the Oppi repository (`relay/`), and its protocol and threat model are in `protocol/push/spec.md`.
 
 The relay receives and can see:
 
@@ -196,7 +196,7 @@ Turning off diagnostics stops new diagnostic uploads and clears the client-side 
 
 ## Contact and reporting
 
-Oppi has no hosted account or central data-request system. For data held by a paired server, contact the person who operates that server or use its local filesystem and provider controls.
+Oppi is developed by Da Chen (Chaos Donkey), who also operates the push relay and is responsible for the data it holds. Oppi has no hosted account or central data-request system. For data held by a paired server, contact the person who operates that server or use its local filesystem and provider controls.
 
 For product support, privacy questions, and deletion help, email [duh@chaosdonkey.dev](mailto:duh@chaosdonkey.dev) or use the [Oppi Support page](support.md). For security reports, read [SECURITY.md](../SECURITY.md). Send sensitive details by email, not through a public issue.
 
