@@ -493,12 +493,42 @@ function missingSqliteMessage(message: string): boolean {
   );
 }
 
+/**
+ * The two lines sqlite3 prints when it cannot open the database itself. Match whole
+ * lines: SQL errors can echo the same phrase (`no such table: unable to open database
+ * file`), and retrying those against the main file could turn a failed query into a
+ * stale read.
+ */
+const SQLITE_CANTOPEN_LINES = [
+  /^Parse error in \d+(?:st|nd|rd|th) command line argument: unable to open database file \(14\)$/m,
+  /^Error: unable to open database ".*": unable to open database file$/m,
+];
+const IMMUTABLE_SNAPSHOT_NOTE =
+  "The database was read as an immutable snapshot of the main file (WAL mode without a -shm file), so writes made while reading or WAL frames not yet checkpointed are not visible.";
+
+/** SQLite URI encoding: `%`, `?`, and `#` must be escaped; `/` and relative paths stay. */
+function sqliteImmutableUri(path: string): string {
+  let encoded = "";
+  for (const ch of path) {
+    encoded += ch === "%" ? "%25" : ch === "?" ? "%3F" : ch === "#" ? "%23" : ch;
+  }
+  return `file:${encoded}?immutable=1`;
+}
+
+type SqliteRun = {
+  stdout: string;
+  stderr: string;
+  error?: string;
+  elapsedMs: number;
+  immutableSnapshot?: boolean;
+};
+
 async function runSqlite(
   api: ToolExecutionApi,
   path: string,
   sql: string,
   context: Context,
-): Promise<{ stdout: string; stderr: string; error?: string; elapsedMs: number }> {
+): Promise<SqliteRun> {
   const env = api.env;
   if (!env)
     return {
@@ -515,63 +545,87 @@ async function runSqlite(
     return { stdout: "", stderr: "", error: "Run one statement per query.", elapsedMs: 0 };
   }
 
-  let stdout = "";
-  let stderr = "";
-  let truncated = false;
   const started = Date.now();
-  const result = await env.exec(
-    [...SQLITE_ARGV, "--", trimmedPath, trimmedSql],
-    {
-      timeout: QUERY_TIMEOUT_SECONDS,
-      onOutput: (text, _ctx, info) => {
-        if (truncated) return;
-        const target = info.stream === "stderr" ? "stderr" : "stdout";
-        const current = target === "stderr" ? stderr : stdout;
-        const next =
-          current.length + text.length > QUERY_OUTPUT_MAX_BYTES
-            ? current + text.slice(0, Math.max(0, QUERY_OUTPUT_MAX_BYTES - current.length))
-            : current + text;
-        if (target === "stderr") stderr = next;
-        else stdout = next;
-        if (current.length + text.length > QUERY_OUTPUT_MAX_BYTES) truncated = true;
+  const finish = (ran: Omit<SqliteRun, "elapsedMs">): SqliteRun => ({
+    ...ran,
+    elapsedMs: Date.now() - started,
+  });
+  const invoke = async (database: string): Promise<SqliteRun & { cantOpen: boolean }> => {
+    let stdout = "";
+    let stderr = "";
+    let truncated = false;
+    const result = await env.exec(
+      [...SQLITE_ARGV, "--", database, trimmedSql],
+      {
+        timeout: QUERY_TIMEOUT_SECONDS,
+        onOutput: (text, _ctx, info) => {
+          if (truncated) return;
+          const target = info.stream === "stderr" ? "stderr" : "stdout";
+          const current = target === "stderr" ? stderr : stdout;
+          const next =
+            current.length + text.length > QUERY_OUTPUT_MAX_BYTES
+              ? current + text.slice(0, Math.max(0, QUERY_OUTPUT_MAX_BYTES - current.length))
+              : current + text;
+          if (target === "stderr") stderr = next;
+          else stdout = next;
+          if (current.length + text.length > QUERY_OUTPUT_MAX_BYTES) truncated = true;
+        },
       },
-    },
-    context,
-  );
-  const elapsedMs = Date.now() - started;
-  if (!result.ok) {
-    const message = result.error.message;
-    if (result.error.code === "timeout") {
+      context,
+    );
+    if (!result.ok) {
+      const message = result.error.message;
+      if (result.error.code === "timeout") {
+        return {
+          stdout,
+          stderr,
+          error: `sqlite3 timed out after ${QUERY_TIMEOUT_SECONDS}s.`,
+          elapsedMs: 0,
+          cantOpen: false,
+        };
+      }
+      if (result.error.code === "shell_unavailable" || missingSqliteMessage(message)) {
+        return {
+          stdout,
+          stderr,
+          error: `sqlite3 is not available in this environment. ${message}`,
+          elapsedMs: 0,
+          cantOpen: false,
+        };
+      }
+      return { stdout, stderr, error: message, elapsedMs: 0, cantOpen: false };
+    }
+    if (result.value.exitCode !== 0) {
+      const detail = stderr.trim() || stdout.trim() || `sqlite3 exited ${result.value.exitCode}`;
       return {
         stdout,
         stderr,
-        error: `sqlite3 timed out after ${QUERY_TIMEOUT_SECONDS}s.`,
-        elapsedMs,
+        error: detail,
+        elapsedMs: 0,
+        cantOpen: SQLITE_CANTOPEN_LINES.some((line) => line.test(detail)),
       };
     }
-    if (result.error.code === "shell_unavailable" || missingSqliteMessage(message)) {
+    if (truncated) {
       return {
         stdout,
         stderr,
-        error: `sqlite3 is not available in this environment. ${message}`,
-        elapsedMs,
+        error: `Query output exceeded ${QUERY_OUTPUT_MAX_BYTES} bytes and was truncated.`,
+        elapsedMs: 0,
+        cantOpen: false,
       };
     }
-    return { stdout, stderr, error: message, elapsedMs };
-  }
-  if (result.value.exitCode !== 0) {
-    const detail = stderr.trim() || stdout.trim() || `sqlite3 exited ${result.value.exitCode}`;
-    return { stdout, stderr, error: detail, elapsedMs };
-  }
-  if (truncated) {
-    return {
-      stdout,
-      stderr,
-      error: `Query output exceeded ${QUERY_OUTPUT_MAX_BYTES} bytes and was truncated.`,
-      elapsedMs,
-    };
-  }
-  return { stdout, stderr, elapsedMs };
+    return { stdout, stderr, elapsedMs: 0, cantOpen: false };
+  };
+
+  const first = await invoke(trimmedPath);
+  // `file://host/...` reads `host` as a URI authority, so `//localhost/tmp/x.db` would
+  // reopen `/tmp/x.db` under the requested path. Leave `//` paths with their first error.
+  if (!first.cantOpen || trimmedPath.startsWith("//")) return finish(first);
+  // Read-only connections cannot create the -shm a WAL database needs; immutable=1
+  // reads the main file as a snapshot instead. Retry once; keep the original error.
+  const retry = await invoke(sqliteImmutableUri(trimmedPath));
+  if (retry.error) return finish(first);
+  return finish({ ...retry, immutableSnapshot: true });
 }
 
 function tableFrom(
@@ -650,6 +704,7 @@ async function executeQuery(
   return toolOk(
     formatPreview(table.columns, table.rows, table.truncated === true, [
       `${fileName(args.path)} · ${table.rows.length} row(s) · ${ran.elapsedMs}ms`,
+      ...(ran.immutableSnapshot ? [IMMUTABLE_SNAPSHOT_NOTE] : []),
       ...(args.chart && !chart ? ["Chart omitted: the result has no numeric series."] : []),
     ]),
   );

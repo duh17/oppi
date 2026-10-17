@@ -40,6 +40,19 @@ function seedSales(path: string, extraRows = 0): void {
   db.close();
 }
 
+function seedClosedWal(path: string): void {
+  const db = new DatabaseSync(path);
+  db.exec("PRAGMA journal_mode=WAL");
+  db.exec(`
+    CREATE TABLE sales (name TEXT, amount INTEGER);
+    INSERT INTO sales VALUES ('apples', 12), ('bananas', 9), ('cherries', 4);
+  `);
+  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  db.close();
+  expect(existsSync(`${path}-shm`)).toBe(false);
+  expect(existsSync(`${path}-wal`)).toBe(false);
+}
+
 function tool(name: string, args: Record<string, unknown>): FauxResponseStep {
   return fauxAssistantMessage([fauxToolCall(name, args)], { stopReason: "toolUse" });
 }
@@ -261,6 +274,168 @@ describe("durable SQLite explorer", { timeout: 20_000 }, () => {
       "SELECT name, type, sql FROM sqlite_schema ORDER BY type, name",
     ]);
     expect(await lastToolText(f.root)).toContain("CREATE TABLE sales");
+  });
+
+  it("queries and inspects schema of a closed WAL database as an immutable snapshot", async () => {
+    const f = await fixture([
+      tool("sqlite_query", {
+        path: "sales.db",
+        sql: "SELECT name, amount FROM sales ORDER BY amount DESC",
+      }),
+      fauxAssistantMessage("queried"),
+      tool("sqlite_schema", { path: "sales.db" }),
+      fauxAssistantMessage("DONE"),
+    ]);
+    seedClosedWal(join(f.dir, "sales.db"));
+    const exec = vi.spyOn(f.env, "exec");
+    await prompt(f.root);
+
+    expect(exec.mock.calls[0]?.[0]).toEqual([
+      "sqlite3",
+      "-readonly",
+      "-safe",
+      "-noinit",
+      "-json",
+      "--",
+      "sales.db",
+      "SELECT name, amount FROM sales ORDER BY amount DESC",
+    ]);
+    expect(exec.mock.calls[1]?.[0]).toEqual([
+      "sqlite3",
+      "-readonly",
+      "-safe",
+      "-noinit",
+      "-json",
+      "--",
+      "file:sales.db?immutable=1",
+      "SELECT name, amount FROM sales ORDER BY amount DESC",
+    ]);
+    const queryText = await lastToolText(f.root);
+    expect(queryText).toContain("apples");
+    expect(queryText).toContain("immutable snapshot of the main file");
+    const queryWidget = (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications[
+      "widget:data"
+    ];
+    expect(queryWidget?.method).toBe("setWidget");
+    expect(queryWidget?.nativeSurface?.blocks?.[0]).toEqual({
+      type: "table",
+      id: "result",
+      columns: ["name", "amount"],
+      rows: [
+        ["apples", "12"],
+        ["bananas", "9"],
+        ["cherries", "4"],
+      ],
+    });
+
+    await prompt(f.root);
+    const schemaText = await lastToolText(f.root);
+    expect(schemaText).toContain("CREATE TABLE sales");
+    expect(schemaText).toContain("immutable snapshot of the main file");
+    const schemaWidget = (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications[
+      "widget:data"
+    ];
+    expect(schemaWidget?.method).toBe("setWidget");
+    expect(schemaWidget?.nativeSurface?.blocks?.[0]).toEqual(
+      expect.objectContaining({
+        type: "table",
+        id: "result",
+        columns: ["name", "type", "sql"],
+      }),
+    );
+    expect(
+      (schemaWidget?.nativeSurface?.blocks?.[0] as { rows: unknown[][] }).rows.some((row) =>
+        String(row[2]).includes("CREATE TABLE sales"),
+      ),
+    ).toBe(true);
+  });
+
+  it("opens a closed WAL database whose path contains a space and a hash", async () => {
+    const f = await fixture([
+      tool("sqlite_query", {
+        path: "my sales#1.db",
+        sql: "SELECT name, amount FROM sales",
+      }),
+      fauxAssistantMessage("DONE"),
+    ]);
+    seedClosedWal(join(f.dir, "my sales#1.db"));
+    const exec = vi.spyOn(f.env, "exec");
+    await prompt(f.root);
+    expect(exec.mock.calls[0]?.[0]).toEqual([
+      "sqlite3",
+      "-readonly",
+      "-safe",
+      "-noinit",
+      "-json",
+      "--",
+      "my sales#1.db",
+      "SELECT name, amount FROM sales",
+    ]);
+    expect(exec.mock.calls[1]?.[0]).toEqual([
+      "sqlite3",
+      "-readonly",
+      "-safe",
+      "-noinit",
+      "-json",
+      "--",
+      "file:my sales%231.db?immutable=1",
+      "SELECT name, amount FROM sales",
+    ]);
+    expect((await lastToolResult(f.root)).isError).toBeFalsy();
+    expect(await lastToolText(f.root)).toContain("apples");
+  });
+
+  it("does not create files when the database path is missing", async () => {
+    const f = await fixture([
+      tool("sqlite_query", { path: "missing.db", sql: "SELECT 1" }),
+      fauxAssistantMessage("DONE"),
+    ]);
+    await prompt(f.root);
+    const result = await lastToolResult(f.root);
+    expect(result.isError).toBe(true);
+    const text = textOf(result.content);
+    expect(text).toContain("unable to open database file");
+    expect(text).not.toContain("immutable=1");
+    expect(
+      (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications["widget:data"],
+    ).toBeUndefined();
+    expect(existsSync(join(f.dir, "missing.db"))).toBe(false);
+    expect(existsSync(join(f.dir, "missing.db-shm"))).toBe(false);
+    expect(existsSync(join(f.dir, "missing.db-wal"))).toBe(false);
+  });
+
+  it("keeps a SQL error that echoes the open-failure phrase instead of reading a stale snapshot", async () => {
+    const table = "unable to open database file";
+    const f = await fixture([
+      tool("sqlite_query", { path: "live.db", sql: `SELECT note FROM "${table}"` }),
+      fauxAssistantMessage("DONE"),
+    ]);
+    // The main file still has the table; the open writer's uncheckpointed WAL has dropped it.
+    const writer = new DatabaseSync(join(f.dir, "live.db"));
+    try {
+      writer.exec("PRAGMA journal_mode=WAL");
+      writer.exec("PRAGMA wal_autocheckpoint=0");
+      writer.exec(
+        `CREATE TABLE "${table}" (note TEXT); INSERT INTO "${table}" VALUES ('stale-row')`,
+      );
+      writer.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      writer.exec(`DROP TABLE "${table}"`);
+      const exec = vi.spyOn(f.env, "exec");
+      await prompt(f.root);
+
+      const result = await lastToolResult(f.root);
+      expect(result.isError).toBe(true);
+      const text = textOf(result.content);
+      expect(text).toContain(`no such table: ${table}`);
+      expect(text).not.toContain("stale-row");
+      expect(text).not.toContain("immutable snapshot");
+      expect(exec).toHaveBeenCalledTimes(1);
+      expect(
+        (await f.harness.snapshot(DurableUI, f.root.id, context))?.notifications["widget:data"],
+      ).toBeUndefined();
+    } finally {
+      writer.close();
+    }
   });
 
   it("caps oversized sqlite3 output before publishing a widget", async () => {
