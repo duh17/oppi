@@ -11,17 +11,28 @@ struct SSHTerminalGeometry: Equatable, Sendable {
 }
 
 struct SSHTerminalCell {
-    let text: String
+    /// 0 when empty or when `cluster` holds a multi-scalar grapheme.
+    let scalar: UInt32
+    /// Set only for combining / multi-scalar cells. Plain ASCII never allocates.
+    let cluster: String?
     let width: Int
     let foreground: GhosttyColorRgb
     let background: GhosttyColorRgb
     let style: GhosttyStyle
+
+    var text: String {
+        if let cluster { return cluster }
+        guard scalar != 0, let unit = Unicode.Scalar(scalar) else { return "" }
+        return String(unit)
+    }
 }
 
 struct SSHTerminalFrame {
     let rows: [[SSHTerminalCell]]
     let cursor: GhosttyRenderStateCursor
     let background: GhosttyColorRgb
+    /// Rows rebuilt on this snapshot. Empty when the picture did not change.
+    let rebuiltRows: IndexSet
 }
 
 /// Separate from the passive log owner. All C access (including callbacks and
@@ -64,6 +75,11 @@ final class SSHTerminalEngine {
     private(set) var changeCount = 0
     var dark = true
     var renderHeld: Bool { heldSince != nil }
+    /// Viewport rows from the last `frame()`. Dirty rows replace one entry.
+    private var cachedRows: [[SSHTerminalCell]] = []
+    private var cachedCursor: GhosttyRenderStateCursor?
+    /// Resize and scroll move every row; rebuild the whole grid.
+    private var forceFullRebuild = true
 
     init(geometry: SSHTerminalGeometry = .init(), sink: @escaping (Data) -> Void) throws {
         self.geometry = geometry
@@ -128,6 +144,7 @@ final class SSHTerminalEngine {
     func resize(_ value: SSHTerminalGeometry) {
         geometry = value
         changeCount &+= 1
+        forceFullRebuild = true
         ghostty_terminal_resize(terminal, UInt16(value.columns), UInt16(value.rows),
                                 UInt32(value.cellWidth), UInt32(value.cellHeight))
         flushReplies()
@@ -144,6 +161,7 @@ final class SSHTerminalEngine {
     func scroll(rows: Int) {
         following = false // A drag, not output, owns follow state.
         changeCount &+= 1
+        forceFullRebuild = true
         var value = GhosttyTerminalScrollViewportValue()
         value.delta = rows
         ghostty_terminal_scroll_viewport(terminal, .init(tag: GHOSTTY_SCROLL_VIEWPORT_DELTA, value: value))
@@ -152,6 +170,7 @@ final class SSHTerminalEngine {
     func backToLive() {
         following = true
         changeCount &+= 1
+        forceFullRebuild = true
         ghostty_terminal_scroll_viewport(terminal, .init(tag: GHOSTTY_SCROLL_VIEWPORT_BOTTOM, value: .init()))
     }
 
@@ -166,42 +185,102 @@ final class SSHTerminalEngine {
         var foreground = GhosttyColorRgb()
         var cursor = GhosttyRenderStateCursor()
         cursor.size = MemoryLayout<GhosttyRenderStateCursor>.size
+        var dirty = GHOSTTY_RENDER_STATE_DIRTY_FALSE
+        var cols: UInt16 = 0
+        var rowCount: UInt16 = 0
         ghostty_render_state_get(render, GHOSTTY_RENDER_STATE_DATA_CURSOR, &cursor)
         ghostty_render_state_get(render, GHOSTTY_RENDER_STATE_DATA_COLOR_BACKGROUND, &background)
         ghostty_render_state_get(render, GHOSTTY_RENDER_STATE_DATA_COLOR_FOREGROUND, &foreground)
+        ghostty_render_state_get(render, GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty)
+        ghostty_render_state_get(render, GHOSTTY_RENDER_STATE_DATA_COLS, &cols)
+        ghostty_render_state_get(render, GHOSTTY_RENDER_STATE_DATA_ROWS, &rowCount)
         ghostty_render_state_get(render, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &rowIterator)
-        var rows = [[SSHTerminalCell]]()
-        while ghostty_render_state_row_iterator_next(rowIterator) {
-            ghostty_render_state_row_get(rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &cells)
-            var row = [SSHTerminalCell]()
-            while ghostty_render_state_row_cells_next(cells) {
-                var raw: GhosttyCell = 0
-                var wide = GHOSTTY_CELL_WIDE_NARROW
-                var style = GhosttyStyle()
-                style.size = MemoryLayout<GhosttyStyle>.size
-                var fg = foreground
-                var bg = background
-                var length: UInt32 = 0
-                ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw)
-                ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide)
-                ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style)
-                ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &fg)
-                ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bg)
-                ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &length)
-                var codepoints = [UInt32](repeating: 0, count: Int(length))
-                if length > 0 {
-                    codepoints.withUnsafeMutableBufferPointer {
-                        ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, $0.baseAddress)
-                    }
-                }
-                let text = String(String.UnicodeScalarView(codepoints.compactMap(Unicode.Scalar.init)))
-                let width = wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : (wide == GHOSTTY_CELL_WIDE_NARROW ? 1 : 0)
-                row.append(.init(text: text, width: width, foreground: fg, background: bg, style: style))
+        let full = forceFullRebuild || cachedRows.isEmpty || dirty == GHOSTTY_RENDER_STATE_DIRTY_FULL
+            || cachedRows.count != Int(rowCount) || (cachedRows.first?.count ?? 0) != Int(cols)
+        var rebuilt = IndexSet()
+        if full {
+            var rows = [[SSHTerminalCell]]()
+            var y = 0
+            while ghostty_render_state_row_iterator_next(rowIterator) {
+                rows.append(readRow(foreground: foreground, background: background))
+                rebuilt.insert(y)
+                y += 1
             }
-            rows.append(row)
+            cachedRows = rows
+            forceFullRebuild = false
+        } else if dirty == GHOSTTY_RENDER_STATE_DIRTY_PARTIAL {
+            var y: UInt16 = 0
+            while ghostty_render_state_row_iterator_next_dirty(rowIterator, &y) {
+                let row = readRow(foreground: foreground, background: background)
+                let index = Int(y)
+                if cachedRows.indices.contains(index) {
+                    cachedRows[index] = row
+                    rebuilt.insert(index)
+                }
+            }
         }
+        if let old = cachedCursor, !Self.sameCursor(old, cursor) {
+            if old.viewport_has_value { rebuilt.insert(Int(old.viewport_y)) }
+            if cursor.viewport_has_value { rebuilt.insert(Int(cursor.viewport_y)) }
+        }
+        cachedCursor = cursor
         ghostty_render_state_clean(render)
-        return .init(rows: rows, cursor: cursor, background: background)
+        return .init(rows: cachedRows, cursor: cursor, background: background, rebuiltRows: rebuilt)
+    }
+
+    /// One row of cells. A single scalar is stored as `UInt32`; only combining
+    /// graphemes allocate a `String`.
+    private func readRow(foreground: GhosttyColorRgb, background: GhosttyColorRgb) -> [SSHTerminalCell] {
+        ghostty_render_state_row_get(rowIterator, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &cells)
+        var row = [SSHTerminalCell]()
+        while ghostty_render_state_row_cells_next(cells) {
+            var raw: GhosttyCell = 0
+            var wide = GHOSTTY_CELL_WIDE_NARROW
+            var style = GhosttyStyle()
+            style.size = MemoryLayout<GhosttyStyle>.size
+            var fg = foreground
+            var bg = background
+            var length: UInt32 = 0
+            var hasStyling = false
+            ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw)
+            ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide)
+            ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_HAS_STYLING, &hasStyling)
+            if hasStyling {
+                ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style)
+            }
+            ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &fg)
+            ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bg)
+            ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &length)
+            var scalar: UInt32 = 0
+            var cluster: String?
+            if length == 1 {
+                withUnsafeMutablePointer(to: &scalar) {
+                    ghostty_render_state_row_cells_get(
+                        cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, $0
+                    )
+                }
+            } else if length > 1 {
+                var codepoints = [UInt32](repeating: 0, count: Int(length))
+                codepoints.withUnsafeMutableBufferPointer {
+                    ghostty_render_state_row_cells_get(
+                        cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, $0.baseAddress
+                    )
+                }
+                cluster = String(String.UnicodeScalarView(codepoints.compactMap(Unicode.Scalar.init)))
+            }
+            let width = wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : (wide == GHOSTTY_CELL_WIDE_NARROW ? 1 : 0)
+            row.append(.init(
+                scalar: scalar, cluster: cluster, width: width,
+                foreground: fg, background: bg, style: style
+            ))
+        }
+        return row
+    }
+
+    private static func sameCursor(_ a: GhosttyRenderStateCursor, _ b: GhosttyRenderStateCursor) -> Bool {
+        a.visible == b.visible && a.viewport_has_value == b.viewport_has_value
+            && a.viewport_x == b.viewport_x && a.viewport_y == b.viewport_y
+            && a.wide_tail == b.wide_tail && a.visual_style == b.visual_style
     }
 
     func key(_ key: GhosttyKey, text: String = "", modifiers: GhosttyMods = 0) -> Data {

@@ -92,25 +92,14 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
     var paintedChangeCount = -1
     /// Rebuilt when Code Font, Code Text Size, or the Nerd Font symbols change;
     /// a new cell size resizes the remote terminal on the next layout.
-    private var painter = SSHTerminalGridPainter.codeFont()
-    private var cellSize: CGSize { painter.cellSize }
-    /// The frame `draw(_:)` paints from. Each tick replaces it and invalidates
-    /// only the rows that differ from it.
-    private var shown: SSHTerminalFrame?
-    /// A new bounds size exposes or stretches pixels outside any row.
+    private var metrics = SSHTerminalCellMetrics.codeFont()
+    private var cellSize: CGSize { metrics.cellSize }
+    private var renderer: SSHTerminalMetalRenderer?
+    /// Theme, font, or bounds changed: encode the whole grid even if libghostty
+    /// reported no dirty rows.
     private var needsFullPaint = true
-    /// Changed rows not yet invalidated: a repaint bigger than one tick's
-    /// budget (a resize, a scroll, a screenful of styled cells) spreads over
-    /// ticks so the main thread keeps answering between them.
-    private var repaints = SSHTerminalRepaintQueue()
-    /// Rows invalidated and not yet drawn. `draw(_:)` paints only these.
-    private var invalidRows = IndexSet()
-    /// Measured paint cost, smoothed. Plain text is a fraction of a millisecond
-    /// per row; one style per cell is about two.
-    private var secondsPerRow = 0.0005
-    private static let paintBudget = 0.008
-    var hasPendingPaint: Bool { !repaints.isEmpty }
     private var paintedSize = CGSize.zero
+    private var sceneActive = true
     private var appliedTheme: ThemeID?
     private var lastGeometry: SSHTerminalGeometry?
     private var modifierButtons: [(button: UIButton, modifier: GhosttyMods, label: String)] = []
@@ -132,16 +121,22 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
     private var pasteControl: UIPasteControl?
     private var foreground = UIColor(Color.themeFg)
 
+    override class var layerClass: AnyClass { CAMetalLayer.self }
+    private var metalLayer: CAMetalLayer? { layer as? CAMetalLayer }
+
     init(channel: SSHTerminalChannel, paste: @escaping (String?) -> Void, followChanged: @escaping (Bool) -> Void) {
         self.channel = channel
         requestPaste = paste
         self.followChanged = followChanged
         super.init(frame: .zero)
+        SSHTerminalMetalPipeline.prewarm()
         isOpaque = true
-        // Rows not invalidated keep their pixels; a resize must not stretch them.
-        clearsContextBeforeDrawing = false
-        contentMode = .topLeft
         clipsToBounds = true
+        if let metalLayer {
+            metalLayer.pixelFormat = .bgra8Unorm
+            metalLayer.framebufferOnly = true
+            metalLayer.isOpaque = true
+        }
         // The bar's UIPasteControl delivers to paste(itemProviders:). A
         // programmatic UIPasteboard read from a plain button shows iOS's
         // Allow Paste alert and blocks the main thread until it is answered.
@@ -161,7 +156,8 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
     /// Posted on the main thread after a Code Font or Code Text Size change and
     /// when Nerd Font symbols finish installing.
     @objc private func fontPreferencesChanged() {
-        painter = SSHTerminalGridPainter.codeFont()
+        metrics = SSHTerminalCellMetrics.codeFont()
+        renderer?.setMetrics(metrics, scale: max(traitCollection.displayScale, 1))
         needsFullPaint = true
         needsPaint = true
         setNeedsLayout()
@@ -178,15 +174,44 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        displayLink?.invalidate()
-        displayLink = nil
-        if window == nil { keyRepeater.stop() }
-        guard window != nil else { return }
+        stopDisplayLink()
+        if window == nil {
+            keyRepeater.stop()
+            NotificationCenter.default.removeObserver(self, name: UIApplication.didBecomeActiveNotification, object: nil)
+            NotificationCenter.default.removeObserver(self, name: UIApplication.willResignActiveNotification, object: nil)
+            return
+        }
         setNeedsLayout()
+        sceneActive = window?.windowScene?.activationState == .foregroundActive
+        startDisplayLinkIfNeeded()
+        let center = NotificationCenter.default
+        center.removeObserver(self, name: UIApplication.didBecomeActiveNotification, object: nil)
+        center.removeObserver(self, name: UIApplication.willResignActiveNotification, object: nil)
+        center.addObserver(self, selector: #selector(sceneBecameActive), name: UIApplication.didBecomeActiveNotification, object: nil)
+        center.addObserver(self, selector: #selector(sceneResignedActive), name: UIApplication.willResignActiveNotification, object: nil)
+    }
+
+    @objc private func sceneBecameActive() {
+        sceneActive = true
+        startDisplayLinkIfNeeded()
+    }
+
+    @objc private func sceneResignedActive() {
+        sceneActive = false
+        stopDisplayLink()
+    }
+
+    private func startDisplayLinkIfNeeded() {
+        guard window != nil, sceneActive, displayLink == nil else { return }
         let link = CADisplayLink(target: DisplayTarget(self), selector: #selector(DisplayTarget.tick))
-        link.preferredFrameRateRange = .init(minimum: 15, maximum: 30, preferred: 30)
+        link.preferredFrameRateRange = .init(minimum: 15, maximum: 60, preferred: 60)
         link.add(to: .main, forMode: .common)
         displayLink = link
+    }
+
+    private func stopDisplayLink() {
+        displayLink?.invalidate()
+        displayLink = nil
     }
 
     override func layoutSubviews() {
@@ -201,6 +226,16 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
         // the grid at zero pixels. didMoveToWindow queues another layout pass.
         let scale = traitCollection.displayScale
         guard scale > 0 else { return }
+        if let metalLayer {
+            metalLayer.contentsScale = scale
+            let drawable = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+            if metalLayer.drawableSize != drawable {
+                metalLayer.drawableSize = drawable
+                needsFullPaint = true
+                needsPaint = true
+            }
+        }
+        renderer?.setMetrics(metrics, scale: scale)
         let geometry = SSHTerminalGeometry(
             columns: min(500, max(1, Int(bounds.width / cellSize.width))),
             rows: min(300, max(1, Int(bounds.height / cellSize.height))),
@@ -226,55 +261,55 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
         installPasteControl(background: background)
         channel.engine.setColors(foreground: foreground.terminalRGB, background: background.terminalRGB,
                                  dark: themeID.preferredColorScheme != .light)
+        needsFullPaint = true
         needsPaint = true
     }
 
-    /// Paints the invalidated rows of the last planned frame; UIKit keeps the
-    /// layer's other pixels. A system redraw (first display, purged backing
-    /// store) asks for more than was invalidated and gets every row in `rect`.
-    override func draw(_ rect: CGRect) {
-        guard let context = UIGraphicsGetCurrentContext() else { return }
-        let frame = shown ?? channel.engine.frame()
-        shown = frame
-        let height = cellSize.height
-        let gridBottom = CGFloat(frame.rows.count) * height
-        let first = max(0, Int(rect.minY / height))
-        let last = min(frame.rows.count, Int(ceil(rect.maxY / height)))
-        var rows = IndexSet(integersIn: first..<max(first, last))
-        if let low = invalidRows.first, let high = invalidRows.last,
-           rect.minY >= CGFloat(low) * height - 0.5, min(rect.maxY, gridBottom) <= CGFloat(high + 1) * height + 0.5 {
-            rows.formIntersection(invalidRows)
+    /// One display-link tick: snapshot the engine and encode the complete grid
+    /// when it changed. Skips when off-window, inactive, or every instance
+    /// buffer is still in flight.
+    func presentIfNeeded() {
+        guard window != nil, sceneActive, bounds.width > 0, bounds.height > 0 else { return }
+        guard let renderer = rendererIfReady() else { return }
+        if renderer.inFlightCount >= SSHTerminalMetalRenderer.ringSize {
+            _ = channel.engine.frame()
+            needsFullPaint = true
+            return
         }
-        invalidRows.removeAll()
-        let background = UIColor(frame.background)
-        background.setFill()
-        if rect.maxY > gridBottom {
-            context.fill(CGRect(x: rect.minX, y: max(rect.minY, gridBottom), width: rect.width, height: rect.maxY - max(rect.minY, gridBottom)))
+        let frame = channel.engine.frame()
+        let shouldDraw = needsFullPaint || !frame.rebuiltRows.isEmpty
+        needsFullPaint = false
+        guard shouldDraw, let metalLayer else { return }
+        metalLayer.device = renderer.device
+        let scale = max(traitCollection.displayScale, 1)
+        if metalLayer.drawableSize.width < 1 {
+            metalLayer.contentsScale = scale
+            metalLayer.drawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
         }
-        guard !rows.isEmpty else { return }
-        let started = CACurrentMediaTime()
-        for range in rows.rangeView {
-            background.setFill()
-            context.fill(CGRect(x: 0, y: CGFloat(range.lowerBound) * height, width: bounds.width, height: CGFloat(range.count) * height))
-            painter.paint(frame, rows: range, cursorColor: foreground.withAlphaComponent(0.65), in: context)
+        guard let drawable = metalLayer.nextDrawable() else {
+            needsFullPaint = true
+            return
         }
-        let perRow = (CACurrentMediaTime() - started) / Double(rows.count)
-        secondsPerRow = secondsPerRow * 0.7 + perRow * 0.3
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        foreground.withAlphaComponent(0.65).getRed(&r, green: &g, blue: &b, alpha: &a)
+        let cursor = SIMD4<Float>(Float(r), Float(g), Float(b), Float(a))
+        let cost = renderer.encode(frame: frame, cursorColor: cursor, drawable: drawable)
+        if !cost.submitted { needsFullPaint = true }
     }
 
-    /// One display-link tick: read the frame, note the rows that changed, and
-    /// invalidate as many as the paint budget allows.
-    func repaintChangedRows() {
-        let next = channel.engine.frame()
-        repaints.add(needsFullPaint ? nil : SSHTerminalPaintPlan.changedRows(from: shown, to: next), rowCount: next.rows.count)
-        needsFullPaint = false
-        shown = next
-        let take = repaints.take(secondsPerRow: secondsPerRow, budget: Self.paintBudget)
-        invalidRows.formUnion(take.rows)
-        for rect in SSHTerminalPaintPlan.invalidationRects(rows: take.rows, margin: take.margin, rowCount: next.rows.count,
-                                                            cellHeight: cellSize.height, bounds: bounds.size) {
-            setNeedsDisplay(rect)
+    private func rendererIfReady() -> SSHTerminalMetalRenderer? {
+        if let renderer { return renderer }
+        guard let pipeline = SSHTerminalMetalPipeline.peek() else {
+            SSHTerminalMetalPipeline.prewarm()
+            return nil
         }
+        let scale = max(traitCollection.displayScale, 1)
+        guard let built = try? SSHTerminalMetalRenderer(pipeline: pipeline, metrics: metrics, scale: scale) else {
+            return nil
+        }
+        metalLayer?.device = built.device
+        renderer = built
+        return built
     }
 
     func insertText(_ text: String) {
@@ -622,10 +657,10 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
             guard let view else { return }
             // A hold has a one-second deadline even if no more bytes arrive.
             let changes = view.channel.engine.changeCount
-            if view.needsPaint || view.paintedChangeCount != changes || view.channel.engine.renderHeld || view.hasPendingPaint {
+            if view.needsPaint || view.paintedChangeCount != changes || view.channel.engine.renderHeld {
                 view.needsPaint = false
                 view.paintedChangeCount = changes
-                view.repaintChangedRows()
+                view.presentIfNeeded()
             }
         }
     }

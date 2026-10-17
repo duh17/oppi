@@ -14,7 +14,7 @@ enum SSHTerminalScreenshotStatus: String {
 struct SSHTerminalScreenshotPreview: View {
     var status: SSHTerminalScreenshotStatus = .none
     var hostLabel: String = "chen@mac-studio"
-    @Environment(\.themeID) private var themeID
+    private let themeID: ThemeID
     @State private var channel = try? SSHTerminalChannel()
     /// A server-scoped connection, as the app root injects, so the input bar
     /// claims the shared dictation manager and shows its mic.
@@ -23,6 +23,15 @@ struct SSHTerminalScreenshotPreview: View {
         connection.setPreviewServerId("preview-server")
         return connection
     }()
+
+    init(status: SSHTerminalScreenshotStatus = .none, hostLabel: String = "chen@mac-studio") {
+        self.status = status
+        self.hostLabel = hostLabel
+        let themeID: ThemeID = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"] == "light"
+            ? .light : .dark
+        self.themeID = themeID
+        ThemeRuntimeState.setThemeID(themeID)
+    }
 
     var body: some View {
         NavigationStack {
@@ -33,6 +42,8 @@ struct SSHTerminalScreenshotPreview: View {
             }
         }
         .environment(connection)
+        .environment(\.themeID, themeID)
+        .environment(\.theme, themeID.appTheme)
         // As the app root does: materials and popovers follow the theme, not
         // whatever appearance the simulator was left in.
         .preferredColorScheme(themeID.preferredColorScheme)
