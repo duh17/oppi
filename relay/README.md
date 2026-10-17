@@ -67,9 +67,11 @@ Point a server at it with `oppi config set push.relays '["http://127.0.0.1:8787"
 Not automated yet. The steps, for whoever owns the account:
 
 1. A Cloudflare account and a hostname for the relay, such as `push.<domain>`. The Workers
-   Free plan fits the per-phone quotas (spec "Quotas") for about 200 phones at their daily
-   cap; past its daily limits every push fails until 00:00 UTC, so move to Workers Paid
-   before that.
+   Free plan fits the per-phone quotas (spec "Quotas") for about 1,000 phones at their daily
+   cap and several thousand in normal use; past its daily limits every push fails until
+   00:00 UTC (the Free plan never bills), so move to Workers Paid before that. Add a rate
+   limiting rule for `/v1/challenge` and `/v1/registrations`: a phone registers about once
+   per install, so 3 requests per client address per 10 seconds is plenty.
 2. An APNs auth key (`.p8`) from the Apple Developer account of the team that signs the app.
 3. `npx wrangler login`, then set secrets: `wrangler secret put APNS_KEY_P8` (the file's
    contents), `APNS_KEY_ID`, `APNS_TEAM_ID`.

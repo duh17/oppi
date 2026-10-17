@@ -1,7 +1,8 @@
 /**
  * Cloudflare adapter: a Worker in front of the relay core, one SQLite-backed Durable Object
- * per registration (atomic quotas, counters, and revocation), and one per outstanding
- * challenge (single use). APNs is reached with `fetch`.
+ * per registration (atomic quotas, counters, and revocation), one per APNs token naming that
+ * phone's current registration, and one per outstanding challenge (single use). APNs is
+ * reached with `fetch`.
  *
  * Secrets (`wrangler secret put`): APNS_KEY_P8, APNS_KEY_ID, APNS_TEAM_ID.
  * Vars (wrangler.toml): APP_ID, BUNDLE_ID.
@@ -31,6 +32,7 @@ import {
 export interface Env {
   REGISTRATIONS: DurableObjectNamespace<RegistrationObject>;
   CHALLENGES: DurableObjectNamespace<ChallengeObject>;
+  APNS_TOKENS: DurableObjectNamespace<ApnsTokenObject>;
   APP_ID: string;
   BUNDLE_ID: string;
   APNS_KEY_P8: string;
@@ -93,6 +95,25 @@ export class RegistrationObject extends DurableObject<Env> {
   }
 }
 
+/**
+ * Addressed by the APNs token; holds only the id of that phone's current registration, so
+ * the token itself is stored once, in the registration.
+ */
+export class ApnsTokenObject extends DurableObject<Env> {
+  async bind(registrationId: string): Promise<string | null> {
+    const previous = (await this.ctx.storage.get<string>("registrationId")) ?? null;
+    if (previous === registrationId) return null;
+    await this.ctx.storage.put("registrationId", registrationId);
+    return previous;
+  }
+
+  async unbind(registrationId: string): Promise<void> {
+    if ((await this.ctx.storage.get<string>("registrationId")) === registrationId) {
+      await this.ctx.storage.deleteAll();
+    }
+  }
+}
+
 export class ChallengeObject extends DurableObject<Env> {
   async put(expiresAt: number): Promise<void> {
     await this.ctx.storage.put("expiresAt", expiresAt);
@@ -120,6 +141,11 @@ class DurableObjectRelayStore implements RelayStore {
     return REGISTRATIONS.get(REGISTRATIONS.idFromName(id));
   }
 
+  private apnsToken(apnsToken: string) {
+    const { APNS_TOKENS } = this.env();
+    return APNS_TOKENS.get(APNS_TOKENS.idFromName(apnsToken));
+  }
+
   private challenge(challenge: string) {
     const { CHALLENGES } = this.env();
     return CHALLENGES.get(CHALLENGES.idFromName(challenge));
@@ -135,6 +161,14 @@ class DurableObjectRelayStore implements RelayStore {
 
   createRegistration(record: RegistrationRecord): Promise<void> {
     return this.registration(record.id).create(record);
+  }
+
+  bindApnsToken(apnsToken: string, registrationId: string): Promise<string | null> {
+    return this.apnsToken(apnsToken).bind(registrationId);
+  }
+
+  unbindApnsToken(apnsToken: string, registrationId: string): Promise<void> {
+    return this.apnsToken(apnsToken).unbind(registrationId);
   }
 
   getRegistration(id: string): Promise<RegistrationRecord | null> {

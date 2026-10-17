@@ -220,7 +220,8 @@ the relay stores no addresses.
 ```
 
 `attestation` is `null` on devices without App Attest (`DCAppAttestService.isSupported`
-false). `clientDataHash` = `SHA-256(UTF-8 "oppi-relay-registration-v1\n" + challenge +
+false), which the relay accepts only with `environment` `sandbox`: development builds,
+Simulator, and health probes. Production registrations must attest. `clientDataHash` = `SHA-256(UTF-8 "oppi-relay-registration-v1\n" + challenge +
 "\n" + apnsToken + "\n" + environment)`.
 
 With an attestation the relay checks, per Apple's "Validating apps that connect to your
@@ -238,12 +239,17 @@ accepted only with `environment` `sandbox`.
   "registrationId": "r_<base64url 16 bytes>",
   "registrationSecret": "<base64url 32 bytes>",
   "attested": true,
-  "limits": { "pushesPerDay": 200 }
+  "limits": { "pushesPerDay": 100 }
 }
 ```
 
+One registration per APNs token: registering a token again deletes the earlier
+registration, its permissions, and their send tokens, and the new registration keeps the
+earlier one's quota counts.
+
 Errors: `400 bad_request`, `400 unknown_field`, `400 challenge_invalid` (unknown, used, or
-expired), `401 attestation_invalid`, `429 rate_limited`.
+expired), `401 attestation_required` (production without an attestation; the challenge
+stays unused), `401 attestation_invalid`, `429 rate_limited`.
 
 **Registration-authenticated calls** carry `Authorization: Bearer <registrationSecret>`.
 Attested registrations also carry `X-Oppi-Assertion: <base64 CBOR assertion>` whose
@@ -291,19 +297,21 @@ first); `429 quota_exceeded` with `Retry-After`; `502 apns_unavailable` for APNs
 
 ### 3.3 Quotas
 
-Per registration and UTC day: 200 pushes when attested, 50 when not. Per registration:
-at most 10 pushes per minute. These fit normal use within the Cloudflare Workers Free plan:
-a push costs one Worker request, one Durable Object request, and one row written, of
-100,000 each a day, so 200 phones at the daily cap use 40,000. A refused push writes
-nothing. Unattested registrations: at most 5 per client address per
-hour (in memory).
+Per registration and UTC day: 100 pushes when attested, 20 when not (sandbox only). Per
+registration: at most 10 pushes per minute. A phone holds one registration per APNs token,
+so registering again never resets these counts. They fit normal use within the Cloudflare
+Workers Free plan: a push costs one Worker request, one Durable Object request, and one row
+written, of 100,000 each a day, so 1,000 phones at the daily cap use them all and normal use
+(a few dozen a day) leaves room for several thousand. A refused push writes nothing.
+Unattested registrations: at most 5 per client address per hour (in memory).
 
 ### 3.4 Relay storage
 
 Per registration: id, `SHA-256(registrationSecret)`, APNs token, environment, attested
 flag, App Attest public key and counter, creation time, permissions (id and
-`SHA-256(secret)`), and quota counters. Challenges until used or expired. No envelopes,
-no client addresses, no request logs.
+`SHA-256(secret)`), and quota counters. Per APNs token, the id of its current registration
+(the Cloudflare adapter keys this by the token and stores only the id). Challenges until
+used or expired. No envelopes, no client addresses, no request logs.
 
 ### 3.5 APNs request (fixed template)
 
@@ -363,9 +371,9 @@ any field from a push that failed a check. Without Apple's
   the relay to delete its permission.
 - Revoking a device or rotating the owner token removes its registration in the same
   write and asks the relay to delete the permission.
-- Per-device budget, in memory: 200 pushes per UTC day and 10 per minute for each device,
+- Per-device budget, in memory: 100 pushes per UTC day and 10 per minute for each device,
   matching the relay's quota so the server stops before the relay refuses. Routine events
-  (`done`, `error`, `device_enrolled`) stop at 180 a day and 8 a minute; the rest
+  (`done`, `error`, `device_enrolled`) stop at 80 a day and 8 a minute; the rest
   is kept for `blocked` and `pairing_approval`, which wait on the user. A relay `429` with
   `Retry-After` pauses that device's pushes until it passes.
 - Events: `blocked` and `done` on program-status transitions, at most once a minute per

@@ -58,6 +58,7 @@ async function startHarness(): Promise<RelayHarness> {
     durableObjects: {
       REGISTRATIONS: { className: "RegistrationObject", useSQLite: true },
       CHALLENGES: { className: "ChallengeObject", useSQLite: true },
+      APNS_TOKENS: { className: "ApnsTokenObject", useSQLite: true },
     },
     bindings: {
       APP_ID,

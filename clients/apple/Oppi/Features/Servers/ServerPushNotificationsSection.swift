@@ -22,6 +22,12 @@ struct ServerPushNotificationsSection: View {
         connection?.pushRelay?.host()
     }
 
+    /// The relay registers App Store and TestFlight builds only when App Attest vouches for
+    /// them; development builds and Simulator may register without it.
+    private static var relayRefusesThisDevice: Bool {
+        APNsEnvironment.current == .production && !DCAppAttestService.shared.isSupported
+    }
+
     var body: some View {
         if let relayHost {
             Section {
@@ -38,7 +44,7 @@ struct ServerPushNotificationsSection: View {
                         }
                     )
                 )
-                .disabled(status == .working)
+                .disabled(status == .working || Self.relayRefusesThisDevice)
                 .accessibilityIdentifier("server.push.enabled")
                 if status == .working {
                     ProgressView()
@@ -50,7 +56,7 @@ struct ServerPushNotificationsSection: View {
                         .accessibilityIdentifier("server.push.error")
                 }
             } footer: {
-                Text(Self.footer(relayHost: relayHost, appAttestSupported: DCAppAttestService.shared.isSupported))
+                Text(Self.footer(relayHost: relayHost, relayRefusesThisDevice: Self.relayRefusesThisDevice))
             }
             .onAppear { isEnabled = PushRegistration.isEnabled(serverId: serverId) }
             .alert("Turn On Push Notifications?", isPresented: $showDisclosure) {
@@ -66,10 +72,10 @@ struct ServerPushNotificationsSection: View {
         String(localized: "Alerts from this server travel through \(relayHost) and Apple. Their content is encrypted on your server to a key that only this device holds. The relay and Apple can see this device's push token, when each alert is sent, and your server's network address. They cannot read titles, session names, or questions.")
     }
 
-    static func footer(relayHost: String, appAttestSupported: Bool) -> String {
+    static func footer(relayHost: String, relayRefusesThisDevice: Bool) -> String {
         let base = String(localized: "End-to-end encrypted through \(relayHost). Off by default.")
-        guard !appAttestSupported else { return base }
-        return base + " " + String(localized: "This device can't prove to the relay that it runs Oppi, so the relay allows fewer alerts a day.")
+        guard relayRefusesThisDevice else { return base }
+        return base + " " + String(localized: "Not available on this device: it can't prove to the relay that it runs Oppi.")
     }
 
     private func turnOn() {

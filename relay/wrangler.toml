@@ -27,9 +27,17 @@ class_name = "RegistrationObject"
 name = "CHALLENGES"
 class_name = "ChallengeObject"
 
+[[durable_objects.bindings]]
+name = "APNS_TOKENS"
+class_name = "ApnsTokenObject"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RegistrationObject", "ChallengeObject"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["ApnsTokenObject"]
 
 [vars]
 APP_ID = "AZAQMY4SPZ.dev.chenda.Oppi"

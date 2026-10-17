@@ -45,12 +45,14 @@ export interface QuotaLimits {
 
 /**
  * Sized for normal use within the Workers Free plan: each push costs one Worker request, one
- * Durable Object request, and one row written (100,000 a day each). 200 phones at the daily
- * cap use 40,000 a day. An Oppi server keeps its own per-device budget below these.
+ * Durable Object request, and one row written (100,000 a day each). 1,000 phones at the daily
+ * cap use them all; normal use is a few dozen a day. An Oppi server keeps its own per-device
+ * budget at or below these. Unattested registrations exist only in sandbox (development builds,
+ * Simulator, and health probes), so they get just enough for testing.
  */
 export const DEFAULT_QUOTA_LIMITS: QuotaLimits = {
-  attestedPerDay: 200,
-  unattestedPerDay: 50,
+  attestedPerDay: 100,
+  unattestedPerDay: 20,
   perMinute: 10,
 };
 
@@ -68,6 +70,13 @@ export interface RelayStore {
   /** True only the first time, before expiry; the challenge is gone afterwards. */
   consumeChallenge(challenge: string, now: number): Promise<boolean>;
   createRegistration(record: RegistrationRecord): Promise<void>;
+  /**
+   * Make `registrationId` the only registration for `apnsToken` and return the one it
+   * replaces, if any. One phone holds one registration, so it holds one quota.
+   */
+  bindApnsToken(apnsToken: string, registrationId: string): Promise<string | null>;
+  /** Forget the token's binding when it still names `registrationId`. */
+  unbindApnsToken(apnsToken: string, registrationId: string): Promise<void>;
   getRegistration(id: string): Promise<RegistrationRecord | null>;
   deleteRegistration(id: string): Promise<void>;
   /** Store `counter` only when it exceeds the stored App Attest counter. */

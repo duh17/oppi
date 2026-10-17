@@ -24,9 +24,9 @@ const PUSH_TTL_SECONDS = 3600;
  * `pairing_approval`), so a busy day of finished runs never hides an approval.
  */
 export const PUSH_DEVICE_BUDGET = {
-  perDay: 200,
+  perDay: 100,
   perMinute: 10,
-  routinePerDay: 180,
+  routinePerDay: 80,
   routinePerMinute: 8,
 } as const;
 

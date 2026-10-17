@@ -44,7 +44,8 @@ struct PushRelayClient: Sendable {
             attestation = ["keyId": keyId, "object": object.base64EncodedString()]
             attestKeyId = keyId
         }
-        // `attestation: null` is the unsupported-device path: lower relay limits.
+        // `attestation: null` is the unsupported-device path, which the relay accepts only in
+        // sandbox (development builds and Simulator), with lower limits.
         let body = try JSONSerialization.data(withJSONObject: [
             "challenge": challenge.challenge,
             "apnsToken": apnsToken,

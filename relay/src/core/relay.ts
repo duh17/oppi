@@ -203,6 +203,11 @@ export function createRelayHandler(deps: RelayDeps): (
     ) {
       throw new HttpError(400, "bad_request");
     }
+    // Production is for App Store and TestFlight builds, which can always attest; only
+    // development builds, Simulator, and probes register in sandbox without App Attest.
+    if (attestation === null && environment === "production") {
+      throw new HttpError(401, "attestation_required");
+    }
     let attestationInput: { keyId: Uint8Array; object: Uint8Array } | null = null;
     if (attestation !== null) {
       if (typeof attestation !== "object" || Array.isArray(attestation)) {
@@ -260,6 +265,15 @@ export function createRelayHandler(deps: RelayDeps): (
       permissions: [],
       quota: emptyQuota(),
     };
+    // Registering again replaces the phone's earlier registration and keeps its counts, so
+    // a new registration never brings a fresh daily quota.
+    const replacedId = await store.bindApnsToken(apnsToken, record.id);
+    if (replacedId) {
+      const replaced = await store.getRegistration(replacedId);
+      if (replaced) record.quota = replaced.quota;
+      await store.deleteRegistration(replacedId);
+      log("relay.registration_replaced");
+    }
     await store.createRegistration(record);
     log("relay.registered", { attested: record.attested });
     return json(201, {
@@ -378,6 +392,7 @@ export function createRelayHandler(deps: RelayDeps): (
     log("relay.apns_rejected", { status: result.status, reason: result.reason ?? "" });
     if (isRetiredToken(result)) {
       await store.deleteRegistration(token.registrationId);
+      await store.unbindApnsToken(authorization.apnsToken, token.registrationId);
       throw new HttpError(410, "gone");
     }
     throw new HttpError(502, "apns_unavailable");
@@ -426,8 +441,14 @@ export function createRelayHandler(deps: RelayDeps): (
     if (registrationMatch && method === "DELETE") {
       const registrationId = registrationMatch[1] ?? "";
       if (!REGISTRATION_ID.test(registrationId)) throw new HttpError(410, "gone");
-      await authenticateRegistration(request, registrationId, path, await readBody(request));
+      const record = await authenticateRegistration(
+        request,
+        registrationId,
+        path,
+        await readBody(request),
+      );
       await store.deleteRegistration(registrationId);
+      await store.unbindApnsToken(record.apnsToken, registrationId);
       return noContent();
     }
     throw new HttpError(404, "not_found");

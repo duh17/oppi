@@ -134,12 +134,27 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
       ).toBe("challenge_invalid");
     });
 
-    it("registers a device without App Attest with the lower daily limit", async () => {
+    it("refuses a production registration without App Attest", async () => {
+      const address = nextAddress();
+      const challenge = (await call(harness, "POST", "/v1/challenge", { address })).json.challenge;
+      const body = { challenge, apnsToken: APNS_TOKEN, environment: "production", attestation: null };
+      expect(await call(harness, "POST", "/v1/registrations", { address, body })).toMatchObject({
+        status: 401,
+        json: { error: "attestation_required" },
+      });
+      // The refusal spends no challenge, and the same phone may still register in sandbox.
+      expect(
+        (await call(harness, "POST", "/v1/registrations", { address, body: { ...body, environment: "sandbox" } }))
+          .status,
+      ).toBe(201);
+    });
+
+    it("registers a sandbox device without App Attest with the lower daily limit", async () => {
       const address = nextAddress();
       const challenge = (await call(harness, "POST", "/v1/challenge", { address })).json.challenge;
       const response = await call(harness, "POST", "/v1/registrations", {
         address,
-        body: { challenge, apnsToken: APNS_TOKEN, environment: "production", attestation: null },
+        body: { challenge, apnsToken: APNS_TOKEN, environment: "sandbox", attestation: null },
       });
       expect(response.status).toBe(201);
       expect(response.json).toMatchObject({
@@ -188,7 +203,7 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
     });
 
     it("sends the fixed APNs template around the envelope", async () => {
-      const registration = await registerUnattested(harness, "production");
+      const registration = await registerUnattested(harness);
       const sendToken = await mintSendToken(harness, registration);
       const envelope = fakeEnvelope();
       const before = Math.floor(Date.now() / 1000);
@@ -200,7 +215,7 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
       expect(response).toMatchObject({ status: 200, json: { ok: true } });
       expect(harness.apnsRequests).toHaveLength(1);
       const [sent] = harness.apnsRequests;
-      expect(sent?.host).toBe("api.push.apple.com");
+      expect(sent?.host).toBe("api.sandbox.push.apple.com");
       expect(sent?.path).toBe(`/3/device/${APNS_TOKEN}`);
       expect(sent?.headers).toMatchObject({
         "apns-push-type": "alert",
@@ -288,6 +303,26 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
       expect(await push()).toMatchObject({ status: 502, json: { error: "apns_unavailable" } });
       harness.respondApns(() => ({ status: 200 }));
       expect((await push()).status).toBe(200);
+    });
+
+    it("keeps one registration per APNs token, carrying its counts to the new one", async () => {
+      const first = await mintSendToken(harness, await registerUnattested(harness));
+      const push = (sendToken: string) =>
+        call(harness, "POST", "/v1/push", { bearer: sendToken, body: { envelope: fakeEnvelope() } });
+      for (let index = 0; index < 6; index += 1) expect((await push(first)).status).toBe(200);
+
+      const second = await mintSendToken(harness, await registerUnattested(harness));
+      // The earlier registration and its send tokens are gone.
+      expect((await push(first)).status).toBe(410);
+      // Registering again did not reset the minute's count: 6 + 4 reaches the limit.
+      for (let index = 0; index < DEFAULT_QUOTA_LIMITS.perMinute - 6; index += 1) {
+        expect((await push(second)).status).toBe(200);
+      }
+      expect((await push(second)).status).toBe(429);
+
+      // A different phone's token is its own registration.
+      const other = await mintSendToken(harness, await registerUnattested(harness, "sandbox", "b".repeat(64)));
+      expect((await push(other)).status).toBe(200);
     });
 
     it("limits a registration's pushes per minute with Retry-After", async () => {

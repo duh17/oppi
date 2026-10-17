@@ -202,12 +202,12 @@ describe("node adapter", () => {
     });
     try {
       const capture = { url: relay.url } as RelayHarness;
-      const sendToken = await mintSendToken(capture, await registerUnattested(capture, "production"));
+      const sendToken = await mintSendToken(capture, await registerUnattested(capture));
       const envelope = fakeEnvelope();
       expect((await call(capture, "POST", "/v1/push", { bearer: sendToken, body: { envelope } })).status).toBe(200);
       const [line] = readFileSync(capturePath, "utf8").trim().split("\n");
       const captured = JSON.parse(line ?? "{}") as CapturedApnsRequest;
-      expect(captured.host).toBe("api.push.apple.com");
+      expect(captured.host).toBe("api.sandbox.push.apple.com");
       expect(captured.path).toBe(`/3/device/${APNS_TOKEN}`);
       expect(JSON.parse(captured.payload)).toMatchObject({ e: envelope, aps: { "mutable-content": 1 } });
     } finally {
@@ -280,8 +280,23 @@ describe("App Attest (node adapter with a test root)", () => {
     });
   });
 
-  it("registers an attested production key for production", async () => {
-    expect((await attest("production", { aaguid: "production" })).response.status).toBe(201);
+  it("registers an attested production key for production and pushes to the production host", async () => {
+    const { response, attestation } = await attest("production", { aaguid: "production" });
+    expect(response.status).toBe(201);
+    const { registrationId, registrationSecret } = response.json as { registrationId: string; registrationSecret: string };
+    const path = `/v1/registrations/${registrationId}/permissions`;
+    const minted = await call(harness, "POST", path, {
+      bearer: registrationSecret,
+      rawBody: "{}",
+      headers: { "x-oppi-assertion": await assertionHeader(attestation.credential, "POST", path, "{}", 1) },
+    });
+    expect(minted.status).toBe(201);
+    const pushed = await call(harness, "POST", "/v1/push", {
+      bearer: minted.json.sendToken as string,
+      body: { envelope: fakeEnvelope() },
+    });
+    expect(pushed.status).toBe(200);
+    expect(harness.apnsRequests.at(-1)?.host).toBe("api.push.apple.com");
   });
 
   it.each<[string, Partial<AttestationOptions>, "sandbox" | "production"]>([

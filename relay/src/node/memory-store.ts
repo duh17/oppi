@@ -74,6 +74,17 @@ export class MemoryRelayStore implements RelayStore {
     this.persist();
   }
 
+  /** Found by scanning: a self-hosted relay serves a handful of phones. */
+  async bindApnsToken(apnsToken: string, registrationId: string): Promise<string | null> {
+    for (const record of this.registrations.values()) {
+      if (record.apnsToken === apnsToken && record.id !== registrationId) return record.id;
+    }
+    return null;
+  }
+
+  /** Nothing to forget: the binding is the registration itself. */
+  async unbindApnsToken(): Promise<void> {}
+
   async getRegistration(id: string): Promise<RegistrationRecord | null> {
     const record = this.registrations.get(id);
     return record ? structuredClone(record) : null;
