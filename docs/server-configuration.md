@@ -89,7 +89,7 @@ Push is off by default. When you turn it on, the server sends end-to-end-encrypt
 Turn it on with the relay's origin, and optionally a standby. Set the relays first: relay mode without them is rejected.
 
 ```bash
-oppi config set push.relays '["https://push.chaosdonkey.dev"]'
+oppi config set push.relays '["https://push.oppi.chaosdonkey.dev"]'
 oppi config set push.mode relay
 oppi server restart
 ```
@@ -101,7 +101,7 @@ oppi server restart
 
 Restart the server after changing `push`. In relay mode, `/server/info` advertises `capabilities.pushNotifications` with the primary relay. Each user still opts in per server on the phone (**Server Settings → Push Notifications**, off by default); only then does the app register with APNs and the relay, ask for notification permission, and send this server its push key.
 
-`https://push.chaosdonkey.dev` is Oppi's relay, and the only one that reaches App Store and TestFlight builds: a relay needs an APNs key from the Apple Developer team that signs the app. If you build and sign Oppi yourself, run the relay in `relay/` (Node, or Cloudflare Workers) with your team's key. See [relay/README.md](../relay/README.md).
+`https://push.oppi.chaosdonkey.dev` is Oppi's relay, and the only one that reaches App Store and TestFlight builds: a relay needs an APNs key from the Apple Developer team that signs the app. If you build and sign Oppi yourself, run the relay in `relay/` (Node, or Cloudflare Workers) with your team's key. See [relay/README.md](../relay/README.md).
 
 What the server does:
 

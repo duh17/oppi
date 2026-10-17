@@ -4,8 +4,10 @@ name = "oppi-push-relay"
 main = "src/cloudflare/worker.ts"
 compatibility_date = "2026-10-01"
 
-# Custom domain on the account's chaosdonkey.dev zone; deploy creates its DNS record and certificate.
-routes = [{ pattern = "push.chaosdonkey.dev", custom_domain = true }]
+# Custom domain on the duhChen account's chaosdonkey.dev zone; deploy creates its DNS record
+# and certificate. One relay per app (each has its own APNs topic and App Attest app ID), so
+# each app gets its own push.<app>.chaosdonkey.dev hostname.
+routes = [{ pattern = "push.oppi.chaosdonkey.dev", custom_domain = true }]
 # Served only at that hostname, not also at a *.workers.dev address.
 workers_dev = false
 
