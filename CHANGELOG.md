@@ -102,6 +102,7 @@ Example:
 
 ### Fixed
 
+- **Server:** In a mirrored terminal session, a question, confirmation, or other prompt the agent opens while the mirror is reconnecting, such as during a server restart, now appears on the phone once the mirror reconnects. Before, it showed only in the terminal and the phone sat on "Waiting on you" with no way to answer.
 - **Client:** Tapping a row in Session Outline, including a search hit, closes the outline so the chat is visible, lands on exactly that row just below the top bar, and keeps it there while rows above it finish loading. After the outline closes, the row lifts slightly with a soft tint and a light tap (the tap follows Settings > Haptic Feedback; Reduce Motion keeps only the tint).
 - **Client:** Session timeline search highlights the letters that match what you typed. Before, rows could keep highlights from an earlier keystroke or show none, and equally good matches came back out of order; they now stay in timeline order.
 - **Server:** Session Outline rows for assistant replies jump to the reply again. Replies that followed hidden reasoning, a tool call, or split text pointed at a row the chat did not have, so tapping them did nothing.

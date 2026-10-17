@@ -1938,6 +1938,91 @@ describe("oppi mirror extension UI replay", () => {
     });
   });
 
+  it("forwards an ask opened while the bridge is reconnecting", async () => {
+    await withInteractiveTerminal(async () => {
+      vi.useFakeTimers();
+      vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");
+      vi.stubEnv("OPPI_MIRROR_TOKEN", "test-token");
+      vi.stubEnv("OPPI_MIRROR_AUTO_START", "false");
+      const pi = createMockPi();
+      await oppiPiMirror(pi as never);
+      const ctx = createMockContext() as MockExtensionContext & {
+        ui: { ask?: unknown };
+      };
+      const terminalAsk = vi.fn(
+        async (
+          _questions: unknown,
+          _allowCustom?: boolean,
+          opts?: { signal?: AbortSignal },
+        ) =>
+          new Promise((resolve) => {
+            opts?.signal?.addEventListener(
+              "abort",
+              () => resolve({ answers: {}, allIgnored: true }),
+              { once: true },
+            );
+          }),
+      );
+      ctx.ui.ask = terminalAsk;
+
+      await startSession(pi, ctx);
+      const firstSocket = await startMirror(pi, ctx);
+
+      // Server restart: the socket drops and the agent asks before reconnect.
+      firstSocket.close();
+      const questions = [
+        {
+          id: "scope",
+          question: "Which side?",
+          options: [{ value: "server", label: "Server" }],
+        },
+      ];
+      const askPromise = (
+        ctx.ui.ask as (
+          questions: unknown,
+          allowCustom?: boolean,
+        ) => Promise<unknown>
+      )(questions, true);
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(terminalAsk).toHaveBeenCalledTimes(1);
+      const secondSocket = wsMock.instances.at(-1);
+      if (!secondSocket || secondSocket === firstSocket) {
+        throw new Error("Expected reconnect websocket");
+      }
+      secondSocket.open();
+      secondSocket.receive(
+        JSON.stringify({
+          type: "hello_ack",
+          protocolVersion: 2,
+          sessionId: "s1",
+          workspaceId: "w1",
+        }),
+      );
+      await Promise.resolve();
+
+      const replayed = sentExtensionUIRequests(secondSocket).find(
+        (request) => request.method === "ask",
+      );
+      expect(replayed).toEqual(
+        expect.objectContaining({ method: "ask", questions, allowCustom: true }),
+      );
+
+      secondSocket.receive(
+        JSON.stringify({
+          type: "extension_ui_response",
+          id: replayed?.id,
+          value: JSON.stringify({ scope: "server" }),
+        }),
+      );
+
+      await expect(askPromise).resolves.toEqual({
+        answers: { scope: "server" },
+        allIgnored: false,
+      });
+    });
+  });
+
   it("does not replay persistent UI that was cleared before bridge connect", async () => {
     await withInteractiveTerminal(async () => {
       vi.stubEnv("OPPI_MIRROR_URL", "http://127.0.0.1:1234");

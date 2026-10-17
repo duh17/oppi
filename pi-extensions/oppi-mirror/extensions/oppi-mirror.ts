@@ -3229,7 +3229,11 @@ async function createTuiMirrorRuntime(
     terminalCall: (opts: ExtensionUIDialogOptions | undefined) => Promise<T>,
     parsePhoneResponse: (response: MirrorExtensionUIResponse) => T,
   ): Promise<T> {
-    if (suppressUIForwarding || ws?.readyState !== WebSocket.OPEN) {
+    // A dialog opened while the bridge reconnects (e.g. across a server restart)
+    // still registers as pending; hello_ack replays it so the phone can answer.
+    const bridgeWanted =
+      runtimeActive && !manualStop && (ws !== null || reconnectTimer !== null);
+    if (suppressUIForwarding || !bridgeWanted) {
       return terminalCall(opts);
     }
 
