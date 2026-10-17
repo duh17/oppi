@@ -502,7 +502,7 @@ struct SSHTerminalMetalTests {
             background: .init(r: 0, g: 0, b: 16),
             dark: true
         )
-        harness.engine.receive(Data("\u{1b}[?25l\u{1b}[2J\u{1b}[H\u{1F600}\u{23FA}".utf8))
+        harness.engine.receive(Data("\u{1b}[?25l\u{1b}[2J\u{1b}[H\u{1F600}\u{23FA}\r\n\u{1F534}".utf8))
         let frame = harness.engine.frame()
         let emojiWidth = frame.rows[0][0].width
         let recordColumn = emojiWidth
@@ -511,6 +511,11 @@ struct SSHTerminalMetalTests {
         #expect(shot.hasInk(column: 0, row: 0), "emoji has ink")
         let chroma = shot.chroma(column: 0, row: 0)
         #expect(chroma > 20, "color emoji must not be an fg-tinted silhouette (chroma \(chroma))")
+        let smileyRB = shot.maxRedMinusBlue(column: 0, row: 0)
+        #expect(smileyRB > 20, "grinning face is yellow, so R > B (R-B \(smileyRB))")
+        #expect(frame.rows[1][0].width >= 2, "red circle must stay on the color-emoji path")
+        let redRB = shot.maxRedMinusBlue(column: 0, row: 1)
+        #expect(redRB > 20, "red circle is red-dominant, so R > B (R-B \(redRB))")
         #expect(shot.hasInk(column: recordColumn, row: 0), "U+23FA has ink")
         #expect(
             !shot.hasInk(column: recordColumn + 1, row: 0),
@@ -804,6 +809,17 @@ struct SSHTerminalMetalTests {
                 let p = pixel(column: column, row: row, dx: dx, dy: dy)
                 let r = Int(p.r), g = Int(p.g), b = Int(p.b)
                 return max(r, g, b) - min(r, g, b)
+            }.max() ?? 0
+        }
+
+        func maxRedMinusBlue(column: Int, row: Int) -> Int {
+            let samples: [(CGFloat, CGFloat)] = [
+                (0.5, 0.45), (0.4, 0.5), (0.6, 0.5), (0.5, 0.35), (0.35, 0.4),
+                (0.45, 0.4), (0.55, 0.4), (0.5, 0.55), (0.4, 0.4), (0.6, 0.4),
+            ]
+            return samples.map { dx, dy in
+                let p = pixel(column: column, row: row, dx: dx, dy: dy)
+                return Int(p.r) - Int(p.b)
             }.max() ?? 0
         }
     }

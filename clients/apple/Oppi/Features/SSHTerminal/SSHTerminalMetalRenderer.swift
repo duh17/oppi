@@ -153,14 +153,14 @@ final class SSHTerminalMetalPipeline: @unchecked Sendable {
 }
 
 /// Core Text glyphs rasterized once at device scale, keyed by grapheme + face.
-/// Coverage glyphs live in an R8 atlas; color emoji in BGRA. CPU packing only:
+/// Coverage glyphs live in an R8 atlas; color emoji in RGBA. CPU packing only:
 /// new ink reaches the private atlas through a blit in the same command buffer
 /// as the draw, so a later frame cannot CPU-write texels an earlier buffer is
 /// still sampling.
 final class SSHTerminalGlyphAtlas {
     static let side = 2048
     let textTexture: MTLTexture
-    /// 1×1 until the first color glyph, then a full-size BGRA atlas.
+    /// 1×1 until the first color glyph, then a full-size RGBA atlas.
     private(set) var colorTexture: MTLTexture
     let side: Int
     private let device: MTLDevice
@@ -226,7 +226,7 @@ final class SSHTerminalGlyphAtlas {
         guard let textTexture = Self.makeTexture(
             device: device, pixelFormat: .r8Unorm, width: atlasSide, height: atlasSide
         ), let placeholder = Self.makeTexture(
-            device: device, pixelFormat: .bgra8Unorm, width: 1, height: 1
+            device: device, pixelFormat: .rgba8Unorm, width: 1, height: 1
         ) else { return nil }
         self.textTexture = textTexture
         self.colorTexture = placeholder
@@ -247,7 +247,7 @@ final class SSHTerminalGlyphAtlas {
     private func ensureColorAtlas() -> Bool {
         if colorAtlasReady { return true }
         guard let texture = Self.makeTexture(
-            device: device, pixelFormat: .bgra8Unorm, width: side, height: side
+            device: device, pixelFormat: .rgba8Unorm, width: side, height: side
         ) else { return false }
         colorTexture = texture
         colorAtlasReady = true
@@ -364,7 +364,7 @@ final class SSHTerminalGlyphAtlas {
                 (plan.text as NSString).draw(at: area.origin, withAttributes: attributes)
             }
         }
-        guard let bytes = bgraBytes(image, width: width, height: height) else { return nil }
+        guard let bytes = rgbaBytes(image, width: width, height: height) else { return nil }
         return RasterizedGlyph(bytes: bytes, color: plan.color)
     }
 
@@ -487,7 +487,7 @@ final class SSHTerminalGlyphAtlas {
         )
     }
 
-    private static func bgraBytes(_ image: UIImage, width: Int, height: Int) -> [UInt8]? {
+    private static func rgbaBytes(_ image: UIImage, width: Int, height: Int) -> [UInt8]? {
         guard let cgImage = image.cgImage else { return nil }
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
         let space = CGColorSpaceCreateDeviceRGB()
@@ -1078,7 +1078,7 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             return existing
         }
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: color ? .bgra8Unorm : .r8Unorm,
+            pixelFormat: color ? .rgba8Unorm : .r8Unorm,
             width: width, height: height, mipmapped: false
         )
         descriptor.usage = [.shaderRead]
