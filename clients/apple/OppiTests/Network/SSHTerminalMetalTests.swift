@@ -1,3 +1,4 @@
+import CoreText
 import Foundation
 import GhosttyVt
 import Metal
@@ -127,6 +128,131 @@ struct SSHTerminalMetalTests {
             frame: frame, cursorColor: SIMD4(1, 1, 1, 0.65), texture: texture, waitUntilCompleted: true
         )
         #expect(!refused.submitted, "a glyph larger than the atlas is not presented")
+        #expect(refused.miss == .deterministic, "overflow is a deterministic miss, not a retry")
+    }
+
+    @Test func missedPackDoesNotCacheBlankGlyphsForALaterFrame() throws {
+        let metrics = SSHTerminalCellMetrics(
+            font: .monospacedSystemFont(ofSize: 13, weight: .regular),
+            boldFont: .monospacedSystemFont(ofSize: 13, weight: .bold)
+        )
+        let scale: CGFloat = 1
+        let glyphW = max(1, Int(ceil(metrics.cellSize.width * scale)))
+        let glyphH = max(1, Int(ceil(metrics.cellSize.height * scale)))
+        func shelfFits(_ side: Int, count: Int) -> Bool {
+            var x = 0, y = 0, rowHeight = 0
+            for _ in 0..<count {
+                if x + glyphW > side {
+                    x = 0
+                    y += rowHeight
+                    rowHeight = 0
+                }
+                if y + glyphH > side { return false }
+                x += glyphW
+                rowHeight = max(rowHeight, glyphH)
+            }
+            return true
+        }
+        var atlasSide = max(glyphW, glyphH)
+        while atlasSide < 8192 && !shelfFits(atlasSide, count: 2) {
+            atlasSide += 1
+        }
+        #expect(shelfFits(atlasSide, count: 2) && !shelfFits(atlasSide, count: 3),
+                "need an atlas that packs AB but not ABC")
+
+        let pipeline = try SSHTerminalMetalPipeline.shared()
+        let renderer = try SSHTerminalMetalRenderer(
+            pipeline: pipeline, metrics: metrics, scale: scale, atlasSide: atlasSide
+        )
+        let engine = try SSHTerminalEngine(
+            geometry: .init(columns: 3, rows: 1, cellWidth: 8, cellHeight: 17)
+        ) { _ in }
+        engine.setColors(
+            foreground: .init(r: 255, g: 255, b: 255),
+            background: .init(r: 0, g: 0, b: 16),
+            dark: true
+        )
+        engine.receive(Data("\u{1b}[?25l\u{1b}[2J\u{1b}[HABC".utf8))
+        let width = max(1, Int((metrics.cellSize.width * 3).rounded()))
+        let height = max(1, Int(metrics.cellSize.height.rounded()))
+        let textureA = try #require(renderer.makeOffscreenTexture(width: width, height: height))
+        let costA = renderer.encodeOffscreen(
+            frame: engine.frame(), cursorColor: SIMD4(1, 1, 1, 0.65),
+            texture: textureA, waitUntilCompleted: true
+        )
+        #expect(!costA.submitted, "frame A cannot fit; packing must not submit")
+        #expect(costA.miss == .deterministic, "a pack that cannot fit is deterministic")
+
+        engine.receive(Data("\u{1b}[2J\u{1b}[HAB".utf8))
+        let textureB = try #require(renderer.makeOffscreenTexture(width: width, height: height))
+        let costB = renderer.encodeOffscreen(
+            frame: engine.frame(), cursorColor: SIMD4(1, 1, 1, 0.65),
+            texture: textureB, waitUntilCompleted: true
+        )
+        #expect(costB.submitted, "frame B fits and must submit")
+        #expect(costB.completed)
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        bytes.withUnsafeMutableBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            textureB.getBytes(
+                base, bytesPerRow: width * 4,
+                from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0
+            )
+        }
+        let shot = Shot(width: width, height: height, bytes: bytes, cell: metrics.cellSize)
+        #expect(shot.hasInk(column: 0, row: 0), "reused A still has ink after a missed pack")
+        #expect(shot.hasInk(column: 1, row: 0), "reused B still has ink after a missed pack")
+    }
+
+    @Test func coldFrameWithHundredsOfNewGlyphsStillPresentsInk() throws {
+        let metrics = SSHTerminalCellMetrics(
+            font: .monospacedSystemFont(ofSize: 13, weight: .regular),
+            boldFont: .monospacedSystemFont(ofSize: 13, weight: .bold)
+        )
+        let scale: CGFloat = 3
+        let glyphH = max(1, Int(ceil(metrics.cellSize.height * scale)))
+        #expect(400 * glyphH > 16384, "past the old one-glyph-per-row staging cap")
+        let scalars = Self.uniqueCoveredScalars(font: metrics.font, count: 400)
+        #expect(scalars.count == 400, "need 400 unique font-covered graphemes")
+
+        let columns = 40
+        let rows = 10
+        let pipeline = try SSHTerminalMetalPipeline.shared()
+        let renderer = try SSHTerminalMetalRenderer(pipeline: pipeline, metrics: metrics, scale: scale)
+        let engine = try SSHTerminalEngine(
+            geometry: .init(columns: columns, rows: rows, cellWidth: 8, cellHeight: 17)
+        ) { _ in }
+        engine.setColors(
+            foreground: .init(r: 255, g: 255, b: 255),
+            background: .init(r: 0, g: 0, b: 16),
+            dark: true
+        )
+        let body = String(String.UnicodeScalarView(scalars))
+        engine.receive(Data("\u{1b}[?25l\u{1b}[2J\u{1b}[H\(body)".utf8))
+        let width = max(1, Int((metrics.cellSize.width * CGFloat(columns) * scale).rounded()))
+        let height = max(1, Int((metrics.cellSize.height * CGFloat(rows) * scale).rounded()))
+        let texture = try #require(renderer.makeOffscreenTexture(width: width, height: height))
+        let cost = renderer.encodeOffscreen(
+            frame: engine.frame(), cursorColor: SIMD4(1, 1, 1, 0.65),
+            texture: texture, waitUntilCompleted: true
+        )
+        #expect(cost.submitted, "a cold screen that fits the atlas must not fail staging")
+        #expect(cost.completed)
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        bytes.withUnsafeMutableBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            texture.getBytes(
+                base, bytesPerRow: width * 4,
+                from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0
+            )
+        }
+        let cell = CGSize(
+            width: metrics.cellSize.width * scale,
+            height: metrics.cellSize.height * scale
+        )
+        let shot = Shot(width: width, height: height, bytes: bytes, cell: cell)
+        #expect(shot.hasInk(column: 0, row: 0), "first unique cell has ink")
+        #expect(shot.hasInk(column: 39, row: 9), "last unique cell has ink")
     }
 
     private func render(
@@ -209,6 +335,32 @@ struct SSHTerminalMetalTests {
             }
             return Shot(width: width, height: height, bytes: bytes, cell: metrics.cellSize)
         }
+    }
+
+    private static func uniqueCoveredScalars(font: UIFont, count: Int) -> [Unicode.Scalar] {
+        let ctFont = font as CTFont
+        var result: [Unicode.Scalar] = []
+        result.reserveCapacity(count)
+        let ranges: [ClosedRange<UInt32>] = [
+            0x21...0x7E,
+            0xA1...0x24F,
+            0x370...0x3FF,
+            0x400...0x52F,
+            0x1E00...0x1EFF,
+        ]
+        for range in ranges {
+            for value in range {
+                guard result.count < count, let scalar = Unicode.Scalar(value) else { continue }
+                let character = Character(scalar)
+                guard !character.isWhitespace, !character.isNewline else { continue }
+                var units = Array(String(scalar).utf16)
+                var glyphs = [CGGlyph](repeating: 0, count: units.count)
+                guard CTFontGetGlyphsForCharacters(ctFont, &units, &glyphs, units.count) else { continue }
+                result.append(scalar)
+            }
+            if result.count >= count { break }
+        }
+        return result
     }
 
     private enum TestError: Error {

@@ -270,10 +270,12 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
     }
 
     /// One display-link tick: snapshot the engine and encode the complete grid
-    /// when it changed. Returns true only when the gate can be consumed: a
-    /// frame was submitted, or the snapshot had nothing new to draw. Every
-    /// other return leaves `needsPaint` set; paths that called `frame()` but
-    /// did not present also leave `needsFullPaint` so the cached grid retries.
+    /// when it changed. Returns true when the gate can be consumed: a frame
+    /// was submitted, the snapshot had nothing new to draw, or encode reported
+    /// a deterministic miss. Transient misses (pipeline not ready, ring full,
+    /// nil drawable, nil command buffer/encoder) leave `needsPaint` set.
+    /// Deterministic misses still set `needsFullPaint` so a later changeCount,
+    /// theme, font, or bounds change retries.
     @discardableResult
     func presentIfNeeded() -> Bool {
         guard window != nil, sceneActive, bounds.width > 0, bounds.height > 0 else { return false }
@@ -302,7 +304,9 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
             return true
         }
         needsFullPaint = true
-        return false
+        // Pack/staging cannot succeed on retry with the same grid and metrics.
+        // Consume the gate so tick does not re-rasterize at 60 Hz.
+        return cost.miss == .deterministic
     }
 
     private func rendererIfReady() -> SSHTerminalMetalRenderer? {
@@ -665,9 +669,9 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
             guard let view else { return }
             // A hold has a one-second deadline even if no more bytes arrive.
             let changes = view.channel.engine.changeCount
-            // Consume the gate only after presentIfNeeded submits (or finds
-            // nothing to draw). A failed present leaves needsPaint set so an
-            // idle prompt still retries without a new byte.
+            // Consume the gate after presentIfNeeded submits, finds nothing
+            // to draw, or hits a deterministic encode miss. Transient misses
+            // leave needsPaint set so the next tick retries without a new byte.
             if view.needsPaint || view.paintedChangeCount != changes || view.channel.engine.renderHeld {
                 if view.presentIfNeeded() {
                     view.needsPaint = false

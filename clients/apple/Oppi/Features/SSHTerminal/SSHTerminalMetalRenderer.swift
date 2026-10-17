@@ -31,12 +31,20 @@ struct SSHTerminalCellMetrics {
     }
 }
 
+/// Encode did not submit. Transient misses retry this same grid;
+/// deterministic misses wait for a new changeCount, theme, font, or bounds.
+enum SSHTerminalMetalEncodeMiss: Equatable, Sendable {
+    case transient
+    case deterministic
+}
+
 struct SSHTerminalMetalFrameCost: Sendable {
     var encodeNanos: UInt64
     var submitted: Bool
     var completed: Bool
     var status: MTLCommandBufferStatus
     var errorDescription: String?
+    var miss: SSHTerminalMetalEncodeMiss? = nil
 }
 
 /// Process-wide pipeline from the precompiled metallib. Built off the main
@@ -431,18 +439,34 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         waitUntilCompleted: Bool
     ) -> SSHTerminalMetalFrameCost {
         let failed = SSHTerminalMetalFrameCost(
-            encodeNanos: 0, submitted: false, completed: false, status: .error, errorDescription: nil
+            encodeNanos: 0, submitted: false, completed: false, status: .error,
+            errorDescription: nil, miss: .transient
         )
+        // place() publishes UVs before the blit commits. On every path that
+        // packed new glyphs and does not commit, drop those keys so a later
+        // frame cannot sample blank atlas texels. In-flight buffers still
+        // sample old texels; later blits on this queue wait for those reads.
+        func abort(
+            slot: Int? = nil,
+            uploads: [SSHTerminalGlyphAtlas.Upload] = [],
+            miss: SSHTerminalMetalEncodeMiss,
+            reason: String
+        ) -> SSHTerminalMetalFrameCost {
+            if let slot { releaseSlot(slot) }
+            if !uploads.isEmpty { atlas.resetPacking() }
+            var cost = failed
+            cost.miss = miss
+            cost.errorDescription = reason
+            return cost
+        }
         let encodeStart = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
         guard let packed = pack(frame: frame, cursorColor: cursorColor) else {
-            var miss = failed
-            miss.errorDescription = "glyph atlas cannot fit this frame"
-            return miss
+            return abort(miss: .deterministic, reason: "glyph atlas cannot fit this frame")
         }
         guard let slotIndex = bind(packed.all) else {
-            var miss = failed
-            miss.errorDescription = "no free Metal instance slot"
-            return miss
+            return abort(
+                uploads: packed.uploads, miss: .transient, reason: "no free Metal instance slot"
+            )
         }
         var uploads = packed.uploads
         let staging: MTLTexture?
@@ -451,24 +475,24 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         } else if let prepared = prepareStaging(slot: slotIndex, uploads: &uploads) {
             staging = prepared
         } else {
-            releaseSlot(slotIndex)
-            var miss = failed
-            miss.errorDescription = "no glyph staging texture"
-            return miss
+            return abort(
+                slot: slotIndex, uploads: uploads,
+                miss: .deterministic, reason: "no glyph staging texture"
+            )
         }
         markInFlight(slotIndex)
         guard let commandBuffer = queue.makeCommandBuffer() else {
-            releaseSlot(slotIndex)
-            var miss = failed
-            miss.errorDescription = "makeCommandBuffer returned nil"
-            return miss
+            return abort(
+                slot: slotIndex, uploads: uploads,
+                miss: .transient, reason: "makeCommandBuffer returned nil"
+            )
         }
         if let staging, !uploads.isEmpty {
             guard let blit = commandBuffer.makeBlitCommandEncoder() else {
-                releaseSlot(slotIndex)
-                var miss = failed
-                miss.errorDescription = "makeBlitCommandEncoder returned nil"
-                return miss
+                return abort(
+                    slot: slotIndex, uploads: uploads,
+                    miss: .transient, reason: "makeBlitCommandEncoder returned nil"
+                )
             }
             // Same queue as prior atlas samples: the blit waits for those reads,
             // then this frame's draw samples the new texels.
@@ -498,10 +522,10 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             1
         )
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else {
-            releaseSlot(slotIndex)
-            var miss = failed
-            miss.errorDescription = "makeRenderCommandEncoder returned nil"
-            return miss
+            return abort(
+                slot: slotIndex, uploads: uploads,
+                miss: .transient, reason: "makeRenderCommandEncoder returned nil"
+            )
         }
         var uniforms = Uniforms(viewportX: Float(target.width), viewportY: Float(target.height))
         let backgrounds = packed.backgrounds
@@ -575,7 +599,11 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
     private func pack(frame: SSHTerminalFrame, cursorColor: SIMD4<Float>) -> PackedInstances? {
         if let packed = packOnce(frame: frame, cursorColor: cursorColor) { return packed }
         atlas.resetPacking()
-        return packOnce(frame: frame, cursorColor: cursorColor)
+        if let packed = packOnce(frame: frame, cursorColor: cursorColor) { return packed }
+        // Second pack still missed: drop keys place() already inserted so a
+        // later frame cannot treat un-uploaded texels as resident.
+        atlas.resetPacking()
+        return nil
     }
 
     private func packOnce(frame: SSHTerminalFrame, cursorColor: SIMD4<Float>) -> PackedInstances? {
@@ -646,7 +674,10 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
 
     private func prepareStaging(slot: Int, uploads: inout [SSHTerminalGlyphAtlas.Upload]) -> MTLTexture? {
         var x = 0, y = 0, rowHeight = 0, stagedWidth = 1, stagedHeight = 1
-        let shelf = max(uploads.map(\.width).max() ?? 1, 1)
+        // Same shelf as the atlas: a set of glyphs that packed into the atlas
+        // packs into staging. Never exceed the device 2D cap (simulator Metal
+        // validation is 8192; Apple GPUs in this app are 16384).
+        let shelf = min(atlas.side, 8192)
         for i in uploads.indices {
             if x + uploads[i].width > shelf {
                 x = 0
