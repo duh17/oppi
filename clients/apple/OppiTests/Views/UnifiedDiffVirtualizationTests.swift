@@ -28,22 +28,11 @@ struct UnifiedDiffVirtualizationTests {
             ),
         ]
         let totalSourceUTF16 = hunks[0].lines.reduce(into: 0) { $0 += $1.text.utf16.count }
-        let index = await Task.detached(priority: .userInitiated) {
-            DiffAttributedStringBuilder.buildChunkIndex(
-                hunks: hunks,
-                filePath: "large.txt",
-                options: .init(includeStats: false, includeGapSummary: true)
-            )
-        }.value
-        let chunkView = DiffChunkCollectionView(
-            index: index,
-            backgroundColor: UIColor(Color.themeBgDark),
-            reviewCommentSelectionContext: nil,
-            sourceContext: nil
-        )
+        let reader = DiffReaderView()
         let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
-        chunkView.frame = host.bounds
-        host.addSubview(chunkView)
+        reader.frame = host.bounds
+        host.addSubview(reader)
+        reader.setDiff(hunks: hunks, filePath: "large.txt")
         host.layoutIfNeeded()
 
         let mountedViewport = await waitForMainActorCondition(timeout: .seconds(10)) {
@@ -54,14 +43,14 @@ struct UnifiedDiffVirtualizationTests {
         }
 
         #expect(mountedViewport, "A large diff must not mount the whole attributed document")
-        let diagnostics = try #require(chunkView.virtualizationDiagnosticsForTesting())
+        let diagnostics = try #require(reader.diagnosticsForTesting())
         #expect(diagnostics.chunkCount > 1)
         #expect(diagnostics.cachedChunkCount <= 14)
         #expect(diagnostics.mountedChunkCount < diagnostics.chunkCount)
         #expect(diagnostics.mountedUTF16Count < diagnostics.totalUTF16Count / 4)
         #expect(diagnostics.indexRanOnMainThread == false)
         #expect(
-            diagnostics.collectionContentWidth > diagnostics.collectionBoundsWidth,
+            diagnostics.contentWidth > diagnostics.boundsWidth,
             "Long clipped diff lines must publish horizontal scroll width"
         )
 
@@ -82,76 +71,55 @@ struct UnifiedDiffVirtualizationTests {
             }
         }
         #expect(renderedTail)
-        let tailDiagnostics = try #require(chunkView.virtualizationDiagnosticsForTesting())
+        let tailDiagnostics = try #require(reader.diagnosticsForTesting())
         #expect(tailDiagnostics.cachedChunkCount <= 14)
         #expect(tailDiagnostics.mountedUTF16Count < tailDiagnostics.totalUTF16Count / 4)
-
-        let wholeDocument = await Task.detached(priority: .userInitiated) {
-            SendableNSAttributedString(DiffAttributedStringBuilder.buildResult(
-                hunks: hunks,
-                filePath: "large.txt",
-                options: .init(includeStats: false, includeGapSummary: true)
-            ).attributedText)
-        }.value.value
-        let baselineStorage = NSTextStorage()
-        let baselineLayout = NSLayoutManager()
-        let baselineContainer = NSTextContainer(size: CGSize(
-            width: CGFloat.greatestFiniteMagnitude,
-            height: CGFloat.greatestFiniteMagnitude
-        ))
-        baselineContainer.lineFragmentPadding = 0
-        baselineContainer.lineBreakMode = .byClipping
-        baselineLayout.addTextContainer(baselineContainer)
-        baselineStorage.addLayoutManager(baselineLayout)
-        let baselineStarted = CACurrentMediaTime()
-        baselineStorage.setAttributedString(wholeDocument)
-        baselineLayout.ensureLayout(for: baselineContainer)
-        let baselineLayoutInstallMilliseconds = (CACurrentMediaTime() - baselineStarted) * 1_000
-
-        print(
-            "DIFF_JIT baseline_utf16=\(wholeDocument.length) baseline_layout_install_ms=\(baselineLayoutInstallMilliseconds) "
-                + "chunk_count=\(diagnostics.chunkCount) cached_chunks=\(diagnostics.cachedChunkCount) "
-                + "mounted_chunks=\(diagnostics.mountedChunkCount) mounted_utf16=\(diagnostics.mountedUTF16Count) "
-                + "collection_content_width=\(diagnostics.collectionContentWidth) "
-                + "collection_bounds_width=\(diagnostics.collectionBoundsWidth) "
-                + "mean_chunk_layout_install_ms=\(diagnostics.meanLayoutInstallMilliseconds)"
-        )
-        #expect(diagnostics.meanLayoutInstallMilliseconds > 0)
-        #expect(baselineLayoutInstallMilliseconds > diagnostics.meanLayoutInstallMilliseconds)
     }
 
-    @Test func smallDiffKeepsWholeDocumentPathWhileLargeDiffUsesChunks() {
-        let small = [WorkspaceReviewDiffHunk(
+    @Test func wrappingFitsRowsToTheViewportAndTextSizeScalesRows() async throws {
+        let longLine = String(repeating: "word ", count: 400)
+        let hunks = [WorkspaceReviewDiffHunk(
             oldStart: 1,
-            oldCount: 1,
+            oldCount: 0,
             newStart: 1,
-            newCount: 1,
-            lines: [WorkspaceReviewDiffLine(
-                kind: .context,
-                text: "let value = 1",
-                oldLine: 1,
-                newLine: 1,
-                spans: nil
-            )]
-        )]
-        let large = [WorkspaceReviewDiffHunk(
-            oldStart: 1,
-            oldCount: 601,
-            newStart: 1,
-            newCount: 601,
-            lines: (1...601).map { (line: Int) in
-                WorkspaceReviewDiffLine(
-                    kind: .context,
-                    text: "line \(line)",
-                    oldLine: line,
-                    newLine: line,
-                    spans: nil
-                )
+            newCount: 20,
+            lines: (1...20).map { line in
+                WorkspaceReviewDiffLine(kind: .added, text: "\(line) \(longLine)", oldLine: nil, newLine: line, spans: nil)
             }
         )]
+        let reader = DiffReaderView()
+        reader.applyReaderPreferencesForTesting(FullScreenReaderPreferences(textScale: 1, wrapsText: false))
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        reader.frame = host.bounds
+        host.addSubview(reader)
+        reader.setDiff(hunks: hunks, filePath: "notes.txt")
 
-        #expect(!UnifiedDiffView.shouldUseChunkedRendering(for: small))
-        #expect(UnifiedDiffView.shouldUseChunkedRendering(for: large))
+        func settledHeight(_ isSettled: (CGFloat, DiffReaderView.Diagnostics) -> Bool) async -> CGFloat? {
+            var settled: CGFloat?
+            _ = await waitForMainActorCondition(timeout: .seconds(10)) {
+                host.layoutIfNeeded()
+                guard let diagnostics = reader.diagnosticsForTesting(),
+                      diagnostics.mountedChunkCount > 0,
+                      isSettled(reader.contentHeightForTesting, diagnostics) else { return false }
+                settled = reader.contentHeightForTesting
+                return true
+            }
+            return settled
+        }
+
+        let unwrappedHeight = try #require(await settledHeight { _, diagnostics in
+            diagnostics.contentWidth > diagnostics.boundsWidth
+        }, "Unwrapped long rows scroll horizontally")
+
+        reader.applyReaderPreferencesForTesting(FullScreenReaderPreferences(textScale: 1, wrapsText: true))
+        let wrappedHeight = try #require(await settledHeight { height, diagnostics in
+            diagnostics.contentWidth <= diagnostics.boundsWidth && height > unwrappedHeight * 3
+        }, "Wrapped rows fit the viewport and grow taller")
+
+        reader.applyReaderPreferencesForTesting(FullScreenReaderPreferences(textScale: 1.3, wrapsText: true))
+        _ = try #require(await settledHeight { height, _ in
+            height > wrappedHeight * 1.2
+        }, "A larger text size makes rows taller")
     }
 
     @Test func chunkPaintingMatchesWholeDocumentSyntaxNumbersWordsAndGaps() async throws {
@@ -182,7 +150,7 @@ struct UnifiedDiffVirtualizationTests {
                 ]
             ),
         ]
-        // Both review renderers draw through DiffBackgroundLayoutManager.
+        // Chunks always render in painter mode (DiffReaderView tints rows).
         let options = DiffAttributedStringBuilder.Options(
             includeStats: true,
             includeGapSummary: true,

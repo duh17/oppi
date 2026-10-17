@@ -1662,80 +1662,7 @@ final class NativeFullScreenDiffBody: UIView {
     }
 
     private func styledDiffText(_ attributedText: NSAttributedString) -> NSAttributedString {
-        let mutable = NSMutableAttributedString(attributedString: attributedText)
-        let fullRange = NSRange(location: 0, length: mutable.length)
-        let lineBreakMode: NSLineBreakMode = readerPreferences.wrapsText ? .byCharWrapping : .byClipping
-        attributedText.enumerateAttribute(.font, in: fullRange) { value, range, _ in
-            let font = (value as? UIFont) ?? FullScreenCodeTypography.codeFont
-            mutable.addAttribute(
-                .font,
-                value: FullScreenCodeTypography.scaledFont(font, scale: readerPreferences.textScale),
-                range: range
-            )
-        }
-        applyDiffParagraphStyles(to: mutable, lineBreakMode: lineBreakMode)
-        return mutable
-    }
-
-    private func applyDiffParagraphStyles(
-        to attributedText: NSMutableAttributedString,
-        lineBreakMode: NSLineBreakMode
-    ) {
-        let source = attributedText.string as NSString
-        var location = 0
-        while location < source.length {
-            var lineEnd = 0
-            var contentsEnd = 0
-            source.getLineStart(
-                nil,
-                end: &lineEnd,
-                contentsEnd: &contentsEnd,
-                for: NSRange(location: location, length: 0)
-            )
-
-            let paragraphRange = NSRange(location: location, length: max(0, lineEnd - location))
-            guard paragraphRange.length > 0 else { break }
-
-            let style = (attributedText.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle)?
-                .mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
-            style.lineBreakMode = lineBreakMode
-            if readerPreferences.wrapsText,
-               let indent = Self.diffCodeColumnIndent(in: attributedText, lineStart: location, contentsEnd: contentsEnd) {
-                style.firstLineHeadIndent = 0
-                style.headIndent = indent
-            } else {
-                style.firstLineHeadIndent = 0
-                style.headIndent = 0
-            }
-            attributedText.addAttribute(.paragraphStyle, value: style, range: paragraphRange)
-
-            guard lineEnd > location else { break }
-            location = lineEnd
-        }
-    }
-
-    private static func diffCodeColumnIndent(
-        in attributedText: NSAttributedString,
-        lineStart: Int,
-        contentsEnd: Int
-    ) -> CGFloat? {
-        guard contentsEnd > lineStart else { return nil }
-        let contentsRange = NSRange(location: lineStart, length: contentsEnd - lineStart)
-        var codeStart: Int?
-        attributedText.enumerateAttribute(diffCodeColumnAttributeKey, in: contentsRange) { value, range, stop in
-            guard value != nil else { return }
-            codeStart = range.location
-            stop.pointee = true
-        }
-        guard let codeStart, codeStart > lineStart else { return nil }
-
-        let prefixRange = NSRange(location: lineStart, length: codeStart - lineStart)
-        let measured = attributedText.attributedSubstring(from: prefixRange).boundingRect(
-            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin],
-            context: nil
-        )
-        return ceil(measured.width)
+        FullScreenDiffTextStyle.styled(attributedText, preferences: readerPreferences)
     }
 
     private func measuredWidth(of attributedText: NSAttributedString) -> CGFloat {
@@ -1835,7 +1762,7 @@ extension NativeFullScreenDiffBody {
         contentsEnd: Int
     ) -> DiffWrappingDiagnostics? {
         guard contentsEnd > lineStart,
-              let expectedIndent = Self.diffCodeColumnIndent(
+              let expectedIndent = FullScreenDiffTextStyle.codeColumnIndent(
                 in: attributedText,
                 lineStart: lineStart,
                 contentsEnd: contentsEnd

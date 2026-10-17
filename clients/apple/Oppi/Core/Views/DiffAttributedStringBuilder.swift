@@ -31,7 +31,7 @@ enum DiffAttributedStringBuilder {
         let codeDefaultAttrs: [NSAttributedString.Key: Any]
         /// Row tints as `.backgroundColor` attributes, for plain TextKit consumers.
         let attributeRows: RowStyle
-        /// Row tints left to `DiffBackgroundLayoutManager`.
+        /// Row tints left to `DiffReaderView`'s tint layers.
         let paintedRows: RowStyle
         let painterColors: PainterColors
 
@@ -216,7 +216,7 @@ enum DiffAttributedStringBuilder {
         }
     }
 
-    /// Row colors drawn by `DiffBackgroundLayoutManager`, cached per theme.
+    /// Row tint colors for `DiffReaderView`'s tint layers, cached per theme.
     struct PainterColors {
         /// Behind the row's text (what the row `.backgroundColor` attribute covers).
         let addedText: UIColor
@@ -306,10 +306,10 @@ enum DiffAttributedStringBuilder {
     struct Options: Sendable {
         var includeStats = false
         var includeGapSummary = true
-        /// The text will be drawn by `DiffBackgroundLayoutManager`, which paints
-        /// full-width row tints itself. Leaving row `.backgroundColor` attributes
-        /// out matters for long lines: TextKit sizes attribute backgrounds across
-        /// the whole line, which cost ~22 ms per tile on a 2,000-character diff.
+        /// The text will be shown by `DiffReaderView`, which tints rows with
+        /// layers. Leaving row `.backgroundColor` attributes out matters for long
+        /// lines: TextKit sizes attribute backgrounds across the whole line, which
+        /// cost ~22 ms per tile on a 2,000-character diff.
         var paintsRowBackgrounds = false
     }
 
@@ -798,8 +798,7 @@ enum DiffAttributedStringBuilder {
         style: StyleAttrs,
         to result: NSMutableAttributedString
     ) {
-        // Chunks only render inside `DiffChunkCollectionView`, whose layout
-        // manager paints the row tints.
+        // Chunks only render inside `DiffReaderView`, which tints rows with layers.
         let rows = style.paintedRows
         let (gutterAttrs, numberAttrs, codeAttrs) = rows.segments(for: row.line.kind)
         let marker: String

@@ -931,6 +931,90 @@ enum FullScreenCodeTypography {
     }
 }
 
+/// Text size and wrapping for unified diff text, shared by the full-screen
+/// diff body and the review diff reader. Safe off the main thread.
+enum FullScreenDiffTextStyle {
+    /// Scales every font by the reader's text size and sets each row's line
+    /// break mode. When wrapping, continuation lines indent past the gutter
+    /// (line number and marker) so code stays in its column.
+    nonisolated static func styled(
+        _ attributedText: NSAttributedString,
+        preferences: FullScreenReaderPreferences
+    ) -> NSAttributedString {
+        let mutable = NSMutableAttributedString(attributedString: attributedText)
+        let fullRange = NSRange(location: 0, length: mutable.length)
+        attributedText.enumerateAttribute(.font, in: fullRange) { value, range, _ in
+            let font = (value as? UIFont) ?? FullScreenCodeTypography.codeFont
+            mutable.addAttribute(
+                .font,
+                value: FullScreenCodeTypography.scaledFont(font, scale: preferences.textScale),
+                range: range
+            )
+        }
+        applyParagraphStyles(to: mutable, wraps: preferences.wrapsText)
+        return mutable
+    }
+
+    nonisolated private static func applyParagraphStyles(
+        to attributedText: NSMutableAttributedString,
+        wraps: Bool
+    ) {
+        let lineBreakMode: NSLineBreakMode = wraps ? .byCharWrapping : .byClipping
+        let source = attributedText.string as NSString
+        var location = 0
+        while location < source.length {
+            var lineEnd = 0
+            var contentsEnd = 0
+            source.getLineStart(
+                nil,
+                end: &lineEnd,
+                contentsEnd: &contentsEnd,
+                for: NSRange(location: location, length: 0)
+            )
+
+            let paragraphRange = NSRange(location: location, length: max(0, lineEnd - location))
+            guard paragraphRange.length > 0 else { break }
+
+            let style = (attributedText.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle)?
+                .mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+            style.lineBreakMode = lineBreakMode
+            style.firstLineHeadIndent = 0
+            style.headIndent = wraps
+                ? codeColumnIndent(in: attributedText, lineStart: location, contentsEnd: contentsEnd) ?? 0
+                : 0
+            attributedText.addAttribute(.paragraphStyle, value: style, range: paragraphRange)
+
+            guard lineEnd > location else { break }
+            location = lineEnd
+        }
+    }
+
+    /// Width of a row's gutter (line number and marker): where its code starts.
+    nonisolated static func codeColumnIndent(
+        in attributedText: NSAttributedString,
+        lineStart: Int,
+        contentsEnd: Int
+    ) -> CGFloat? {
+        guard contentsEnd > lineStart else { return nil }
+        let contentsRange = NSRange(location: lineStart, length: contentsEnd - lineStart)
+        var codeStart: Int?
+        attributedText.enumerateAttribute(diffCodeColumnAttributeKey, in: contentsRange) { value, range, stop in
+            guard value != nil else { return }
+            codeStart = range.location
+            stop.pointee = true
+        }
+        guard let codeStart, codeStart > lineStart else { return nil }
+
+        let prefixRange = NSRange(location: lineStart, length: codeStart - lineStart)
+        let measured = attributedText.attributedSubstring(from: prefixRange).boundingRect(
+            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin],
+            context: nil
+        )
+        return ceil(measured.width)
+    }
+}
+
 @MainActor
 protocol FullScreenReaderConfigurable: AnyObject {
     func applyReaderPreferences(_ preferences: FullScreenReaderPreferences)

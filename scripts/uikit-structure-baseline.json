@@ -283,9 +283,6 @@
     "clients/apple/Oppi/Core/Views/CameraPicker.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Core/Views/DiffChunkCollectionView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Core/Views/EmbeddedFileViewerView.swift": {
       "import SwiftUI": 1
     },
@@ -348,9 +345,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/TerminalMirrorIndicatorView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Core/Views/UnifiedDiffView.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Core/Views/WorkingSpinnerView.swift": {

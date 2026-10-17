@@ -52,8 +52,8 @@ struct DiffGutterAttributeTests {
     /// The gutter region (" + " / " - ") must carry a .backgroundColor attribute
     /// so that timeline expanded views (plain UITextView, no custom layout manager)
     /// show the tinted line background across the entire row — not just line
-    /// numbers and code. UnifiedDiffView compensates with UnifiedDiffLayoutManager
-    /// but the attributed string itself must be self-contained.
+    /// numbers and code. The review reader (`DiffReaderView`) builds without
+    /// these and tints rows with layers; every other consumer needs them.
     @Test func addedGutterHasBackgroundColor() throws {
         let result = DiffAttributedStringBuilder.build(
             hunks: makeHunks(), filePath: "test.swift"

@@ -99,6 +99,7 @@ Example:
 
 - **Server:** Commit, Changes, and session file diffs now match `git diff --minimal` line for line. Before, about a third of file diffs could show a blank line that was not in the file and shift the line numbers after it.
 - **Client/Server:** Word highlights in diffs mark only lines that were actually edited, not unrelated lines that happen to sit side by side in a rewrite, and long edited lines highlight the changed words instead of the whole line. Diffs of rewritten prose, such as a trimmed changelog, open and scroll faster, and commit file diffs no longer download both full copies of the file.
+- **Client:** Commit file diffs and the Changes review scroll smoothly on long diffs and long lines, and have the same Viewing Options as full-screen diffs: text size and Wrap Text, shared with them.
 - **Server:** Sandbox workspaces can no longer run programs on the host through their git config or hooks. As a result, sandbox workspaces no longer support worktrees.
 - **Server:** Sandbox sessions read `AGENTS.md`, `CLAUDE.md`, and Skills through the VM, so a symlink can no longer put a file the VM hides, such as `.env`, into the prompt.
 - **Server:** Someone who knew a paired device's id could block its token refresh.

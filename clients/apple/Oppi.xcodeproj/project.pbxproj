@@ -562,6 +562,7 @@
 		453B33BE7236D89E89598EBF /* DocumentParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14F4E6616EE3AE9922D062C4 /* DocumentParser.swift */; };
 		453BA0D625EB7C9CFFA8D047 /* WorkspaceFileEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AF262D0E0A4922B26F838A6 /* WorkspaceFileEditing.swift */; };
 		453E6FF23A3284F4628F2F4A /* NearbyPairingInviteMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 036E70B04782CB208DE18873 /* NearbyPairingInviteMessage.swift */; };
+		458D9A1C9C21C60B0808AD18 /* DiffReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32F5E2DC1A45F118FE74A6FB /* DiffReaderView.swift */; };
 		458EA23A7516B551B49FED91 /* SessionToolOutputAccessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30C5F0DCEBFD5781F3A254F4 /* SessionToolOutputAccessTests.swift */; };
 		4594F3C9D799EEA9956C007A /* MarkdownStreamingPerf.swift in Sources */ = {isa = PBXBuildFile; fileRef = D170975DF573DB804847346D /* MarkdownStreamingPerf.swift */; };
 		45C1A10DA99834E5017565FF /* AssistantLongMarkdownBlankTailTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CDA3B379C6FFBFBB72E43D1 /* AssistantLongMarkdownBlankTailTests.swift */; };
@@ -809,7 +810,6 @@
 		63621D358745653959758610 /* LANFirstConnectionPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E560FCFBC733EFB516ADDA9A /* LANFirstConnectionPolicyTests.swift */; };
 		638C23994A37A4FEC9B9AC9C /* NotebookCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC41C3DEB6D18F90119AE884 /* NotebookCellView.swift */; };
 		638DE60402A9862E865C339B /* LiveActivityManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D39D8E6C30794119E5A36F95 /* LiveActivityManagerTests.swift */; };
-		63ABB189429882BC82EB5FAB /* UnifiedDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69D14504BEA36189D5A1641D /* UnifiedDiffView.swift */; };
 		63B02AB3D42CAC37807DA575 /* MacQuickSessionLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0775E4210C1032398BC76B /* MacQuickSessionLauncher.swift */; };
 		63B942559B6CD2BD12DCE50F /* MacToolTimelineRowPaintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D143325069288361F5BAE10 /* MacToolTimelineRowPaintTests.swift */; };
 		63FD75E0D609C8EC6214045D /* MacCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA690C1C82924FF70447ED2D /* MacCatalogTests.swift */; };
@@ -2030,7 +2030,6 @@
 		F572AA36961CEC5DBE91BF24 /* AUDIT-RESULTS.md in Resources */ = {isa = PBXBuildFile; fileRef = 35FA3411D780C1DB10CED7BC /* AUDIT-RESULTS.md */; };
 		F59A573B01B8B8D6A6BF0851 /* IntentSessionOpenTrigger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81B5706E4C50B370DF565619 /* IntentSessionOpenTrigger.swift */; };
 		F6018A15AE6297457B11373C /* SessionRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = B95EBD89E6F0340E0347F74D /* SessionRow.swift */; };
-		F60BCC544EF485D91E7E7F15 /* DiffChunkCollectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A0CA827C360918C9B50F6DB /* DiffChunkCollectionView.swift */; };
 		F60DD1834D6C1DBF8616EBD3 /* MacSessionTimelineColumnPaintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD04C5EC9E86A68761B7249B /* MacSessionTimelineColumnPaintTests.swift */; };
 		F60F0E23C5748811BB74F04A /* MarkdownTableMarkupRewriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA73F8952DA811631CE45052 /* MarkdownTableMarkupRewriter.swift */; };
 		F6321F8916608C769215FF08 /* PushAlertPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53977C716B1023E1947075B9 /* PushAlertPresentation.swift */; };
@@ -2566,6 +2565,7 @@
 		32B94B7C042304D8E6A5523D /* AppLockSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLockSettings.swift; sourceTree = "<group>"; };
 		32C1DCD6795B5C6E5C5595F3 /* WhatsNewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhatsNewView.swift; sourceTree = "<group>"; };
 		32EBEE6AD7960B2EB0D8982B /* SSHTerminalStatusGlyph.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalStatusGlyph.swift; sourceTree = "<group>"; };
+		32F5E2DC1A45F118FE74A6FB /* DiffReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffReaderView.swift; sourceTree = "<group>"; };
 		32FB3943A013F883DF00B81B /* JSONCodeBlockWrapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONCodeBlockWrapTests.swift; sourceTree = "<group>"; };
 		33056886A4351AE6D0E18104 /* MermaidXYChartParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidXYChartParser.swift; sourceTree = "<group>"; };
 		331097B81B15D75B475DFE00 /* AutoTitleSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoTitleSettingsView.swift; sourceTree = "<group>"; };
@@ -2932,10 +2932,8 @@
 		692A4747C46B99B0BF61915E /* TimelineStreamingScrollMatrixSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineStreamingScrollMatrixSupport.swift; sourceTree = "<group>"; };
 		6967D1470CC713AF430A8877 /* MacServerLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacServerLifecycleTests.swift; sourceTree = "<group>"; };
 		69B8E01DF85CB2297B30142A /* StatsHeroRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsHeroRow.swift; sourceTree = "<group>"; };
-		69D14504BEA36189D5A1641D /* UnifiedDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedDiffView.swift; sourceTree = "<group>"; };
 		69D30D46B8A00309262E6696 /* MermaidQuadrantParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MermaidQuadrantParser.swift; sourceTree = "<group>"; };
 		69D603A421ED850B5226621C /* DelimitedTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DelimitedTable.swift; sourceTree = "<group>"; };
-		6A0CA827C360918C9B50F6DB /* DiffChunkCollectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffChunkCollectionView.swift; sourceTree = "<group>"; };
 		6A1D307EC33352D3AFA4D0D5 /* VoiceSpectrumAnalyzerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSpectrumAnalyzerTests.swift; sourceTree = "<group>"; };
 		6A28657447754F24ADFA0279 /* AdjacentFileNavigatorLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdjacentFileNavigatorLayoutTests.swift; sourceTree = "<group>"; };
 		6A2A545103E4D66062EFD322 /* FocusedSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FocusedSessionStore.swift; sourceTree = "<group>"; };
@@ -5766,7 +5764,7 @@
 				86BFA3976D5D5D501989260F /* CameraPicker.swift */,
 				7FBC0F8C16B5298704A5B983 /* DelimitedTableRenderView.swift */,
 				F3797817271519709070D510 /* DiffAttributedStringBuilder.swift */,
-				6A0CA827C360918C9B50F6DB /* DiffChunkCollectionView.swift */,
+				32F5E2DC1A45F118FE74A6FB /* DiffReaderView.swift */,
 				5398DC223A63D4284069B932 /* DocumentFamily.swift */,
 				4E68B230E7FE6CB9EBA56D26 /* DoubleTapZoom.swift */,
 				0996499F6180DAE543025C8C /* EmbeddedFileViewerView.swift */,
@@ -5806,7 +5804,6 @@
 				165B4236951807959AF85EA6 /* StatusPill.swift */,
 				5B65FEE66FAB328B15B0F651 /* TerminalMirrorIndicatorView.swift */,
 				C9FD10FBFCCFC05542C969C7 /* TransientConfirmationPill.swift */,
-				69D14504BEA36189D5A1641D /* UnifiedDiffView.swift */,
 				9049C3DC3C7F54FCC2E25CA4 /* WorkingSpinnerView.swift */,
 			);
 			path = Views;
@@ -8982,8 +8979,8 @@
 				C9EC938EDA52EBE1F5929F2D /* DictationStreamClient.swift in Sources */,
 				9A7293597F4966F4ABE5EB6E /* DictationTransport.swift in Sources */,
 				FE84BDDEB6B8C45964D5AD2A /* DiffAttributedStringBuilder.swift in Sources */,
-				F60BCC544EF485D91E7E7F15 /* DiffChunkCollectionView.swift in Sources */,
 				D3C7CEF0011EEE8127F0393E /* DiffEngine.swift in Sources */,
+				458D9A1C9C21C60B0808AD18 /* DiffReaderView.swift in Sources */,
 				8DCFFC260D4A54F8B956C06C /* DocumentFamily.swift in Sources */,
 				1ECD4C55C09F91B62F00751C /* DocumentParser.swift in Sources */,
 				F36970AA0D34F937A8C52060 /* DocumentRenderPipeline.swift in Sources */,
@@ -9532,7 +9529,6 @@
 				D3EFD60482D4A5CB36790C2C /* UIHangHarnessView.swift in Sources */,
 				DAD1B990DB0744F12AD93486 /* USDZLocalFileStore.swift in Sources */,
 				8AEB1C6307230720F40EAE38 /* USDZRenderingPreview.swift in Sources */,
-				63ABB189429882BC82EB5FAB /* UnifiedDiffView.swift in Sources */,
 				C75F2E6631D3A6FFD0EF292C /* UnifiedPatchParser.swift in Sources */,
 				DA23EF08C218E637A53C1130 /* User.swift in Sources */,
 				57BA6754795A63DBCC6606B3 /* UserFacingErrorText.swift in Sources */,

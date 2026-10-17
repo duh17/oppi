@@ -915,24 +915,7 @@ final class FullScreenCodeViewController: UIViewController {
     }
 
     private func makeFloatingViewingOptionsButton(palette: ThemePalette) -> UIButton {
-        var config = UIButton.Configuration.glass()
-        config.image = UIImage(systemName: FullScreenViewingOptionsSymbols.readerModeIconName)
-        config.preferredSymbolConfigurationForImage = .init(
-            pointSize: FullScreenFloatingControlChrome.symbolPointSize,
-            weight: .semibold
-        )
-        let contentPadding = FullScreenFloatingControlChrome.standaloneContentPadding
-        config.contentInsets = NSDirectionalEdgeInsets(
-            top: contentPadding,
-            leading: contentPadding,
-            bottom: contentPadding,
-            trailing: contentPadding
-        )
-        FullScreenFloatingControlChrome.applyGlassBackground(to: &config, palette: palette)
-
-        let button = UIButton(configuration: config)
-        button.accessibilityLabel = String(localized: "Viewing Options")
-        button.accessibilityHint = String(localized: "Adjust text size, wrapping, and spacing")
+        let button = FullScreenViewingOptionsController.makeFloatingButton(palette: palette)
         button.addTarget(self, action: #selector(showViewingOptions), for: .touchUpInside)
         return button
     }
@@ -942,12 +925,7 @@ final class FullScreenCodeViewController: UIViewController {
         palette: ThemePalette,
         preferences: FullScreenReaderPreferences
     ) {
-        var config = button.configuration ?? .plain()
-        FullScreenFloatingControlChrome.applyGlassBackground(to: &config, palette: palette)
-        button.configuration = config
-        button.accessibilityValue = String(
-            localized: "Text size \(Int(round(preferences.textScale * 100))) percent"
-        )
+        FullScreenViewingOptionsController.updateFloatingButton(button, palette: palette, preferences: preferences)
     }
 
     private func configureFloatingAnnotateButton(
@@ -2036,31 +2014,11 @@ final class FullScreenCodeViewController: UIViewController {
         }
         viewingOptionsController = options
 
-        if let barItem = viewingOptionsBarItem {
-            options.modalPresentationStyle = .popover
-            options.popoverPresentationController?.barButtonItem = barItem
-        } else if traitCollection.horizontalSizeClass == .regular,
-                  let sourceButton = floatingViewingOptionsButton {
-            options.modalPresentationStyle = .popover
-            options.popoverPresentationController?.sourceView = sourceButton
-            options.popoverPresentationController?.sourceRect = sourceButton.bounds
-            options.popoverPresentationController?.permittedArrowDirections = [.down, .right]
-        } else {
-            options.modalPresentationStyle = .pageSheet
-        }
-
-        if let sheet = options.sheetPresentationController {
-            let detentIdentifier = UISheetPresentationController.Detent.Identifier("viewing-options")
-            sheet.detents = [
-                .custom(identifier: detentIdentifier) { [weak options] _ in
-                    options?.preferredSheetHeight ?? 280
-                }
-            ]
-            sheet.selectedDetentIdentifier = detentIdentifier
-            sheet.prefersGrabberVisible = true
-            sheet.preferredCornerRadius = 24
-        }
-
+        options.configurePresentation(
+            barItem: viewingOptionsBarItem,
+            sourceButton: floatingViewingOptionsButton,
+            horizontalSizeClass: traitCollection.horizontalSizeClass
+        )
         present(options, animated: true)
     }
 
@@ -2371,7 +2329,9 @@ private final class FullScreenContentHostController: UIViewController {
     }
 }
 
-private final class FullScreenViewingOptionsController: UIHostingController<FullScreenViewingOptionsPanel> {
+/// Text size, wrapping, and spacing for full-screen readers. Shared by
+/// `FullScreenCodeViewController` and the review diff reader (`DiffReaderView`).
+final class FullScreenViewingOptionsController: UIHostingController<FullScreenViewingOptionsPanel> {
     private var family: FullScreenReaderContentFamily
     private var preferences: FullScreenReaderPreferences
     private let onTextScaleChanged: (CGFloat) -> Void
@@ -2449,9 +2409,77 @@ private final class FullScreenViewingOptionsController: UIHostingController<Full
             onReset: onReset
         )
     }
+
+    /// A popover from a rail bar item, or from the floating button in regular
+    /// width; otherwise a sheet sized to the panel.
+    func configurePresentation(
+        barItem: UIBarButtonItem?,
+        sourceButton: UIView?,
+        horizontalSizeClass: UIUserInterfaceSizeClass
+    ) {
+        if let barItem {
+            modalPresentationStyle = .popover
+            popoverPresentationController?.barButtonItem = barItem
+        } else if horizontalSizeClass == .regular, let sourceButton {
+            modalPresentationStyle = .popover
+            popoverPresentationController?.sourceView = sourceButton
+            popoverPresentationController?.sourceRect = sourceButton.bounds
+            popoverPresentationController?.permittedArrowDirections = [.down, .right]
+        } else {
+            modalPresentationStyle = .pageSheet
+        }
+
+        if let sheet = sheetPresentationController {
+            let detentIdentifier = UISheetPresentationController.Detent.Identifier("viewing-options")
+            sheet.detents = [
+                .custom(identifier: detentIdentifier) { [weak self] _ in
+                    self?.preferredSheetHeight ?? 280
+                }
+            ]
+            sheet.selectedDetentIdentifier = detentIdentifier
+            sheet.prefersGrabberVisible = true
+            sheet.preferredCornerRadius = 24
+        }
+    }
+
+    /// The floating glass Viewing Options button. Callers add the target.
+    static func makeFloatingButton(palette: ThemePalette) -> UIButton {
+        var config = UIButton.Configuration.glass()
+        config.image = UIImage(systemName: FullScreenViewingOptionsSymbols.readerModeIconName)
+        config.preferredSymbolConfigurationForImage = .init(
+            pointSize: FullScreenFloatingControlChrome.symbolPointSize,
+            weight: .semibold
+        )
+        let contentPadding = FullScreenFloatingControlChrome.standaloneContentPadding
+        config.contentInsets = NSDirectionalEdgeInsets(
+            top: contentPadding,
+            leading: contentPadding,
+            bottom: contentPadding,
+            trailing: contentPadding
+        )
+        FullScreenFloatingControlChrome.applyGlassBackground(to: &config, palette: palette)
+
+        let button = UIButton(configuration: config)
+        button.accessibilityLabel = String(localized: "Viewing Options")
+        button.accessibilityHint = String(localized: "Adjust text size, wrapping, and spacing")
+        return button
+    }
+
+    static func updateFloatingButton(
+        _ button: UIButton,
+        palette: ThemePalette,
+        preferences: FullScreenReaderPreferences
+    ) {
+        var config = button.configuration ?? .plain()
+        FullScreenFloatingControlChrome.applyGlassBackground(to: &config, palette: palette)
+        button.configuration = config
+        button.accessibilityValue = String(
+            localized: "Text size \(Int(round(preferences.textScale * 100))) percent"
+        )
+    }
 }
 
-private struct FullScreenViewingOptionsPanel: View {
+struct FullScreenViewingOptionsPanel: View {
     let family: FullScreenReaderContentFamily
     let preferences: FullScreenReaderPreferences
     let onTextScaleChanged: (CGFloat) -> Void
@@ -2588,7 +2616,7 @@ private struct FullScreenViewingOptionsPanel: View {
     }
 }
 
-private enum FullScreenViewingOptionsSymbols {
+enum FullScreenViewingOptionsSymbols {
     static var readerModeIconName: String {
         if UIImage(systemName: "text.page") != nil {
             return "text.page"

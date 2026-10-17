@@ -186,49 +186,67 @@ struct DiffBuilderPerfBench {
         return [WorkspaceReviewDiffHunk(oldStart: 1, oldCount: 170, newStart: 1, newCount: 131, lines: lines)]
     }()
 
-    /// Same options as the review diff reader (`UnifiedDiffView`).
-    private static let reviewReaderOptions = DiffAttributedStringBuilder.Options(
-        includeStats: false,
-        includeGapSummary: true,
-        paintsRowBackgrounds: true
-    )
-
-    @Test("Benchmark: prose rewrite build + one viewport paint")
-    func proseRewriteViewportPaint() {
-        let built = DiffAttributedStringBuilder.buildResult(
+    /// What the review reader (`DiffReaderView`) does per chunk and per tile.
+    ///
+    /// - `diffPrepare_prose_rewrite_chunk`: style + TextKit layout of the first
+    ///   chunk (off the main thread in the reader).
+    /// - `diffAttach_prose_rewrite_chunk`: main-thread cost to put a prepared
+    ///   chunk on screen (text view creation and its layout pass).
+    /// - `diffPaint_prose_rewrite_viewport`: CPU background pass for one
+    ///   phone-sized tile (row tints are GPU layers; only word highlights remain).
+    /// - `diffDraw_prose_rewrite_viewport`: background + glyphs for that tile.
+    @Test("Benchmark: prose rewrite reader chunk + one viewport paint")
+    func proseRewriteViewportPaint() throws {
+        // Same chunking as DiffReaderView (8 KB).
+        let index = DiffAttributedStringBuilder.buildChunkIndex(
             hunks: Self.proseRewriteHunks,
             filePath: "CHANGELOG.md",
-            options: Self.reviewReaderOptions
-        ).attributedText
-        let storage = NSTextStorage(attributedString: built)
-        let layoutManager = DiffBackgroundLayoutManager()
-        let container = NSTextContainer(size: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude))
-        container.lineFragmentPadding = 0
-        container.lineBreakMode = .byClipping
-        layoutManager.addTextContainer(container)
-        storage.addLayoutManager(layoutManager)
-        layoutManager.ensureLayout(for: container)
-        layoutManager.viewportWidth = 402
-        layoutManager.measuredContentWidth = layoutManager.usedRect(for: container).width
+            options: .init(includeStats: false, includeGapSummary: true, paintsRowBackgrounds: true),
+            maxUTF8Bytes: 8 * 1024
+        )
+        let chunk = try #require(index.chunks.first)
+        let unwrapped = FullScreenReaderPreferences(wrapsText: false)
+        let prepareUs = Self.measureUs {
+            _ = DiffReaderPreparedChunk.prepare(chunk, preferences: unwrapped, wrapWidth: nil)
+        }
+        let prepareWrappedUs = Self.measureUs {
+            _ = DiffReaderPreparedChunk.prepare(
+                chunk,
+                preferences: FullScreenReaderPreferences(wrapsText: true),
+                wrapWidth: 402
+            )
+        }
+        // measureUs runs its block six times; each attach needs a fresh chunk.
+        var unattached = (0..<6).map { _ in
+            DiffReaderPreparedChunk.prepare(chunk, preferences: unwrapped, wrapWidth: nil)
+        }
+        let attachUs = Self.measureUs {
+            let textView = unattached.removeLast().makeTextView()
+            textView.layoutIfNeeded()
+        }
+        let textView = DiffReaderPreparedChunk.prepare(chunk, preferences: unwrapped, wrapWidth: nil).makeTextView()
+        let layoutManager = textView.layoutManager
 
         // One phone-sized tile, the unit TextKit repaints while scrolling.
         let viewport = CGRect(x: 0, y: 0, width: 402, height: 874)
-        let glyphs = layoutManager.glyphRange(forBoundingRect: viewport, in: container)
+        let glyphs = layoutManager.glyphRange(forBoundingRect: viewport, in: textView.textContainer)
         let renderer = UIGraphicsImageRenderer(size: viewport.size)
         let paintUs = Self.measureUs {
             _ = renderer.image { _ in
                 layoutManager.drawBackground(forGlyphRange: glyphs, at: .zero)
             }
         }
-        let buildUs = Self.measureUs {
-            _ = DiffAttributedStringBuilder.buildResult(
-                hunks: Self.proseRewriteHunks,
-                filePath: "CHANGELOG.md",
-                options: Self.reviewReaderOptions
-            )
+        let drawUs = Self.measureUs {
+            _ = renderer.image { _ in
+                layoutManager.drawBackground(forGlyphRange: glyphs, at: .zero)
+                layoutManager.drawGlyphs(forGlyphRange: glyphs, at: .zero)
+            }
         }
-        print("METRIC diffBuild_prose_rewrite=\(buildUs)")
+        print("METRIC diffPrepare_prose_rewrite_chunk=\(prepareUs)")
+        print("METRIC diffPrepare_prose_rewrite_chunk_wrapped=\(prepareWrappedUs)")
+        print("METRIC diffAttach_prose_rewrite_chunk=\(attachUs)")
         print("METRIC diffPaint_prose_rewrite_viewport=\(paintUs)")
+        print("METRIC diffDraw_prose_rewrite_viewport=\(drawUs)")
         #expect(paintUs < 500_000, "viewport paint: \(paintUs)μs")
     }
 

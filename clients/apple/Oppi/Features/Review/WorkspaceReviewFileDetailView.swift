@@ -541,7 +541,8 @@ struct WorkspaceReviewFileDetailView: View {
                 WorkspaceReviewDiffView(
                     diff: diff,
                     filePath: currentFile.path,
-                    reviewCommentSelectionContext: reviewCommentSelectionContext
+                    reviewCommentSelectionContext: reviewCommentSelectionContext,
+                    trailingAccessoryCount: adjacentFileNavigatorTrailingAccessoryCount
                 )
                 .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -566,7 +567,8 @@ struct WorkspaceReviewFileDetailView: View {
                         WorkspaceReviewDiffView(
                             diff: diff,
                             filePath: currentFile.path,
-                            reviewCommentSelectionContext: reviewCommentSelectionContext
+                            reviewCommentSelectionContext: reviewCommentSelectionContext,
+                            trailingAccessoryCount: adjacentFileNavigatorTrailingAccessoryCount
                         )
                         .environment(\.reviewCommentSelectionScope, effectiveReviewCommentSelectionScope)
                     case .current:
@@ -648,6 +650,14 @@ struct WorkspaceReviewFileDetailView: View {
 
     private var adjacentFileNavigatorLeadingAccessoryCount: Int {
         AdjacentFileNavigatorLayout.leadingAccessoryCount(
+            canGoPrevious: adjacentReviewFile(.previous) != nil,
+            canGoNext: adjacentReviewFile(.next) != nil
+        )
+    }
+
+    /// The next-file button sits in the trailing corner; Viewing Options stacks above it.
+    private var adjacentFileNavigatorTrailingAccessoryCount: Int {
+        AdjacentFileNavigatorLayout.trailingAccessoryCount(
             canGoPrevious: adjacentReviewFile(.previous) != nil,
             canGoNext: adjacentReviewFile(.next) != nil
         )
@@ -780,18 +790,55 @@ struct WorkspaceReviewFileDetailView: View {
     }
 }
 
-/// Shared diff view for review surfaces, backed by the canonical unified renderer.
+/// SwiftUI seam for the Changes review screen, which is still SwiftUI. The
+/// reader itself is UIKit (`DiffReaderView`).
 struct WorkspaceReviewDiffView: View {
     let diff: WorkspaceReviewDiffResponse
     let filePath: String
     var reviewCommentSelectionContext: ReviewCommentSelectionContext?
+    /// Floating controls the host stacks in the trailing bottom corner.
+    var trailingAccessoryCount = 0
 
     var body: some View {
-        UnifiedDiffView(
+        DiffReaderRepresentable(
             hunks: diff.hunks,
             filePath: filePath,
-            emptyDescription: "This file has no textual diff to show.",
-            reviewCommentSelectionContext: reviewCommentSelectionContext
+            reviewCommentSelectionContext: reviewCommentSelectionContext,
+            trailingAccessoryCount: trailingAccessoryCount
+        )
+        .ignoresSafeArea(.keyboard)
+    }
+}
+
+private struct DiffReaderRepresentable: UIViewRepresentable {
+    let hunks: [WorkspaceReviewDiffHunk]
+    let filePath: String
+    let reviewCommentSelectionContext: ReviewCommentSelectionContext?
+    let trailingAccessoryCount: Int
+
+    @Environment(\.reviewCommentSelectionScope) private var reviewCommentSelectionScope
+    @Environment(\.horizontalBackSwipeAction) private var horizontalBackSwipeAction
+
+    func makeUIView(context: Context) -> DiffReaderView {
+        let reader = DiffReaderView()
+        update(reader)
+        return reader
+    }
+
+    func updateUIView(_ reader: DiffReaderView, context: Context) {
+        update(reader)
+    }
+
+    private func update(_ reader: DiffReaderView) {
+        let selection = reviewCommentSelectionContext ?? reviewCommentSelectionScope?.makeContext()
+        reader.reviewCommentSelectionContext = selection
+        reader.sourceContext = selection?.sourceContext(surface: .fullScreenDiff, filePath: filePath)
+        reader.installBackSwipe(action: horizontalBackSwipeAction)
+        reader.trailingAccessoryCount = trailingAccessoryCount
+        reader.setDiff(
+            hunks: hunks,
+            filePath: filePath,
+            emptyDescription: "This file has no textual diff to show."
         )
     }
 }
