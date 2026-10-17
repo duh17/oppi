@@ -152,9 +152,11 @@ final class SSHTerminalConnectChrome {
 
     private func presentTrust(from host: UIViewController) {
         guard let failure = session.hostFailure else { return }
-        if trustScreen != nil { return }
-        // Dismissing this prompt leaves a list row that reopens it.
-        if presentedTrustFailure == failure { return }
+        if presentedTrustFailure == failure {
+            // Same failure: keep the open sheet, or leave a list row to reopen.
+            return
+        }
+        if trustScreen != nil { dismissTrust() }
         presentedTrustFailure = failure
         let screen = SSHTerminalTrustViewController(
             failure: failure,
@@ -200,6 +202,8 @@ final class SSHTerminalConnectChrome {
         )
         sheet.addAction(UIAlertAction(title: "Forget Trusted Key", style: .destructive) { [weak self] _ in
             self?.session.forgetTrustedKey()
+            self?.presentedTrustFailure = nil
+            self?.dismissTrust()
         })
         sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
         if let popover = sheet.popoverPresentationController {
