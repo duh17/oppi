@@ -28,9 +28,15 @@ struct SSHTerminalTests {
         #expect(copies == ["héllo"])
     }
 
-    @Test func remoteCopyLandsOnTheDeviceClipboardOnlyWhileConnected() throws {
+    @Test func remoteCopyLandsOnTheDeviceClipboardOnlyWhileConnectedAndViewed() throws {
         let channel = try SSHTerminalChannel()
         channel.opened(TerminalConnectionFixture())
+        // Off screen, or Oppi not in front: the write is dropped.
+        UIPasteboard.general.string = "local-only"
+        channel.event(.data(Data("\u{1b}]52;c;aMOpbGxv\u{7}".utf8)))
+        #expect(UIPasteboard.general.string == "local-only")
+        #expect(channel.copies == 0)
+        channel.isViewed = true
         UIPasteboard.general.string = "local-only"
         channel.event(.data(Data("\u{1b}]52;c;aMOpbGxv\u{7}".utf8)))
         #expect(UIPasteboard.general.string == "héllo")
@@ -43,6 +49,17 @@ struct SSHTerminalTests {
         #expect(channel.copies == 1)
     }
 
+    /// The path stream does not end when its consumer is cancelled; the watch
+    /// must finish it, or a closed terminal's watcher (and its monitor) lives on.
+    @Test func cancellingTheNetworkWatchEndsIt() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture())
+        let watch = Task { await channel.watchNetwork() }
+        try await Task.sleep(for: .milliseconds(100))
+        watch.cancel()
+        await watch.value
+        channel.close(reason: "done")
+    }
 
     @Test func statusAndDeviceRepliesReachTheSamePTYSinkInOrder() throws {
         var sent = Data()
@@ -966,6 +983,7 @@ private actor TerminalConnectionFixture: SSHTerminalConnection {
     private var alive = true
     func setAlive(_ value: Bool) { alive = value }
     func checkAlive() throws { if !alive { throw SSHConnectionError.requestTimedOut } }
+    nonisolated func close() {}
     func cancel() {
         suspendedSend?.resume(throwing: SSHConnectionError.connectionClosed)
         suspendedSend = nil

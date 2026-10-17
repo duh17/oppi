@@ -14,6 +14,11 @@ protocol SSHTerminalConnection: Sendable {
     func run(_ command: String, input: Data) async throws -> SSHExecResult
     /// One SSH round trip. Throwing means the connection is gone.
     func checkAlive() async throws
+    /// Submits the close to the connection and returns without waiting. It
+    /// is the only close that is on the wire when a caller cannot await, such
+    /// as an iOS background-task expiration handler.
+    func close()
+    /// `close()`, then waits until the connection is closed.
     func cancel() async
 }
 
@@ -181,6 +186,9 @@ final class SSHTerminalChannel {
     /// The registry closed this terminal because Oppi stayed in the background
     /// past the grace period. A terminal on screen reconnects on return.
     private(set) var closedForBackground = false
+    /// This terminal's screen is showing and the scene is active. The view
+    /// reports it. A remote clipboard write is applied only then.
+    @ObservationIgnored var isViewed = false
     /// The connection's cancellation, so a caller that must finish before the
     /// process suspends can wait for it.
     @ObservationIgnored private(set) var teardown: Task<Void, Never>?
@@ -188,6 +196,8 @@ final class SSHTerminalChannel {
     /// A path change is a hint, not proof the SSH stream failed: one SSH round
     /// trip decides. A live connection clears the notice; a dead one closes
     /// with a reason and offers Reconnect. Input is never replayed.
+    /// Ends with the calling task: cancellation finishes the path stream, which
+    /// stops the monitor.
     func watchNetwork() async {
         let monitor = NWPathMonitor()
         let (paths, continuation) = AsyncStream<String>.makeStream(bufferingPolicy: .bufferingNewest(1))
@@ -200,9 +210,14 @@ final class SSHTerminalChannel {
         monitor.start(queue: DispatchQueue(label: "oppi.ssh.path"))
         defer { monitor.cancel() }
         var previous: String?
-        for await path in paths {
-            if let previous, previous != path, connected { await recheckAfterNetworkChange() }
-            previous = path
+        // `AsyncStream` does not end on its own when its consumer is cancelled.
+        await withTaskCancellationHandler {
+            for await path in paths {
+                if let previous, previous != path, connected { await recheckAfterNetworkChange() }
+                previous = path
+            }
+        } onCancel: {
+            continuation.finish()
         }
     }
 
@@ -248,8 +263,10 @@ final class SSHTerminalChannel {
     /// A remote copy (Herdr's copy-on-select, tmux, an agent's /copy) lands on
     /// this device's clipboard, as it would on the host terminal's. Local only:
     /// a host program must not reach other devices through Universal Clipboard.
+    /// A terminal that is off screen, or while Oppi is not in front, drops the
+    /// write: nobody is looking at what it would put on the clipboard.
     private func copyToClipboard(_ text: String) {
-        guard connected else { return }
+        guard connected, isViewed else { return }
         UIPasteboard.general.setItems([[UTType.utf8PlainText.identifier: text]], options: [.localOnly: true])
         lastCopyLength = text.count
         copies &+= 1
@@ -424,7 +441,8 @@ final class SSHTerminalChannel {
     /// Close rather than silently losing bytes while the process is suspended.
     /// Host tmux or Herdr preserves the remote work.
     func closeForBackground() {
-        guard connected else { return }
+        // A reconnect still dialing is closed for the background too.
+        guard connected || connecting else { return }
         closedForBackground = true
         close(reason: "Oppi went to the background.")
     }
@@ -440,7 +458,11 @@ final class SSHTerminalChannel {
         pump = nil
         resizeTask?.cancel()
         resizeTask = nil
-        if let connection { teardown = Task { await connection.cancel() } }
+        if let connection {
+            // On the wire now; the task only waits for it to finish.
+            connection.close()
+            teardown = Task { await connection.cancel() }
+        }
         connection = nil
     }
 

@@ -166,6 +166,7 @@ private actor PreviewConnection: SSHTerminalConnection {
     func send(_ bytes: Data) async throws { await echo(bytes) }
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws {}
     func checkAlive() async throws {}
+    nonisolated func close() {}
     func cancel() async {}
 
     func run(_ command: String, input: Data) async throws -> SSHExecResult {

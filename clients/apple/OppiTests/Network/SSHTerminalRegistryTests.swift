@@ -12,10 +12,18 @@ struct SSHTerminalRegistryTests {
         let registry: SSHTerminalRegistry
         let tasks = FakeBackgroundTasks()
         let gate = SleepGate()
+        /// Stands in for the app's preferences; the registry watches its flag.
+        let defaults = UserDefaults(suiteName: "SSHTerminalRegistryTests.\(UUID().uuidString)")!
+        static let flag = "sshTerminalEnabled"
 
         init(denyBackgroundTask: Bool = false) {
             tasks.denies = denyBackgroundTask
-            registry = SSHTerminalRegistry(backgroundTasks: tasks, sleep: { [gate] _ in try await gate.wait() })
+            defaults.set(true, forKey: Self.flag)
+            let defaults = defaults
+            registry = SSHTerminalRegistry(
+                backgroundTasks: tasks, sleep: { [gate] _ in try await gate.wait() },
+                defaults: defaults, experimentEnabled: { defaults.bool(forKey: Self.flag) }
+            )
         }
 
         /// A live terminal for a saved host, with its byte queue.
@@ -106,11 +114,110 @@ struct SSHTerminalRegistryTests {
         live.channel.close(reason: "done")
     }
 
-    @Test func turningTheExperimentOffEndsEveryTerminal() async throws {
+    /// The Settings toggle only writes the flag; no SSH screen is mounted to react.
+    @Test func turningTheExperimentOffEndsTerminalsAndConnectsWithNoViewMounted() async throws {
         let harness = Harness()
         let live = try harness.open()
-        SSHTerminalConnectSession(registry: harness.registry).handleExperimentDisabled()
-        #expect(!live.channel.connected)
+        let attempt = Task<Void, Never> { try? await Task.sleep(for: .seconds(30)) }
+        let recorder = AttemptRecorder()
+        harness.registry.track(attempt: UUID(), task: attempt) { recorder.ends.append($0) }
+
+        harness.defaults.set(false, forKey: Harness.flag)
+        try await waitUntil { !live.channel.connected }
+        #expect(live.channel.reason == "SSH Terminal was turned off.")
+        #expect(harness.registry.terminal(for: live.profile.id) == nil)
+        #expect(attempt.isCancelled)
+        #expect(recorder.ends == [.experimentDisabled])
+
+        // A connect that was already past its last check is refused too.
+        let late = try SSHTerminalChannel()
+        let lateConnection = FakeConnection()
+        late.opened(lateConnection)
+        #expect(!harness.registry.adopt(late, profile: live.profile, queue: SSHTerminalEventQueue()))
+        #expect(!late.connected && lateConnection.closed.withLock { $0 })
+    }
+
+    @Test func otherPreferenceChangesLeaveTerminalsAlone() async throws {
+        let harness = Harness()
+        let live = try harness.open()
+        harness.defaults.set("x", forKey: "unrelated")
+        for _ in 0..<20 { await Task.yield() }
+        #expect(live.channel.connected)
+        live.channel.close(reason: "done")
+    }
+
+    // MARK: - Connects in flight
+
+    @Test func aConnectInFlightIsCancelledWhenOppiEntersTheBackground() async throws {
+        let harness = Harness()
+        let attempt = Task<Void, Never> { try? await Task.sleep(for: .seconds(30)) }
+        let recorder = AttemptRecorder()
+        harness.registry.track(attempt: UUID(), task: attempt) { recorder.ends.append($0) }
+        harness.registry.appDidEnterBackground()
+        #expect(attempt.isCancelled)
+        #expect(recorder.ends == [.background])
+        // Done once: a finished attempt is not cancelled again.
+        harness.registry.appDidEnterBackground()
+        #expect(recorder.ends == [.background])
+        #expect(harness.tasks.began == 0)
+    }
+
+    @Test func aConnectThatFinishedItsAttemptIsNotCancelledLater() async throws {
+        let harness = Harness()
+        let attempt = Task<Void, Never> {}
+        let recorder = AttemptRecorder()
+        let id = UUID()
+        harness.registry.track(attempt: id, task: attempt) { recorder.ends.append($0) }
+        harness.registry.untrack(attempt: id)
+        harness.registry.appDidEnterBackground()
+        #expect(recorder.ends.isEmpty)
+    }
+
+    @Test func aConnectThatOpensInTheBackgroundWithNoGraceIsDiscarded() async throws {
+        let harness = Harness()
+        harness.registry.appDidEnterBackground()
+        let channel = try SSHTerminalChannel()
+        let connection = FakeConnection()
+        channel.opened(connection)
+        let profile = SSHTerminalProfile(host: "one.ts.net", username: "alice")
+        #expect(!harness.registry.adopt(channel, profile: profile, queue: SSHTerminalEventQueue()))
+        #expect(!channel.connected)
+        #expect(channel.closedForBackground)
+        #expect(connection.closed.withLock { $0 })
+        #expect(!harness.registry.holds(channel))
+        #expect(harness.registry.terminal(for: profile.id) == nil)
+
+        // Back in front, a connect is adopted again.
+        harness.registry.appDidBecomeActive()
+        let next = try SSHTerminalChannel()
+        next.opened(FakeConnection())
+        #expect(harness.registry.adopt(next, profile: profile, queue: SSHTerminalEventQueue()))
+        next.close(reason: "done")
+    }
+
+    @Test func aConnectThatOpensDuringTheGraceIsClosedWithTheOthersWhenItEnds() async throws {
+        let harness = Harness()
+        let first = try harness.open()
+        harness.registry.appDidEnterBackground()
+        let second = try harness.open(SSHTerminalProfile(host: "two.ts.net", username: "alice"))
+        #expect(second.channel.connected)
+        harness.gate.open()
+        await harness.tasks.waitForEnd()
+        #expect(!first.channel.connected && !second.channel.connected)
+    }
+
+    /// A reconnect from the terminal screen has no host-list view mounted; its
+    /// channel is the one the screen shows and must read as closed for the background.
+    @Test func aSessionConnectCancelledByTheBackgroundClosesItsChannelForTheBackground() async throws {
+        let harness = Harness()
+        let session = SSHTerminalConnectSession(registry: harness.registry)
+        let pending = try SSHTerminalChannel()
+        session.channel = pending
+        session.connecting = true
+        session.handleBackground()
+        #expect(!session.connecting)
+        #expect(pending.closedForBackground && !pending.connected && !pending.connecting)
+        #expect(session.failure == SSHTerminalConnectSession.backgroundFailure)
     }
 
     // MARK: - Background grace
@@ -151,18 +258,52 @@ struct SSHTerminalRegistryTests {
         live.channel.close(reason: "done")
     }
 
-    @Test func iOSExpirationClosesAtOnceAndEndsTheTask() async throws {
+    @Test func iOSExpirationClosesOnTheWireBeforeEndingTheTask() async throws {
         let harness = Harness()
         let live = try harness.open()
         harness.registry.appDidEnterBackground()
+        var closedWhenTaskEnded: Bool?
+        harness.tasks.atEnd = { closedWhenTaskEnded = live.connection.closed.withLock { $0 } }
         harness.tasks.expire()
         #expect(!live.channel.connected)
         #expect(live.channel.closedForBackground)
         #expect(harness.tasks.endedCount == 1)
+        // The close was submitted before the process could suspend, not left to a later task.
+        #expect(closedWhenTaskEnded == true)
         // The timer arriving afterwards cannot end the task a second time.
         harness.gate.open()
         for _ in 0..<20 { await Task.yield() }
         #expect(harness.tasks.endedCount == 1)
+    }
+
+    /// iOS may run the handler before `beginBackgroundTask` returns.
+    @Test func expirationInsideBeginStillClosesAndEndsTheTaskOnce() async throws {
+        let harness = Harness()
+        harness.tasks.expireInsideBegin = true
+        let live = try harness.open()
+        harness.registry.appDidEnterBackground()
+        #expect(!live.channel.connected)
+        #expect(live.channel.closedForBackground)
+        #expect(harness.tasks.endedIDs == [harness.tasks.identifier])
+        harness.gate.open()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(harness.tasks.endedCount == 1)
+    }
+
+    /// A handler left over from a grace that already ended must not close what
+    /// is running now.
+    @Test func aStaleExpirationAfterReturnLeavesTerminalsAlone() async throws {
+        let harness = Harness()
+        let live = try harness.open()
+        harness.registry.appDidEnterBackground()
+        harness.registry.appDidBecomeActive()
+        #expect(harness.tasks.endedCount == 1)
+        harness.tasks.expire()
+        #expect(live.channel.connected)
+        #expect(!live.channel.closedForBackground)
+        #expect(harness.registry.terminal(for: live.profile.id)?.channel === live.channel)
+        #expect(harness.tasks.endedCount == 1)
+        live.channel.close(reason: "done")
     }
 
     @Test func withoutABackgroundTaskTerminalsCloseImmediately() async throws {
@@ -210,8 +351,16 @@ private func waitUntil(_ condition: @MainActor () -> Bool) async throws {
     Issue.record("Condition was not met within 2 seconds")
 }
 
+@MainActor
+private final class AttemptRecorder {
+    var ends = [SSHTerminalRegistry.AttemptEnd]()
+}
+
 private final class FakeConnection: SSHTerminalConnection {
     let cancelled = Mutex(false)
+    /// `close()` submitted: on the wire, whether or not anyone awaited it.
+    let closed = Mutex(false)
+    func close() { closed.withLock { $0 = true } }
     func send(_ bytes: Data) async throws {}
     func resize(columns: Int, rows: Int, pixelWidth: Int, pixelHeight: Int) async throws {}
     func run(_ command: String, input: Data) async throws -> SSHExecResult { throw SSHConnectionError.commandRequestRejected }
@@ -237,8 +386,13 @@ private final class SleepGate: Sendable {
 @MainActor
 private final class FakeBackgroundTasks: SSHBackgroundTasks {
     var denies = false
+    /// Runs the expiration handler before `begin` returns.
+    var expireInsideBegin = false
+    var atEnd: (() -> Void)?
+    let identifier = UIBackgroundTaskIdentifier(rawValue: 42)
     private(set) var began = 0
     private(set) var endedCount = 0
+    private(set) var endedIDs = [UIBackgroundTaskIdentifier]()
     private var expiration: (@MainActor () -> Void)?
     private var endWaiter: CheckedContinuation<Void, Never>?
 
@@ -246,11 +400,14 @@ private final class FakeBackgroundTasks: SSHBackgroundTasks {
         guard !denies else { return nil }
         began += 1
         self.expiration = expiration
-        return UIBackgroundTaskIdentifier(rawValue: 42)
+        if expireInsideBegin { expiration() }
+        return identifier
     }
 
     func end(_ task: UIBackgroundTaskIdentifier) {
         endedCount += 1
+        endedIDs.append(task)
+        atEnd?()
         endWaiter?.resume()
         endWaiter = nil
     }

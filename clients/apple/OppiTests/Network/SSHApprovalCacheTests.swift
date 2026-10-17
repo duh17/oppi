@@ -135,6 +135,20 @@ struct SSHApprovalCacheTests {
         #expect(cache.context(for: .deviceKeySigning) == nil)
     }
 
+    @Test func approvalIsNotKeptWhenAppLockLockedDuringTheAttempt() async throws {
+        let cache = makeCache(Clock())
+        // App Lock locks while the person is still approving.
+        _ = try await cache.approved(
+            for: .deviceKeySigning,
+            evaluate: { _ in cache.invalidateAll() },
+            use: { _ in 1 }
+        )
+        #expect(cache.context(for: .deviceKeySigning) == nil)
+        // A lock before the attempt began does not stop a new approval from being kept.
+        try await approve(cache, .deviceKeySigning, Probe())
+        #expect(cache.context(for: .deviceKeySigning) != nil)
+    }
+
     @Test func onlyCredentialFailuresEndAnApproval() {
         let host = SSHHostKey(openSSH: "ssh-ed25519 AAAA")
         let credential: [any Error] = [

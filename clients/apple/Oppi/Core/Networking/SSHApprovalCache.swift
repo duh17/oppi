@@ -37,6 +37,9 @@ final class SSHApprovalCache: Sendable {
     }
 
     private let entries = Mutex<[Purpose: Entry]>([:])
+    /// Counts `invalidateAll` calls. An attempt that began before one must not
+    /// store its approval after it: the lock it spanned ended that approval.
+    private let generation = Atomic<Int>(0)
     private let window: TimeInterval
     private let now: @Sendable () -> TimeInterval
 
@@ -63,7 +66,11 @@ final class SSHApprovalCache: Sendable {
         return context
     }
 
-    func store(_ context: LAContext, for purpose: Purpose) {
+    /// Keeps `context` unless `invalidateAll` ran since `generation` was read
+    /// (`currentGeneration`). Returns whether it was kept. A refused context is
+    /// left alone: the attempt that holds it may still be signing with it.
+    @discardableResult
+    func store(_ context: LAContext, for purpose: Purpose, ifGeneration expected: Int? = nil) -> Bool {
         let approvedAt = now()
         let window = window
         let expiry = Task { [weak self] in
@@ -71,13 +78,19 @@ final class SSHApprovalCache: Sendable {
             guard !Task.isCancelled else { return }
             _ = self?.context(for: purpose)
         }
-        let replaced = entries.withLock { entries -> Entry? in
+        // The check and the insert share the lock `invalidateAll` takes.
+        let outcome = entries.withLock { entries -> (kept: Bool, replaced: Entry?) in
+            if let expected, expected != generation.load(ordering: .acquiring) { return (false, nil) }
             let previous = entries[purpose]
             entries[purpose] = Entry(context: context, approvedAt: approvedAt, expiry: expiry)
-            return previous
+            return (true, previous)
         }
-        if let replaced, replaced.context !== context { retire(replaced) } else { replaced?.expiry.cancel() }
+        guard outcome.kept else { expiry.cancel(); return false }
+        if let replaced = outcome.replaced, replaced.context !== context { retire(replaced) } else { outcome.replaced?.expiry.cancel() }
+        return true
     }
+
+    var currentGeneration: Int { generation.load(ordering: .acquiring) }
 
     func invalidate(_ purpose: Purpose) {
         let removed = entries.withLock { $0.removeValue(forKey: purpose) }
@@ -86,6 +99,7 @@ final class SSHApprovalCache: Sendable {
 
     func invalidateAll() {
         let removed = entries.withLock { entries -> [Entry] in
+            generation.add(1, ordering: .acquiringAndReleasing)
             let all = Array(entries.values)
             entries.removeAll()
             return all
@@ -110,6 +124,7 @@ final class SSHApprovalCache: Sendable {
         evaluate: @escaping @Sendable (LAContext) async throws -> Void,
         use: @escaping @Sendable (LAContext) async throws -> Value
     ) async throws -> Value {
+        let attemptGeneration = currentGeneration
         if let cached = context(for: purpose) {
             do {
                 return try await use(cached)
@@ -132,7 +147,8 @@ final class SSHApprovalCache: Sendable {
             try Task.checkCancellation()
             let value = try await use(fresh)
             try Task.checkCancellation()
-            store(fresh, for: purpose)
+            // A lock during this attempt: the approval does not outlive the attempt.
+            store(fresh, for: purpose, ifGeneration: attemptGeneration)
             return value
         } catch {
             fresh.invalidate()

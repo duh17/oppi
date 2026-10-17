@@ -45,6 +45,14 @@ struct UIApplicationBackgroundTasks: SSHBackgroundTasks {
 /// calls the expiration handler, every terminal closes with "Oppi went to the
 /// background." (`closedForBackground`) before the process can suspend. A terminal
 /// that is on screen then reconnects on return.
+///
+/// A connect still in flight when Oppi enters the background is cancelled
+/// (`track`), and a connect that finishes while Oppi is in the background with
+/// no grace running is discarded (`adopt`): a live SSH session must never be
+/// left for iOS to suspend.
+///
+/// The registry watches the SSH Terminal experiment flag itself, so turning it
+/// off ends every terminal and connect even when no SSH screen is mounted.
 @MainActor @Observable
 final class SSHTerminalRegistry {
     static let shared = SSHTerminalRegistry()
@@ -57,24 +65,83 @@ final class SSHTerminalRegistry {
         fileprivate let tasks: [Task<Void, Never>]
     }
 
-    private struct Grace {
-        let id = UUID()
-        let backgroundTask: UIBackgroundTaskIdentifier
+    /// Why a tracked connect was cancelled from outside its screen.
+    enum AttemptEnd { case background, experimentDisabled }
+
+    private struct Attempt {
+        let task: Task<Void, Never>
+        let ended: @MainActor (AttemptEnd) -> Void
+    }
+
+    /// One background task and its grace timer. A class: the expiration
+    /// handler may run before `begin` returns, and a stale handler must
+    /// recognize it is not the current grace.
+    private final class Grace {
+        var identifier: UIBackgroundTaskIdentifier?
         var timer: Task<Void, Never>?
+        /// The grace is finished; its background task is ended once its identifier is known.
+        var over = false
+        var taskEnded = false
     }
 
     private var terminals: [UUID: Terminal] = [:]
+    @ObservationIgnored private var attempts: [UUID: Attempt] = [:]
+    @ObservationIgnored private var inBackground = false
     @ObservationIgnored private var grace: Grace?
     @ObservationIgnored private let backgroundTasks: any SSHBackgroundTasks
     @ObservationIgnored private let sleep: @Sendable (Duration) async throws -> Void
+    @ObservationIgnored private let experimentEnabled: @MainActor () -> Bool
+    @ObservationIgnored private var flagObserver: FlagObserver?
+
+    /// Removes its notification observer when the registry goes away.
+    private final class FlagObserver: @unchecked Sendable {
+        let token: any NSObjectProtocol
+        init(_ token: any NSObjectProtocol) { self.token = token }
+        deinit { NotificationCenter.default.removeObserver(token) }
+    }
 
     init(
         backgroundTasks: any SSHBackgroundTasks = UIApplicationBackgroundTasks(),
-        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+        defaults: UserDefaults = .standard,
+        experimentEnabled: @escaping @MainActor () -> Bool = { AppPreferences.Experiments.sshTerminalEnabled }
     ) {
         self.backgroundTasks = backgroundTasks
         self.sleep = sleep
+        self.experimentEnabled = experimentEnabled
+        // The Settings toggle writes this flag; no SSH screen needs to be mounted to hear it.
+        flagObserver = FlagObserver(NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: defaults, queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor in self?.experimentMayHaveChanged() }
+        })
     }
+
+    private func experimentMayHaveChanged() {
+        guard !experimentEnabled() else { return }
+        endEverything()
+    }
+
+    /// SSH Terminal is off: no terminal, no connect in flight, no kept approval.
+    private func endEverything() {
+        let pending = attempts
+        attempts.removeAll()
+        for attempt in pending.values {
+            attempt.task.cancel()
+            attempt.ended(.experimentDisabled)
+        }
+        closeAll(reason: "SSH Terminal was turned off.")
+        SSHApprovalCache.shared.invalidateAll()
+    }
+
+    /// Registers a connect in flight under `id`. Oppi entering the background
+    /// or SSH Terminal turning off cancels it and calls `ended`. The connect
+    /// calls `untrack` when it finishes.
+    func track(attempt id: UUID, task: Task<Void, Never>, ended: @escaping @MainActor (AttemptEnd) -> Void) {
+        attempts[id] = Attempt(task: task, ended: ended)
+    }
+
+    func untrack(attempt id: UUID) { attempts[id] = nil }
 
     /// The connected terminal for a saved host, if any.
     func terminal(for profileID: UUID) -> Terminal? {
@@ -91,7 +158,22 @@ final class SSHTerminalRegistry {
 
     /// Takes over a channel whose shell just opened. Its output is read here
     /// from now on, whichever screen is showing.
-    func adopt(_ channel: SSHTerminalChannel, profile: SSHTerminalProfile, queue: SSHTerminalEventQueue) {
+    ///
+    /// Refused (the channel is closed, its reason says why) while Oppi is in the
+    /// background with no grace running, and while SSH Terminal is off: nothing
+    /// would close that session before iOS suspends the process.
+    @discardableResult
+    func adopt(_ channel: SSHTerminalChannel, profile: SSHTerminalProfile, queue: SSHTerminalEventQueue) -> Bool {
+        guard experimentEnabled() else {
+            queue.finish()
+            channel.close(reason: "SSH Terminal was turned off.")
+            return false
+        }
+        guard !inBackground || grace != nil else {
+            queue.finish()
+            channel.closeForBackground()
+            return false
+        }
         close(profile.id, reason: "Replaced by a new connection.")
         let consumer = Task { [weak self] in
             await channel.consume(queue)
@@ -100,6 +182,7 @@ final class SSHTerminalRegistry {
         // The screen's network watch ends with the screen; this one lasts as long as the terminal.
         let watcher = Task { await channel.watchNetwork() }
         terminals[profile.id] = Terminal(profile: profile, channel: channel, tasks: [consumer, watcher])
+        return true
     }
 
     /// Ends a host's terminal, if it has one.
@@ -128,42 +211,58 @@ final class SSHTerminalRegistry {
 
     // MARK: - Background grace
 
-    /// Oppi entered the background. Live terminals keep running and reading
-    /// for the grace period.
+    /// Oppi entered the background. A connect in flight is cancelled; live
+    /// terminals keep running and reading for the grace period.
     func appDidEnterBackground() {
+        inBackground = true
+        let pending = attempts
+        attempts.removeAll()
+        for attempt in pending.values {
+            attempt.task.cancel()
+            attempt.ended(.background)
+        }
         guard grace == nil, terminals.values.contains(where: { $0.channel.connected }) else { return }
-        let backgroundTask = backgroundTasks.begin { [weak self] in self?.graceExpired() }
-        guard let backgroundTask else {
+        // Set before `begin`: iOS may call the expiration handler before it returns.
+        let current = Grace()
+        grace = current
+        guard let identifier = backgroundTasks.begin(expiration: { [weak self] in self?.graceExpired(current) }) else {
             // Without a background task there is no grace: close before suspension.
+            grace = nil
             closeAllForBackground()
             return
         }
-        var started = Grace(backgroundTask: backgroundTask)
-        let id = started.id
-        started.timer = Task { [weak self, sleep] in
-            do { try await sleep(Self.backgroundGrace) } catch { return }
-            await self?.graceElapsed(id)
+        current.identifier = identifier
+        if current.over {
+            // The expiration handler already ran inside `begin`.
+            finish(current)
+            return
         }
-        grace = started
+        current.timer = Task { [weak self, sleep] in
+            do { try await sleep(Self.backgroundGrace) } catch { return }
+            await self?.graceElapsed(current)
+        }
     }
 
     /// Oppi is active again. Within the grace nothing closed, so nothing reconnects.
     func appDidBecomeActive() {
-        endGrace()
+        inBackground = false
+        if let current = grace { finish(current) }
     }
 
     /// The grace ran out while iOS still allows the process to run: let the
     /// connections finish closing before the background task ends.
-    private func graceElapsed(_ id: UUID) async {
-        guard grace?.id == id else { return }
+    private func graceElapsed(_ current: Grace) async {
+        guard grace === current else { return }
         for task in closeAllForBackground() { await task.value }
-        if grace?.id == id { endGrace() }
+        finish(current)
     }
 
-    /// iOS is about to suspend: close now and return. The handler may not wait.
-    private func graceExpired() {
-        closeAllForBackground()
-        endGrace()
+    /// iOS is about to suspend: close now, on the wire, and end the task. The
+    /// handler cannot wait. A handler for a grace that is over does nothing
+    /// to the terminals; it only makes sure its own task ended.
+    private func graceExpired(_ current: Grace) {
+        if grace === current { closeAllForBackground() }
+        finish(current)
     }
 
     @discardableResult
@@ -178,10 +277,15 @@ final class SSHTerminalRegistry {
         return teardowns
     }
 
-    private func endGrace() {
-        guard let ended = grace else { return }
-        grace = nil
-        ended.timer?.cancel()
-        backgroundTasks.end(ended.backgroundTask)
+    /// Ends this grace's background task exactly once. Before `begin` returned
+    /// the identifier is unknown; `appDidEnterBackground` ends it then.
+    private func finish(_ current: Grace) {
+        if grace === current { grace = nil }
+        current.timer?.cancel()
+        current.over = true
+        if let identifier = current.identifier, !current.taskEnded {
+            current.taskEnded = true
+            backgroundTasks.end(identifier)
+        }
     }
 }

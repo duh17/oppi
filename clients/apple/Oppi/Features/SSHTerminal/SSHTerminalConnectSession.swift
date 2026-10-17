@@ -59,7 +59,9 @@ final class SSHTerminalConnectSession {
             return
         }
         begin(value, savingHostOnly: false)
+        let attempt = runID
         task = Task {
+            defer { registry.untrack(attempt: attempt) }
             do {
                 try await Task.detached { try SSHTerminalProfileStore().save(value, password: suppliedPassword) }.value
                 guard !Task.isCancelled, runID == self.runID else { return }
@@ -94,13 +96,30 @@ final class SSHTerminalConnectSession {
                 owner.opened(session, command: value.startupCommand)
                 // Sign-in's task (and its password capture) ends here. The
                 // registry's byte consumer owns no authentication material.
-                registry.adopt(owner, profile: value, queue: queue)
+                // It refuses (and closes `owner`) when Oppi is in the background
+                // with no grace left to close the session.
+                let adopted = registry.adopt(owner, profile: value, queue: queue)
                 task = nil
                 connecting = false
-                showsTerminal = true
+                if adopted {
+                    showsTerminal = true
+                } else {
+                    failure = Self.backgroundFailure
+                }
             } catch {
                 guard runID == self.runID, !Task.isCancelled else { return }
                 noteFailure(error, profile: value)
+            }
+        }
+        if let task {
+            // Backgrounding or turning the experiment off ends this attempt even
+            // when no view of this session is mounted (a reconnect from the
+            // terminal screen, for one).
+            registry.track(attempt: attempt, task: task) { [weak self] end in
+                switch end {
+                case .background: self?.handleBackground()
+                case .experimentDisabled: self?.handleExperimentDisabled()
+                }
             }
         }
     }
@@ -173,27 +192,38 @@ final class SSHTerminalConnectSession {
     /// Stops a connect in flight. A shell the registry owns is not this
     /// session's to close: Disconnect and the host's lifecycle end it.
     func cancel() {
-        runID = UUID()
-        task?.cancel()
-        task = nil
-        password = ""
+        stopAttempt()
         closeUnregisteredChannel(reason: "Closed by you.")
-        connecting = false
-        savingHostOnly = false
     }
 
+    static let backgroundFailure = "Connection cancelled when Oppi entered the background. Connect again to open a fresh shell."
+
+    /// An attempt cancelled by the background closes its channel as a
+    /// background close, so a terminal screen that is up reconnects on return.
     func handleBackground() {
         password = ""
         passwordPrompt = false
         guard connecting else { return }
-        cancel()
-        failure = "Connection cancelled when Oppi entered the background. Connect again to open a fresh shell."
+        stopAttempt()
+        if let channel, !registry.holds(channel) { channel.closeForBackground() }
+        failure = Self.backgroundFailure
     }
 
+    /// The registry ends the terminals itself when the flag turns off. This
+    /// ends what belongs to this session: its attempt and its screen.
     func handleExperimentDisabled() {
         cancel()
-        registry.closeAll(reason: "SSH Terminal was turned off.")
         showsTerminal = false
+    }
+
+    private func stopAttempt() {
+        registry.untrack(attempt: runID)
+        runID = UUID()
+        task?.cancel()
+        task = nil
+        password = ""
+        connecting = false
+        savingHostOnly = false
     }
 
     private func closeUnregisteredChannel(reason: String) {

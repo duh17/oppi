@@ -259,15 +259,21 @@ struct SSHTerminalView: View {
         .toolbarVisibility(topBarHidden && channel.connected ? .hidden : .visible, for: .navigationBar)
         // Leaving the screen does not close the terminal: `SSHTerminalRegistry`
         // owns the channel, and Disconnect or the host's lifecycle ends it.
-        .onAppear { isOnScreen = true }
+        .onAppear {
+            isOnScreen = true
+            channel.isViewed = scenePhase == .active
+        }
         .onDisappear {
             isOnScreen = false
+            channel.isViewed = false
             pasteNoticeTask?.cancel()
         }
         .onChange(of: channel.closedForBackground) { _, closed in
             if closed, isOnScreen { reconnectOnReturn = true }
         }
         .onChange(of: scenePhase) { _, phase in
+            // A remote clipboard write is applied only while this screen is in front.
+            channel.isViewed = isOnScreen && phase == .active
             if phase == .active { reconnectAfterReturn() }
         }
         // App Lock's cover can come and go (cancel, leave again) before the

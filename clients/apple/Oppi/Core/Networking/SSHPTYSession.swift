@@ -83,6 +83,8 @@ final class SSHPTYSession: @unchecked Sendable {
     }
 
     private let channels: Mutex<Channels?>
+    /// Completes when the SSH connection is closed, however that started.
+    private let closed: EventLoopFuture<Void>
 
     private init(connection: SSHConnection, terminal: Channel) {
         let parent = connection.channel
@@ -95,6 +97,7 @@ final class SSHPTYSession: @unchecked Sendable {
             Self.probe(parent, timeout: .seconds(15))
         }
         parent.closeFuture.whenComplete { _ in keepalive.cancel() }
+        closed = parent.closeFuture
         channels = Mutex(Channels(connection: connection, terminal: terminal, keepalive: keepalive))
     }
 
@@ -276,18 +279,29 @@ final class SSHPTYSession: @unchecked Sendable {
         return try await connection.run(command, input: input, maximumOutputBytes: maximumOutputBytes, timeout: timeout)
     }
 
-    /// Closes both channels. Input is not retained and cannot be replayed by a
-    /// later connection.
+    /// Submits the close of both channels to their event loop and returns
+    /// without waiting for it. Input is not retained and cannot be replayed by
+    /// a later connection. Safe to call from anywhere, including an iOS
+    /// background-task expiration handler that cannot wait.
+    func close() { takeAndClose() }
+
+    /// `close()`, then waits until the connection is closed.
     func cancel() async {
+        takeAndClose()
+        _ = try? await closed.get()
+    }
+
+    @discardableResult
+    private func takeAndClose() -> Channels? {
         let owned = channels.withLock { channels -> Channels? in
             defer { channels = nil }
             return channels
         }
-        guard let owned else { return }
+        guard let owned else { return nil }
         owned.keepalive.cancel()
         owned.terminal.close(promise: nil)
         owned.connection.close()
-        _ = try? await owned.connection.channel.closeFuture.get()
+        return owned
     }
 
     deinit {
