@@ -25,6 +25,36 @@ The APNs request is fixed: `apns-push-type: alert`, priority 10, the configured 
 expiration of at most an hour, and the payload
 `{"aps":{"alert":{"title":"Oppi","body":"You have a new notification."},"mutable-content":1},"e":"<envelope>"}`.
 
+## Limits and why they are set this way
+
+Oppi's relay at `push.oppi.chaosdonkey.dev` runs on the Cloudflare Workers Free plan. There
+is no paid tier and no plan for subscriptions or accounts. The limits below come from the
+operator's own daily use, sized so that most people get a good experience while the relay
+stays inside the free plan:
+
+| Limit | Value |
+| --- | --- |
+| Pushes per phone per UTC day | 100 with App Attest; 20 for sandbox registrations without it |
+| Pushes per phone per minute | 10 |
+| Registrations per phone | 1 per APNs token; registering again keeps the day's counts |
+| Pushes per client address per minute | 60, checked before any send token is looked up |
+| Registrations without App Attest | sandbox only, 5 per client address per hour |
+| Challenge and registration requests | 3 per client address per 10 seconds (Cloudflare rate limiting rule) |
+
+Each Oppi server keeps its own per-device budget at or below the relay's (100 a day, with
+routine alerts stopping at 80), so normal use never reaches the relay's limit.
+
+The Free plan allows 100,000 Worker requests and 100,000 Durable Object requests a day, and a
+push costs about one of each. That covers about 1,000 phones at the daily cap and several
+thousand in normal use. When a daily limit is reached, every push fails until 00:00 UTC; the
+Free plan never bills. A determined flood of junk requests can still use up a day's limit.
+The limits above raise the cost of that; they cannot prevent it on this plan.
+
+The limits count pushes only. They need no account, no identifiers beyond what the table in
+[What the relay sees and keeps](#what-the-relay-sees-and-keeps) lists, and no analytics. If
+usage grows past what the free plan carries, the limits and the Cloudflare plan will be
+revisited, and this section and the [privacy policy](../docs/privacy.md) updated with them.
+
 ## Layout
 
 | Path | |
@@ -67,11 +97,10 @@ Point a server at it with `oppi config set push.relays '["http://127.0.0.1:8787"
 Not automated yet. The steps, for whoever owns the account:
 
 1. A Cloudflare account and a hostname for the relay, such as `push.<domain>`. The Workers
-   Free plan fits the per-phone quotas (spec "Quotas") for about 1,000 phones at their daily
-   cap and several thousand in normal use; past its daily limits every push fails until
-   00:00 UTC (the Free plan never bills), so move to Workers Paid before that. Add a rate
-   limiting rule for `/v1/challenge` and `/v1/registrations`: a phone registers about once
-   per install, so 3 requests per client address per 10 seconds is plenty.
+   Free plan fits the per-phone quotas (see [Limits](#limits-and-why-they-are-set-this-way));
+   move to Workers Paid if you need more. Add a rate limiting rule for `/v1/challenge` and
+   `/v1/registrations`: a phone registers about once per install, so 3 requests per client
+   address per 10 seconds is plenty.
 2. An APNs auth key (`.p8`) from the Apple Developer account of the team that signs the app.
 3. `npx wrangler login`, then set secrets: `wrangler secret put APNS_KEY_P8` (the file's
    contents), `APNS_KEY_ID`, `APNS_TEAM_ID`.

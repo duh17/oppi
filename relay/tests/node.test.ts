@@ -5,7 +5,11 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { requestClientData, registrationClientData } from "../src/core/relay.js";
+import {
+  PUSHES_PER_ADDRESS_PER_MINUTE,
+  requestClientData,
+  registrationClientData,
+} from "../src/core/relay.js";
 import { CaptureApnsSender, Http2ApnsSender } from "../src/node/apns-http2.js";
 import { MemoryRelayStore } from "../src/node/memory-store.js";
 import { DEFAULT_QUOTA_LIMITS } from "../src/core/store.js";
@@ -173,6 +177,26 @@ describe("node adapter", () => {
     expect((await register()).json.error).toBe("rate_limited");
     harness.advance(3_600_000);
     expect((await register()).status).toBe(201);
+  });
+
+  it("limits pushes per client address a minute before looking up the send token", async () => {
+    harness = await startHarness();
+    const address = nextAddress();
+    const madeUp = `osp1.r_${"A".repeat(22)}.p_${"B".repeat(22)}.${"C".repeat(43)}`;
+    const push = (bearer: string, from = address) =>
+      call(harness, "POST", "/v1/push", { address: from, bearer, body: { envelope: fakeEnvelope() } });
+    for (let index = 0; index < PUSHES_PER_ADDRESS_PER_MINUTE; index += 1) {
+      expect((await push(madeUp)).status).toBe(410);
+    }
+    const limited = await push(madeUp);
+    expect(limited).toMatchObject({ status: 429, json: { error: "rate_limited" } });
+    expect(limited.headers.get("retry-after")).toBe("60");
+    // The limit is the address's, not the token's: a real token from it waits too.
+    const sendToken = await mintSendToken(harness, await registerUnattested(harness));
+    expect((await push(sendToken)).status).toBe(429);
+    expect((await push(sendToken, nextAddress())).status).toBe(200);
+    harness.advance(60_000);
+    expect((await push(sendToken)).status).toBe(200);
   });
 
   it("stops an unattested registration at its daily limit until the next UTC day", async () => {

@@ -33,6 +33,8 @@ const ENVELOPE_VERSION = 0x01;
 const MAX_BODY_BYTES = 8 * 1024;
 const MAX_TTL_SECONDS = 3600;
 const CHALLENGE_TTL_MS = 300_000;
+/** Pushes one client address may send a minute, before any send token is looked up. */
+export const PUSHES_PER_ADDRESS_PER_MINUTE = 60;
 
 const REGISTRATION_ID = /^r_[A-Za-z0-9_-]{22}$/;
 const PERMISSION_ID = /^p_[A-Za-z0-9_-]{22}$/;
@@ -181,6 +183,10 @@ export function createRelayHandler(deps: RelayDeps): (
   );
   const challengeLimiter = new AddressLimiter(20, 10 * 60_000);
   const unattestedLimiter = new AddressLimiter(5, 60 * 60_000);
+  // Checked before the send token reaches storage, so a flood of made-up tokens from one
+  // address stops costing Durable Object requests. Per isolate, so it only raises the bar;
+  // a server pushing to a handful of phones stays far below it.
+  const pushLimiter = new AddressLimiter(PUSHES_PER_ADDRESS_PER_MINUTE, 60_000);
   const { store } = deps;
 
   async function postChallenge(clientAddress: string | null): Promise<Response> {
@@ -335,7 +341,14 @@ export function createRelayHandler(deps: RelayDeps): (
     return json(201, { permissionId, sendToken: `osp1.${record.id}.${permissionId}.${secret}` });
   }
 
-  async function postPush(request: Request, body: Uint8Array): Promise<Response> {
+  async function postPush(
+    request: Request,
+    body: Uint8Array,
+    clientAddress: string | null,
+  ): Promise<Response> {
+    if (!pushLimiter.allow(clientAddress, now())) {
+      throw new HttpError(429, "rate_limited", { "retry-after": "60" });
+    }
     const token = parseSendToken(bearer(request));
     const fields = parseObject(body, ["envelope", "collapseId", "ttl"]);
     const { envelope, collapseId, ttl } = fields;
@@ -418,7 +431,9 @@ export function createRelayHandler(deps: RelayDeps): (
     if (path === "/v1/registrations" && method === "POST") {
       return postRegistration(await readBody(request), clientAddress);
     }
-    if (path === "/v1/push" && method === "POST") return postPush(request, await readBody(request));
+    if (path === "/v1/push" && method === "POST") {
+      return postPush(request, await readBody(request), clientAddress);
+    }
     if (path === "/v1/permission" && method === "DELETE") return deletePermissionBySendToken(request);
 
     const permissionMatch = /^\/v1\/registrations\/([^/]+)\/permissions(?:\/([^/]+))?$/.exec(path);

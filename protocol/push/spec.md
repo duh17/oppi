@@ -288,7 +288,8 @@ was revoked, or its registration was deleted.
 
 Results: `200 {"ok": true}`; `410 gone` (also when APNs answers `410`, `400
 BadDeviceToken`, or `400 DeviceTokenNotForTopic`: the relay deletes the registration
-first); `429 quota_exceeded` with `Retry-After`; `502 apns_unavailable` for APNs `429`,
+first); `429 quota_exceeded` with `Retry-After`; `429 rate_limited` with `Retry-After: 60`
+when the client address passed its per-minute limit; `502 apns_unavailable` for APNs `429`,
 `5xx`, or network failure.
 
 **`DELETE /v1/permission`** → `204`, idempotent. The server revokes its own permission.
@@ -303,7 +304,8 @@ so registering again never resets these counts. They fit normal use within the C
 Workers Free plan: a push costs one Worker request, one Durable Object request, and one row
 written, of 100,000 each a day, so 1,000 phones at the daily cap use them all and normal use
 (a few dozen a day) leaves room for several thousand. A refused push writes nothing.
-Unattested registrations: at most 5 per client address per hour (in memory).
+Unattested registrations: at most 5 per client address per hour (in memory). Pushes: at most
+60 per client address per minute (in memory), checked before the send token is looked up.
 
 ### 3.4 Relay storage
 
