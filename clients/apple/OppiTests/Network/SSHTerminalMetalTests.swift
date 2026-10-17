@@ -176,7 +176,7 @@ struct SSHTerminalMetalTests {
         #expect(!shot.hasInk(column: 1, row: 0), "width-1 U+23FA must not spill into the next cell")
     }
 
-    @Test func variationSelectorsDoNotBlockTextPresentationFallback() throws {
+    @Test func emojiPresentationSelectorKeepsColorAndTextFallbackFits() throws {
         let metrics = SSHTerminalCellMetrics(
             font: .monospacedSystemFont(ofSize: 13, weight: .regular),
             boldFont: .monospacedSystemFont(ofSize: 13, weight: .bold)
@@ -185,17 +185,51 @@ struct SSHTerminalMetalTests {
         let font = metrics.font
         let record = "\u{23FA}"
         let selected = "\u{23FA}\u{FE0F}"
+        let heart = "\u{2764}\u{FE0F}"
         let recordBytes = try rasterize(record, font: font, metrics: metrics, columns: 1, scale: scale)
         let selectedBytes = try rasterize(selected, font: font, metrics: metrics, columns: 1, scale: scale)
-        let chopped = originClippedRasterize(selected, font: font, metrics: metrics, columns: 1, scale: scale)
-        #expect(recordBytes.bytes == selectedBytes.bytes, "U+FE0F must not skip the text-presentation path")
+        let heartBytes = try rasterize(heart, font: font, metrics: metrics, columns: 1, scale: scale)
+        let choppedRecord = originClippedRasterize(record, font: font, metrics: metrics, columns: 1, scale: scale)
+
         #expect(
-            selectedBytes.bytes != chopped.bytes,
-            "U+23FA U+FE0F must not be the origin-clipped Apple Color Emoji overflow"
+            recordBytes.bytes != choppedRecord.bytes,
+            "bare U+23FA must not be the origin-clipped Apple Color Emoji overflow"
         )
-        let ink = try #require(atlasInk(selectedBytes.bytes, width: selectedBytes.width, height: selectedBytes.height))
-        #expect(ink.minX > 0 && ink.maxX < selectedBytes.width - 1)
-        #expect(ink.minY > 0 && ink.maxY < selectedBytes.height - 1)
+        let recordInk = try #require(atlasInk(recordBytes.bytes, width: recordBytes.width, height: recordBytes.height))
+        #expect(recordInk.minX > 0 && recordInk.maxX < recordBytes.width - 1)
+        #expect(recordInk.minY > 0 && recordInk.maxY < recordBytes.height - 1)
+
+        let selectedInk = try #require(atlasInk(selectedBytes.bytes, width: selectedBytes.width, height: selectedBytes.height))
+        #expect(selectedInk.count > 0, "U+23FA U+FE0F must have ink")
+        #expect(selectedInk.maxX < selectedBytes.width, "U+23FA U+FE0F must stay inside the cell \(selectedInk)")
+        #expect(selectedInk.maxY < selectedBytes.height, "U+23FA U+FE0F must stay inside the cell \(selectedInk)")
+
+        let heartInk = try #require(atlasInk(heartBytes.bytes, width: heartBytes.width, height: heartBytes.height))
+        #expect(heartInk.count > 0, "❤️ must have ink")
+        #expect(heartInk.maxX < heartBytes.width, "❤️ must stay inside the cell \(heartInk)")
+        #expect(heartInk.maxY < heartBytes.height, "❤️ must stay inside the cell \(heartInk)")
+        let heartRB = atlasMaxRedMinusBlue(heartBytes.bytes, width: heartBytes.width, height: heartBytes.height)
+        #expect(heartRB > 20, "❤️ is emoji presentation, so R > B (R-B \(heartRB))")
+
+        let harness = try Harness(columns: 8, rows: 1, scale: scale)
+        defer { harness.finish() }
+        harness.engine.setColors(
+            foreground: .init(r: 255, g: 255, b: 255),
+            background: .init(r: 0, g: 0, b: 16),
+            dark: true
+        )
+        harness.engine.receive(Data("\u{1b}[?25l\u{1b}[2J\u{1b}[H\u{2764}\u{FE0F} \u{23FA}".utf8))
+        let frame = harness.engine.frame()
+        let heartWidth = frame.rows[0][0].width
+        let recordColumn = heartWidth + 1
+        let shot = try harness.render()
+        #expect(heartWidth >= 1)
+        #expect(shot.hasInk(column: 0, row: 0), "❤️ has ink")
+        let gridRB = shot.maxRedMinusBlue(column: 0, row: 0)
+        #expect(gridRB > 20, "grid ❤️ is red-dominant (R-B \(gridRB))")
+        #expect(!shot.hasInk(column: heartWidth, row: 0), "width-\(heartWidth) ❤️ must not spill into the next cell")
+        #expect(shot.hasInk(column: recordColumn, row: 0), "bare U+23FA after ❤️ has ink")
+        #expect(!shot.hasInk(column: recordColumn + 1, row: 0), "bare U+23FA must not spill")
     }
 
     @Test func cursorOutlineBlendsOverAColouredCell() throws {
@@ -645,6 +679,18 @@ struct SSHTerminalMetalTests {
             height: CGFloat(ink.maxY - ink.minY + 1) / scale
         )
         return (bounds, bounds.maxX)
+    }
+
+    private func atlasMaxRedMinusBlue(_ bytes: [UInt8], width: Int, height: Int) -> Int {
+        var best = 0
+        for y in 0..<height {
+            for x in 0..<width {
+                let offset = (y * width + x) * 4
+                if bytes[offset + 3] <= 8 { continue }
+                best = max(best, Int(bytes[offset]) - Int(bytes[offset + 2]))
+            }
+        }
+        return best
     }
 
     private func atlasInk(_ bytes: [UInt8], width: Int, height: Int) -> (

@@ -368,10 +368,12 @@ final class SSHTerminalGlyphAtlas {
         return RasterizedGlyph(bytes: bytes, color: plan.color)
     }
 
-    /// Text-presentation for a width-1 color-emoji cell whose only remaining
-    /// scalar after stripping U+FE0E/U+FE0F is one base. Multi-scalar clusters
-    /// keep their bytes and may only scale if they are still emoji. Cascade
-    /// box-drawing, blocks, and CJK never constrain.
+    /// Width-1 clusters that ask for emoji (U+FE0F) stay on the color-emoji
+    /// path and scale to fit the cell. Bare and U+FE0E clusters whose only
+    /// remaining scalar is one base use text presentation so glyphs such as
+    /// U+23FA keep the whole record mark. Multi-scalar clusters keep their
+    /// bytes and may only scale if they are still emoji. Cascade box-drawing,
+    /// blocks, and CJK never constrain.
     private static func planDraw(
         text: String, font: UIFont, columns: Int
     ) -> (text: String, font: UIFont, constrain: Bool, color: Bool) {
@@ -380,8 +382,9 @@ final class SSHTerminalGlyphAtlas {
         }
         let emoji = resolvedFontLooksLikeColorEmoji(text: text, font: font)
         guard emoji else { return (text, font, false, false) }
+        let wantsEmoji = text.unicodeScalars.contains { $0.value == 0xFE0F }
         let bases = Array(text.unicodeScalars.filter { $0.value != 0xFE0E && $0.value != 0xFE0F })
-        if columns == 1, bases.count == 1 {
+        if columns == 1, bases.count == 1, !wantsEmoji {
             let base = String(bases[0])
             if let symbols = UIFont(name: "AppleSymbols", size: font.pointSize),
                sshTerminalFontCovers(symbols, base) {
