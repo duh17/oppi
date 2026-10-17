@@ -16,6 +16,21 @@ enum PushNotificationOpening {
         }
     }
 
+    /// The app icon badge for this push: its session joins the stored sessions owing a look
+    /// (`SessionBadge`), and the badge is their count. Nil leaves the badge as it is: a push
+    /// that failed a check, a pairing push, or stored state that could not be updated.
+    /// `updateBadge` applies the change to the stored set and returns the result.
+    static func badge(
+        for result: Result<OpenedPushEnvelope, PushEnvelopeRejection>,
+        updateBadge: ((inout SessionBadge) -> Void) -> SessionBadge?
+    ) -> Int? {
+        guard case .success(let opened) = result,
+              let key = SessionBadge.key(serverId: opened.serverId, plaintext: opened.plaintext) else {
+            return nil
+        }
+        return updateBadge { $0.insert(key) }?.count
+    }
+
     /// Steps 1-7 of spec §2.5. `acceptMessage` records the message id for the key and
     /// answers false for a replay or when replay state cannot be saved.
     static func open(

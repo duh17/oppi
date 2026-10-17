@@ -474,6 +474,10 @@ final class ServerConnection {
 
     init(seenStorage: SessionSeenLedgerStorage? = nil) {
         sessionStore = SessionStore(seenStorage: seenStorage)
+        // Opening a session clears its notifications; the app icon badge counts down with the seen ledger.
+        sessionStore.onMarkSeen = { serverId, sessionIds in
+            AttentionNotificationService.shared.removeDeliveredNotifications(serverId: serverId, sessionIds: sessionIds)
+        }
         // Wire silence watchdog probe to request a state refresh.
         silenceWatchdog.onProbe = { [weak self] in
             try? await self?.requestState()

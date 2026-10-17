@@ -1,4 +1,5 @@
 import Testing
+import UserNotifications
 @testable import Oppi
 
 @Suite("AttentionNotificationService")
@@ -92,6 +93,32 @@ struct AttentionNotificationServiceTests {
                 userInfo: ["sessionId": "ignored"]
             ) == nil
         )
+    }
+
+    @Test func openingASessionClearsOnlyThatSessionsNotificationsOnItsServer() {
+        func notification(_ id: String, category: String, _ userInfo: [String: String]) -> UNNotificationRequest {
+            let content = UNMutableNotificationContent()
+            content.categoryIdentifier = category
+            content.userInfo = userInfo
+            // Every Session Done shares one thread.
+            content.threadIdentifier = PushAlertPresentation.sessionDoneThreadIdentifier
+            return UNNotificationRequest(identifier: id, content: content, trigger: nil)
+        }
+        let done = AttentionNotificationService.sessionDoneCategoryId
+        let delivered = [
+            notification("push-done", category: done, ["serverId": "a", "sessionId": "s1"]),
+            notification("push-blocked", category: AttentionNotificationService.sessionBlockedCategoryId, ["serverId": "a", "sessionId": "s1"]),
+            notification("local-ask", category: AttentionNotificationService.askCategoryId, ["sessionId": "s1"]),
+            notification("other-session", category: done, ["serverId": "a", "sessionId": "s2"]),
+            notification("other-server", category: done, ["serverId": "b", "sessionId": "s1"]),
+            notification("pairing", category: AttentionNotificationService.pairingApprovalCategoryId, ["serverId": "a"]),
+        ]
+
+        #expect(AttentionNotificationService.sessionNotificationIdentifiers(
+            in: delivered,
+            serverId: "a",
+            sessionIds: ["s1"]
+        ) == ["push-done", "push-blocked", "local-ask"])
     }
 }
 

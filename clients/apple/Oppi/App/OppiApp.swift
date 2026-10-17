@@ -722,6 +722,7 @@ final class OppiApp {
             coordinator.connection(for: serverId)?.sessionStore.session(id: sessionId)
         }
         await setupNotifications()
+        AppIconBadgeService.shared.start(coordinator: coordinator)
 #if DEBUG
         scheduleE2EInAppBrowserIfRequested()
 
@@ -1812,7 +1813,7 @@ final class OppiApp {
 
             backgroundKeepAlive.end()
             SSHTerminalRegistry.shared.appDidBecomeActive()
-            AttentionNotificationService.shared.syncBadgeToDelivered()
+            AppIconBadgeService.shared.appDidBecomeActive()
 
             if shouldReconnect {
                 let reconnectInterval = lifecycleSignposter.beginInterval("foreground.reconnect")

@@ -9,10 +9,10 @@ import UserNotifications
 /// Lock and scoped-lock redaction, and shows the result. Anything that fails a check, or a
 /// timeout, shows the fixed fallback: never a field from the failed push. Each fallback logs
 /// its rejection reason, and nothing from the push.
-/// The badge is set after counting delivered notifications, on another queue, so the content
-/// handler is taken under a lock: whichever of that count or the timeout comes first delivers.
-final class NotificationService: UNNotificationServiceExtension, @unchecked Sendable {
-    private let lock = NSLock()
+///
+/// A decrypted session push also adds its session to the ones owing the user a look and badges
+/// the app icon with their count (`SessionBadge`); the fallback leaves the badge as it is.
+final class NotificationService: UNNotificationServiceExtension {
     private var contentHandler: ((UNNotificationContent) -> Void)?
 
     override func didReceive(
@@ -30,35 +30,27 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
         if case .failure(let reason) = result {
             PushSharedStore.logger.notice("Push shown as fallback: \(reason.rawValue, privacy: .public)")
         }
-        let presentation = PushNotificationOpening.presentation(
-            for: result,
-            redaction: { PushSharedStore.loadRedactionSnapshot() }
+        deliver(
+            PushNotificationOpening.presentation(
+                for: result,
+                redaction: { PushSharedStore.loadRedactionSnapshot() }
+            ),
+            badge: PushNotificationOpening.badge(for: result, updateBadge: PushSharedStore.updateSessionBadge(_:))
         )
-        let identifier = request.identifier
-        UNUserNotificationCenter.current().getDeliveredNotifications { [self] delivered in
-            deliver(presentation, badge: NotificationBadge.count(
-                deliveredIdentifiers: delivered.map(\.request.identifier),
-                adding: identifier
-            ))
-        }
     }
 
     override func serviceExtensionTimeWillExpire() {
-        if deliver(.fallback, badge: nil) {
+        if contentHandler != nil {
             PushSharedStore.logger.notice("Push shown as fallback: timeout")
         }
+        deliver(.fallback, badge: nil)
     }
 
-    /// `badge` nil leaves the app icon badge as it is. False when already delivered.
-    @discardableResult
-    private func deliver(_ presentation: PushAlertPresentation, badge: Int?) -> Bool {
-        lock.lock()
-        let contentHandler = contentHandler
+    /// `badge` nil leaves the app icon badge as it is.
+    private func deliver(_ presentation: PushAlertPresentation, badge: Int?) {
+        guard let contentHandler else { return }
         self.contentHandler = nil
-        lock.unlock()
-        guard let contentHandler else { return false }
         contentHandler(Self.content(for: presentation, badge: badge))
-        return true
     }
 
     static func content(for presentation: PushAlertPresentation, badge: Int?) -> UNNotificationContent {

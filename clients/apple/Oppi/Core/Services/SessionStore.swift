@@ -98,6 +98,10 @@ final class SessionStore {
     /// Persists seen ledgers across launches; nil keeps them in memory (tests, previews).
     @ObservationIgnored private let seenStorage: SessionSeenLedgerStorage?
 
+    /// Called with this server's id whenever the user sees sessions: opening or leaving a
+    /// chat, or opening a thread.
+    @ObservationIgnored var onMarkSeen: (@MainActor (_ serverId: String, _ sessionIds: [String]) -> Void)?
+
     init(seenStorage: SessionSeenLedgerStorage? = nil) {
         self.seenStorage = seenStorage
     }
@@ -253,6 +257,8 @@ final class SessionStore {
     }
 
     func markSeen(sessionIds: some Sequence<String>) {
+        let sessionIds = Array(sessionIds)
+        if let activeServerId, !sessionIds.isEmpty { onMarkSeen?(activeServerId, sessionIds) }
         let key = activeServerKey
         var ledger = seenLedger(for: key)
         let now = Date()
@@ -272,6 +278,20 @@ final class SessionStore {
 
     private func seenLedger(for key: String) -> SessionSeenLedger {
         serverSeenLedgers[key] ?? SessionSeenLedger(baseline: seenBaseline)
+    }
+
+    // ── App icon badge ──
+
+    /// Sessions on this server that owe the user a look (`SessionBadge`), by the same status
+    /// every session row shows.
+    var sessionIdsOwingALook: Set<String> {
+        Set(sessions.lazy.filter { session in
+            SessionStatusKind.resolve(
+                session: session,
+                pendingAskCount: self.listPendingAskCount(for: session.id),
+                seenAt: self.seenAt(for: session.id)
+            ).owesLook(isTopLevel: session.parentSessionId == nil)
+        }.map(\.id))
     }
 
     // ── Freshness (delegates to active server) ──

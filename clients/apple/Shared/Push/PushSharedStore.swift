@@ -7,8 +7,8 @@ import Security
 /// may be locked (spec §1, §2.5, §2.6):
 ///
 /// - push keys in the shared keychain group, `AfterFirstUnlockThisDeviceOnly`;
-/// - the redaction snapshot and the replay ledger as App Group files with
-///   `completeUntilFirstUserAuthentication` protection.
+/// - the redaction snapshot, the replay ledger, and the sessions behind the app icon badge as
+///   App Group files with `completeUntilFirstUserAuthentication` protection.
 ///
 /// Read failures fail closed: no key means the fallback text and an unreadable snapshot
 /// means everything is redacted. An unreadable replay ledger is reset instead, so one bad
@@ -190,6 +190,44 @@ enum PushSharedStore {
                 "Push replay ledger not saved (\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public)); showing the fallback"
             )
             return false
+        }
+    }
+
+    // MARK: Session badge
+
+    /// Apply `change` to the stored sessions owing a look (`SessionBadge`) under the
+    /// cross-process lock the app and the extension share. Nil when the set cannot be
+    /// locked or saved.
+    static func updateSessionBadge(_ change: (inout SessionBadge) -> Void) -> SessionBadge? {
+        guard let directory = try? stateDirectory(),
+              let container = try? CrossProcessFileLock.appGroupContainer(
+                identifier: SharedConstants.appGroupIdentifier
+              ) else {
+            logger.error("Session badge unavailable")
+            return nil
+        }
+        let updated = try? CrossProcessFileLock.withLock(serverId: "push-badge", container: container) {
+            updateSessionBadge(at: directory.appendingPathComponent("badge.json"), change)
+        }
+        return updated ?? nil
+    }
+
+    /// The badge read-modify-write; the caller holds the cross-process lock. A missing or
+    /// unreadable file starts empty.
+    static func updateSessionBadge(at url: URL, _ change: (inout SessionBadge) -> Void) -> SessionBadge? {
+        let stored = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(SessionBadge.self, from: $0) }
+        var badge = stored ?? SessionBadge()
+        change(&badge)
+        guard badge != stored else { return badge }
+        do {
+            try write(JSONEncoder().encode(badge), to: url)
+            return badge
+        } catch {
+            let nsError = error as NSError
+            logger.error(
+                "Session badge not saved (\(nsError.domain, privacy: .public) \(nsError.code, privacy: .public))"
+            )
+            return nil
         }
     }
 }

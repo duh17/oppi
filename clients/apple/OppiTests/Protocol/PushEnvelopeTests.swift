@@ -235,6 +235,54 @@ struct PushEnvelopeTests {
         #expect(!accepted)
     }
 
+    // MARK: - App icon badge
+
+    /// The extension's badge for a push, against a stored badge file.
+    private static func badge(_ userInfo: [AnyHashable: Any], storedAt url: URL) throws -> Int? {
+        let vectors = try vectors()
+        let result = PushNotificationOpening.open(
+            userInfo: userInfo,
+            now: now(vectors),
+            key: try keyLookup(vectors),
+            acceptMessage: { _, _ in true }
+        )
+        return PushNotificationOpening.badge(for: result) { change in
+            PushSharedStore.updateSessionBadge(at: url, change)
+        }
+    }
+
+    private static func envelope(_ name: String) throws -> [AnyHashable: Any] {
+        ["e": try #require(try vectors().valid.first { $0.name == name }).envelope]
+    }
+
+    @Test func aSessionPushJoinsTheStoredSessionsOnce() throws {
+        let directory = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("badge.json")
+        // The app left one session owing a look on another server.
+        let seeded = PushSharedStore.updateSessionBadge(at: url) {
+            $0.insert(.init(serverId: "sha256:other", sessionId: "s_vector"))
+        }
+        #expect(seeded?.count == 1)
+
+        #expect(try Self.badge(Self.envelope("blocked-permission"), storedAt: url) == 2)
+        // Every vector names the same session: a second push and its done add nothing.
+        #expect(try Self.badge(Self.envelope("blocked-auth"), storedAt: url) == 2)
+        #expect(try Self.badge(Self.envelope("done-no-workspace"), storedAt: url) == 2)
+    }
+
+    @Test func aFallbackOrPairingPushLeavesTheBadgeAsItIs() throws {
+        let directory = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("badge.json")
+
+        #expect(try Self.badge(["aps": ["alert": ["title": "Oppi"]]], storedAt: url) == nil)
+        #expect(try Self.badge(["e": "tampered"], storedAt: url) == nil)
+        #expect(try Self.badge(Self.envelope("pairing-approval"), storedAt: url) == nil)
+        #expect(try Self.badge(Self.envelope("device-enrolled"), storedAt: url) == nil)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
     // MARK: - Presentation
 
     private func present(

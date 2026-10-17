@@ -365,17 +365,44 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             .removeDeliveredNotifications(withIdentifiers: [identifier])
     }
 
-    /// Recount the app icon badge from what is left in Notification Center, after the user
-    /// opened or cleared notifications while the app was away.
-    func syncBadgeToDelivered() {
+    /// The user saw these sessions on `serverId`: their notifications leave Notification
+    /// Center, as the badge counts down. Done notifications share one thread, so this matches
+    /// each notification's session, and its server when it names one (local banners do not).
+    func removeDeliveredNotifications(serverId: String, sessionIds: [String]) {
         guard !_skipSchedulingForTesting else { return }
+        let center = UNUserNotificationCenter.current()
         Task { @MainActor in
-            let center = UNUserNotificationCenter.current()
-            let count = await center.deliveredNotifications().count
-            try? await center.setBadgeCount(count)
+            let delivered = await center.deliveredNotifications().map(\.request)
+            let identifiers = Self.sessionNotificationIdentifiers(
+                in: delivered,
+                serverId: serverId,
+                sessionIds: Set(sessionIds)
+            )
+            if !identifiers.isEmpty {
+                center.removeDeliveredNotifications(withIdentifiers: identifiers)
+            }
         }
     }
 
+    nonisolated static func sessionNotificationIdentifiers(
+        in requests: [UNNotificationRequest],
+        serverId: String,
+        sessionIds: Set<String>
+    ) -> [String] {
+        requests
+            .filter { request in
+                let content = request.content
+                guard let sessionId = navigationSessionId(
+                    categoryIdentifier: content.categoryIdentifier,
+                    userInfo: content.userInfo
+                ), sessionIds.contains(sessionId) else { return false }
+                let notificationServerId = content.userInfo["serverId"] as? String
+                return notificationServerId == nil || notificationServerId == serverId
+            }
+            .map(\.identifier)
+    }
+
+    /// Local banners carry the same app icon badge as pushes: the sessions owing a look.
     private func schedule(identifier: String, content: @escaping @MainActor () -> UNMutableNotificationContent) {
         guard !_skipSchedulingForTesting else {
             return
@@ -400,11 +427,9 @@ final class AttentionNotificationService: NSObject, UNUserNotificationCenterDele
             guard await notificationsAuthorized() else {
                 return
             }
-            let center = UNUserNotificationCenter.current()
-            let delivered = await center.deliveredNotifications().map(\.request.identifier)
             do {
-                try await center.add(request(
-                    badge: NotificationBadge.count(deliveredIdentifiers: delivered, adding: identifier)
+                try await UNUserNotificationCenter.current().add(request(
+                    badge: AppIconBadgeService.shared.refresh()
                 ))
             } catch {
                 notificationLogger.error("Failed to schedule attention notification: \(error.localizedDescription, privacy: .public)")
