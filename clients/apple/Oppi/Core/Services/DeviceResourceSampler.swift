@@ -8,8 +8,9 @@ private let samplerLog = Logger(subsystem: AppIdentifiers.subsystem, category: "
 /// Samples CPU, memory, and thermal metrics every 10 seconds while the app is
 /// foregrounded. All sampling and uploads are gated by `TelemetrySettings`.
 ///
-/// CPU samples carry the app state at sample time (`screen`, `stream`,
-/// `agents`, `voice`) so a steady CPU cost can be traced to what was on screen.
+/// CPU and memory-footprint samples carry the app state at sample time
+/// (`screen`, `stream`, `agents`, `voice`) so a spike can be traced to what
+/// was on screen. Available-memory and thermal samples stay untagged.
 @MainActor
 final class DeviceResourceSampler {
     static let shared = DeviceResourceSampler()
@@ -108,6 +109,11 @@ final class DeviceResourceSampler {
             return
         }
 
+        let appStateTags = Self.appStateTags(
+            context: MetricKitCrashContextStore.snapshot(),
+            screenAwake: ScreenAwakeController.shared
+        )
+
         // CPU (needs delta from previous sample)
         let currentCPU = readCPUSample()
         if let prev = previousCPUSample, let cur = currentCPU {
@@ -120,10 +126,7 @@ final class DeviceResourceSampler {
                     metric: .deviceCpuPct,
                     value: cpuPct,
                     unit: .count,
-                    tags: Self.cpuSampleTags(
-                        context: MetricKitCrashContextStore.snapshot(),
-                        screenAwake: ScreenAwakeController.shared
-                    )
+                    tags: appStateTags
                 )
             }
         }
@@ -134,7 +137,8 @@ final class DeviceResourceSampler {
             await ChatMetricsService.shared.record(
                 metric: .deviceMemoryMb,
                 value: footprintMB,
-                unit: .count
+                unit: .count,
+                tags: appStateTags
             )
         }
 
@@ -161,9 +165,9 @@ final class DeviceResourceSampler {
         )
     }
 
-    /// App state when a CPU sample is taken. A 10 s window that spans a
-    /// change is tagged with the state at its end.
-    static func cpuSampleTags(
+    /// App state when a CPU or memory-footprint sample is taken. A 10 s window
+    /// that spans a change is tagged with the state at its end.
+    static func appStateTags(
         context: MetricKitCrashContext?,
         screenAwake: ScreenAwakeController
     ) -> [String: String] {

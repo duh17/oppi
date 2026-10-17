@@ -26,9 +26,9 @@ struct DeviceResourceSamplerTests {
         #expect(sink.isFinite)
     }
 
-    @Test("CPU tags keep agent activity and voice capture apart")
+    @Test("App-state tags keep agent activity and voice capture apart")
     @MainActor
-    func cpuTagsSeparateAgentsAndVoice() {
+    func appStateTagsSeparateAgentsAndVoice() {
         let screenAwake = ScreenAwakeController(
             timeoutProvider: { nil },
             idleTimerSetter: { _ in },
@@ -36,7 +36,7 @@ struct DeviceResourceSamplerTests {
         )
 
         screenAwake.setVoiceInputActive(true)
-        var tags = DeviceResourceSampler.cpuSampleTags(context: nil, screenAwake: screenAwake)
+        var tags = DeviceResourceSampler.appStateTags(context: nil, screenAwake: screenAwake)
         #expect(tags["voice"] == "on")
         #expect(tags["agents"] == "idle")
         #expect(tags["screen"] == "unknown")
@@ -44,12 +44,12 @@ struct DeviceResourceSamplerTests {
 
         screenAwake.setVoiceInputActive(false)
         screenAwake.setSessionActivity(true, sessionId: "s1")
-        tags = DeviceResourceSampler.cpuSampleTags(context: nil, screenAwake: screenAwake)
+        tags = DeviceResourceSampler.appStateTags(context: nil, screenAwake: screenAwake)
         #expect(tags["voice"] == "off")
         #expect(tags["agents"] == "running")
 
         screenAwake.clearSessionActivity(sessionId: "s1")
-        tags = DeviceResourceSampler.cpuSampleTags(context: nil, screenAwake: screenAwake)
+        tags = DeviceResourceSampler.appStateTags(context: nil, screenAwake: screenAwake)
         #expect(tags["agents"] == "idle")
     }
 

@@ -416,7 +416,8 @@ export const CHAT_METRIC_REGISTRY = {
   },
   "device.memory_mb": {
     unit: "count",
-    description: "Device physical memory footprint in MB (phys_footprint from task_vm_info).",
+    description:
+      "Device physical memory footprint in MB (phys_footprint from task_vm_info). Tags: screen, stream, agents (running|idle), voice (on|off) at sample time.",
   },
   "device.memory_available_mb": {
     unit: "count",

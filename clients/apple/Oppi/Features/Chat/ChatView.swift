@@ -1059,14 +1059,17 @@ struct ChatView: View {
             }
             .onDisappear {
                 let shellSwapRemount = mountedPresentation != appNavigation.workspaceNavigationPresentation
+                var disappearMetadata = ChatMountTelemetry.disappearMetadata(
+                    sessionId: sessionId,
+                    shellSwapRemount: shellSwapRemount,
+                    presentation: mountedPresentation.telemetryLabel
+                )
+                disappearMetadata["footprintMB"] =
+                    AppDiagnosticsService.currentFootprintMB().map(String.init) ?? "n/a"
                 ClientLog.info(
                     "Navigation",
                     "Chat disappeared",
-                    metadata: ChatMountTelemetry.disappearMetadata(
-                        sessionId: sessionId,
-                        shellSwapRemount: shellSwapRemount,
-                        presentation: mountedPresentation.telemetryLabel
-                    ),
+                    metadata: disappearMetadata,
                     flush: true
                 )
                 // Freeze the viewport before cleanup can publish an empty timeline
@@ -2027,14 +2030,17 @@ struct ChatView: View {
             controller: scrollController,
             presentation: mountedPresentation
         )
+        var appearMetadata = ChatMountTelemetry.appearMetadata(
+            sessionId: sessionId,
+            shellSwapRemount: shellSwapRemount,
+            presentation: mountedPresentation.telemetryLabel
+        )
+        appearMetadata["footprintMB"] =
+            AppDiagnosticsService.currentFootprintMB().map(String.init) ?? "n/a"
         ClientLog.info(
             "Navigation",
             "Chat appeared",
-            metadata: ChatMountTelemetry.appearMetadata(
-                sessionId: sessionId,
-                shellSwapRemount: shellSwapRemount,
-                presentation: mountedPresentation.telemetryLabel
-            ),
+            metadata: appearMetadata,
             flush: true
         )
 

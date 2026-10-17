@@ -1931,12 +1931,18 @@ final class OppiApp {
             """
         )
 
-        ClientLog.error("Memory", "Memory warning", metadata: [
+        let context = MetricKitCrashContextStore.snapshot()
+        var warningMetadata: [String: String] = [
             "footprintBeforeMB": footprintBefore.map(String.init) ?? "n/a",
             "footprintAfterMB": footprintAfter.map(String.init) ?? "n/a",
             "cacheEntries": String(cacheEntries),
             "cacheBytes": String(cacheBytes),
-        ])
+            "screen": context?.screen ?? "unknown",
+        ]
+        if let sessionId = context?.sessionId {
+            warningMetadata["sessionId"] = sessionId
+        }
+        ClientLog.error("Memory", "Memory warning", metadata: warningMetadata)
     }
 
     private func configureWatchdogHooks() {
