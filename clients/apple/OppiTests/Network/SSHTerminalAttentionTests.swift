@@ -106,4 +106,26 @@ struct SSHTerminalAttentionTests {
         store.apply(blocked, at: later)
         #expect(visible()?.slot == .blocked, "a new blocked message after a pause outranks it again")
     }
+
+    @Test func aSwipeBegunOnOneNoticeDoesNotDismissItsReplacement() {
+        let card = SSHTerminalNoticeCardView()
+        var dismissed: [SSHTerminalNotice.Key] = []
+        card.onDismiss = { dismissed.append($0) }
+        let theme = ThemeRuntimeState.currentThemeID()
+        let notification = SSHTerminalNotice.alert(
+            SSHTerminalAlert(id: 1, source: .notification, title: "", body: "Tests passed")
+        )
+        let blocked = SSHTerminalNotice.blocked(
+            SSHTerminalBlockedNotice(recordID: "", notice: 2, kind: .needsApproval, remoteText: "Allow rg?")
+        )
+        card.apply(notice: notification, hostCaption: "host", themeID: theme, reduceMotion: true)
+        card.handlePan(state: .began, translationY: 0, velocityY: 0)
+        card.apply(notice: blocked, hostCaption: "host", themeID: theme, reduceMotion: true)
+        card.handlePan(state: .ended, translationY: -40, velocityY: -500)
+        #expect(dismissed.isEmpty, "a swipe started on the notification must not fold the blocked card")
+
+        card.handlePan(state: .began, translationY: 0, velocityY: 0)
+        card.handlePan(state: .ended, translationY: -40, velocityY: -500)
+        #expect(dismissed == [blocked.key])
+    }
 }

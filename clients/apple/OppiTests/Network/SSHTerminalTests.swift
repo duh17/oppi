@@ -919,6 +919,66 @@ struct SSHTerminalTests {
         var bytes = fixture.bytes.makeAsyncIterator()
         #expect(await bytes.next() == Data("x".utf8))
     }
+
+    @Test func leavingWhileAModalIsPresentedClearsIsViewedAndShowsTerminal() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture())
+        let session = SSHTerminalConnectSession()
+        session.showsTerminal = true
+        let terminal = SSHTerminalViewController(
+            channel: channel, reconnect: {}, editHost: {}, session: session
+        )
+        let root = UIViewController()
+        let nav = UINavigationController(rootViewController: root)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = nav
+        window.makeKeyAndVisible()
+        nav.pushViewController(terminal, animated: false)
+        nav.view.layoutIfNeeded()
+        channel.isViewed = true
+        session.showsTerminal = true
+
+        let modal = UIViewController()
+        terminal.present(modal, animated: false)
+        #expect(terminal.presentedViewController === modal)
+        #expect(channel.isViewed)
+
+        nav.popViewController(animated: false)
+        nav.view.layoutIfNeeded()
+        #expect(!channel.isViewed)
+        #expect(!session.showsTerminal)
+        #expect(channel.connected)
+        window.isHidden = true
+        window.rootViewController = nil
+        channel.close(reason: "done")
+    }
+
+    @Test func inputAndPasteBannersSitOnAMaterialCard() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture())
+        channel.event(.data(Data("prompt> ls\nfile.txt\n".utf8)))
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        channel.event(.eof)
+        channel.modifierLatch.toggle(GhosttyMods(GHOSTTY_MODS_CTRL))
+        #expect(!channel.key(GHOSTTY_KEY_C, text: "c"))
+        mounted.host.view.setNeedsLayout()
+        mounted.host.view.layoutIfNeeded()
+        let banner = try #require(mounted.find { $0.accessibilityIdentifier == "sshTerminal.inputNotice" })
+        #expect(banner.subviews.contains { $0 is UIVisualEffectView })
+        #expect(banner.accessibilityIdentifier == "sshTerminal.inputNotice")
+        if let dir = ProcessInfo.processInfo.environment["OPPI_NOTICE_SHOT"] {
+            let folder = URL(fileURLWithPath: dir)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let renderer = UIGraphicsImageRenderer(bounds: mounted.controller.view.bounds)
+            let image = renderer.image { ctx in mounted.controller.view.layer.render(in: ctx.cgContext) }
+            try image.pngData()?.write(to: folder.appendingPathComponent("input-notice-after.png"))
+        }
+    }
 }
 
 @MainActor

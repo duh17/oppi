@@ -9,7 +9,7 @@ import UIKit
 /// stable, so a notice does not resize the remote PTY. A tap or an upward
 /// swipe folds it into the toolbar glyph, so the prompt under it can be read.
 final class SSHTerminalNoticeCardView: UIView {
-    var onDismiss: () -> Void = {}
+    var onDismiss: (SSHTerminalNotice.Key) -> Void = { _ in }
     var onFrameChange: (CGRect) -> Void = { _ in }
 
     private let material = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
@@ -24,6 +24,8 @@ final class SSHTerminalNoticeCardView: UIView {
     private var dragOffset: CGFloat = 0
     private var reduceMotion = false
     private var notice: SSHTerminalNotice?
+    /// The notice under the finger when the swipe began.
+    private var panBeganKey: SSHTerminalNotice.Key?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -121,7 +123,8 @@ final class SSHTerminalNoticeCardView: UIView {
         accessibilityHint = "Dismisses the notice"
         accessibilityCustomActions = [
             UIAccessibilityCustomAction(name: "Dismiss") { [weak self] _ in
-                self?.onDismiss()
+                guard let self, let key = self.notice?.key else { return false }
+                self.onDismiss(key)
                 return true
             },
         ]
@@ -178,28 +181,39 @@ final class SSHTerminalNoticeCardView: UIView {
     }
 
     @objc private func tapped() {
-        onDismiss()
+        guard let key = notice?.key else { return }
+        onDismiss(key)
     }
 
     @objc private func panned(_ gesture: UIPanGestureRecognizer) {
-        let dy = gesture.translation(in: self).y
-        switch gesture.state {
+        handlePan(
+            state: gesture.state,
+            translationY: gesture.translation(in: self).y,
+            velocityY: gesture.velocity(in: self).y
+        )
+    }
+
+    /// Captures the notice at finger-down. A replacement mid-swipe is a new
+    /// card: the gesture cannot dismiss it.
+    func handlePan(state: UIGestureRecognizer.State, translationY dy: CGFloat, velocityY: CGFloat) {
+        switch state {
+        case .began:
+            panBeganKey = notice?.key
         case .changed:
             dragOffset = dy < 0 ? dy : dy / 6
             transform = CGAffineTransform(translationX: 0, y: dragOffset)
         case .ended, .cancelled:
-            let velocity = gesture.velocity(in: self).y
-            if dy < -24 || velocity < -400 {
-                let duration: TimeInterval = reduceMotion ? 0.2 : 0.35
-                UIView.animate(withDuration: duration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
-                    self.transform = .identity
-                }
-                onDismiss()
+            let began = panBeganKey
+            panBeganKey = nil
+            let sameNotice = began != nil && began == notice?.key
+            let flick = dy < -24 || velocityY < -400
+            let duration: TimeInterval = reduceMotion ? 0.2 : 0.35
+            UIView.animate(withDuration: duration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+                self.transform = .identity
+            }
+            if state == .ended, sameNotice, flick, let began {
+                onDismiss(began)
             } else {
-                let duration: TimeInterval = reduceMotion ? 0.2 : 0.35
-                UIView.animate(withDuration: duration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
-                    self.transform = .identity
-                }
                 dragOffset = 0
             }
         default:

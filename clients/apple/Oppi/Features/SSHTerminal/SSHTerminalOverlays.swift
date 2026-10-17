@@ -160,25 +160,37 @@ final class SSHTerminalConnectionBannerView: UIView {
 }
 
 final class SSHTerminalTextBannerView: UIView {
+    private let material = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
     private let label = UILabel()
 
     init(identifier: String) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         accessibilityIdentifier = identifier
+        isAccessibilityElement = true
+
+        material.translatesAutoresizingMaskIntoConstraints = false
+        material.layer.cornerRadius = 12
+        material.clipsToBounds = true
+        addSubview(material)
+
         label.translatesAutoresizingMaskIntoConstraints = false
         label.font = .preferredFont(forTextStyle: .footnote)
         label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = 2
-        addSubview(label)
+        material.contentView.addSubview(label)
+
         NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+            material.topAnchor.constraint(equalTo: topAnchor),
+            material.bottomAnchor.constraint(equalTo: bottomAnchor),
+            material.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            material.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            label.topAnchor.constraint(equalTo: material.contentView.topAnchor, constant: 4),
+            label.bottomAnchor.constraint(equalTo: material.contentView.bottomAnchor, constant: -4),
+            label.leadingAnchor.constraint(equalTo: material.contentView.leadingAnchor, constant: 10),
+            label.trailingAnchor.constraint(equalTo: material.contentView.trailingAnchor, constant: -10),
             heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
         ])
-        isAccessibilityElement = true
     }
 
     @available(*, unavailable)

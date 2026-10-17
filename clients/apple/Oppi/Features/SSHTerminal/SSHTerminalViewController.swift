@@ -123,8 +123,12 @@ final class SSHTerminalViewController: UIViewController {
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        let leaving = isMovingFromParent || isBeingDismissed
+        let coveredByPush = navigationController != nil && navigationController?.topViewController !== self
         // Herdr, status detail, and paste alerts cover this screen; stay viewed.
-        guard presentedViewController == nil else { return }
+        // Swipe-back or a push over this screen still clears the clipboard gate
+        // even if a modal is up: OSC 52 must not land after the user left.
+        if presentedViewController != nil, !leaving, !coveredByPush { return }
         isOnScreen = false
         channel.isViewed = false
         pasteNoticeTask?.cancel()
@@ -137,7 +141,7 @@ final class SSHTerminalViewController: UIViewController {
         attentionFeedback.cancel()
         // Leaving the screen does not close the terminal: `SSHTerminalRegistry`
         // owns the channel, and Disconnect or the host's lifecycle ends it.
-        guard isMovingFromParent || isBeingDismissed else { return }
+        guard leaving else { return }
         session?.showsTerminal = false
         if let defaultsObserver {
             NotificationCenter.default.removeObserver(defaultsObserver)
@@ -248,10 +252,9 @@ final class SSHTerminalViewController: UIViewController {
 
         handle.onShow = { [weak self] in self?.setTopBarHidden(false) }
         connectionBanner.onReconnect = { [weak self] in self?.reconnect() }
-        noticeCard.onDismiss = { [weak self] in
-            guard let self, let key = self.visibleNotice?.key else { return }
-            self.attention.dismiss(key)
-            self.setNeedsUpdateProperties()
+        noticeCard.onDismiss = { [weak self] key in
+            self?.attention.dismiss(key)
+            self?.setNeedsUpdateProperties()
         }
         noticeCard.onFrameChange = { [weak self] in self?.attention.cardFrame = $0 }
         backToLive.addAction(UIAction { [weak self] _ in
