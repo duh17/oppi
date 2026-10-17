@@ -34,7 +34,7 @@ final class NativeMarkdownVideoView: UIView {
     private let statusLabel = UILabel()
     private let openButton = UIButton(type: .system)
     private let stillImageView = UIImageView()
-    private let playButton = InlineVideoPlayButton(type: .custom)
+    private let playButton = InlineVideoPlayButton()
     private var stillTask: Task<Void, Never>?
     /// The user asked to play; the player is built once a source and a window exist.
     private var isPlayRequested = false
@@ -233,16 +233,6 @@ final class NativeMarkdownVideoView: UIView {
         stillImageView.isHidden = true
         stillImageView.isAccessibilityElement = false
 
-        var playConfiguration = UIButton.Configuration.filled()
-        playConfiguration.image = UIImage(systemName: "play.fill")
-        playConfiguration.cornerStyle = .capsule
-        playConfiguration.baseBackgroundColor = UIColor.black.withAlphaComponent(0.6)
-        playConfiguration.baseForegroundColor = .white
-        playConfiguration.contentInsets = NSDirectionalEdgeInsets(top: 18, leading: 20, bottom: 18, trailing: 16)
-        playConfiguration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
-            font: .systemFont(ofSize: 22, weight: .bold)
-        )
-        playButton.configuration = playConfiguration
         playButton.translatesAutoresizingMaskIntoConstraints = false
         playButton.accessibilityIdentifier = "markdown-video-play"
         playButton.isHidden = true
@@ -262,10 +252,12 @@ final class NativeMarkdownVideoView: UIView {
             stillImageView.trailingAnchor.constraint(equalTo: trailingAnchor),
             stillImageView.topAnchor.constraint(equalTo: topAnchor),
             stillImageView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            playButton.centerXAnchor.constraint(equalTo: centerXAnchor),
-            playButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            playButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            playButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            // The control is the whole slot so a tap anywhere on the still plays;
+            // only the centered disc is drawn.
+            playButton.leadingAnchor.constraint(equalTo: leadingAnchor),
+            playButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+            playButton.topAnchor.constraint(equalTo: topAnchor),
+            playButton.bottomAnchor.constraint(equalTo: bottomAnchor),
             statusLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             statusLabel.centerYAnchor.constraint(equalTo: centerYAnchor, constant: -22),
             statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 12),
@@ -284,21 +276,12 @@ final class NativeMarkdownVideoView: UIView {
         openButton.isHidden = true
         stillImageView.isHidden = stillImageView.image == nil
         playButton.isHidden = false
+        playButton.showsProgress = false
         playButton.accessibilityLabel = String(format: String(localized: "Play video: %@"), embed.displayLabel)
         playButton.accessibilityTraits = [.button]
         isAccessibilityElement = false
         accessibilityLabel = nil
         accessibilityTraits = []
-    }
-
-    /// Tap landed before the source resolved; the player follows as soon as it does.
-    private func showPreparing(embed: MarkdownVideoEmbed) {
-        playButton.isHidden = true
-        statusLabel.text = String(format: String(localized: "Preparing video: %@"), embed.displayLabel)
-        statusLabel.isHidden = false
-        isAccessibilityElement = true
-        accessibilityLabel = String(format: String(localized: "Preparing video: %@"), embed.displayLabel)
-        accessibilityTraits = [.updatesFrequently]
     }
 
     private func showFallback(title: String, detail: String, actionable: Bool) {
@@ -329,6 +312,7 @@ final class NativeMarkdownVideoView: UIView {
         statusLabel.isHidden = true
         openButton.isHidden = true
         playButton.isHidden = true
+        playButton.showsProgress = false
         isAccessibilityElement = false
         accessibilityLabel = nil
         backgroundColor = .clear
@@ -520,28 +504,25 @@ final class NativeMarkdownVideoView: UIView {
 #endif
     }
 
+    /// The control stays visible, spinning, until `installPlayer` succeeds, so a
+    /// mount that is deferred (transition, no window yet) or does not land can be
+    /// retried by tapping again.
     @objc private func playTapped() {
-        guard !isStaticFallback, playerController == nil, let embed = currentEmbed else { return }
+        guard !isStaticFallback, playerController == nil, currentEmbed != nil else { return }
         isPlayRequested = true
-        if currentSource == nil {
-            showPreparing(embed: embed)
-        } else {
-            playButton.isHidden = true
-        }
+        playButton.showsProgress = true
         scheduleFirstMount()
     }
 
     /// Pixel box the still is downsampled to: the 16:9 slot at this screen's scale,
     /// width quantized so a row re-entering at a marginally different width still
     /// hits the cache.
-    private func stillPixelSize() -> CGSize {
+    private func stillPixelSize(scale: CGFloat) -> CGSize {
         let measured = bounds.width > 0 ? bounds.width : displayWidth
         let width = max(16, (measured / 16).rounded() * 16)
-        let scale = window?.screen.scale ?? traitCollection.displayScale
-        let pixelScale = scale > 0 ? scale : 2
         return CGSize(
-            width: (width * pixelScale).rounded(),
-            height: (MarkdownInlineVideoLayout.reservedHeight(forWidth: width) * pixelScale).rounded()
+            width: (width * scale).rounded(),
+            height: (MarkdownInlineVideoLayout.reservedHeight(forWidth: width) * scale).rounded()
         )
     }
 
@@ -552,10 +533,10 @@ final class NativeMarkdownVideoView: UIView {
               stillTask == nil,
               playerController == nil,
               !isStaticFallback,
-              window != nil,
+              let window,
               let source = currentSource,
               let identity = currentIdentity else { return }
-        let size = stillPixelSize()
+        let size = stillPixelSize(scale: window.screen.scale)
         let store = InlineVideoStillFrameStore.shared
         if let cached = store.cachedImage(for: source, maxPixelSize: size) {
             applyStill(cached)
@@ -590,6 +571,7 @@ final class NativeMarkdownVideoView: UIView {
 
     private func removePlayer() {
         isPlayRequested = false
+        playButton.showsProgress = false
         playbackObservation = nil
         captions.setPlayer(nil)
         playbackModel.teardown()
@@ -683,9 +665,68 @@ final class NativeMarkdownVideoView: UIView {
     }
 }
 
-/// Play control whose accessibility activation takes the same path as a touch,
-/// so VoiceOver / automation and a finger share one owner action.
-private final class InlineVideoPlayButton: UIButton {
+/// Full-slot play control: a tap anywhere on the still plays, and only a centered
+/// disc is drawn. Accessibility activation takes the same path as a touch, so
+/// VoiceOver / automation and a finger share one owner action.
+private final class InlineVideoPlayButton: UIControl {
+    private let disc = UIView()
+    private let glyph = UIImageView()
+    private let spinner = UIActivityIndicatorView(style: .medium)
+
+    /// Spinner in the disc while the player is being built after a tap.
+    var showsProgress = false {
+        didSet {
+            glyph.isHidden = showsProgress
+            if showsProgress { spinner.startAnimating() } else { spinner.stopAnimating() }
+        }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isAccessibilityElement = true
+        accessibilityTraits = [.button]
+
+        disc.translatesAutoresizingMaskIntoConstraints = false
+        disc.isUserInteractionEnabled = false
+        disc.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+
+        glyph.translatesAutoresizingMaskIntoConstraints = false
+        glyph.tintColor = .white
+        glyph.contentMode = .center
+        glyph.image = UIImage(
+            systemName: "play.fill",
+            withConfiguration: UIImage.SymbolConfiguration(textStyle: .title1, scale: .large)
+        )
+        glyph.adjustsImageSizeForAccessibilityContentSizeCategory = true
+
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.color = .white
+        spinner.hidesWhenStopped = true
+
+        addSubview(disc)
+        disc.addSubview(glyph)
+        disc.addSubview(spinner)
+        NSLayoutConstraint.activate([
+            disc.centerXAnchor.constraint(equalTo: centerXAnchor),
+            disc.centerYAnchor.constraint(equalTo: centerYAnchor),
+            disc.widthAnchor.constraint(equalTo: disc.heightAnchor),
+            glyph.topAnchor.constraint(equalTo: disc.topAnchor, constant: 14),
+            glyph.bottomAnchor.constraint(equalTo: disc.bottomAnchor, constant: -14),
+            glyph.leadingAnchor.constraint(equalTo: disc.leadingAnchor, constant: 14),
+            glyph.trailingAnchor.constraint(equalTo: disc.trailingAnchor, constant: -14),
+            spinner.centerXAnchor.constraint(equalTo: disc.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: disc.centerYAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        disc.layer.cornerRadius = disc.bounds.height / 2
+    }
+
     override func accessibilityActivate() -> Bool {
         sendActions(for: .touchUpInside)
         return true
@@ -719,7 +760,8 @@ extension NativeMarkdownVideoView {
     var debugPlayerParentForTesting: UIViewController? { playerController?.parent }
     var debugPlayerSlotForTesting: UIViewController? { slotController }
     var debugPlaybackModelForTesting: AuthenticatedMediaPlayerModel { playbackModel }
-    var debugPlayButtonForTesting: UIButton { playButton }
+    var debugPlayButtonForTesting: UIControl { playButton }
+    var debugIsPlayProgressShownForTesting: Bool { playButton.showsProgress }
     /// Drives the play control's own touch action, the same owner an accessibility
     /// activation reaches.
     func debugTapPlayForTesting() { playButton.sendActions(for: .touchUpInside) }

@@ -1015,6 +1015,12 @@ struct MarkdownInlineVideoTests {
         let parent = UIViewController()
         let video = NativeMarkdownVideoView()
         parent.view.addSubview(video)
+        video.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            video.leadingAnchor.constraint(equalTo: parent.view.leadingAnchor),
+            video.trailingAnchor.constraint(equalTo: parent.view.trailingAnchor),
+            video.topAnchor.constraint(equalTo: parent.view.topAnchor),
+        ])
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
         window.rootViewController = parent
         window.makeKeyAndVisible()
@@ -1029,7 +1035,7 @@ struct MarkdownInlineVideoTests {
             )
         }
         apply()
-        video.layoutIfNeeded()
+        parent.view.layoutIfNeeded()
         for _ in 0..<40 where !video.debugHasCurrentSourceForTesting { await Task.yield() }
         try await Task.sleep(for: .milliseconds(50))
 
@@ -1045,10 +1051,13 @@ struct MarkdownInlineVideoTests {
         #expect(play.accessibilityIdentifier == "markdown-video-play")
         #expect(play.accessibilityTraits.contains(.button))
         #expect(play.accessibilityLabel?.contains(embed.displayLabel) == true)
-        #expect(play.bounds.width >= 44 && play.bounds.height >= 44)
+        #expect(play.bounds == video.bounds, "the control covers the whole slot")
 
-        // Accessibility activation reaches the same owner action as a touch.
-        #expect(play.accessibilityActivate())
+        // A touch away from the centered disc, in the slot's corner, plays.
+        let corner = CGPoint(x: 4, y: 4)
+        let hit = try #require(video.hitTest(corner, with: nil))
+        #expect(hit === play)
+        play.sendActions(for: .touchUpInside)
         #expect(video.debugIsPlayRequestedForTesting)
         for _ in 0..<80 where !video.debugHasPlayerForTesting { await Task.yield() }
         #expect(video.debugHasPlayerForTesting)
@@ -1063,6 +1072,53 @@ struct MarkdownInlineVideoTests {
         #expect(!video.debugHasPlayerForTesting)
         #expect(!video.debugIsPlayRequestedForTesting)
         #expect(!play.isHidden)
+        #expect(!video.debugIsPlayProgressShownForTesting)
+
+        // Accessibility activation reaches the same owner action as a touch.
+        #expect(play.accessibilityActivate())
+        #expect(video.debugIsPlayRequestedForTesting)
+        for _ in 0..<80 where !video.debugHasPlayerForTesting { await Task.yield() }
+        #expect(video.debugHasPlayerForTesting)
+    }
+
+    @MainActor
+    @Test("a mount that cannot land yet keeps the play control visible; a later tap still builds one player")
+    func deferredMountKeepsPlayControlAndRetries() async throws {
+        let embed = try makeEmbed("![[movie.mp4]]")
+        let source = dummyMediaSource()
+        let parent = UIViewController()
+        let video = NativeMarkdownVideoView()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 844))
+        window.rootViewController = parent
+        window.makeKeyAndVisible()
+        defer { video.prepareForRemoval(); window.isHidden = true }
+
+        // Not in any window yet: a mount has nowhere to land.
+        video.apply(
+            embed: embed,
+            sourceProvider: { _ in source },
+            renderingMode: .live,
+            preferredDisplayWidth: 320
+        )
+        for _ in 0..<40 where !video.debugHasCurrentSourceForTesting { await Task.yield() }
+        video.debugTapPlayForTesting()
+        for _ in 0..<10 { await Task.yield() }
+        #expect(!video.debugHasPlayerForTesting)
+        #expect(!video.debugPlayButtonForTesting.isHidden, "the only control must not vanish before a player exists")
+        #expect(video.debugIsPlayProgressShownForTesting)
+
+        // A second tap while still pending changes nothing; once a window exists the
+        // request lands and exactly one player is built.
+        video.debugTapPlayForTesting()
+        parent.view.addSubview(video)
+        video.debugTapPlayForTesting()
+        for _ in 0..<80 where !video.debugHasPlayerForTesting { await Task.yield() }
+        #expect(video.debugHasPlayerForTesting)
+        #expect(video.debugPlayButtonForTesting.isHidden)
+        #expect(!video.debugIsPlayProgressShownForTesting)
+        let installed = video.debugPlaybackModelForTesting.player
+        video.debugTapPlayForTesting()
+        #expect(video.debugPlaybackModelForTesting.player === installed)
     }
 
     @MainActor
@@ -1088,7 +1144,8 @@ struct MarkdownInlineVideoTests {
         let pending = try #require(resume)
         video.debugTapPlayForTesting()
         #expect(!video.debugHasPlayerForTesting)
-        #expect(video.debugPlayButtonForTesting.isHidden)
+        #expect(!video.debugPlayButtonForTesting.isHidden)
+        #expect(video.debugIsPlayProgressShownForTesting)
 
         pending.resume(returning: dummyMediaSource())
         for _ in 0..<80 where !video.debugHasPlayerForTesting { await Task.yield() }
@@ -1144,6 +1201,42 @@ struct MarkdownInlineVideoTests {
         #expect(store.cachedImage(for: good, maxPixelSize: size) == nil)
         _ = await store.image(for: good, maxPixelSize: size)
         #expect(await counter.count == 4)
+    }
+
+    @MainActor
+    @Test("a memory warning while a still is in flight leaves the cache empty afterwards")
+    func memoryWarningDuringGenerationIsNotUndone() async throws {
+        let center = NotificationCenter()
+        let gate = StillGenerationGate()
+        let counter = StillGenerationCounter()
+        // Ignores cancellation on purpose: the store itself must refuse the late result.
+        let store = InlineVideoStillFrameStore(
+            generator: { _, _ in
+                await counter.record()
+                await gate.wait()
+                return Self.solidImage()
+            },
+            notificationCenter: center
+        )
+        let source = dummyMediaSource(fileName: "late.mp4")
+        let size = CGSize(width: 640, height: 360)
+
+        let request = Task { @MainActor in await store.image(for: source, maxPixelSize: size) }
+        for _ in 0..<40 where await counter.count == 0 { await Task.yield() }
+        #expect(await counter.count == 1)
+
+        center.post(name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
+        for _ in 0..<10 { await Task.yield() }
+        await gate.open()
+        _ = await request.value
+        for _ in 0..<10 { await Task.yield() }
+
+        #expect(store.cachedImage(for: source, maxPixelSize: size) == nil, "late result refilled the cache")
+        // The key is not poisoned: a fresh request generates again.
+        await gate.open()
+        _ = await store.image(for: source, maxPixelSize: size)
+        #expect(await counter.count == 2)
+        #expect(store.cachedImage(for: source, maxPixelSize: size) != nil)
     }
 
     private static func solidImage() -> UIImage {
@@ -2268,4 +2361,18 @@ private final class HangingHTTPServer: @unchecked Sendable {
 private actor StillGenerationCounter {
     private(set) var count = 0
     func record() { count += 1 }
+}
+
+private actor StillGenerationGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+    func open() {
+        isOpen = true
+        waiters.forEach { $0.resume() }
+        waiters.removeAll()
+    }
 }
