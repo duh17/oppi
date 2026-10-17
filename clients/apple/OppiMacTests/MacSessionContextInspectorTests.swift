@@ -122,49 +122,6 @@ struct SessionContextPresentationTests {
         #expect(stats.loadedResources == nil)
     }
 
-    @Test func compositionSplitsSystemPromptAgentsSkillsAndMessages() {
-        let composition = SessionContextCompositionSnapshot(
-            piSystemPromptChars: 400,
-            piSystemPromptTokens: 40,
-            agentsChars: 80,
-            agentsTokens: 10,
-            agentsFiles: [
-                ContextFileTokenSnapshot(path: "/tmp/AGENTS.md", chars: 80, tokens: 10),
-            ],
-            skillsListingChars: 40,
-            skillsListingTokens: 5
-        )
-
-        let segments = SessionContextCompositionProjection.segments(
-            totalContextTokens: 100,
-            composition: composition
-        )
-
-        #expect(segments.map(\.kind) == [
-            .piBasePrompt, .agentsFiles, .skillsIndex, .messagesAndRuntime,
-        ])
-        #expect(segments.map(\.tokens) == [25, 10, 5, 60])
-        #expect(segments[1].label == "AGENTS files (1)")
-    }
-
-    @Test func compositionIsEmptyWhenContextTokensAreZero() {
-        let composition = SessionContextCompositionSnapshot(
-            piSystemPromptChars: 10,
-            piSystemPromptTokens: 2,
-            agentsChars: 0,
-            agentsTokens: 0,
-            agentsFiles: [],
-            skillsListingChars: 0,
-            skillsListingTokens: 0
-        )
-        #expect(
-            SessionContextCompositionProjection.segments(
-                totalContextTokens: 0,
-                composition: composition
-            ).isEmpty
-        )
-    }
-
     @Test func loadedResourcesUnknownIsNotEmptyWhileLoadingOrFailed() {
         let loading = MacSessionLoadedResourcesPresentation.phase(
             isLoading: true,

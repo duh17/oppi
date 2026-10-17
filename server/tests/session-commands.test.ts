@@ -258,6 +258,10 @@ describe("SessionCommandCoordinator", () => {
         getSkills: () => ({ skills: [] }),
         getExtensions: () => ({ extensions: [] }),
       },
+      agent: { state: { tools: [] } },
+      _hiddenDeclarations: new Set(),
+      getAllTools: () => [],
+      autoCompactionEnabled: false,
     } as unknown as AgentSession;
     const { coordinator } = makeCoordinator(agentSession, {
       sdkBackend: {

@@ -468,15 +468,7 @@ struct MacControlSessionLaunchDraft: Equatable {
         return allowsEmptyRequest || !trimmed.isEmpty
     }
 
-    var domainTitle: String {
-        switch domain {
-        case .agents: "Agent"
-        case .schedules: "Schedule"
-        case .skills: "Skill"
-        case .themes: "Theme"
-        case .workspaces: "Workspace"
-        }
-    }
+    var domainTitle: String { domain.title }
 
     var title: String {
         intent == .revise ? "Revise \(targetName ?? domainTitle)" : "Create \(domainTitle)"

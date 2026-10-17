@@ -684,11 +684,27 @@ private enum ChatRoutesFixture {
     static let sessionStats: JSONValue = [
         "tokens": ["input": 800, "output": 200, "cacheRead": 0, "cacheWrite": 0, "total": 1_000],
         "cost": 0.01,
+        "contextComposition": [
+            "piSystemPromptTokens": 500,
+            "agentsTokens": 100,
+            "agentsFiles": [["path": "/tmp/oppi-chat-routes/AGENTS.md", "chars": 400, "tokens": 100]],
+            "skillsListingTokens": 50,
+            "compactionReserveTokens": 16_384,
+            "tools": [
+                ["name": "read", "tokens": 160, "inContext": true, "source": ["kind": "builtin", "name": ""]],
+                ["name": "weather", "tokens": 120, "inContext": true, "source": ["kind": "extension", "name": "weather", "path": .string(extensionPath)]],
+                ["name": "forecast", "tokens": 300, "inContext": false, "source": ["kind": "extension", "name": "weather", "path": .string(extensionPath)]],
+                ["name": "mcp__docs__search", "tokens": 400, "inContext": false, "source": ["kind": "mcp", "name": "docs"]],
+                ["name": "mcp__docs__fetch", "tokens": 250, "inContext": false, "source": ["kind": "mcp", "name": "docs"]],
+            ],
+        ],
         "loadedResources": [
             "skills": [["name": .string(skillName), "description": "Routes through the panel", "path": "/tmp/oppi-chat-routes/.pi/skills/route-skill"]],
-            "extensions": [],
+            "extensions": [["name": "weather", "path": .string(extensionPath)]],
         ],
     ]
+
+    static let extensionPath = "/tmp/oppi-chat-routes/.pi/extensions/weather.ts"
 
     static let models = [
         ModelInfo(id: "claude-routes", name: "Claude Routes", provider: "anthropic", contextWindow: 200_000),

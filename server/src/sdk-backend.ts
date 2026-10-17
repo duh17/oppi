@@ -32,6 +32,7 @@ import {
   type ResourceDiagnostic,
   type Skill,
   type ToolDefinition,
+  type ToolInfo,
   SessionManager as PiSessionManager,
   DefaultResourceLoader,
   ModelRuntime,
@@ -54,9 +55,12 @@ import { extensionNameForAllowlist } from "./extension-loader.js";
 import {
   addUsageToModelBreakdown,
   estimateTokensFromChars,
+  estimateToolDeclarationTokens,
   sortedModelUsage,
   TOOLS_SUMMARIES_USAGE_KEY,
   TOOLS_SUMMARIES_USAGE_LABEL,
+  type ContextToolSnapshot,
+  type ContextToolSource,
   type SessionModelUsageSnapshot,
 } from "./session-stats.js";
 import {
@@ -71,6 +75,7 @@ import { applyPendingProviderRegistrations } from "./extension-model-discovery.j
 import { managedProjectTrustContext, resolveManagedProjectTrust } from "./project-trust.js";
 import {
   availableMcpBuiltinNames,
+  BUILTIN_EXTENSION_PATH_PREFIX,
   createMcpBuiltinExtensions,
   isBuiltinExtensionPath,
 } from "./host-mcp-extensions.js";
@@ -126,6 +131,8 @@ function collectSessionContextComposition(session: AgentSession): {
   agentsFiles: Array<{ path: string; chars: number; tokens: number }>;
   skillsListingChars: number;
   skillsListingTokens: number;
+  tools: ContextToolSnapshot[];
+  compactionReserveTokens?: number;
 } {
   const piSystemPromptChars = session.systemPrompt.length;
   const piSystemPromptTokens = estimateTokensFromChars(piSystemPromptChars);
@@ -154,7 +161,84 @@ function collectSessionContextComposition(session: AgentSession): {
     agentsFiles,
     skillsListingChars,
     skillsListingTokens,
+    tools: collectContextTools(session),
+    // Auto-compaction runs once context passes the window minus this reserve.
+    ...(session.autoCompactionEnabled
+      ? {
+          compactionReserveTokens: session.settingsManager.getCompactionReserveTokens(
+            session.model,
+          ),
+        }
+      : {}),
   };
+}
+
+/**
+ * Tools the model can reach: the declared ones, sized with the description the request sends
+ * (a `prepareLoadout` hook such as code mode's can rewrite it), and the ones it loads on demand.
+ * Hidden tools and inactive direct tools are unreachable, so they cost nothing and are left out.
+ */
+function collectContextTools(session: AgentSession): ContextToolSnapshot[] {
+  const hidden = hiddenDeclarations(session);
+  const declared = new Map(
+    session.agent.state.tools
+      .filter((tool) => !hidden.has(tool.name))
+      .map((tool) => [tool.name, tool]),
+  );
+  const extensionPaths = loadedExtensionPaths(session);
+  return session.getAllTools().flatMap((tool) => {
+    const offered = declared.get(tool.name);
+    // A hidden declaration stays callable (code mode's `only` mode lists it), so it is on demand.
+    const onDemand =
+      hidden.has(tool.name) || tool.exposure === "codemode" || tool.exposure === "deferred";
+    if (!offered && !onDemand) return [];
+    return [
+      {
+        name: tool.name,
+        tokens: estimateToolDeclarationTokens(offered ?? tool),
+        inContext: offered !== undefined,
+        source: contextToolSource(tool, extensionPaths),
+      },
+    ];
+  });
+}
+
+/**
+ * Declarations a `prepareLoadout` hook strips from every request while the tool stays active:
+ * code mode's `only` mode hides each direct tool it can call. Pi keeps this set only on the
+ * session's private state; the host MCP test pins the field.
+ */
+function hiddenDeclarations(session: AgentSession): ReadonlySet<string> {
+  return (session as unknown as { _hiddenDeclarations: ReadonlySet<string> })._hiddenDeclarations;
+}
+
+/** Each extension's load path to the path its loaded-extension row reports. */
+function loadedExtensionPaths(session: AgentSession): Map<string, string> {
+  return new Map(
+    session.resourceLoader
+      .getExtensions()
+      .extensions.map((extension) => [extension.path, loadedExtensionPath(extension)]),
+  );
+}
+
+function loadedExtensionPath(extension: { path: string; resolvedPath?: string }): string {
+  return extension.resolvedPath || extension.path;
+}
+
+const MCP_BUILTIN_EXTENSION_PATH = `${BUILTIN_EXTENSION_PATH_PREFIX}mcp`;
+
+function contextToolSource(
+  tool: ToolInfo,
+  extensionPaths: ReadonlyMap<string, string>,
+): ContextToolSource {
+  const { path: loadPath, source } = tool.sourceInfo;
+  if (tool.namespace && loadPath === MCP_BUILTIN_EXTENSION_PATH) {
+    return { kind: "mcp", name: tool.namespace.aliases?.[0] ?? tool.namespace.name };
+  }
+  if (source === "builtin") return { kind: "builtin", name: "" };
+  // The client joins an extension's tools to its row by this path, so report the row's path.
+  const path = extensionPaths.get(loadPath) ?? loadPath;
+  return { kind: "extension", name: extensionNameForAllowlist(path, tool.sourceInfo), path };
 }
 
 function collectLoadedSessionResources(session: AgentSession): {
@@ -168,8 +252,8 @@ function collectLoadedSessionResources(session: AgentSession): {
   }));
 
   const extensions = session.resourceLoader.getExtensions().extensions.map((extension) => ({
-    name: extensionNameForAllowlist(extension.resolvedPath || extension.path, extension.sourceInfo),
-    path: extension.resolvedPath || extension.path,
+    name: extensionNameForAllowlist(loadedExtensionPath(extension), extension.sourceInfo),
+    path: loadedExtensionPath(extension),
   }));
 
   return { skills, extensions };

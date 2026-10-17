@@ -20,6 +20,42 @@ export function estimateTokensFromChars(chars: number): number {
   return Math.max(1, Math.ceil(chars / 4));
 }
 
+/**
+ * Where a tool comes from, for the context breakdown: Pi's own tools, one extension, or one MCP
+ * server. Clients group by this; they never infer it from tool names.
+ */
+export interface ContextToolSource {
+  kind: "builtin" | "extension" | "mcp";
+  /** Extension or MCP server name. Empty for built-in tools. */
+  name: string;
+  /** Extension file, when the extension has one. */
+  path?: string;
+}
+
+/** One tool the model can reach, with the estimated size of its declaration. */
+export interface ContextToolSnapshot {
+  name: string;
+  tokens: number;
+  /** Declared in every request. Otherwise loaded on demand (tool search or code mode). */
+  inContext: boolean;
+  source: ContextToolSource;
+}
+
+/** A tool declaration as a request sends it: name, description, and parameter schema. */
+export function estimateToolDeclarationTokens(tool: {
+  name: string;
+  description?: string;
+  parameters?: unknown;
+}): number {
+  return estimateTokensFromChars(
+    JSON.stringify({
+      name: tool.name,
+      description: tool.description ?? "",
+      parameters: tool.parameters ?? {},
+    }).length,
+  );
+}
+
 function finiteNonNegative(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
 }

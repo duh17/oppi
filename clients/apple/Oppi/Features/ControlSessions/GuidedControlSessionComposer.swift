@@ -459,15 +459,7 @@ struct GuidedControlSessionComposer: View {
         "guided.\(domain.rawValue).\(intent.rawValue)"
     }
 
-    private var domainTitle: String {
-        switch domain {
-        case .agents: "Agent"
-        case .schedules: "Schedule"
-        case .skills: "Skill"
-        case .themes: "Theme"
-        case .workspaces: "Workspace"
-        }
-    }
+    private var domainTitle: String { domain.title }
 
     private func selectWorkspace(_ workspace: Workspace) {
         selectedWorkspace = workspace
@@ -686,6 +678,7 @@ struct GuidedControlSessionSheet: View {
     private var domainSystemImage: String {
         switch domain {
         case .agents: "person.crop.circle.badge.questionmark"
+        case .extensions: "puzzlepiece.extension"
         case .schedules: "calendar.badge.clock"
         case .skills: "hammer"
         case .themes: "paintpalette"
@@ -694,14 +687,7 @@ struct GuidedControlSessionSheet: View {
     }
 
     private var title: String {
-        let fallbackSubject = switch domain {
-        case .agents: "Agent"
-        case .schedules: "Schedule"
-        case .skills: "Skill"
-        case .themes: "Theme"
-        case .workspaces: "Workspace"
-        }
-        let subject = targetName ?? fallbackSubject
+        let subject = targetName ?? domain.title
         return intent == .create ? "Create \(subject)" : "Revise \(subject)"
     }
 }

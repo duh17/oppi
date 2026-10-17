@@ -2614,6 +2614,14 @@ describe("server durable managed runtime", () => {
         agentsTokens: 0,
         agentsFiles: [],
         skillsListingTokens: 0,
+        // Offered tools sit under the extension that registers them; the client
+        // matches a path-less extension row to its tools by name.
+        tools: expect.arrayContaining([
+          expect.objectContaining({
+            inContext: true,
+            source: { kind: "extension", name: DurableAsk.name },
+          }),
+        ]),
       },
       loadedResources: {
         skills: [],

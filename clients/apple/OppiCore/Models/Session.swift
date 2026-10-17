@@ -181,10 +181,23 @@ struct PiTuiMirrorSessionMetadata: Codable, Sendable, Equatable {
 
 enum ControlSessionDomain: String, Codable, Sendable {
     case agents
+    case extensions
     case schedules
     case skills
     case themes
     case workspaces
+
+    /// The kind of thing a control session creates or revises, as titles name it.
+    var title: String {
+        switch self {
+        case .agents: "Agent"
+        case .extensions: "Extension"
+        case .schedules: "Schedule"
+        case .skills: "Skill"
+        case .themes: "Theme"
+        case .workspaces: "Workspace"
+        }
+    }
 }
 
 enum ControlSessionIntent: String, Codable, Sendable {
@@ -278,6 +291,7 @@ enum ControlSessionStarterPrompt {
     ) -> String {
         let subject = switch domain {
         case .agents: "saved Agent"
+        case .extensions: "Pi extension"
         case .schedules: "Schedule"
         case .skills: "Skill"
         case .themes: "iOS theme"
@@ -290,7 +304,7 @@ enum ControlSessionStarterPrompt {
             "\nCanonical workspace ID: \($0)\nCanonical workspace name: \(workspaceName ?? "unknown")"
         } ?? ""
         let selectedHostFile = switch (domain, intent) {
-        case (.skills, _): "\nSelected existing host file: \(targetPath ?? "unknown")"
+        case (.skills, _), (.extensions, _): "\nSelected existing host file: \(targetPath ?? "unknown")"
         case (.themes, .revise): "\nSelected theme file Oppi serves: \(targetPath ?? "unknown")"
         default: ""
         }
@@ -299,6 +313,8 @@ enum ControlSessionStarterPrompt {
             "Use the `oppi agent` command family to list and inspect existing definitions, then create or update the proposed definition. If Agent behavior is ambiguous, ask focused questions about responsibilities, boundaries, resources, defaults, and success criteria."
         case .schedules:
             "Use the `oppi schedule` command family to list and inspect existing schedules, then create or update the proposed schedule. If schedule behavior or timing is ambiguous, ask focused questions about the task, target workspace or session, cadence, time zone, safety constraints, and expected output. Every model change must use a canonical `provider/model` ID. If the user omits the provider and inspected server state does not identify it, ask one focused provider question before proposing the change; do not guess. Once the provider is known, name the canonical ID and use `oppi schedule update <id> --model <provider/model>` for a model-only update instead of embedding the model in definition JSON."
+        case .extensions:
+            "Use stock `read` to inspect the selected extension file and the modules it imports by relative path from inside its own directory, and stock `edit` for precise replacements in those existing files. When an extension API is unclear, read Pi's extension documentation in the installed Pi package. Sessions load extensions when they start, so tell the user to reload a session to apply the change."
         case .skills:
             "Use stock `read` to inspect the selected launch file. Staged review comments carry absolute source paths; use each comment’s path when it refers to another file, and use stock `edit` for precise replacements in those existing files. Do not use `oppi` to read or update Skill files."
         case .themes:
@@ -318,17 +334,19 @@ enum ControlSessionStarterPrompt {
         // Skills and themes are host files edited with stock file tools; the
         // other domains are server definitions changed only through `oppi`.
         let inspection = switch domain {
-        case .skills, .themes: ""
+        case .extensions, .skills, .themes: ""
         case .agents, .schedules, .workspaces:
             "First inspect the current server state using only approved `oppi` commands. "
         }
         let approval = switch domain {
-        case .skills: " Summarize the exact proposed changes before editing."
+        case .extensions, .skills: " Summarize the exact proposed changes before editing."
         case .themes: " Summarize the proposed colors and file path before writing."
         case .agents, .schedules, .workspaces:
             " Summarize the exact proposed changes and wait for the user's explicit approval before invoking the appropriate `oppi` command."
         }
         let constraints = switch domain {
+        case .extensions:
+            "Do not use `write`, `bash`, the `oppi` CLI, or temporary files for this task. Edit only the selected extension file and existing files inside its directory that it imports by relative path; never a file outside that directory, even one it imports."
         case .skills:
             "Do not use `write`, `bash`, or temporary files for this task. Do not edit paths other than the selected launch file or the absolute paths carried by staged review comments."
         case .themes:

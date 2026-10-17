@@ -33,9 +33,12 @@ import { computeCacheWaste } from "./cache-miss.js";
 import {
   addUsageToModelBreakdown,
   estimateTokensFromChars,
+  estimateToolDeclarationTokens,
   sortedModelUsage,
   TOOLS_SUMMARIES_USAGE_KEY,
   TOOLS_SUMMARIES_USAGE_LABEL,
+  type ContextToolSnapshot,
+  type ContextToolSource,
   type SessionModelUsageSnapshot,
 } from "./session-stats.js";
 import { durableUnsupportedFeature, type AgentDefinition } from "./agent-launch-service.js";
@@ -1022,6 +1025,8 @@ export class DurableBackend implements AgentBackend {
     const skillsListingChars =
       (await this.harness.snapshot(ProjectContextDoc, this.conversation.id, BACKGROUND_CONTEXT))
         ?.skills?.length ?? 0;
+    // The Harness compacts at the context window minus this reserve.
+    const compaction = this.host.runtime.runPolicySettings.getCompactionSettings();
     return {
       cacheWaste: computeCacheWaste(
         (await this.historyEntries()).flatMap((entry) =>
@@ -1040,6 +1045,8 @@ export class DurableBackend implements AgentBackend {
         agentsFiles,
         skillsListingChars,
         skillsListingTokens: estimateTokensFromChars(skillsListingChars),
+        tools: this.contextTools(agent),
+        ...(compaction.enabled ? { compactionReserveTokens: compaction.reserveTokens } : {}),
       },
       loadedResources: {
         skills: this.resources.skills.map((skill) => ({
@@ -1221,6 +1228,27 @@ export class DurableBackend implements AgentBackend {
       ],
     };
   }
+  /** Offered tools, then the deferred ones `tool_search` can load, each under its extension. */
+  private contextTools(agent: Awaited<ReturnType<Conversation["agent"]>>): ContextToolSnapshot[] {
+    const source = (name: string): ContextToolSource => {
+      const server = this.mcp?.serverOf(name);
+      if (server !== undefined) return { kind: "mcp", name: server };
+      const extension = agent.extensions.find((candidate) =>
+        candidate.tools?.some((tool) => tool.name === name),
+      );
+      return { kind: "extension", name: extension?.name ?? "" };
+    };
+    return [
+      ...agent.tools.map((tool) => ({ tool, inContext: true })),
+      ...agent.deferred.map((tool) => ({ tool, inContext: false })),
+    ].map(({ tool, inContext }) => ({
+      name: tool.name,
+      tokens: estimateToolDeclarationTokens(tool),
+      inContext,
+      source: source(tool.name),
+    }));
+  }
+
   /** Pi's exporter over the whole conversation, with the active system prompt and offered tools. */
   async exportToHtml(outputPath: string): Promise<string> {
     this.assertOpen();

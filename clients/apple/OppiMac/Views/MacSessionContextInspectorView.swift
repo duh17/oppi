@@ -17,6 +17,7 @@ struct MacSessionContextInspectorView: View {
         guard let composition = store.sessionStats?.contextComposition else { return [] }
         return SessionContextCompositionProjection.segments(
             totalContextTokens: usage.usedTokens,
+            contextWindow: usage.window,
             composition: composition
         )
     }
@@ -308,10 +309,13 @@ struct MacSessionContextInspectorView: View {
 
     private func compositionColor(for kind: SessionContextCompositionKind) -> Color {
         switch kind {
-        case .piBasePrompt: .themePurple
+        case .systemPrompt: .themePurple
         case .agentsFiles: .themeCyan
-        case .skillsIndex: .themeYellow
-        case .messagesAndRuntime: .themeGreen
+        case .skills: .themeYellow
+        case .messages: .themeBlue
+        case .tools: .themeOrange
+        case .mcpTools: .themeGreen
+        case .compactionReserve: .themeComment
         }
     }
 

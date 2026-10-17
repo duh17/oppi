@@ -108,8 +108,29 @@ enum SessionStatsParser {
             agentsTokens: agentsTokens,
             agentsFiles: agentsFiles,
             skillsListingChars: skillsListingChars,
-            skillsListingTokens: skillsListingTokens
+            skillsListingTokens: skillsListingTokens,
+            tools: parseContextTools(object["tools"]),
+            compactionReserveTokens: parseInt(object["compactionReserveTokens"])
         )
+    }
+
+    private static func parseContextTools(_ value: JSONValue?) -> [ContextToolSnapshot] {
+        value?.arrayValue?.compactMap { item in
+            guard let tool = item.objectValue,
+                  let name = tool["name"]?.stringValue,
+                  let source = tool["source"]?.objectValue,
+                  let kind = source["kind"]?.stringValue.flatMap(ContextToolSnapshot.SourceKind.init(rawValue:)) else {
+                return nil
+            }
+            return ContextToolSnapshot(
+                name: name,
+                tokens: parseInt(tool["tokens"]) ?? 0,
+                inContext: tool["inContext"]?.boolValue ?? false,
+                sourceKind: kind,
+                sourceName: source["name"]?.stringValue ?? "",
+                sourcePath: source["path"]?.stringValue
+            )
+        } ?? []
     }
 
     private static func parseInt(_ value: JSONValue?) -> Int? {

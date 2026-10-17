@@ -35,6 +35,7 @@ import {
 
 const CONTROL_SESSION_DOMAINS: ReadonlySet<string> = new Set<ControlSessionDomain>([
   "agents",
+  "extensions",
   "schedules",
   "skills",
   "themes",

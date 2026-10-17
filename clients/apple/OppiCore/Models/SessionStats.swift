@@ -41,6 +41,26 @@ struct ContextFileTokenSnapshot: Equatable, Sendable {
     let tokens: Int
 }
 
+/// One tool the model can reach, with the estimated size of its declaration.
+struct ContextToolSnapshot: Equatable, Sendable {
+    /// Where the tool comes from. The server decides; clients never infer it from names.
+    enum SourceKind: String, Sendable {
+        case builtIn = "builtin"
+        case piExtension = "extension"
+        case mcp
+    }
+
+    let name: String
+    let tokens: Int
+    /// Declared in every request. Otherwise loaded on demand (tool search or code mode).
+    let inContext: Bool
+    let sourceKind: SourceKind
+    /// Extension or MCP server name; empty for built-in tools.
+    let sourceName: String
+    /// Extension file, when the extension has one.
+    let sourcePath: String?
+}
+
 struct SessionContextCompositionSnapshot: Equatable, Sendable {
     let piSystemPromptChars: Int
     let piSystemPromptTokens: Int
@@ -49,6 +69,10 @@ struct SessionContextCompositionSnapshot: Equatable, Sendable {
     let agentsFiles: [ContextFileTokenSnapshot]
     let skillsListingChars: Int
     let skillsListingTokens: Int
+    /// Empty when the session's runtime does not report its tools.
+    var tools: [ContextToolSnapshot] = []
+    /// Free space auto-compaction keeps. Nil when auto-compaction is off or unreported.
+    var compactionReserveTokens: Int? = nil
 }
 
 struct SessionResourceSnapshot: Equatable, Sendable, Identifiable {

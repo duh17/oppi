@@ -256,7 +256,8 @@ struct ChatView: View {
     static func reviewCommentPathFormattingPolicy(
         controlDomain: ControlSessionDomain?
     ) -> ReviewCommentPathFormatting {
-        controlDomain == .skills ? .verbatim : .normalizedDisplay
+        // Skill and extension sessions edit host files at their exact paths.
+        controlDomain == .skills || controlDomain == .extensions ? .verbatim : .normalizedDisplay
     }
 
     private var reviewCommentPathFormatting: ReviewCommentPathFormatting {
@@ -898,8 +899,9 @@ struct ChatView: View {
             }
             .chatAuxiliaryPresentation(
                 isPresented: sidePanel ? .constant(false) : $showContextInspector,
-                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation
-            ) { chatModalScope(contextInspectorSheet) }
+                prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation,
+                screen: { .controller(makeContextController) }
+            )
             .chatAuxiliaryPresentation(
                 isPresented: $showShareRedactionSheet,
                 prefersFullScreen: prefersFullScreenChatAuxiliaryPresentation,
@@ -1229,13 +1231,13 @@ struct ChatView: View {
         return nil
     }
 
-    /// The outline is a UIKit screen; Files and Context are hosted SwiftUI
-    /// with the chat's own values (`chatModalScope`).
+    /// Outline and Context are UIKit screens; Files is hosted SwiftUI with the
+    /// chat's own values (`chatModalScope`).
     private func chatSidePanel(_ panel: ChatSidePanel) -> RouterScreen {
         switch panel {
         case .files: .hosted { AnyView(chatModalScope(filePanelSheet)) }
         case .outline: .controller(makeOutlineController)
-        case .context: .hosted { AnyView(chatModalScope(contextInspectorSheet)) }
+        case .context: .controller(makeContextController)
         }
     }
 
@@ -3059,28 +3061,24 @@ struct ChatView: View {
         }
     }
 
-    private var currentWorkspace: Workspace? {
-        guard let wsId = session?.workspaceId else { return nil }
-        return connection.workspaceStore.workspaces.first { $0.id == wsId }
-    }
-
-    private var contextInspectorSheet: some View {
-        ContextInspectorView(
+    /// The Context panel. It reads this chat's session row live, so its window
+    /// totals follow the conversation while it is open.
+    private func makeContextController() -> UIViewController {
+        let sessionStore = sessionStore
+        let sessionId = sessionId
+        let connection = connection
+        let session = { sessionStore.sessions.first { $0.id == sessionId } }
+        return ContextInspectorViewController(
             session: session,
-            workspace: currentWorkspace,
-            loadSessionStats: {
-                try await connection.getSessionStats()
-            }
+            workspace: {
+                guard let workspaceId = session()?.workspaceId else { return nil }
+                return connection.workspaceStore.workspaces.first { $0.id == workspaceId }
+            },
+            connection: connection,
+            reviewCommentSelectionScope: .activeSession(reviewCommentSelectionRouter),
+            loadSessionStats: { try await connection.getSessionStats() },
+            onClose: { showContextInspector = false }
         )
-        .navigationTitle("Context")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button(role: .close) { showContextInspector = false }
-                    .accessibilityIdentifier("chat.context.close")
-            }
-        }
-        .environment(\.reviewCommentSelectionScope, .activeSession(reviewCommentSelectionRouter))
     }
 
     private var modelPickerSheet: some View {

@@ -1205,6 +1205,96 @@ export default function (pi) {
     expect(readFileSync(observed, "utf8")).toContain("mcp__echo__echo");
     expect(readFileSync(marker, "utf8")).not.toContain("call echo");
   });
+
+  it("reports each reachable tool's source and size in the context breakdown", async () => {
+    writeFileSync(
+      join(agentDir, "extensions", "weather.ts"),
+      `export default function(pi) {
+        pi.registerTool({
+          name: "weather",
+          label: "Weather",
+          description: "Look up the weather for a city.",
+          parameters: { type: "object", properties: { city: { type: "string" } } },
+          async execute() { return { content: [{ type: "text", text: "sunny" }] }; },
+        });
+        pi.registerTool({
+          name: "forecast",
+          label: "Forecast",
+          description: "Ten-day forecast.",
+          parameters: { type: "object", properties: {} },
+          exposure: "deferred",
+          async execute() { return { content: [{ type: "text", text: "rain" }] }; },
+        });
+        pi.registerTool({
+          name: "secret",
+          label: "Secret",
+          description: "Unreachable.",
+          parameters: { type: "object", properties: {} },
+          exposure: "hidden",
+          async execute() { return { content: [] }; },
+        });
+      }`,
+    );
+    const backend = await create({});
+    await expectEcho(backend);
+    const stats = (await backend.getSessionStats()) as {
+      contextComposition: {
+        tools: Array<{
+          name: string;
+          tokens: number;
+          inContext: boolean;
+          source: { kind: string; name: string; path?: string };
+        }>;
+        compactionReserveTokens?: number;
+      };
+      loadedResources: { extensions: Array<{ name: string; path: string }> };
+    };
+    const tools = new Map(stats.contextComposition.tools.map((tool) => [tool.name, tool]));
+    const weatherPath = stats.loadedResources.extensions.find(
+      (extension) => extension.name === "weather",
+    )?.path;
+
+    // The client finds an extension's tools by the path its loaded-extension row carries.
+    expect(weatherPath).toBeDefined();
+    expect(tools.get("weather")).toMatchObject({
+      inContext: true,
+      source: { kind: "extension", name: "weather", path: weatherPath },
+    });
+    expect(tools.get("forecast")).toMatchObject({ inContext: false });
+    expect(tools.has("secret")).toBe(false);
+    expect(tools.get("mcp__echo__echo")).toMatchObject({
+      inContext: true,
+      source: { kind: "mcp", name: "echo" },
+    });
+    expect(tools.get("read")).toMatchObject({ inContext: true, source: { kind: "builtin" } });
+    expect(tools.get("weather")!.tokens).toBeGreaterThan(0);
+    // Auto-compaction is on by default and keeps Pi's default reserve.
+    expect(stats.contextComposition.compactionReserveTokens).toBe(16_384);
+
+    sessionOf(backend).setAutoCompactionEnabled(false);
+    const withoutCompaction = (await backend.getSessionStats()) as {
+      contextComposition: { compactionReserveTokens?: number };
+    };
+    expect(withoutCompaction.contextComposition.compactionReserveTokens).toBeUndefined();
+  });
+
+  it("counts declarations code mode hides from requests as on demand", async () => {
+    writeFileSync(
+      join(agentDir, "settings.json"),
+      JSON.stringify({ defaultTools: ["+codemode"], codemode: { mode: "only" } }),
+    );
+    const backend = await create({});
+    const session = sessionOf(backend);
+    // `only` keeps the direct tools active but strips their declarations from every request.
+    expect(session.getActiveToolNames()).toEqual(expect.arrayContaining(["codemode", "read"]));
+    const stats = (await backend.getSessionStats()) as {
+      contextComposition: { tools: Array<{ name: string; inContext: boolean }> };
+    };
+    const tools = new Map(stats.contextComposition.tools.map((tool) => [tool.name, tool]));
+
+    expect(tools.get("codemode")).toMatchObject({ inContext: true });
+    expect(tools.get("read")).toMatchObject({ inContext: false });
+  });
 });
 
 describe("builtin extension availability boundaries", () => {

@@ -434,15 +434,7 @@ struct ReviewableControlMarkdownView: View {
         navigation.openWorkspaceSession(target)
     }
 
-    private var domainTitle: String {
-        switch domain {
-        case .agents: "Agent"
-        case .schedules: "Schedule"
-        case .skills: "Skill"
-        case .themes: "Theme"
-        case .workspaces: "Workspace"
-        }
-    }
+    private var domainTitle: String { domain.title }
 
     private static func languageHint(for path: String) -> String? {
         switch FileType.detect(from: path, content: "") {

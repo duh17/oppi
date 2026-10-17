@@ -343,9 +343,6 @@
     "clients/apple/Oppi/Features/Chat/Support/ChatSubviews.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Chat/Support/ContextInspectorView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/Chat/Support/ContextUsageViews.swift": {
       "import SwiftUI": 1
     },

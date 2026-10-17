@@ -53,6 +53,7 @@ Example:
 
 ### Added
 
+- **Client/Server:** The chat **Context** panel breaks the context window down in request order: system prompt, AGENTS files, Skills, messages, tool declarations, MCP tools, and the compaction reserve, plus the tools loaded on demand that cost nothing yet. Collapsible sections list each AGENTS file, Skill, tool source, MCP server, and extension with its size. An extension's page shows its tools and offers **View Source** and **Edit with Oppi**, which starts a session that changes the extension.
 - **Client/Server:** **Server Metrics** in the host pill menu shows the server's CPU, memory, and disk and the Oppi server process's CPU, memory, and sessions over the last 30 days. The menu item appears only while sampling is on. On macOS and Linux it reads the machine; in Docker or another container it reads the container's own usage against its limits. The Server section moved there from Usage, and **Server Settings → Server Metrics** turns sampling on and adds the menu item. It is off until you turn it on, and off costs nothing. See [Server configuration](docs/server-configuration.md#server-metrics).
 - **Client:** Inline Markdown videos show a still frame with a play button and build their player only when you tap play, in chat and the full-screen reader. Scrolling through a chat with many videos no longer starts a player for each one. See [Markdown inline video](docs/attachment-rendering.md#markdown-inline-video).
 - **Client:** Usage adds 1y and All ranges for token and cost history.

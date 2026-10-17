@@ -462,6 +462,12 @@ export class DurableMcp {
       }));
   }
 
+  /** The server that offers `toolName`; undefined for tool search and the resource tools. */
+  serverOf(toolName: string): string | undefined {
+    for (const [server, tools] of this.serverTools) if (tools.has(toolName)) return server;
+    return undefined;
+  }
+
   private registered(): Registered[] {
     return [
       ...[...this.serverTools.values()].flatMap((tools) => [...tools.values()]),

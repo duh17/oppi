@@ -161,11 +161,52 @@ final class ChatRoutesUITests: XCTestCase {
         app.buttons["chat.toolbar.context"].tap()
         let context = app.navigationBars["Context"]
         XCTAssertTrue(context.waitForExistence(timeout: 5), "Context did not open")
+        // The window splits in request order; tools loaded on demand are listed apart.
+        for segment in ["systemPrompt", "agentsFiles", "skills", "messages", "tools", "compactionReserve", "onDemand"] {
+            XCTAssertTrue(
+                app.cells["chat.context.segment.\(segment)"].waitForExistence(timeout: 10),
+                "Context is missing the \(segment) row"
+            )
+        }
         attachScreenshot("context")
 
+        // Sections open collapsed; an MCP server lists its on-demand tools when opened.
+        let servers = app.cells["chat.context.section.mcpServers"]
+        scrollTo(servers)
+        servers.tap()
+        let docs = app.cells.matching(NSPredicate(format: "label CONTAINS %@", "docs")).firstMatch
+        XCTAssertTrue(docs.waitForExistence(timeout: 5), "Opening MCP servers did not list the docs server")
+        scrollTo(docs)
+        docs.tap()
+        XCTAssertTrue(
+            app.cells.matching(NSPredicate(format: "label CONTAINS %@", "mcp__docs__search")).firstMatch
+                .waitForExistence(timeout: 5),
+            "Opening the docs server did not list its tools"
+        )
+        attachScreenshot("context-mcp")
+
+        // An extension opens its page with its tools and the edit action.
+        let extensions = app.cells["chat.context.section.extensions"]
+        scrollTo(extensions)
+        extensions.tap()
+        let weather = app.cells["chat.context.extension.weather"]
+        scrollTo(weather)
+        weather.tap()
+        let extensionPage = app.navigationBars["weather"]
+        XCTAssertTrue(extensionPage.waitForExistence(timeout: 5), "The extension was not pushed inside Context")
+        XCTAssertTrue(app.cells["chat.context.extension.edit"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.cells.matching(NSPredicate(format: "label CONTAINS %@", "forecast")).firstMatch.exists)
+        attachScreenshot("context-extension")
+        barButton(extensionPage, NSPredicate(format: "identifier == %@", "BackButton")).tap()
+        XCTAssertTrue(context.waitForExistence(timeout: 5), "Back must pop to Context")
+
         // A loaded skill, then one of its files, push inside the panel.
-        let skillRow = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "route-skill")).firstMatch
+        let skills = app.cells["chat.context.section.skills"]
+        scrollTo(skills)
+        skills.tap()
+        let skillRow = app.cells["chat.context.skill.route-skill"]
         XCTAssertTrue(skillRow.waitForExistence(timeout: 10), "The session's loaded skill is missing")
+        scrollTo(skillRow)
         skillRow.tap()
         let skill = app.navigationBars["route-skill"]
         XCTAssertTrue(skill.waitForExistence(timeout: 5), "The skill was not pushed inside Context")
@@ -652,6 +693,17 @@ final class ChatRoutesUITests: XCTestCase {
         let start = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         let bottom = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98))
         start.press(forDuration: 0.1, thenDragTo: bottom, withVelocity: .fast, thenHoldForDuration: 0)
+    }
+
+    /// Scrolls the Context list until all of `element` shows above the list's
+    /// bottom edge; a row cut off there reports hittable but misses the tap.
+    private func scrollTo(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        let list = app.collectionViews["chat.context.list"]
+        let visible = { element.exists && list.frame.insetBy(dx: 0, dy: 40).contains(element.frame) }
+        for _ in 0..<8 where !visible() {
+            list.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(visible(), "\(element) never scrolled into reach", file: file, line: line)
     }
 
     private func text(of element: XCUIElement) -> String {
