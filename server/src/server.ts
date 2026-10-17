@@ -35,6 +35,7 @@ import { defaultModelRefFromGlobalSettings, ModelCatalog } from "./model-catalog
 import { ExtensionProviderCatalog } from "./extension-model-discovery.js";
 import type { ProgramStatusSync } from "./program-status.js";
 import { SessionPushNotifier } from "./session-push-notifier.js";
+import { LiveActivityNotifier, liveActivityCounts } from "./live-activity-notifier.js";
 import { AgentScheduleRunner } from "./agent-schedule-runner.js";
 import { intervalFromEnv, ServerResourceSampler } from "./server-resource-sampler.js";
 import { HostResourceProbe } from "./host-resource-probe.js";
@@ -490,6 +491,8 @@ export class Server {
 
   // End-to-end-encrypted session alerts through the push relay.
   private sessionPushNotifier: SessionPushNotifier;
+  // Counts-only Live Activity for away phones, through the push relay.
+  private liveActivityNotifier: LiveActivityNotifier;
 
   // Full-text search index (SQLite FTS5)
   private searchIndex: SearchIndex | null = null;
@@ -587,6 +590,10 @@ export class Server {
     this.sessionPushNotifier = new SessionPushNotifier(this.push, this.storage, {
       isDevicePresent: (deviceId) => this.isDevicePresent(deviceId),
       hasWorkingChild: (sessionId) => this.sessions.hasWorkingChild(sessionId),
+    });
+    this.liveActivityNotifier = new LiveActivityNotifier(this.push, {
+      isDevicePresent: (deviceId) => this.isDevicePresent(deviceId),
+      counts: () => liveActivityCounts(this.liveSessions()),
     });
     this.sessions = new SessionManager(storage, this.opsMetrics);
     this.sessions.contextWindowResolver = (modelId: string) =>
@@ -713,6 +720,7 @@ export class Server {
     this.sessions.on("session_event", handleSessionEvent);
     const handleProgramStatusChange = (session: Session, change: ProgramStatusSync): void => {
       this.sessionPushNotifier.handleProgramStatusChange(session, change);
+      this.liveActivityNotifier.countsChanged();
     };
     this.sessions.on("program_status_change", handleProgramStatusChange);
     this.mirrorRuntime.on("program_status_change", handleProgramStatusChange);
@@ -1013,6 +1021,7 @@ export class Server {
       this.opsMetrics.start();
       this.startUploadGcLoop();
       this.scheduleRunner.start();
+      this.liveActivityNotifier.start();
       this.resumeSessionsAfterRestartInBackground();
 
       // Background: warm the search index without monopolizing the event loop.
@@ -1133,6 +1142,7 @@ export class Server {
   async stop(): Promise<void> {
     this.stopUploadGcLoop();
     this.pairing.dispose();
+    this.liveActivityNotifier.stop();
     await this.scheduleRunner.stop();
     this.opsMetrics.stop();
     this.resourceSampler.stop();
@@ -1375,7 +1385,16 @@ export class Server {
    */
   private notePresenceSocket(ws: WebSocket): void {
     const principal = this.socketPrincipals.get(ws);
-    if (principal?.kind === "device") this.presenceSocketDevices.set(ws, principal.deviceId);
+    if (principal?.kind !== "device") return;
+    const wasPresent = this.isDevicePresent(principal.deviceId);
+    this.presenceSocketDevices.set(ws, principal.deviceId);
+    if (!wasPresent) this.liveActivityNotifier.presenceChanged(principal.deviceId);
+  }
+
+  private forgetPresenceSocket(ws: WebSocket): void {
+    const deviceId = this.presenceSocketDevices.get(ws);
+    if (!this.presenceSocketDevices.delete(ws) || deviceId === undefined) return;
+    if (!this.isDevicePresent(deviceId)) this.liveActivityNotifier.presenceChanged(deviceId);
   }
 
   private isDevicePresent(deviceId: string): boolean {
@@ -1833,7 +1852,7 @@ export class Server {
       ws.on("close", () => {
         this.clearAccessExpiryTimer(ws);
         this.socketPrincipals.delete(ws);
-        this.presenceSocketDevices.delete(ws);
+        this.forgetPresenceSocket(ws);
       });
       if (principal.kind === "device" && principal.tokenClass === "at_" && principal.expiresAt) {
         this.scheduleAccessTokenExpiry(ws, principal.expiresAt);

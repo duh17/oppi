@@ -467,15 +467,8 @@ extension ServerConnection {
     // MARK: - Live Activity Sync
 
     func syncLiveActivityState() {
-        guard ReleaseFeatures.liveActivitiesEnabled else {
-            return
-        }
-
-        LiveActivityManager.shared.sync(
-            connectionId: liveActivityConnectionId,
-            sessions: sessionStore.sessions,
-            seenAt: { [sessionStore] id in sessionStore.seenAt(for: id) }
-        )
+        guard let currentServerId else { return }
+        LiveActivityManager.shared.sync(connectionId: currentServerId, sessions: sessionStore.sessions)
     }
 
     // MARK: - Model Cache

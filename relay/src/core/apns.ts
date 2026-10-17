@@ -55,6 +55,73 @@ export function buildApnsRequest(input: {
   return { environment: input.environment, deviceToken: input.deviceToken, headers, payload };
 }
 
+// ─── Live Activity (spec §3.6) ───
+
+/** The app's `ActivityAttributes` type; ActivityKit decodes `attributes` with it. */
+export const LIVE_ACTIVITY_ATTRIBUTES_TYPE = "OppiActivityAttributes";
+/** Apple requires an alert to start a Live Activity by push. Fixed text, like the fallback. */
+export const LIVE_ACTIVITY_START_ALERT = { title: "Oppi", body: "Agents are working." } as const;
+/** An ended card leaves the Lock Screen this long after the server's timestamp. */
+export const LIVE_ACTIVITY_DISMISSAL_SECONDS = 30;
+const LIVE_ACTIVITY_TTL_SECONDS = 3600;
+
+/**
+ * The only Live Activity request the relay makes: two validated counts in a fixed template.
+ * Routine updates go at priority 5 so they do not spend the phone's ActivityKit budget;
+ * start and end go at 10.
+ */
+export function buildLiveActivityRequest(input: {
+  environment: ApnsEnvironment;
+  token: string;
+  bundleId: string;
+  event: "start" | "update" | "end";
+  running: number;
+  needsYou: number;
+  timestamp: number;
+  slot: string;
+  now: number;
+}): ApnsRequest {
+  const headers: Record<string, string> = {
+    "apns-push-type": "liveactivity",
+    "apns-priority": input.event === "update" ? "5" : "10",
+    "apns-topic": `${input.bundleId}.push-type.liveactivity`,
+    "apns-expiration": String(Math.floor(input.now / 1000) + LIVE_ACTIVITY_TTL_SECONDS),
+  };
+  const contentState = { running: input.running, needsYou: input.needsYou };
+  let aps: Record<string, unknown>;
+  switch (input.event) {
+    case "start":
+      aps = {
+        timestamp: input.timestamp,
+        event: "start",
+        "content-state": contentState,
+        "attributes-type": LIVE_ACTIVITY_ATTRIBUTES_TYPE,
+        attributes: { slot: input.slot },
+        // Ask iOS for the new activity's update token (iOS 18 and later).
+        "input-push-token": 1,
+        alert: LIVE_ACTIVITY_START_ALERT,
+      };
+      break;
+    case "update":
+      aps = { timestamp: input.timestamp, event: "update", "content-state": contentState };
+      break;
+    case "end":
+      aps = {
+        timestamp: input.timestamp,
+        event: "end",
+        "content-state": contentState,
+        "dismissal-date": input.timestamp + LIVE_ACTIVITY_DISMISSAL_SECONDS,
+      };
+      break;
+  }
+  return {
+    environment: input.environment,
+    deviceToken: input.token,
+    headers,
+    payload: JSON.stringify({ aps }),
+  };
+}
+
 /** APNs answers that mean the token will never work again: the relay forgets it. */
 export function isRetiredToken(result: ApnsResult): boolean {
   if (result.status === 410) return true;

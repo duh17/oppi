@@ -143,6 +143,7 @@ function normalizePushRegistration(value: unknown): PushRegistration | undefined
     publicKey: value.publicKey as string,
     sendToken: value.sendToken as string,
     registeredAt,
+    ...(value.liveActivity === true ? { liveActivity: true } : {}),
   };
 }
 

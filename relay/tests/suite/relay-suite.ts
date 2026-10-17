@@ -94,13 +94,53 @@ export async function registerUnattested(
 export async function mintSendToken(
   harness: RelayHarness,
   registration: { registrationId: string; registrationSecret: string },
+  liveActivitySlot?: string,
 ): Promise<string> {
   const response = await call(harness, "POST", `/v1/registrations/${registration.registrationId}/permissions`, {
     bearer: registration.registrationSecret,
-    body: {},
+    body: liveActivitySlot ? { liveActivitySlot } : {},
   });
   expect(response.status).toBe(201);
   return response.json.sendToken as string;
+}
+
+export const SLOT = "S".repeat(22);
+export const START_TOKEN = "5".repeat(160);
+export const ACTIVITY_TOKEN = "e".repeat(160);
+
+export async function putLiveActivity(
+  harness: RelayHarness,
+  registration: { registrationId: string; registrationSecret: string },
+  body: unknown,
+): Promise<number> {
+  return (
+    await call(harness, "PUT", `/v1/registrations/${registration.registrationId}/live-activity`, {
+      bearer: registration.registrationSecret,
+      body,
+    })
+  ).status;
+}
+
+export function liveActivity(
+  harness: RelayHarness,
+  sendToken: string,
+  body: Record<string, unknown>,
+): ReturnType<typeof call> {
+  return call(harness, "POST", "/v1/live-activity", {
+    bearer: sendToken,
+    body: { timestamp: Math.floor(Date.now() / 1000), ...body },
+  });
+}
+
+/** A phone with a start token, one server's permission naming `SLOT`, and that send token. */
+export async function liveActivityPhone(
+  harness: RelayHarness,
+  apnsToken = APNS_TOKEN,
+): Promise<{ registration: { registrationId: string; registrationSecret: string }; sendToken: string }> {
+  const registration = await registerUnattested(harness, "sandbox", apnsToken);
+  const sendToken = await mintSendToken(harness, registration, SLOT);
+  expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities: [] })).toBe(204);
+  return { registration, sendToken };
 }
 
 export function defineRelaySuite(name: string, start: () => Promise<RelayHarness>): void {
@@ -371,6 +411,208 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
         })).status,
       ).toBe(204);
       expect((await call(harness, "POST", "/v1/push", { bearer: second, body: { envelope: fakeEnvelope() } })).status).toBe(410);
+    });
+
+    it("starts, updates, and ends a Live Activity from the fixed template", async () => {
+      const { registration, sendToken } = await liveActivityPhone(harness);
+      const timestamp = Math.floor(Date.now() / 1000);
+
+      expect(await liveActivity(harness, sendToken, { event: "start", running: 3, needsYou: 1, timestamp })).toMatchObject({
+        status: 200,
+        json: { ok: true },
+      });
+      const [start] = harness.apnsRequests;
+      expect(start?.host).toBe("api.sandbox.push.apple.com");
+      expect(start?.path).toBe(`/3/device/${START_TOKEN}`);
+      expect(start?.headers).toMatchObject({
+        "apns-push-type": "liveactivity",
+        "apns-topic": `${BUNDLE_ID}.push-type.liveactivity`,
+        "apns-priority": "10",
+      });
+      expect(start?.headers).not.toHaveProperty("apns-collapse-id");
+      expect(JSON.parse(start?.payload ?? "{}")).toEqual({
+        aps: {
+          timestamp,
+          event: "start",
+          "content-state": { running: 3, needsYou: 1 },
+          "attributes-type": "OppiActivityAttributes",
+          attributes: { slot: SLOT },
+          "input-push-token": 1,
+          alert: { title: "Oppi", body: "Agents are working." },
+        },
+      });
+
+      // No update token until the phone reports the started activity's.
+      expect(await liveActivity(harness, sendToken, { event: "update", running: 2, needsYou: 1 })).toMatchObject({
+        status: 409,
+        json: { error: "no_activity" },
+      });
+      expect(
+        await putLiveActivity(harness, registration, {
+          startToken: START_TOKEN,
+          activities: [{ slot: SLOT, token: ACTIVITY_TOKEN }],
+        }),
+      ).toBe(204);
+
+      expect((await liveActivity(harness, sendToken, { event: "update", running: 2, needsYou: 0, timestamp })).status).toBe(200);
+      const update = harness.apnsRequests[1];
+      expect(update?.path).toBe(`/3/device/${ACTIVITY_TOKEN}`);
+      expect(update?.headers["apns-priority"]).toBe("5");
+      expect(JSON.parse(update?.payload ?? "{}")).toEqual({
+        aps: { timestamp, event: "update", "content-state": { running: 2, needsYou: 0 } },
+      });
+
+      expect((await liveActivity(harness, sendToken, { event: "end", running: 0, needsYou: 0, timestamp })).status).toBe(200);
+      const end = harness.apnsRequests[2];
+      expect(end?.path).toBe(`/3/device/${ACTIVITY_TOKEN}`);
+      expect(end?.headers["apns-priority"]).toBe("10");
+      expect(JSON.parse(end?.payload ?? "{}")).toEqual({
+        aps: {
+          timestamp,
+          event: "end",
+          "content-state": { running: 0, needsYou: 0 },
+          "dismissal-date": timestamp + 30,
+        },
+      });
+      // The ended activity takes no more updates.
+      expect((await liveActivity(harness, sendToken, { event: "update", running: 1, needsYou: 0 })).status).toBe(409);
+      expect(harness.apnsRequests).toHaveLength(3);
+    });
+
+    it("accepts only the fixed Live Activity schema", async () => {
+      const { sendToken } = await liveActivityPhone(harness);
+      const send = (body: Record<string, unknown>) => liveActivity(harness, sendToken, body);
+      const now = Math.floor(Date.now() / 1000);
+      for (const body of [
+        { event: "pause", running: 1, needsYou: 0 },
+        { event: "start", running: 100, needsYou: 0 },
+        { event: "start", running: -1, needsYou: 2 },
+        { event: "start", running: 1.5, needsYou: 0 },
+        { event: "start", running: "1", needsYou: 0 },
+        { event: "start", running: 1 },
+        { event: "start", running: 0, needsYou: 0 },
+        { event: "update", running: 0, needsYou: 0 },
+        { event: "end", running: 1, needsYou: 0 },
+        { event: "start", running: 1, needsYou: 0, timestamp: now - 301 },
+        { event: "start", running: 1, needsYou: 0, timestamp: now + 301 },
+        { event: "start", running: 1, needsYou: 0, timestamp: (now + 0.5) },
+        { event: "start", running: 1, needsYou: 0, timestamp: String(now) },
+      ]) {
+        expect((await send(body)).json.error, JSON.stringify(body)).toBe("bad_request");
+      }
+      for (const extra of [{ alert: { title: "Approve the deploy" } }, { title: "x" }, { slot: SLOT }, { priority: 10 }]) {
+        expect((await send({ event: "start", running: 1, needsYou: 0, ...extra })).json.error).toBe("unknown_field");
+      }
+      expect(harness.apnsRequests).toHaveLength(0);
+      expect((await call(harness, "POST", "/v1/live-activity", { body: { event: "end", running: 0, needsYou: 0, timestamp: now } })).status).toBe(401);
+    });
+
+    it("answers 409 without charging when there is no token to push to", async () => {
+      const noSlot = await mintSendToken(harness, await registerUnattested(harness));
+      expect((await liveActivity(harness, noSlot, { event: "start", running: 1, needsYou: 0 })).json.error).toBe("no_activity");
+
+      const registration = await registerUnattested(harness);
+      const sendToken = await mintSendToken(harness, registration, SLOT);
+      expect((await liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 })).json.error).toBe("no_activity");
+      expect(await putLiveActivity(harness, registration, { startToken: null, activities: [] })).toBe(204);
+      for (const event of ["start", "update"]) {
+        expect((await liveActivity(harness, sendToken, { event, running: 1, needsYou: 0 })).status).toBe(409);
+      }
+      expect((await liveActivity(harness, sendToken, { event: "end", running: 0, needsYou: 0 })).status).toBe(409);
+      expect(harness.apnsRequests).toHaveLength(0);
+
+      // None of those spent the Live Activity quota.
+      expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities: [] })).toBe(204);
+      for (let index = 0; index < DEFAULT_QUOTA_LIMITS.liveActivityPerMinute; index += 1) {
+        expect((await liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 })).status).toBe(200);
+      }
+    });
+
+    it("counts Live Activity pushes apart from alerts", async () => {
+      const { sendToken } = await liveActivityPhone(harness);
+      const start = () => liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 });
+      const alert = () => call(harness, "POST", "/v1/push", { bearer: sendToken, body: { envelope: fakeEnvelope() } });
+      for (let index = 0; index < DEFAULT_QUOTA_LIMITS.liveActivityPerMinute; index += 1) {
+        expect((await start()).status).toBe(200);
+      }
+      const limited = await start();
+      expect(limited).toMatchObject({ status: 429, json: { error: "quota_exceeded" } });
+      expect(Number(limited.headers.get("retry-after"))).toBeGreaterThanOrEqual(1);
+      // A Live Activity at its limit leaves every alert.
+      for (let index = 0; index < DEFAULT_QUOTA_LIMITS.perMinute; index += 1) {
+        expect((await alert()).status).toBe(200);
+      }
+      expect((await alert()).status).toBe(429);
+
+      // And alerts at their limit leave the Live Activity's own count alone.
+      const other = await liveActivityPhone(harness, "b".repeat(64));
+      for (let index = 0; index < DEFAULT_QUOTA_LIMITS.perMinute; index += 1) {
+        expect((await call(harness, "POST", "/v1/push", { bearer: other.sendToken, body: { envelope: fakeEnvelope() } })).status).toBe(200);
+      }
+      expect((await liveActivity(harness, other.sendToken, { event: "start", running: 1, needsYou: 0 })).status).toBe(200);
+    });
+
+    it("keeps a phone's Live Activity counts when it registers again", async () => {
+      const first = await liveActivityPhone(harness);
+      const start = (sendToken: string) => liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 });
+      for (let index = 0; index < DEFAULT_QUOTA_LIMITS.liveActivityPerMinute; index += 1) {
+        expect((await start(first.sendToken)).status).toBe(200);
+      }
+      const second = await liveActivityPhone(harness);
+      expect((await start(second.sendToken)).status).toBe(429);
+    });
+
+    it.each([
+      [410, "Unregistered"],
+      [400, "BadDeviceToken"],
+    ])("forgets only the Live Activity token when APNs answers %i %s", async (status, reason) => {
+      const { registration, sendToken } = await liveActivityPhone(harness);
+      expect(
+        await putLiveActivity(harness, registration, {
+          startToken: START_TOKEN,
+          activities: [{ slot: SLOT, token: ACTIVITY_TOKEN }],
+        }),
+      ).toBe(204);
+      harness.respondApns(() => ({ status, reason }));
+      expect(await liveActivity(harness, sendToken, { event: "update", running: 1, needsYou: 0 })).toMatchObject({
+        status: 409,
+        json: { error: "no_activity" },
+      });
+      harness.respondApns(() => ({ status: 200 }));
+      expect((await liveActivity(harness, sendToken, { event: "update", running: 1, needsYou: 0 })).status).toBe(409);
+      // The start token and the alert registration still work.
+      expect((await liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 })).status).toBe(200);
+      expect((await call(harness, "POST", "/v1/push", { bearer: sendToken, body: { envelope: fakeEnvelope() } })).status).toBe(200);
+    });
+
+    it("takes the phone's Live Activity tokens only in the fixed shape, with its secret", async () => {
+      const registration = await registerUnattested(harness);
+      const put = (body: unknown) => putLiveActivity(harness, registration, body);
+      expect(await put({ startToken: START_TOKEN, activities: [{ slot: SLOT, token: ACTIVITY_TOKEN }] })).toBe(204);
+      for (const body of [
+        { startToken: START_TOKEN },
+        { activities: [] },
+        { startToken: "XYZ", activities: [] },
+        { startToken: START_TOKEN, activities: [{ slot: "short", token: ACTIVITY_TOKEN }] },
+        { startToken: START_TOKEN, activities: [{ slot: SLOT, token: "nothex" }] },
+        { startToken: START_TOKEN, activities: [{ slot: SLOT, token: ACTIVITY_TOKEN }, { slot: SLOT, token: START_TOKEN }] },
+        { startToken: START_TOKEN, activities: Array.from({ length: 17 }, (_, index) => ({ slot: `${String(index).padStart(2, "0")}${"S".repeat(20)}`, token: ACTIVITY_TOKEN })) },
+      ]) {
+        expect(await put(body), JSON.stringify(body).slice(0, 80)).toBe(400);
+      }
+      expect(await put({ startToken: null, activities: [{ slot: SLOT, token: ACTIVITY_TOKEN, name: "x" }] })).toBe(400);
+      expect(
+        (await call(harness, "PUT", `/v1/registrations/${registration.registrationId}/live-activity`, {
+          bearer: "wrong",
+          body: { startToken: null, activities: [] },
+        })).status,
+      ).toBe(401);
+      expect(
+        (await call(harness, "POST", `/v1/registrations/${registration.registrationId}/permissions`, {
+          bearer: registration.registrationSecret,
+          body: { liveActivitySlot: "not a slot" },
+        })).status,
+      ).toBe(400);
     });
 
     it("stores and logs no envelope, send token, or client address", async () => {

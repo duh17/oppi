@@ -102,7 +102,7 @@ The chat timeline handles links before UIKit opens them:
 - `http://` and `https://` follow the Browser link-opening setting: Oppi's in-app browser or the external browser.
 - Other schemes fall back to the system default behavior.
 
-Session URLs received from outside the app, including Live Activity taps and cold-launch URLs, keep the external deep-link contract and replace the visible session route.
+Session URLs received from outside the app, including cold-launch URLs, keep the external deep-link contract and replace the visible session route.
 
 An agent can print a link like this in a message:
 

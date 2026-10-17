@@ -616,10 +616,10 @@
     "clients/apple/Oppi/Features/Servers/ServerBadgePage.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Servers/ServerPairedDevicesPage.swift": {
+    "clients/apple/Oppi/Features/Servers/ServerNotificationsSection.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/Servers/ServerPushNotificationsSection.swift": {
+    "clients/apple/Oppi/Features/Servers/ServerPairedDevicesPage.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Servers/ServerSettingsRootView.swift": {

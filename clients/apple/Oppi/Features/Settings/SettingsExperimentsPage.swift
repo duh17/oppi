@@ -12,7 +12,6 @@ struct SettingsExperimentsPage: View {
     @MainActor
     static func enabledCount(sessionThreadsEnabled: Bool) -> Int {
         [
-            ReleaseFeatures.liveActivitiesEnabled && AppPreferences.LiveActivity.isEnabled,
             sessionThreadsEnabled,
             AppPreferences.Experiments.sshTerminalEnabled,
             AppPreferences.Experiments.durableSessionsEnabled,
@@ -22,12 +21,6 @@ struct SettingsExperimentsPage: View {
 
     var body: some View {
         List {
-            if ReleaseFeatures.liveActivitiesEnabled {
-                Section {
-                    Toggle("Live Activities", isOn: liveActivityToggle)
-                }
-            }
-
             Section {
                 Toggle("Session Threads", isOn: Bindable(navigation).sessionThreadsEnabled)
                     .accessibilityIdentifier("settings.sessionThreads")
@@ -61,19 +54,5 @@ struct SettingsExperimentsPage: View {
             }
         }
         .settingsPage("Experiments")
-    }
-
-    private var liveActivityToggle: Binding<Bool> {
-        Binding(
-            get: { AppPreferences.LiveActivity.isEnabled },
-            set: { newValue in
-                guard newValue != AppPreferences.LiveActivity.isEnabled else { return }
-                AppPreferences.LiveActivity.setEnabled(newValue)
-                if newValue {
-                    _ = KeychainService.migrateLegacyServersToSharedGroup()
-                }
-                LiveActivityManager.shared.recoverIfNeeded()
-            }
-        )
     }
 }

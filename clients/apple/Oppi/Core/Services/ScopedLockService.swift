@@ -433,17 +433,14 @@ final class ScopedLockService {
     }
 
     /// A new lock: delivered ask and `done` notifications may show its question
-    /// text or session name, and the Live Activity its session name; all follow
-    /// the lock now.
+    /// text or session name; they follow the lock now. The Live Activity shows
+    /// counts only.
     static func clearContentShownBeforeLock(_ scope: ScopedLockScope) {
         if ReleaseFeatures.localAttentionNotificationsEnabled {
             AttentionNotificationService.shared.removeLockSensitiveNotifications()
             if case .server(let serverId) = scope {
                 AttentionNotificationService.shared.removePairingNotifications(serverId: serverId)
             }
-        }
-        if ReleaseFeatures.liveActivitiesEnabled {
-            LiveActivityManager.shared.recoverIfNeeded()
         }
     }
 }

@@ -8,6 +8,9 @@
  * logs, storage, or APNs output, in any common encoding, while the test receiver opens every
  * captured envelope back to them.
  *
+ * The same run drives the Live Activity (LiveActivityNotifier → PushSender) for a canary-named
+ * session: its APNs requests must be the fixed counts-only template, with no canary either.
+ *
  *   cd server && npx tsx scripts/push-canary.ts [--target node|cloudflare|all] [--write-capture]
  *
  * `--write-capture` records the Node run's APNs payloads in
@@ -37,10 +40,12 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { LiveActivityNotifier, liveActivityCounts } from "../src/live-activity-notifier.js";
 import { PushSender } from "../src/push/push-sender.js";
 import { ensureIdentityMaterial, identityConfigForDataDir } from "../src/security.js";
 import { SessionPushNotifier } from "../src/session-push-notifier.js";
 import { Storage } from "../src/storage.js";
+import type { Session } from "../src/types.js";
 import { openPushEnvelopeForTest } from "../tests/helpers/push-envelope-open.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -265,6 +270,9 @@ async function startCloudflareRelay(workDir: string): Promise<RelayUnderTest> {
 
 // ─── App side (what the phone does at the relay) ───
 
+/** The phone's random name for this server's Live Activity. */
+const LIVE_ACTIVITY_SLOT = randomBytes(16).toString("base64url");
+
 async function mintSendToken(relay: string): Promise<string> {
   const challenge = (await (await fetch(`${relay}/v1/challenge`, { method: "POST" })).json()) as {
     challenge: string;
@@ -288,10 +296,22 @@ async function mintSendToken(relay: string): Promise<string> {
         authorization: `Bearer ${registration.registrationSecret}`,
         "content-type": "application/json",
       },
-      body: "{}",
+      body: JSON.stringify({ liveActivitySlot: LIVE_ACTIVITY_SLOT }),
     })
   ).json()) as { sendToken?: string };
   if (!permission.sendToken) fail("relay did not mint a send token");
+  const liveActivity = await fetch(
+    `${relay}/v1/registrations/${registration.registrationId}/live-activity`,
+    {
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${registration.registrationSecret}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ startToken: "5".repeat(160), activities: [] }),
+    },
+  );
+  if (liveActivity.status !== 204) fail(`relay refused Live Activity tokens: ${liveActivity.status}`);
   return permission.sendToken;
 }
 
@@ -405,13 +425,62 @@ async function runCanary(
       fail(`${name}: push after re-registration not delivered: ${JSON.stringify(afterReregistration)}`);
     }
 
-    const apns = relay.apns();
-    if (apns.length !== 3) fail(`${name}: expected 3 APNs requests, saw ${apns.length}`);
+    // Live Activity: a canary-named session works while the phone is away.
+    storage.setPushRegistration({ ...reregistered, liveActivity: true });
+    const working = { ...current, programStatus: { state: "working" as const, since: 5 } };
+    const liveSends: Array<Promise<unknown>> = [];
+    const liveSessions: Session[] = [];
+    const liveActivity = new LiveActivityNotifier(
+      {
+        registrations: () => sender.registrations(),
+        sendLiveActivity: (...sendArgs: Parameters<PushSender["sendLiveActivity"]>) => {
+          const result = sender.sendLiveActivity(...sendArgs);
+          liveSends.push(result);
+          return result;
+        },
+      },
+      { isDevicePresent: () => false, counts: () => liveActivityCounts(liveSessions) },
+    );
+    // The phone leaves with nothing running, then the session starts working.
+    liveActivity.presenceChanged(enrolled.deviceId);
+    liveSessions.push(working);
+    liveActivity.countsChanged();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    liveActivity.stop();
+    const liveResults = (await Promise.all(liveSends)) as Array<{ status: string } | null>;
+    if (liveResults.length !== 1 || liveResults[0]?.status !== "delivered") {
+      fail(`${name}: expected 1 delivered Live Activity start, got ${JSON.stringify(liveResults)}`);
+    }
+
+    const all = relay.apns();
+    const apns = all.filter((request) => request.headers["apns-push-type"] === "alert");
+    const liveApns = all.filter((request) => request.headers["apns-push-type"] === "liveactivity");
+    if (apns.length !== 3) fail(`${name}: expected 3 alert APNs requests, saw ${apns.length}`);
+    if (liveApns.length !== 1) {
+      fail(`${name}: expected 1 Live Activity APNs request, saw ${liveApns.length}`);
+    }
+    const liveAps = (JSON.parse(liveApns[0]?.payload ?? "{}") as { aps?: Record<string, unknown> })
+      .aps;
+    const expectedLiveAps = {
+      timestamp: liveAps?.timestamp,
+      event: "start",
+      "content-state": { running: 1, needsYou: 0 },
+      "attributes-type": "OppiActivityAttributes",
+      attributes: { slot: LIVE_ACTIVITY_SLOT },
+      "input-push-token": 1,
+      alert: { title: "Oppi", body: "Agents are working." },
+    };
+    if (
+      typeof liveAps?.timestamp !== "number" ||
+      JSON.stringify(liveAps) !== JSON.stringify(expectedLiveAps)
+    ) {
+      fail(`${name}: Live Activity payload is not the fixed counts-only template`);
+    }
     const surfaces = {
       "relay input": proxy.input(),
       "relay logs": relay.logs(),
       "relay storage": relay.storage(),
-      "APNs output": JSON.stringify(apns),
+      "APNs output": JSON.stringify(all),
     };
     for (const [surface, text] of Object.entries(surfaces)) {
       for (const [label, canary] of Object.entries(canaries)) {
@@ -449,7 +518,7 @@ async function runCanary(
       if (!decrypted.includes(canary)) fail(`${name}: ${label} canary did not survive encryption`);
     }
     console.log(
-      `PASS ${name}: 3 pushes (1 after re-registering the same key); canaries absent from relay input (${surfaces["relay input"].length} B), logs (${surfaces["relay logs"].length} B), storage (${surfaces["relay storage"].length} B), APNs output (${surfaces["APNs output"].length} B); all 3 envelopes open to them`,
+      `PASS ${name}: 3 pushes (1 after re-registering the same key) and 1 counts-only Live Activity start; canaries absent from relay input (${surfaces["relay input"].length} B), logs (${surfaces["relay logs"].length} B), storage (${surfaces["relay storage"].length} B), APNs output (${surfaces["APNs output"].length} B); all 3 envelopes open to them`,
     );
     return {
       canaries,

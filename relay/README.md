@@ -5,6 +5,10 @@ Notification service (APNs). Apple accepts pushes for an app only from the devel
 signs it, so the relay holds that team's APNs key; Oppi servers hold only a per-device send
 token. The relay never sees a push key or push content and contains no decryption code.
 
+It also carries Oppi's Live Activity: a counts-only card ("3 running · 1 needs you") that a server
+starts, updates, and ends while the phone is away. Those pushes carry two integers the relay
+validates and puts into a fixed ActivityKit template; nothing else from the server reaches APNs.
+
 The protocol, the envelope, and the threat model are in
 [protocol/push/spec.md](../protocol/push/spec.md). This package implements relay API v1.
 
@@ -15,6 +19,8 @@ The protocol, the envelope, and the threat model are in
 | Device registration | APNs token, sandbox or production, App Attest attestation | Token, environment, App Attest public key and counter, `SHA-256` of the registration secret |
 | Send permissions | — | Permission ID and `SHA-256` of its secret, up to 16 per registration |
 | Each push | Server IP address, time, a 641-byte envelope it cannot open, an optional collapse ID | Daily and per-minute counts only |
+| Live Activity tokens | ActivityKit push-to-start token, one update token per live activity, the phone's random per-server slot | The tokens, slots, and when each update token first arrived |
+| Each Live Activity push | Server IP address, time, `start`/`update`/`end`, the running and needs-you counts | Its own daily and per-minute counts only |
 
 No envelopes, IP addresses, request bodies, or request logs are stored. Logs carry event names
 and status codes only. Client addresses feed in-memory rate limits and are never written down.
@@ -24,6 +30,12 @@ A registration is deleted when APNs reports its token retired (`410`, `400 BadDe
 The APNs request is fixed: `apns-push-type: alert`, priority 10, the configured topic, an
 expiration of at most an hour, and the payload
 `{"aps":{"alert":{"title":"Oppi","body":"You have a new notification."},"mutable-content":1},"e":"<envelope>"}`.
+
+Live Activity requests are fixed too: `apns-push-type: liveactivity`, topic
+`<bundle ID>.push-type.liveactivity`, priority 5 for updates and 10 for start and end, and an
+`aps` built only from the event, the two counts, the timestamp, and the phone's slot; `start`
+adds the fixed alert `Oppi` / `Agents are working.` that Apple requires. An APNs answer that
+retires a Live Activity token clears that token only; the registration stays. See spec §3.6.
 
 ## Limits and why they are set this way
 
@@ -37,7 +49,9 @@ stays inside the free plan:
 | Pushes per phone per UTC day | 100 with App Attest; 20 for sandbox registrations without it |
 | Pushes per phone per minute | 10 |
 | Registrations per phone | 1 per APNs token; registering again keeps the day's counts |
-| Pushes per client address per minute | 60, checked before any send token is looked up |
+| Live Activity updates per phone per UTC day | 40 with App Attest; 20 for sandbox registrations without it, counted apart from alerts |
+| Live Activity updates per phone per minute | 3 |
+| Pushes and Live Activity updates per client address per minute | 60 together, checked before any send token is looked up |
 | Registrations without App Attest | sandbox only, 5 per client address per hour |
 | Challenge and registration requests | 3 per client address per 10 seconds (Cloudflare rate limiting rule) |
 

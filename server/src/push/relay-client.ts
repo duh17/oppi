@@ -25,6 +25,23 @@ export interface RelayPushRequest {
   ttl?: number;
 }
 
+/**
+ * A Live Activity push (spec "Live Activity"): an event and two counts, nothing else. The
+ * relay builds the APNs payload from a fixed template.
+ */
+export interface LiveActivityPush {
+  event: "start" | "update" | "end";
+  running: number;
+  needsYou: number;
+  /** Unix seconds. */
+  timestamp: number;
+}
+
+export type LiveActivitySendResult =
+  | RelaySendResult
+  /** The relay holds no token for this event: no slot, start token, or live activity. */
+  | { status: "no_activity" };
+
 export interface RelayClientOptions {
   fetch?: typeof fetch;
   timeoutMs?: number;
@@ -64,6 +81,34 @@ export class RelayClient {
         status: "rejected",
         httpStatus: response.status,
         error: await errorCode(response),
+        ...(response.status === 429 && Number.isInteger(retryAfterSeconds) && retryAfterSeconds > 0
+          ? { retryAfterSeconds }
+          : {}),
+      };
+    }
+    return { status: "unavailable" };
+  }
+
+  async liveActivity(sendToken: string, push: LiveActivityPush): Promise<LiveActivitySendResult> {
+    // Field by field, so nothing but the fixed schema can reach the relay.
+    const body = JSON.stringify({
+      event: push.event,
+      running: push.running,
+      needsYou: push.needsYou,
+      timestamp: push.timestamp,
+    });
+    for (const [index, origin] of this.origins.entries()) {
+      const response = await this.request(origin, "/v1/live-activity", "POST", sendToken, body);
+      if (!response || response.status >= 500) continue;
+      if (response.status === 200) return { status: "delivered" };
+      if (response.status === 410) return { status: "gone", prune: index === 0 };
+      const error = await errorCode(response);
+      if (response.status === 409 && error === "no_activity") return { status: "no_activity" };
+      const retryAfterSeconds = Number(response.headers.get("retry-after") ?? "");
+      return {
+        status: "rejected",
+        httpStatus: response.status,
+        error,
         ...(response.status === 429 && Number.isInteger(retryAfterSeconds) && retryAfterSeconds > 0
           ? { retryAfterSeconds }
           : {}),

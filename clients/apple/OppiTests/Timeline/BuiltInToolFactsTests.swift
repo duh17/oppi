@@ -25,10 +25,6 @@ struct BuiltInToolFactsTests {
             expandedTurnIDs: [], toolInspection: { reducer.toolInspection(for: $0) })
         guard case .quietWork(let line) = projection.rows.first else { Issue.record("Expected terminal bucket"); return }
         #expect(line.buckets == [.init(kind: .terminal, count: 1)])
-        let manager = LiveActivityManager()
-        manager.sync(connectionId: "c", sessions: [makeTestSession(id: "s", status: .busy)])
-        manager.recordEvent(connectionId: "c", event: .toolStart(sessionId: "s", toolEventId: "t", tool: "bash", args: args))
-        #expect(manager.currentState.primaryLastActivity == inspection.activityLabel)
     }
 
     @Test func oldServerReadUsesNativeCodeAndRange() {

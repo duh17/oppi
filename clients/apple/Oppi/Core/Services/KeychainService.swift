@@ -174,22 +174,6 @@ enum KeychainService {
         return discovered
     }
 
-    /// Explicitly migrate legacy keychain entries into the shared group.
-    /// Call this when the user enables Live Activities.
-    @discardableResult
-    static func migrateLegacyServersToSharedGroup() -> Int {
-        var migratedCount = 0
-        for server in discoverServersAnyGroup() where migrateToSharedGroupIfNeeded(server) {
-            migratedCount += 1
-        }
-
-        if migratedCount > 0 {
-            logger.error("Found \(migratedCount) server(s) in legacy keychain group, re-saving to shared group")
-        }
-
-        return migratedCount
-    }
-
     /// Load a single server by fingerprint ID.
     /// Tries shared group first, falls back to any-group.
     static func loadServer(id: String) -> PairedServer? {

@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SealedPushEnvelope } from "../src/push/envelope.js";
-import { PUSH_DEVICE_BUDGET, PushSender } from "../src/push/push-sender.js";
+import {
+  LIVE_ACTIVITY_DEVICE_BUDGET,
+  PUSH_DEVICE_BUDGET,
+  PushSender,
+} from "../src/push/push-sender.js";
 import { RelayClient } from "../src/push/relay-client.js";
 import { Storage } from "../src/storage.js";
 import { openPushEnvelopeForTest } from "./helpers/push-envelope-open.js";
@@ -288,6 +292,74 @@ describe("PushSender", () => {
       expect(calls).toHaveLength(1);
       clock += 1_000;
       expect(await sendMany(push, 1, notification)).toEqual(["delivered"]);
+    });
+  });
+
+  describe("Live Activity", () => {
+    let clock: number;
+    const update = { event: "update" as const, running: 2, needsYou: 1, timestamp: 1_760_000_000 };
+
+    function liveActivitySender(fetchImpl: typeof fetch, liveActivity = true): PushSender {
+      storage.updateConfig({ push: { mode: "relay", relays: [PRIMARY] } });
+      storage.setPushRegistration({
+        deviceId,
+        keyId: vectors.recipient.keyId,
+        publicKey: vectors.recipient.publicKey,
+        sendToken: "osp1.r_a.p_a.secret-a",
+        ...(liveActivity ? { liveActivity: true } : {}),
+      });
+      return new PushSender(storage, { signingKey: signing.privateKey, fetch: fetchImpl, now: () => clock });
+    }
+
+    beforeEach(() => {
+      clock = Date.parse("2026-10-17T12:00:00Z");
+    });
+
+    it("posts only the fixed schema, and only to devices that accept Live Activities", async () => {
+      const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
+      const off = liveActivitySender(fetchImpl, false);
+      expect(await off.sendLiveActivity(off.registrations()[0]!, update)).toBeNull();
+      expect(calls).toHaveLength(0);
+
+      const push = liveActivitySender(fetchImpl);
+      const extra = { ...update, title: "Deploy" } as typeof update;
+      expect(await push.sendLiveActivity(push.registrations()[0]!, extra)).toEqual({ status: "delivered" });
+      expect(calls[0]?.url).toBe(`${PRIMARY}/v1/live-activity`);
+      expect(calls[0]?.authorization).toBe("Bearer osp1.r_a.p_a.secret-a");
+      expect(calls[0]?.body).toEqual({ event: "update", running: 2, needsYou: 1, timestamp: 1_760_000_000 });
+    });
+
+    it("reads a relay 409 no_activity as no card, not a refusal", async () => {
+      const { fetchImpl } = relayFetch({
+        [PRIMARY]: () => new Response(JSON.stringify({ error: "no_activity" }), { status: 409 }),
+      });
+      const push = liveActivitySender(fetchImpl);
+      expect(await push.sendLiveActivity(push.registrations()[0]!, update)).toEqual({ status: "no_activity" });
+      expect(storage.getPushRegistrations()).toHaveLength(1);
+    });
+
+    it("spends its own daily budget, keeping room to start and end, apart from alerts", async () => {
+      const { fetchImpl, calls } = relayFetch({ [PRIMARY]: ok });
+      const push = liveActivitySender(fetchImpl);
+      const [registration] = push.registrations();
+      if (!registration) throw new Error("missing registration");
+      const results: string[] = [];
+      for (let index = 0; index <= LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay; index += 1) {
+        results.push((await push.sendLiveActivity(registration, update))?.status ?? "none");
+      }
+      expect(results.at(-1)).toBe("throttled");
+      expect(results.filter((status) => status === "delivered")).toHaveLength(LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay);
+      const end = { event: "end" as const, running: 0, needsYou: 0, timestamp: 1_760_000_000 };
+      for (let index = LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay; index < LIVE_ACTIVITY_DEVICE_BUDGET.perDay; index += 1) {
+        expect((await push.sendLiveActivity(registration, end))?.status).toBe("delivered");
+      }
+      expect((await push.sendLiveActivity(registration, end))?.status).toBe("throttled");
+      expect(calls).toHaveLength(LIVE_ACTIVITY_DEVICE_BUDGET.perDay);
+
+      // Alerts keep their whole budget.
+      expect((await push.send(registration, notification))?.status).toBe("delivered");
+      clock = Date.parse("2026-10-18T00:00:00Z");
+      expect((await push.sendLiveActivity(registration, update))?.status).toBe("delivered");
     });
   });
 });

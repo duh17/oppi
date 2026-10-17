@@ -194,35 +194,11 @@ struct ScreenshotPreviewView: View {
         case "audio-script-reader":
             AudioScriptReaderPreview()
         case "live-activity-working":
-            LiveActivityPreviewScreen(
-                title: "Live Activity — Working",
-                state: .workingPreview,
-                isStale: false
-            )
-        case "live-activity-blocked":
-            LiveActivityPreviewScreen(
-                title: "Live Activity — Needs Approval",
-                state: .blockedPreview,
-                isStale: false
-            )
-        case "live-activity-awaiting":
-            LiveActivityPreviewScreen(
-                title: "Live Activity — Awaiting Reply",
-                state: .awaitingReplyPreview,
-                isStale: false
-            )
-        case "live-activity-stale-awaiting":
-            LiveActivityPreviewScreen(
-                title: "Live Activity — Stale Awaiting Reply",
-                state: .awaitingReplyPreview,
-                isStale: true
-            )
+            LiveActivityPreviewScreen(title: "Live Activity: Running", state: .init(running: 3, needsYou: 0))
+        case "live-activity-needs-you":
+            LiveActivityPreviewScreen(title: "Live Activity: Needs You", state: .init(running: 3, needsYou: 1))
         case "live-activity-done":
-            LiveActivityPreviewScreen(
-                title: "Live Activity — Done",
-                state: .donePreview,
-                isStale: false
-            )
+            LiveActivityPreviewScreen(title: "Live Activity: All Done", state: .init(running: 0, needsYou: 0))
         case "metal-orbs":
             MetalOrbScreenshotPreview()
         case "workspace-shell":
@@ -581,70 +557,6 @@ private struct AudioFilePlayerScreenshotPreview: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("screenshot.ready")
     }
-}
-
-private extension PiSessionAttributes.ContentState {
-    static let workingPreview = Self(
-        primaryPhase: .working,
-        primarySessionId: "session-working",
-        primarySessionName: "Refactor Timeline",
-        primaryTool: "Edit",
-        primaryLastActivity: "Running Edit",
-        totalActiveSessions: 2,
-        sessionsAwaitingReply: 0,
-        sessionsWorking: 2,
-        primaryMutatingToolCalls: 3,
-        primaryFilesChanged: 2,
-        primaryAddedLines: 48,
-        primaryRemovedLines: 12,
-        sessionStartDate: Date().addingTimeInterval(-97)
-    )
-
-    static let blockedPreview = Self(
-        primaryPhase: .blocked,
-        primarySessionId: "session-blocked",
-        primarySessionName: "Migrate Database",
-        primaryTool: nil,
-        primaryLastActivity: "Needs approval",
-        totalActiveSessions: 3,
-        sessionsAwaitingReply: 0,
-        sessionsWorking: 2,
-        sessionsBlocked: 1,
-        primaryBlockedKind: "permission",
-        sessionStartDate: nil
-    )
-
-    static let awaitingReplyPreview = Self(
-        primaryPhase: .awaitingReply,
-        primarySessionId: "session-awaiting",
-        primarySessionName: "Deploy Server",
-        primaryTool: nil,
-        primaryLastActivity: "Waiting for your next instruction",
-        totalActiveSessions: 1,
-        sessionsAwaitingReply: 1,
-        sessionsWorking: 0,
-        primaryMutatingToolCalls: nil,
-        primaryFilesChanged: nil,
-        primaryAddedLines: nil,
-        primaryRemovedLines: nil,
-        sessionStartDate: nil
-    )
-
-    static let donePreview = Self(
-        primaryPhase: .ended,
-        primarySessionId: "session-done",
-        primarySessionName: "Review Release Notes",
-        primaryTool: nil,
-        primaryLastActivity: "Session ended",
-        totalActiveSessions: 0,
-        sessionsAwaitingReply: 0,
-        sessionsWorking: 0,
-        primaryMutatingToolCalls: nil,
-        primaryFilesChanged: nil,
-        primaryAddedLines: nil,
-        primaryRemovedLines: nil,
-        sessionStartDate: nil
-    )
 }
 
 // MARK: - Router modal sites

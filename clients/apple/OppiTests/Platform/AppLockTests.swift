@@ -407,24 +407,6 @@ struct AppLockShareExtensionTests {
 @MainActor
 @Suite("App Lock redaction")
 struct AppLockRedactionTests {
-    @Test func liveActivityNeverShowsSessionTextWhileAppLockIsOn() {
-        let unlockedOff = LiveActivityManager(hidesSessionText: { false })
-        unlockedOff.sync(connectionId: "c1", sessions: [makeTestSession(id: "s1", name: "Secret plan", status: .busy)])
-        #expect(unlockedOff.currentState.primarySessionName == "Secret plan", "App Lock off shows the name")
-
-        let manager = LiveActivityManager(hidesSessionText: { true })
-        manager.sync(connectionId: "c1", sessions: [makeTestSession(id: "s1", name: "Secret plan", status: .busy)])
-        manager.recordEvent(connectionId: "c1", event: .toolStart(
-            sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]
-        ))
-
-        #expect(manager.currentState.primaryPhase == .working)
-        #expect(manager.currentState.totalActiveSessions == 1)
-        #expect(manager.currentState.primarySessionName == "Oppi")
-        #expect(manager.currentState.primaryTool == nil)
-        #expect(manager.currentState.primaryLastActivity == String(localized: "Working"))
-    }
-
     @Test func turningAppLockOnRemovesEverySessionNotificationIncludingRemotePushes() {
         func request(_ identifier: String, category: String, sessionId: String) -> UNNotificationRequest {
             let content = UNMutableNotificationContent()
@@ -522,32 +504,9 @@ struct AppLockContentRaceTests {
         #expect(delivered.identifier == "ask-s-race")
         #expect(delivered.body == String(localized: "Open Oppi to answer a question."))
     }
-
-    @Test func turningAppLockOnRedactsTheLiveActivityAndInFlightUpdates() {
-        let lock = Flag()
-        let manager = LiveActivityManager(hidesSessionText: { lock.value })
-        manager.sync(connectionId: "c1", sessions: [makeTestSession(id: "s1", name: "Secret plan", status: .busy)])
-        let queued = manager.currentState
-        #expect(queued.primarySessionName == "Secret plan")
-
-        lock.value = true
-        manager.endAllForAppLock()
-
-        #expect(manager.currentState.primarySessionName == "Oppi")
-        // An update queued before the switch is re-checked before delivery.
-        let delivered = LiveActivityManager.stateForDelivery(queued, hidesSessionText: true)
-        #expect(delivered.primarySessionName == "Oppi")
-        #expect(delivered.primaryTool == nil)
-        #expect(delivered.totalActiveSessions == queued.totalActiveSessions)
-    }
 }
 
 // MARK: - Test doubles
-
-@MainActor
-private final class Flag {
-    var value = false
-}
 
 @MainActor
 private final class TestClock {

@@ -10,7 +10,12 @@ import { safeErrorMessage } from "../log-utils.js";
 import type { ServerMetricCollector } from "../server-metric-collector.js";
 import type { PushRegistration, ServerConfig } from "../types.js";
 import { type PushPlaintext, type PushSubject, sealPushEnvelope } from "./envelope.js";
-import { RelayClient, type RelaySendResult } from "./relay-client.js";
+import {
+  type LiveActivityPush,
+  type LiveActivitySendResult,
+  RelayClient,
+  type RelaySendResult,
+} from "./relay-client.js";
 
 const log = createLogger({ base: { component: "push" } });
 
@@ -67,6 +72,49 @@ class DeviceBudget {
     if (usage.dayCount >= perDay || usage.minuteCount >= perMinute) return false;
     usage.dayCount += 1;
     usage.minuteCount += 1;
+    return true;
+  }
+
+  pause(deviceId: string, until: number): void {
+    const usage = this.usage.get(deviceId);
+    if (usage) usage.pausedUntil = Math.max(usage.pausedUntil, until);
+  }
+}
+
+/**
+ * Live Activity pushes one device may get from this server a UTC day, apart from alerts
+ * (spec "Live Activity"), matching the relay's per-phone Live Activity quota. Updates stop
+ * at the lower number so a busy day still leaves room to start and end the card.
+ */
+export const LIVE_ACTIVITY_DEVICE_BUDGET = {
+  perDay: 40,
+  updatesPerDay: 32,
+} as const;
+
+/** In memory, like `DeviceBudget`; the relay enforces its own quota as well. */
+class LiveActivityBudget {
+  private readonly usage = new Map<
+    string,
+    { day: string; dayCount: number; pausedUntil: number }
+  >();
+
+  take(deviceId: string, isUpdate: boolean, now: number): boolean {
+    const day = new Date(now).toISOString().slice(0, 10);
+    let usage = this.usage.get(deviceId);
+    if (!usage) {
+      usage = { day, dayCount: 0, pausedUntil: 0 };
+      this.usage.set(deviceId, usage);
+    }
+    if (now < usage.pausedUntil) return false;
+    if (usage.day !== day) {
+      usage.day = day;
+      usage.dayCount = 0;
+    }
+    const limit = isUpdate
+      ? LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay
+      : LIVE_ACTIVITY_DEVICE_BUDGET.perDay;
+    if (usage.dayCount >= limit) return false;
+    usage.dayCount += 1;
     return true;
   }
 
@@ -173,6 +221,7 @@ function pushPlaintext(notification: PushNotification, ts: number): PushPlaintex
 export class PushSender {
   private readonly now: () => number;
   private readonly budget = new DeviceBudget();
+  private readonly liveActivityBudget = new LiveActivityBudget();
 
   constructor(
     private readonly storage: PushSenderStorage,
@@ -200,17 +249,7 @@ export class PushSender {
     notification: PushNotification,
   ): Promise<RelaySendResult | { status: "failed" } | { status: "throttled" } | null> {
     const relays = this.relays();
-    if (!relays) return null;
-    // A device revoked or re-registered since the caller listed registrations gets nothing.
-    const current = this.storage
-      .getPushRegistrations()
-      .some(
-        (entry) =>
-          entry.deviceId === registration.deviceId &&
-          entry.keyId === registration.keyId &&
-          entry.sendToken === registration.sendToken,
-      );
-    if (!current) return null;
+    if (!relays || !this.isCurrent(registration)) return null;
     const startedAt = this.now();
     const waitsOnUser =
       notification.event === "blocked" || notification.event === "pairing_approval";
@@ -246,10 +285,70 @@ export class PushSender {
     if (result.status === "rejected" && result.retryAfterSeconds !== undefined) {
       this.budget.pause(registration.deviceId, this.now() + result.retryAfterSeconds * 1000);
     }
+    this.settle(registration, result, startedAt, notification.event);
+    return result;
+  }
+
+  /**
+   * Send one Live Activity push to a device that accepts them, within its own budget. Prunes
+   * the registration on a primary `410`, like `send`. Never throws.
+   */
+  async sendLiveActivity(
+    registration: PushRegistration,
+    push: LiveActivityPush,
+  ): Promise<LiveActivitySendResult | { status: "failed" } | { status: "throttled" } | null> {
+    const relays = this.relays();
+    if (!relays || !registration.liveActivity || !this.isCurrent(registration)) return null;
+    const startedAt = this.now();
+    const event = `live_activity_${push.event}`;
+    if (!this.liveActivityBudget.take(registration.deviceId, push.event === "update", startedAt)) {
+      log.info("push.device_budget_exhausted", { alert: event });
+      this.options.metrics?.record("server.push_result", 1, { result: "throttled", event });
+      return { status: "throttled" };
+    }
+    let result: LiveActivitySendResult | { status: "failed" };
+    try {
+      result = await new RelayClient(relays, { fetch: this.options.fetch }).liveActivity(
+        registration.sendToken,
+        push,
+      );
+    } catch (err: unknown) {
+      log.warn("push.seal_or_send_failed", { error: safeErrorMessage(err) });
+      result = { status: "failed" };
+    }
+    if (result.status === "rejected" && result.retryAfterSeconds !== undefined) {
+      this.liveActivityBudget.pause(
+        registration.deviceId,
+        this.now() + result.retryAfterSeconds * 1000,
+      );
+    }
+    this.settle(registration, result, startedAt, event);
+    return result;
+  }
+
+  /** False for a device revoked or re-registered since the caller listed registrations. */
+  private isCurrent(registration: PushRegistration): boolean {
+    return this.storage
+      .getPushRegistrations()
+      .some(
+        (entry) =>
+          entry.deviceId === registration.deviceId &&
+          entry.keyId === registration.keyId &&
+          entry.sendToken === registration.sendToken,
+      );
+  }
+
+  /** Prune on a primary `410`, log what was not delivered, and record the result. */
+  private settle(
+    registration: PushRegistration,
+    result: LiveActivitySendResult | { status: "failed" },
+    startedAt: number,
+    event: string,
+  ): void {
     if (result.status === "gone" && result.prune) {
       this.storage.removePushRegistration(registration.deviceId, registration.sendToken);
       log.info("push.registration_pruned", { device: registration.deviceId });
-    } else if (result.status !== "delivered") {
+    } else if (result.status !== "delivered" && result.status !== "no_activity") {
       log.warn("push.not_delivered", {
         status: result.status,
         ...(result.status === "rejected"
@@ -260,11 +359,7 @@ export class PushSender {
     this.options.metrics?.record("server.push_send_ms", this.now() - startedAt, {
       result: result.status,
     });
-    this.options.metrics?.record("server.push_result", 1, {
-      result: result.status,
-      event: notification.event,
-    });
-    return result;
+    this.options.metrics?.record("server.push_result", 1, { result: result.status, event });
   }
 
   /** Best effort: tell the relay a forgotten registration's permission is no longer used. */

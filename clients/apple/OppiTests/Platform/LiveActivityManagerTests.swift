@@ -1,391 +1,132 @@
 @testable import Oppi
-import ActivityKit
 import Foundation
 import Testing
 
-// MARK: - State Aggregation
-
-@Suite("LiveActivityManager state aggregation", .serialized)
+@Suite("Live Activity counts")
 @MainActor
-struct LiveActivityStateTests {
-
-    @Test("sync busy session produces working phase")
-    @MainActor func syncBusyWorking() {
-        let mgr = LiveActivityManager()
-        let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session])
-
-        #expect(mgr.currentState.primaryPhase == .working)
-        #expect(mgr.currentState.totalActiveSessions == 1)
-        #expect(mgr.currentState.sessionsWorking == 1)
-    }
-
-    @Test("sync busy session carries turn start date")
-    @MainActor func syncBusyCarriesTurnStartDate() {
-        let mgr = LiveActivityManager()
-        let turnStart = Date(timeIntervalSince1970: 1_700_000_123)
-        let session = makeTestSession(id: "s1", status: .busy, currentTurnStartedAt: turnStart)
-
-        mgr.sync(connectionId: "c1", sessions: [session])
-
-        #expect(mgr.currentState.sessionStartDate == turnStart)
-    }
-
-    @Test("sync stopped session produces ended phase")
-    @MainActor func syncStoppedEnded() {
-        let mgr = LiveActivityManager()
-        let session = makeTestSession(id: "s1", status: .stopped)
-        mgr.sync(connectionId: "c1", sessions: [session])
-
-        #expect(mgr.currentState.primaryPhase == .ended)
-        #expect(mgr.currentState.totalActiveSessions == 0)
-    }
-
-    @Test("blocked program status shows its kind and outranks working", arguments: [
-        (ProgramStatusKind.permission, "permission", "Needs approval"),
-        (.question, "question", "Question"),
-        (.auth, "auth", "Sign-in"),
-        (.unknown("device-flow"), "question", "Question"),
-    ])
-    @MainActor func blockedShowsItsKind(kind: ProgramStatusKind, wireKind: String, label: String) {
-        let mgr = LiveActivityManager()
-        let blocked = makeTestSession(
-            id: "blocked",
-            status: .busy,
-            programStatus: ProgramStatus(state: .blocked, kind: kind, since: Date()),
+struct LiveActivityCountsTests {
+    private func session(
+        _ id: String,
+        _ state: ProgramStatusState,
+        kind: ProgramStatusKind? = nil,
+        status: SessionStatus = .busy,
+        parent: String? = nil
+    ) -> Session {
+        var session = makeTestSession(
+            id: id,
+            status: status,
+            programStatus: ProgramStatus(state: state, kind: kind, since: Date()),
             messageCount: 2,
             firstMessage: "go"
         )
-        let working = makeTestSession(id: "working", status: .busy, messageCount: 2, firstMessage: "go")
-
-        mgr.sync(connectionId: "c1", sessions: [working, blocked])
-
-        #expect(mgr.currentState.primaryPhase == .blocked)
-        #expect(mgr.currentState.primarySessionId == "blocked")
-        #expect(mgr.currentState.primaryBlockedKind == wireKind)
-        #expect(mgr.currentState.sessionsBlocked == 1)
-        #expect(mgr.currentState.sessionsWorking == 1)
-        #expect(LiveActivityPresentation.statusLabel(mgr.currentState) == label)
+        session.parentSessionId = parent
+        return session
     }
 
-    @Test("unseen done is green Done; a seen outcome and idle are not")
-    @MainActor func unseenDoneIsGreenAndSeenIsNot() {
-        let mgr = LiveActivityManager()
-        let since = Date()
-        let done = makeTestSession(
-            id: "done",
-            status: .ready,
-            lastActivity: since,
-            programStatus: ProgramStatus(state: .done, since: since),
-            messageCount: 2,
-            firstMessage: "go"
-        )
-        mgr.sync(connectionId: "c1", sessions: [done], seenAt: { _ in since.addingTimeInterval(-10) })
-        #expect(mgr.currentState.primaryPhase == .done)
-        #expect(LiveActivityPresentation.statusLabel(mgr.currentState) == "Done")
-
-        mgr.sync(connectionId: "c1", sessions: [done], seenAt: { _ in since })
-        #expect(mgr.currentState.primaryPhase == .ended)
-
-        let idle = makeTestSession(
-            id: "idle",
-            status: .ready,
-            programStatus: ProgramStatus(state: .idle, since: since),
-            messageCount: 2,
-            firstMessage: "go"
-        )
-        mgr.sync(connectionId: "c1", sessions: [idle])
-        #expect(mgr.currentState.primaryPhase == .ended)
+    @Test func countsTopLevelRunningAndWaitingSessionsOnly() {
+        let counts = LiveActivityManager.counts(for: [
+            session("a", .working),
+            session("b", .working),
+            session("c", .blocked, kind: .permission),
+            session("d", .blocked, kind: .auth),
+            session("e", .done, status: .ready),
+            session("f", .idle, status: .ready),
+            session("g", .working, status: .stopped),
+            session("child-1", .working, parent: "a"),
+            session("child-2", .blocked, kind: .question, parent: "a"),
+        ])
+        #expect(counts == .init(running: 2, needsYou: 2))
     }
 
-    @Test("program status leads and a later event hint overrides it")
-    @MainActor func programStatusLeadsAndClears() {
-        let mgr = LiveActivityManager()
-        let blocked = makeTestSession(
-            id: "s1",
-            status: .busy,
-            programStatus: ProgramStatus(state: .blocked, kind: .permission, since: Date()),
-            messageCount: 2,
-            firstMessage: "go"
-        )
-        mgr.sync(connectionId: "c1", sessions: [blocked])
-        #expect(mgr.currentState.primaryPhase == .blocked)
+    @Test func syncTracksOnlyServersWhoseCardIsOn() {
+        let manager = LiveActivityManager(isEnabled: { $0 == "on" }, serverDrivesCard: { _ in false })
+        manager.sync(connectionId: "off", sessions: [session("a", .working)])
+        manager.sync(connectionId: "on", sessions: [session("a", .working), session("b", .blocked)])
+        #expect(manager.countsByServer == ["on": .init(running: 1, needsYou: 1)])
 
-        var resumed = blocked
-        resumed.programStatus = ProgramStatus(state: .working, since: Date())
-        mgr.sync(connectionId: "c1", sessions: [resumed])
-        #expect(mgr.currentState.primaryPhase == .working)
-        #expect(mgr.currentState.primaryBlockedKind == nil)
-        #expect(mgr.currentState.sessionsBlocked == nil)
-
-        // A later event hint is newer than the stored program status.
-        mgr.sync(connectionId: "c1", sessions: [blocked])
-        mgr.recordEvent(connectionId: "c1", event: .agentSettled(sessionId: "s1"))
-        #expect(mgr.currentState.primaryPhase == .awaitingReply)
-    }
-
-    @Test("an older activity state without blocked fields still decodes")
-    func oldContentStateDecodes() throws {
-        let json = """
-        {"primaryPhase":"working","primarySessionName":"Old","totalActiveSessions":1,
-         "sessionsAwaitingReply":0,"sessionsWorking":1}
-        """
-        let state = try JSONDecoder().decode(
-            PiSessionAttributes.ContentState.self,
-            from: Data(json.utf8)
-        )
-        #expect(state.primaryPhase == .working)
-        #expect(state.sessionsBlocked == nil)
-        #expect(state.primaryBlockedKind == nil)
-    }
-
-    @Test("recordEvent agentStart sets working")
-    @MainActor func agentStartWorking() {
-        let mgr = LiveActivityManager()
-        let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session])
-
-        mgr.recordEvent(connectionId: "c1", event: .agentStart(sessionId: "s1"))
-        #expect(mgr.currentState.primaryPhase == .working)
-    }
-
-    @Test("recordEvent agentSettled sets awaitingReply within visibility window")
-    @MainActor func agentSettledAwaitingReply() {
-        let mgr = LiveActivityManager()
-        let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session])
-
-        mgr.recordEvent(connectionId: "c1", event: .agentEnd(sessionId: "s1"))
-        #expect(mgr.currentState.primaryPhase != .awaitingReply, "agent_end alone is not idle")
-
-        mgr.recordEvent(connectionId: "c1", event: .agentSettled(sessionId: "s1"))
-        #expect(mgr.currentState.primaryPhase == .awaitingReply)
-    }
-
-    @Test("recordEvent toolStart shows tool name")
-    @MainActor func toolStartShowsTool() {
-        let mgr = LiveActivityManager()
-        let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session])
-
-        mgr.recordEvent(connectionId: "c1", event: .toolStart(
-            sessionId: "s1", toolEventId: "t1", tool: "bash", args: [:]
-        ))
-        #expect(mgr.currentState.primaryTool == "bash")
-        #expect(mgr.currentState.primaryLastActivity == "Running bash")
-        #expect(mgr.currentState.primaryPhase == .working)
-        mgr.recordEvent(connectionId: "c1", event: .toolEnd(sessionId: "s1", toolEventId: "child", parentToolCallId: "t1"))
-        #expect(mgr.currentState.primaryTool == "bash", "Nested completion must not clear its running parent")
-        mgr.recordEvent(connectionId: "c1", event: .toolEnd(sessionId: "s1", toolEventId: "t1"))
-        #expect(mgr.currentState.primaryTool == nil)
-    }
-
-    @Test("sync carries primary change stats into content state")
-    @MainActor func syncCarriesChangeStats() {
-        let mgr = LiveActivityManager()
-        var session = makeTestSession(id: "s1", status: .busy)
-        session.changeStats = SessionChangeStats(
-            mutatingToolCalls: 3,
-            filesChanged: 2,
-            changedFiles: ["a.swift", "b.swift"],
-            changedFilesOverflow: nil,
-            addedLines: 12,
-            removedLines: 4
-        )
-
-        mgr.sync(connectionId: "c1", sessions: [session])
-
-        #expect(mgr.currentState.primaryMutatingToolCalls == 3)
-        #expect(mgr.currentState.primaryFilesChanged == 2)
-        #expect(mgr.currentState.primaryAddedLines == 12)
-        #expect(mgr.currentState.primaryRemovedLines == 4)
-    }
-
-    @Test("working outranks awaitingReply across sessions")
-    @MainActor func workingOutranksAwaitingReply() {
-        let mgr = LiveActivityManager()
-        let working = makeTestSession(id: "s1", status: .busy)
-        let ready = makeTestSession(id: "s2", status: .ready)
-
-        mgr.sync(connectionId: "c1", sessions: [working, ready])
-
-        #expect(mgr.currentState.primaryPhase == .working)
-        #expect(mgr.currentState.primarySessionId == "s1")
-    }
-
-    @Test("removeConnection clears state")
-    @MainActor func removeConnectionClears() {
-        let mgr = LiveActivityManager()
-        let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session])
-        #expect(mgr.currentState.primaryPhase == .working)
-
-        mgr.removeConnection("c1")
-        #expect(mgr.currentState.primaryPhase == .ended)
-        #expect(mgr.currentState.totalActiveSessions == 0)
-    }
-
-    @Test("recordEvent error sets error phase")
-    @MainActor func errorSetsErrorPhase() {
-        let mgr = LiveActivityManager()
-        let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session])
-
-        mgr.recordEvent(connectionId: "c1", event: .error(sessionId: "s1", message: "Something broke"))
-        #expect(mgr.currentState.primaryPhase == .error)
-    }
-
-    @Test("recordEvent retrying error does not set error phase")
-    @MainActor func retryingErrorIgnored() {
-        let mgr = LiveActivityManager()
-        let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session])
-
-        mgr.recordEvent(connectionId: "c1", event: .error(sessionId: "s1", message: "Retrying (attempt 2/3)"))
-        #expect(mgr.currentState.primaryPhase == .working)
-    }
-
-    @Test("recordEvent sessionEnded sets ended phase")
-    @MainActor func sessionEndedSetsEnded() {
-        let mgr = LiveActivityManager()
-        let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session])
-
-        mgr.recordEvent(connectionId: "c1", event: .sessionEnded(sessionId: "s1", reason: "done"))
-        #expect(mgr.currentState.primaryPhase == .ended)
+        manager.removeConnection("on")
+        #expect(manager.countsByServer.isEmpty)
     }
 }
 
-// MARK: - Lifecycle Recovery (P0: 8-hour silent death)
+@Suite("Live Activity relay contract")
+struct LiveActivityRelayContractTests {
+    /// The relay's update payload (protocol/push/spec.md "Live Activity"). ActivityKit decodes
+    /// `content-state` and `attributes` with a default `JSONDecoder`; a renamed field breaks
+    /// every pushed update.
+    @Test func decodesTheRelayTemplate() throws {
+        let start = Data("""
+        {"aps":{"timestamp":1760000000,"event":"start","content-state":{"running":3,"needsYou":1},\
+        "attributes-type":"OppiActivityAttributes","attributes":{"slot":"SSSSSSSSSSSSSSSSSSSSSS"},\
+        "input-push-token":1,"alert":{"title":"Oppi","body":"Agents are working."}}}
+        """.utf8)
+        let aps = try #require(
+            (try JSONSerialization.jsonObject(with: start) as? [String: Any])?["aps"] as? [String: Any]
+        )
+        let contentState = try JSONSerialization.data(withJSONObject: try #require(aps["content-state"]))
+        let attributes = try JSONSerialization.data(withJSONObject: try #require(aps["attributes"]))
 
-@Suite("LiveActivityManager lifecycle recovery", .serialized)
-@MainActor
-struct LiveActivityLifecycleTests {
-
-    @Test("recoverIfNeeded reattaches orphaned ActivityKit activity")
-    @MainActor func recoverReattachesOrphanedActivity() async {
-        await endAllLiveActivitiesImmediately()
-
-        let source = LiveActivityManager()
-        let session = makeTestSession(id: "s-orphan", status: .busy)
-        source.sync(connectionId: "c-source", sessions: [session])
-        #expect(source.activeActivity != nil)
-
-        // Simulate app relaunch: a fresh manager instance has no in-memory
-        // reference, but ActivityKit still has the live activity.
-        let recovered = LiveActivityManager()
-        #expect(recovered.activeActivity == nil)
-        #expect(recovered.currentState.primaryPhase == .ended)
-
-        recovered.recoverIfNeeded()
-
-        // Regression: before the fix this stayed nil.
-        #expect(recovered.activeActivity != nil)
-
-        await endAllLiveActivitiesImmediately()
+        #expect(try JSONDecoder().decode(OppiActivityAttributes.ContentState.self, from: contentState)
+            == .init(running: 3, needsYou: 1))
+        #expect(try JSONDecoder().decode(OppiActivityAttributes.self, from: attributes).slot
+            == "SSSSSSSSSSSSSSSSSSSSSS")
+        #expect(aps["attributes-type"] as? String == String(describing: OppiActivityAttributes.self))
     }
 
-    @Test("recoverIfNeeded with active sessions and no activity triggers refresh")
-    @MainActor func recoverWithActiveSessions() {
-        let mgr = LiveActivityManager()
-        let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session])
-
-        #expect(mgr.currentState.primaryPhase == .working)
-
-        // Recovery should detect that sessions are active and re-aggregate.
-        // An existing ActivityKit activity may be reattached in tests, so we
-        // assert on aggregate state rather than `activeActivity` identity.
-        mgr.recoverIfNeeded()
-        #expect(mgr.currentState.primaryPhase == .working)
-        #expect(mgr.currentState.totalActiveSessions == 1)
-    }
-
-    @Test("recoverIfNeeded with no sessions is a no-op")
-    @MainActor func recoverWithNoSessions() {
-        let mgr = LiveActivityManager()
-        mgr.recoverIfNeeded()
-        #expect(mgr.currentState.primaryPhase == .ended)
-    }
-}
-
-// MARK: - Idle Dismiss (P1: proper activity.end)
-
-@Suite("LiveActivityManager idle dismiss", .serialized)
-@MainActor
-struct LiveActivityIdleDismissTests {
-
-    @Test("idle dismiss delay is 5 seconds, not 60")
-    @MainActor func idleDismissDelayIs5Seconds() {
-        // The manager's idleDismissDelay should be short (5s) — the old 60s linger
-        // violates HIG. We can't directly read the private property, but we verify
-        // the behavior: after all sessions end, the manager should schedule a
-        // short dismiss rather than keeping the activity alive for a full minute.
-        let mgr = LiveActivityManager()
-        let session = makeTestSession(id: "s1", status: .busy)
-        mgr.sync(connectionId: "c1", sessions: [session])
-        #expect(mgr.currentState.primaryPhase == .working)
-
-        // End the session — should transition to ended
-        mgr.recordEvent(connectionId: "c1", event: .sessionEnded(sessionId: "s1", reason: "done"))
-        #expect(mgr.currentState.primaryPhase == .ended)
-        #expect(mgr.currentState.totalActiveSessions == 0)
-    }
-}
-
-// MARK: - Deep Link URL (P1: widgetURL)
-
-@Suite("Live Activity deep links")
-@MainActor
-struct LiveActivityDeepLinkTests {
-
-    @Test("session deep link parses oppi://session/<id>")
-    func sessionDeepLinkParse() {
-        guard let url = URL(string: "oppi://session/abc-123") else {
-            Issue.record("Expected deep link URL to parse")
-            return
+    @Test func rejectsAContentStateWithoutBothCounts() {
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(OppiActivityAttributes.ContentState.self, from: Data(#"{"running":1}"#.utf8))
         }
-        #expect(url.scheme == "oppi")
-        #expect(url.host == "session")
-        let sessionId = url.path
-            .split(separator: "/", omittingEmptySubsequences: true)
-            .first
-            .map(String.init)
-        #expect(sessionId == "abc-123")
     }
-
 }
 
-// MARK: - Helpers
+@Suite("Live Activity settings")
+struct LiveActivitySettingsTests {
+    private func defaults() -> UserDefaults {
+        let name = "LiveActivitySettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
 
-private func endAllLiveActivitiesImmediately() async {
-    let finalState = makeState(phase: .ended)
+    @Test func offByDefaultAndPerServer() {
+        let defaults = defaults()
+        #expect(!LiveActivitySettings.isEnabled(serverId: "sha256:a", defaults: defaults))
+        LiveActivitySettings.setEnabled(true, serverId: "sha256:a", defaults: defaults)
+        #expect(LiveActivitySettings.isEnabled(serverId: "sha256:a", defaults: defaults))
+        #expect(!LiveActivitySettings.isEnabled(serverId: "sha256:b", defaults: defaults))
+    }
 
-    for activity in Activity<PiSessionAttributes>.activities {
-        await activity.end(
-            .init(state: finalState, staleDate: nil),
-            dismissalPolicy: .immediate
+    @Test func eachServerKeepsOneRandomSlotInTheRelayFormat() throws {
+        let defaults = defaults()
+        let a = LiveActivitySettings.slot(serverId: "sha256:a", defaults: defaults)
+        let b = LiveActivitySettings.slot(serverId: "sha256:b", defaults: defaults)
+        #expect(a.wholeMatch(of: /[A-Za-z0-9_-]{22}/) != nil)
+        #expect(a != b)
+        #expect(!a.contains("sha256"))
+        #expect(LiveActivitySettings.slot(serverId: "sha256:a", defaults: defaults) == a)
+        #expect(LiveActivitySettings.serverId(forSlot: b, defaults: defaults) == "sha256:b")
+
+        LiveActivitySettings.setEnabled(true, serverId: "sha256:b", defaults: defaults)
+        #expect(LiveActivitySettings.enabledSlots(defaults: defaults) == [b])
+    }
+
+    @Test @MainActor func relayGetsTokensOnlyForServersWhoseCardIsOn() {
+        let state = LiveActivityRelaySync.state(
+            startToken: "5555",
+            activityTokens: ["on": "aaaa", "off": "bbbb"],
+            enabledSlots: ["on"]
         )
+        #expect(state == .init(startToken: "5555", activities: [.init(slot: "on", token: "aaaa")]))
+        // No card on anywhere: the relay can start nothing.
+        let none = LiveActivityRelaySync.state(startToken: "5555", activityTokens: ["off": "bbbb"], enabledSlots: [])
+        #expect(none == .init(startToken: nil, activities: []))
     }
 
-    // Give ActivityKit a moment to settle the list before the next test.
-    try? await Task.sleep(for: .milliseconds(50))
-}
-
-private func makeState(phase: SessionPhase) -> PiSessionAttributes.ContentState {
-    PiSessionAttributes.ContentState(
-        primaryPhase: phase,
-        primarySessionId: "test-session",
-        primarySessionName: "Test",
-        primaryTool: nil,
-        primaryLastActivity: nil,
-        totalActiveSessions: phase == .ended ? 0 : 1,
-        sessionsAwaitingReply: phase == .awaitingReply ? 1 : 0,
-        sessionsWorking: phase == .working ? 1 : 0,
-        primaryMutatingToolCalls: nil,
-        primaryFilesChanged: nil,
-        primaryAddedLines: nil,
-        primaryRemovedLines: nil,
-        sessionStartDate: nil
-    )
+    @Test func relayBodyCarriesANullStartTokenToClearIt() throws {
+        let body = try JSONEncoder().encode(PushRelayClient.LiveActivityState(startToken: nil, activities: []))
+        let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+        #expect(json["startToken"] is NSNull)
+        #expect((json["activities"] as? [Any])?.isEmpty == true)
+    }
 }

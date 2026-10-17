@@ -4,991 +4,209 @@ import OSLog
 
 private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "LiveActivity")
 
-/// Manages the aggregate Live Activity across all tracked sessions.
+/// Oppi's Live Activity: one counts-only card per server whose card is on
+/// (`LiveActivitySettings`), saying how many top-level sessions run and how many wait on you.
 ///
-/// v2 policy:
-/// - Single aggregate activity (not one-per-session)
-/// - Event-driven updates only
-/// - Session phase model (`working`, `blocked`, `awaitingReply`, `error`, `ended`), read from
-///   the session's program status; lifecycle covers sessions that lack one
+/// While Oppi runs it drives each card from the server's sessions. While Oppi is closed, a
+/// server with push on drives the same card through the relay (protocol/push/spec.md "Live
+/// Activity"); the server skips a device that holds a live stream, so the two never drive the
+/// card at once. Every card is requested with `pushType: .token`, and every card's update token,
+/// including those the relay started, goes to `LiveActivityRelaySync`.
 @MainActor @Observable
 final class LiveActivityManager {
     static let shared = LiveActivityManager()
 
-    private struct SessionSnapshot {
-        let id: String
-        var name: String
-        var status: SessionStatus
-        var phaseHint: SessionPhase
-        /// Program-status reading of the session as of the last `sync`. Nil after an event
-        /// hint, which is newer than the stored session, and for no stored value.
-        var statusKind: SessionStatusKind?
-        var activeTool: String?
-        var lastActivity: String?
-        var startDate: Date?
-        var changeStats: SessionChangeStats?
-        var updatedAt: Date
-        /// When the session entered `.ready` status. Used for awaitingReply
-        /// expiry so that `sync()` refreshing `updatedAt` doesn't keep the
-        /// expiry window open indefinitely.
-        var readySince: Date?
-        /// Lock scope inputs, filled by `sync`; events alone do not carry them.
-        var workspaceId: String?
-        var isIncognito = false
-    }
+    typealias Counts = OppiActivityAttributes.ContentState
 
-    private struct ConnectionSnapshot {
-        var sessionsById: [String: SessionSnapshot] = [:]
-    }
+    static let noCounts = Counts(running: 0, needsYou: 0)
+    /// An ended card leaves the Lock Screen this long after it ends; the relay uses the same.
+    static let dismissalDelay: TimeInterval = 30
 
-    private struct SessionView {
-        let id: String
-        let lockTarget: ScopedLockTarget
-        let name: String
-        let phase: SessionPhase
-        let blockedKind: String?
-        let activeTool: String?
-        let lastActivity: String?
-        let startDate: Date?
-        let changeStats: SessionChangeStats?
-        let updatedAt: Date
-    }
+    /// Counts of each synced server whose card is on, by server ID.
+    private(set) var countsByServer: [String: Counts] = [:]
+    /// The card for each slot.
+    private var activities: [String: Activity<OppiActivityAttributes>] = [:]
+    /// Token and state watchers, by activity ID.
+    private var watchers: [String: Task<Void, Never>] = [:]
+    private var systemObservers: [Task<Void, Never>] = []
+    /// Slots whose card the person dismissed: no new card until the counts reach zero.
+    private var dismissedSlots: Set<String> = []
 
-    private struct DeliveredSnapshot: Equatable {
-        let state: PiSessionAttributes.ContentState
-        let staleDate: Date?
-        let relevanceScore: Double
-
-        init(from content: ActivityContent<PiSessionAttributes.ContentState>) {
-            state = content.state
-            staleDate = content.staleDate
-            relevanceScore = content.relevanceScore
-        }
-
-        static func == (lhs: Self, rhs: Self) -> Bool {
-            lhs.state == rhs.state
-                && lhs.staleDate == rhs.staleDate
-                && lhs.relevanceScore == rhs.relevanceScore
-        }
-    }
-
-    private static let emptyState = PiSessionAttributes.ContentState(
-        primaryPhase: .ended,
-        primarySessionId: nil,
-        primarySessionName: "Oppi",
-        primaryTool: nil,
-        primaryLastActivity: nil,
-        totalActiveSessions: 0,
-        sessionsAwaitingReply: 0,
-        sessionsWorking: 0,
-        sessionsBlocked: nil,
-        primaryBlockedKind: nil,
-        primaryMutatingToolCalls: nil,
-        primaryFilesChanged: nil,
-        primaryAddedLines: nil,
-        primaryRemovedLines: nil,
-        sessionStartDate: nil
-    )
-
-    private(set) var activeActivity: Activity<PiSessionAttributes>?
-
-    /// Observes `activityStateUpdates` to detect system-initiated endings
-    /// (8-hour limit, user removal from Lock Screen).
-    private var activityObservationTask: Task<Void, Never>?
-
-    private(set) var currentState: PiSessionAttributes.ContentState = LiveActivityManager.emptyState
-    private var lastStateChangeAt = Date()
-    private var connectionSnapshots: [String: ConnectionSnapshot] = [:]
-
-    private var idleDismissTask: Task<Void, Never>?
-
-    /// One-shot timer used to expire transient `.awaitingReply` UI without polling.
-    private var awaitingReplyExpiryTask: Task<Void, Never>?
-    private var awaitingReplyExpiryDate: Date?
-
-    /// Throttle: true when a push is pending, coalesces rapid updates.
-    private var hasPendingPush = false
-    private var pushThrottleTask: Task<Void, Never>?
-
-    private var lastDeliveredSnapshot: DeliveredSnapshot?
-    /// Advances on every queued ActivityKit update; an update task whose
-    /// number is no longer current was superseded and is dropped.
-    private var pushSequence = 0
-
-    /// Minimum interval between ActivityKit updates (ActivityKit throttles at ~1/sec anyway).
-    private let pushThrottleInterval: Duration = .seconds(1)
-    /// Brief grace period before ending the activity after all sessions go idle.
-    /// Short enough to feel responsive, long enough to absorb rapid state flicker.
-    private let idleDismissDelay: Duration = .seconds(5)
-    /// Keep `.awaitingReply` visible briefly, then auto-dismiss if nothing else is active.
-    private let awaitingReplyVisibilitySeconds: TimeInterval = 5
-    /// Working/error/approval states should eventually go stale if we stop receiving events.
-    private let staleIntervalSeconds: TimeInterval = 300
-    /// How long the ended activity lingers on the Lock Screen after `activity.end()`.
-    /// Keep it short — stale session info is not useful. 4 seconds is enough for
-    /// a glance at the final state without the activity overstaying its welcome.
-    private let lockScreenDismissDelaySeconds: TimeInterval = 4
-
-    /// True while App Lock is on: the Lock Screen and Dynamic Island show
-    /// phase and counts only, never session names, tools, or activity text.
-    private let hidesSessionText: @MainActor () -> Bool
-    /// True for a session whose server, workspace, or the session itself is
-    /// locked: its name, tool, and activity text stay off the Lock Screen.
-    private let hidesScopedSessionText: @MainActor (ScopedLockTarget) -> Bool
+    private let isEnabled: @MainActor (String) -> Bool
+    private let serverDrivesCard: @MainActor (String) -> Bool
 
     init(
-        hidesSessionText: @escaping @MainActor () -> Bool = { AppLockService.shared.isEnabled },
-        hidesScopedSessionText: @escaping @MainActor (ScopedLockTarget) -> Bool = {
-            ScopedLockService.shared.hidesContentOutsideApp($0)
-        }
+        isEnabled: @escaping @MainActor (String) -> Bool = { LiveActivitySettings.isEnabled(serverId: $0) },
+        serverDrivesCard: @escaping @MainActor (String) -> Bool = { PushRegistration.isEnabled(serverId: $0) }
     ) {
-        self.hidesSessionText = hidesSessionText
-        self.hidesScopedSessionText = hidesScopedSessionText
+        self.isEnabled = isEnabled
+        self.serverDrivesCard = serverDrivesCard
     }
 
-    // MARK: - Public API
+    // MARK: - Counts
 
-    /// Sync canonical session state for a server connection.
-    /// `seenAt` is this device's watermark, so a seen done or error is not green.
-    func sync(
-        connectionId: String,
-        sessions: [Session],
-        seenAt: (String) -> Date? = { _ in nil }
-    ) {
-        var snapshot = connectionSnapshots[connectionId] ?? ConnectionSnapshot()
-
-        var nextById: [String: SessionSnapshot] = [:]
-
-        for session in sessions {
-            var entry = snapshot.sessionsById[session.id] ?? SessionSnapshot(
-                id: session.id,
-                name: session.displayTitle,
-                status: session.status,
-                phaseHint: baselinePhase(for: session.status),
-                statusKind: nil,
-                activeTool: nil,
-                lastActivity: nil,
-                startDate: nil,
-                changeStats: session.changeStats,
-                updatedAt: session.lastActivity,
-                readySince: session.status == .ready ? session.lastActivity : nil
-            )
-
-            let previousStatus = entry.status
-
-            entry.name = session.displayTitle
-            entry.status = session.status
-            entry.statusKind = SessionStatusKind.resolve(session: session, seenAt: seenAt(session.id))
-            entry.changeStats = session.changeStats
-            entry.workspaceId = session.workspaceId
-            entry.isIncognito = session.ephemeral == true
-            if session.lastActivity > entry.updatedAt {
-                entry.updatedAt = session.lastActivity
+    /// Running and waiting top-level sessions. Subagents never count, matching the server.
+    static func counts(for sessions: [Session]) -> Counts {
+        var counts = noCounts
+        for session in sessions where session.parentSessionId == nil {
+            let kind = SessionStatusKind.resolve(session: session, seenAt: nil)
+            if kind == .working {
+                counts.running += 1
+            } else if kind.isBlocked {
+                counts.needsYou += 1
             }
-
-            switch session.status {
-            case .starting, .busy, .stopping:
-                entry.phaseHint = .working
-                entry.readySince = nil
-                if let currentTurnStartedAt = session.currentTurnStartedAt {
-                    entry.startDate = currentTurnStartedAt
-                } else if !isWorkingStatus(previousStatus) || entry.startDate == nil {
-                    // Fallback when we don't observe an explicit agentStart
-                    // (e.g. app relaunch while session is already busy).
-                    entry.startDate = session.lastActivity
-                }
-            case .ready:
-                // Record when session first entered .ready so the awaitingReply
-                // expiry window is anchored to the transition, not refreshed by
-                // subsequent syncs.
-                if entry.readySince == nil {
-                    entry.readySince = Date()
-                }
-                if entry.phaseHint != .error {
-                    entry.phaseHint = .awaitingReply
-                }
-                entry.activeTool = nil
-                entry.startDate = nil
-            case .error:
-                entry.phaseHint = .error
-                entry.activeTool = nil
-                entry.startDate = nil
-                if entry.lastActivity == nil {
-                    entry.lastActivity = String(localized: "Attention needed")
-                }
-            case .stopped:
-                entry.phaseHint = .ended
-                entry.activeTool = nil
-                entry.startDate = nil
-                entry.lastActivity = String(localized: "Session ended")
-            }
-
-            if entry.lastActivity == nil {
-                entry.lastActivity = Self.defaultLastActivity(for: entry.phaseHint)
-            }
-
-            nextById[session.id] = entry
         }
-
-        snapshot.sessionsById = nextById
-        connectionSnapshots[connectionId] = snapshot
-
-        // Nudge stale snapshots out if no session data remains for a connection.
-        if sessions.isEmpty {
-            connectionSnapshots.removeValue(forKey: connectionId)
-        }
-
-        refreshLifecycle()
+        return counts
     }
 
-    /// Incremental event hinting for richer phase/tool transitions.
-    func recordEvent(connectionId: String, event: AgentEvent) {
-        var snapshot = connectionSnapshots[connectionId] ?? ConnectionSnapshot()
+    // MARK: - Inputs
 
-        func upsertSession(_ sessionId: String) -> SessionSnapshot {
-            if let existing = snapshot.sessionsById[sessionId] {
-                return existing
-            }
-            return SessionSnapshot(
-                id: sessionId,
-                name: fallbackSessionName(sessionId),
-                status: .ready,
-                phaseHint: .awaitingReply,
-                statusKind: nil,
-                activeTool: nil,
-                lastActivity: nil,
-                startDate: nil,
-                changeStats: nil,
-                updatedAt: Date(),
-                readySince: Date()
-            )
-        }
-
-        var didChange = true
-
-        switch event {
-        case .agentStart(let sessionId):
-            var entry = upsertSession(sessionId)
-            let now = Date()
-            entry.status = .busy
-            entry.statusKind = nil
-            entry.phaseHint = .working
-            entry.readySince = nil
-            entry.startDate = now
-            entry.lastActivity = String(localized: "Working")
-            entry.updatedAt = now
-            snapshot.sessionsById[sessionId] = entry
-
-        case .agentEnd:
-            // agent_end is not idle — retries may follow. Wait for agent_settled.
-            break
-
-        case .agentSettled(let sessionId):
-            var entry = upsertSession(sessionId)
-            let now = Date()
-            entry.status = .ready
-            entry.statusKind = nil
-            entry.phaseHint = .awaitingReply
-            entry.readySince = now
-            entry.activeTool = nil
-            entry.startDate = nil
-            entry.lastActivity = String(localized: "Your turn")
-            entry.updatedAt = now
-            snapshot.sessionsById[sessionId] = entry
-
-        case .toolStart(let sessionId, _, let tool, let args, _, let input, let display, let output, let parent):
-            guard parent == nil else { break }
-            let inspection = ToolContentDescriptorBuilder.inspect(tool: tool,
-                context: .init(args: args, inputPresentation: input, display: display, outputPresentation: output),
-                includeOutput: false, includeFileContent: false)
-            var entry = upsertSession(sessionId)
-            let now = Date()
-            entry.status = .busy
-            entry.statusKind = nil
-            entry.phaseHint = .working
-            if entry.startDate == nil {
-                entry.startDate = now
-            }
-            entry.activeTool = inspection.title
-            entry.lastActivity = inspection.activityLabel
-            entry.updatedAt = now
-            snapshot.sessionsById[sessionId] = entry
-
-        case .toolEnd(let sessionId, _, _, _, _, _, _, _, let parent, _):
-            guard parent == nil else { break }
-            var entry = upsertSession(sessionId)
-            entry.activeTool = nil
-            entry.updatedAt = Date()
-            snapshot.sessionsById[sessionId] = entry
-
-        case .sessionEnded(let sessionId, _):
-            var entry = upsertSession(sessionId)
-            entry.status = .stopped
-            entry.statusKind = nil
-            entry.phaseHint = .ended
-            entry.activeTool = nil
-            entry.startDate = nil
-            entry.lastActivity = String(localized: "Session ended")
-            entry.updatedAt = Date()
-            snapshot.sessionsById[sessionId] = entry
-
-        case .error(let sessionId, let message):
-            guard !message.hasPrefix("Retrying (") else {
-                didChange = false
-                break
-            }
-            var entry = upsertSession(sessionId)
-            entry.status = .error
-            entry.statusKind = nil
-            entry.phaseHint = .error
-            entry.startDate = nil
-            entry.lastActivity = String(localized: "Attention needed")
-            entry.updatedAt = Date()
-            snapshot.sessionsById[sessionId] = entry
-
-        case .textDelta,
-             .thinkingDelta,
-             .messageEnd,
-             .cacheMiss,
-             .notice,
-             .toolUpdate,
-             .toolOutput,
-             .compactionStart,
-             .compactionEnd,
-             .retryStart,
-             .retryEnd,
-             .commandResult,
-             .customCard:
-            didChange = false
-        }
-
-        guard didChange else {
+    /// The server's current sessions. `connectionId` is the server ID.
+    func sync(connectionId serverId: String, sessions: [Session]) {
+        guard isEnabled(serverId) else {
+            countsByServer.removeValue(forKey: serverId)
+            endCard(serverId: serverId)
             return
         }
-
-        connectionSnapshots[connectionId] = snapshot
-        refreshLifecycle()
+        countsByServer[serverId] = Self.counts(for: sessions)
+        apply(serverId: serverId)
     }
 
-    func removeConnection(_ connectionId: String) {
-        connectionSnapshots.removeValue(forKey: connectionId)
-        refreshLifecycle()
-    }
-
-    /// End the current Live Activity.
-    ///
-    /// HIG: "Always end a Live Activity immediately when the task or event ends,
-    /// and consider setting a custom dismissal time."
-    /// We end immediately but use a Lock Screen dismissal window so users can
-    /// glance at the final state. `.immediate` is reserved for explicit user action.
-    func endIfNeeded(immediate: Bool = false) {
-        guard let activity = activeActivity else { return }
-
-        cleanupTimers()
-
-        nonisolated(unsafe) let detachedActivity = activity
-        let finalState = Self.emptyState
-        let policy: ActivityUIDismissalPolicy = immediate
-            ? .immediate
-            : .after(Date().addingTimeInterval(lockScreenDismissDelaySeconds))
-
-        Task {
-            await detachedActivity.end(
-                ActivityContent(state: finalState, staleDate: nil),
-                dismissalPolicy: policy
-            )
+    /// The app stopped following this server. A server with push on keeps the card current;
+    /// otherwise nothing would, so it ends.
+    func removeConnection(_ serverId: String) {
+        countsByServer.removeValue(forKey: serverId)
+        if !(isEnabled(serverId) && serverDrivesCard(serverId)) {
+            endCard(serverId: serverId)
         }
-
-        activeActivity = nil
-        currentState = finalState
-        let dismissalLabel = immediate ? "immediate" : "after \(Int(self.lockScreenDismissDelaySeconds))s"
-        logger.error("Live Activity ended (dismissal=\(dismissalLabel, privacy: .public))")
     }
 
-    /// Reconcile ActivityKit state after app launch / foreground.
-    ///
-    /// Handles app lifecycle gaps where ActivityKit keeps a live activity
-    /// but this singleton lost its in-memory `activeActivity` reference.
-    /// App Lock turned on: end every activity at once (including leftovers this
-    /// process has no snapshots for), then start fresh with redacted state if
-    /// sessions are still active.
-    func endAllForAppLock() {
-        endAllActivitiesImmediately()
-        currentState = Self.emptyState
-        refreshLifecycle()
+    /// The server's card or push setting changed.
+    func settingsChanged(serverId: String) {
+        if !isEnabled(serverId) {
+            countsByServer.removeValue(forKey: serverId)
+            endCard(serverId: serverId)
+        }
+        LiveActivityRelaySync.shared.publish()
     }
 
+    /// Watch for cards the relay starts and for the push-to-start token. Call once at launch,
+    /// including a background launch: iOS wakes Oppi so it can report a pushed card's token.
+    func startObservingSystem() {
+        guard systemObservers.isEmpty else { return }
+        adoptExisting()
+        systemObservers.append(Task { [weak self] in
+            for await activity in Activity<OppiActivityAttributes>.activityUpdates {
+                self?.adopt(activity)
+            }
+        })
+        systemObservers.append(Task {
+            for await token in Activity<OppiActivityAttributes>.pushToStartTokenUpdates {
+                LiveActivityRelaySync.shared.setStartToken(token)
+            }
+        })
+    }
+
+    /// Back in the foreground: pick up cards started or ended while away.
     func recoverIfNeeded() {
-        refreshLifecycle()
+        adoptExisting()
+        for serverId in countsByServer.keys { apply(serverId: serverId) }
     }
 
-    private func cleanupTimers() {
-        pushThrottleTask?.cancel()
-        pushThrottleTask = nil
-        idleDismissTask?.cancel()
-        idleDismissTask = nil
-        awaitingReplyExpiryTask?.cancel()
-        awaitingReplyExpiryTask = nil
-        awaitingReplyExpiryDate = nil
-        activityObservationTask?.cancel()
-        activityObservationTask = nil
-        hasPendingPush = false
-        lastDeliveredSnapshot = nil
-        lastStateChangeAt = Date()
-    }
+    // MARK: - ActivityKit
 
-    // MARK: - Lifecycle
-
-    /// Reattach an existing ActivityKit activity if this process lost its
-    /// in-memory `activeActivity` reference (app relaunch / suspension).
-    private func recoverTrackedActivityReferenceIfNeeded() {
-        if let existing = activeActivity,
-           existing.activityState == .ended || existing.activityState == .dismissed {
-            logger.error("Recovered stale activeActivity reference (state=\(String(describing: existing.activityState), privacy: .public))")
-            cleanupTimers()
-            activeActivity = nil
-            currentState = Self.emptyState
-        }
-
-        guard activeActivity == nil else { return }
-
-        guard let recovered = Activity<PiSessionAttributes>.activities.first(where: {
-            $0.activityState == .active || $0.activityState == .stale
-        }) else { return }
-
-        activeActivity = recovered
-        observeActivityLifecycle(recovered)
-        let recoveredContent = recovered.content
-        currentState = recoveredContent.state
-        lastStateChangeAt = recoveredStateChangeDate(from: recoveredContent)
-        lastDeliveredSnapshot = DeliveredSnapshot(from: recoveredContent)
-        logger.error("Recovered orphaned Live Activity reference (id=\(recovered.id, privacy: .public), state=\(String(describing: recovered.activityState), privacy: .public))")
-    }
-
-    private func endActivitiesIfPreferenceDisabled() {
-        let ended = endAllActivitiesImmediately()
-        guard ended > 0 else { return }
-        logger.error(
-            "Live Activities disabled by preference; ended \(ended, privacy: .public) activity(ies)"
-        )
-    }
-
-    /// Ends every active or stale activity with the empty state, dismissed at once.
-    @discardableResult
-    private func endAllActivitiesImmediately() -> Int {
-        cleanupTimers()
-        activeActivity = nil
-
-        let activitiesToEnd = Activity<PiSessionAttributes>.activities.filter {
-            $0.activityState == .active || $0.activityState == .stale
-        }
-        guard !activitiesToEnd.isEmpty else { return 0 }
-
-        let finalState = Self.emptyState
-        for activity in activitiesToEnd {
-            nonisolated(unsafe) let detachedActivity = activity
-            Task {
-                await detachedActivity.end(
-                    ActivityContent(state: finalState, staleDate: nil),
-                    dismissalPolicy: .immediate
-                )
-            }
-        }
-        return activitiesToEnd.count
-    }
-
-    private func refreshLifecycle() {
-        let liveActivitiesEnabled = AppPreferences.LiveActivity.isEnabled
-
-        if liveActivitiesEnabled {
-            recoverTrackedActivityReferenceIfNeeded()
-        } else {
-            endActivitiesIfPreferenceDisabled()
-        }
-
-        applyCurrentState(aggregateState())
-
-        guard liveActivitiesEnabled else { return }
-
-        scheduleAwaitingReplyExpiryIfNeeded()
-
-        let shouldShow = shouldShowLiveActivity(state: currentState)
-        if shouldShow {
-            idleDismissTask?.cancel()
-            idleDismissTask = nil
-            ensureActivityStartedIfNeeded()
-            pushUpdate()
+    private func apply(serverId: String) {
+        guard let counts = countsByServer[serverId] else { return }
+        let slot = LiveActivitySettings.slot(serverId: serverId)
+        if counts == Self.noCounts {
+            dismissedSlots.remove(slot)
+            endCard(serverId: serverId)
             return
         }
-
-        guard activeActivity != nil else { return }
-        scheduleIdleDismiss()
-    }
-
-    private func shouldShowLiveActivity(state: PiSessionAttributes.ContentState) -> Bool {
-        state.totalActiveSessions > 0
-    }
-
-    private func applyCurrentState(_ nextState: PiSessionAttributes.ContentState, now: Date = Date()) {
-        if nextState != currentState {
-            lastStateChangeAt = now
-        }
-        currentState = nextState
-    }
-
-    private func activityContent(for state: PiSessionAttributes.ContentState) -> ActivityContent<PiSessionAttributes.ContentState> {
-        ActivityContent(
-            state: state,
-            staleDate: staleDate(for: state),
-            relevanceScore: relevanceScore(for: state)
-        )
-    }
-
-    private func recoveredStateChangeDate(
-        from content: ActivityContent<PiSessionAttributes.ContentState>,
-        now: Date = Date()
-    ) -> Date {
-        guard let staleDate = content.staleDate else {
-            return now
-        }
-        return staleDate.addingTimeInterval(-staleIntervalSeconds)
-    }
-
-    private func scheduleAwaitingReplyExpiryIfNeeded() {
-        let nextExpiry = nextAwaitingReplyExpiryDate()
-
-        guard let nextExpiry else {
-            awaitingReplyExpiryTask?.cancel()
-            awaitingReplyExpiryTask = nil
-            awaitingReplyExpiryDate = nil
+        if let activity = activities[slot] {
+            guard activity.content.state != counts else { return }
+            nonisolated(unsafe) let detached = activity
+            Task { await detached.update(ActivityContent(state: counts, staleDate: nil)) }
             return
         }
-
-        if let existing = awaitingReplyExpiryDate,
-           abs(existing.timeIntervalSince(nextExpiry)) < 0.01,
-           awaitingReplyExpiryTask != nil {
-            return
-        }
-
-        awaitingReplyExpiryTask?.cancel()
-        awaitingReplyExpiryDate = nextExpiry
-
-        awaitingReplyExpiryTask = Task { [weak self] in
-            let delay = max(0, nextExpiry.timeIntervalSinceNow)
-            if delay > 0 {
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            }
-
-            guard !Task.isCancelled, let self else { return }
-
-            self.awaitingReplyExpiryTask = nil
-            self.awaitingReplyExpiryDate = nil
-
-            self.refreshLifecycle()
-
-            if !self.shouldShowLiveActivity(state: self.currentState) {
-                self.endIfNeeded()
-            }
-        }
-    }
-
-    private func nextAwaitingReplyExpiryDate(now: Date = Date()) -> Date? {
-        var earliest: Date?
-
-        for snapshot in connectionSnapshots.values {
-            for session in snapshot.sessionsById.values {
-                guard isTransientPhase(session) else { continue }
-
-                let referenceDate = session.readySince ?? session.updatedAt
-                let expiry = referenceDate.addingTimeInterval(awaitingReplyVisibilitySeconds)
-                guard expiry > now else { continue }
-
-                if let current = earliest {
-                    if expiry < current {
-                        earliest = expiry
-                    }
-                } else {
-                    earliest = expiry
-                }
-            }
-        }
-
-        return earliest
-    }
-
-    private func ensureActivityStartedIfNeeded() {
-        guard AppPreferences.LiveActivity.isEnabled else { return }
-
-        // Check if our tracked activity was ended by the system (8-hour limit,
-        // user removal). activityState is synchronously available.
-        if let existing = activeActivity,
-           existing.activityState == .ended || existing.activityState == .dismissed {
-            logger.error("Detected system-ended activity, clearing stale reference")
-            cleanupTimers()
-            activeActivity = nil
-            currentState = Self.emptyState
-        }
-
-        guard activeActivity == nil else { return }
-
-        let authInfo = ActivityAuthorizationInfo()
-        guard authInfo.areActivitiesEnabled else {
-            logger.error("Live Activities not enabled (areActivitiesEnabled=false). User must enable in Settings → Oppi → Live Activities")
-            return
-        }
-
-        let attributes = PiSessionAttributes(activityName: "Oppi")
-
+        guard !dismissedSlots.contains(slot), ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         do {
-            let content = activityContent(for: currentState)
             let activity = try Activity.request(
-                attributes: attributes,
-                content: content,
-                pushType: nil
+                attributes: OppiActivityAttributes(slot: slot),
+                content: ActivityContent(state: counts, staleDate: nil),
+                pushType: .token
             )
-            activeActivity = activity
-            observeActivityLifecycle(activity)
-            lastDeliveredSnapshot = DeliveredSnapshot(from: content)
-            logger.error("Live Activity started")
+            adopt(activity)
         } catch {
             logger.error("Live Activity request failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
-    /// Watch for system-initiated activity endings (8-hour limit, user removal).
-    /// When detected, nil out `activeActivity` so the next `refreshLifecycle()`
-    /// can restart it if sessions are still active.
-    private func observeActivityLifecycle(_ activity: Activity<PiSessionAttributes>) {
-        activityObservationTask?.cancel()
-        activityObservationTask = Task { [weak self] in
-            for await state in activity.activityStateUpdates {
-                guard !Task.isCancelled else { break }
-                guard let self else { break }
+    private func endCard(serverId: String) {
+        let slot = LiveActivitySettings.slot(serverId: serverId)
+        guard let activity = activities.removeValue(forKey: slot) else { return }
+        end(activity, dismissal: .after(Date().addingTimeInterval(Self.dismissalDelay)))
+        LiveActivityRelaySync.shared.removeActivity(slot: slot)
+    }
 
-                switch state {
-                case .ended, .dismissed:
-                    logger.error("Activity ended by system (state=\(String(describing: state), privacy: .public))")
-                    if self.activeActivity?.id == activity.id {
-                        self.cleanupTimers()
-                        self.activeActivity = nil
-                        self.currentState = Self.emptyState
+    private func end(_ activity: Activity<OppiActivityAttributes>, dismissal: ActivityUIDismissalPolicy) {
+        nonisolated(unsafe) let detached = activity
+        Task { await detached.end(ActivityContent(state: Self.noCounts, staleDate: nil), dismissalPolicy: dismissal) }
+    }
 
-                        // If we still have active sessions, restart the activity.
-                        if self.shouldShowLiveActivity(state: self.aggregateState()) {
-                            self.refreshLifecycle()
-                        }
-                    }
-                case .pending, .active, .stale:
-                    break
-                @unknown default:
-                    break
-                }
-            }
+    private func adoptExisting() {
+        for activity in Activity<OppiActivityAttributes>.activities {
+            adopt(activity)
         }
     }
 
-    private func scheduleIdleDismiss() {
-        guard idleDismissTask == nil else { return }
-
-        idleDismissTask = Task { [weak self] in
-            try? await Task.sleep(for: self?.idleDismissDelay ?? .seconds(60))
-            guard !Task.isCancelled, let self else { return }
-            self.idleDismissTask = nil
-            if !self.shouldShowLiveActivity(state: self.currentState) {
-                self.endIfNeeded()
-            }
-        }
-    }
-
-    // MARK: - Activity Updates
-
-    /// Throttled push: coalesces rapid state changes into at most one
-    /// ActivityKit update per `pushThrottleInterval`.
-    private func pushUpdate() {
-        guard AppPreferences.LiveActivity.isEnabled else { return }
-        guard activeActivity != nil else { return }
-
-        hasPendingPush = true
-
-        guard pushThrottleTask == nil else { return }
-
-        executePush()
-
-        pushThrottleTask = Task { [weak self] in
-            try? await Task.sleep(for: self?.pushThrottleInterval ?? .seconds(1))
-            guard !Task.isCancelled else { return }
-            guard let self else { return }
-
-            if self.hasPendingPush {
-                self.executePush()
-            }
-            self.pushThrottleTask = nil
-        }
-    }
-
-    private func executePush() {
-        guard AppPreferences.LiveActivity.isEnabled else { return }
-        guard let activity = activeActivity else { return }
-
-        hasPendingPush = false
-
-        let state = currentState
-        let deliveredSnapshot = DeliveredSnapshot(from: activityContent(for: state))
-
-        if deliveredSnapshot == lastDeliveredSnapshot {
+    /// Track a card. A newer card for the same server replaces the one held: it is the one
+    /// the relay just started.
+    private func adopt(_ activity: Activity<OppiActivityAttributes>) {
+        guard activity.activityState == .active || activity.activityState == .stale else { return }
+        let slot = activity.attributes.slot
+        guard LiveActivitySettings.serverId(forSlot: slot).map(isEnabled) == true else {
+            // A card for a server whose card is off, or one this phone no longer knows.
+            end(activity, dismissal: .immediate)
             return
         }
-
-        lastDeliveredSnapshot = deliveredSnapshot
-        pushSequence &+= 1
-        let sequence = pushSequence
-
-        nonisolated(unsafe) let detachedActivity = activity
-        let alertConfiguration: AlertConfiguration? = nil
-
-        Task { @MainActor [weak self] in
-            // Built on the main actor right before the update: App Lock or a
-            // server, workspace, or session lock may have turned on since this
-            // update was queued, and a newer update supersedes this one.
-            guard let self, sequence == self.pushSequence else { return }
-            let deliveredState = self.deliveryState(for: state)
-            await detachedActivity.update(
-                ActivityContent(
-                    state: deliveredState,
-                    staleDate: deliveredSnapshot.staleDate,
-                    relevanceScore: deliveredSnapshot.relevanceScore
-                ),
-                alertConfiguration: alertConfiguration
-            )
+        if let held = activities[slot] {
+            guard held.id != activity.id else { return }
+            end(held, dismissal: .immediate)
         }
+        activities[slot] = activity
+        watch(activity, slot: slot)
     }
 
-    // MARK: - Aggregation
-
-    private func aggregateState() -> PiSessionAttributes.ContentState {
-        let sortedConnectionIds = connectionSnapshots.keys.sorted()
-
-        var allSessions: [(connectionId: String, session: SessionSnapshot)] = []
-
-        for connectionId in sortedConnectionIds {
-            guard let snapshot = connectionSnapshots[connectionId] else { continue }
-            allSessions.append(contentsOf: snapshot.sessionsById.values.map { (connectionId, $0) })
-        }
-
-        let sessionViews = allSessions.map { connectionId, session in
-            SessionView(
-                id: session.id,
-                // Connection ids are server ids (`ServerConnection.liveActivityConnectionId`).
-                lockTarget: .session(
-                    serverId: connectionId,
-                    workspaceId: session.workspaceId,
-                    sessionId: session.id,
-                    isIncognito: session.isIncognito
-                ),
-                name: session.name,
-                phase: phase(for: session),
-                blockedKind: blockedKind(for: session),
-                activeTool: session.activeTool,
-                lastActivity: session.lastActivity,
-                startDate: session.startDate,
-                changeStats: session.changeStats,
-                updatedAt: session.updatedAt
-            )
-        }
-
-        let totalActiveSessions = sessionViews.filter { $0.phase != .ended }.count
-        let sessionsAwaitingReply = sessionViews.filter { $0.phase == .awaitingReply }.count
-        let sessionsWorking = sessionViews.filter { $0.phase == .working }.count
-        let sessionsBlocked = sessionViews.filter { $0.phase == .blocked }.count
-
-        let primary = sessionViews.max { lhs, rhs in
-            let lhsPriority = phasePriority(lhs.phase)
-            let rhsPriority = phasePriority(rhs.phase)
-            if lhsPriority != rhsPriority {
-                return lhsPriority < rhsPriority
-            }
-            return lhs.updatedAt < rhs.updatedAt
-        }
-
-        if let primary {
-            let state = PiSessionAttributes.ContentState(
-                primaryPhase: primary.phase,
-                primarySessionId: primary.id,
-                primarySessionName: primary.name,
-                primaryTool: primary.activeTool,
-                primaryLastActivity: primary.lastActivity,
-                totalActiveSessions: totalActiveSessions,
-                sessionsAwaitingReply: sessionsAwaitingReply,
-                sessionsWorking: sessionsWorking,
-                sessionsBlocked: sessionsBlocked > 0 ? sessionsBlocked : nil,
-                primaryBlockedKind: primary.phase == .blocked ? primary.blockedKind : nil,
-                primaryMutatingToolCalls: primary.changeStats?.mutatingToolCalls,
-                primaryFilesChanged: primary.changeStats?.filesChanged,
-                primaryAddedLines: primary.changeStats?.addedLines,
-                primaryRemovedLines: primary.changeStats?.removedLines,
-                sessionStartDate: primary.phase == .working ? primary.startDate : nil
-            )
-            return Self.stateForDelivery(
-                state,
-                hidesSessionText: hidesSessionText() || hidesScopedSessionText(primary.lockTarget)
-            )
-        }
-
-        return Self.emptyState
-    }
-
-    /// The state an update delivers now: `queued` with App Lock and the
-    /// primary session's scoped lock applied as of this moment.
-    func deliveryState(for queued: PiSessionAttributes.ContentState) -> PiSessionAttributes.ContentState {
-        let primaryTarget = queued.primarySessionId.flatMap { sessionId in
-            connectionSnapshots.lazy.compactMap { connectionId, snapshot in
-                snapshot.sessionsById[sessionId].map { session in
-                    ScopedLockTarget.session(
-                        serverId: connectionId,
-                        workspaceId: session.workspaceId,
-                        sessionId: session.id,
-                        isIncognito: session.isIncognito
-                    )
+    private func watch(_ activity: Activity<OppiActivityAttributes>, slot: String) {
+        guard watchers[activity.id] == nil else { return }
+        watchers[activity.id] = Task { [weak self] in
+            let tokens = Task {
+                for await token in activity.pushTokenUpdates {
+                    LiveActivityRelaySync.shared.setActivityToken(token, slot: slot)
                 }
-            }.first
-        }
-        return Self.stateForDelivery(
-            queued,
-            hidesSessionText: hidesSessionText() || (primaryTarget.map(hidesScopedSessionText) ?? false)
-        )
-    }
-
-    /// App Lock: phase and counts only; no session name, tool, or activity text.
-    static func stateForDelivery(
-        _ state: PiSessionAttributes.ContentState,
-        hidesSessionText: Bool
-    ) -> PiSessionAttributes.ContentState {
-        guard hidesSessionText else { return state }
-        var redacted = state
-        redacted.primarySessionName = emptyState.primarySessionName
-        redacted.primaryTool = nil
-        redacted.primaryLastActivity = defaultLastActivity(for: state.primaryPhase)
-        return redacted
-    }
-
-    private func phase(for session: SessionSnapshot) -> SessionPhase {
-        if let kind = session.statusKind {
-            switch kind {
-            case .working:
-                return .working
-            case .needsApproval, .question, .signIn:
-                return .blocked
-            case .stopped:
-                return .ended
-            case .error:
-                // A failed session stays an error; a run that ended in an error shows briefly.
-                return session.status == .error ? .error : settledPhase(.error, for: session)
-            case .done:
-                return settledPhase(.done, for: session)
-            case .idle:
-                return .ended
+            }
+            defer { tokens.cancel() }
+            for await state in activity.activityStateUpdates where state == .ended || state == .dismissed {
+                self?.cardEnded(activity, slot: slot, state: state)
+                return
             }
         }
+    }
 
-        switch session.status {
-        case .starting, .busy, .stopping:
-            return .working
-        case .error:
-            return .error
-        case .stopped:
-            return .ended
-        case .ready:
-            return settledPhase(.awaitingReply, for: session)
+    /// Apple ended the card (its 8 hours ran out), the person dismissed it, or someone ended it.
+    private func cardEnded(_ activity: Activity<OppiActivityAttributes>, slot: String, state: ActivityState) {
+        watchers.removeValue(forKey: activity.id)
+        guard activities[slot]?.id == activity.id else { return }
+        activities.removeValue(forKey: slot)
+        LiveActivityRelaySync.shared.removeActivity(slot: slot)
+        logger.info("Live Activity ended (state=\(String(describing: state), privacy: .public))")
+        // Apple's 8 hours ran out while work goes on: start a new card. A dismissed card
+        // stays away until the work it counted is over.
+        if state == .dismissed {
+            dismissedSlots.insert(slot)
+        } else if let serverId = LiveActivitySettings.serverId(forSlot: slot) {
+            apply(serverId: serverId)
         }
     }
-
-    /// A settled outcome shows for `awaitingReplyVisibilitySeconds`, then the session reads
-    /// as ended so the activity can dismiss. Anchored to `readySince` (the transition), not
-    /// `updatedAt`, which `sync()` refreshes on every message.
-    private func settledPhase(_ phase: SessionPhase, for session: SessionSnapshot) -> SessionPhase {
-        let referenceDate = session.readySince ?? session.updatedAt
-        let age = Date().timeIntervalSince(referenceDate)
-        if age <= awaitingReplyVisibilitySeconds, session.phaseHint != .error || phase == .error {
-            return phase
-        }
-        return .ended
-    }
-
-    /// Phases that expire on their own timer.
-    private func isTransientPhase(_ session: SessionSnapshot) -> Bool {
-        let phase = phase(for: session)
-        return phase == .awaitingReply || phase == .done || (phase == .error && session.status != .error)
-    }
-
-    private func blockedKind(for session: SessionSnapshot) -> String? {
-        switch session.statusKind {
-        case .needsApproval: "permission"
-        case .question: "question"
-        case .signIn: "auth"
-        case .working, .error, .done, .idle, .stopped, nil: nil
-        }
-    }
-
-    private func isWorkingStatus(_ status: SessionStatus) -> Bool {
-        switch status {
-        case .starting, .busy, .stopping:
-            return true
-        case .ready, .error, .stopped:
-            return false
-        }
-    }
-
-    private func baselinePhase(for status: SessionStatus) -> SessionPhase {
-        switch status {
-        case .starting, .busy, .stopping:
-            return .working
-        case .ready:
-            return .awaitingReply
-        case .error:
-            return .error
-        case .stopped:
-            return .ended
-        }
-    }
-
-    private func phasePriority(_ phase: SessionPhase) -> Int {
-        switch phase {
-        case .blocked: return 100
-        case .error: return 75
-        case .working: return 50
-        case .done: return 30
-        case .awaitingReply: return 25
-        case .ended: return 0
-        }
-    }
-
-    private func relevanceScore(for state: PiSessionAttributes.ContentState) -> Double {
-        Double(phasePriority(state.primaryPhase))
-    }
-
-    private func staleDate(for state: PiSessionAttributes.ContentState) -> Date? {
-        if state.primaryPhase == .awaitingReply || state.primaryPhase == .done {
-            return nil
-        }
-        if state.primaryPhase == .ended {
-            return nil
-        }
-        return lastStateChangeAt.addingTimeInterval(staleIntervalSeconds)
-    }
-
-    private func fallbackSessionName(_ sessionId: String) -> String {
-        "Session \(String(sessionId.prefix(8)))"
-    }
-
-    private static func defaultLastActivity(for phase: SessionPhase) -> String {
-        switch phase {
-        case .working: return String(localized: "Working")
-        case .blocked: return String(localized: "Needs you")
-        case .done: return String(localized: "Done")
-        case .awaitingReply: return String(localized: "Your turn")
-        case .error: return String(localized: "Attention needed")
-        case .ended: return String(localized: "Session ended")
-        }
-    }
-
 }

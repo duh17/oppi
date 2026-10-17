@@ -117,7 +117,7 @@ struct ServerSettingsRootView: View {
                 Text("Off by default. When on, samples this server's CPU, memory, and disk every 30 seconds for Server Metrics and Grafana, kept 30 days on the server.")
             }
 
-            ServerPushNotificationsSection(
+            ServerNotificationsSection(
                 serverId: pairedServer.id,
                 connection: coordinator.connection(for: pairedServer.id)
             )

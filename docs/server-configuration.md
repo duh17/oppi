@@ -99,7 +99,7 @@ oppi server restart
 | `push.mode` | `off` (default) or `relay`. |
 | `push.relays` | `[primary]` or `[primary, standby]` origins: `https`, or `http` on loopback for local testing. No path. Required in relay mode. |
 
-Restart the server after changing `push`. In relay mode, `/server/info` advertises `capabilities.pushNotifications` with the primary relay. Each user still opts in per server on the phone (**Server Settings → Push Notifications**, off by default); only then does the app register with APNs and the relay, ask for notification permission, and send this server its push key.
+Restart the server after changing `push`. In relay mode, `/server/info` advertises `capabilities.pushNotifications` with the primary relay. Each user still opts in per server on the phone (**Server Settings → Notifications**, **Push Notifications**, off by default); only then does the app register with APNs and the relay, ask for notification permission, and send this server its push key.
 
 `https://push.oppi.chaosdonkey.dev` is Oppi's relay, and the only one that reaches App Store and TestFlight builds: a relay needs an APNs key from the Apple Developer team that signs the app. If you build and sign Oppi yourself, run the relay in `relay/` (Node, or Cloudflare Workers) with your team's key. See [relay/README.md](../relay/README.md).
 
@@ -116,6 +116,14 @@ What the server does:
   Nothing else pushes: not a failed model call that an automatic retry recovers, not a subagent finishing or failing (its lead hears about it), and not a session ending or timing out.
 - **Presence:** `blocked` and `done` skip any device that holds an open app-event or session stream, because that device already shows the change. Other devices still get the push, so an open Mac or iPad does not silence the phone. An iPhone that stays connected in the background while an agent works posts its own **Session Done** notification instead. A stream that was never closed, because the app was suspended or lost its network, keeps its device present until the server's ping timeout drops it, up to about 90 seconds; a `blocked` or `done` in that window is not pushed to that device.
 - **Content:** a title, the session name, and a fixed body (an ended session's reason), all inside the envelope. On the phone, App Lock and scoped locks hide the session name. Logs record only outcomes such as `push.not_delivered` and `push.registration_pruned`.
+
+### Live Activity
+
+In relay mode the server also keeps each opted-in phone's Live Activity current while Oppi is closed. The card shows counts only: how many top-level sessions are running and how many need you (approval, question, or sign-in). Subagents never count. Users turn it on per server on the phone (**Server Settings**, **Notifications**, **Live Activities**, off by default); with push off for that server the card updates only while Oppi is open. There is no server setting beyond `push`.
+
+- **What is sent:** the event (`start`, `update`, or `end`), the two counts, and a timestamp, in plain text to the relay, which puts them into a fixed ActivityKit template. No session names, IDs, or text. Apple and the relay can read these counts and their timing; see the [spec](../protocol/push/spec.md#36-live-activity).
+- **When:** only when the counts on the card would change, at most once a minute per device (the latest counts win), and only while the device holds no app-event or session stream; an open app updates its own card. Work starting while the phone has no card starts one (with Apple's required alert, "Oppi: Agents are working."); nothing running or waiting ends it within about 30 seconds. Apple ends a card after 8 hours; if work continues the server ends it and starts a new one. A minute after the server starts it reconciles each device once, so a card left from before a restart ends.
+- **Limits:** 40 Live Activity pushes per device a UTC day, separate from the alert budget; updates stop at 32 so start and end keep room. Over the limit they are dropped and logged as `push.device_budget_exhausted` with `alert: live_activity_*`.
 
 ## Extensions
 

@@ -20,9 +20,15 @@ import { createRelayHandler } from "../core/relay.js";
 import {
   applyAddPermission,
   applyAssertionCounter,
+  applyAuthorizeLiveActivity,
   applyAuthorizePush,
+  applyClearLiveActivityToken,
   applyDeletePermission,
+  applySetLiveActivity,
   type AddPermissionResult,
+  type LiveActivityAuthorization,
+  type LiveActivityEvent,
+  type LiveActivityTarget,
   type PermissionRecord,
   type PushAuthorization,
   type RegistrationRecord,
@@ -92,6 +98,38 @@ export class RegistrationObject extends DurableObject<Env> {
     // A refused push changes no count worth keeping; skipping the write saves free-plan rows.
     if (result.ok) await this.ctx.storage.put(RECORD_KEY, record);
     return result;
+  }
+
+  async setLiveActivity(
+    startToken: string | null,
+    activities: Array<{ slot: string; token: string }>,
+    now: number,
+  ): Promise<boolean> {
+    const record = await this.read();
+    if (!record) return false;
+    applySetLiveActivity(record, startToken, activities, now);
+    await this.ctx.storage.put(RECORD_KEY, record);
+    return true;
+  }
+
+  async authorizeLiveActivity(
+    permissionId: string,
+    secretHash: string,
+    event: LiveActivityEvent,
+    now: number,
+  ): Promise<LiveActivityAuthorization> {
+    const record = await this.read();
+    if (!record) return { ok: false, reason: "gone" };
+    const result = applyAuthorizeLiveActivity(record, permissionId, secretHash, event, now);
+    if (result.ok) await this.ctx.storage.put(RECORD_KEY, record);
+    return result;
+  }
+
+  async clearLiveActivityToken(target: LiveActivityTarget, token: string): Promise<void> {
+    const record = await this.read();
+    if (record && applyClearLiveActivityToken(record, target, token)) {
+      await this.ctx.storage.put(RECORD_KEY, record);
+    }
   }
 }
 
@@ -198,6 +236,29 @@ class DurableObjectRelayStore implements RelayStore {
     now: number,
   ): Promise<PushAuthorization> {
     return this.registration(id).authorizePush(permissionId, secretHash, now);
+  }
+
+  setLiveActivity(
+    id: string,
+    startToken: string | null,
+    activities: Array<{ slot: string; token: string }>,
+    now: number,
+  ): Promise<boolean> {
+    return this.registration(id).setLiveActivity(startToken, activities, now);
+  }
+
+  authorizeLiveActivity(
+    id: string,
+    permissionId: string,
+    secretHash: string,
+    event: LiveActivityEvent,
+    now: number,
+  ): Promise<LiveActivityAuthorization> {
+    return this.registration(id).authorizeLiveActivity(permissionId, secretHash, event, now);
+  }
+
+  clearLiveActivityToken(id: string, target: LiveActivityTarget, token: string): Promise<void> {
+    return this.registration(id).clearLiveActivityToken(target, token);
   }
 }
 

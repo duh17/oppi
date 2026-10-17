@@ -23,10 +23,6 @@ enum ReleaseFeatures {
     /// `capabilities.pushNotifications` relay and the user's opt-in (`PushRegistration`).
     static let localAttentionNotificationsEnabled = true
 
-    /// Live Activity codepath availability (runtime opt-in handled by
-    /// `AppPreferences.LiveActivity`).
-    static let liveActivitiesEnabled = false
-
     /// Composer microphone button + on-device speech-to-text via SpeechAnalyzer.
     static let voiceInputEnabled = true
 

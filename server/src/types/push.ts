@@ -24,6 +24,12 @@ export interface PushRegistrationRequest {
   issuedAt: number;
   /** Base64url P-256 `r || s` by the device's enrolled key. */
   signature: string;
+  /**
+   * The phone shows Oppi's Live Activity and gave the relay its tokens, so this server may
+   * drive the card while the phone is away (spec "Live Activity"). A hint outside the signature: the relay
+   * holds the real tokens and refuses when it has none.
+   */
+  liveActivity?: boolean;
 }
 
 /**
@@ -38,4 +44,6 @@ export interface PushRegistration {
   publicKey: string;
   sendToken: string;
   registeredAt: number;
+  /** The phone accepts Live Activity pushes (`PushRegistrationRequest.liveActivity`). */
+  liveActivity?: boolean;
 }

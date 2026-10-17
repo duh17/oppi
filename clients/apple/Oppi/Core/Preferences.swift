@@ -12,36 +12,11 @@ import Foundation
 ///
 /// ## Usage
 ///
-///     let enabled = AppPreferences.LiveActivity.isEnabled
 ///     AppPreferences.Session.setAutoTitleProvider(.server)
 ///
+/// Per-server settings live with their feature: `PushRegistration` and
+/// `LiveActivitySettings`.
 enum AppPreferences {
-
-    // MARK: - Live Activity
-
-    /// User-facing preference for Live Activities.
-    ///
-    /// Default is OFF in app builds to reduce rollout risk. Tests default ON
-    /// so existing LiveActivityManager coverage remains stable.
-    enum LiveActivity {
-        private static let enabledKey = "\(AppIdentifiers.subsystem).liveActivities.enabled"
-
-        private static var defaultEnabled: Bool {
-            ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-                || NSClassFromString("XCTestCase") != nil
-        }
-
-        static var isEnabled: Bool {
-            if let stored = UserDefaults.standard.object(forKey: enabledKey) as? Bool {
-                return stored
-            }
-            return defaultEnabled
-        }
-
-        static func setEnabled(_ enabled: Bool) {
-            UserDefaults.standard.set(enabled, forKey: enabledKey)
-        }
-    }
 
     // MARK: - Screen Awake
 

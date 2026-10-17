@@ -205,17 +205,14 @@ final class AppLockService {
     }
 
     /// Turning App Lock on: content shown while it was off (ask notifications
-    /// with question text, `done` banners with session names, the Live
-    /// Activity) follows the new setting at once. Runs in the foreground with
-    /// the user present. Playback, including Picture in Picture, is never
-    /// affected by App Lock.
+    /// with question text, `done` banners with session names) follows the new
+    /// setting at once. The Live Activity shows counts only, so it stays. Runs
+    /// in the foreground with the user present. Playback, including Picture in
+    /// Picture, is never affected by App Lock.
     static func clearContentShownBeforeAppLock() {
         if ReleaseFeatures.localAttentionNotificationsEnabled {
             AttentionNotificationService.shared.removeLockSensitiveNotifications()
             AttentionNotificationService.shared.removePairingNotifications()
-        }
-        if ReleaseFeatures.liveActivitiesEnabled {
-            LiveActivityManager.shared.endAllForAppLock()
         }
     }
 

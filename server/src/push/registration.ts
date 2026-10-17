@@ -14,7 +14,7 @@ export const PUSH_REGISTRATION_MAX_SKEW_MS = 10 * 60 * 1000;
 const MAX_SEND_TOKEN_LENGTH = 512;
 
 export type PushRegistrationCheck =
-  | { ok: true; keyId: string; publicKey: string; sendToken: string }
+  | { ok: true; keyId: string; publicKey: string; sendToken: string; liveActivity: boolean }
   | { ok: false; status: 400 | 401 | 409; error: string };
 
 /** The exact bytes the device key signs. */
@@ -51,7 +51,10 @@ export function checkPushRegistration(input: {
   now: number;
 }): PushRegistrationCheck {
   const { body } = input;
-  const { keyId, publicKey, sendToken, relay, issuedAt, signature } = body;
+  const { keyId, publicKey, sendToken, relay, issuedAt, signature, liveActivity } = body;
+  if (liveActivity !== undefined && typeof liveActivity !== "boolean") {
+    return { ok: false, status: 400, error: "liveActivity must be a boolean" };
+  }
   if (
     typeof keyId !== "string" ||
     typeof publicKey !== "string" ||
@@ -100,5 +103,14 @@ export function checkPushRegistration(input: {
   if (relay !== input.primaryRelay) {
     return { ok: false, status: 409, error: "relay_mismatch" };
   }
-  return { ok: true, keyId, publicKey: publicKeyBytes.toString("base64url"), sendToken };
+  // `liveActivity` is outside the signature on purpose: flipping it on gets refused at the
+  // relay, which holds the real tokens, and flipping it off only withholds the card, which a
+  // proxy could already do by dropping the request.
+  return {
+    ok: true,
+    keyId,
+    publicKey: publicKeyBytes.toString("base64url"),
+    sendToken,
+    liveActivity: liveActivity === true,
+  };
 }

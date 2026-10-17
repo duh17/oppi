@@ -148,7 +148,6 @@ struct ToolInspection: Equatable, Sendable {
         if let path = file?.path { return title + " " + (displayPath ?? path) }
         return argsSummary.isEmpty ? title : title + ": " + String(argsSummary.prefix(80))
     }
-    var activityLabel: String { "Running \(title.isEmpty ? "tool" : title)" }
     var input: [Field]
     var calls: NestedToolCalls?
     var callsSummary: String? {

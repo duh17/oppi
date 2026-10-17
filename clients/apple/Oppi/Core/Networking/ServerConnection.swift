@@ -490,11 +490,6 @@ final class ServerConnection {
     /// Fingerprint of the currently connected server (set after configure).
     private(set) var currentServerId: String?
 
-    /// Stable key used by LiveActivityManager to merge multi-server snapshots.
-    var liveActivityConnectionId: String {
-        currentServerId ?? "default"
-    }
-
     // MARK: - Setup
 
     // periphery:ignore - used by ServerConnectionTests via @testable import
@@ -1359,8 +1354,8 @@ final class ServerConnection {
         clearFocusedSessionStreamEndpoint()
         wsClient?.disconnect()
 
-        if ReleaseFeatures.liveActivitiesEnabled {
-            LiveActivityManager.shared.removeConnection(liveActivityConnectionId)
+        if let currentServerId {
+            LiveActivityManager.shared.removeConnection(currentServerId)
         }
     }
 
@@ -1865,7 +1860,6 @@ final class ServerConnection {
         if deferSharedStoreToLiveSession,
            shouldDeferSharedStoreUpdateToLiveSessionConsumer(message) {
             handleInactiveSessionUI(message, sessionId: sessionId)
-            recordCrossSessionLiveActivityEvent(message, sessionId: sessionId)
             return
         }
 
@@ -1873,7 +1867,6 @@ final class ServerConnection {
         handleInactiveSessionUI(message, sessionId: sessionId)
 
         if result.handled {
-            recordCrossSessionLiveActivityEvent(message, sessionId: sessionId)
             return
         }
 
@@ -1885,12 +1878,6 @@ final class ServerConnection {
                 current.status = .error
                 current.lastActivity = Date()
                 sessionStore.upsert(current)
-            }
-            if ReleaseFeatures.liveActivitiesEnabled {
-                LiveActivityManager.shared.recordEvent(
-                    connectionId: liveActivityConnectionId,
-                    event: .error(sessionId: sessionId, message: errorMessage)
-                )
             }
             syncLiveActivityState()
         default:

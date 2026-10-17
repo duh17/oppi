@@ -1,12 +1,18 @@
 /**
  * Relay API v1 (protocol/push/spec.md §3), adapter-agnostic: a WHATWG `Request` in, a
  * `Response` out. The relay checks envelope size and version and never opens one; it holds
- * no decryption code.
+ * no decryption code. Live Activity pushes (spec §3.6) carry two validated counts in a fixed
+ * template and nothing else.
  */
 
 import { APPLE_APP_ATTESTATION_ROOT_CA_PEM } from "./apple-app-attestation-root.js";
 import { verifyAssertion, verifyAttestation } from "./app-attest.js";
-import { buildApnsRequest, isRetiredToken, type ApnsSender } from "./apns.js";
+import {
+  buildApnsRequest,
+  buildLiveActivityRequest,
+  isRetiredToken,
+  type ApnsSender,
+} from "./apns.js";
 import {
   base64Decode,
   base64urlDecode,
@@ -21,7 +27,9 @@ import {
 import {
   DEFAULT_QUOTA_LIMITS,
   emptyQuota,
+  MAX_PERMISSIONS_PER_REGISTRATION,
   type ApnsEnvironment,
+  type LiveActivityEvent,
   type RegistrationRecord,
   type RelayStore,
 } from "./store.js";
@@ -41,6 +49,11 @@ const PERMISSION_ID = /^p_[A-Za-z0-9_-]{22}$/;
 const SECRET = /^[A-Za-z0-9_-]{43}$/;
 const APNS_TOKEN = /^[0-9a-f]{64,200}$/;
 const COLLAPSE_ID = /^[A-Za-z0-9_-]{22}$/;
+const LIVE_ACTIVITY_SLOT = /^[A-Za-z0-9_-]{22}$/;
+/** Live Activity counts are top-level sessions; more than this shows as this. */
+export const LIVE_ACTIVITY_MAX_COUNT = 99;
+/** How far a Live Activity `timestamp` may be from the relay clock. */
+const LIVE_ACTIVITY_TIMESTAMP_SKEW_SECONDS = 300;
 
 export interface RelayConfig {
   /** `<Team ID>.<bundle ID>`, the App Attest RP ID. */
@@ -276,7 +289,10 @@ export function createRelayHandler(deps: RelayDeps): (
     const replacedId = await store.bindApnsToken(apnsToken, record.id);
     if (replacedId) {
       const replaced = await store.getRegistration(replacedId);
-      if (replaced) record.quota = replaced.quota;
+      if (replaced) {
+        record.quota = replaced.quota;
+        if (replaced.liveActivityQuota) record.liveActivityQuota = replaced.liveActivityQuota;
+      }
       await store.deleteRegistration(replacedId);
       log("relay.registration_replaced");
     }
@@ -328,13 +344,20 @@ export function createRelayHandler(deps: RelayDeps): (
   }
 
   async function postPermission(request: Request, registrationId: string, path: string, body: Uint8Array) {
-    parseObject(body, []);
+    const { liveActivitySlot } = parseObject(body, ["liveActivitySlot"]);
+    if (
+      liveActivitySlot !== undefined &&
+      (typeof liveActivitySlot !== "string" || !LIVE_ACTIVITY_SLOT.test(liveActivitySlot))
+    ) {
+      throw new HttpError(400, "bad_request");
+    }
     const record = await authenticateRegistration(request, registrationId, path, body);
     const permissionId = randomId("p_");
     const secret = base64urlEncode(randomBytes(32));
     const result = await store.addPermission(record.id, {
       id: permissionId,
       secretHash: await secretHash(secret),
+      ...(typeof liveActivitySlot === "string" ? { liveActivitySlot } : {}),
     });
     if (result === "gone") throw new HttpError(410, "gone");
     if (result === "limit") throw new HttpError(409, "too_many_permissions");
@@ -411,6 +434,133 @@ export function createRelayHandler(deps: RelayDeps): (
     throw new HttpError(502, "apns_unavailable");
   }
 
+  /** The phone's whole Live Activity token state; replaces what the relay held. */
+  async function putLiveActivity(
+    request: Request,
+    registrationId: string,
+    path: string,
+    body: Uint8Array,
+  ): Promise<Response> {
+    const { startToken, activities } = parseObject(body, ["startToken", "activities"]);
+    if (
+      (startToken !== null && (typeof startToken !== "string" || !APNS_TOKEN.test(startToken))) ||
+      !Array.isArray(activities) ||
+      activities.length > MAX_PERMISSIONS_PER_REGISTRATION
+    ) {
+      throw new HttpError(400, "bad_request");
+    }
+    const parsed: Array<{ slot: string; token: string }> = [];
+    for (const entry of activities as unknown[]) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        throw new HttpError(400, "bad_request");
+      }
+      for (const key of Object.keys(entry)) {
+        if (key !== "slot" && key !== "token") throw new HttpError(400, "unknown_field");
+      }
+      const { slot, token } = entry as Record<string, unknown>;
+      if (
+        typeof slot !== "string" ||
+        !LIVE_ACTIVITY_SLOT.test(slot) ||
+        typeof token !== "string" ||
+        !APNS_TOKEN.test(token) ||
+        parsed.some((item) => item.slot === slot)
+      ) {
+        throw new HttpError(400, "bad_request");
+      }
+      parsed.push({ slot, token });
+    }
+    const record = await authenticateRegistration(request, registrationId, path, body);
+    if (!(await store.setLiveActivity(record.id, startToken, parsed, now()))) {
+      throw new HttpError(410, "gone");
+    }
+    return noContent();
+  }
+
+  /** A server's Live Activity push: the fixed schema below, nothing caller-written reaches APNs. */
+  async function postLiveActivity(
+    request: Request,
+    body: Uint8Array,
+    clientAddress: string | null,
+  ): Promise<Response> {
+    // Shares the push limit: both look up a send token, so both feed a junk-token flood.
+    if (!pushLimiter.allow(clientAddress, now())) {
+      throw new HttpError(429, "rate_limited", { "retry-after": "60" });
+    }
+    const token = parseSendToken(bearer(request));
+    const { event, running, needsYou, timestamp } = parseObject(body, [
+      "event",
+      "running",
+      "needsYou",
+      "timestamp",
+    ]);
+    const isCount = (value: unknown): value is number =>
+      typeof value === "number" &&
+      Number.isInteger(value) &&
+      value >= 0 &&
+      value <= LIVE_ACTIVITY_MAX_COUNT;
+    if (
+      (event !== "start" && event !== "update" && event !== "end") ||
+      !isCount(running) ||
+      !isCount(needsYou) ||
+      typeof timestamp !== "number" ||
+      !Number.isInteger(timestamp) ||
+      Math.abs(timestamp - now() / 1000) > LIVE_ACTIVITY_TIMESTAMP_SKEW_SECONDS ||
+      // Nothing running or waiting is an end, and an end shows nothing running or waiting.
+      (event === "end") !== (running + needsYou === 0)
+    ) {
+      throw new HttpError(400, "bad_request");
+    }
+
+    const authorization = await store.authorizeLiveActivity(
+      token.registrationId,
+      token.permissionId,
+      await secretHash(token.secret),
+      event as LiveActivityEvent,
+      now(),
+    );
+    if (!authorization.ok) {
+      if (authorization.reason === "gone") throw new HttpError(410, "gone");
+      if (authorization.reason === "no_activity") throw new HttpError(409, "no_activity");
+      throw new HttpError(429, "quota_exceeded", {
+        "retry-after": String(authorization.retryAfterSeconds),
+      });
+    }
+
+    const apnsRequest = buildLiveActivityRequest({
+      environment: authorization.environment,
+      token: authorization.token,
+      bundleId: deps.config.bundleId,
+      event: event as LiveActivityEvent,
+      running,
+      needsYou,
+      timestamp,
+      slot: authorization.slot,
+      now: now(),
+    });
+    let result;
+    try {
+      result = await deps.apns.send(apnsRequest);
+    } catch {
+      log("relay.apns_network_error");
+      throw new HttpError(502, "apns_unavailable");
+    }
+    if (result.status === 200) {
+      // The ended activity takes no more updates.
+      if (event === "end") {
+        await store.clearLiveActivityToken(token.registrationId, authorization.target, authorization.token);
+      }
+      log("relay.live_activity_delivered", { event: event as string });
+      return json(200, { ok: true });
+    }
+    log("relay.apns_rejected", { status: result.status, reason: result.reason ?? "" });
+    if (isRetiredToken(result)) {
+      // Only this Live Activity token is dead; the phone's alert registration still works.
+      await store.clearLiveActivityToken(token.registrationId, authorization.target, authorization.token);
+      throw new HttpError(409, "no_activity");
+    }
+    throw new HttpError(502, "apns_unavailable");
+  }
+
   async function deletePermissionBySendToken(request: Request): Promise<Response> {
     const token = parseSendToken(bearer(request));
     const record = await store.getRegistration(token.registrationId);
@@ -434,6 +584,9 @@ export function createRelayHandler(deps: RelayDeps): (
     if (path === "/v1/push" && method === "POST") {
       return postPush(request, await readBody(request), clientAddress);
     }
+    if (path === "/v1/live-activity" && method === "POST") {
+      return postLiveActivity(request, await readBody(request), clientAddress);
+    }
     if (path === "/v1/permission" && method === "DELETE") return deletePermissionBySendToken(request);
 
     const permissionMatch = /^\/v1\/registrations\/([^/]+)\/permissions(?:\/([^/]+))?$/.exec(path);
@@ -450,6 +603,14 @@ export function createRelayHandler(deps: RelayDeps): (
         return noContent();
       }
       throw new HttpError(405, "method_not_allowed");
+    }
+
+    const liveActivityMatch = /^\/v1\/registrations\/([^/]+)\/live-activity$/.exec(path);
+    if (liveActivityMatch) {
+      const registrationId = liveActivityMatch[1] ?? "";
+      if (!REGISTRATION_ID.test(registrationId)) throw new HttpError(410, "gone");
+      if (method !== "PUT") throw new HttpError(405, "method_not_allowed");
+      return putLiveActivity(request, registrationId, path, await readBody(request));
     }
 
     const registrationMatch = /^\/v1\/registrations\/([^/]+)$/.exec(path);

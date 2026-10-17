@@ -1806,10 +1806,8 @@ final class OppiApp {
                 "reconnect": shouldReconnect ? "true" : "false",
             ])
 
-            // Recover Live Activity if system ended it while backgrounded (8-hour limit, user removal).
-            if ReleaseFeatures.liveActivitiesEnabled {
-                LiveActivityManager.shared.recoverIfNeeded()
-            }
+            // Pick up Live Activities started, ended, or dismissed while backgrounded.
+            LiveActivityManager.shared.recoverIfNeeded()
 
             backgroundKeepAlive.end()
             SSHTerminalRegistry.shared.appDidBecomeActive()

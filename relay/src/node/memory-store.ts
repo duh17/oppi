@@ -8,10 +8,16 @@ import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import {
   applyAddPermission,
   applyAssertionCounter,
+  applyAuthorizeLiveActivity,
   applyAuthorizePush,
+  applyClearLiveActivityToken,
   applyDeletePermission,
+  applySetLiveActivity,
   DEFAULT_QUOTA_LIMITS,
   type AddPermissionResult,
+  type LiveActivityAuthorization,
+  type LiveActivityEvent,
+  type LiveActivityTarget,
   type PermissionRecord,
   type PushAuthorization,
   type QuotaLimits,
@@ -133,5 +139,44 @@ export class MemoryRelayStore implements RelayStore {
     );
     if (result.ok) this.persist();
     return result;
+  }
+
+  async setLiveActivity(
+    id: string,
+    startToken: string | null,
+    activities: Array<{ slot: string; token: string }>,
+    now: number,
+  ): Promise<boolean> {
+    const record = this.registrations.get(id);
+    if (!record) return false;
+    applySetLiveActivity(record, startToken, activities, now);
+    this.persist();
+    return true;
+  }
+
+  async authorizeLiveActivity(
+    id: string,
+    permissionId: string,
+    secretHash: string,
+    event: LiveActivityEvent,
+    now: number,
+  ): Promise<LiveActivityAuthorization> {
+    const record = this.registrations.get(id);
+    if (!record) return { ok: false, reason: "gone" };
+    const result = applyAuthorizeLiveActivity(
+      record,
+      permissionId,
+      secretHash,
+      event,
+      now,
+      this.options.limits ?? DEFAULT_QUOTA_LIMITS,
+    );
+    if (result.ok) this.persist();
+    return result;
+  }
+
+  async clearLiveActivityToken(id: string, target: LiveActivityTarget, token: string): Promise<void> {
+    const record = this.registrations.get(id);
+    if (record && applyClearLiveActivityToken(record, target, token)) this.persist();
   }
 }

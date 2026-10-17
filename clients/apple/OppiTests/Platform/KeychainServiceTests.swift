@@ -216,11 +216,7 @@ struct KeychainServiceTests {
     /// (default) keychain group. After calling `loadServer(id:)`, the item
     /// should be transparently migrated to the shared access group without
     /// requiring the user to re-pair.
-    @Test func legacyItemMigratesToSharedGroupOnLoadWhenLiveActivitiesAreDisabled() throws {
-        let originalLiveActivitySetting = AppPreferences.LiveActivity.isEnabled
-        AppPreferences.LiveActivity.setEnabled(false)
-        defer { AppPreferences.LiveActivity.setEnabled(originalLiveActivitySetting) }
-
+    @Test func legacyItemMigratesToSharedGroupOnLoad() throws {
         let fp = UUID().uuidString
         guard let server = makeServer(fingerprint: fp) else {
             Issue.record("Failed to create PairedServer")

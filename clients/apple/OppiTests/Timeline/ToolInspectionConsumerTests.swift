@@ -14,17 +14,10 @@ struct ToolInspectionConsumerTests {
         let inspection = try #require(reducer.toolInspection(for: reducer.items[0]))
         #expect(inspection.glyph == "dollarsign")
         #expect(inspection.outlineSummary(argsSummary: "ignored") == "$ echo hello")
-        #expect(inspection.activityLabel == "Running Execute command")
         let projection = QuietTimelineProjection.make(items: reducer.items, isQuiet: true, isBusy: true,
             expandedTurnIDs: [], toolInspection: { reducer.toolInspection(for: $0) })
         guard case .quietWork(let line) = projection.rows.first else { Issue.record("Missing work strip"); return }
         #expect(line.buckets == [.init(kind: .terminal, count: 1)])
-        let manager = LiveActivityManager()
-        manager.sync(connectionId: "c", sessions: [makeTestSession(id: "s", status: .busy)])
-        manager.recordEvent(connectionId: "c", event: .toolStart(sessionId: "s", toolEventId: "t", tool: tool,
-            args: [:], display: .init(title: "Execute command", verbatim: true), outputPresentation: .init(kind: "terminal")))
-        #expect(manager.currentState.primaryTool == "Execute command")
-        #expect(manager.currentState.primaryLastActivity == "Running Execute command")
     }
 
     @Test(arguments: [false, true])
@@ -173,6 +166,5 @@ struct ToolInspectionConsumerTests {
                 outputPresentation: .init(kind: "fileContent", provenance: requested ? "requested" : "result")), includeOutput: false)
         #expect(inspection.activityKind == (requested ? .fileMutation : .fileContent))
         #expect(inspection.outlineSummary(argsSummary: "") == "File operation example.swift")
-        #expect(inspection.activityLabel == "Running File operation")
     }
 }

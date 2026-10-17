@@ -64,11 +64,19 @@ struct PushRelayClient: Sendable {
         )
     }
 
-    func mintSendToken(_ registration: Registration) async throws -> (permissionId: String, sendToken: String) {
+    /// `liveActivitySlot` names this server's Live Activity at the relay; without one the
+    /// server can push alerts but cannot start or update the card.
+    func mintSendToken(
+        _ registration: Registration,
+        liveActivitySlot: String?
+    ) async throws -> (permissionId: String, sendToken: String) {
         struct Response: Decodable { let permissionId: String; let sendToken: String }
         let path = "/v1/registrations/\(registration.registrationId)/permissions"
+        let body = try JSONSerialization.data(
+            withJSONObject: liveActivitySlot.map { ["liveActivitySlot": $0] } ?? [:]
+        )
         let response: Response = try await decode(
-            sendAuthenticated("POST", path: path, body: Data("{}".utf8), registration: registration)
+            sendAuthenticated("POST", path: path, body: body, registration: registration)
         )
         return (response.permissionId, response.sendToken)
     }
@@ -79,6 +87,33 @@ struct PushRelayClient: Sendable {
         let parts = sendToken.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 4, parts[0] == "osp1" else { return nil }
         return (String(parts[1]), String(parts[2]))
+    }
+
+    /// The phone's whole Live Activity token state; the relay replaces what it held.
+    struct LiveActivityState: Encodable, Equatable, Sendable {
+        struct Activity: Encodable, Equatable, Sendable {
+            let slot: String
+            let token: String
+        }
+
+        let startToken: String?
+        let activities: [Activity]
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            // The relay requires the key, with null to clear.
+            try container.encode(startToken, forKey: .startToken)
+            try container.encode(activities, forKey: .activities)
+        }
+
+        private enum CodingKeys: String, CodingKey { case startToken, activities }
+    }
+
+    func putLiveActivity(_ state: LiveActivityState, registration: Registration) async throws {
+        let path = "/v1/registrations/\(registration.registrationId)/live-activity"
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        _ = try await sendAuthenticated("PUT", path: path, body: encoder.encode(state), registration: registration)
     }
 
     func deletePermission(_ permissionId: String, registration: Registration) async throws {
@@ -254,5 +289,20 @@ enum PushRelayRegistrationStore {
 
     static func delete(relay: URL, environment: APNsEnvironment) {
         SecItemDelete(query(account: account(relay: relay, environment: environment)) as CFDictionary)
+    }
+
+    /// Every stored registration, for calls that go to each relay this phone uses.
+    static func all() -> [PushRelayClient.Registration] {
+        let lookup: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccessGroup as String: SharedConstants.keychainAccessGroup,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(lookup as CFDictionary, &result) == errSecSuccess,
+              let items = result as? [Data] else { return [] }
+        return items.compactMap { try? JSONDecoder().decode(PushRelayClient.Registration.self, from: $0) }
     }
 }

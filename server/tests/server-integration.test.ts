@@ -1403,6 +1403,21 @@ describe("push registration API", () => {
     expect(storage.getPushRegistrations().some((entry) => entry.deviceId === deviceId)).toBe(false);
   });
 
+  it("records whether the phone accepts Live Activity pushes, and rejects a non-boolean", async () => {
+    setPushMode("relay");
+    const liveActivity = () =>
+      storage.getPushRegistrations().find((entry) => entry.deviceId === deviceId)?.liveActivity;
+    expect(
+      (await put("/me/push-registration", { ...signedRegistration(), liveActivity: true })).status,
+    ).toBe(200);
+    expect(liveActivity()).toBe(true);
+    expect((await put("/me/push-registration", signedRegistration())).status).toBe(200);
+    expect(liveActivity()).toBeUndefined();
+    expect(
+      (await put("/me/push-registration", { ...signedRegistration(), liveActivity: "yes" })).status,
+    ).toBe(400);
+  });
+
   it("DELETE /me/push-registration forgets the calling device's registration", async () => {
     setPushMode("relay");
     expect((await put("/me/push-registration", signedRegistration())).status).toBe(200);

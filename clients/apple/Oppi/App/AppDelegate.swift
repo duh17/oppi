@@ -26,6 +26,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         if ReleaseFeatures.localAttentionNotificationsEnabled {
             AttentionNotificationService.shared.configureForLaunch()
         }
+        // Also on a background launch: iOS wakes Oppi when the relay starts a Live
+        // Activity, so Oppi can hand the relay the new card's update token.
+        LiveActivityManager.shared.startObservingSystem()
         // Before any scene connects, so it sees every phase change.
         _ = AppScenePhase.shared
         app = OppiApp()

@@ -1,7 +1,9 @@
 # Oppi Push: Envelope v1 and Relay API v1
 
 Status: v1, unreleased. Implemented by `server/src/push/`, `relay/`, and
-`clients/apple/OppiCore/Push/` with the `OppiNotificationService` extension.
+`clients/apple/OppiCore/Push/` with the `OppiNotificationService` extension. The
+counts-only Live Activity (section 3.6) rides the same registrations and send tokens; it is
+not encrypted and carries no text.
 
 Oppi pushes are end-to-end encrypted. A paired Oppi server encrypts each notification to a
 key that only the phone holds and signs it with the server's identity key. The relay and
@@ -259,7 +261,8 @@ checks `rpIdHash`, and requires the counter to exceed the stored counter, then s
 Failures: `401 unauthorized`, `401 assertion_invalid`, `410 gone` for an unknown
 registration.
 
-- **`POST /v1/registrations/{id}/permissions`**, body `{}` → `201 {"permissionId":
+- **`POST /v1/registrations/{id}/permissions`**, body `{}` or
+  `{"liveActivitySlot": "<22 base64url chars>"}` (section 3.6) → `201 {"permissionId":
   "p_<base64url 16 bytes>", "sendToken": "osp1.<registrationId>.<permissionId>.<base64url 32
   bytes>"}`. At most 16 permissions per registration (`409 too_many_permissions`). The app
   hands the token to one paired server, which treats it as opaque. The app keeps the token
@@ -268,6 +271,8 @@ registration.
   ids route the request to the registration's storage.
 - **`DELETE /v1/registrations/{id}/permissions/{permissionId}`** → `204`.
 - **`DELETE /v1/registrations/{id}`** → `204`. Deletes its permissions.
+- **`PUT /v1/registrations/{id}/live-activity`**: the phone's Live Activity tokens
+  (section 3.6), `204`.
 
 ### 3.2 Server calls
 
@@ -308,13 +313,21 @@ written, of 100,000 each a day, so 1,000 phones at the daily cap use them all an
 Unattested registrations: at most 5 per client address per hour (in memory). Pushes: at most
 60 per client address per minute (in memory), checked before the send token is looked up.
 
+Live Activity pushes (3.6) have their own counters: 40 per registration and UTC day when
+attested, 20 when not, and 3 a minute. They never spend the alert quota and alerts never
+spend theirs; registering again keeps both. A Live Activity push refused before APNs
+(`409 no_activity`) is not counted.
+
 ### 3.4 Relay storage
 
 Per registration: id, `SHA-256(registrationSecret)`, APNs token, environment, attested
 flag, App Attest public key and counter, creation time, permissions (id and
-`SHA-256(secret)`), and quota counters. Per APNs token, the id of its current registration
-(the Cloudflare adapter keys this by the token and stores only the id). Challenges until
-used or expired. No envelopes, no client addresses, no request logs.
+`SHA-256(secret)`, and the Live Activity slot when given), and quota counters. With Live
+Activities (3.6): the ActivityKit push-to-start token, each live card's update token with
+its slot and the time the relay first saw it, and the Live Activity quota counters. Per
+APNs token, the id of its current registration (the Cloudflare adapter keys this by the
+token and stores only the id). Challenges until used or expired. No envelopes, no Live
+Activity counts, no client addresses, no request logs.
 
 ### 3.5 APNs request (fixed template)
 
@@ -334,6 +347,78 @@ There is no outer sound, thread ID, category, or interruption level. The extensi
 those after decrypting, so urgency and session grouping stay inside the ciphertext. It
 stacks every `done` in one Notification Center thread; other session events stack per
 session.
+
+### 3.6 Live Activity
+
+One counts-only card per paired server on the phone's Lock Screen and Dynamic Island: how
+many top-level sessions run and how many wait on the person. Apple and the relay can read
+ActivityKit payloads, so this path carries two integers, a timestamp, and a random slot,
+never text. It is not encrypted; there is nothing in it to encrypt beyond the counts.
+
+**Slot.** The phone makes a random 16-byte value per server (22 base64url characters,
+kept on the phone) and sends it as `liveActivitySlot` when it mints that server's
+permission, only while the card is on for that server. It names the card
+(`attributes.slot`) and keys its update token, and survives the phone minting a new
+permission for the same server. A permission without a slot gets `409 no_activity`.
+
+**`PUT /v1/registrations/{id}/live-activity`** (registration-authenticated, App Attest
+assertion when attested):
+
+```json
+{ "startToken": "<hex>" , "activities": [{ "slot": "<22 chars>", "token": "<hex>" }] }
+```
+
+Both keys are required; `startToken` may be `null`. Tokens are lowercase hex, 64-200
+characters; at most 16 activities with distinct slots. The body replaces what the relay
+held. The relay keeps, per slot, when it first saw that token (`tokenAt`); sending the same
+token again keeps it. `204`; `400 bad_request`, `400 unknown_field`, `401`, `410 gone`.
+The phone sends its whole state whenever ActivityKit gives it a push-to-start or update
+token, a card ends, or a server's card setting changes. It sends `startToken: null` while no
+server's card is on, and only the update tokens of servers whose card is on.
+
+**`POST /v1/live-activity`** (Bearer send token):
+
+```json
+{ "event": "update", "running": 3, "needsYou": 1, "timestamp": 1760000000 }
+```
+
+| Field | Rule |
+| --- | --- |
+| `event` | `start`, `update`, or `end` |
+| `running`, `needsYou` | integers 0-99; `start` and `update` need a sum of at least 1; `end` needs both 0 |
+| `timestamp` | integer Unix seconds within 300 s of the relay clock |
+
+No other field is accepted (`400 unknown_field`). Results: `200 {"ok": true}`; `409
+no_activity` when the permission has no slot, `start` finds no start token, `update` or
+`end` finds no update token for the slot, or `update` finds one at least 8 hours old (Apple
+has ended that card; `end` still goes, to take it off the Lock Screen); `410 gone` as for
+`/v1/push`; `429 quota_exceeded` with `Retry-After`; `502 apns_unavailable`. A `start`
+forgets the slot's update token, since a new card is coming. A delivered `end` forgets it.
+When APNs retires a Live Activity token (`410`, `400 BadDeviceToken`, `400
+DeviceTokenNotForTopic`), the relay forgets that token only and answers `409 no_activity`;
+the registration and its alerts stay.
+
+APNs request, built by the relay alone: `:path` `/3/device/<token>` by the registration's
+environment, `apns-push-type: liveactivity`, `apns-topic: <bundle ID>.push-type.liveactivity`,
+`apns-priority: 5` for `update` (outside the phone's ActivityKit budget) and `10` for
+`start` and `end`, `apns-expiration: now + 3600`, no collapse ID. Payloads:
+
+```json
+{"aps":{"timestamp":T,"event":"start","content-state":{"running":R,"needsYou":N},"attributes-type":"OppiActivityAttributes","attributes":{"slot":"<slot>"},"input-push-token":1,"alert":{"title":"Oppi","body":"Agents are working."}}}
+{"aps":{"timestamp":T,"event":"update","content-state":{"running":R,"needsYou":N}}}
+{"aps":{"timestamp":T,"event":"end","content-state":{"running":0,"needsYou":0},"dismissal-date":T+30}}
+```
+
+Apple requires an alert to start a card by push; it is fixed text. `input-push-token`
+asks iOS for the new card's update token, which the app reports with the PUT above.
+
+**Phone.** `OppiActivityAttributes` (`slot`) with `ContentState { running, needsYou }`, the
+relay template's keys. The app drives each card itself while it runs, requesting it with
+`pushType: .token`, and ends it 30 s after the counts reach zero. It adopts a card the relay
+started (same slot); a newer card for a slot replaces the older one. A card the person
+dismissed stays away until that server's counts reach zero.
+
+**Server.** See section 5.
 
 ## 4. Fallback
 
@@ -357,7 +442,8 @@ any field from a push that failed a check. Without Apple's
   "sendToken": "osp1....",
   "relay": "<primary origin>",
   "issuedAt": 1760000000000,
-  "signature": "<base64url 64-byte P-256 r||s>"
+  "signature": "<base64url 64-byte P-256 r||s>",
+  "liveActivity": true
 }
 ```
 
@@ -370,6 +456,10 @@ any field from a push that failed a check. Without Apple's
   device's previous registration and answers `{"serverPublicKey": "<base64url 32 bytes>",
   "keyId": "<kid>"}`. The app checks the public key against the pinned fingerprint before
   storing it for the extension. In `off` mode the route answers `409 push_disabled`.
+  `liveActivity` (optional boolean, `400` otherwise) says the phone shows this server's
+  Live Activity; it is outside the signature on purpose: a proxy that sets it only gets
+  `409 no_activity` from the relay, which holds the real tokens, and one that clears it
+  only withholds the card, as dropping the request would.
 - **`DELETE /me/push-registration`** forgets the calling device's registration and asks
   the relay to delete its permission.
 - Revoking a device or rotating the owner token removes its registration in the same
@@ -398,6 +488,21 @@ any field from a push that failed a check. Without Apple's
   devices.
 - Fail closed: the relay client accepts only a sealed-envelope type that only the sealing
   function constructs. No code path builds an APNs payload or a relay body from plaintext.
+- Live Activity (3.6), for devices whose registration has `liveActivity: true` and that
+  hold no live stream (a present app drives its own card; the server never drives it at the
+  same time). Counts are the server's live sessions without a parent: `running` = program
+  status `working`, `needsYou` = `blocked`. The server sends only when the card's counts
+  would change, at most once a minute per device, the latest counts winning. Per device it
+  tracks whether a card exists: none (start when work begins), unknown (the app drove it, or
+  the server restarted), or live (started by this server). Zero counts end the card. An
+  `update` answered `409 no_activity` is followed by `end` (clears an expired card) and
+  `start`; a refused `start` is not retried until the counts change. A card this server
+  started is ended and started again after 8 hours while work goes on. When a device leaves,
+  the server assumes its card shows the current counts, unless they changed in the 2 minutes
+  before (a suspended app may have missed that), and then sends. A minute after startup it
+  reconciles each device once. Network failures retry after 5 minutes; a `429` waits out
+  `Retry-After`. Budget: 40 per device and UTC day, apart from alerts; `update` stops at 32
+  so `start` and `end` keep room.
 
 ## 6. Threat model
 
@@ -451,7 +556,13 @@ can return later as a new envelope `version`. The Ed25519 signature is classical
 forging it would need a quantum computer at the time of the attack, so there is nothing to
 harvest.
 
-**Out of scope for v1:** notification rules, a delivery log, Live Activities, a standby on
+**Live Activity metadata, by design:** the relay sees each Live Activity push's counts
+and timing (not stored), the phone's push-to-start and update tokens, the per-server slots,
+and when each update token arrived; Apple sees the counts, timing, slot, and the fixed
+start alert. Nobody else's text is in it. A stolen send token can set a phone's card to
+false counts, within the Live Activity quota, for the server it was minted for.
+
+**Out of scope for v1:** notification rules, a delivery log, a standby on
 another cloud, and the independent cryptographic review.
 
 ## 7. Test vectors

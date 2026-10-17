@@ -383,38 +383,4 @@ extension ServerConnection {
             handleInactiveSessionUI(message, sessionId: session.id)
         }
     }
-
-    /// Record Live Activity events for cross-session messages.
-    ///
-    /// Cross-session events bypass the active-session state updates, so they
-    /// record Live Activity events directly.
-    func recordCrossSessionLiveActivityEvent(
-        _ message: ServerMessage,
-        sessionId: String
-    ) {
-        guard ReleaseFeatures.liveActivitiesEnabled else { return }
-
-        let event: AgentEvent?
-        switch message {
-        case .agentStart:
-            event = .agentStart(sessionId: sessionId)
-        case .agentSettled:
-            event = .agentSettled(sessionId: sessionId)
-        case .stopConfirmed:
-            event = .agentSettled(sessionId: sessionId)
-        case .stopFailed:
-            event = .agentStart(sessionId: sessionId)
-        case .sessionEnded(let reason):
-            event = .sessionEnded(sessionId: sessionId, reason: reason)
-        default:
-            event = nil
-        }
-
-        if let event {
-            LiveActivityManager.shared.recordEvent(
-                connectionId: liveActivityConnectionId,
-                event: event
-            )
-        }
-    }
 }

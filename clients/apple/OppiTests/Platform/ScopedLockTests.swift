@@ -245,25 +245,6 @@ struct ScopedLockServiceTests {
 
         #expect(harness.locks.access(incognito) == .unlocked)
     }
-
-    @Test func aLockedWorkspaceHidesItsSessionNameFromTheLiveActivity() {
-        let harness = ScopedHarness(appLock: .off, outcomes: [])
-        let locks = harness.locks
-        let manager = LiveActivityManager(
-            hidesSessionText: { false },
-            hidesScopedSessionText: { locks.hidesContentOutsideApp($0) }
-        )
-        manager.sync(connectionId: "srv", sessions: [
-            makeTestSession(id: "s1", workspaceId: "w1", name: "Secret plan", status: .busy),
-        ])
-        #expect(manager.currentState.primarySessionName == "Secret plan")
-
-        locks.lock(.workspace(serverId: "srv", workspaceId: "w1"))
-        manager.recoverIfNeeded()
-
-        #expect(manager.currentState.primarySessionName == "Oppi")
-        #expect(manager.currentState.primaryPhase == .working)
-    }
 }
 
 // MARK: - Surfaces outside the open screen
@@ -271,28 +252,6 @@ struct ScopedLockServiceTests {
 @MainActor
 @Suite("Scoped lock surfaces", .serialized)
 struct ScopedLockSurfaceTests {
-    @Test func aLiveActivityUpdateQueuedBeforeALockIsDeliveredRedacted() {
-        let harness = ScopedHarness(appLock: .off, outcomes: [])
-        let locks = harness.locks
-        let manager = LiveActivityManager(
-            hidesSessionText: { false },
-            hidesScopedSessionText: { locks.hidesContentOutsideApp($0) }
-        )
-        manager.sync(connectionId: "srv", sessions: [
-            makeTestSession(id: "s1", workspaceId: "w1", name: "Secret plan", status: .busy),
-        ])
-        let queued = manager.currentState
-        #expect(manager.deliveryState(for: queued).primarySessionName == "Secret plan")
-
-        // The lock lands after the update was queued, before it is delivered.
-        locks.lock(.session(serverId: "srv", sessionId: "s1"), workspaceId: "w1")
-
-        let delivered = manager.deliveryState(for: queued)
-        #expect(delivered.primarySessionName == "Oppi")
-        #expect(delivered.primaryTool == nil)
-        #expect(delivered.totalActiveSessions == queued.totalActiveSessions)
-    }
-
     @Test func aWorkspaceAttentionRefreshNeverPutsALockedQuestionInANotification() async throws {
         let harness = ScopedHarness(appLock: .off, outcomes: [])
         let conn = ServerConnection()

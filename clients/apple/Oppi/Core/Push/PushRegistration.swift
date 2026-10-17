@@ -19,6 +19,10 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Push
 /// 5. checks the server's Ed25519 key against the fingerprint pinned at pairing and stores
 ///    it with the private key for the Notification Service Extension.
 ///
+/// With the server's Live Activity also on (`LiveActivitySettings`), the permission carries
+/// the card's slot and the server learns `liveActivity: true`, so it can drive the card while
+/// Oppi is closed; `LiveActivityRelaySync` then gives the relay the tokens.
+///
 /// The relay sees the APNs token, never a push key or push content.
 @MainActor
 final class PushRegistration {
@@ -125,6 +129,7 @@ final class PushRegistration {
             try PushRelayRegistrationStore.save(registration, relay: relay, environment: environment)
         }
 
+        let liveActivity = LiveActivitySettings.isEnabled(serverId: serverId)
         // Each connection re-sends the permission this phone already gave the server: minting
         // on every connection would leak one permission each time, and a full registration
         // takes every server's alerts down with it (below). A token is reused only on the
@@ -143,7 +148,10 @@ final class PushRegistration {
                     // have released it.
                     try? await client.deletePermission(storedPermission.permissionId, registration: registration)
                 }
-                sendToken = try await client.mintSendToken(registration).sendToken
+                sendToken = try await client.mintSendToken(
+                    registration,
+                    liveActivitySlot: liveActivity ? LiveActivitySettings.slot(serverId: serverId) : nil
+                ).sendToken
             } catch PushRelayClient.RelayError.gone, PushRelayClient.RelayError.tooManyPermissions
                 where retryWithNewRelayRegistration {
                 // The relay forgot this device (APNs retired the token), or permissions leaked
@@ -186,7 +194,8 @@ final class PushRegistration {
             sendToken: sendToken,
             relay: relay.absoluteString,
             issuedAt: issuedAt,
-            signature: signature.base64URLEncodedString
+            signature: signature.base64URLEncodedString,
+            liveActivity: liveActivity
         ))
 
         // Pin: only the server whose identity this phone paired with may sign its pushes.
@@ -205,6 +214,8 @@ final class PushRegistration {
             createdAt: key.createdAt
         ))
         pruneKeys(serverId: serverId, keeping: 2)
+        // A new relay registration starts without Live Activity tokens.
+        LiveActivityRelaySync.shared.publish()
     }
 
     /// Turn push off for a server: the server forgets this device's key and token, the relay
@@ -328,6 +339,9 @@ struct PushRegistrationRequest: Encodable, Equatable, Sendable {
     let relay: String
     let issuedAt: Int64
     let signature: String
+    /// This server may drive the Live Activity while Oppi is closed. Outside the signature:
+    /// the relay holds the real tokens and refuses without them.
+    let liveActivity: Bool
 }
 
 struct PushRegistrationResponse: Decodable, Equatable, Sendable {
