@@ -160,11 +160,14 @@ final class SSHTerminalMetalPipeline: @unchecked Sendable {
 final class SSHTerminalGlyphAtlas {
     static let side = 2048
     let textTexture: MTLTexture
-    let colorTexture: MTLTexture
+    /// 1×1 until the first color glyph, then a full-size BGRA atlas.
+    private(set) var colorTexture: MTLTexture
     let side: Int
+    private let device: MTLDevice
     private var map = [GlyphKey: CachedGlyph]()
     private var textPack = Packer()
     private var colorPack = Packer()
+    private var colorAtlasReady = false
 
     struct GlyphKey: Hashable {
         var face: UInt8
@@ -218,19 +221,37 @@ final class SSHTerminalGlyphAtlas {
 
     init?(device: MTLDevice, side: Int = SSHTerminalGlyphAtlas.side) {
         let atlasSide = max(1, side)
+        self.device = device
         self.side = atlasSide
-        func makeTexture(pixelFormat: MTLPixelFormat) -> MTLTexture? {
-            let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-                pixelFormat: pixelFormat, width: atlasSide, height: atlasSide, mipmapped: false
-            )
-            descriptor.usage = [.shaderRead, .shaderWrite]
-            descriptor.storageMode = .private
-            return device.makeTexture(descriptor: descriptor)
-        }
-        guard let textTexture = makeTexture(pixelFormat: .r8Unorm),
-              let colorTexture = makeTexture(pixelFormat: .bgra8Unorm) else { return nil }
+        guard let textTexture = Self.makeTexture(
+            device: device, pixelFormat: .r8Unorm, width: atlasSide, height: atlasSide
+        ), let placeholder = Self.makeTexture(
+            device: device, pixelFormat: .bgra8Unorm, width: 1, height: 1
+        ) else { return nil }
         self.textTexture = textTexture
-        self.colorTexture = colorTexture
+        self.colorTexture = placeholder
+    }
+
+    private static func makeTexture(
+        device: MTLDevice, pixelFormat: MTLPixelFormat, width: Int, height: Int
+    ) -> MTLTexture? {
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: pixelFormat, width: width, height: height, mipmapped: false
+        )
+        descriptor.usage = [.shaderRead, .shaderWrite]
+        descriptor.storageMode = .private
+        return device.makeTexture(descriptor: descriptor)
+    }
+
+    @discardableResult
+    private func ensureColorAtlas() -> Bool {
+        if colorAtlasReady { return true }
+        guard let texture = Self.makeTexture(
+            device: device, pixelFormat: .bgra8Unorm, width: side, height: side
+        ) else { return false }
+        colorTexture = texture
+        colorAtlasReady = true
+        return true
     }
 
     func resetPacking() {
@@ -265,6 +286,7 @@ final class SSHTerminalGlyphAtlas {
         ) else { return nil }
         let origin: (x: Int, y: Int)?
         if glyph.color {
+            guard ensureColorAtlas() else { return nil }
             origin = colorPack.place(width: pixelWidth, height: pixelHeight, side: side)
         } else {
             origin = textPack.place(width: pixelWidth, height: pixelHeight, side: side)
@@ -874,21 +896,31 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             }
         }
         let defaultBg = Self.rgba(frame.background)
+        let cols = frame.rows.first?.count ?? 0
+        var backgrounds = [CellInstance]()
+        var glyphs = [CellInstance]()
+        var overlays = [CellInstance]()
+        backgrounds.reserveCapacity(max(1, rowCount * cols))
+        glyphs.reserveCapacity(max(1, rowCount * cols))
+        let appendNow = rebuildAll
         for y in dirty {
             guard let packed = packRow(
                 y: y, row: frame.rows[y], defaultBg: defaultBg,
                 cell: cell, cellW: cellW, cellH: cellH, uploads: &uploads
             ) else { return nil }
             rowCache[y] = packed
+            if appendNow {
+                backgrounds.append(contentsOf: packed.backgrounds)
+                glyphs.append(contentsOf: packed.glyphs)
+                overlays.append(contentsOf: packed.overlays)
+            }
         }
-        var backgrounds = [CellInstance]()
-        var glyphs = [CellInstance]()
-        var overlays = [CellInstance]()
-        backgrounds.reserveCapacity(max(1, rowCount * (frame.rows.first?.count ?? 0)))
-        for row in rowCache {
-            backgrounds.append(contentsOf: row.backgrounds)
-            glyphs.append(contentsOf: row.glyphs)
-            overlays.append(contentsOf: row.overlays)
+        if !appendNow {
+            for row in rowCache {
+                backgrounds.append(contentsOf: row.backgrounds)
+                glyphs.append(contentsOf: row.glyphs)
+                overlays.append(contentsOf: row.overlays)
+            }
         }
         if let cursor = cursorQuad(
             frame: frame, color: Self.premultiply(cursorColor), cellW: cellW, cellH: cellH
@@ -911,6 +943,8 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         uploads: inout [SSHTerminalGlyphAtlas.Upload]
     ) -> RowInstances? {
         var packed = RowInstances()
+        packed.backgrounds.reserveCapacity(row.count)
+        packed.glyphs.reserveCapacity(row.count)
         for (x, item) in row.enumerated() {
             guard item.width > 0 else { continue }
             let origin = SIMD2<Float>(Float(x) * cellW, Float(y) * cellH)

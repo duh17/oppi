@@ -56,6 +56,31 @@ struct SSHTerminalDisplayLinkTests {
         channel.engine.receive(Data("x".utf8))
         #expect(grid.needsPaint, "PTY bytes must dirty the grid so an idle-paused display link restarts")
     }
+
+    @Test func historyOffsetChangeDirtiesTheGridAndClearsFollow() throws {
+        let channel = try SSHTerminalChannel()
+        var following = true
+        let grid = SSHTerminalGridView(
+            channel: channel, paste: { _ in }, followChanged: { following = $0 }
+        )
+        let mounted = try MountedDisplayGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        channel.engine.receive(Data((1...120).map { "line \($0)\r\n" }.joined().utf8))
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        grid.needsPaint = false
+        channel.engine.scrollToRow(0)
+        #expect(!channel.engine.following)
+        #expect(grid.needsPaint, "history offset must wake an idle-paused display link")
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        #expect(following == false, "detaching from live must show Back to Live")
+        let scrolling = SSHTerminalDisplayLinkPolicy.resolve(
+            hasWindow: true, sceneActive: true,
+            needsFullPaint: false, pictureChanged: false, renderHeld: false, scrolling: true
+        )
+        #expect(scrolling.running, "display link must run while the scroll view decelerates")
+    }
 }
 
 @MainActor
