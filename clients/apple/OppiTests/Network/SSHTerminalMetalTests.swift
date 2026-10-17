@@ -201,8 +201,14 @@ struct SSHTerminalMetalTests {
 
         let selectedInk = try #require(atlasInk(selectedBytes.bytes, width: selectedBytes.width, height: selectedBytes.height))
         #expect(selectedInk.count > 0, "U+23FA U+FE0F must have ink")
-        #expect(selectedInk.maxX < selectedBytes.width, "U+23FA U+FE0F must stay inside the cell \(selectedInk)")
-        #expect(selectedInk.maxY < selectedBytes.height, "U+23FA U+FE0F must stay inside the cell \(selectedInk)")
+        #expect(
+            selectedInk.minX > 0 && selectedInk.maxX < selectedBytes.width - 1,
+            "U+23FA U+FE0F must sit inside the cell, not on the clip edge \(selectedInk)"
+        )
+        #expect(
+            selectedInk.minY > 0 && selectedInk.maxY < selectedBytes.height - 1,
+            "U+23FA U+FE0F must sit inside the cell, not on the clip edge \(selectedInk)"
+        )
 
         let heartInk = try #require(atlasInk(heartBytes.bytes, width: heartBytes.width, height: heartBytes.height))
         #expect(heartInk.count > 0, "❤️ must have ink")

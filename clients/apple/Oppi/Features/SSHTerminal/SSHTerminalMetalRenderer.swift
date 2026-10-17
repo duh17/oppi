@@ -437,7 +437,7 @@ final class SSHTerminalGlyphAtlas {
                 loose.draw(at: .zero)
                 return
             }
-            let pad = 1 / max(scale, 1)
+            let pad = 2 / max(scale, 1)
             let avail = CGRect(
                 x: pad, y: pad,
                 width: max(area.width - 2 * pad, pad),
