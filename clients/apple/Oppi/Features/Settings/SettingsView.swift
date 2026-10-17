@@ -9,6 +9,7 @@ struct SettingsView: View {
     @Environment(AppNavigation.self) private var navigation
     @Environment(ServerStore.self) private var serverStore
     @Environment(ConnectionCoordinator.self) private var coordinator
+    @Environment(\.screenNavigator) private var navigator
 
     @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var sshTerminalEnabled = false
 
@@ -65,9 +66,12 @@ struct SettingsView: View {
                 }
                 .accessibilityIdentifier("settings.tailscale")
                 if sshTerminalEnabled {
-                    SettingsIndexRow("SSH Hosts", systemImage: "terminal") {
-                        SSHTerminalHostListView()
+                    SettingsIndexActionRow {
+                        navigator.push(SSHTerminalHostListViewController())
+                    } label: {
+                        SettingsRowLabel("SSH Hosts", systemImage: "terminal")
                     }
+                    .accessibilityLabel("SSH Hosts")
                     .accessibilityIdentifier("settings.sshTerminal")
                 }
                 SettingsIndexRow("Privacy & Security", systemImage: "hand.raised") {

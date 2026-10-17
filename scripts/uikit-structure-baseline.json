@@ -562,15 +562,6 @@
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalComposer.swift": {
       "import SwiftUI": 1
     },
-    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalConnectSession.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalHostListView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalSetupView.swift": {
-      "import SwiftUI": 1
-    },
     "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalViewController.swift": {
       "import SwiftUI": 1
     },

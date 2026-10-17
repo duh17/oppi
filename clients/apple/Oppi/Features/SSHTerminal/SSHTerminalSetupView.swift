@@ -1,25 +1,46 @@
-import SwiftUI
 import UIKit
 
-struct SSHTerminalSetupView: View {
-    var profileID: UUID?
-    @AppStorage(AppPreferences.Experiments.sshTerminalKey) private var experimentEnabled = false
-    @Environment(\.screenNavigator) private var navigator
-    @State private var profile: SSHTerminalProfile
-    @State private var portText: String
-    @State private var identity: SSHIdentity?
-    @State private var identityFailure: String?
-    @State private var identityNeedsReplacement = false
-    @State private var copied = false
-    @State private var deleteConfirmation = false
-    @State private var session = SSHTerminalConnectSession()
+/// Add or edit a saved SSH host. Opening never dials. Connect is an explicit tap.
+final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDelegate {
+    private let profileID: UUID?
+    private var profile: SSHTerminalProfile
+    private var portText: String
+    private var identity: SSHIdentity?
+    private var identityFailure: String?
+    private var identityNeedsReplacement = false
+    private var copied = false
+    private let session = SSHTerminalConnectSession()
+    private var chrome: SSHTerminalConnectChrome?
+
+    private let collectionView: UICollectionView
+    private var dataSource: UICollectionViewDiffableDataSource<Section, Item>?
+    private var lastThemeID: ThemeID?
+
+    private enum Section: Hashable { case host, startup, identity, actions, delete }
+    private enum Item: Hashable {
+        case host, port, username, authentication, savePassword
+        case startup
+        case publicKey, copyKey, backing, identityStatus, replaceKey
+        case connecting, connect, saveHost, failure, trustUnknown, trustMismatch
+        case deleteHost
+    }
 
     init(profileID: UUID? = nil) {
         self.profileID = profileID
         let stored = profileID.flatMap { SSHTerminalProfileStore().profile(id: $0) } ?? SSHTerminalProfile(id: profileID ?? UUID())
-        _profile = State(initialValue: stored)
-        _portText = State(initialValue: String(stored.port))
+        profile = stored
+        portText = String(stored.port)
+        var config = UICollectionLayoutListConfiguration(appearance: .insetGrouped)
+        config.headerMode = .supplementary
+        config.footerMode = .supplementary
+        collectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewCompositionalLayout.list(using: config))
+        super.init(nibName: nil, bundle: nil)
+        title = "SSH Terminal"
+        navigationItem.largeTitleDisplayMode = .inline
     }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
 
     private var target: String { profile.host.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var port: UInt16? { UInt16(portText) }
@@ -27,137 +48,498 @@ struct SSHTerminalSetupView: View {
         !target.isEmpty && !profile.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && port != nil && port != 0
     }
 
-    var body: some View {
-        List {
-            Section {
-                TextField("Hostname or IP", text: $profile.host)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
-                    .accessibilityIdentifier("sshTerminal.host")
-                TextField("Port", text: $portText).keyboardType(.numberPad)
-                    .accessibilityIdentifier("sshTerminal.port")
-                TextField("Username", text: $profile.username)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(nil)
-                    .accessibilityIdentifier("sshTerminal.username")
-                Picker("Sign In", selection: $profile.authentication) {
-                    Text("Password").tag(SSHTerminalProfile.Authentication.password)
-                    Text("This Device’s Key").tag(SSHTerminalProfile.Authentication.deviceKey)
-                }.accessibilityIdentifier("sshTerminal.authentication")
-                if profile.authentication == .password {
-                    Toggle("Save Password", isOn: $profile.savesPassword)
-                        .accessibilityIdentifier("sshTerminal.savePassword")
-                }
-            } header: { Text("Host") } footer: {
-                Text("Remote Login (sshd) must be enabled. When Oppi’s Tailscale node is running, *.ts.net hosts use it; other hosts use your current network.")
-            }.disabled(session.connecting)
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        collectionView.delegate = self
+        collectionView.keyboardDismissMode = .interactive
+        SSHTerminalSettingsList.pin(collectionView, in: view)
+        installDataSource()
+        chrome = SSHTerminalConnectChrome(
+            host: self,
+            session: session,
+            profile: { [weak self] in self?.normalizedProfile() ?? SSHTerminalProfile() },
+            setProfile: { [weak self] in self?.applySaved($0) },
+            editHost: { [weak self] in self?.session.showsTerminal = false },
+            submitPassword: { [weak self] password in
+                guard let self else { return }
+                if self.session.savingHostOnly { self.saveHost(password: password) } else { self.connect(password: password) }
+            },
+            onSaved: { [weak self] in self?.applySaved($0) }
+        )
+        chrome?.start()
+        loadIdentityIfSelected()
+        updateConnectBarItem()
+        setNeedsUpdateProperties()
+    }
 
-            Section {
-                TextField("Login shell", text: Binding(
-                    get: { profile.startupCommand ?? "" },
-                    set: { profile.startupCommand = $0 }
-                ))
-                .font(.system(.body, design: .monospaced))
-                .textInputAutocapitalization(.never).autocorrectionDisabled()
-                .accessibilityIdentifier("sshTerminal.startupCommand")
-            } header: { Text("Run on Connect") } footer: {
-                Text("Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. Enter `herdr` to attach your Herdr session. The connection ends when the command exits (for Herdr, detach with Ctrl-B Q). The command must be on the PATH that SSH commands see.")
-            }.disabled(session.connecting)
-
-            if profile.authentication == .deviceKey {
-                Section {
-                    if let identity {
-                        Text(identity.publicKeyOpenSSH)
-                            .font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
-                            .accessibilityIdentifier("sshTerminal.publicKey")
-                        Button(copied ? "Copied Public Key" : "Copy Public Key", systemImage: copied ? "checkmark" : "doc.on.doc") {
-                            UIPasteboard.general.string = identity.publicKeyOpenSSH
-                            copied = true
-                        }.accessibilityIdentifier("sshTerminal.copyKey")
-                        Text(identity.backingDescription).font(.footnote).foregroundStyle(.themeComment)
-                    } else {
-                        Text(identityFailure ?? "Loading identity…").foregroundStyle(.themeComment)
-                        if identityNeedsReplacement {
-                            Button("Device passcode changed — create a new key") {
-                                loadIdentityIfSelected(createReplacement: true)
-                            }.disabled(session.connecting)
-                        }
-                    }
-                } header: { Text("This Device’s SSH Identity") } footer: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Append this public key to ~/.ssh/authorized_keys. Signing requires Face ID or your device passcode. The simulator uses a software key. Oppi never installs the key for you.")
-                        if identityNeedsReplacement {
-                            Text("Replace the old entry in ~/.ssh/authorized_keys with the new public key before connecting.")
-                        }
-                    }
-                }
-            }
-
-            Section {
-                if session.connecting {
-                    SSHTerminalConnectProgress(savingHostOnly: session.savingHostOnly) { session.cancel() }
-                } else {
-                    Button("Connect") { connect() }.disabled(!canConnect)
-                        .accessibilityIdentifier("sshTerminal.connect")
-                    Button("Save Host") { saveHost() }.disabled(!canConnect)
-                        .accessibilityIdentifier("sshTerminal.saveHost")
-                }
-                if let failure = session.failure {
-                    Text("Disconnected — \(failure)").foregroundStyle(.themeRed)
-                        .accessibilityIdentifier("sshTerminal.failure")
-                }
-                SSHTerminalTrustRows(
-                    hostFailure: session.hostFailure, connecting: session.connecting,
-                    trust: { session.trustAndConnect(profile: normalizedProfile(), experimentEnabled: experimentEnabled, onSaved: applySaved) },
-                    requestForget: { session.forgetConfirmation = true }
-                )
-            } footer: {
-                Text("Saved passwords stay only in this device’s private Keychain and require Face ID or passcode at connect. Unsaved passwords are used for one attempt only. Keyboard-interactive and private-key import are not supported. Reconnect opens a fresh shell; use tmux to preserve work. Input is never replayed.")
-            }
-            if SSHTerminalProfileStore().contains(profile.id) {
-                Section {
-                    Button("Delete Host", role: .destructive) { deleteConfirmation = true }
-                        .accessibilityIdentifier("sshTerminal.deleteHost")
-                }
-            }
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        chrome?.hostDidDisappear()
+        if isMovingFromParent || isBeingDismissed {
+            chrome?.stopObserving()
         }
-        .settingsPage("SSH Terminal")
-        .task {
-            guard experimentEnabled else { return }
-            // Opening the form never dials. Connect is an explicit tap.
-            loadIdentityIfSelected()
-        }
-        .onChange(of: profile.authentication) { loadIdentityIfSelected() }
-        .onChange(of: profile.host) { session.hostFailure = nil; session.failure = nil }
-        .onChange(of: portText) { session.hostFailure = nil; session.failure = nil }
-        .onChange(of: session.devicePasscodeChanged) { _, changed in
-            guard changed else { return }
+    }
+
+    override func updateProperties() {
+        super.updateProperties()
+        _ = session.connecting
+        _ = session.failure
+        _ = session.hostFailure
+        _ = session.passwordPrompt
+        _ = session.showsTerminal
+        _ = session.forgetConfirmation
+        _ = session.savingHostOnly
+        _ = session.channel
+        _ = session.devicePasscodeChanged
+        _ = AppScenePhase.shared.isBackground
+        if session.devicePasscodeChanged {
             identity = nil
             identityNeedsReplacement = true
             identityFailure = session.failure
         }
-        .confirmationDialog("Delete this host and its saved password?", isPresented: $deleteConfirmation, titleVisibility: .visible) {
-            Button("Delete Host", role: .destructive) { deleteHost() }
+        let themeID = sshTerminalThemeID
+        if lastThemeID != themeID {
+            lastThemeID = themeID
+            SSHTerminalSettingsList.applyTheme(to: view, collectionView: collectionView, themeID: themeID)
         }
-        .sshTerminalConnection(
-            session: session, profile: $profile, experimentEnabled: experimentEnabled,
-            editHost: { session.showsTerminal = false },
-            submitPassword: { password in
-                if session.savingHostOnly { saveHost(password: password) } else { connect(password: password) }
+        applySnapshot()
+        updateConnectBarItem()
+        chrome?.sync()
+    }
+
+    @objc private func barConnect() { connect() }
+
+    /// Always in the navigation bar so Connect is tappable while the keyboard is up.
+    private func updateConnectBarItem() {
+        let item = UIBarButtonItem(title: "Connect", style: .done, target: self, action: #selector(barConnect))
+        item.accessibilityIdentifier = "sshTerminal.connect"
+        item.isEnabled = canConnect && !session.connecting
+        navigationItem.rightBarButtonItem = item
+    }
+
+    private func installDataSource() {
+        let field = UICollectionView.CellRegistration<SSHTerminalTextFieldCell, Item> { [weak self] cell, _, item in
+            self?.configureField(cell, item: item)
+        }
+        let action = UICollectionView.CellRegistration<SSHTerminalActionCell, Item> { [weak self] cell, _, item in
+            self?.configureAction(cell, item: item)
+        }
+        let list = UICollectionView.CellRegistration<UICollectionViewListCell, Item> { [weak self] cell, _, item in
+            self?.configureList(cell, item: item)
+        }
+        let header = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionHeader) { [weak self] cell, _, indexPath in
+            var content = UIListContentConfiguration.groupedHeader()
+            content.text = self?.headerTitle(at: indexPath)
+            cell.contentConfiguration = content
+        }
+        let footer = UICollectionView.SupplementaryRegistration<UICollectionViewListCell>(elementKind: UICollectionView.elementKindSectionFooter) { [weak self] cell, _, indexPath in
+            var content = UIListContentConfiguration.groupedFooter()
+            content.text = self?.footerTitle(at: indexPath)
+            content.textProperties.numberOfLines = 0
+            cell.contentConfiguration = content
+        }
+        dataSource = UICollectionViewDiffableDataSource(collectionView: collectionView) { collectionView, indexPath, item in
+            switch item {
+            case .host, .port, .username, .startup:
+                collectionView.dequeueConfiguredReusableCell(using: field, for: indexPath, item: item)
+            case .authentication, .copyKey, .replaceKey, .connect, .saveHost, .deleteHost:
+                collectionView.dequeueConfiguredReusableCell(using: action, for: indexPath, item: item)
+            default:
+                collectionView.dequeueConfiguredReusableCell(using: list, for: indexPath, item: item)
             }
-        )
+        }
+        dataSource?.supplementaryViewProvider = { collectionView, kind, indexPath in
+            if kind == UICollectionView.elementKindSectionHeader {
+                return collectionView.dequeueConfiguredReusableSupplementary(using: header, for: indexPath)
+            }
+            return collectionView.dequeueConfiguredReusableSupplementary(using: footer, for: indexPath)
+        }
+    }
+
+    private func configureField(_ cell: SSHTerminalTextFieldCell, item: Item) {
+        let palette = sshTerminalThemeID.palette
+        let enabled = !session.connecting
+        switch item {
+        case .host:
+            cell.configure(
+                text: profile.host, placeholder: "Hostname or IP", identifier: "sshTerminal.host",
+                keyboard: .URL, textColor: UIColor(palette.fg), enabled: enabled
+            ) { [weak self] in
+                self?.profile.host = $0
+                self?.session.hostFailure = nil
+                self?.session.failure = nil
+                self?.reloadActionItems()
+            }
+        case .port:
+            cell.configure(
+                text: portText, placeholder: "Port", identifier: "sshTerminal.port",
+                keyboard: .numberPad, textColor: UIColor(palette.fg), enabled: enabled
+            ) { [weak self] in
+                self?.portText = $0
+                self?.session.hostFailure = nil
+                self?.session.failure = nil
+                self?.reloadActionItems()
+            }
+        case .username:
+            cell.configure(
+                text: profile.username, placeholder: "Username", identifier: "sshTerminal.username",
+                keyboard: .default, textColor: UIColor(palette.fg), enabled: enabled
+            ) { [weak self] in
+                self?.profile.username = $0
+                self?.reloadActionItems()
+            }
+        case .startup:
+            cell.configure(
+                text: profile.startupCommand ?? "", placeholder: "Login shell", identifier: "sshTerminal.startupCommand",
+                monospaced: true, textColor: UIColor(palette.fg), enabled: enabled
+            ) { [weak self] in
+                self?.profile.startupCommand = $0
+            }
+        default:
+            break
+        }
+    }
+
+    private func configureAction(_ cell: SSHTerminalActionCell, item: Item) {
+        let palette = sshTerminalThemeID.palette
+        switch item {
+        case .authentication:
+            cell.configure(
+                title: "Sign In",
+                identifier: "sshTerminal.authentication",
+                color: UIColor(palette.fg),
+                enabled: !session.connecting,
+                subtitle: profile.authentication == .password ? "Password" : "This Device’s Key",
+                menu: UIMenu(title: "Sign In", children: [
+                    UIAction(
+                        title: "Password",
+                        state: profile.authentication == .password ? .on : .off
+                    ) { [weak self] _ in
+                        self?.profile.authentication = .password
+                        self?.loadIdentityIfSelected()
+                    },
+                    UIAction(
+                        title: "This Device’s Key",
+                        state: profile.authentication == .deviceKey ? .on : .off
+                    ) { [weak self] _ in
+                        self?.profile.authentication = .deviceKey
+                        self?.loadIdentityIfSelected()
+                    },
+                ])
+            )
+            cell.accessories = [.disclosureIndicator()]
+        case .copyKey:
+            cell.configure(
+                title: copied ? "Copied Public Key" : "Copy Public Key",
+                identifier: "sshTerminal.copyKey",
+                color: UIColor(palette.blue),
+                image: copied ? "checkmark" : "doc.on.doc",
+                action: { [weak self] in self?.copyPublicKey() }
+            )
+        case .replaceKey:
+            cell.configure(
+                title: "Device passcode changed — create a new key",
+                identifier: "sshTerminal.replaceKey",
+                color: UIColor(palette.blue),
+                enabled: !session.connecting,
+                action: { [weak self] in self?.loadIdentityIfSelected(createReplacement: true) }
+            )
+        case .connect:
+            cell.configure(
+                title: "Connect",
+                identifier: "sshTerminal.connect.list",
+                color: UIColor(palette.blue),
+                enabled: canConnect && !session.connecting,
+                action: { [weak self] in self?.connect() }
+            )
+        case .saveHost:
+            cell.configure(
+                title: "Save Host",
+                identifier: "sshTerminal.saveHost",
+                color: UIColor(palette.blue),
+                enabled: canConnect && !session.connecting,
+                action: { [weak self] in self?.saveHost() }
+            )
+        case .deleteHost:
+            cell.configure(
+                title: "Delete Host",
+                identifier: "sshTerminal.deleteHost",
+                color: UIColor(palette.red),
+                action: { [weak self] in self?.confirmDelete() }
+            )
+        default:
+            break
+        }
+    }
+
+    private func configureList(_ cell: UICollectionViewListCell, item: Item) {
+        let palette = sshTerminalThemeID.palette
+        cell.accessories = []
+        cell.accessibilityIdentifier = nil
+        var content = UIListContentConfiguration.subtitleCell()
+        content.textProperties.color = UIColor(palette.fg)
+        content.secondaryTextProperties.color = UIColor(palette.comment)
+        switch item {
+        case .authentication:
+            content = UIListContentConfiguration.valueCell()
+            content.text = "Sign In"
+            content.textProperties.color = UIColor(palette.fg)
+            content.secondaryText = profile.authentication == .password ? "Password" : "This Device’s Key"
+            content.secondaryTextProperties.color = UIColor(palette.comment)
+            cell.accessories = [.disclosureIndicator()]
+            cell.accessibilityIdentifier = "sshTerminal.authentication"
+            cell.accessibilityTraits.insert(.button)
+        case .savePassword:
+            content = UIListContentConfiguration.valueCell()
+            content.text = "Save Password"
+            content.textProperties.color = UIColor(palette.fg)
+            let toggle = UISwitch()
+            toggle.isOn = profile.savesPassword
+            toggle.isEnabled = !session.connecting
+            toggle.accessibilityIdentifier = "sshTerminal.savePassword"
+            toggle.addAction(UIAction { [weak self] action in
+                guard let toggle = action.sender as? UISwitch else { return }
+                self?.profile.savesPassword = toggle.isOn
+            }, for: .valueChanged)
+            cell.accessories = [.customView(configuration: .init(customView: toggle, placement: .trailing()))]
+            cell.accessibilityIdentifier = "sshTerminal.savePassword"
+        case .publicKey:
+            content.text = identity?.publicKeyOpenSSH ?? ""
+            content.textProperties.font = .monospacedSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .footnote).pointSize, weight: .regular)
+            content.textProperties.numberOfLines = 0
+            cell.accessibilityIdentifier = "sshTerminal.publicKey"
+        case .copyKey:
+            content.text = copied ? "Copied Public Key" : "Copy Public Key"
+            content.image = UIImage(systemName: copied ? "checkmark" : "doc.on.doc")
+            cell.accessibilityIdentifier = "sshTerminal.copyKey"
+        case .backing:
+            content.text = identity?.backingDescription ?? ""
+            content.textProperties.font = .preferredFont(forTextStyle: .footnote)
+            content.textProperties.color = UIColor(palette.comment)
+        case .identityStatus:
+            content.text = identityFailure ?? "Loading identity…"
+            content.textProperties.color = UIColor(palette.comment)
+        case .replaceKey:
+            content.text = "Device passcode changed — create a new key"
+            content.textProperties.color = UIColor(palette.blue)
+        case .connecting:
+            content.text = session.savingHostOnly ? "Saving Host…" : "Connecting…"
+            let cancel = UIButton(type: .system)
+            var conf = UIButton.Configuration.plain()
+            conf.title = "Cancel"
+            conf.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 8, bottom: 12, trailing: 8)
+            cancel.configuration = conf
+            cancel.addAction(UIAction { [weak self] _ in self?.session.cancel() }, for: .touchUpInside)
+            cell.accessories = [.customView(configuration: .init(customView: cancel, placement: .trailing()))]
+            cell.accessibilityIdentifier = "sshTerminal.connecting"
+        case .connect:
+            content.text = "Connect"
+            content.textProperties.color = canConnect ? UIColor(palette.blue) : UIColor(palette.comment)
+            cell.accessibilityIdentifier = "sshTerminal.connect"
+            cell.accessibilityTraits.insert(.button)
+            if !canConnect { cell.accessibilityTraits.insert(.notEnabled) }
+        case .saveHost:
+            content.text = "Save Host"
+            content.textProperties.color = canConnect ? UIColor(palette.blue) : UIColor(palette.comment)
+            cell.accessibilityIdentifier = "sshTerminal.saveHost"
+            cell.accessibilityTraits.insert(.button)
+            if !canConnect { cell.accessibilityTraits.insert(.notEnabled) }
+        case .failure:
+            content.text = "Disconnected — \(session.failure ?? "")"
+            content.textProperties.color = UIColor(palette.red)
+            content.textProperties.numberOfLines = 0
+            cell.accessibilityIdentifier = "sshTerminal.failure"
+        case .trustUnknown:
+            content.text = "New host — trust decision"
+            content.secondaryText = "Verify the fingerprint, then Trust & Connect."
+            cell.accessibilityIdentifier = "sshTerminal.trustPrompt"
+        case .trustMismatch:
+            content.text = "Host key changed — connection blocked."
+            content.textProperties.color = UIColor(palette.red)
+            content.secondaryText = "Forget the trusted key only after you verify why it changed."
+        case .deleteHost:
+            content.text = "Delete Host"
+            content.textProperties.color = UIColor(palette.red)
+            cell.accessibilityIdentifier = "sshTerminal.deleteHost"
+        default:
+            break
+        }
+        cell.contentConfiguration = content
+    }
+
+    private func applySnapshot() {
+        guard dataSource != nil else { return }
+        var snapshot = NSDiffableDataSourceSnapshot<Section, Item>()
+        snapshot.appendSections([.host])
+        var hostItems: [Item] = [.host, .port, .username, .authentication]
+        if profile.authentication == .password { hostItems.append(.savePassword) }
+        snapshot.appendItems(hostItems, toSection: .host)
+
+        snapshot.appendSections([.startup])
+        snapshot.appendItems([.startup], toSection: .startup)
+
+        if profile.authentication == .deviceKey {
+            snapshot.appendSections([.identity])
+            if identity != nil {
+                snapshot.appendItems([.publicKey, .copyKey, .backing], toSection: .identity)
+            } else {
+                var items: [Item] = [.identityStatus]
+                if identityNeedsReplacement { items.append(.replaceKey) }
+                snapshot.appendItems(items, toSection: .identity)
+            }
+        }
+
+        snapshot.appendSections([.actions])
+        var actions: [Item] = []
+        if session.connecting {
+            actions.append(.connecting)
+        } else {
+            actions.append(contentsOf: [.connect, .saveHost])
+        }
+        if session.failure != nil { actions.append(.failure) }
+        switch session.hostFailure {
+        case .unknownHostKey: actions.append(.trustUnknown)
+        case .hostKeyMismatch: actions.append(.trustMismatch)
+        default: break
+        }
+        snapshot.appendItems(actions, toSection: .actions)
+
+        if SSHTerminalProfileStore().contains(profile.id) {
+            snapshot.appendSections([.delete])
+            snapshot.appendItems([.deleteHost], toSection: .delete)
+        }
+        if let current = dataSource?.snapshot(), current.itemIdentifiers == snapshot.itemIdentifiers {
+            snapshot.reloadItems(snapshot.itemIdentifiers)
+        }
+        dataSource?.apply(snapshot, animatingDifferences: false)
+    }
+
+    private func reloadActionItems() {
+        guard var snapshot = dataSource?.snapshot() else { return }
+        let items = snapshot.itemIdentifiers.filter {
+            switch $0 {
+            case .connect, .saveHost, .authentication: return true
+            default: return false
+            }
+        }
+        guard !items.isEmpty else { return }
+        snapshot.reloadItems(items)
+        dataSource?.apply(snapshot, animatingDifferences: false)
+        updateConnectBarItem()
+    }
+
+    func collectionView(_ collectionView: UICollectionView, shouldSelectItemAt indexPath: IndexPath) -> Bool {
+        guard let item = dataSource?.itemIdentifier(for: indexPath) else { return false }
+        switch item {
+        case .authentication, .copyKey, .replaceKey, .connect, .saveHost, .deleteHost, .trustUnknown, .trustMismatch:
+            return true
+        default:
+            return false
+        }
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        collectionView.deselectItem(at: indexPath, animated: true)
+        guard let item = dataSource?.itemIdentifier(for: indexPath) else { return }
+        switch item {
+        case .authentication:
+            guard !session.connecting else { return }
+            presentAuthenticationPicker()
+        case .copyKey:
+            copyPublicKey()
+        case .replaceKey:
+            guard !session.connecting else { return }
+            loadIdentityIfSelected(createReplacement: true)
+        case .connect:
+            connect()
+        case .saveHost:
+            saveHost()
+        case .deleteHost:
+            confirmDelete()
+        case .trustUnknown, .trustMismatch:
+            chrome?.reopenTrust()
+        default:
+            break
+        }
+    }
+
+    private func presentAuthenticationPicker() {
+        let sheet = UIAlertController(title: "Sign In", message: nil, preferredStyle: .actionSheet)
+        sheet.addAction(UIAlertAction(title: "Password", style: .default) { [weak self] _ in
+            self?.profile.authentication = .password
+            self?.loadIdentityIfSelected()
+            self?.applySnapshot()
+        })
+        sheet.addAction(UIAlertAction(title: "This Device’s Key", style: .default) { [weak self] _ in
+            self?.profile.authentication = .deviceKey
+            self?.loadIdentityIfSelected()
+            self?.applySnapshot()
+        })
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
+            popover.permittedArrowDirections = []
+        }
+        present(sheet, animated: true)
+    }
+
+    private func copyPublicKey() {
+        guard let identity else { return }
+        UIPasteboard.general.string = identity.publicKeyOpenSSH
+        copied = true
+        applySnapshot()
+    }
+
+    private func headerTitle(at indexPath: IndexPath) -> String? {
+        guard let section = dataSource?.snapshot().sectionIdentifiers[safe: indexPath.section] else { return nil }
+        switch section {
+        case .host: return "Host"
+        case .startup: return "Run on Connect"
+        case .identity: return "This Device’s SSH Identity"
+        default: return nil
+        }
+    }
+
+    private func footerTitle(at indexPath: IndexPath) -> String? {
+        guard let section = dataSource?.snapshot().sectionIdentifiers[safe: indexPath.section] else { return nil }
+        switch section {
+        case .host:
+            return "Remote Login (sshd) must be enabled. When Oppi’s Tailscale node is running, *.ts.net hosts use it; other hosts use your current network."
+        case .startup:
+            return "Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. Enter `herdr` to attach your Herdr session. The connection ends when the command exits (for Herdr, detach with Ctrl-B Q). The command must be on the PATH that SSH commands see."
+        case .identity:
+            var text = "Append this public key to ~/.ssh/authorized_keys. Signing requires Face ID or your device passcode. The simulator uses a software key. Oppi never installs the key for you."
+            if identityNeedsReplacement {
+                text += "\nReplace the old entry in ~/.ssh/authorized_keys with the new public key before connecting."
+            }
+            return text
+        case .actions:
+            return "Saved passwords stay only in this device’s private Keychain and require Face ID or passcode at connect. Unsaved passwords are used for one attempt only. Keyboard-interactive and private-key import are not supported. Reconnect opens a fresh shell; use tmux to preserve work. Input is never replayed."
+        default:
+            return nil
+        }
     }
 
     private func loadIdentityIfSelected(createReplacement: Bool = false) {
-        guard experimentEnabled, profile.authentication == .deviceKey else { identity = nil; return }
+        guard AppPreferences.Experiments.sshTerminalEnabled, profile.authentication == .deviceKey else {
+            identity = nil
+            applySnapshot()
+            return
+        }
         do {
             identity = try SSHIdentityKeyStore.loadOrCreate(createReplacement: createReplacement)
             identityFailure = nil
             identityNeedsReplacement = false
-            if createReplacement { session.failure = "New SSH key created. Replace the old entry in ~/.ssh/authorized_keys before connecting." }
+            if createReplacement {
+                session.failure = "New SSH key created. Replace the old entry in ~/.ssh/authorized_keys before connecting."
+            }
         } catch {
             identity = nil
             identityNeedsReplacement = (error as? SSHIdentityKeyStoreError) == .devicePasscodeChanged
             identityFailure = error.localizedDescription
         }
+        applySnapshot()
     }
 
     private func normalizedProfile() -> SSHTerminalProfile {
@@ -169,16 +551,45 @@ struct SSHTerminalSetupView: View {
     private func applySaved(_ saved: SSHTerminalProfile) {
         profile = saved
         portText = String(saved.port)
+        applySnapshot()
     }
 
     private func saveHost(password: String? = nil) {
         guard canConnect else { return }
-        session.saveHost(profile: normalizedProfile(), suppliedPassword: password, experimentEnabled: experimentEnabled, onSaved: applySaved)
+        session.saveHost(
+            profile: normalizedProfile(),
+            suppliedPassword: password,
+            experimentEnabled: AppPreferences.Experiments.sshTerminalEnabled,
+            onSaved: applySaved
+        )
     }
 
     private func connect(password: String? = nil) {
         guard canConnect else { return }
-        session.connect(profile: normalizedProfile(), suppliedPassword: password, experimentEnabled: experimentEnabled, onSaved: applySaved)
+        session.connect(
+            profile: normalizedProfile(),
+            suppliedPassword: password,
+            experimentEnabled: AppPreferences.Experiments.sshTerminalEnabled,
+            onSaved: applySaved
+        )
+    }
+
+    private func confirmDelete() {
+        let sheet = UIAlertController(
+            title: "Delete this host and its saved password?",
+            message: nil,
+            preferredStyle: .actionSheet
+        )
+        sheet.addAction(UIAlertAction(title: "Delete Host", style: .destructive) { [weak self] _ in
+            self?.deleteHost()
+        })
+        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
+            popover.permittedArrowDirections = []
+        }
+        present(sheet, animated: true)
     }
 
     private func deleteHost() {
@@ -186,9 +597,15 @@ struct SSHTerminalSetupView: View {
             session.cancel()
             try SSHTerminalProfileStore().delete(id: profile.id)
             SSHTerminalRegistry.shared.close(profile.id, reason: "The host was deleted.")
-            navigator.finish()
+            Router.finish(self)
         } catch {
             session.failure = error.localizedDescription
         }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

@@ -190,9 +190,12 @@ final class ShellNavigationController: UINavigationController, UINavigationContr
         }
         for index in 0..<kept where current[index].route != routes[index] {
             routeByScreen[ObjectIdentifier(current[index].screen)] = routes[index]
-            if let screen = current[index].screen as? HostedScreenController {
-                ShellRouteScreens.update(screen, route: routes[index], placement: placement(at: index), openSidebar: openSidebar)
-            }
+            ShellRouteScreens.update(
+                current[index].screen,
+                route: routes[index],
+                placement: placement(at: index),
+                openSidebar: openSidebar
+            )
         }
         shownRoutes = routes
         guard kept < current.count || kept < routes.count else { return }

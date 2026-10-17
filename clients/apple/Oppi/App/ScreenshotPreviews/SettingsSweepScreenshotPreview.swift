@@ -151,7 +151,13 @@ struct SettingsSweepScreenshotPreview: View {
         case "tailscale", "onboarding-tailscale":
             Self.applyTailnetFixture()
         case "ssh-hosts":
-            Self.seedSSHHosts()
+            // Live SSH drive writes real catalog entries; a volatile fixture
+            // catalog would shadow them so the new host never appears.
+            if ProcessInfo.processInfo.environment["OPPI_LIVE_SSH"] == "1" {
+                ScreenshotVolatileDefaults.apply([AppPreferences.Experiments.sshTerminalKey: true])
+            } else {
+                Self.seedSSHHosts()
+            }
         case "agents":
             // Enables Schedule Recurring Run on the agent detail.
             connection.workspaceStore.workspacesByServer[server.id] = [Self.workspace]
@@ -199,6 +205,12 @@ struct SettingsSweepScreenshotPreview: View {
         case "extensions":
             RouterPreviewStack(root: root) { ServerExtensionsView() }
                 .ignoresSafeArea()
+        case "ssh-hosts":
+            RouterPreviewControllerStack(root: root) { SSHTerminalHostListViewController() }
+                .ignoresSafeArea()
+        case "ssh-setup":
+            RouterPreviewControllerStack(root: root) { SSHTerminalSetupViewController() }
+                .ignoresSafeArea()
         // Every other page is the root of a router stack, where its links push.
         default:
             RouterPreviewStack(root: root) { pushedPage }
@@ -217,8 +229,6 @@ struct SettingsSweepScreenshotPreview: View {
                 previewFailure: .hostKeyMismatch(saved: Self.hostKeyA, presented: Self.hostKeyB),
                 host: "mac-studio.tail1234.ts.net"
             )
-        case "ssh-hosts": SSHTerminalHostListView()
-        case "ssh-setup": SSHTerminalSetupView()
         case "mcp": McpServersView(scopeId: McpScopeSnapshot.globalId)
         case "mcp-detail":
             McpServerDetailView(

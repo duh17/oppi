@@ -1,4 +1,5 @@
-import SwiftUI
+import Foundation
+import Observation
 
 /// Trust, password, and dial path shared by the host list and the setup form.
 /// The view that starts Connect presents the password sheet and trust UI.
@@ -144,7 +145,7 @@ final class SSHTerminalConnectSession {
         task = Task {
             do {
                 // Updating a presence-protected item can wait for approval.
-                // Never block SwiftUI's main actor on a Security call.
+                // Never block the main actor on a Security call.
                 try await Task.detached { try SSHTerminalProfileStore().save(value, password: suppliedPassword) }.value
                 guard !Task.isCancelled, runID == self.runID else { return }
                 registry.reconcile(saved: value)
@@ -265,149 +266,5 @@ final class SSHTerminalConnectSession {
             passwordPrompt = true
             connectedProfile = profile
         }
-    }
-}
-
-struct SSHTerminalTrustRows: View {
-    let hostFailure: SSHConnectionError?
-    let connecting: Bool
-    let trust: () -> Void
-    let requestForget: () -> Void
-
-    var body: some View {
-        if case .unknownHostKey(let key) = hostFailure {
-            Text("New host — trust decision").font(.headline).accessibilityIdentifier("sshTerminal.trustPrompt")
-            fingerprint("Presented Host Key", key)
-            Text("Verify this fingerprint on the host before trusting it. No credentials were sent.")
-                .font(.footnote).foregroundStyle(.themeComment)
-            Button("Trust & Connect", action: trust)
-                .disabled(connecting).accessibilityIdentifier("sshTerminal.trustKey")
-        } else if case .hostKeyMismatch(let saved, let presented) = hostFailure {
-            Text("Host key changed — connection blocked.").foregroundStyle(.themeRed)
-            fingerprint("Trusted", saved)
-            fingerprint("Presented", presented)
-            Button("Forget Trusted Key", role: .destructive, action: requestForget)
-                .accessibilityIdentifier("sshTerminal.forgetKey")
-        }
-    }
-
-    private func fingerprint(_ label: String, _ key: SSHHostKey) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("\(label) (\(key.algorithm))").font(.footnote).foregroundStyle(.themeComment)
-            Text(key.fingerprint).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
-        }.accessibilityElement(children: .combine)
-    }
-}
-
-struct SSHTerminalConnectProgress: View {
-    let savingHostOnly: Bool
-    let cancel: () -> Void
-
-    var body: some View {
-        HStack {
-            ProgressView().controlSize(.small)
-            Text(savingHostOnly ? "Saving Host…" : "Connecting…")
-            Spacer()
-            Button("Cancel", action: cancel)
-        }.accessibilityIdentifier("sshTerminal.connecting")
-    }
-}
-
-private struct SSHTerminalConnectionModifier: ViewModifier {
-    @Bindable var session: SSHTerminalConnectSession
-    @Binding var profile: SSHTerminalProfile
-    let experimentEnabled: Bool
-    let editHost: () -> Void
-    let submitPassword: (String) -> Void
-    @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.screenNavigator) private var navigator
-
-    func body(content: Content) -> some View {
-        content
-            .routerModal(
-                isPresented: $session.passwordPrompt,
-                presentation: .sheet.detents([.medium()]).inNavigation(),
-                onDismiss: { session.password = "" },
-                content: {
-                    Form {
-                        Section {
-                            SecureField("Password", text: $session.password).textContentType(nil)
-                                .accessibilityIdentifier("sshTerminal.password")
-                        } header: { Text(profile.endpointLabel) }
-                        Section {
-                            Toggle("Save Password", isOn: $profile.savesPassword)
-                            Text("Saving requires a device passcode. Face ID or passcode approval is required when Oppi reads it, except for 5 minutes after you approve.")
-                                .font(.footnote).foregroundStyle(.themeComment)
-                        }
-                    }
-                    .navigationTitle("SSH Sign In")
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button(role: .cancel) { session.password = ""; session.passwordPrompt = false }
-                        }
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button(role: .confirm) {
-                                let attempt = session.password
-                                session.password = ""
-                                session.passwordPrompt = false
-                                submitPassword(attempt)
-                            }
-                            .disabled(session.password.isEmpty)
-                            .accessibilityLabel(session.savingHostOnly ? "Save" : "Connect")
-                            .accessibilityIdentifier("sshTerminal.passwordConnect")
-                        }
-                    }
-                }
-            )
-            .confirmationDialog("Forget the trusted host key?", isPresented: $session.forgetConfirmation, titleVisibility: .visible) {
-                Button("Forget Trusted Key", role: .destructive) { session.forgetTrustedKey() }
-            } message: { Text("Only do this after independently verifying why the host key changed.") }
-            .onChange(of: scenePhase) { _, phase in
-                guard phase == .background else { return }
-                session.handleBackground()
-            }
-            .onChange(of: experimentEnabled) { _, enabled in
-                if !enabled { session.handleExperimentDisabled() }
-            }
-            .onDisappear { if !session.showsTerminal { session.cancel() } }
-            .onChange(of: session.showsTerminal) { _, visible in
-                if visible { pushTerminal() } else { session.cancel() }
-            }
-    }
-
-    /// Pushes the terminal over this screen, after the SwiftUI update that
-    /// reported the open session.
-    private func pushTerminal() {
-        let session = session
-        let editHost = editHost
-        let hostLabel = profile.endpointLabel
-        DispatchQueue.main.async { [navigator] in
-            guard session.showsTerminal, let channel = session.channel else { return }
-            // The UIKit screen pops itself when the session stops showing it
-            // (Edit Host, the experiment turned off). Leaving it (Back, swipe)
-            // only leaves the screen: the registry keeps the shell.
-            navigator.push(SSHTerminalViewController(
-                channel: channel,
-                reconnect: { session.reconnect(experimentEnabled: AppPreferences.Experiments.sshTerminalEnabled) },
-                editHost: editHost,
-                hostLabel: hostLabel,
-                session: session
-            ))
-        }
-    }
-}
-
-extension View {
-    func sshTerminalConnection(
-        session: SSHTerminalConnectSession,
-        profile: Binding<SSHTerminalProfile>,
-        experimentEnabled: Bool,
-        editHost: @escaping () -> Void,
-        submitPassword: @escaping (String) -> Void
-    ) -> some View {
-        modifier(SSHTerminalConnectionModifier(
-            session: session, profile: profile, experimentEnabled: experimentEnabled,
-            editHost: editHost, submitPassword: submitPassword
-        ))
     }
 }

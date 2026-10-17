@@ -23,12 +23,11 @@ final class UIValidateTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments.append("--screenshot-preview")
         app.launchEnvironment["SCREENSHOT_SCREEN"] = resolvedScreen
+        for (key, value) in ProcessInfo.processInfo.environment where key.hasPrefix("SCREENSHOT_") {
+            app.launchEnvironment[key] = value
+        }
         if let fixture = ProcessInfo.processInfo.environment["OPPI_UI_VALIDATE_FIXTURE"] {
             app.launchEnvironment["OPPI_UI_VALIDATE_FIXTURE"] = fixture
-        }
-        if let colorScheme = ProcessInfo.processInfo.environment["SCREENSHOT_COLOR_SCHEME"],
-           !colorScheme.isEmpty {
-            app.launchEnvironment["SCREENSHOT_COLOR_SCHEME"] = colorScheme
         }
         app.launch()
 

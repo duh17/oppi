@@ -656,6 +656,24 @@ struct RouterPreviewNavigation<Content: View>: UIViewControllerRepresentable {
     func updateUIViewController(_ navigation: RouterNavigationController, context: Context) {}
 }
 
+/// A UIKit screen as the root of a router navigation controller, the way the
+/// shell hosts SSH Terminal's host list.
+struct RouterPreviewControllerStack: UIViewControllerRepresentable {
+    let root: AppRootEnvironment
+    let makeScreen: () -> UIViewController
+
+    func makeUIViewController(context: Context) -> RouterNavigationController {
+        let screen = makeScreen()
+        screen.traitOverrides.appRootEnvironment = root
+        let navigation = RouterNavigationController(rootViewController: screen)
+        let themeStore = root.themeStore
+        navigation.interfaceStyle = { themeStore.userInterfaceStyle }
+        return navigation
+    }
+
+    func updateUIViewController(_ navigation: RouterNavigationController, context: Context) {}
+}
+
 /// The real workspace shell over fixture services: the stack or split
 /// layout the window size picks, its drawer, and every route.
 struct WorkspaceShellPreview: UIViewControllerRepresentable {

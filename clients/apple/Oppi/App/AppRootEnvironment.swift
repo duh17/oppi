@@ -52,6 +52,7 @@ final class AppScenePhase {
     static let shared = AppScenePhase()
 
     private(set) var phase: ScenePhase
+    var isBackground: Bool { phase == .background }
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
     private init() {

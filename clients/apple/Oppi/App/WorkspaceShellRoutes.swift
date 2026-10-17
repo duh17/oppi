@@ -1,8 +1,9 @@
 import SwiftUI
 
 // The SwiftUI content of the workspace shell's routes. UIKit owns the stacks
-// (`ShellRouter.swift`, `WorkspaceShellController.swift`); every route's
-// screen is a `ShellRouteView` hosted through `HostFactory`.
+// (`ShellRouter.swift`, `WorkspaceShellController.swift`). Most routes are a
+// `ShellRouteView` hosted through `HostFactory`; SSH Terminal's host list is a
+// UIKit screen.
 
 /// Hosted screens for the shell's UIKit controllers.
 @MainActor
@@ -12,19 +13,29 @@ enum ShellRouteScreens {
         placement: ShellRoutePlacement,
         root: AppRootEnvironment,
         openSidebar: (() -> Void)?
-    ) -> HostedScreenController {
-        HostFactory.screen(root: root, bars: route.bars) {
+    ) -> UIViewController {
+        if case .utility(.sshTerminal) = route {
+            let screen = SSHTerminalHostListViewController(showsSidebarToggle: placement == .splitDetailRoot)
+            screen.traitOverrides.appRootEnvironment = root
+            return screen
+        }
+        return HostFactory.screen(root: root, bars: route.bars) {
             ShellRouteView(route: route, placement: placement, openSidebar: openSidebar)
         }
     }
 
     /// Newer content for the same screen (a refreshed workspace).
     static func update(
-        _ screen: HostedScreenController,
+        _ screen: UIViewController,
         route: ShellRoute,
         placement: ShellRoutePlacement,
         openSidebar: (() -> Void)?
     ) {
+        if let list = screen as? SSHTerminalHostListViewController {
+            list.showsSidebarToggle = placement == .splitDetailRoot
+            return
+        }
+        guard let screen = screen as? HostedScreenController else { return }
         screen.setContent {
             ShellRouteView(route: route, placement: placement, openSidebar: openSidebar)
         }
@@ -245,7 +256,8 @@ private struct WorkspaceUtilityDestinationView: View {
             case .mcpServers:
                 McpServersView(scopeId: McpScopeSnapshot.globalId)
             case .sshTerminal:
-                SSHTerminalHostListView()
+                // The shell hosts this route as SSHTerminalHostListViewController.
+                EmptyView()
             case .desktopStill:
                 desktopViewer
             case .manageServers:

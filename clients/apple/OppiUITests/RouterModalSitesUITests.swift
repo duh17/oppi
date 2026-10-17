@@ -299,7 +299,7 @@ final class RouterModalSitesUITests: XCTestCase {
         let savePassword = app.switches["Save Password"]
         XCTAssertTrue(savePassword.waitForExistence(timeout: 5))
         XCTAssertEqual(savePassword.value as? String, "0")
-        savePassword.switches.firstMatch.tap()
+        savePassword.tap()
         XCTAssertTrue(waitFor(savePassword.value as? String == "1"), "The toggle must round-trip through the host list")
         attachScreenshot("ssh-password-sheet")
         cancelButton.tap()
