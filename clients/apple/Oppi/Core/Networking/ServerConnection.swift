@@ -43,6 +43,11 @@ final class ServerConnection {
     var pendingPairingApprovals: [PendingPairingApproval] = []
     var pairingApprovalsMutationGeneration: UInt64 = 0
     var pairingApprovalsRefreshSequence: UInt64 = 0
+    /// `serverMetrics.enabled` from `GET /server/metrics/settings`, read once per
+    /// connection and updated by the toggle. Nil until known: the host pill hides
+    /// Server Metrics for nil and false alike. Filled by `ConnectionCoordinator`.
+    var serverMetricsEnabled: Bool?
+    @ObservationIgnored var isLoadingServerMetricsEnabled = false
 
     // Networking
     private(set) var apiClient: APIClient?

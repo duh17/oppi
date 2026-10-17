@@ -320,6 +320,7 @@ final class ServerSettingsModel {
             guard shouldApply(client.serverId) else { return }
             serverMetricsEnabled = enabled
             serverMetricsError = nil
+            coordinator?.setServerMetricsEnabledCache(enabled, for: client.serverId)
         } catch {
             guard shouldApply(client.serverId, error: error) else { return }
             serverMetricsEnabled = nil
@@ -335,6 +336,8 @@ final class ServerSettingsModel {
         defer { if shouldApply(client.serverId) { isSavingServerMetrics = false } }
         do {
             let saved = try await client.api.setServerMetricsEnabled(enabled)
+            // The server changed even if this screen moved on; the pill follows it.
+            coordinator?.setServerMetricsEnabledCache(saved, for: client.serverId)
             guard shouldApply(client.serverId) else { return }
             serverMetricsEnabled = saved
             serverMetricsError = nil

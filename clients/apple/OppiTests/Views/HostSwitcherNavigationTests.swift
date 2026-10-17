@@ -5,12 +5,20 @@ import Testing
 @Suite("Host switcher destinations")
 struct HostSwitcherDestinationTests {
     @Test func menuListsServerJobsWithMetricsAfterUsage() {
-        #expect(HostSwitcherDestination.menuItems == [
+        #expect(HostSwitcherDestination.allMenuItems == [
             .modelProviders,
             .usage,
             .serverMetrics,
             .serverSettings,
         ])
+        #expect(HostSwitcherDestination.menuItems(serverMetricsEnabled: true) == HostSwitcherDestination.allMenuItems)
+    }
+
+    @Test func serverMetricsStaysOutOfTheMenuUnlessKnownOn() {
+        let hidden: [HostSwitcherDestination] = [.modelProviders, .usage, .serverSettings]
+        #expect(HostSwitcherDestination.menuItems(serverMetricsEnabled: false) == hidden)
+        // Unknown fails closed: Server Settings is the on-ramp.
+        #expect(HostSwitcherDestination.menuItems(serverMetricsEnabled: nil) == hidden)
     }
 
     @Test func titlesAreUsageServerSettingsAndModelProviders() {
@@ -21,7 +29,7 @@ struct HostSwitcherDestinationTests {
     }
 
     @Test func titlesAvoidManageStatsAndConfig() {
-        for destination in HostSwitcherDestination.menuItems {
+        for destination in HostSwitcherDestination.allMenuItems {
             let title = destination.menuTitle.lowercased()
             #expect(!title.contains("manage"))
             #expect(!title.contains("stats"))

@@ -982,6 +982,33 @@ final class ConnectionCoordinator {
         return connection.apiClient
     }
 
+    // MARK: - Server Metrics Setting
+
+    /// Reads `serverMetrics.enabled` once per connection for the host pill. A
+    /// known value (or a read in flight) is never refetched; a failed read stays
+    /// unknown, so the pill keeps Server Metrics hidden until the next attempt.
+    func loadServerMetricsEnabledIfNeeded(for serverId: String) async {
+        if let connection = connections[serverId] {
+            guard connection.serverMetricsEnabled == nil,
+                  !connection.isLoadingServerMetricsEnabled else { return }
+        }
+        guard let client = await apiClientReady(for: serverId),
+              let connection = connections[serverId],
+              connection.serverMetricsEnabled == nil,
+              !connection.isLoadingServerMetricsEnabled else { return }
+        connection.isLoadingServerMetricsEnabled = true
+        defer { connection.isLoadingServerMetricsEnabled = false }
+        guard let enabled = try? await client.serverMetricsEnabled(),
+              connections[serverId] === connection,
+              connection.serverMetricsEnabled == nil else { return }
+        connection.serverMetricsEnabled = enabled
+    }
+
+    /// The latest known value, from the toggle or a metrics answer.
+    func setServerMetricsEnabledCache(_ enabled: Bool, for serverId: String) {
+        connections[serverId]?.serverMetricsEnabled = enabled
+    }
+
     // MARK: - Server Lifecycle
 
     @discardableResult

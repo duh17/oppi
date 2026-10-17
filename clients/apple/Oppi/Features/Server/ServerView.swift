@@ -354,9 +354,16 @@ struct ServerMetricsScreen: View {
     var body: some View {
         if let server = selectedServer {
             ServerMetricsControllerHost(
-                source: ServerMetricsSource(serverId: server.id) { [coordinator] in
-                    await coordinator.apiClientReady(for: server.id)
-                },
+                source: ServerMetricsSource(
+                    serverId: server.id,
+                    client: { [coordinator] in await coordinator.apiClientReady(for: server.id) },
+                    cachedEnabled: { [coordinator] in
+                        coordinator.connection(for: server.id)?.serverMetricsEnabled
+                    },
+                    cacheEnabled: { [coordinator] in
+                        coordinator.setServerMetricsEnabledCache($0, for: server.id)
+                    }
+                ),
                 themeID: themeID
             )
             .ignoresSafeArea(.container, edges: .vertical)

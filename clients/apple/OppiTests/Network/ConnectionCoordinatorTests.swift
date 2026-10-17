@@ -28,6 +28,29 @@ private actor CoordinatorPreparationGate {
     }
 }
 
+/// Answers `GET /server/metrics/settings` and counts the requests it sees.
+private final class MetricsSettingsProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var paths: [String] = []
+    nonisolated(unsafe) static var enabled = true
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        Self.paths.append(request.url?.path ?? "")
+        let body = Data(#"{"enabled":\#(Self.enabled)}"#.utf8)
+        let response = HTTPURLResponse(
+            url: request.url!, statusCode: 200, httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: body)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
 @Suite("ConnectionCoordinator", .serialized)
 @MainActor
 struct ConnectionCoordinatorTests {
@@ -1483,6 +1506,40 @@ struct ConnectionCoordinatorTests {
         let order = coordinator.activeConnection.workspaceStore.serverOrder
         #expect(order.contains("sha256:order-a"))
         #expect(order.contains("sha256:order-b"))
+    }
+
+    // MARK: - Server Metrics setting cache
+
+    @Test func serverMetricsSettingIsReadOncePerConnectionAndUpdatedByTheToggle() async {
+        let (coordinator, _) = makeCoordinator()
+        let server = makeServer(id: "sha256:metrics-cache", name: "Metrics")
+        coordinator.serverStore.addOrUpdate(server)
+        coordinator._serverInfoBootstrapForTesting = { [self] _, _ in successfulServerInfo() }
+        coordinator._apiClientFactoryForTesting = { environment, observer in
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [MetricsSettingsProtocol.self]
+            return APIClient(environment: environment, configuration: configuration, availabilityObserver: observer)
+        }
+        MetricsSettingsProtocol.paths = []
+        MetricsSettingsProtocol.enabled = false
+
+        await coordinator.loadServerMetricsEnabledIfNeeded(for: server.id)
+        let connection = coordinator.connection(for: server.id)
+        #expect(connection?.serverMetricsEnabled == false)
+        let offItems = HostSwitcherDestination.menuItems(serverMetricsEnabled: connection?.serverMetricsEnabled)
+        #expect(!offItems.contains(.serverMetrics))
+
+        // A known value is never refetched, and never reads history.
+        await coordinator.loadServerMetricsEnabledIfNeeded(for: server.id)
+        await coordinator.loadServerMetricsEnabledIfNeeded(for: server.id)
+        #expect(MetricsSettingsProtocol.paths == ["/server/metrics/settings"])
+
+        coordinator.setServerMetricsEnabledCache(true, for: server.id)
+        #expect(connection?.serverMetricsEnabled == true)
+        let onItems = HostSwitcherDestination.menuItems(serverMetricsEnabled: connection?.serverMetricsEnabled)
+        #expect(onItems.contains(.serverMetrics))
+        #expect(MetricsSettingsProtocol.paths.count == 1)
+        connection?.disconnectAppEventStream()
     }
 
     // MARK: - Tailnet route

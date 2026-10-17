@@ -5,6 +5,10 @@ import UIKit
 struct ServerMetricsSource {
     let serverId: String
     let client: @MainActor () async -> APIClient?
+    /// The connection's cached `serverMetrics.enabled`; nil when not yet known.
+    let cachedEnabled: @MainActor () -> Bool?
+    /// Records what the page learned or changed, so the host pill follows it.
+    let cacheEnabled: @MainActor (Bool) -> Void
 }
 
 /// Server Metrics: the active host's CPU, memory, and disk and the Oppi server
@@ -18,6 +22,10 @@ final class ServerMetricsViewController: UIViewController {
     private var snapshot: ServerMetricsSnapshot?
     private var errorMessage: String?
     private var isTogglingSampling = false
+    /// Sampling is known off without a metrics snapshot: the cached flag said so,
+    /// so the page never asked for history.
+    private var samplingOff = false
+    private var isAppeared = false
     private var loadTask: Task<Void, Never>?
     private var refreshTimer: Timer?
 
@@ -34,12 +42,11 @@ final class ServerMetricsViewController: UIViewController {
     private let hostDiskCard = ServerMetricCardView(identifier: "hostDisk", title: "Disk")
     private let processCPUCard = ServerMetricCardView(identifier: "processCpu", title: "CPU")
     private let processMemoryCard = ServerMetricCardView(identifier: "processMemory", title: "Memory")
-    private let eventLoopCard = ServerMetricCardView(identifier: "eventLoop", title: "Event Loop")
     private let activityCard = ServerMetricCardView(identifier: "activity", title: "Sessions")
 
     private var hostViews: [UIView] { [hostHeader, hostCPUCard, hostMemoryCard, hostDiskCard] }
     private var processViews: [UIView] {
-        [processHeader, processCPUCard, processMemoryCard, eventLoopCard, activityCard, footerLabel]
+        [processHeader, processCPUCard, processMemoryCard, activityCard, footerLabel]
     }
 
     init(source: ServerMetricsSource, themeID: ThemeID) {
@@ -63,20 +70,31 @@ final class ServerMetricsViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        startAutoRefresh()
+        isAppeared = true
+        // Sampling may have been turned on in Server Settings while this page sat in the stack.
+        if isOff, source.cachedEnabled() == true {
+            snapshot = nil
+            samplingOff = false
+            render()
+            reload()
+        }
+        updateAutoRefresh()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        refreshTimer?.invalidate()
-        refreshTimer = nil
+        isAppeared = false
+        updateAutoRefresh()
     }
+
+    private var isOff: Bool { samplingOff || snapshot?.enabled == false }
 
     func setSource(_ newSource: ServerMetricsSource) {
         let switchedHost = newSource.serverId != source.serverId
         source = newSource
         guard switchedHost else { return }
         snapshot = nil
+        samplingOff = false
         errorMessage = nil
         // A Turn On still in flight belongs to the previous host.
         isTogglingSampling = false
@@ -159,7 +177,7 @@ final class ServerMetricsViewController: UIViewController {
         }
         footerLabel.textColor = UIColor(palette.comment)
         statusView.apply(palette)
-        for card in [hostCPUCard, hostMemoryCard, hostDiskCard, processCPUCard, processMemoryCard, eventLoopCard, activityCard] {
+        for card in [hostCPUCard, hostMemoryCard, hostDiskCard, processCPUCard, processMemoryCard, activityCard] {
             card.apply(palette)
         }
     }
@@ -175,18 +193,23 @@ final class ServerMetricsViewController: UIViewController {
         snapshot = nil
         errorMessage = nil
         render()
+        updateAutoRefresh()
         reload()
     }
 
-    private func startAutoRefresh() {
-        refreshTimer?.invalidate()
-        // The sampler writes every ~30s; refreshing faster shows nothing new.
-        // 7d and 30d re-read up to a month of samples, so they refresh on pull.
+    /// The timer exists only while this page is on screen, sampling is on, and the
+    /// range is live. The sampler writes every ~30s; refreshing faster shows nothing
+    /// new. 7d and 30d re-read up to a month of samples, so they refresh on pull.
+    private func updateAutoRefresh() {
+        let wanted = isAppeared && range.refreshesLive && snapshot?.enabled == true
+        guard wanted else {
+            refreshTimer?.invalidate()
+            refreshTimer = nil
+            return
+        }
+        guard refreshTimer == nil else { return }
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.range.refreshesLive else { return }
-                self.reload()
-            }
+            MainActor.assumeIsolated { self?.reload() }
         }
     }
 
@@ -194,6 +217,17 @@ final class ServerMetricsViewController: UIViewController {
         loadTask?.cancel()
         let source = source
         let range = range
+        // Known off: show the off state without asking the server for history.
+        if source.cachedEnabled() == false {
+            samplingOff = true
+            snapshot = nil
+            errorMessage = nil
+            render()
+            updateAutoRefresh()
+            if endingRefresh { scrollView.refreshControl?.endRefreshing() }
+            return
+        }
+        samplingOff = false
         loadTask = Task { [weak self] in
             defer {
                 if endingRefresh { self?.scrollView.refreshControl?.endRefreshing() }
@@ -203,6 +237,17 @@ final class ServerMetricsViewController: UIViewController {
                 return
             }
             do {
+                // Unknown flag (a leftover or deep-linked page): the tiny settings
+                // read decides before the history read does.
+                if source.cachedEnabled() == nil {
+                    let enabled = try await client.serverMetricsEnabled()
+                    guard !Task.isCancelled else { return }
+                    source.cacheEnabled(enabled)
+                    if !enabled {
+                        self?.finishOff(serverId: source.serverId)
+                        return
+                    }
+                }
                 let result = try await client.fetchServerMetrics(range: range)
                 self?.finishLoad(serverId: source.serverId, range: range, result: .success(result))
             } catch is CancellationError {
@@ -213,18 +258,30 @@ final class ServerMetricsViewController: UIViewController {
         }
     }
 
+    private func finishOff(serverId: String) {
+        guard serverId == source.serverId, !Task.isCancelled else { return }
+        samplingOff = true
+        snapshot = nil
+        errorMessage = nil
+        render()
+        updateAutoRefresh()
+    }
+
     private func finishLoad(serverId: String, range: ServerMetricsRange, result: Result<ServerMetricsSnapshot, Error>) {
         // A slow answer for a host or range the page has left is stale.
         guard serverId == source.serverId, range == self.range, !Task.isCancelled else { return }
         switch result {
         case .success(let value):
             snapshot = value
+            samplingOff = false
             errorMessage = nil
+            source.cacheEnabled(value.enabled)
         case .failure(let error):
             if (error as? URLError)?.code == .cancelled { return }
             errorMessage = error.localizedDescription
         }
         render()
+        updateAutoRefresh()
     }
 
     private func setSampling(_ enabled: Bool) {
@@ -236,7 +293,8 @@ final class ServerMetricsViewController: UIViewController {
             var failure: Error?
             do {
                 guard let client = await source.client() else { throw ServerMetricsLoadError.notConnected }
-                try await client.setServerMetricsEnabled(enabled)
+                let saved = try await client.setServerMetricsEnabled(enabled)
+                source.cacheEnabled(saved)
             } catch {
                 failure = error
             }
@@ -258,7 +316,7 @@ final class ServerMetricsViewController: UIViewController {
         guard isViewLoaded else { return }
         let palette = themeID.palette
         let status: ServerMetricsStatusView.State?
-        if let snapshot, !snapshot.enabled {
+        if isOff {
             status = .off(isTurningOn: isTogglingSampling, error: errorMessage)
         } else if snapshot == nil, let errorMessage {
             status = .failed(errorMessage)
@@ -270,7 +328,7 @@ final class ServerMetricsViewController: UIViewController {
         statusView.isHidden = status == nil
         if let status { statusView.show(status) }
 
-        guard let snapshot, snapshot.enabled else {
+        guard !isOff, let snapshot else {
             (hostViews + processViews).forEach { $0.isHidden = true }
             return
         }
@@ -284,7 +342,6 @@ final class ServerMetricsViewController: UIViewController {
         hostDiskCard.configure(model.hostDisk(palette: palette))
         processCPUCard.configure(model.processCPU(palette: palette))
         processMemoryCard.configure(model.processMemory(palette: palette))
-        eventLoopCard.configure(model.eventLoop(palette: palette))
         activityCard.configure(model.activity(palette: palette))
         footerLabel.text = model.footer
     }
@@ -331,7 +388,7 @@ struct ServerMetricsPageModel {
     }
 
     /// Highest plotted bucket average. Charts scale to this, not to `peak`:
-    /// one 11-second event-loop stall would otherwise flatten the whole line.
+    /// one short spike would otherwise flatten the whole line.
     private func plottedTop(_ key: ServerMetricSeries) -> Double? {
         avg(key).compactMap { $0 }.max()
     }
@@ -461,22 +518,6 @@ struct ServerMetricsPageModel {
         )
     }
 
-    func eventLoop(palette: ThemePalette) -> ServerMetricCardView.Content {
-        let yMax = Swift.max(50, (plottedTop(.eventLoopP99) ?? 0) * 1.15)
-        var detail = "p99 delay"
-        if let loop = latest?.eventLoop { detail += " · max \(ServerMetricsFormat.milliseconds(loop.max)) last sample" }
-        return ServerMetricCardView.Content(
-            value: latest.map { ServerMetricsFormat.milliseconds($0.eventLoop.p99) } ?? "—",
-            detail: detail,
-            chart: chart(
-                [.init(values: avg(.eventLoopP99), color: UIColor(palette.yellow), filled: true)],
-                yMax: yMax,
-                yLabel: ServerMetricsFormat.milliseconds(yMax),
-                format: ServerMetricsFormat.milliseconds
-            )
-        )
-    }
-
     func activity(palette: ThemePalette) -> ServerMetricCardView.Content {
         // Both lines share the axis, so it fits whichever peaks higher.
         let yMax = Swift.max(4, (peak(.sessions) ?? 0) + 1, (peak(.wsConnections) ?? 0) + 1)
@@ -526,10 +567,6 @@ enum ServerMetricsFormat {
 
     static func decimal(_ value: Double) -> String {
         String(format: "%.2f", value)
-    }
-
-    static func milliseconds(_ value: Double) -> String {
-        value < 10 ? String(format: "%.1f ms", value) : "\(Int(value.rounded())) ms"
     }
 
     /// Server values are MB (1024²). Shown as MB, GB, or TB.

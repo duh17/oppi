@@ -603,12 +603,18 @@ enum HostSwitcherDestination: Hashable {
     case modelProviders
     case serverSettings
 
-    static let menuItems: [Self] = [
+    static let allMenuItems: [Self] = [
         .modelProviders,
         .usage,
         .serverMetrics,
         .serverSettings,
     ]
+
+    /// Server Metrics is opt-in: its row shows only once the server is known to
+    /// sample. Server Settings is the on-ramp, so unknown hides it like off.
+    static func menuItems(serverMetricsEnabled: Bool?) -> [Self] {
+        serverMetricsEnabled == true ? allMenuItems : allMenuItems.filter { $0 != .serverMetrics }
+    }
 
     var title: String {
         switch self {
@@ -716,7 +722,12 @@ struct HostSwitcherMenu: View {
 
             Divider()
 
-            ForEach(HostSwitcherDestination.menuItems, id: \.self) { item in
+            ForEach(
+                HostSwitcherDestination.menuItems(
+                    serverMetricsEnabled: coordinator.connection(for: current.id)?.serverMetricsEnabled
+                ),
+                id: \.self
+            ) { item in
                 Button {
                     guard item.shouldNavigate(from: destination) else { return }
                     navigation.openHostSwitcherDestination(item, serverId: current.id)
@@ -735,6 +746,10 @@ struct HostSwitcherMenu: View {
         }
         .accessibilityLabel("Current server: \(current.name)")
         .accessibilityValue(badgeState(for: current).title)
+        // Once per connection: a known value is never refetched.
+        .task(id: current.id) {
+            await coordinator.loadServerMetricsEnabledIfNeeded(for: current.id)
+        }
     }
 
     private func menuAccessibilityValue(for server: PairedServer) -> String {
