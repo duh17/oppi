@@ -25,6 +25,12 @@ export const LIVE_ACTIVITY_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 const LEAVE_GRACE_MS = 120_000;
 /** After a failed send (relay or network down), try once more after this. */
 const RETRY_AFTER_FAILURE_MS = 5 * 60_000;
+/**
+ * An update that finds no update token at the relay is tried again, once a minute, this many
+ * times: the phone may still be reporting a new card's token. After that the card is out of
+ * reach until the counts reach zero.
+ */
+export const LIVE_ACTIVITY_MISSING_TOKEN_RETRIES = 5;
 
 /**
  * Running and waiting top-level sessions. Subagents (sessions with a parent) never count: the
@@ -58,12 +64,22 @@ const EMPTY: LiveActivityCounts = { running: 0, needsYou: 0 };
 interface DeviceState {
   /**
    * `none`: no card, as far as this server knows. `unknown`: the phone drove the card while
-   * present, or the server restarted. `live`: this server started the card at `startedAt`.
+   * present, or the server restarted. `live`: this server started the card. `lost`: the relay
+   * holds no update token for the card (the person dismissed it, or the phone ended it), so
+   * this server starts no card until the counts reach zero.
    */
-  activity: "none" | "unknown" | "live";
+  activity: "none" | "unknown" | "live" | "lost";
+  /**
+   * `live`: when this server started the card. `unknown`: the earliest the card can have
+   * started, so its 8-hour restart comes no later than Apple's end.
+   */
   startedAt?: number;
   /** Counts the card shows (or the relay last refused to start for); undefined: not known. */
   shown?: LiveActivityCounts;
+  /** Updates in a row that found no update token. */
+  missedUpdates: number;
+  /** Unix seconds of the last event sent; each event goes out with a later one. */
+  lastTimestamp: number;
   lastSentAt: number;
   /** No send before this: a failure or a relay `429`. */
   retryAt: number;
@@ -89,16 +105,28 @@ export interface LiveActivityNotifierOptions {
  * stream: a present app updates its own card, so the server never drives the same activity.
  * A send goes out only when the counts the card shows differ from the current ones, at most
  * once a minute per device; the latest counts win. Nothing running or waiting ends the card,
- * work starting while there is none starts one, and a card Apple ended after 8 hours is ended
- * and started again while work goes on. An update the relay cannot deliver (no live activity:
- * the phone ended or dismissed it, or Apple's 8 hours ran out) is followed by an end, which
- * takes an expired card off the Lock Screen, and a start.
+ * and work starting while there is none starts one. A card is ended and started again before
+ * Apple's 8 hours run out while work goes on.
+ *
+ * A start goes out only when this server knows there is no card: it ended the last one
+ * (the relay delivered the `end`) or the counts reached zero. An update the relay cannot
+ * deliver means the relay holds no token for the card: the phone may still be reporting a new
+ * card's token, so the update is tried again a few times; after that the card is out of
+ * reach (dismissed, or ended on the phone) and nothing more goes out until the counts reach
+ * zero. Starting a card then could put a second card next to one the person can see, or
+ * bring back one they dismissed.
  */
 export class LiveActivityNotifier {
   private readonly devices = new Map<string, DeviceState>();
   private readonly now: () => number;
+  /** The server starts with no live sessions. */
   private lastCounts: LiveActivityCounts = EMPTY;
   private lastCountsChangeAt = Number.NEGATIVE_INFINITY;
+  /**
+   * When the counts last went from zero to some. Both the app and this server end the card at
+   * zero, so no card shown now started before this. Undefined until seen.
+   */
+  private countsRoseAt: number | undefined;
   private stopped = false;
 
   constructor(
@@ -109,9 +137,10 @@ export class LiveActivityNotifier {
   }
 
   /**
-   * After a restart the server does not know what any card shows. Reconcile each device once,
-   * a minute in so sessions settle first: a card left from before the restart ends when
-   * nothing runs. The relay answers `no_activity`, at no quota cost, when there is no card.
+   * After a restart the server does not know what any card shows or when it started.
+   * Reconcile each device once, a minute in so sessions settle first: a card left from before
+   * the restart ends when nothing runs, and is restarted otherwise, since it may be near
+   * Apple's 8 hours. The relay answers `no_activity`, at no quota cost, when there is no card.
    */
   start(): void {
     const now = this.now();
@@ -133,7 +162,9 @@ export class LiveActivityNotifier {
   /** A session's program status changed; the counts may have too. */
   countsChanged(): void {
     const counts = this.options.counts();
-    if (!sameCounts(this.lastCounts, counts)) {
+    const previous = this.lastCounts;
+    if (!sameCounts(previous, counts)) {
+      if (isEmpty(previous)) this.countsRoseAt = this.now();
       this.lastCounts = counts;
       this.lastCountsChangeAt = this.now();
     }
@@ -156,11 +187,13 @@ export class LiveActivityNotifier {
     // unless they changed while it may already have been suspended.
     const counts = this.options.counts();
     const recentChange = this.now() - this.lastCountsChangeAt < LEAVE_GRACE_MS;
-    device.startedAt = undefined;
+    device.missedUpdates = 0;
     if (isEmpty(counts) && !recentChange) {
       device.activity = "none";
       device.shown = EMPTY;
+      device.startedAt = undefined;
     } else {
+      device.startedAt = this.earliestCardStart(device);
       device.activity = "unknown";
       device.shown = recentChange ? undefined : counts;
     }
@@ -176,14 +209,31 @@ export class LiveActivityNotifier {
     if (!device) {
       device = {
         activity: "unknown",
+        missedUpdates: 0,
+        lastTimestamp: 0,
         lastSentAt: Number.NEGATIVE_INFINITY,
         retryAt: 0,
         sending: false,
         dirty: false,
       };
+      device.startedAt = this.earliestCardStart(device);
       this.devices.set(deviceId, device);
     }
     return device;
+  }
+
+  /**
+   * The earliest a card the phone shows now can have started: not before the counts last rose
+   * from zero, nor before this server last started one (a newer card replaces it), nor more
+   * than 8 hours ago (Apple would have ended it). Restarting by this keeps a card up even when
+   * the app started it, at the cost of an early restart now and then.
+   */
+  private earliestCardStart(device: DeviceState): number {
+    return Math.max(
+      this.countsRoseAt ?? Number.NEGATIVE_INFINITY,
+      device.startedAt ?? Number.NEGATIVE_INFINITY,
+      this.now() - LIVE_ACTIVITY_MAX_AGE_MS,
+    );
   }
 
   private forget(deviceId: string): void {
@@ -197,18 +247,30 @@ export class LiveActivityNotifier {
     device.timer = undefined;
   }
 
-  /** Whether the card should change now, given what it shows. */
-  private needsSend(device: DeviceState, counts: LiveActivityCounts, now: number): boolean {
-    if (device.activity === "none") return !isEmpty(counts) && !sameCounts(device.shown, counts);
-    if (isEmpty(counts)) return true;
-    if (
-      device.activity === "live" &&
+  /** The card may be at Apple's 8 hours: end it and start a new one. */
+  private dueForRestart(device: DeviceState, now: number): boolean {
+    return (
+      (device.activity === "live" || device.activity === "unknown") &&
       device.startedAt !== undefined &&
       now - device.startedAt >= LIVE_ACTIVITY_MAX_AGE_MS
-    ) {
-      return true;
+    );
+  }
+
+  /** Whether the card should change now, given what it shows. */
+  private needsSend(device: DeviceState, counts: LiveActivityCounts, now: number): boolean {
+    switch (device.activity) {
+      case "none":
+        // At zero after a refused start: an `end` ends a dismissal at the relay.
+        return isEmpty(counts)
+          ? !sameCounts(device.shown, EMPTY)
+          : !sameCounts(device.shown, counts);
+      case "lost":
+        return isEmpty(counts);
+      default:
+        return (
+          isEmpty(counts) || this.dueForRestart(device, now) || !sameCounts(device.shown, counts)
+        );
     }
-    return !sameCounts(device.shown, counts);
   }
 
   /** Arm the device's one timer for its next send, or for its card's 8-hour restart. */
@@ -225,7 +287,10 @@ export class LiveActivityNotifier {
     let at: number | undefined;
     if (this.needsSend(device, this.options.counts(), now)) {
       at = Math.max(now, device.lastSentAt + LIVE_ACTIVITY_MIN_INTERVAL_MS, device.retryAt);
-    } else if (device.activity === "live" && device.startedAt !== undefined) {
+    } else if (
+      (device.activity === "live" || device.activity === "unknown") &&
+      device.startedAt !== undefined
+    ) {
       at = device.startedAt + LIVE_ACTIVITY_MAX_AGE_MS;
     }
     if (at === undefined) return;
@@ -268,37 +333,49 @@ export class LiveActivityNotifier {
     counts: LiveActivityCounts,
   ): Promise<void> {
     if (isEmpty(counts)) {
-      await this.end(registration, device);
+      // Delivered, or no card: either way there is none now.
+      if ((await this.send(registration, device, "end", EMPTY)) !== "failed") {
+        this.settle(device, "none", EMPTY);
+      }
       return;
     }
     if (device.activity === "none") {
       await this.begin(registration, device, counts);
       return;
     }
-    if (
-      device.activity === "live" &&
-      device.startedAt !== undefined &&
-      this.now() - device.startedAt >= LIVE_ACTIVITY_MAX_AGE_MS
-    ) {
-      if (await this.end(registration, device)) await this.begin(registration, device, counts);
+    if (this.dueForRestart(device, this.now())) {
+      const ended = await this.send(registration, device, "end", EMPTY);
+      if (ended === "delivered") {
+        this.settle(device, "none", EMPTY);
+        await this.begin(registration, device, counts);
+      } else if (ended === "no_activity") {
+        // No token to end: the card is out of reach. Starting one could sit next to it.
+        this.settle(device, "lost", undefined);
+      }
       return;
     }
     const result = await this.send(registration, device, "update", counts);
     if (result === "delivered") {
       device.shown = counts;
+      device.missedUpdates = 0;
     } else if (result === "no_activity") {
-      if (await this.end(registration, device)) await this.begin(registration, device, counts);
+      device.missedUpdates += 1;
+      if (device.missedUpdates > LIVE_ACTIVITY_MISSING_TOKEN_RETRIES) {
+        log.info("live_activity.card_out_of_reach");
+        this.settle(device, "lost", undefined);
+      }
     }
   }
 
-  /** End the card. True once there is none (ended, or the relay had none). */
-  private async end(registration: PushRegistration, device: DeviceState): Promise<boolean> {
-    const result = await this.send(registration, device, "end", EMPTY);
-    if (result !== "delivered" && result !== "no_activity") return false;
-    device.activity = "none";
+  private settle(
+    device: DeviceState,
+    activity: "none" | "lost",
+    shown: LiveActivityCounts | undefined,
+  ): void {
+    device.activity = activity;
     device.startedAt = undefined;
-    device.shown = EMPTY;
-    return true;
+    device.shown = shown;
+    device.missedUpdates = 0;
   }
 
   private async begin(
@@ -311,27 +388,32 @@ export class LiveActivityNotifier {
       device.activity = "live";
       device.startedAt = this.now();
       device.shown = counts;
+      device.missedUpdates = 0;
     } else if (result === "no_activity") {
-      // No start token at the relay: the phone turned Live Activities off. Try again when
-      // the counts change.
-      device.activity = "none";
-      device.shown = counts;
+      // No start token at the relay (the phone turned Live Activities off), or the person
+      // dismissed the card. Try again when the counts change.
+      this.settle(device, "none", counts);
     }
   }
 
-  /** Send one event. Failures set the device's retry time. */
+  /**
+   * Send one event. Failures set the device's retry time. Each event carries a later
+   * timestamp than the device's last one, so a start right after an end is the newer event:
+   * Apple ignores an event no newer than the one before.
+   */
   private async send(
     registration: PushRegistration,
     device: DeviceState,
     event: LiveActivityPush["event"],
     counts: LiveActivityCounts,
   ): Promise<"delivered" | "no_activity" | "failed"> {
-    const now = this.now();
+    const timestamp = Math.max(Math.floor(this.now() / 1000), device.lastTimestamp + 1);
+    device.lastTimestamp = timestamp;
     const result = await this.push.sendLiveActivity(registration, {
       event,
       running: counts.running,
       needsYou: counts.needsYou,
-      timestamp: Math.floor(now / 1000),
+      timestamp,
     });
     switch (result?.status) {
       case "delivered":

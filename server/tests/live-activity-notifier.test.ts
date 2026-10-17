@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   LIVE_ACTIVITY_MAX_AGE_MS,
+  LIVE_ACTIVITY_MISSING_TOKEN_RETRIES,
   LiveActivityNotifier,
   liveActivityCounts,
   type LiveActivityCounts,
@@ -174,19 +175,51 @@ describe("LiveActivityNotifier", () => {
     expect(events()).toEqual(["update 1/0"]);
   });
 
-  it("falls back to end and start when the relay has no live activity to update", async () => {
+  it("waits for a new card's update token instead of starting a second card", async () => {
+    leave();
+    change({ running: 1, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    // The phone has not reported the started card's token yet.
+    answer = () => ({ status: "no_activity" });
+    change({ running: 2, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events()).toEqual(["start 1/0", "update 2/0"]);
+    answer = () => ({ status: "delivered" });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events()).toEqual(["start 1/0", "update 2/0", "update 2/0"]);
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(sent).toHaveLength(3);
+  });
+
+  it("leaves a card it cannot reach alone until the counts reach zero", async () => {
+    // The person dismissed the app's card, or the phone ended it: the relay holds no token.
     present = true;
     notifier.presenceChanged(phone.deviceId);
     change({ running: 1, needsYou: 0 });
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     leave();
-    answer = (push) => (push.event === "start" ? { status: "delivered" } : { status: "no_activity" });
+    answer = () => ({ status: "no_activity" });
     change({ running: 2, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    const updates = Array.from(
+      { length: LIVE_ACTIVITY_MISSING_TOKEN_RETRIES + 1 },
+      () => "update 2/0",
+    );
+    expect(events()).toEqual(updates);
+    change({ running: 3, needsYou: 1 });
+    await vi.advanceTimersByTimeAsync(LIVE_ACTIVITY_MAX_AGE_MS);
+    expect(events()).toEqual(updates);
+
+    // Zero ends the dismissal at the relay; the next work gets a card.
+    change({ running: 0, needsYou: 0 });
     await vi.advanceTimersByTimeAsync(0);
-    expect(events()).toEqual(["update 2/0", "end 0/0", "start 2/0"]);
+    answer = () => ({ status: "delivered" });
+    change({ running: 1, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events()).toEqual([...updates, "end 0/0", "start 1/0"]);
   });
 
-  it("restarts the card after Apple's 8 hours while work goes on", async () => {
+  it("restarts the card after Apple's 8 hours while work goes on, the start newer than the end", async () => {
     leave();
     change({ running: 1, needsYou: 0 });
     await vi.advanceTimersByTimeAsync(0);
@@ -194,9 +227,41 @@ describe("LiveActivityNotifier", () => {
     expect(events()).toEqual(["start 1/0"]);
     await vi.advanceTimersByTimeAsync(1);
     expect(events()).toEqual(["start 1/0", "end 0/0", "start 1/0"]);
+    expect(sent[2]!.timestamp).toBeGreaterThan(sent[1]!.timestamp);
   });
 
-  it("does not retry a start the relay refused until the counts change", async () => {
+  it("restarts a card the app started before Apple's 8 hours run out", async () => {
+    present = true;
+    notifier.presenceChanged(phone.deviceId);
+    change({ running: 1, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(3 * 60 * 60_000);
+    // The card shows these counts; nothing changes for the rest of the day.
+    leave();
+    await vi.advanceTimersByTimeAsync(5 * 60 * 60_000 - 1);
+    expect(sent).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(events()).toEqual(["end 0/0", "start 1/0"]);
+    expect(sent[1]!.timestamp).toBeGreaterThan(sent[0]!.timestamp);
+    // And again 8 hours after that.
+    await vi.advanceTimersByTimeAsync(LIVE_ACTIVITY_MAX_AGE_MS);
+    expect(events()).toEqual(["end 0/0", "start 1/0", "end 0/0", "start 1/0"]);
+  });
+
+  it("starts no card over one it could not end", async () => {
+    present = true;
+    notifier.presenceChanged(phone.deviceId);
+    change({ running: 1, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    leave();
+    answer = (push) => (push.event === "end" ? { status: "no_activity" } : { status: "delivered" });
+    await vi.advanceTimersByTimeAsync(LIVE_ACTIVITY_MAX_AGE_MS);
+    expect(events()).toEqual(["end 0/0"]);
+    change({ running: 2, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(events()).toEqual(["end 0/0"]);
+  });
+
+  it("does not retry a start the relay refused until the counts change, and ends at zero", async () => {
     answer = () => ({ status: "no_activity" });
     leave();
     change({ running: 1, needsYou: 0 });
@@ -205,6 +270,12 @@ describe("LiveActivityNotifier", () => {
     change({ running: 2, needsYou: 0 });
     await vi.advanceTimersByTimeAsync(60_000);
     expect(events()).toEqual(["start 1/0", "start 2/0"]);
+    // A dismissed card's refusal lasts until an end says the counts reached zero.
+    change({ running: 0, needsYou: 0 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events()).toEqual(["start 1/0", "start 2/0", "end 0/0"]);
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(sent).toHaveLength(3);
   });
 
   it("retries after a relay outage and waits out a quota's Retry-After", async () => {
@@ -240,5 +311,14 @@ describe("LiveActivityNotifier", () => {
     // No card: nothing more until work starts.
     await vi.advanceTimersByTimeAsync(30 * 60_000);
     expect(sent).toHaveLength(1);
+  });
+
+  it("restarts a card left from before a restart while work goes on: it may be near 8 hours", async () => {
+    counts = { running: 2, needsYou: 1 };
+    notifier.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(events()).toEqual(["end 0/0", "start 2/1"]);
+    await vi.advanceTimersByTimeAsync(LIVE_ACTIVITY_MAX_AGE_MS - 1);
+    expect(sent).toHaveLength(2);
   });
 });

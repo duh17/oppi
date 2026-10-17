@@ -18,6 +18,7 @@ import {
   type LiveActivityAuthorization,
   type LiveActivityEvent,
   type LiveActivityTarget,
+  type LiveActivityUpdate,
   type PermissionRecord,
   type PushAuthorization,
   type QuotaLimits,
@@ -141,15 +142,10 @@ export class MemoryRelayStore implements RelayStore {
     return result;
   }
 
-  async setLiveActivity(
-    id: string,
-    startToken: string | null,
-    activities: Array<{ slot: string; token: string }>,
-    now: number,
-  ): Promise<boolean> {
+  async setLiveActivity(id: string, update: LiveActivityUpdate, now: number): Promise<boolean> {
     const record = this.registrations.get(id);
     if (!record) return false;
-    applySetLiveActivity(record, startToken, activities, now);
+    applySetLiveActivity(record, update, now);
     this.persist();
     return true;
   }
@@ -163,7 +159,7 @@ export class MemoryRelayStore implements RelayStore {
   ): Promise<LiveActivityAuthorization> {
     const record = this.registrations.get(id);
     if (!record) return { ok: false, reason: "gone" };
-    const result = applyAuthorizeLiveActivity(
+    const { authorization, changed } = applyAuthorizeLiveActivity(
       record,
       permissionId,
       secretHash,
@@ -171,8 +167,8 @@ export class MemoryRelayStore implements RelayStore {
       now,
       this.options.limits ?? DEFAULT_QUOTA_LIMITS,
     );
-    if (result.ok) this.persist();
-    return result;
+    if (changed) this.persist();
+    return authorization;
   }
 
   async clearLiveActivityToken(id: string, target: LiveActivityTarget, token: string): Promise<void> {

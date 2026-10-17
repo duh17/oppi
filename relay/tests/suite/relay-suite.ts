@@ -15,11 +15,16 @@ export interface CapturedApnsRequest {
   payload: string;
 }
 
+export interface ApnsAnswer {
+  status: number;
+  reason?: string;
+}
+
 export interface RelayHarness {
   url: string;
   apnsRequests: CapturedApnsRequest[];
   /** How the mock APNs answers; 200 by default. */
-  respondApns(handler: (request: CapturedApnsRequest) => { status: number; reason?: string }): void;
+  respondApns(handler: (request: CapturedApnsRequest) => ApnsAnswer | Promise<ApnsAnswer>): void;
   /** Everything the relay persisted, as text: what its operator could read. */
   storageText(): Promise<string>;
   logs: string[];
@@ -139,7 +144,7 @@ export async function liveActivityPhone(
 ): Promise<{ registration: { registrationId: string; registrationSecret: string }; sendToken: string }> {
   const registration = await registerUnattested(harness, "sandbox", apnsToken);
   const sendToken = await mintSendToken(harness, registration, SLOT);
-  expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities: [] })).toBe(204);
+  expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities: [], dismissed: [] })).toBe(204);
   return { registration, sendToken };
 }
 
@@ -451,6 +456,7 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
         await putLiveActivity(harness, registration, {
           startToken: START_TOKEN,
           activities: [{ slot: SLOT, token: ACTIVITY_TOKEN }],
+          dismissed: [],
         }),
       ).toBe(204);
 
@@ -514,7 +520,7 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
       const registration = await registerUnattested(harness);
       const sendToken = await mintSendToken(harness, registration, SLOT);
       expect((await liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 })).json.error).toBe("no_activity");
-      expect(await putLiveActivity(harness, registration, { startToken: null, activities: [] })).toBe(204);
+      expect(await putLiveActivity(harness, registration, { startToken: null, activities: [], dismissed: [] })).toBe(204);
       for (const event of ["start", "update"]) {
         expect((await liveActivity(harness, sendToken, { event, running: 1, needsYou: 0 })).status).toBe(409);
       }
@@ -522,7 +528,7 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
       expect(harness.apnsRequests).toHaveLength(0);
 
       // None of those spent the Live Activity quota.
-      expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities: [] })).toBe(204);
+      expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities: [], dismissed: [] })).toBe(204);
       for (let index = 0; index < DEFAULT_QUOTA_LIMITS.liveActivityPerMinute; index += 1) {
         expect((await liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 })).status).toBe(200);
       }
@@ -571,6 +577,7 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
         await putLiveActivity(harness, registration, {
           startToken: START_TOKEN,
           activities: [{ slot: SLOT, token: ACTIVITY_TOKEN }],
+          dismissed: [],
         }),
       ).toBe(204);
       harness.respondApns(() => ({ status, reason }));
@@ -585,26 +592,102 @@ export function defineRelaySuite(name: string, start: () => Promise<RelayHarness
       expect((await call(harness, "POST", "/v1/push", { bearer: sendToken, body: { envelope: fakeEnvelope() } })).status).toBe(200);
     });
 
+    it("keeps the card's update token until APNs accepts the start that replaces it", async () => {
+      const { registration, sendToken } = await liveActivityPhone(harness);
+      const tokens = (activityToken: string) =>
+        putLiveActivity(harness, registration, {
+          startToken: START_TOKEN,
+          activities: [{ slot: SLOT, token: activityToken }],
+          dismissed: [],
+        });
+      expect(await tokens(ACTIVITY_TOKEN)).toBe(204);
+
+      // APNs refuses the start: the card on the phone can still be updated and ended.
+      harness.respondApns(() => ({ status: 503, reason: "ServiceUnavailable" }));
+      expect((await liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 })).status).toBe(502);
+      harness.respondApns(() => ({ status: 200 }));
+      expect((await liveActivity(harness, sendToken, { event: "update", running: 2, needsYou: 0 })).status).toBe(200);
+      expect(harness.apnsRequests.at(-1)?.path).toBe(`/3/device/${ACTIVITY_TOKEN}`);
+
+      // Accepted: the old card's token goes, since a new card is coming.
+      expect((await liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 })).status).toBe(200);
+      expect((await liveActivity(harness, sendToken, { event: "update", running: 2, needsYou: 0 })).json.error).toBe("no_activity");
+    });
+
+    it("keeps a new card's update token that arrives while its start is in flight", async () => {
+      const { registration, sendToken } = await liveActivityPhone(harness);
+      const tokens = (activityToken: string) =>
+        putLiveActivity(harness, registration, {
+          startToken: START_TOKEN,
+          activities: [{ slot: SLOT, token: activityToken }],
+          dismissed: [],
+        });
+      const newCard = "f".repeat(160);
+      expect(await tokens(ACTIVITY_TOKEN)).toBe(204);
+      harness.respondApns(async () => {
+        expect(await tokens(newCard)).toBe(204);
+        return { status: 200 };
+      });
+      expect((await liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 })).status).toBe(200);
+      harness.respondApns(() => ({ status: 200 }));
+      expect((await liveActivity(harness, sendToken, { event: "update", running: 3, needsYou: 0 })).status).toBe(200);
+      expect(harness.apnsRequests.at(-1)?.path).toBe(`/3/device/${newCard}`);
+    });
+
+    it("starts no card for a dismissed slot until a server ends it", async () => {
+      const { registration, sendToken } = await liveActivityPhone(harness);
+      const state = (dismissed: string[]) =>
+        putLiveActivity(harness, registration, { startToken: START_TOKEN, activities: [], dismissed });
+      const start = () => liveActivity(harness, sendToken, { event: "start", running: 1, needsYou: 0 });
+      const end = () => liveActivity(harness, sendToken, { event: "end", running: 0, needsYou: 0 });
+
+      expect(await state([SLOT])).toBe(204);
+      expect((await start()).json.error).toBe("no_activity");
+      expect(harness.apnsRequests).toHaveLength(0);
+      // Counts reached zero: the dismissed card has no token, but the dismissal is over.
+      expect((await end()).json.error).toBe("no_activity");
+      // The phone listing the slot again, from before it learned that, changes nothing.
+      expect(await state([SLOT])).toBe(204);
+      expect((await start()).status).toBe(200);
+
+      // A new dismissal: the phone stopped listing the slot, then listed it again.
+      expect(await state([])).toBe(204);
+      expect(await state([SLOT])).toBe(204);
+      expect((await start()).json.error).toBe("no_activity");
+      // The phone drops the slot (it saw the counts reach zero): starts go again.
+      expect(await state([])).toBe(204);
+      expect((await start()).status).toBe(200);
+      // None of the refusals spent the Live Activity quota.
+      expect((await start()).status).toBe(200);
+      expect((await start()).status).toBe(429);
+    });
+
     it("takes the phone's Live Activity tokens only in the fixed shape, with its secret", async () => {
       const registration = await registerUnattested(harness);
       const put = (body: unknown) => putLiveActivity(harness, registration, body);
-      expect(await put({ startToken: START_TOKEN, activities: [{ slot: SLOT, token: ACTIVITY_TOKEN }] })).toBe(204);
+      expect(await put({ startToken: START_TOKEN, activities: [{ slot: SLOT, token: ACTIVITY_TOKEN }], dismissed: [] })).toBe(204);
+      const other = "D".repeat(22);
       for (const body of [
-        { startToken: START_TOKEN },
-        { activities: [] },
-        { startToken: "XYZ", activities: [] },
-        { startToken: START_TOKEN, activities: [{ slot: "short", token: ACTIVITY_TOKEN }] },
-        { startToken: START_TOKEN, activities: [{ slot: SLOT, token: "nothex" }] },
-        { startToken: START_TOKEN, activities: [{ slot: SLOT, token: ACTIVITY_TOKEN }, { slot: SLOT, token: START_TOKEN }] },
-        { startToken: START_TOKEN, activities: Array.from({ length: 17 }, (_, index) => ({ slot: `${String(index).padStart(2, "0")}${"S".repeat(20)}`, token: ACTIVITY_TOKEN })) },
+        { startToken: START_TOKEN, dismissed: [] },
+        { activities: [], dismissed: [] },
+        { startToken: START_TOKEN, activities: [] },
+        { startToken: "XYZ", activities: [], dismissed: [] },
+        { startToken: START_TOKEN, activities: [{ slot: "short", token: ACTIVITY_TOKEN }], dismissed: [] },
+        { startToken: START_TOKEN, activities: [{ slot: SLOT, token: "nothex" }], dismissed: [] },
+        { startToken: START_TOKEN, activities: [{ slot: SLOT, token: ACTIVITY_TOKEN }, { slot: SLOT, token: START_TOKEN }], dismissed: [] },
+        { startToken: START_TOKEN, activities: Array.from({ length: 17 }, (_, index) => ({ slot: `${String(index).padStart(2, "0")}${"S".repeat(20)}`, token: ACTIVITY_TOKEN })), dismissed: [] },
+        { startToken: START_TOKEN, activities: [], dismissed: ["short"] },
+        { startToken: START_TOKEN, activities: [], dismissed: [other, other] },
+        // A dismissed card has no update token.
+        { startToken: START_TOKEN, activities: [{ slot: SLOT, token: ACTIVITY_TOKEN }], dismissed: [SLOT] },
       ]) {
         expect(await put(body), JSON.stringify(body).slice(0, 80)).toBe(400);
       }
-      expect(await put({ startToken: null, activities: [{ slot: SLOT, token: ACTIVITY_TOKEN, name: "x" }] })).toBe(400);
+      expect(await put({ startToken: null, activities: [{ slot: SLOT, token: ACTIVITY_TOKEN, name: "x" }], dismissed: [] })).toBe(400);
       expect(
         (await call(harness, "PUT", `/v1/registrations/${registration.registrationId}/live-activity`, {
           bearer: "wrong",
-          body: { startToken: null, activities: [] },
+          body: { startToken: null, activities: [], dismissed: [] },
         })).status,
       ).toBe(401);
       expect(

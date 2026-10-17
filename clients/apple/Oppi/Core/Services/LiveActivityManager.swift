@@ -12,6 +12,10 @@ private let logger = Logger(subsystem: AppIdentifiers.subsystem, category: "Live
 /// Activity"); the server skips a device that holds a live stream, so the two never drive the
 /// card at once. Every card is requested with `pushType: .token`, and every card's update token,
 /// including those the relay started, goes to `LiveActivityRelaySync`.
+///
+/// A card the person dismissed stays away until that server's counts reach zero: this app
+/// starts none for it, and the relay, told through `LiveActivityRelaySync`, lets no server
+/// start one until the server ends it at zero.
 @MainActor @Observable
 final class LiveActivityManager {
     static let shared = LiveActivityManager()
@@ -30,7 +34,9 @@ final class LiveActivityManager {
     private var watchers: [String: Task<Void, Never>] = [:]
     private var systemObservers: [Task<Void, Never>] = []
     /// Slots whose card the person dismissed: no new card until the counts reach zero.
-    private var dismissedSlots: Set<String> = []
+    @ObservationIgnored private var dismissedSlots: Set<String> = [] {
+        didSet { LiveActivityRelaySync.shared.setDismissed(dismissedSlots) }
+    }
 
     private let isEnabled: @MainActor (String) -> Bool
     private let serverDrivesCard: @MainActor (String) -> Bool
@@ -170,10 +176,19 @@ final class LiveActivityManager {
             end(activity, dismissal: .immediate)
             return
         }
-        if let held = activities[slot] {
-            guard held.id != activity.id else { return }
-            end(held, dismissal: .immediate)
+        let held = activities[slot]
+        if held?.id == activity.id { return }
+        if dismissedSlots.contains(slot) {
+            guard LiveActivityRelaySync.shared.relayHoldsDismissal(slot) else {
+                // The relay started it before it learned of the dismissal.
+                end(activity, dismissal: .immediate)
+                return
+            }
+            // The relay starts no card for a dismissed slot until a server ends it at zero:
+            // this card is for new work.
+            dismissedSlots.remove(slot)
         }
+        if let held { end(held, dismissal: .immediate) }
         activities[slot] = activity
         watch(activity, slot: slot)
     }

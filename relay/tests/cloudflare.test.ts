@@ -13,7 +13,14 @@ import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll } from "vitest";
-import { APP_ID, BUNDLE_ID, defineRelaySuite, type CapturedApnsRequest, type RelayHarness } from "./suite/relay-suite.js";
+import {
+  APP_ID,
+  BUNDLE_ID,
+  defineRelaySuite,
+  type ApnsAnswer,
+  type CapturedApnsRequest,
+  type RelayHarness,
+} from "./suite/relay-suite.js";
 
 const relayRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 let bundleDir: string;
@@ -48,7 +55,7 @@ async function startHarness(): Promise<RelayHarness> {
   const persistDir = mkdtempSync(join(tmpdir(), "oppi-relay-do-"));
   const apnsRequests: CapturedApnsRequest[] = [];
   const logs: string[] = [];
-  let handler: (request: CapturedApnsRequest) => { status: number; reason?: string } = () => ({ status: 200 });
+  let handler: (request: CapturedApnsRequest) => ApnsAnswer | Promise<ApnsAnswer> = () => ({ status: 200 });
   const mf = new Miniflare({
     modules: true,
     modulesRoot: bundleDir,
@@ -80,7 +87,7 @@ async function startHarness(): Promise<RelayHarness> {
       });
       const captured = { host: url.host, path: url.pathname, headers, payload: await request.text() };
       apnsRequests.push(captured);
-      const result = handler(captured);
+      const result = await handler(captured);
       return new Response(result.reason ? JSON.stringify({ reason: result.reason }) : "", {
         status: result.status,
       });

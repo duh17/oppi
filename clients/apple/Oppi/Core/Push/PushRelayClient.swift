@@ -98,15 +98,19 @@ struct PushRelayClient: Sendable {
 
         let startToken: String?
         let activities: [Activity]
+        /// Slots whose card the person dismissed: the relay starts none for them until a
+        /// server ends it.
+        let dismissed: [String]
 
         func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             // The relay requires the key, with null to clear.
             try container.encode(startToken, forKey: .startToken)
             try container.encode(activities, forKey: .activities)
+            try container.encode(dismissed, forKey: .dismissed)
         }
 
-        private enum CodingKeys: String, CodingKey { case startToken, activities }
+        private enum CodingKeys: String, CodingKey { case startToken, activities, dismissed }
     }
 
     func putLiveActivity(_ state: LiveActivityState, registration: Registration) async throws {
@@ -116,14 +120,21 @@ struct PushRelayClient: Sendable {
         _ = try await sendAuthenticated("PUT", path: path, body: encoder.encode(state), registration: registration)
     }
 
+    /// Returns once the relay no longer holds the permission: deleted, or its registration is
+    /// gone, which takes its permissions with it.
     func deletePermission(_ permissionId: String, registration: Registration) async throws {
         let path = "/v1/registrations/\(registration.registrationId)/permissions/\(permissionId)"
-        _ = try await sendAuthenticated("DELETE", path: path, body: Data(), registration: registration)
+        do {
+            _ = try await sendAuthenticated("DELETE", path: path, body: Data(), registration: registration)
+        } catch RelayError.gone {}
     }
 
+    /// Returns once the relay no longer holds the registration or its permissions.
     func deleteRegistration(_ registration: Registration) async throws {
         let path = "/v1/registrations/\(registration.registrationId)"
-        _ = try await sendAuthenticated("DELETE", path: path, body: Data(), registration: registration)
+        do {
+            _ = try await sendAuthenticated("DELETE", path: path, body: Data(), registration: registration)
+        } catch RelayError.gone {}
     }
 
     // MARK: - Transport

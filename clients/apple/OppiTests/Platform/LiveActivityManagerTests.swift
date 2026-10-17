@@ -111,22 +111,96 @@ struct LiveActivitySettingsTests {
         #expect(LiveActivitySettings.enabledSlots(defaults: defaults) == [b])
     }
 
-    @Test @MainActor func relayGetsTokensOnlyForServersWhoseCardIsOn() {
+    @Test @MainActor func relayGetsTokensAndDismissalsOnlyForServersWhoseCardIsOn() {
         let state = LiveActivityRelaySync.state(
             startToken: "5555",
             activityTokens: ["on": "aaaa", "off": "bbbb"],
-            enabledSlots: ["on"]
+            dismissedSlots: ["gone", "off"],
+            enabledSlots: ["on", "gone"]
         )
-        #expect(state == .init(startToken: "5555", activities: [.init(slot: "on", token: "aaaa")]))
+        #expect(state == .init(
+            startToken: "5555",
+            activities: [.init(slot: "on", token: "aaaa")],
+            dismissed: ["gone"]
+        ))
         // No card on anywhere: the relay can start nothing.
         let none = LiveActivityRelaySync.state(startToken: "5555", activityTokens: ["off": "bbbb"], enabledSlots: [])
-        #expect(none == .init(startToken: nil, activities: []))
+        #expect(none == .init(startToken: nil, activities: [], dismissed: []))
     }
 
     @Test func relayBodyCarriesANullStartTokenToClearIt() throws {
-        let body = try JSONEncoder().encode(PushRelayClient.LiveActivityState(startToken: nil, activities: []))
+        let body = try JSONEncoder().encode(PushRelayClient.LiveActivityState(startToken: nil, activities: [], dismissed: []))
         let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
         #expect(json["startToken"] is NSNull)
         #expect((json["activities"] as? [Any])?.isEmpty == true)
+        #expect((json["dismissed"] as? [Any])?.isEmpty == true)
+    }
+}
+
+@Suite("Live Activity relay upload")
+@MainActor
+struct LiveActivityRelayUploadTests {
+    private static let registration = PushRelayClient.Registration(
+        relay: "https://relay.example",
+        environment: "sandbox",
+        apnsToken: String(repeating: "a", count: 64),
+        registrationId: "r_AAAAAAAAAAAAAAAAAAAAAA",
+        registrationSecret: "secret",
+        appAttestKeyId: nil
+    )
+
+    /// What the fake relay saw.
+    @MainActor private final class Relay {
+        var answers: [Error?]
+        var sent: [PushRelayClient.LiveActivityState] = []
+        var pauses: [Duration] = []
+
+        init(answers: [Error?]) { self.answers = answers }
+
+        func sync() -> LiveActivityRelaySync {
+            LiveActivityRelaySync(
+                registrations: { [LiveActivityRelayUploadTests.registration] },
+                enabledSlots: { ["slot"] },
+                put: { [self] state, _ in
+                    sent.append(state)
+                    let answer: Error? = answers.isEmpty ? URLError(.cannotConnectToHost) : answers.removeFirst()
+                    if let answer { throw answer }
+                },
+                // Like Task.sleep, a cancelled wait throws.
+                sleep: { [self] in
+                    try Task.checkCancellation()
+                    pauses.append($0)
+                }
+            )
+        }
+    }
+
+    @Test func retriesAFailedUploadUntilTheRelayAcceptsIt() async {
+        let relay = Relay(answers: [URLError(.notConnectedToInternet), URLError(.timedOut), nil])
+        let sync = relay.sync()
+        sync.setDismissed(["slot"])
+        #expect(!sync.relayHoldsDismissal("slot"))
+        await sync.publish().value
+
+        #expect(relay.sent.count == 3)
+        #expect(relay.sent.allSatisfy { $0.dismissed == ["slot"] })
+        #expect(relay.pauses == [Duration.seconds(1)] + LiveActivityRelaySync.retryDelays.prefix(2))
+        #expect(sync.relayHoldsDismissal("slot"))
+    }
+
+    @Test func stopsRetryingWhenTheRelayForgotTheRegistration() async {
+        let relay = Relay(answers: [PushRelayClient.RelayError.gone])
+        let sync = relay.sync()
+        await sync.publish().value
+        #expect(relay.sent.count == 1)
+    }
+
+    @Test func givesUpAfterTheLastRetry() async {
+        let relay = Relay(answers: [])
+        let sync = relay.sync()
+        sync.setDismissed(["slot"])
+        await sync.publish().value
+        #expect(relay.sent.count == LiveActivityRelaySync.retryDelays.count + 1)
+        #expect(!sync.relayHoldsDismissal("slot"))
     }
 }

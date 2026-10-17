@@ -308,7 +308,7 @@ async function mintSendToken(relay: string): Promise<string> {
         authorization: `Bearer ${registration.registrationSecret}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ startToken: "5".repeat(160), activities: [] }),
+      body: JSON.stringify({ startToken: "5".repeat(160), activities: [], dismissed: [] }),
     },
   );
   if (liveActivity.status !== 204) fail(`relay refused Live Activity tokens: ${liveActivity.status}`);

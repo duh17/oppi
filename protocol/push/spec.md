@@ -269,7 +269,7 @@ registration.
   and gives the same one to that server on later connections; it mints another only for a
   new registration or a new pairing. The relay stores only `SHA-256` of its secret part; the
   ids route the request to the registration's storage.
-- **`DELETE /v1/registrations/{id}/permissions/{permissionId}`** → `204`.
+- **`DELETE /v1/registrations/{id}/permissions/{permissionId}`** → `204`, idempotent.
 - **`DELETE /v1/registrations/{id}`** → `204`. Deletes its permissions.
 - **`PUT /v1/registrations/{id}/live-activity`**: the phone's Live Activity tokens
   (section 3.6), `204`.
@@ -324,7 +324,8 @@ Per registration: id, `SHA-256(registrationSecret)`, APNs token, environment, at
 flag, App Attest public key and counter, creation time, permissions (id and
 `SHA-256(secret)`, and the Live Activity slot when given), and quota counters. With Live
 Activities (3.6): the ActivityKit push-to-start token, each live card's update token with
-its slot and the time the relay first saw it, and the Live Activity quota counters. Per
+its slot and the time the relay first saw it, the slots whose card the person dismissed
+(and whether a server has ended each since), and the Live Activity quota counters. Per
 APNs token, the id of its current registration (the Cloudflare adapter keys this by the
 token and stores only the id). Challenges until used or expired. No envelopes, no Live
 Activity counts, no client addresses, no request logs.
@@ -365,16 +366,27 @@ permission for the same server. A permission without a slot gets `409 no_activit
 assertion when attested):
 
 ```json
-{ "startToken": "<hex>" , "activities": [{ "slot": "<22 chars>", "token": "<hex>" }] }
+{ "startToken": "<hex>" , "activities": [{ "slot": "<22 chars>", "token": "<hex>" }], "dismissed": ["<22 chars>"] }
 ```
 
-Both keys are required; `startToken` may be `null`. Tokens are lowercase hex, 64-200
-characters; at most 16 activities with distinct slots. The body replaces what the relay
-held. The relay keeps, per slot, when it first saw that token (`tokenAt`); sending the same
-token again keeps it. `204`; `400 bad_request`, `400 unknown_field`, `401`, `410 gone`.
+All three keys are required; `startToken` may be `null`. Tokens are lowercase hex, 64-200
+characters; at most 16 activities with distinct slots. `dismissed` lists at most 16 distinct
+slots whose card the person dismissed and that have had no card since; a slot in
+`dismissed` cannot also be in `activities`. The body replaces what the relay held. The
+relay keeps, per slot, when it first saw that token (`tokenAt`); sending the same token
+again keeps it. `204`; `400 bad_request`, `400 unknown_field`, `401`, `410 gone`.
 The phone sends its whole state whenever ActivityKit gives it a push-to-start or update
-token, a card ends, or a server's card setting changes. It sends `startToken: null` while no
-server's card is on, and only the update tokens of servers whose card is on.
+token, a card ends or is dismissed, or a server's card setting changes, and sends it again
+after 5 s, 15 s, 1 min, 5 min, and 5 min while a relay fails to accept it. It sends
+`startToken: null` while no server's card is on, and only the update tokens and dismissed
+slots of servers whose card is on.
+
+**Dismissal.** A slot the phone lists in `dismissed` gets no `start` (`409 no_activity`)
+until a server sends `end` for it, which says that server's counts reached zero; the relay
+records that even when there is no token to end. The record lasts while the phone keeps
+listing the slot, so a phone that has not yet learned of the `end` cannot dismiss the next
+card by listing the slot again; once the phone stops listing the slot, listing it again is a
+new dismissal.
 
 **`POST /v1/live-activity`** (Bearer send token):
 
@@ -389,11 +401,14 @@ server's card is on, and only the update tokens of servers whose card is on.
 | `timestamp` | integer Unix seconds within 300 s of the relay clock |
 
 No other field is accepted (`400 unknown_field`). Results: `200 {"ok": true}`; `409
-no_activity` when the permission has no slot, `start` finds no start token, `update` or
-`end` finds no update token for the slot, or `update` finds one at least 8 hours old (Apple
-has ended that card; `end` still goes, to take it off the Lock Screen); `410 gone` as for
-`/v1/push`; `429 quota_exceeded` with `Retry-After`; `502 apns_unavailable`. A `start`
-forgets the slot's update token, since a new card is coming. A delivered `end` forgets it.
+no_activity` when the permission has no slot, `start` finds no start token or a dismissed
+slot, `update` or `end` finds no update token for the slot, or `update` finds one at least
+8 hours old (Apple has ended that card; `end` still goes, to take it off the Lock Screen);
+`410 gone` as for `/v1/push`; `429 quota_exceeded` with `Retry-After`; `502
+apns_unavailable`. Once APNs accepts a `start`, the relay forgets the slot's previous update
+token, only if it is still the one held when the start was authorized (the phone may already
+have reported the new card's); until then the card on the phone can still be updated and
+ended. A delivered `end` forgets the token.
 When APNs retires a Live Activity token (`410`, `400 BadDeviceToken`, `400
 DeviceTokenNotForTopic`), the relay forgets that token only and answers `409 no_activity`;
 the registration and its alerts stay.
@@ -416,7 +431,10 @@ asks iOS for the new card's update token, which the app reports with the PUT abo
 relay template's keys. The app drives each card itself while it runs, requesting it with
 `pushType: .token`, and ends it 30 s after the counts reach zero. It adopts a card the relay
 started (same slot); a newer card for a slot replaces the older one. A card the person
-dismissed stays away until that server's counts reach zero.
+dismissed stays away until that server's counts reach zero: the app starts none, and lists
+the slot in `dismissed` until it sees the counts reach zero or adopts a card the relay
+started after every relay accepted the dismissal (which means a server ended it at zero). A
+card the relay starts before it has accepted the dismissal is ended at once.
 
 **Server.** See section 5.
 
@@ -494,15 +512,25 @@ any field from a push that failed a check. Without Apple's
   status `working`, `needsYou` = `blocked`. The server sends only when the card's counts
   would change, at most once a minute per device, the latest counts winning. Per device it
   tracks whether a card exists: none (start when work begins), unknown (the app drove it, or
-  the server restarted), or live (started by this server). Zero counts end the card. An
-  `update` answered `409 no_activity` is followed by `end` (clears an expired card) and
-  `start`; a refused `start` is not retried until the counts change. A card this server
-  started is ended and started again after 8 hours while work goes on. When a device leaves,
-  the server assumes its card shows the current counts, unless they changed in the 2 minutes
-  before (a suspended app may have missed that), and then sends. A minute after startup it
-  reconciles each device once. Network failures retry after 5 minutes; a `429` waits out
-  `Retry-After`. Budget: 40 per device and UTC day, apart from alerts; `update` stops at 32
-  so `start` and `end` keep room.
+  the server restarted), live (started by this server), or lost (out of reach). Zero counts
+  end the card, from any state. A `start` goes out only when there is no card: from none, or
+  right after a delivered `end`; never after an `end` answered `409`, which could leave a
+  second card next to one the person sees or bring back one they dismissed. An `update`
+  answered `409 no_activity` is tried again once a minute up to 5 times (the phone may still
+  be reporting a new card's token), then the card is lost: nothing more goes out until the
+  counts reach zero. A refused `start` is not retried until the counts change, and an `end`
+  follows at zero (it ends a dismissal at the relay). Every card is ended and started again
+  by 8 hours from the earliest it can have started, while work goes on: when this server
+  started it; for an unknown card, the latest of the time the counts last rose from zero,
+  this server's last start, and 8 hours before the server lost track (so a card left from
+  before a restart is restarted at the reconcile). Each event to a device carries a later
+  `timestamp` than the one before, so the `start` after an `end` is the newer event. When a
+  device leaves, the server assumes its card shows the current counts, unless they changed in
+  the 2 minutes before (a suspended app may have missed that), and then sends. A minute after
+  startup it reconciles each device once. Network failures retry after 5 minutes; a `429`
+  waits out `Retry-After`. Budget: 40 per device and UTC day, apart from alerts; `update`
+  stops at 32 so `start` and `end` keep room; a `409 no_activity`, which the relay does not
+  charge, does not count.
 
 ## 6. Threat model
 

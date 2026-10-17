@@ -19,7 +19,7 @@ The protocol, the envelope, and the threat model are in
 | Device registration | APNs token, sandbox or production, App Attest attestation | Token, environment, App Attest public key and counter, `SHA-256` of the registration secret |
 | Send permissions | — | Permission ID and `SHA-256` of its secret, up to 16 per registration |
 | Each push | Server IP address, time, a 641-byte envelope it cannot open, an optional collapse ID | Daily and per-minute counts only |
-| Live Activity tokens | ActivityKit push-to-start token, one update token per live activity, the phone's random per-server slot | The tokens, slots, and when each update token first arrived |
+| Live Activity tokens | ActivityKit push-to-start token, one update token per live activity, the phone's random per-server slot, the slots whose card the person dismissed | The tokens, slots, when each update token first arrived, and which dismissed slots a server has ended since |
 | Each Live Activity push | Server IP address, time, `start`/`update`/`end`, the running and needs-you counts | Its own daily and per-minute counts only |
 
 No envelopes, IP addresses, request bodies, or request logs are stored. Logs carry event names
@@ -35,7 +35,10 @@ Live Activity requests are fixed too: `apns-push-type: liveactivity`, topic
 `<bundle ID>.push-type.liveactivity`, priority 5 for updates and 10 for start and end, and an
 `aps` built only from the event, the two counts, the timestamp, and the phone's slot; `start`
 adds the fixed alert `Oppi` / `Agents are working.` that Apple requires. An APNs answer that
-retires a Live Activity token clears that token only; the registration stays. See spec §3.6.
+retires a Live Activity token clears that token only; the registration stays. A slot the phone
+lists as dismissed gets no `start` until a server sends `end` for it (its counts reached zero),
+and a card's update token is forgotten only once APNs accepts the `start` that replaces it.
+See spec §3.6.
 
 ## Limits and why they are set this way
 

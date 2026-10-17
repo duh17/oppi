@@ -38,6 +38,7 @@ import {
   registerUnattested,
   SLOT,
   START_TOKEN,
+  type ApnsAnswer,
   type CapturedApnsRequest,
   type RelayHarness,
 } from "./suite/relay-suite.js";
@@ -49,7 +50,7 @@ interface MockApns {
   origins: { sandbox: string; production: string };
   requests: CapturedApnsRequest[];
   authorizations: string[];
-  handler: (request: CapturedApnsRequest) => { status: number; reason?: string };
+  handler: (request: CapturedApnsRequest) => ApnsAnswer | Promise<ApnsAnswer>;
   close(): Promise<void>;
 }
 
@@ -70,14 +71,14 @@ async function startMockApns(): Promise<MockApns> {
       let payload = "";
       stream.setEncoding("utf8");
       stream.on("data", (chunk: string) => (payload += chunk));
-      stream.on("end", () => {
+      stream.on("end", async () => {
         const apnsHeaders = Object.fromEntries(
           Object.entries(headers).filter(([name]) => name.startsWith("apns-")),
         ) as Record<string, string>;
         const request = { host, path: String(headers[":path"]), headers: apnsHeaders, payload };
         mock.requests.push(request);
         mock.authorizations.push(String(headers.authorization ?? ""));
-        const result = mock.handler(request);
+        const result = await mock.handler(request);
         stream.respond({ ":status": result.status, "content-type": "application/json" });
         stream.end(result.reason ? JSON.stringify({ reason: result.reason }) : "");
       });
@@ -257,12 +258,12 @@ describe("node adapter", () => {
     harness = await startHarness({ now: base });
     const { registration, sendToken } = await liveActivityPhone(harness);
     const activities = [{ slot: SLOT, token: ACTIVITY_TOKEN }];
-    expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities })).toBe(204);
+    expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities, dismissed: [] })).toBe(204);
     const at = (ms: number) => Math.floor((base + ms) / 1000);
 
     harness.advance(8 * 3_600_000 - 60_000);
     // Sending the same token again keeps its age.
-    expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities })).toBe(204);
+    expect(await putLiveActivity(harness, registration, { startToken: START_TOKEN, activities, dismissed: [] })).toBe(204);
     expect((await liveActivity(harness, sendToken, { event: "update", running: 1, needsYou: 0, timestamp: at(8 * 3_600_000 - 60_000) })).status).toBe(200);
     harness.advance(60_000);
     const late = at(8 * 3_600_000);
@@ -452,7 +453,7 @@ describe("App Attest (node adapter with a test root)", () => {
     const { response, attestation } = await attest("sandbox");
     const { registrationId, registrationSecret } = response.json as { registrationId: string; registrationSecret: string };
     const path = `/v1/registrations/${registrationId}/live-activity`;
-    const body = JSON.stringify({ startToken: START_TOKEN, activities: [] });
+    const body = JSON.stringify({ startToken: START_TOKEN, activities: [], dismissed: [] });
     const put = (headers: Record<string, string> = {}) =>
       call(harness, "PUT", path, { bearer: registrationSecret, rawBody: body, headers });
     expect((await put()).json.error).toBe("assertion_invalid");

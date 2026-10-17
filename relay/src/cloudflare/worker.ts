@@ -29,6 +29,7 @@ import {
   type LiveActivityAuthorization,
   type LiveActivityEvent,
   type LiveActivityTarget,
+  type LiveActivityUpdate,
   type PermissionRecord,
   type PushAuthorization,
   type RegistrationRecord,
@@ -100,14 +101,10 @@ export class RegistrationObject extends DurableObject<Env> {
     return result;
   }
 
-  async setLiveActivity(
-    startToken: string | null,
-    activities: Array<{ slot: string; token: string }>,
-    now: number,
-  ): Promise<boolean> {
+  async setLiveActivity(update: LiveActivityUpdate, now: number): Promise<boolean> {
     const record = await this.read();
     if (!record) return false;
-    applySetLiveActivity(record, startToken, activities, now);
+    applySetLiveActivity(record, update, now);
     await this.ctx.storage.put(RECORD_KEY, record);
     return true;
   }
@@ -120,9 +117,16 @@ export class RegistrationObject extends DurableObject<Env> {
   ): Promise<LiveActivityAuthorization> {
     const record = await this.read();
     if (!record) return { ok: false, reason: "gone" };
-    const result = applyAuthorizeLiveActivity(record, permissionId, secretHash, event, now);
-    if (result.ok) await this.ctx.storage.put(RECORD_KEY, record);
-    return result;
+    const { authorization, changed } = applyAuthorizeLiveActivity(
+      record,
+      permissionId,
+      secretHash,
+      event,
+      now,
+    );
+    // A refused push writes nothing unless it ended a dismissal; skipping saves free-plan rows.
+    if (changed) await this.ctx.storage.put(RECORD_KEY, record);
+    return authorization;
   }
 
   async clearLiveActivityToken(target: LiveActivityTarget, token: string): Promise<void> {
@@ -238,13 +242,8 @@ class DurableObjectRelayStore implements RelayStore {
     return this.registration(id).authorizePush(permissionId, secretHash, now);
   }
 
-  setLiveActivity(
-    id: string,
-    startToken: string | null,
-    activities: Array<{ slot: string; token: string }>,
-    now: number,
-  ): Promise<boolean> {
-    return this.registration(id).setLiveActivity(startToken, activities, now);
+  setLiveActivity(id: string, update: LiveActivityUpdate, now: number): Promise<boolean> {
+    return this.registration(id).setLiveActivity(update, now);
   }
 
   authorizeLiveActivity(

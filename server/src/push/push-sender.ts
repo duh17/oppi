@@ -122,6 +122,12 @@ class LiveActivityBudget {
     const usage = this.usage.get(deviceId);
     if (usage) usage.pausedUntil = Math.max(usage.pausedUntil, until);
   }
+
+  /** Give back a send the relay refused before APNs (`409 no_activity`): it charged nothing. */
+  refund(deviceId: string): void {
+    const usage = this.usage.get(deviceId);
+    if (usage && usage.dayCount > 0) usage.dayCount -= 1;
+  }
 }
 
 /** What one push says, before its timestamp. */
@@ -316,6 +322,7 @@ export class PushSender {
       log.warn("push.seal_or_send_failed", { error: safeErrorMessage(err) });
       result = { status: "failed" };
     }
+    if (result.status === "no_activity") this.liveActivityBudget.refund(registration.deviceId);
     if (result.status === "rejected" && result.retryAfterSeconds !== undefined) {
       this.liveActivityBudget.pause(
         registration.deviceId,

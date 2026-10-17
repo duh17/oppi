@@ -329,13 +329,26 @@ describe("PushSender", () => {
       expect(calls[0]?.body).toEqual({ event: "update", running: 2, needsYou: 1, timestamp: 1_760_000_000 });
     });
 
-    it("reads a relay 409 no_activity as no card, not a refusal", async () => {
+    it("reads a relay 409 no_activity as no card, not a refusal, and spends no budget on it", async () => {
+      let noActivity = true;
       const { fetchImpl } = relayFetch({
-        [PRIMARY]: () => new Response(JSON.stringify({ error: "no_activity" }), { status: 409 }),
+        [PRIMARY]: () =>
+          noActivity
+            ? new Response(JSON.stringify({ error: "no_activity" }), { status: 409 })
+            : new Response(JSON.stringify({ ok: true }), { status: 200 }),
       });
       const push = liveActivitySender(fetchImpl);
-      expect(await push.sendLiveActivity(push.registrations()[0]!, update)).toEqual({ status: "no_activity" });
+      const [registration] = push.registrations();
+      if (!registration) throw new Error("missing registration");
+      expect(await push.sendLiveActivity(registration, update)).toEqual({ status: "no_activity" });
       expect(storage.getPushRegistrations()).toHaveLength(1);
+
+      // The relay charged nothing for those, so neither does the server.
+      for (let index = 0; index < LIVE_ACTIVITY_DEVICE_BUDGET.updatesPerDay; index += 1) {
+        await push.sendLiveActivity(registration, update);
+      }
+      noActivity = false;
+      expect((await push.sendLiveActivity(registration, update))?.status).toBe("delivered");
     });
 
     it("spends its own daily budget, keeping room to start and end, apart from alerts", async () => {

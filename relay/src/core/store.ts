@@ -29,11 +29,23 @@ export interface LiveActivityTokenRecord {
   tokenAt: number;
 }
 
+/**
+ * A slot whose card the person dismissed. `start` stays refused for it until a server sends
+ * `end` for the slot (its counts reached zero), which sets `ended`. The entry lasts while the
+ * phone keeps listing the slot, so a stale listing cannot dismiss it again.
+ */
+export interface LiveActivityDismissalRecord {
+  slot: string;
+  ended: boolean;
+}
+
 /** The phone's Live Activity tokens. */
 export interface LiveActivityState {
   /** ActivityKit push-to-start token, lowercase hex. */
   startToken?: string;
   activities: LiveActivityTokenRecord[];
+  /** Absent when no card is dismissed. */
+  dismissed?: LiveActivityDismissalRecord[];
 }
 
 export interface QuotaState {
@@ -96,6 +108,14 @@ export const LIVE_ACTIVITY_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 
 export type LiveActivityEvent = "start" | "update" | "end";
 
+/** The phone's whole Live Activity state, as `PUT .../live-activity` sends it. */
+export interface LiveActivityUpdate {
+  startToken: string | null;
+  activities: Array<{ slot: string; token: string }>;
+  /** Slots whose card the person dismissed and that have no card since. */
+  dismissed: string[];
+}
+
 /** Which token a Live Activity push goes to: the phone's start token or one slot's activity. */
 export type LiveActivityTarget = { kind: "start" } | { kind: "activity"; slot: string };
 
@@ -106,6 +126,11 @@ export type LiveActivityAuthorization =
       target: LiveActivityTarget;
       slot: string;
       environment: ApnsEnvironment;
+      /**
+       * For `start`: the slot's update token when it was authorized. The relay forgets it only
+       * once APNs accepts the start, and only while it is still this token.
+       */
+      replacedToken?: string;
     }
   | { ok: false; reason: "gone" }
   | { ok: false; reason: "no_activity" }
@@ -146,13 +171,12 @@ export interface RelayStore {
   /** Replace the phone's Live Activity tokens. False when the registration is gone. */
   setLiveActivity(
     id: string,
-    startToken: string | null,
-    activities: Array<{ slot: string; token: string }>,
+    update: LiveActivityUpdate,
     now: number,
   ): Promise<boolean>;
   /**
    * Check the permission's secret, find the token the event goes to, and charge one Live
-   * Activity push. A `start` forgets the slot's previous activity token.
+   * Activity push. An `end` also ends the slot's dismissal, even when there is no token.
    */
   authorizeLiveActivity(
     id: string,
@@ -241,20 +265,27 @@ function chargeQuota(
 
 export function applySetLiveActivity(
   record: RegistrationRecord,
-  startToken: string | null,
-  activities: Array<{ slot: string; token: string }>,
+  update: LiveActivityUpdate,
   now: number,
 ): void {
-  const previous = record.liveActivity?.activities ?? [];
+  const previous = record.liveActivity;
+  const dismissed = update.dismissed.map(
+    (slot) => previous?.dismissed?.find((entry) => entry.slot === slot) ?? { slot, ended: false },
+  );
   record.liveActivity = {
-    ...(startToken ? { startToken } : {}),
-    activities: activities.map(({ slot, token }) => {
-      const kept = previous.find((entry) => entry.slot === slot && entry.token === token);
+    ...(update.startToken ? { startToken: update.startToken } : {}),
+    activities: update.activities.map(({ slot, token }) => {
+      const kept = previous?.activities.find((entry) => entry.slot === slot && entry.token === token);
       return { slot, token, tokenAt: kept?.tokenAt ?? now };
     }),
+    ...(dismissed.length > 0 ? { dismissed } : {}),
   };
 }
 
+/**
+ * `changed`: the record changed even though the push was refused (an `end` ended a
+ * dismissal), so the store must save it.
+ */
 export function applyAuthorizeLiveActivity(
   record: RegistrationRecord,
   permissionId: string,
@@ -262,20 +293,31 @@ export function applyAuthorizeLiveActivity(
   event: LiveActivityEvent,
   now: number,
   limits: QuotaLimits = DEFAULT_QUOTA_LIMITS,
-): LiveActivityAuthorization {
+): { authorization: LiveActivityAuthorization; changed: boolean } {
   const permission = record.permissions.find((entry) => entry.id === permissionId);
   if (!permission || !hashesEqual(permission.secretHash, secretHash)) {
-    return { ok: false, reason: "gone" };
+    return { authorization: { ok: false, reason: "gone" }, changed: false };
   }
   const slot = permission.liveActivitySlot;
   const state = record.liveActivity;
-  if (!slot || !state) return { ok: false, reason: "no_activity" };
+  if (!slot || !state) return { authorization: { ok: false, reason: "no_activity" }, changed: false };
+
+  // The work the dismissed card counted is over; the next work may show a card again.
+  const dismissal = state.dismissed?.find((entry) => entry.slot === slot);
+  let changed = false;
+  if (event === "end" && dismissal && !dismissal.ended) {
+    dismissal.ended = true;
+    changed = true;
+  }
 
   let token: string | undefined;
   let target: LiveActivityTarget;
+  let replacedToken: string | undefined;
   if (event === "start") {
-    token = state.startToken;
+    // The person dismissed this server's card: no new one until its counts reach zero.
+    if (!dismissal || dismissal.ended) token = state.startToken;
     target = { kind: "start" };
+    replacedToken = state.activities.find((entry) => entry.slot === slot)?.token;
   } else {
     const activity = state.activities.find((entry) => entry.slot === slot);
     // Apple has ended an activity this old; an update would land nowhere. An `end` still
@@ -285,7 +327,7 @@ export function applyAuthorizeLiveActivity(
     }
     target = { kind: "activity", slot };
   }
-  if (!token) return { ok: false, reason: "no_activity" };
+  if (!token) return { authorization: { ok: false, reason: "no_activity" }, changed };
 
   record.liveActivityQuota ??= emptyQuota();
   const charged = chargeQuota(
@@ -294,10 +336,18 @@ export function applyAuthorizeLiveActivity(
     record.attested ? limits.liveActivityAttestedPerDay : limits.liveActivityUnattestedPerDay,
     limits.liveActivityPerMinute,
   );
-  if (!charged.ok) return charged;
-  // A started activity brings its own update token; the slot's old one is stale.
-  if (event === "start") state.activities = state.activities.filter((entry) => entry.slot !== slot);
-  return { ok: true, token, target, slot, environment: record.environment };
+  if (!charged.ok) return { authorization: charged, changed };
+  return {
+    authorization: {
+      ok: true,
+      token,
+      target,
+      slot,
+      environment: record.environment,
+      ...(replacedToken ? { replacedToken } : {}),
+    },
+    changed: true,
+  };
 }
 
 export function applyClearLiveActivityToken(

@@ -441,11 +441,17 @@ export function createRelayHandler(deps: RelayDeps): (
     path: string,
     body: Uint8Array,
   ): Promise<Response> {
-    const { startToken, activities } = parseObject(body, ["startToken", "activities"]);
+    const { startToken, activities, dismissed } = parseObject(body, [
+      "startToken",
+      "activities",
+      "dismissed",
+    ]);
     if (
       (startToken !== null && (typeof startToken !== "string" || !APNS_TOKEN.test(startToken))) ||
       !Array.isArray(activities) ||
-      activities.length > MAX_PERMISSIONS_PER_REGISTRATION
+      activities.length > MAX_PERMISSIONS_PER_REGISTRATION ||
+      !Array.isArray(dismissed) ||
+      dismissed.length > MAX_PERMISSIONS_PER_REGISTRATION
     ) {
       throw new HttpError(400, "bad_request");
     }
@@ -469,8 +475,22 @@ export function createRelayHandler(deps: RelayDeps): (
       }
       parsed.push({ slot, token });
     }
+    // A dismissed slot has no card, so it has no update token either.
+    const dismissedSlots: string[] = [];
+    for (const slot of dismissed as unknown[]) {
+      if (
+        typeof slot !== "string" ||
+        !LIVE_ACTIVITY_SLOT.test(slot) ||
+        dismissedSlots.includes(slot) ||
+        parsed.some((item) => item.slot === slot)
+      ) {
+        throw new HttpError(400, "bad_request");
+      }
+      dismissedSlots.push(slot);
+    }
     const record = await authenticateRegistration(request, registrationId, path, body);
-    if (!(await store.setLiveActivity(record.id, startToken, parsed, now()))) {
+    const update = { startToken, activities: parsed, dismissed: dismissedSlots };
+    if (!(await store.setLiveActivity(record.id, update, now()))) {
       throw new HttpError(410, "gone");
     }
     return noContent();
@@ -548,6 +568,15 @@ export function createRelayHandler(deps: RelayDeps): (
       // The ended activity takes no more updates.
       if (event === "end") {
         await store.clearLiveActivityToken(token.registrationId, authorization.target, authorization.token);
+      }
+      // The new card brings its own update token; the one held before belongs to the card the
+      // server just ended. Until APNs accepts the start, that card can still be ended.
+      if (event === "start" && authorization.replacedToken) {
+        await store.clearLiveActivityToken(
+          token.registrationId,
+          { kind: "activity", slot: authorization.slot },
+          authorization.replacedToken,
+        );
       }
       log("relay.live_activity_delivered", { event: event as string });
       return json(200, { ok: true });
