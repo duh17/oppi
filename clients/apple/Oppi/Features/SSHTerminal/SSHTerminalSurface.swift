@@ -30,7 +30,7 @@ enum SSHTerminalTapAction: Equatable {
 /// Mounted work is only the viewport grid, not one UITextView for scrollback.
 /// libghostty owns history/reflow/alternate screen; UIKit paints copied cells
 /// at fixed positions and supplies UIKeyInput and physical-key events.
-final class SSHTerminalGridView: UIView, UIKeyInput {
+final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     let channel: SSHTerminalChannel
     let requestPaste: (String?) -> Void
     let followChanged: (Bool) -> Void
@@ -63,8 +63,24 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
     /// UIKit does not repeat pressesBegan for a held key, so repeats are ours.
     private let keyRepeater = SSHTerminalKeyRepeater()
     private var repeatingPress: UIPress?
-    private var scrollRemainder: CGFloat = 0
+    private var wheelRemainder = SSHTerminalWheelScaling.Accumulator()
+    private var altRemainder: CGFloat = 0
     private var displayLink: CADisplayLink?
+    private let metalHost = SSHTerminalMetalHostView()
+    private let historyScroll = SSHTerminalHistoryScrollView()
+    private let selectionOverlay = SSHTerminalSelectionOverlay()
+    private var appPan: UIPanGestureRecognizer?
+    private var longPress: UILongPressGestureRecognizer?
+    private var tapRecognizer: UITapGestureRecognizer?
+    private var tapIgnore = SSHTerminalTapIgnore()
+    private var tapSequence = SSHTerminalTapSequence()
+    private var pendingHide: Task<Void, Never>?
+    private var dragTarget: SSHTerminalDragTarget?
+    private var dragSnapshot: SSHTerminalSelectionSnapshot?
+    private var highlightClear: Task<Void, Never>?
+    private var highlightGeneration = 0
+    private var isSyncingHistoryScroll = false
+    private var lastFollow = true
     private var bar: UIView?
     private var barKeys: UIStackView?
     /// The foreground program's actions, inserted after Paste.
@@ -73,8 +89,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
     private var pasteControl: UIPasteControl?
     private var foreground = UIColor.label
 
-    override class var layerClass: AnyClass { CAMetalLayer.self }
-    private var metalLayer: CAMetalLayer? { layer as? CAMetalLayer }
+    private var metalLayer: CAMetalLayer? { metalHost.metalLayer }
 
     init(channel: SSHTerminalChannel, paste: @escaping (String?) -> Void, followChanged: @escaping (Bool) -> Void) {
         self.channel = channel
@@ -84,19 +99,19 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
         SSHTerminalMetalPipeline.prewarm()
         isOpaque = true
         clipsToBounds = true
-        if let metalLayer {
-            metalLayer.pixelFormat = .bgra8Unorm
-            metalLayer.framebufferOnly = true
-            metalLayer.isOpaque = true
-        }
+        metalHost.isUserInteractionEnabled = false
+        selectionOverlay.isUserInteractionEnabled = false
+        addSubview(metalHost)
+        addSubview(selectionOverlay)
+        configureHistoryScroll()
+        addSubview(historyScroll)
         // The bar's UIPasteControl delivers to paste(itemProviders:). A
         // programmatic UIPasteboard read from a plain button shows iOS's
         // Allow Paste alert and blocks the main thread until it is answered.
         pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: [UTType.plainText.identifier])
         accessibilityIdentifier = "sshTerminal.grid"
-        accessibilityLabel = "SSH terminal. Tap to type or to hide the keyboard. Drag to scroll."
-        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped(_:))))
-        addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(scrollHistory(_:))))
+        accessibilityLabel = "SSH terminal. Tap to type or hide the keyboard. Double-tap a word to copy it. Drag to scroll. Touch and hold, then drag, to select."
+        installGestures()
         bar = makeAccessoryBar()
         applyTheme(ThemeRuntimeState.currentThemeID())
         NotificationCenter.default.addObserver(self, selector: #selector(fontPreferencesChanged),
@@ -173,6 +188,9 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
     override func layoutSubviews() {
         super.layoutSubviews()
         guard bounds.width > 0, bounds.height > 0 else { return }
+        metalHost.frame = bounds
+        selectionOverlay.frame = bounds
+        historyScroll.frame = bounds
         if bounds.size != paintedSize {
             paintedSize = bounds.size
             needsFullPaint = true
@@ -201,6 +219,8 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
             channel.resize(geometry)
             needsPaint = true
         }
+        syncHistoryScrollFromEngine()
+        updateTouchMode()
     }
 
     /// Only a different theme changes colors.
@@ -212,11 +232,13 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
         foreground = UIColor(theme.text.primary)
         let background = UIColor(theme.bg.primary)
         backgroundColor = background
+        metalHost.backgroundColor = background
         bar?.backgroundColor = background
         bar?.tintColor = foreground
         installPasteControl(background: background)
         channel.engine.setColors(foreground: foreground.terminalRGB, background: background.terminalRGB,
                                  dark: themeID.preferredColorScheme != .light)
+        historyScroll.indicatorStyle = themeID.preferredColorScheme == .light ? .black : .white
         needsFullPaint = true
         needsPaint = true
     }
@@ -308,7 +330,34 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
     /// for mouse reports. While that keyboard is up, the same app keeps the
     /// tap as a click and the keyboard stays. Chat mode still clicks, and
     /// otherwise focuses the chat bar.
+    ///
+    /// Single tap does not wait for double-tap failure. The ~300 ms delay
+    /// would lag keyboard focus and mouse clicks; tap 1 stays immediate. Tap 2
+    /// only copies the word captured under the finger at tap 1, before any
+    /// first-responder change, and never runs the single-tap action.
     @objc private func tapped(_ gesture: UITapGestureRecognizer) {
+        handleTap(at: gesture.location(in: self), now: CACurrentMediaTime())
+    }
+
+    /// Backup when tap 1 hid the keyboard and the second single-tap is lost.
+    /// Copies the tap-1 snapshot only; never runs the single-tap action.
+    @objc private func doubleTapped(_ gesture: UITapGestureRecognizer) {
+        copyPendingWord()
+    }
+
+    func handleTap(at point: CGPoint, now: TimeInterval) {
+        if tapIgnore.consumeTap() { return }
+        let cell = self.cell(at: point)
+        let snapshot = channel.engine.selectWord(column: cell.column, row: cell.row)
+        switch tapSequence.recognize(location: point, time: now, snapshot: snapshot) {
+        case .firstTap:
+            performSingleTap(at: point)
+        case .secondTap:
+            copyPendingWord()
+        }
+    }
+
+    private func performSingleTap(at point: CGPoint) {
         let otherFocused = window.map { Self.hasFirstResponder(in: $0) } ?? false
         switch SSHTerminalTapAction.resolve(
             terminalTyping: tapTypesInTerminal,
@@ -317,17 +366,53 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
             appWantsClicks: channel.connected && channel.engine.mouseTracking
         ) {
         case .hideKeyboard:
-            _ = resignFirstResponder()
+            // Delay hide so a second tap can still land. Focus and mouse
+            // clicks stay immediate.
+            scheduleHideKeyboard()
         case .typeInTerminal:
+            cancelHideKeyboard()
             _ = becomeFirstResponder()
         case .dismissOtherInput:
+            cancelHideKeyboard()
             window?.endEditing(true)
         case .mouseClick:
-            let cell = self.cell(at: gesture.location(in: self))
+            cancelHideKeyboard()
+            let cell = self.cell(at: point)
             channel.mouse(.click, column: cell.column, row: cell.row)
         case .focusChatBar:
+            cancelHideKeyboard()
             focusComposer()
         }
+    }
+
+    private func scheduleHideKeyboard() {
+        pendingHide?.cancel()
+        pendingHide = Task { @MainActor [weak self] in
+            let nanos = UInt64(SSHTerminalTapSequence.doubleTapTimeout * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanos)
+            guard !Task.isCancelled, let self else { return }
+            _ = self.resignFirstResponder()
+            self.pendingHide = nil
+        }
+    }
+
+    private func cancelHideKeyboard() {
+        pendingHide?.cancel()
+        pendingHide = nil
+    }
+
+    private func copyPendingWord() {
+        cancelHideKeyboard()
+        guard let snapshot = tapSequence.takePendingSnapshot() else { return }
+        channel.copyLocalSelection(snapshot.text)
+        showHighlight(snapshot, lingering: true)
+        needsPaint = true
+    }
+
+    func backToLive() {
+        channel.engine.backToLive()
+        syncHistoryScrollFromEngine()
+        needsPaint = true
     }
 
     private static func hasFirstResponder(in view: UIView) -> Bool {
@@ -426,39 +511,270 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
         super.pressesCancelled(presses, with: event)
     }
 
-    @objc private func scrollHistory(_ gesture: UIPanGestureRecognizer) {
+    @objc private func appScrolled(_ gesture: UIPanGestureRecognizer) {
         let travel = gesture.translation(in: self).y
         gesture.setTranslation(.zero, in: self)
         if gesture.state == .began {
-            scrollRemainder = 0
+            wheelRemainder = SSHTerminalWheelScaling.Accumulator()
+            altRemainder = 0
         }
-        // History or wheel steps only. The navigation bar resizes the remote
-        // terminal, so Hide Bar and the top handle are the only switches.
-        // A mouse-reporting app owns its own history (Herdr panes, pi, less):
-        // send wheel notches where the finger is instead of moving the local
-        // viewport, which an alternate-screen app never fills.
-        if channel.engine.mouseTracking {
-            scrollRemainder -= travel
-            let rows = Int(scrollRemainder / cellSize.height)
-            guard rows != 0 else { return }
-            scrollRemainder -= CGFloat(rows) * cellSize.height
-            let cell = self.cell(at: gesture.location(in: self))
-            for _ in 0..<abs(rows) {
-                channel.mouse(rows < 0 ? .wheelUp : .wheelDown, column: cell.column, row: cell.row)
-            }
+        switch channel.engine.scrollAction {
+        case .history:
             return
+        case .mouseWheel:
+            let steps = wheelRemainder.steps(travel: travel, cellHeight: cellSize.height)
+            guard steps != 0 else { return }
+            let cell = self.cell(at: gesture.location(in: self))
+            for _ in 0..<abs(steps) {
+                channel.mouse(steps < 0 ? .wheelUp : .wheelDown, column: cell.column, row: cell.row)
+            }
+        case .alternateKeys:
+            altRemainder -= travel
+            let rows = Int(altRemainder / cellSize.height)
+            guard rows != 0 else { return }
+            altRemainder -= CGFloat(rows) * cellSize.height
+            let key: GhosttyKey = rows < 0 ? GHOSTTY_KEY_ARROW_UP : GHOSTTY_KEY_ARROW_DOWN
+            for _ in 0..<abs(rows) {
+                _ = channel.key(key)
+            }
         }
-        if gesture.state == .began {
-            channel.engine.scroll(rows: 0)
-            followChanged(false)
-        }
-        scrollRemainder -= travel
-        let rows = Int(scrollRemainder / cellSize.height)
-        if rows != 0 {
-            scrollRemainder -= CGFloat(rows) * cellSize.height
-            channel.engine.scroll(rows: rows)
+    }
+
+    @objc private func longPressed(_ gesture: UILongPressGestureRecognizer) {
+        let location = gesture.location(in: self)
+        let cell = self.cell(at: location)
+        let scale = max(traitCollection.displayScale, 1)
+        let surface = CGPoint(x: location.x * scale, y: location.y * scale)
+        switch gesture.state {
+        case .began:
+            tapIgnore.arm()
+            tapSequence.reset()
+            cancelHideKeyboard()
+            historyScroll.isScrollEnabled = false
+            let target = SSHTerminalDragTarget.resolve(mouseReporting: channel.engine.mouseTracking)
+            dragTarget = target
+            dragSnapshot = nil
+            switch target {
+            case .mouse:
+                channel.mouse(.press, column: cell.column, row: cell.row)
+            case .selection:
+                channel.engine.beginSelection(column: cell.column, row: cell.row, surfacePoint: surface)
+            }
+        case .changed:
+            switch dragTarget {
+            case .mouse:
+                channel.mouse(.motion, column: cell.column, row: cell.row)
+            case .selection:
+                if let snapshot = channel.engine.dragSelection(
+                    column: cell.column, row: cell.row, surfacePoint: surface
+                ) {
+                    dragSnapshot = snapshot
+                    showHighlight(snapshot, lingering: false)
+                }
+            case nil:
+                break
+            }
+        case .ended, .cancelled, .failed:
+            let target = dragTarget
+            dragTarget = nil
+            switch target {
+            case .mouse:
+                channel.mouse(.release, column: cell.column, row: cell.row)
+            case .selection:
+                channel.engine.endSelection(column: cell.column, row: cell.row)
+                if gesture.state == .ended, let snapshot = dragSnapshot {
+                    channel.copyLocalSelection(snapshot.text)
+                    showHighlight(snapshot, lingering: true)
+                } else {
+                    clearHighlight()
+                    channel.engine.cancelSelection()
+                }
+            case nil:
+                break
+            }
+            dragSnapshot = nil
+            let tapFailed = tapRecognizer?.state == .failed || tapRecognizer?.state == .cancelled
+            tapIgnore.longPressEnded(tapFailed: tapFailed)
+            updateTouchMode()
+        default:
+            break
         }
         needsPaint = true
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === historyScroll, !isSyncingHistoryScroll else { return }
+        guard channel.engine.scrollAction == .history else { return }
+        guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
+        let height = cellSize.height
+        guard height > 0 else { return }
+        let maxOffset = max(0, scrollView.contentSize.height - scrollView.bounds.height)
+        let y = scrollView.contentOffset.y
+        let bounce: CGFloat
+        if y < 0 {
+            bounce = -y
+            channel.engine.scrollToRow(0)
+        } else if y > maxOffset {
+            bounce = maxOffset - y
+            let bar = channel.engine.scrollbar
+            let last = max(0, Int(bar.total) - Int(bar.len))
+            channel.engine.scrollToRow(last)
+        } else {
+            bounce = 0
+            channel.engine.scrollToRow(Int((y / height).rounded()))
+        }
+        let transform = CGAffineTransform(translationX: 0, y: bounce)
+        metalHost.transform = transform
+        selectionOverlay.transform = transform
+        publishFollowState()
+        needsPaint = true
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard scrollView === historyScroll, !decelerate else { return }
+        guard channel.engine.scrollAction == .history else { return }
+        settleHistoryScroll()
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        guard scrollView === historyScroll else { return }
+        guard channel.engine.scrollAction == .history else { return }
+        settleHistoryScroll()
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer === longPress { return false }
+        if other === longPress { return false }
+        return true
+    }
+
+    private func configureHistoryScroll() {
+        historyScroll.delegate = self
+        historyScroll.alwaysBounceVertical = true
+        historyScroll.showsHorizontalScrollIndicator = false
+        historyScroll.showsVerticalScrollIndicator = true
+        historyScroll.delaysContentTouches = false
+        historyScroll.contentInsetAdjustmentBehavior = .never
+        historyScroll.backgroundColor = .clear
+        historyScroll.isOpaque = false
+        historyScroll.keyboardDismissMode = .none
+        historyScroll.decelerationRate = .normal
+        historyScroll.accessibilityElementsHidden = true
+    }
+
+    private func installGestures() {
+        let tap = UITapGestureRecognizer(target: self, action: #selector(tapped(_:)))
+        tap.delegate = self
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(doubleTapped(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        doubleTap.cancelsTouchesInView = false
+        doubleTap.delegate = self
+        let press = UILongPressGestureRecognizer(target: self, action: #selector(longPressed(_:)))
+        press.minimumPressDuration = 0.45
+        press.allowableMovement = 12
+        press.delegate = self
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(appScrolled(_:)))
+        pan.delegate = self
+        historyScroll.touchBegan = { [weak self] in self?.tapIgnore.touchBegan() }
+        historyScroll.addGestureRecognizer(tap)
+        historyScroll.addGestureRecognizer(doubleTap)
+        historyScroll.addGestureRecognizer(press)
+        historyScroll.addGestureRecognizer(pan)
+        tapRecognizer = tap
+        longPress = press
+        appPan = pan
+        updateTouchMode()
+    }
+
+    private func updateTouchMode() {
+        let history = channel.engine.scrollAction == .history && dragTarget == nil
+        historyScroll.isScrollEnabled = history
+        historyScroll.showsVerticalScrollIndicator = history
+        appPan?.isEnabled = !history && dragTarget == nil
+        if history {
+            syncHistoryScrollFromEngine()
+        } else {
+            metalHost.transform = .identity
+            selectionOverlay.transform = .identity
+            publishFollowState()
+        }
+    }
+
+    private func syncHistoryScrollFromEngine() {
+        guard channel.engine.scrollAction == .history else { return }
+        publishFollowState()
+        guard !historyScroll.isDragging, !historyScroll.isDecelerating else { return }
+        let height = cellSize.height
+        guard height > 0, bounds.height > 0 else { return }
+        let bar = channel.engine.scrollbar
+        let contentHeight = SSHTerminalHistoryLayout.contentHeight(
+            boundsHeight: bounds.height,
+            totalRows: Int(bar.total),
+            viewportRows: Int(bar.len),
+            cellHeight: height
+        )
+        let offsetY = min(max(0, CGFloat(bar.offset) * height), max(0, contentHeight - bounds.height))
+        isSyncingHistoryScroll = true
+        historyScroll.contentSize = CGSize(width: bounds.width, height: contentHeight)
+        if abs(historyScroll.contentOffset.y - offsetY) > 0.5 {
+            historyScroll.contentOffset = CGPoint(x: 0, y: offsetY)
+        }
+        isSyncingHistoryScroll = false
+        if metalHost.transform != .identity {
+            metalHost.transform = .identity
+            selectionOverlay.transform = .identity
+        }
+    }
+
+    private func settleHistoryScroll() {
+        guard channel.engine.scrollAction == .history else { return }
+        publishFollowState()
+        if channel.engine.following {
+            channel.engine.backToLive()
+        }
+        syncHistoryScrollFromEngine()
+        needsPaint = true
+    }
+
+    private func publishFollowState() {
+        let following = !SSHTerminalFollowChrome.showsBackToLive(
+            scrollAction: channel.engine.scrollAction,
+            following: channel.engine.following
+        )
+        guard lastFollow != following else { return }
+        lastFollow = following
+        followChanged(following)
+    }
+
+    private func showHighlight(_ snapshot: SSHTerminalSelectionSnapshot, lingering: Bool) {
+        selectionOverlay.spans = snapshot.spans.compactMap { span in
+            guard span.row >= 0 else { return nil }
+            let x = CGFloat(span.startColumn) * cellSize.width
+            let width = CGFloat(span.endColumn - span.startColumn + 1) * cellSize.width
+            return CGRect(
+                x: x,
+                y: CGFloat(span.row) * cellSize.height,
+                width: width,
+                height: cellSize.height
+            )
+        }
+        selectionOverlay.isHidden = selectionOverlay.spans.isEmpty
+        highlightClear?.cancel()
+        guard lingering else { return }
+        highlightGeneration &+= 1
+        let generation = highlightGeneration
+        highlightClear = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard let self, self.highlightGeneration == generation else { return }
+            self.clearHighlight()
+        }
+    }
+
+    private func clearHighlight() {
+        highlightClear?.cancel()
+        highlightClear = nil
+        selectionOverlay.spans = []
+        selectionOverlay.isHidden = true
     }
 
     func setKeyActions(_ actions: [SSHTerminalKeyAction]) {
@@ -624,12 +940,76 @@ final class SSHTerminalGridView: UIView, UIKeyInput {
             // Consume the gate after presentIfNeeded submits, finds nothing
             // to draw, or hits a deterministic encode miss. Transient misses
             // leave needsPaint set so the next tick retries without a new byte.
+            view.updateTouchMode()
+            view.syncHistoryScrollFromEngine()
             if view.needsPaint || view.paintedChangeCount != changes || view.channel.engine.renderHeld {
                 if view.presentIfNeeded() {
                     view.needsPaint = false
                     view.paintedChangeCount = changes
                 }
             }
+        }
+    }
+}
+
+/// History scroller. Touches begin here, so a sticky long-press tap ignore
+/// can clear before the next independent tap is recognized.
+private final class SSHTerminalHistoryScrollView: UIScrollView {
+    var touchBegan: (() -> Void)?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        touchBegan?()
+        super.touchesBegan(touches, with: event)
+    }
+
+    override func touchesShouldBegin(_ touches: Set<UITouch>, with event: UIEvent?, in view: UIView) -> Bool {
+        touchBegan?()
+        return super.touchesShouldBegin(touches, with: event, in: view)
+    }
+}
+
+/// Metal drawable host. Kept as a child so history rubber-band can translate
+/// the grid without moving the native scroll view on top of it.
+private final class SSHTerminalMetalHostView: UIView {
+    let metalLayer = CAMetalLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isOpaque = true
+        metalLayer.pixelFormat = .bgra8Unorm
+        metalLayer.framebufferOnly = true
+        metalLayer.isOpaque = true
+        layer.addSublayer(metalLayer)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        metalLayer.frame = bounds
+    }
+}
+
+private final class SSHTerminalSelectionOverlay: UIView {
+    var spans: [CGRect] = [] {
+        didSet { setNeedsDisplay() }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isOpaque = false
+        backgroundColor = .clear
+        isHidden = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func draw(_ rect: CGRect) {
+        UIColor.systemBlue.withAlphaComponent(0.28).setFill()
+        for span in spans {
+            UIBezierPath(rect: span).fill()
         }
     }
 }

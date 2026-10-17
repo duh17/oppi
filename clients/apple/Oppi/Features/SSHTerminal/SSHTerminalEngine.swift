@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import GhosttyVt
 
@@ -57,6 +58,10 @@ final class SSHTerminalEngine {
     private var cells: GhosttyRenderStateRowCells?
     private var encoder: GhosttyKeyEncoder?
     private var mouseEncoder: GhosttyMouseEncoder?
+    private var selectionGesture: GhosttySelectionGesture?
+    private var selectionPress: GhosttySelectionGestureEvent?
+    private var selectionDrag: GhosttySelectionGestureEvent?
+    private var selectionRelease: GhosttySelectionGestureEvent?
     private var replies = [Data]()
     private var live = true
     private var titleChanged = false
@@ -89,16 +94,29 @@ final class SSHTerminalEngine {
               ghostty_render_state_row_iterator_new(nil, &rowIterator) == GHOSTTY_SUCCESS,
               ghostty_render_state_row_cells_new(nil, &cells) == GHOSTTY_SUCCESS,
               ghostty_key_encoder_new(nil, &encoder) == GHOSTTY_SUCCESS,
-              ghostty_mouse_encoder_new(nil, &mouseEncoder) == GHOSTTY_SUCCESS else {
+              ghostty_mouse_encoder_new(nil, &mouseEncoder) == GHOSTTY_SUCCESS,
+              ghostty_selection_gesture_new(nil, &selectionGesture) == GHOSTTY_SUCCESS,
+              ghostty_selection_gesture_event_new(nil, &selectionPress, GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_PRESS) == GHOSTTY_SUCCESS,
+              ghostty_selection_gesture_event_new(nil, &selectionDrag, GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DRAG) == GHOSTTY_SUCCESS,
+              ghostty_selection_gesture_event_new(nil, &selectionRelease, GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_RELEASE) == GHOSTTY_SUCCESS else {
             throw SSHTerminalError.engineUnavailable
         }
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_USERDATA, Unmanaged.passUnretained(self).toOpaque())
         installEffects()
         var historyLimit: Int = 8 * 1024 * 1024
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES, &historyLimit)
+        // Ghostty default: DEC 1007 on. Set both the live value and the RIS
+        // restore so less/man/git-log pagers keep alternate scroll.
+        var altScroll = GhosttyTerminalModeConfig(mode: ghostty_mode_new(1007, false), value: true)
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_MODE_DEFAULT, &altScroll)
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_MODE, &altScroll)
     }
 
     isolated deinit {
+        ghostty_selection_gesture_event_free(selectionRelease)
+        ghostty_selection_gesture_event_free(selectionDrag)
+        ghostty_selection_gesture_event_free(selectionPress)
+        ghostty_selection_gesture_free(selectionGesture, terminal)
         ghostty_mouse_encoder_free(mouseEncoder)
         ghostty_key_encoder_free(encoder)
         ghostty_render_state_row_cells_free(cells)
@@ -167,11 +185,51 @@ final class SSHTerminalEngine {
         ghostty_terminal_scroll_viewport(terminal, .init(tag: GHOSTTY_SCROLL_VIEWPORT_DELTA, value: value))
     }
 
+    /// Absolute row in the same space as `scrollbar.offset`.
+    func scrollToRow(_ row: Int) {
+        changeCount &+= 1
+        forceFullRebuild = true
+        var value = GhosttyTerminalScrollViewportValue()
+        value.row = max(0, row)
+        ghostty_terminal_scroll_viewport(terminal, .init(tag: GHOSTTY_SCROLL_VIEWPORT_ROW, value: value))
+        var active = false
+        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_VIEWPORT_ACTIVE, &active)
+        following = active
+    }
+
     func backToLive() {
         following = true
         changeCount &+= 1
         forceFullRebuild = true
         ghostty_terminal_scroll_viewport(terminal, .init(tag: GHOSTTY_SCROLL_VIEWPORT_BOTTOM, value: .init()))
+    }
+
+    var scrollbar: GhosttyTerminalScrollbar {
+        var value = GhosttyTerminalScrollbar()
+        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_SCROLLBAR, &value)
+        return value
+    }
+
+    var alternateScreen: Bool {
+        var screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY
+        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen)
+        return screen == GHOSTTY_TERMINAL_SCREEN_ALTERNATE
+    }
+
+    func mode(_ mode: GhosttyMode) -> Bool {
+        var config = GhosttyTerminalModeConfig(mode: mode, value: false)
+        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_MODE, &config)
+        return config.value
+    }
+
+    var alternateScroll: Bool { mode(ghostty_mode_new(1007, false)) }
+
+    var scrollAction: SSHTerminalScrollAction {
+        SSHTerminalScrollAction.resolve(
+            altScreen: alternateScreen,
+            mouseReporting: mouseTracking,
+            alternateScroll: alternateScroll
+        )
     }
 
     func frame() -> SSHTerminalFrame {
@@ -316,6 +374,9 @@ final class SSHTerminalEngine {
 
     enum MouseInput {
         case click
+        case press
+        case motion
+        case release
         case wheelUp
         case wheelDown
     }
@@ -336,21 +397,27 @@ final class SSHTerminalEngine {
         let row = min(max(0, row), geometry.rows - 1)
         let position = GhosttyMousePosition(x: Float((Double(column) + 0.5) * Double(geometry.cellWidth)),
                                             y: Float((Double(row) + 0.5) * Double(geometry.cellHeight)))
-        let events: [(GhosttyMouseAction, GhosttyMouseButton)] = switch input {
-        case .click: [(GHOSTTY_MOUSE_ACTION_PRESS, GHOSTTY_MOUSE_BUTTON_LEFT), (GHOSTTY_MOUSE_ACTION_RELEASE, GHOSTTY_MOUSE_BUTTON_LEFT)]
-        case .wheelUp: [(GHOSTTY_MOUSE_ACTION_PRESS, GHOSTTY_MOUSE_BUTTON_FOUR)]
-        case .wheelDown: [(GHOSTTY_MOUSE_ACTION_PRESS, GHOSTTY_MOUSE_BUTTON_FIVE)]
+        let events: [(GhosttyMouseAction, GhosttyMouseButton, Bool)] = switch input {
+        case .click: [
+            (GHOSTTY_MOUSE_ACTION_PRESS, GHOSTTY_MOUSE_BUTTON_LEFT, true),
+            (GHOSTTY_MOUSE_ACTION_RELEASE, GHOSTTY_MOUSE_BUTTON_LEFT, false),
+        ]
+        case .press: [(GHOSTTY_MOUSE_ACTION_PRESS, GHOSTTY_MOUSE_BUTTON_LEFT, true)]
+        case .motion: [(GHOSTTY_MOUSE_ACTION_MOTION, GHOSTTY_MOUSE_BUTTON_LEFT, true)]
+        case .release: [(GHOSTTY_MOUSE_ACTION_RELEASE, GHOSTTY_MOUSE_BUTTON_LEFT, false)]
+        case .wheelUp: [(GHOSTTY_MOUSE_ACTION_PRESS, GHOSTTY_MOUSE_BUTTON_FOUR, false)]
+        case .wheelDown: [(GHOSTTY_MOUSE_ACTION_PRESS, GHOSTTY_MOUSE_BUTTON_FIVE, false)]
         }
         var output = Data()
-        for (action, button) in events {
+        for (action, button, pressed) in events {
             var event: GhosttyMouseEvent?
             guard ghostty_mouse_event_new(nil, &event) == GHOSTTY_SUCCESS else { return Data() }
             defer { ghostty_mouse_event_free(event) }
             ghostty_mouse_event_set_action(event, action)
             ghostty_mouse_event_set_button(event, button)
             ghostty_mouse_event_set_position(event, position)
-            var pressed = action == GHOSTTY_MOUSE_ACTION_PRESS && input == .click
-            ghostty_mouse_encoder_setopt(mouseEncoder, GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &pressed)
+            var anyPressed = pressed
+            ghostty_mouse_encoder_setopt(mouseEncoder, GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &anyPressed)
             var buffer = [CChar](repeating: 0, count: 64)
             var length = 0
             let result = buffer.withUnsafeMutableBufferPointer {
@@ -360,6 +427,170 @@ final class SSHTerminalEngine {
             output.append(buffer.withUnsafeBytes { Data($0.prefix(length)) })
         }
         return output
+    }
+
+    /// Ghostty default word boundaries except `:`. `/` was never a boundary,
+    /// so paths stay one word. Dropping colon keeps `https://…` as one word.
+    private static let wordBoundaries: [UInt32] = [
+        0,
+        0x20, 0x09, 0x27, 0x22, 0x2502, 0x60, 0x7C,
+        0x3B, 0x2C, 0x28, 0x29, 0x5B, 0x5D, 0x7B, 0x7D, 0x3C, 0x3E, 0x24,
+    ]
+
+    /// Word under a viewport cell. Paths and URLs count as one word.
+    func selectWord(column: Int, row: Int) -> SSHTerminalSelectionSnapshot? {
+        guard let ref = viewportRef(column: column, row: row) else { return nil }
+        return Self.wordBoundaries.withUnsafeBufferPointer { buffer in
+            var options = GhosttyTerminalSelectWordOptions()
+            options.size = MemoryLayout<GhosttyTerminalSelectWordOptions>.size
+            options.ref = ref
+            options.boundary_codepoints = buffer.baseAddress
+            options.boundary_codepoints_len = buffer.count
+            var selection = GhosttySelection()
+            selection.size = MemoryLayout<GhosttySelection>.size
+            guard ghostty_terminal_select_word(terminal, &options, &selection) == GHOSTTY_SUCCESS else {
+                return nil
+            }
+            guard let snapshot = snapshot(selection) else { return nil }
+            return SSHTerminalWordCopy.applyingTrailingColonTrim(snapshot)
+        }
+    }
+
+    func beginSelection(column: Int, row: Int, surfacePoint: CGPoint) {
+        guard let selectionGesture, let selectionPress else { return }
+        ghostty_selection_gesture_reset(selectionGesture, terminal)
+        guard var ref = viewportRef(column: column, row: row) else { return }
+        ghostty_selection_gesture_event_set(
+            selectionPress, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF, &ref
+        )
+        var position = GhosttySurfacePosition(x: surfacePoint.x, y: surfacePoint.y)
+        ghostty_selection_gesture_event_set(
+            selectionPress, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_POSITION, &position
+        )
+        _ = ghostty_selection_gesture_event(selectionGesture, terminal, selectionPress, nil)
+    }
+
+    func dragSelection(column: Int, row: Int, surfacePoint: CGPoint) -> SSHTerminalSelectionSnapshot? {
+        guard let selectionGesture, let selectionDrag else { return nil }
+        guard var ref = viewportRef(column: column, row: row) else { return nil }
+        ghostty_selection_gesture_event_set(
+            selectionDrag, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF, &ref
+        )
+        var position = GhosttySurfacePosition(x: surfacePoint.x, y: surfacePoint.y)
+        ghostty_selection_gesture_event_set(
+            selectionDrag, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_POSITION, &position
+        )
+        var gestureGeometry = GhosttySelectionGestureGeometry(
+            columns: UInt32(max(1, self.geometry.columns)),
+            cell_width: UInt32(max(1, self.geometry.cellWidth)),
+            padding_left: 0,
+            screen_height: UInt32(max(1, self.geometry.pixelHeight))
+        )
+        ghostty_selection_gesture_event_set(
+            selectionDrag, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_GEOMETRY, &gestureGeometry
+        )
+        var selection = GhosttySelection()
+        selection.size = MemoryLayout<GhosttySelection>.size
+        guard ghostty_selection_gesture_event(
+            selectionGesture, terminal, selectionDrag, &selection
+        ) == GHOSTTY_SUCCESS else { return nil }
+        return snapshot(selection)
+    }
+
+    func endSelection(column: Int, row: Int) {
+        guard let selectionGesture, let selectionRelease else { return }
+        if var ref = viewportRef(column: column, row: row) {
+            ghostty_selection_gesture_event_set(
+                selectionRelease, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF, &ref
+            )
+        } else {
+            ghostty_selection_gesture_event_set(
+                selectionRelease, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF, nil
+            )
+        }
+        _ = ghostty_selection_gesture_event(selectionGesture, terminal, selectionRelease, nil)
+    }
+
+    func cancelSelection() {
+        guard let selectionGesture else { return }
+        ghostty_selection_gesture_reset(selectionGesture, terminal)
+    }
+
+    private func viewportRef(column: Int, row: Int) -> GhosttyGridRef? {
+        let column = min(max(0, column), max(0, geometry.columns - 1))
+        let row = min(max(0, row), max(0, geometry.rows - 1))
+        var value = GhosttyPointValue()
+        value.coordinate = GhosttyPointCoordinate(x: UInt16(column), y: UInt32(row))
+        let point = GhosttyPoint(tag: GHOSTTY_POINT_TAG_VIEWPORT, value: value)
+        var ref = GhosttyGridRef()
+        ref.size = MemoryLayout<GhosttyGridRef>.size
+        guard ghostty_terminal_grid_ref(terminal, point, &ref) == GHOSTTY_SUCCESS else { return nil }
+        return ref
+    }
+
+    private func snapshot(_ selection: GhosttySelection) -> SSHTerminalSelectionSnapshot? {
+        guard let text = formatSelection(selection), !text.isEmpty else { return nil }
+        return SSHTerminalSelectionSnapshot(text: text, spans: viewportSpans(selection))
+    }
+
+    private func formatSelection(_ selection: GhosttySelection) -> String? {
+        var selection = selection
+        var options = GhosttyTerminalSelectionFormatOptions()
+        options.size = MemoryLayout<GhosttyTerminalSelectionFormatOptions>.size
+        options.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN
+        options.unwrap = true
+        options.trim = true
+        return withUnsafePointer(to: &selection) { pointer in
+            options.selection = pointer
+            var output: UnsafeMutablePointer<UInt8>?
+            var length = 0
+            let result = ghostty_terminal_selection_format_alloc(
+                terminal, nil, options, &output, &length
+            )
+            defer { ghostty_free(nil, output, length) }
+            guard result == GHOSTTY_SUCCESS, let output, length > 0 else { return nil }
+            return String(decoding: UnsafeBufferPointer(start: output, count: length), as: UTF8.self)
+        }
+    }
+
+    private func viewportSpans(_ selection: GhosttySelection) -> [SSHTerminalSelectionSpan] {
+        var selection = selection
+        var ordered = GhosttySelection()
+        ordered.size = MemoryLayout<GhosttySelection>.size
+        guard ghostty_terminal_selection_ordered(
+            terminal, &selection, GHOSTTY_SELECTION_ORDER_FORWARD, &ordered
+        ) == GHOSTTY_SUCCESS else { return [] }
+        var start = GhosttyPointCoordinate()
+        var end = GhosttyPointCoordinate()
+        let startOK = ghostty_terminal_point_from_grid_ref(
+            terminal, &ordered.start, GHOSTTY_POINT_TAG_VIEWPORT, &start
+        ) == GHOSTTY_SUCCESS
+        let endOK = ghostty_terminal_point_from_grid_ref(
+            terminal, &ordered.end, GHOSTTY_POINT_TAG_VIEWPORT, &end
+        ) == GHOSTTY_SUCCESS
+        let lastCol = max(0, geometry.columns - 1)
+        let lastRow = max(0, geometry.rows - 1)
+        let startX = startOK ? Int(start.x) : 0
+        let startY = startOK ? Int(start.y) : 0
+        let endX = endOK ? Int(end.x) : lastCol
+        let endY = endOK ? Int(end.y) : lastRow
+        guard startOK || endOK else { return [] }
+        let top = max(0, min(startY, lastRow))
+        let bottom = max(0, min(endY, lastRow))
+        if top == bottom {
+            let lo = max(0, min(startX, endX))
+            let hi = min(lastCol, max(startX, endX))
+            return [SSHTerminalSelectionSpan(row: top, startColumn: lo, endColumn: hi)]
+        }
+        var spans = [SSHTerminalSelectionSpan]()
+        spans.append(SSHTerminalSelectionSpan(row: top, startColumn: startX, endColumn: lastCol))
+        if bottom > top + 1 {
+            for row in (top + 1)..<bottom {
+                spans.append(SSHTerminalSelectionSpan(row: row, startColumn: 0, endColumn: lastCol))
+            }
+        }
+        spans.append(SSHTerminalSelectionSpan(row: bottom, startColumn: 0, endColumn: endX))
+        return spans
     }
 
     static func pasteIsSafe(_ text: String) -> Bool {

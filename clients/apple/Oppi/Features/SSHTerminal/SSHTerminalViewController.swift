@@ -258,9 +258,7 @@ final class SSHTerminalViewController: UIViewController {
         }
         noticeCard.onFrameChange = { [weak self] in self?.attention.cardFrame = $0 }
         backToLive.addAction(UIAction { [weak self] _ in
-            self?.channel.engine.backToLive()
-            self?.detached = false
-            self?.setNeedsUpdateProperties()
+            self?.gridView?.backToLive()
         }, for: .touchUpInside)
         statusGlyph.onOpen = { [weak self] in self?.showStatusDetail() }
 

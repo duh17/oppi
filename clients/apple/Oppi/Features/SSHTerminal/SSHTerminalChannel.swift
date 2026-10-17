@@ -272,6 +272,16 @@ final class SSHTerminalChannel {
         copies &+= 1
     }
 
+    /// The user's own copy from a double-tap or long-press on the grid.
+    /// This is not OSC 52, so the remote-clipboard gate does not apply.
+    func copyLocalSelection(_ text: String) {
+        let clipped = SSHTerminalCopyLimit.clip(text, maxBytes: SSHTerminalEngine.maximumCopyBytes)
+        guard !clipped.isEmpty else { return }
+        UIPasteboard.general.setItems([[UTType.utf8PlainText.identifier: clipped]])
+        lastCopyLength = clipped.count
+        copies &+= 1
+    }
+
     func event(_ event: SSHPTYEvent) {
         guard connected else { return }
         switch event {
