@@ -15,6 +15,7 @@ final class SSHTerminalPasswordViewController: UIViewController, UICollectionVie
     private var password = ""
     private weak var passwordField: UITextField?
     private var confirmItem: UIBarButtonItem?
+    private var lastThemeID: ThemeID?
 
     private enum Section: Hashable { case password, save }
     private enum Item: Hashable { case password, savePassword, saveHint }
@@ -138,6 +139,12 @@ final class SSHTerminalPasswordViewController: UIViewController, UICollectionVie
     override func updateProperties() {
         super.updateProperties()
         applyTheme()
+        let themeID = sshTerminalThemeID
+        guard lastThemeID != themeID, let dataSource else { return }
+        lastThemeID = themeID
+        var snapshot = dataSource.snapshot()
+        snapshot.reloadItems(snapshot.itemIdentifiers)
+        dataSource.apply(snapshot, animatingDifferences: false)
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {

@@ -18,6 +18,7 @@ final class SSHTerminalConnectChrome {
     private var presentedTrustFailure: SSHConnectionError?
     private var lastWasBackground = false
     private var pushingTerminal = false
+    private var showsTerminalEdge = SSHTerminalShowsTerminalEdge()
     private var defaultsObserver: NSObjectProtocol?
 
     init(
@@ -89,6 +90,9 @@ final class SSHTerminalConnectChrome {
             presentForgetConfirmation(from: host)
         }
 
+        if showsTerminalEdge.shouldCancelAttempt(showsTerminal: session.showsTerminal) {
+            session.cancel()
+        }
         if session.showsTerminal {
             pushTerminal(from: host)
         } else {
@@ -195,23 +199,18 @@ final class SSHTerminalConnectChrome {
     }
 
     private func presentForgetConfirmation(from host: UIViewController) {
-        let sheet = UIAlertController(
+        let alert = UIAlertController(
             title: "Forget the trusted host key?",
             message: "Only do this after independently verifying why the host key changed.",
-            preferredStyle: .actionSheet
+            preferredStyle: .alert
         )
-        sheet.addAction(UIAlertAction(title: "Forget Trusted Key", style: .destructive) { [weak self] _ in
+        alert.addAction(UIAlertAction(title: "Forget Trusted Key", style: .destructive) { [weak self] _ in
             self?.session.forgetTrustedKey()
             self?.presentedTrustFailure = nil
             self?.dismissTrust()
         })
-        sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = host.view
-            popover.sourceRect = CGRect(x: host.view.bounds.midX, y: host.view.bounds.midY, width: 1, height: 1)
-            popover.permittedArrowDirections = []
-        }
-        (host.presentedViewController ?? host).present(sheet, animated: true)
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        (host.presentedViewController ?? host).present(alert, animated: true)
     }
 
     private func pushTerminal(from host: UIViewController) {

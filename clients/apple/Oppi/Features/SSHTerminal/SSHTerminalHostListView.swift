@@ -273,6 +273,8 @@ final class SSHTerminalHostListViewController: UIViewController, UICollectionVie
             done(true)
         }
         delete.accessibilityLabel = "Delete Host"
+        // UIContextualAction is not UIAccessibilityIdentification: there is no
+        // public accessibilityIdentifier (SwiftUI swipe had sshTerminal.host.delete).
         let config = UISwipeActionsConfiguration(actions: [delete])
         config.performsFirstActionWithFullSwipe = false
         return config

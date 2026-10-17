@@ -5,9 +5,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     private let profileID: UUID?
     private var profile: SSHTerminalProfile
     private var portText: String
-    private var identity: SSHIdentity?
-    private var identityFailure: String?
-    private var identityNeedsReplacement = false
+    private var deviceKey = SSHTerminalDeviceKeyState()
     private var copied = false
     private let session = SSHTerminalConnectSession()
     private var chrome: SSHTerminalConnectChrome?
@@ -92,11 +90,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
         _ = session.channel
         _ = session.devicePasscodeChanged
         _ = AppScenePhase.shared.isBackground
-        if session.devicePasscodeChanged {
-            identity = nil
-            identityNeedsReplacement = true
-            identityFailure = session.failure
-        }
+        deviceKey.observePasscodeChanged(session.devicePasscodeChanged, failure: session.failure)
         let themeID = sshTerminalThemeID
         if lastThemeID != themeID {
             lastThemeID = themeID
@@ -304,7 +298,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             cell.accessories = [.customView(configuration: .init(customView: toggle, placement: .trailing()))]
             cell.accessibilityIdentifier = "sshTerminal.savePassword"
         case .publicKey:
-            content.text = identity?.publicKeyOpenSSH ?? ""
+            content.text = deviceKey.identity?.publicKeyOpenSSH ?? ""
             content.textProperties.font = .monospacedSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .footnote).pointSize, weight: .regular)
             content.textProperties.numberOfLines = 0
             cell.accessibilityIdentifier = "sshTerminal.publicKey"
@@ -313,11 +307,11 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             content.image = UIImage(systemName: copied ? "checkmark" : "doc.on.doc")
             cell.accessibilityIdentifier = "sshTerminal.copyKey"
         case .backing:
-            content.text = identity?.backingDescription ?? ""
+            content.text = deviceKey.identity?.backingDescription ?? ""
             content.textProperties.font = .preferredFont(forTextStyle: .footnote)
             content.textProperties.color = UIColor(palette.comment)
         case .identityStatus:
-            content.text = identityFailure ?? "Loading identity…"
+            content.text = deviceKey.identityFailure ?? "Loading identity…"
             content.textProperties.color = UIColor(palette.comment)
         case .replaceKey:
             content.text = "Device passcode changed — create a new key"
@@ -380,11 +374,11 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
 
         if profile.authentication == .deviceKey {
             snapshot.appendSections([.identity])
-            if identity != nil {
+            if deviceKey.identity != nil {
                 snapshot.appendItems([.publicKey, .copyKey, .backing], toSection: .identity)
             } else {
                 var items: [Item] = [.identityStatus]
-                if identityNeedsReplacement { items.append(.replaceKey) }
+                if deviceKey.identityNeedsReplacement { items.append(.replaceKey) }
                 snapshot.appendItems(items, toSection: .identity)
             }
         }
@@ -485,7 +479,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
     }
 
     private func copyPublicKey() {
-        guard let identity else { return }
+        guard let identity = deviceKey.identity else { return }
         UIPasteboard.general.string = identity.publicKeyOpenSSH
         copied = true
         applySnapshot()
@@ -510,7 +504,7 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
             return "Runs this command in the terminal instead of a login shell, like `ssh -t host 'command'` or OpenSSH RemoteCommand. Enter `herdr` to attach your Herdr session. The connection ends when the command exits (for Herdr, detach with Ctrl-B Q). The command must be on the PATH that SSH commands see."
         case .identity:
             var text = "Append this public key to ~/.ssh/authorized_keys. Signing requires Face ID or your device passcode. The simulator uses a software key. Oppi never installs the key for you."
-            if identityNeedsReplacement {
+            if deviceKey.identityNeedsReplacement {
                 text += "\nReplace the old entry in ~/.ssh/authorized_keys with the new public key before connecting."
             }
             return text
@@ -523,21 +517,22 @@ final class SSHTerminalSetupViewController: UIViewController, UICollectionViewDe
 
     private func loadIdentityIfSelected(createReplacement: Bool = false) {
         guard AppPreferences.Experiments.sshTerminalEnabled, profile.authentication == .deviceKey else {
-            identity = nil
+            deviceKey.applyLoadResult(identity: nil, needsReplacement: false, failure: nil)
             applySnapshot()
             return
         }
         do {
-            identity = try SSHIdentityKeyStore.loadOrCreate(createReplacement: createReplacement)
-            identityFailure = nil
-            identityNeedsReplacement = false
+            let identity = try SSHIdentityKeyStore.loadOrCreate(createReplacement: createReplacement)
+            deviceKey.applyLoadResult(identity: identity, needsReplacement: false, failure: nil)
             if createReplacement {
                 session.failure = "New SSH key created. Replace the old entry in ~/.ssh/authorized_keys before connecting."
             }
         } catch {
-            identity = nil
-            identityNeedsReplacement = (error as? SSHIdentityKeyStoreError) == .devicePasscodeChanged
-            identityFailure = error.localizedDescription
+            deviceKey.applyLoadResult(
+                identity: nil,
+                needsReplacement: (error as? SSHIdentityKeyStoreError) == .devicePasscodeChanged,
+                failure: error.localizedDescription
+            )
         }
         applySnapshot()
     }

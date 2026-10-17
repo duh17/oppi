@@ -8,6 +8,10 @@ final class SSHTerminalTrustViewController: UIViewController {
     private let connecting: Bool
     private let onTrust: () -> Void
     private let onForget: () -> Void
+    private var commentLabels: [UILabel] = []
+    private var fgLabels: [UILabel] = []
+    private var fgTextViews: [UITextView] = []
+    private var lastThemeID: ThemeID?
 
     init(
         failure: SSHConnectionError,
@@ -51,6 +55,7 @@ final class SSHTerminalTrustViewController: UIViewController {
             title = "New host"
             let heading = headline("New host — trust decision", color: UIColor(palette.fg))
             heading.accessibilityIdentifier = "sshTerminal.trustPrompt"
+            fgLabels.append(heading)
             stack.addArrangedSubview(heading)
             stack.addArrangedSubview(fingerprint("Presented Host Key", key, palette: palette))
             stack.addArrangedSubview(footnote(
@@ -69,7 +74,9 @@ final class SSHTerminalTrustViewController: UIViewController {
             navigationItem.rightBarButtonItem = bar
         case .hostKeyMismatch(let saved, let presented):
             title = "Host key changed"
-            stack.addArrangedSubview(headline("Host key changed — connection blocked.", color: UIColor(palette.red)))
+            let heading = headline("Host key changed — connection blocked.", color: UIColor(palette.red))
+            fgLabels.append(heading)
+            stack.addArrangedSubview(heading)
             stack.addArrangedSubview(fingerprint("Trusted", saved, palette: palette))
             stack.addArrangedSubview(fingerprint("Presented", presented, palette: palette))
             var config = UIButton.Configuration.borderedProminent()
@@ -110,8 +117,16 @@ final class SSHTerminalTrustViewController: UIViewController {
 
     private func applyTheme() {
         let themeID = sshTerminalThemeID
+        lastThemeID = themeID
         overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
-        view.backgroundColor = UIColor(themeID.palette.bg)
+        let palette = themeID.palette
+        view.backgroundColor = UIColor(palette.bg)
+        commentLabels.forEach { $0.textColor = UIColor(palette.comment) }
+        fgLabels.forEach { $0.textColor = UIColor(palette.fg) }
+        fgTextViews.forEach { $0.textColor = UIColor(palette.fg) }
+        if case .hostKeyMismatch = failure, let heading = fgLabels.first {
+            heading.textColor = UIColor(palette.red)
+        }
     }
 
     private func headline(_ text: String, color: UIColor) -> UILabel {
@@ -129,6 +144,7 @@ final class SSHTerminalTrustViewController: UIViewController {
         label.font = .preferredFont(forTextStyle: .footnote)
         label.textColor = UIColor(palette.comment)
         label.numberOfLines = 0
+        commentLabels.append(label)
         return label
     }
 
@@ -140,6 +156,7 @@ final class SSHTerminalTrustViewController: UIViewController {
         caption.text = "\(label) (\(key.algorithm))"
         caption.font = .preferredFont(forTextStyle: .footnote)
         caption.textColor = UIColor(palette.comment)
+        commentLabels.append(caption)
         let value = UITextView()
         value.text = key.fingerprint
         value.font = .monospacedSystemFont(ofSize: UIFont.preferredFont(forTextStyle: .footnote).pointSize, weight: .regular)
@@ -150,6 +167,7 @@ final class SSHTerminalTrustViewController: UIViewController {
         value.textContainerInset = .zero
         value.textContainer.lineFragmentPadding = 0
         value.isSelectable = true
+        fgTextViews.append(value)
         stack.addArrangedSubview(caption)
         stack.addArrangedSubview(value)
         stack.isAccessibilityElement = true
