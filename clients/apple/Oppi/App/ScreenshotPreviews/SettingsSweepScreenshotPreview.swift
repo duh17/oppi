@@ -32,7 +32,8 @@ struct SettingsSweepScreenshotPreview: View {
     private static let skills: [ServerSkillSummary] = [
         ServerSkillSummary(
             id: "release", name: "release", description: "Review release readiness before shipping.",
-            provenance: .init(kind: .piAgent, label: "~/.pi/agent/skills"), path: nil,
+            provenance: .init(kind: .piAgent, label: "~/.pi/agent/skills"),
+            path: "/Users/preview/.pi/agent/skills/release/SKILL.md",
             state: .enabled, loadError: nil, warnings: [], editable: true
         ),
         ServerSkillSummary(
@@ -201,7 +202,8 @@ struct SettingsSweepScreenshotPreview: View {
             RouterPreviewStack(root: root) { ServerExtensionsView() }
                 .ignoresSafeArea()
         // Pages that push through the router.
-        case "agents", "agents-pi", "agents-pi-file", "schedules", "mcp", "mcp-detail", "ssh-hosts", "ssh-setup":
+        case "agents", "agents-pi", "agents-pi-file", "schedules", "mcp", "mcp-detail", "ssh-hosts", "ssh-setup",
+             "skill-file-review":
             RouterPreviewStack(root: root) { pushedPage }
                 .ignoresSafeArea()
         default:
@@ -252,15 +254,7 @@ struct SettingsSweepScreenshotPreview: View {
         case "agents": AgentManagementView()
         case "schedules": ScheduleManagementView()
         case "skill-file-review":
-            ReviewableControlMarkdownView(
-                fileContent: "# Release\n\nReview release readiness.",
-                domain: .skills,
-                targetId: "release",
-                targetName: "release",
-                sourceLabel: "release / SKILL.md",
-                sourcePath: "~/.pi/agent/skills/release/SKILL.md",
-                editFlow: .guidedRevision
-            )
+            ServerSkillFileView(target: .init(serverId: server.id, resourceId: "release", path: "SKILL.md"))
         default: TailnetSettingsView(previewProbes: Self.tailnetProbes)
         }
     }
@@ -404,6 +398,8 @@ struct SettingsSweepScreenshotPreview: View {
                 builtInTools: [ServerToolSummary(name: "read"), ServerToolSummary(name: "bash")],
                 optionalTools: [ServerToolSummary(name: "codemode")]
             )),
+            // A Skill file is a host read; the fixture answers every one.
+            "/files/current": Data("# Release\n\nReview release readiness.".utf8),
             "/server/resources/skills/release": json(ServerSkillDetail(
                 summary: skills[0],
                 skillMarkdown: "# Release\n\nReview release readiness.",

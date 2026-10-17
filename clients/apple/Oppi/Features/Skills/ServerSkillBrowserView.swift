@@ -101,21 +101,23 @@ struct ServerSkillBrowserScopedDestinationView: View {
 struct ServerSkillBrowserView: View {
     @Environment(\.apiClient) private var apiClient
     @Environment(AppNavigation.self) private var navigation
+    @Environment(ServerResourceStore.self) private var store
     @Environment(\.theme) private var theme
 
     let target: ServerSkillBrowserNavTarget
 
-    @State private var detail: ServerSkillDetail?
-    @State private var isLoading = true
+    @State private var fetchedDetail: ServerSkillDetail?
     @State private var error: String?
 
-    private var tree: [ServerSkillFileTreeNode] {
-        ServerSkillFileTree.build(paths: detail?.files ?? [])
+    /// The Skill's page loaded this detail just before opening the list.
+    private var detail: ServerSkillDetail? {
+        fetchedDetail ?? store.skillDetail(id: target.resourceId, serverId: target.serverId)
     }
 
     var body: some View {
         Group {
             if let detail {
+                let tree = ServerSkillFileTree.build(paths: detail.files)
                 if tree.isEmpty {
                     ContentUnavailableView(
                         "No Skill Files",
@@ -139,23 +141,26 @@ struct ServerSkillBrowserView: View {
                     .listStyle(.insetGrouped)
                     .themedListSurface()
                 }
-            } else if isLoading {
-                ProgressView("Loading skill files…")
-            } else {
+            } else if let error {
                 ContentUnavailableView {
                     Label("Files Unavailable", systemImage: "exclamationmark.triangle.fill")
                 } description: {
-                    Text(error ?? "The skill files could not be loaded.")
+                    Text(error)
                 } actions: {
                     Button("Retry") { Task { await load() } }
                         .buttonStyle(.borderedProminent)
                 }
+            } else {
+                ProgressView("Loading skill files…")
             }
         }
         .background(theme.bg.primary)
         .navigationTitle(detail?.summary.name ?? "Skill Files")
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: target) { await load() }
+        .task(id: target) {
+            guard detail == nil else { return }
+            await load()
+        }
     }
 
     @ViewBuilder
@@ -187,21 +192,19 @@ struct ServerSkillBrowserView: View {
     private func load() async {
         guard let apiClient else {
             error = "Not connected"
-            isLoading = false
             return
         }
 
-        if detail == nil { isLoading = true }
         error = nil
         do {
             let response = try await apiClient.getServerSkill(id: target.resourceId)
             guard !Task.isCancelled else { return }
-            detail = response
+            store.rememberSkillDetail(response, serverId: target.serverId)
+            fetchedDetail = response
         } catch {
             guard !Task.isCancelled else { return }
             self.error = error.localizedDescription
         }
-        isLoading = false
     }
 
     private func fileIcon(for path: String) -> String {

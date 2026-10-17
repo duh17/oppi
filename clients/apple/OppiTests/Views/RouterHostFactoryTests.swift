@@ -108,6 +108,39 @@ struct RouterHostFactoryTests {
         #expect(navigation.workspacePath.isEmpty)
     }
 
+    @Test("popping a reader that hid the shell's bar brings the bar and Back back")
+    func shellStackShowsBarAgainAfterReaderPops() async throws {
+        let root = makeTestAppRoot()
+        let window = try showInWindow(WorkspaceShellController(root: root))
+        defer { hide(window) }
+        var stack: ShellNavigationController?
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            stack = shellStack(in: window.rootViewController)
+            return stack?.viewControllers.count == 1
+        })
+        let shellStack = try #require(stack)
+
+        root.navigation.openWorkspaceUtility(.skills)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            shellStack.transitionCoordinator == nil && shellStack.viewControllers.count == 2
+        })
+        let skills = try #require(shellStack.topViewController as? HostedScreenController)
+
+        // A file reader hides the bar for its own chrome, as a Skill file did.
+        skills.navigator.push {
+            Text("Reader").toolbarVisibility(.hidden, for: .navigationBar)
+        }
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            shellStack.transitionCoordinator == nil && shellStack.isNavigationBarHidden
+        })
+
+        shellStack.popViewController(animated: true)
+        #expect(await waitForMainActorCondition(timeout: .seconds(3)) {
+            shellStack.transitionCoordinator == nil && shellStack.topViewController === skills
+        })
+        #expect(!shellStack.isNavigationBarHidden)
+    }
+
     @Test("bar policy applies per screen each time it appears, so popping restores the previous screen's bars")
     func barPolicyFollowsTheVisibleScreen() async throws {
         let rootScreen = HostFactory.screen(

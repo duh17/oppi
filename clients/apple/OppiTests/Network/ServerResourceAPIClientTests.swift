@@ -24,35 +24,23 @@ struct ServerResourceAPIClientTests {
         #expect(skills.first?.packageName == "@scope/review-tools")
     }
 
-    @Test func skillDetailAndFileSafelyEncodeOpaqueIDAndFilePath() async throws {
+    @Test func skillDetailSafelyEncodesOpaqueID() async throws {
         let client = makeClient()
         defer { TestURLProtocol.handler = nil }
         let resourceID = "skill a/b?c"
-        let filePath = "nested dir/ü?notes.md"
-        var requestCount = 0
 
         TestURLProtocol.handler = { request in
-            requestCount += 1
             let url = testUnwrap(request.url)
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-            if requestCount == 1 {
-                #expect(components?.percentEncodedPath == "/server/resources/skills/skill%20a%2Fb%3Fc")
-                return mockResponse(json: """
-                {"summary":{"id":"skill a/b?c","name":"Release","description":"Review releases.","provenance":{"kind":"piAgent","label":"~/.pi/agent/skills"},"state":"enabled","warnings":[],"editable":true},"skillMarkdown":"# Release","files":[]}
-                """)
-            }
-
-            #expect(components?.percentEncodedPath == "/server/resources/skills/skill%20a%2Fb%3Fc/file")
-            #expect(components?.queryItems?.first(where: { $0.name == "path" })?.value == filePath)
-            return mockResponse(json: #"{"content":"notes"}"#)
+            #expect(components?.percentEncodedPath == "/server/resources/skills/skill%20a%2Fb%3Fc")
+            return mockResponse(json: """
+            {"summary":{"id":"skill a/b?c","name":"Release","description":"Review releases.","provenance":{"kind":"piAgent","label":"~/.pi/agent/skills"},"state":"enabled","warnings":[],"editable":true},"skillMarkdown":"# Release","files":[]}
+            """)
         }
 
         let detail = try await client.getServerSkill(id: resourceID)
-        let content = try await client.getServerSkillFile(id: resourceID, path: filePath)
 
         #expect(detail.summary.id == resourceID)
-        #expect(content == "notes")
-        #expect(requestCount == 2)
     }
 
     @Test func normalEnablePutsBooleanAndDecodesAuthoritativeSummaries() async throws {

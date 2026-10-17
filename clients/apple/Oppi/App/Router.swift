@@ -140,12 +140,8 @@ final class RouterNavigationController: UINavigationController, RouterModalConta
         willShow viewController: UIViewController,
         animated: Bool
     ) {
-        // A pushed file reader hides this bar for its own chrome
-        // (`toolbarVisibility(.hidden, for: .navigationBar)`), and nothing
-        // shows it again when the reader pops: the screen below lost its
-        // title, items, and search bar. Every screen starts with the bar;
-        // content that hides it hides it again.
-        setNavigationBarHidden(false, animated: animated)
+        // The panel lost its title, Done, and search after a reader popped.
+        showNavigationBarForIncomingScreen(animated: animated)
     }
 
     override func updateProperties() {
@@ -171,6 +167,25 @@ final class RouterNavigationController: UINavigationController, RouterModalConta
         if isBeingDismissed || presentingViewController == nil, let onDismissed {
             self.onDismissed = nil
             onDismissed()
+        }
+    }
+}
+
+extension UINavigationController {
+    /// Call from `navigationController(_:willShow:animated:)`. A pushed file
+    /// reader hides the bar for its own chrome
+    /// (`toolbarVisibility(.hidden, for: .navigationBar)`), and nothing shows
+    /// it again when the reader pops: the screen below loses its Back button,
+    /// title, items, and search bar. Every screen starts with the bar; content
+    /// that hides it hides it again. A cancelled back swipe leaves the reader
+    /// on top, so its hidden bar comes back.
+    func showNavigationBarForIncomingScreen(animated: Bool) {
+        let wasHidden = isNavigationBarHidden
+        guard wasHidden else { return }
+        setNavigationBarHidden(false, animated: animated)
+        transitionCoordinator?.notifyWhenInteractionChanges { [weak self] context in
+            guard context.isCancelled else { return }
+            self?.setNavigationBarHidden(true, animated: true)
         }
     }
 }

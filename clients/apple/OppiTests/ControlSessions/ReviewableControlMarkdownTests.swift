@@ -63,37 +63,49 @@ struct ReviewableControlMarkdownTests {
             ("/Users/chen/.pi/agent/skills/review/SKILL.md", "/outside.md"),
             ("/Users/chen/.pi/agent/skills/review/SKILL.md", "refs\\outside.md"),
             ("relative/review/SKILL.md", "SKILL.md"),
-            ("/Users/chen/.pi/agent/skills/review.md", "other.md"),
         ] {
-            guard case .editingUnavailable = ServerSkillFilePresentation.resolve(
+            guard case .unavailable = ServerSkillFilePresentation.resolve(
                 editable: true,
                 resourcePath: resourcePath,
                 selectedFilePath: selectedPath
             ) else {
-                Issue.record("Expected editing to be unavailable for \(selectedPath)")
+                Issue.record("Expected no host path for \(selectedPath)")
                 continue
             }
         }
     }
 
-    @Test func skillFilePresentationExplainsMissingEditablePathButKeepsReadOnlySkillsOrdinary() {
-        let missingPath = ServerSkillFilePresentation.resolve(
-            editable: true,
-            resourcePath: nil,
-            selectedFilePath: "SKILL.md"
+    @Test func skillFilePresentationReadsNeighborsAndReadOnlySkillsWithoutEdit() {
+        // A top-level Markdown Skill is that one file: its neighbors open
+        // read-only so a revision never edits them.
+        #expect(
+            ServerSkillFilePresentation.resolve(
+                editable: true,
+                resourcePath: "/Users/chen/.pi/agent/skills/review.md",
+                selectedFilePath: "other.md"
+            ) == .readOnly(hostPath: "/Users/chen/.pi/agent/skills/other.md")
         )
-        guard case .editingUnavailable(let reason) = missingPath else {
-            Issue.record("An editable pathless Skill must explain why editing is unavailable")
-            return
-        }
-        #expect(reason.contains("server did not provide"))
         #expect(
             ServerSkillFilePresentation.resolve(
                 editable: false,
+                resourcePath: "/opt/homebrew/lib/node_modules/tools/skills/review/SKILL.md",
+                selectedFilePath: "SKILL.md"
+            ) == .readOnly(hostPath: "/opt/homebrew/lib/node_modules/tools/skills/review/SKILL.md")
+        )
+    }
+
+    @Test func skillFilePresentationExplainsMissingPath() {
+        for editable in [true, false] {
+            guard case .unavailable(let reason) = ServerSkillFilePresentation.resolve(
+                editable: editable,
                 resourcePath: nil,
                 selectedFilePath: "SKILL.md"
-            ) == .readOnly
-        )
+            ) else {
+                Issue.record("A pathless Skill has no host file to read")
+                continue
+            }
+            #expect(reason.contains("server did not provide"))
+        }
     }
 
     @Test func targetDraftKeysAreSeparatedByServerDomainAndCanonicalTarget() {

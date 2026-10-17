@@ -53,6 +53,8 @@ final class ServerResourceStore {
         var normalResourceVersions: [ServerResourceMutationKey: UInt64] = [:]
         var skillsGeneration: UInt64 = 0
         var extensionsGeneration: UInt64 = 0
+        /// Latest detail response per Skill id.
+        var skillDetails: [String: ServerSkillDetail] = [:]
     }
 
     private let cache: TimelineCache
@@ -85,6 +87,17 @@ final class ServerResourceStore {
 
     func builtInTools(forServer serverId: String) -> [ServerToolSummary] {
         partitions[serverId]?.builtInTools ?? []
+    }
+
+    /// The latest detail a Skill's page loaded. Its file list and the files it
+    /// opens read this instead of asking the server to rebuild the whole Skill
+    /// catalog again.
+    func skillDetail(id: String, serverId: String) -> ServerSkillDetail? {
+        partitions[serverId]?.skillDetails[id]
+    }
+
+    func rememberSkillDetail(_ detail: ServerSkillDetail, serverId: String) {
+        update(serverId) { $0.skillDetails[detail.summary.id] = detail }
     }
 
     func hasLoadedSkills(forServer serverId: String) -> Bool {

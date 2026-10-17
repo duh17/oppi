@@ -116,6 +116,8 @@ struct FileBrowserContentView: View {
     var serverId: String? = nil
     let filePath: String
     let fileName: String
+    /// Replaces the bar title, as a Skill file names its path inside the Skill.
+    var title: String? = nil
     var source: FileBrowserContentSource = .workspaceFile
     var sessionId: String? = nil
     var controlSessionId: String? = nil
@@ -136,6 +138,9 @@ struct FileBrowserContentView: View {
     var showsSwiftUIReviewCommentStashOverlay = true
     /// Parent hosts hide their own file navigation while the text editor is open.
     var onEditingChange: ((Bool) -> Void)? = nil
+    /// Where selected-text comments go when the host owns them (a Skill file
+    /// stages them for its revision session). Nil: the environment's scope.
+    var reviewCommentSelectionContext: ReviewCommentSelectionContext? = nil
 
 #if DEBUG
     var debugHasMarkdownViewportRestoreForTesting: Bool {
@@ -203,7 +208,8 @@ struct FileBrowserContentView: View {
     private var currentFilePath: String { currentSelection.path }
     private var currentFileName: String { currentSelection.name }
     private var viewerTitle: String {
-        FileBrowserContentRenderingPolicy.navigationTitle(
+        if let title { return title }
+        return FileBrowserContentRenderingPolicy.navigationTitle(
             source: source,
             path: currentFilePath,
             fileName: currentFileName
@@ -424,6 +430,7 @@ struct FileBrowserContentView: View {
     private func readerView(text: String) -> some View {
         EmbeddedFileViewerView(
             content: fullScreenContent(text: text),
+            reviewCommentSelectionContext: reviewCommentSelectionContext,
             reviewCommentSessionId: sessionId,
             lineAnchor: activeSelection == nil ? lineAnchor : nil,
             lineAnchorNotice: onLineAnchorNotice,

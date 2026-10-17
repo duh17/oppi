@@ -320,11 +320,14 @@ struct ServerSkillDetailView: View {
     private func startLoad() {
         let apiClient = apiClient
         let serverName = serverName
+        let store = store
         loader.load(target: target) {
             guard let apiClient else {
                 throw ServerResourceDetailLoadError.notConnected(serverName)
             }
-            return try await apiClient.getServerSkill(id: target.resourceId)
+            let detail = try await apiClient.getServerSkill(id: target.resourceId)
+            store.rememberSkillDetail(detail, serverId: target.serverId)
+            return detail
         }
     }
 

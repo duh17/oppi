@@ -223,9 +223,15 @@ struct ReviewableControlMarkdownView: View {
     @Environment(QuickCommentTemplateStore.self) private var quickCommentTemplateStore
     @Environment(\.dismiss) private var dismiss
 
-    private let viewerContent: FullScreenCodeContent
+    private enum Viewer {
+        /// Text the caller already holds, in the full-screen reader.
+        case fullScreen(FullScreenCodeContent)
+        /// A file on the server's host, in the shared file reader.
+        case hostFile(serverId: String, title: String)
+    }
+
+    private let viewer: Viewer
     private let languageHint: String?
-    private let usesEmbeddedPresentation: Bool
     let domain: ControlSessionDomain
     let targetId: String
     let targetName: String
@@ -242,9 +248,8 @@ struct ReviewableControlMarkdownView: View {
         sourcePath: String,
         editFlow: ReviewableControlMarkdownEditFlow = .directSession
     ) {
-        self.viewerContent = .markdown(content: content, filePath: sourcePath)
+        self.viewer = .fullScreen(.markdown(content: content, filePath: sourcePath))
         self.languageHint = "markdown"
-        self.usesEmbeddedPresentation = false
         self.domain = domain
         self.targetId = targetId
         self.targetName = targetName
@@ -253,23 +258,26 @@ struct ReviewableControlMarkdownView: View {
         self.editFlow = editFlow
     }
 
+    /// A file at `hostFilePath` on the server, read directly from the host
+    /// like any other host file: images, PDFs, and relative Markdown images
+    /// work. Host files keep the system bar, so Edit is a bar button there.
     init(
-        fileContent: String,
+        hostFilePath: String,
+        serverId: String,
+        title: String,
         domain: ControlSessionDomain,
         targetId: String,
         targetName: String,
         sourceLabel: String,
-        sourcePath: String,
         editFlow: ReviewableControlMarkdownEditFlow = .directSession
     ) {
-        self.viewerContent = .fromText(fileContent, filePath: sourcePath)
-        self.languageHint = Self.languageHint(for: sourcePath)
-        self.usesEmbeddedPresentation = true
+        self.viewer = .hostFile(serverId: serverId, title: title)
+        self.languageHint = Self.languageHint(for: hostFilePath)
         self.domain = domain
         self.targetId = targetId
         self.targetName = targetName
         self.sourceLabel = sourceLabel
-        self.sourcePath = sourcePath
+        self.sourcePath = hostFilePath
         self.editFlow = editFlow
     }
 
@@ -314,23 +322,29 @@ struct ReviewableControlMarkdownView: View {
         )
     }
 
+    private var editTitle: String {
+        isCreatingSession ? "Starting…" : "Edit"
+    }
+
     private var navigationActions: [FullScreenViewerNavigationAction] {
         [
             FullScreenViewerNavigationAction(
                 id: "edit-in-session",
-                title: isCreatingSession ? "Starting…" : "Edit",
+                title: editTitle,
                 accessibilityLabel: "Edit in Oppi Session",
                 isEnabled: !isCreatingSession,
-                handler: {
-                    switch editFlow {
-                    case .directSession:
-                        Task { await createOrOpenRevisionSession() }
-                    case .guidedRevision:
-                        showGuidedRevision = true
-                    }
-                }
+                handler: startEdit
             ),
         ]
+    }
+
+    private func startEdit() {
+        switch editFlow {
+        case .directSession:
+            Task { await createOrOpenRevisionSession() }
+        case .guidedRevision:
+            showGuidedRevision = true
+        }
     }
 
     private var starterPrompt: String {
@@ -345,7 +359,7 @@ struct ReviewableControlMarkdownView: View {
     }
 
     var body: some View {
-        viewer
+        viewerBody
         .task(id: draftSessionId) {
             comments.load(
                 localScopeId: ReviewCommentLocalScope.controlDraft,
@@ -385,20 +399,32 @@ struct ReviewableControlMarkdownView: View {
     }
 
     @ViewBuilder
-    private var viewer: some View {
-        if usesEmbeddedPresentation {
-            EmbeddedFileViewerView(
-                content: viewerContent,
-                reviewCommentSelectionContext: selectionContext,
-                navigationActions: navigationActions
-            )
-            .ignoresSafeArea(edges: .top)
-        } else {
+    private var viewerBody: some View {
+        switch viewer {
+        case .fullScreen(let content):
             FullScreenCodeView(
-                content: viewerContent,
+                content: content,
                 reviewCommentSelectionContext: selectionContext,
                 navigationActions: navigationActions
             )
+        case .hostFile(let serverId, let title):
+            FileBrowserContentView(
+                workspaceId: "",
+                serverId: serverId,
+                filePath: sourcePath,
+                fileName: (sourcePath as NSString).lastPathComponent,
+                title: title,
+                source: .hostFile,
+                reviewCommentSelectionContext: selectionContext
+            )
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(editTitle, systemImage: "pencil", action: startEdit)
+                        .disabled(isCreatingSession)
+                        .accessibilityLabel("Edit in Oppi Session")
+                        .accessibilityIdentifier("controlFile.editInSession")
+                }
+            }
         }
     }
 

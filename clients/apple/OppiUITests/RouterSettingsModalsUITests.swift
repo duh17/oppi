@@ -202,7 +202,7 @@ final class RouterSettingsModalsUITests: XCTestCase {
 
     func testSkillFileGuidedRevisionSheet() {
         launch(page: "skill-file-review")
-        let edit = app.buttons["fullscreen-code.action.edit-in-session"]
+        let edit = app.buttons["controlFile.editInSession"]
         XCTAssertTrue(edit.waitForExistence(timeout: 10), "Skill file viewer did not load")
         assertGuidedSheet(opener: { edit.tap() }, title: "Revise release")
     }

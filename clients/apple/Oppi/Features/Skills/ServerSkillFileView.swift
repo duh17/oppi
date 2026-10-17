@@ -22,37 +22,40 @@ struct ServerSkillFileScopedDestinationView: View {
     }
 }
 
+/// How a Skill file opens. Every file is read from its host path, the same
+/// direct read as any other host file.
 enum ServerSkillFilePresentation: Equatable {
+    /// Readable, with Edit in Oppi Session.
     case editable(hostPath: String)
-    case editingUnavailable(reason: String)
-    case readOnly
+    case readOnly(hostPath: String)
+    /// No host path to read.
+    case unavailable(reason: String)
 
     static func resolve(
         editable: Bool,
         resourcePath: String?,
         selectedFilePath: String
     ) -> Self {
-        guard editable else { return .readOnly }
         guard let resourcePath else {
-            return .editingUnavailable(
-                reason: "Editing is unavailable because the server did not provide this Skill’s source path."
-            )
+            return .unavailable(reason: "The server did not provide this Skill’s source path.")
         }
-        guard let hostPath = selectedHostPath(
+        guard let location = hostLocation(
             resourcePath: resourcePath,
             selectedFilePath: selectedFilePath
         ) else {
-            return .editingUnavailable(
-                reason: "Editing is unavailable because this file does not have a valid Skill-relative path."
-            )
+            return .unavailable(reason: "This file does not have a valid Skill-relative path.")
         }
-        return .editable(hostPath: hostPath)
+        return editable && location.isSkillSource
+            ? .editable(hostPath: location.path)
+            : .readOnly(hostPath: location.path)
     }
 
-    private static func selectedHostPath(
+    /// `isSkillSource` is false for a file beside a top-level Markdown Skill:
+    /// that Skill is the one file, so revising it never edits its neighbors.
+    private static func hostLocation(
         resourcePath: String,
         selectedFilePath: String
-    ) -> String? {
+    ) -> (path: String, isSkillSource: Bool)? {
         let components = selectedFilePath.split(
             separator: "/",
             omittingEmptySubsequences: false
@@ -70,29 +73,37 @@ enum ServerSkillFilePresentation: Equatable {
         let canonicalResourcePath = (resourcePath as NSString).standardizingPath
         let resourceFileName = (canonicalResourcePath as NSString).lastPathComponent
         let skillDirectory: String
+        var isSkillSource = true
         if resourceFileName == "SKILL.md" {
             skillDirectory = (canonicalResourcePath as NSString).deletingLastPathComponent
         } else if canonicalResourcePath.hasSuffix(".md") {
-            // A top-level Markdown resource represents that file only. Directory-
-            // backed Skills can expose nested files through their SKILL.md root.
-            guard selectedFilePath == resourceFileName else { return nil }
             skillDirectory = (canonicalResourcePath as NSString).deletingLastPathComponent
+            isSkillSource = selectedFilePath == resourceFileName
         } else {
             skillDirectory = canonicalResourcePath
         }
-        return ((skillDirectory as NSString).appendingPathComponent(selectedFilePath) as NSString)
+        let path = ((skillDirectory as NSString).appendingPathComponent(selectedFilePath) as NSString)
             .standardizingPath
+        return (path, isSkillSource)
     }
 }
 
+/// One Skill file in the shared file reader. The Skill's page or the
+/// catalog already holds its summary, so opening a file is one host read;
+/// the server rebuilds its Skill catalog only when neither has it.
 struct ServerSkillFileView: View {
     @Environment(\.apiClient) private var apiClient
+    @Environment(ServerResourceStore.self) private var store
     let target: ServerSkillFileNavTarget
 
-    @State private var content: String?
-    @State private var summary: ServerSkillSummary?
-    @State private var isLoading = true
+    @State private var fetchedSummary: ServerSkillSummary?
     @State private var error: String?
+
+    private var summary: ServerSkillSummary? {
+        fetchedSummary
+            ?? store.skillDetail(id: target.resourceId, serverId: target.serverId)?.summary
+            ?? store.skills(forServer: target.serverId).first { $0.id == target.resourceId }
+    }
 
     private var fileName: String {
         target.path.split(separator: "/").last.map(String.init) ?? target.path
@@ -100,7 +111,7 @@ struct ServerSkillFileView: View {
 
     var body: some View {
         Group {
-            if let content, let summary {
+            if let summary {
                 switch ServerSkillFilePresentation.resolve(
                     editable: summary.editable,
                     resourcePath: summary.path,
@@ -108,96 +119,69 @@ struct ServerSkillFileView: View {
                 ) {
                 case .editable(let hostPath):
                     ReviewableControlMarkdownView(
-                        fileContent: content,
+                        hostFilePath: hostPath,
+                        serverId: target.serverId,
+                        title: target.path,
                         domain: .skills,
                         targetId: target.resourceId,
                         targetName: summary.name,
                         sourceLabel: "\(summary.name) / \(target.path)",
-                        sourcePath: hostPath,
                         editFlow: .guidedRevision
                     )
-                case .editingUnavailable(let reason):
-                    ordinaryViewer(
-                        content: content,
-                        navigationActions: [
-                            FullScreenViewerNavigationAction(
-                                id: "edit-unavailable",
-                                title: "Edit",
-                                accessibilityLabel: "Edit unavailable",
-                                accessibilityValue: reason,
-                                isEnabled: false,
-                                handler: {}
-                            ),
-                        ]
+                case .readOnly(let hostPath):
+                    FileBrowserContentView(
+                        workspaceId: "",
+                        serverId: target.serverId,
+                        filePath: hostPath,
+                        fileName: fileName,
+                        title: target.path,
+                        source: .hostFile
                     )
-                    .safeAreaInset(edge: .bottom) {
-                        Label(reason, systemImage: "exclamationmark.triangle.fill")
-                            .font(.footnote)
-                            .foregroundStyle(.themeOrange)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            .background(.themeBgHighlight)
-                    }
-                case .readOnly:
-                    ordinaryViewer(content: content)
+                case .unavailable(let reason):
+                    unavailable(reason)
                 }
-            } else if isLoading {
-                ProgressView("Loading file…")
+            } else if let error {
+                unavailable(error)
             } else {
-                ContentUnavailableView {
-                    Label("File Unavailable", systemImage: "exclamationmark.triangle.fill")
-                } description: {
-                    Text(error ?? "The skill file could not be loaded.")
-                } actions: {
-                    Button("Retry") { Task { await load() } }
-                        .buttonStyle(.borderedProminent)
-                }
+                ProgressView("Loading file…")
+                    .navigationTitle(fileName)
+                    .navigationBarTitleDisplayMode(.inline)
             }
         }
         .background(.themeBg)
-        .navigationTitle(content == nil ? fileName : "")
+        .task(id: target) {
+            guard summary == nil else { return }
+            await loadSummary()
+        }
+    }
+
+    private func unavailable(_ reason: String) -> some View {
+        ContentUnavailableView {
+            Label("File Unavailable", systemImage: "exclamationmark.triangle.fill")
+        } description: {
+            Text(reason)
+        } actions: {
+            Button("Retry") { Task { await loadSummary() } }
+                .buttonStyle(.borderedProminent)
+        }
+        .navigationTitle(fileName)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarVisibility(content == nil ? .automatic : .hidden, for: .navigationBar)
-        .task(id: target) { await load() }
     }
 
-    private func ordinaryViewer(
-        content: String,
-        navigationActions: [FullScreenViewerNavigationAction] = []
-    ) -> some View {
-        EmbeddedFileViewerView(
-            content: .fromText(content, filePath: target.path),
-            navigationActions: navigationActions
-        )
-        .ignoresSafeArea(edges: .top)
-    }
-
-    private func load() async {
-        content = nil
-        summary = nil
-        isLoading = true
+    private func loadSummary() async {
         error = nil
-
         guard let apiClient else {
             error = "Not connected"
-            isLoading = false
             return
         }
         do {
-            async let fetchedContent = apiClient.getServerSkillFile(
-                id: target.resourceId,
-                path: target.path
-            )
-            async let fetchedDetail = apiClient.getServerSkill(id: target.resourceId)
-            let (resolvedContent, resolvedDetail) = try await (fetchedContent, fetchedDetail)
+            let detail = try await apiClient.getServerSkill(id: target.resourceId)
             guard !Task.isCancelled else { return }
-            content = resolvedContent
-            summary = resolvedDetail.summary
+            store.rememberSkillDetail(detail, serverId: target.serverId)
+            fetchedSummary = detail.summary
         } catch {
             guard !Task.isCancelled else { return }
             self.error = error.localizedDescription
         }
-        isLoading = false
     }
 }

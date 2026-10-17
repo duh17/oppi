@@ -12,18 +12,6 @@ extension APIClient {
         return try JSONDecoder().decode(ServerSkillDetail.self, from: data)
     }
 
-    func getServerSkillFile(id: String, path: String) async throws -> String {
-        struct Response: Decodable {
-            let content: String
-        }
-
-        let data = try await get(url: serverResourceURL(
-            pathSegments: ["skills", id, "file"],
-            queryItems: [URLQueryItem(name: "path", value: path)]
-        ))
-        return try JSONDecoder().decode(Response.self, from: data).content
-    }
-
     func setServerSkillEnabled(id: String, enabled: Bool) async throws -> ServerSkillSummary {
         let data = try await put(
             url: serverResourceURL(pathSegments: ["skills", id, "enabled"]),
