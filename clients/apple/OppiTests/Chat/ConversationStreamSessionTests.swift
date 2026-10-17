@@ -176,6 +176,28 @@ struct ConversationStreamSessionTests {
         await harness.finish()
     }
 
+    @Test func whitespaceOnlyThinkingNeverBecomesARow() async throws {
+        // Local GLM models emit a "\n" thinking block before every tool call.
+        let harness = Harness()
+        await harness.connect()
+        _ = try await harness.attach(1)
+        let reducer = harness.manager.reducer
+        harness.frame(.snapshot(.init(conversationId: 7, head: 0, hasOlder: false, entries: [Wire.user(1, "go")], docs: [
+            "pi.live": Wire.live(content: [Wire.thinking("\n"), Wire.toolCall("call-1", "bash", ["command": "ls"])]),
+        ])))
+        #expect(await harness.waitForRows(["1", "call-1"]))
+
+        harness.frame(.update(.init(
+            conversationId: 7,
+            entries: [Wire.assistant(2, [Wire.thinking("\n"), Wire.toolCall("call-1", "bash", ["command": "ls"])])],
+            docs: ["pi.live": [.delete([.key("generation")])]]
+        )))
+        // The trace keeps the block; only the timeline skips it.
+        #expect(await harness.waitForCommitted(["1", "2-think-0", "call-1"]))
+        #expect(reducer.items.map(\.id) == ["1", "call-1"])
+        await harness.finish()
+    }
+
     @Test func classicTimelineEventsAreIgnoredWhileTheirOtherEffectsApply() async throws {
         let harness = Harness()
         await harness.connect()

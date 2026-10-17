@@ -890,6 +890,7 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
                 ))
                 if isLast { streamingTextID = id }
             case .thinking(let index, let text):
+                guard !StringFastChecks.isEffectivelyEmpty(text) else { continue }
                 let id = "pi.live-\(liveAnswerGeneration)-think-\(index)"
                 answerRowIDs["think-\(index)"] = id
                 rows.append(TimelineTurnAssembler.makeThinkingItem(
@@ -1166,6 +1167,11 @@ final class TimelineReducer { // swiftlint:disable:this type_body_length
 
         case .thinking:
             let thinking = event.thinking ?? ""
+            // Some models (e.g. local GLM) emit a "\n" thinking block before
+            // every tool call; a whitespace-only row renders as a blank gap.
+            guard !StringFastChecks.isEffectivelyEmpty(thinking) else {
+                return nil
+            }
             insertItem(.thinking(
                 id: event.id,
                 preview: thinking,
