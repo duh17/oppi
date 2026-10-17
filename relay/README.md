@@ -71,8 +71,8 @@ Not automated yet. The steps, for whoever owns the account:
 2. An APNs auth key (`.p8`) from the Apple Developer account of the team that signs the app.
 3. `npx wrangler login`, then set secrets: `wrangler secret put APNS_KEY_P8` (the file's
    contents), `APNS_KEY_ID`, `APNS_TEAM_ID`.
-4. Check `APP_ID` (`<Team ID>.<bundle ID>`) and `BUNDLE_ID` in `wrangler.toml`, add a
-   `routes` entry for the hostname, then `npx wrangler deploy`.
+4. Check `APP_ID` (`<Team ID>.<bundle ID>`), `BUNDLE_ID`, and the `routes` hostname in
+   `wrangler.toml` (Oppi's own relay is `push.chaosdonkey.dev`), then `npx wrangler deploy`.
 
 `wrangler.toml` holds no account ID or secrets, and turns Workers Logs and invocation logs off.
 The local Workers runtime cannot speak HTTP/2 to APNs, so real delivery is only testable after
