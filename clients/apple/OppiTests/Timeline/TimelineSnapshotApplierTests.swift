@@ -53,8 +53,6 @@ struct TimelineSnapshotApplierTests {
             nextIDSet: Set(nextIDs),
             nextItemByID: nextItemByID,
             previousItemByID: previousItemByID,
-            hiddenCount: 3,
-            previousHiddenCount: 0,
             streamingAssistantID: "item-250",
             previousStreamingAssistantID: "stale-removed",
             themeChanged: false
@@ -63,8 +61,7 @@ struct TimelineSnapshotApplierTests {
         // isStreamingMutableItem skips finalized .assistantMessage items during
         // streaming, so item-4 and item-519 are NOT detected by changedItemIDs.
         // item-250 is reconfigured via the streaming assistant gate (content changed).
-        // loadMore is reconfigured because hiddenCount changed.
-        let expected: Set<String> = ["item-250", ChatTimelineCollectionHost.loadMoreID]
+        let expected: Set<String> = ["item-250"]
         #expect(Set(reconfigureIDs) == expected)
         #expect(Set(reconfigureIDs).count == reconfigureIDs.count)
     }
@@ -82,8 +79,6 @@ struct TimelineSnapshotApplierTests {
                            "assistant-1": item],
             previousItemByID: ["tool-1": .toolCall(id: "tool-1", tool: "bash", argsSummary: "", outputPreview: "", outputByteCount: 0, isError: false, isDone: true),
                                "assistant-1": item],
-            hiddenCount: 0,
-            previousHiddenCount: 0,
             streamingAssistantID: "assistant-1",
             previousStreamingAssistantID: nil,
             themeChanged: false
@@ -104,8 +99,6 @@ struct TimelineSnapshotApplierTests {
             nextIDSet: Set(ids),
             nextItemByID: ["assistant-1": next],
             previousItemByID: ["assistant-1": prev],
-            hiddenCount: 0,
-            previousHiddenCount: 0,
             streamingAssistantID: "assistant-1",
             previousStreamingAssistantID: nil,
             themeChanged: false
@@ -124,8 +117,6 @@ struct TimelineSnapshotApplierTests {
             nextIDSet: Set(ids),
             nextItemByID: ["assistant-1": next],
             previousItemByID: [:],
-            hiddenCount: 0,
-            previousHiddenCount: 0,
             streamingAssistantID: "assistant-1",
             previousStreamingAssistantID: nil,
             themeChanged: false
@@ -145,8 +136,6 @@ struct TimelineSnapshotApplierTests {
             nextIDSet: Set(ids),
             nextItemByID: ["assistant-1": a1, "assistant-2": a2],
             previousItemByID: ["assistant-1": a1],
-            hiddenCount: 0,
-            previousHiddenCount: 0,
             streamingAssistantID: "assistant-2",
             previousStreamingAssistantID: "assistant-1",
             themeChanged: false
@@ -169,8 +158,6 @@ struct TimelineSnapshotApplierTests {
             nextIDSet: Set(ids),
             nextItemByID: ["tool-1": toolNext, "assistant-1": assistant],
             previousItemByID: ["tool-1": toolPrev, "assistant-1": assistant],
-            hiddenCount: 0,
-            previousHiddenCount: 0,
             streamingAssistantID: "assistant-1",
             previousStreamingAssistantID: nil,
             themeChanged: false
@@ -218,29 +205,5 @@ struct TimelineSnapshotApplierTests {
         )
 
         #expect(result.isEmpty)
-    }
-
-    // MARK: - Animated reconfigure filtering
-
-    @Test func loadMoreFilteredFromReconfigureWhenAnimating() {
-        let changedIDs = ["item-1", ChatTimelineCollectionHost.loadMoreID, "item-2"]
-
-        let filtered = TimelineSnapshotApplier.reconfigureIDsForAnimatedApply(
-            changedIDs,
-            shouldAnimate: true
-        )
-
-        #expect(filtered == ["item-1", "item-2"])
-    }
-
-    @Test func loadMoreKeptInReconfigureWhenNotAnimating() {
-        let changedIDs = ["item-1", ChatTimelineCollectionHost.loadMoreID, "item-2"]
-
-        let filtered = TimelineSnapshotApplier.reconfigureIDsForAnimatedApply(
-            changedIDs,
-            shouldAnimate: false
-        )
-
-        #expect(filtered == ["item-1", ChatTimelineCollectionHost.loadMoreID, "item-2"])
     }
 }

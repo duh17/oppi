@@ -443,10 +443,7 @@ extension ChatTimelineCollectionHost.Controller {
             }
 
             cell.contentConfiguration = LoadMoreTimelineRowConfiguration(
-                hiddenCount: self.hiddenCount,
-                hasOlderServerPage: self.hasOlderServerPage,
-                renderWindowStep: self.renderWindowStep,
-                onTap: { [weak self] in self?.onShowEarlier?() }
+                onRequestEarlier: { [weak self] in self?.onShowEarlier?() }
             )
             cell.backgroundConfiguration = UIBackgroundConfiguration.clear()
             cell.contentView.clipsToBounds = true

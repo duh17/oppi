@@ -1,10 +1,11 @@
 import UIKit
 
+/// Top-of-timeline marker for rows that are not rendered yet. Scrolling up
+/// toward it reveals them automatically (see the timeline scroll delegate),
+/// so the row is only a progress affordance. Accessibility activation keeps
+/// the same owner action for readers who cannot drive a scroll gesture.
 struct LoadMoreTimelineRowConfiguration: UIContentConfiguration {
-    let hiddenCount: Int
-    let hasOlderServerPage: Bool
-    let renderWindowStep: Int
-    let onTap: () -> Void
+    let onRequestEarlier: () -> Void
 
     func makeContentView() -> any UIView & UIContentView {
         LoadMoreTimelineRowContentView(configuration: self)
@@ -16,20 +17,15 @@ struct LoadMoreTimelineRowConfiguration: UIContentConfiguration {
 }
 
 final class LoadMoreTimelineRowContentView: UIView, UIContentView {
-    /// The row self-sizes to its label, so the button can only be as tall as
-    /// the row itself — a hit area grown past the cell bounds is discarded by
-    /// the cell's own `point(inside:)`. Grow the row instead so the reveal
-    /// action gets the minimum comfortable touch target.
-    private static let minimumTapTargetHeight: CGFloat = 44
+    private static let rowHeight: CGFloat = 44
 
-    private let button = UIButton(type: .system)
+    private let spinner = UIActivityIndicatorView(style: .medium)
     private var currentConfiguration: LoadMoreTimelineRowConfiguration
 
     init(configuration: LoadMoreTimelineRowConfiguration) {
         self.currentConfiguration = configuration
         super.init(frame: .zero)
         setupViews()
-        apply(configuration: configuration)
     }
 
     @available(*, unavailable)
@@ -41,48 +37,39 @@ final class LoadMoreTimelineRowContentView: UIView, UIContentView {
         get { currentConfiguration }
         set {
             guard let config = newValue as? LoadMoreTimelineRowConfiguration else { return }
-            apply(configuration: config)
+            currentConfiguration = config
         }
     }
 
     private func setupViews() {
         backgroundColor = .clear
 
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.titleLabel?.font = AppFont.monoMedium
-        button.contentHorizontalAlignment = .center
-        button.contentVerticalAlignment = .center
-        button.addTarget(self, action: #selector(handleTap), for: .touchUpInside)
-
-        addSubview(button)
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.hidesWhenStopped = false
+        spinner.startAnimating()
+        addSubview(spinner)
 
         NSLayoutConstraint.activate([
-            button.leadingAnchor.constraint(equalTo: leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: trailingAnchor),
-            button.topAnchor.constraint(equalTo: topAnchor),
-            button.bottomAnchor.constraint(equalTo: bottomAnchor),
-            button.heightAnchor.constraint(greaterThanOrEqualToConstant: Self.minimumTapTargetHeight),
+            spinner.centerXAnchor.constraint(equalTo: centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(greaterThanOrEqualToConstant: Self.rowHeight),
         ])
+
+        isAccessibilityElement = true
+        accessibilityLabel = "Load earlier messages"
+        accessibilityTraits = .button
     }
 
-    private func apply(configuration: LoadMoreTimelineRowConfiguration) {
-        currentConfiguration = configuration
-
-        let title: String
-        if configuration.hiddenCount > 0 {
-            let revealCount = min(configuration.renderWindowStep, configuration.hiddenCount)
-            title = "Show \(revealCount) earlier messages (\(configuration.hiddenCount) hidden)"
-        } else if configuration.hasOlderServerPage {
-            title = "Load earlier messages"
-        } else {
-            title = "No earlier messages"
+    /// Reused cells stop animating when they leave the window.
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            spinner.startAnimating()
         }
-        button.setTitle(title, for: .normal)
-        button.setTitleColor(UIColor(ThemeRuntimeState.currentPalette().blue), for: .normal)
     }
 
-    @objc
-    private func handleTap() {
-        currentConfiguration.onTap()
+    override func accessibilityActivate() -> Bool {
+        currentConfiguration.onRequestEarlier()
+        return true
     }
 }

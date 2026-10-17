@@ -81,6 +81,7 @@ Example:
 ### Changed
 
 - **Client:** **Settings → Chat → Style** picks Full, Compact, or Chat. Chat is a messaging layout: your prompts are bubbles and each turn's work folds into one pill. It replaces the Compact Turns toggle.
+- **Client:** Scrolling up in a chat loads earlier messages before you reach the top, without moving what you are reading. The **Show earlier messages** button is gone.
 - **Client:** Your prompts are an elevated card that stands apart from replies, and built-in themes set their contrast automatically so prompts, reply cards, and inline code stay readable. See [Custom themes](docs/themes.md).
 - **Client:** Custom Themes: describe a theme to have an Oppi session write it, or choose **Edit with Oppi** on an existing one.
 - **Client:** Session rows, threads, and the inbox show one status from the server: Working, Needs approval, Question, or Sign-in, then Done or Error until you open the session, then Idle or Stopped. Idle is no longer green.

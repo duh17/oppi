@@ -661,7 +661,7 @@ struct ChatTimelineCoordinatorTests {
 
             // sanity check closure is wired in config payload
             if let config = loadMoreCell.contentConfiguration as? LoadMoreTimelineRowConfiguration {
-                config.onTap()
+                config.onRequestEarlier()
             }
             #expect(showEarlierTapped == 1)
         }
@@ -684,71 +684,6 @@ struct ChatTimelineCoordinatorTests {
 
             let workingCell = try configuredTimelineCell(in: harness.collectionView, item: 0)
             #expect(workingCell.contentConfiguration is WorkingIndicatorTimelineRowConfiguration)
-        }
-    }
-
-    @MainActor
-    @Test func loadMoreRowButtonCoversVisibleRowAndInvokesCallbackOnce() throws {
-        var callbackCount = 0
-        let harness = makeTimelineHarness(sessionId: "session-load-more")
-        let config = makeTimelineConfiguration(
-            items: [.systemEvent(id: "system-1", message: "Context compacted")],
-            hiddenCount: 196,
-            renderWindowStep: 60,
-            onShowEarlier: { callbackCount += 1 },
-            sessionId: "session-load-more",
-            reducer: harness.reducer,
-            toolOutputStore: harness.toolOutputStore,
-            toolArgsStore: harness.toolArgsStore,
-            connection: harness.connection,
-            scrollController: harness.scrollController,
-            audioPlayer: harness.audioPlayer
-        )
-        harness.coordinator.apply(configuration: config, to: harness.collectionView)
-        harness.collectionView.layoutIfNeeded()
-
-        let cell = try configuredTimelineCell(in: harness.collectionView, item: 0)
-        let row = try #require(timelineFirstView(ofType: LoadMoreTimelineRowContentView.self, in: cell.contentView))
-        let button = try #require(timelineFirstView(ofType: UIButton.self, in: row))
-
-        #expect(button.title(for: .normal) == "Show 60 earlier messages (196 hidden)")
-        #expect(button.frame.minX == 0)
-        #expect(button.frame.minY == 0)
-        #expect(abs(button.frame.width - row.bounds.width) <= 1)
-        #expect(abs(button.frame.height - row.bounds.height) <= 1)
-
-        button.sendActions(for: .touchUpInside)
-        #expect(callbackCount == 1)
-    }
-
-    @MainActor
-    @Test func loadMoreRowSelfSizesToAComfortableTapTarget() throws {
-        let windowed = makeWindowedTimelineHarness(sessionId: "session-load-more-tap-target")
-        windowed.applyItems(
-            [.systemEvent(id: "system-1", message: "Context compacted")],
-            hiddenCount: 9,
-            renderWindowStep: 60,
-            isBusy: false
-        )
-
-        let cell = try configuredTimelineCell(in: windowed.collectionView, item: 0)
-        let row = try #require(timelineFirstView(ofType: LoadMoreTimelineRowContentView.self, in: cell.contentView))
-        let button = try #require(timelineFirstView(ofType: UIButton.self, in: row))
-
-        #expect(
-            cell.bounds.height >= 44,
-            "load-more row self-sized to \(cell.bounds.height)pt, below the 44pt minimum touch target"
-        )
-
-        // A real finger lands anywhere in the row, not just on the glyphs.
-        for relativeY in [0.15, 0.5, 0.85] {
-            let pointInCell = CGPoint(x: cell.bounds.midX, y: cell.bounds.height * relativeY)
-            let pointInCollectionView = windowed.collectionView.convert(pointInCell, from: cell)
-            let hit = windowed.collectionView.hitTest(pointInCollectionView, with: nil)
-            #expect(
-                hit === button || hit?.isDescendant(of: button) == true,
-                "tap at \(relativeY) of the row height hit \(String(describing: hit)) instead of the button"
-            )
         }
     }
 

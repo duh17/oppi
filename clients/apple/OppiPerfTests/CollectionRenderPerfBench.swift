@@ -372,8 +372,6 @@ struct CollectionRenderPerfBench {
                 nextIDSet: nextIDSet,
                 nextItemByID: nextItemByID,
                 previousItemByID: prevDeduped.itemByID,
-                hiddenCount: 0,
-                previousHiddenCount: 0,
                 streamingAssistantID: nil,
                 previousStreamingAssistantID: nil,
                 themeChanged: false
@@ -655,8 +653,6 @@ struct CollectionRenderPerfBench {
                 nextIDSet: nextIDSet20,
                 nextItemByID: deduped20.itemByID,
                 previousItemByID: prevDeduped20.itemByID,
-                hiddenCount: 0,
-                previousHiddenCount: 0,
                 streamingAssistantID: nil,
                 previousStreamingAssistantID: nil,
                 themeChanged: false

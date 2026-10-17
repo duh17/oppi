@@ -6,6 +6,7 @@ extension ChatTimelineCollectionHost.Controller {
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         scrollController?.setUserInteracting(true)
         lastObservedContentOffsetY = scrollView.contentOffset.y
+        earlierRowsRequestMark = nil
 
         guard let collectionView = scrollView as? UICollectionView else { return }
         // A real drag owns follow state immediately. Sample the live geometry
@@ -36,6 +37,13 @@ extension ChatTimelineCollectionHost.Controller {
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         scrollController?.setUserInteracting(false)
+    }
+
+    /// A status-bar tap is a programmatic scroll, so the drag path never sees
+    /// it. It is still an explicit ask for the top; keep going past it.
+    func scrollViewDidScrollToTop(_ scrollView: UIScrollView) {
+        earlierRowsRequestMark = nil
+        requestEarlierRowsIfNearTop(scrollView)
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -76,6 +84,7 @@ extension ChatTimelineCollectionHost.Controller {
                 anchoredCV.captureDetachedAnchor()
             }
             updateDetachedStreamingHintVisibility()
+            requestEarlierRowsIfNearTop(scrollView)
             return
         }
 
@@ -127,9 +136,45 @@ extension ChatTimelineCollectionHost.Controller {
     }
 }
 
+/// Local reveals shrink the hidden count; a loaded older page grows the
+/// timeline. Either one means the last request landed.
+struct EarlierRowsRequestMark: Equatable {
+    let hiddenCount: Int
+    let timelineItemCount: Int
+}
+
 // MARK: - Scroll State Helpers
 
 extension ChatTimelineCollectionHost.Controller {
+    /// Infinite scroll toward older rows: once an upward user scroll is within
+    /// one viewport of the top, reveal the next batch before the reader reaches
+    /// the edge. The detached identity anchor keeps the reader's row in place
+    /// while rows are inserted above it.
+    func requestEarlierRowsIfNearTop(_ scrollView: UIScrollView) {
+        guard currentIDs.first == ChatTimelineCollectionHost.loadMoreID,
+              onShowEarlier != nil else {
+            return
+        }
+        // Not the first row ID: a folded work pill keeps its ID while the
+        // window grows through its turn.
+        let mark = EarlierRowsRequestMark(
+            hiddenCount: previousHiddenCount,
+            timelineItemCount: currentFullTimelineItemIDs.count
+        )
+        guard mark != earlierRowsRequestMark else { return }
+        let insets = scrollView.adjustedContentInset
+        let viewportHeight = scrollView.bounds.height - insets.top - insets.bottom
+        let distanceFromTop = scrollView.contentOffset.y + insets.top
+        guard viewportHeight > 0, distanceFromTop < viewportHeight else { return }
+
+        earlierRowsRequestMark = mark
+        // Never mutate the snapshot inside the scroll callback; the reveal
+        // re-enters layout and contentOffset.
+        DispatchQueue.main.async { [weak self] in
+            self?.onShowEarlier?()
+        }
+    }
+
     func updateLastDistanceFromBottom(_ scrollView: UIScrollView) {
         let insets = scrollView.adjustedContentInset
         let visibleHeight = scrollView.bounds.height - insets.top - insets.bottom

@@ -10,8 +10,6 @@ enum TimelineSnapshotApplier {
         previousIDs: [String],
         nextItemByID: [String: ChatItem],
         previousItemByID: [String: ChatItem],
-        hiddenCount: Int,
-        previousHiddenCount: Int,
         streamingAssistantID: String?,
         previousStreamingAssistantID: String?,
         sessionId: String? = nil,
@@ -58,8 +56,6 @@ enum TimelineSnapshotApplier {
                     nextIDs: nextIDs,
                     nextItemByID: nextItemByID,
                     previousItemByID: previousItemByID,
-                    hiddenCount: hiddenCount,
-                    previousHiddenCount: previousHiddenCount,
                     streamingAssistantID: streamingAssistantID,
                     previousStreamingAssistantID: previousStreamingAssistantID
                 ),
@@ -98,8 +94,6 @@ enum TimelineSnapshotApplier {
                     nextIDSet: nextIDSet,
                     nextItemByID: nextItemByID,
                     previousItemByID: previousItemByID,
-                    hiddenCount: hiddenCount,
-                    previousHiddenCount: previousHiddenCount,
                     streamingAssistantID: streamingAssistantID,
                     previousStreamingAssistantID: previousStreamingAssistantID,
                     themeChanged: themeChanged
@@ -121,25 +115,19 @@ enum TimelineSnapshotApplier {
         // incur (~2-3x cost). The previous behavior animated during busy
         // sessions, which caused tool/system row insertions to slide in
         // with a crossfade that could stutter on heavy timelines.
-        let shouldAnimate = false
-
         var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
         snapshot.appendSections([0])
         snapshot.appendItems(nextIDs)
 
-        let reconfigureIDs = reconfigureIDsForAnimatedApply(
-            dedupedChangedIDs,
-            shouldAnimate: shouldAnimate
-        )
-        if !reconfigureIDs.isEmpty {
-            snapshot.reconfigureItems(reconfigureIDs)
+        if !dedupedChangedIDs.isEmpty {
+            snapshot.reconfigureItems(dedupedChangedIDs)
         }
         let applyToken = ChatTimelinePerf.beginCollectionApply(
             itemCount: nextIDs.count,
             changedCount: dedupedChangedIDs.count,
             sessionId: sessionId
         )
-        dataSource?.apply(snapshot, animatingDifferences: shouldAnimate)
+        dataSource?.apply(snapshot, animatingDifferences: false)
         ChatTimelinePerf.endCollectionApply(applyToken)
     }
 
@@ -169,18 +157,6 @@ enum TimelineSnapshotApplier {
             }
             return true
         }
-    }
-
-    /// Filter out the load-more row from reconfigure during animated applies.
-    /// Animated reconfigure causes a crossfade that flickers the "Show N
-    /// earlier messages" button at the top of the timeline. The hidden-count
-    /// text is cosmetic and updates on the next non-animated tick.
-    static func reconfigureIDsForAnimatedApply(
-        _ changedIDs: [String],
-        shouldAnimate: Bool
-    ) -> [String] {
-        guard shouldAnimate else { return changedIDs }
-        return changedIDs.filter { $0 != ChatTimelineCollectionHost.loadMoreID }
     }
 
     static func themeReconfigureItemIDs(
@@ -225,8 +201,6 @@ enum TimelineSnapshotApplier {
         nextIDSet: Set<String>,
         nextItemByID: [String: ChatItem],
         previousItemByID: [String: ChatItem],
-        hiddenCount: Int,
-        previousHiddenCount: Int,
         streamingAssistantID: String?,
         previousStreamingAssistantID: String?,
         themeChanged: Bool
@@ -237,11 +211,6 @@ enum TimelineSnapshotApplier {
             previousItemByID: previousItemByID,
             streamingAssistantID: streamingAssistantID
         )
-
-        if hiddenCount != previousHiddenCount,
-           nextIDSet.contains(ChatTimelineCollectionHost.loadMoreID) {
-            changedIDs.append(ChatTimelineCollectionHost.loadMoreID)
-        }
 
         if let streamingAssistantID,
            shouldReconfigureStreamingAssistant(
@@ -270,8 +239,6 @@ enum TimelineSnapshotApplier {
         nextIDs: [String],
         nextItemByID: [String: ChatItem],
         previousItemByID: [String: ChatItem],
-        hiddenCount: Int,
-        previousHiddenCount: Int,
         streamingAssistantID: String?,
         previousStreamingAssistantID: String?
     ) -> [String] {
@@ -281,11 +248,6 @@ enum TimelineSnapshotApplier {
             previousItemByID: previousItemByID,
             streamingAssistantID: streamingAssistantID
         )
-
-        if hiddenCount != previousHiddenCount,
-           nextIDs.first == ChatTimelineCollectionHost.loadMoreID {
-            changed.append(ChatTimelineCollectionHost.loadMoreID)
-        }
 
         // Streaming IDs can be arbitrary (not necessarily item IDs in the
         // snapshot). Validate against nextItemByID before appending — the

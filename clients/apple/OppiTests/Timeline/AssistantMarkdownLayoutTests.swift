@@ -1156,8 +1156,6 @@ struct AssistantMarkdownLayoutTests {
             previousIDs: [],
             nextItemByID: itemByID,
             previousItemByID: [:],
-            hiddenCount: 0,
-            previousHiddenCount: 0,
             streamingAssistantID: nil,
             previousStreamingAssistantID: nil
         )

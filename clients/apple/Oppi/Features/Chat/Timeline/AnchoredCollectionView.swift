@@ -178,6 +178,7 @@ final class AnchoredCollectionView: UICollectionView {
     /// Capture the detached anchor for subsequent contentOffset corrections.
     /// Called before snapshot apply when the user is scrolled away from bottom.
     func captureDetachedAnchor() {
+        detachedAnchorGeneration &+= 1
         frozenOffsetY = nil
         // Isolated test fixtures host this view without a timeline
         // controller. Keep the first-visible index-path pin so their
@@ -243,13 +244,35 @@ final class AnchoredCollectionView: UICollectionView {
         self.detachedAnchorItemID = replacementID
     }
 
-    /// Compositional layout can expose the replacement's final frame only
-    /// after the snapshot's first layout pass. Reapply the captured screen Y
-    /// once that geometry exists so a page prepend cannot leave one-frame or
-    /// settled drift behind.
-    func restoreRemappedDetachedAnchorPosition() {
+    /// Each capture or clear starts a generation, so a restore deferred from an
+    /// earlier apply cannot reinstall a pin that a jump or recapture replaced.
+    private var detachedAnchorGeneration: UInt64 = 0
+
+    /// The reader's pinned row screen Y as captured before a snapshot apply.
+    struct DetachedReaderPosition {
+        fileprivate let generation: UInt64
+        let screenY: CGFloat
+    }
+
+    var detachedReaderPosition: DetachedReaderPosition? {
+        guard detachedAnchorItemID != nil else { return nil }
+        return DetachedReaderPosition(generation: detachedAnchorGeneration, screenY: detachedAnchorScreenY)
+    }
+
+    /// Compositional layout can expose a prepended or replaced row's final
+    /// frame only after the snapshot's first layout pass. Reapply the screen Y
+    /// captured before the apply once that geometry exists, so a page prepend
+    /// cannot leave one-frame or settled drift behind. The caller passes the
+    /// pre-apply position because a finger-owned layout pass refreshes the
+    /// live anchor Y from the already-shifted frame.
+    func restoreDetachedReaderPosition(_ position: DetachedReaderPosition) {
         guard isDetachedFromBottom,
-              let indexPath = currentDetachedAnchorIndexPath(),
+              position.generation == detachedAnchorGeneration,
+              detachedAnchorItemID != nil else {
+            return
+        }
+        detachedAnchorScreenY = position.screenY
+        guard let indexPath = currentDetachedAnchorIndexPath(),
               let attributes = layoutAttributesForItem(at: indexPath) else {
             return
         }
@@ -273,6 +296,7 @@ final class AnchoredCollectionView: UICollectionView {
 
     /// Clear the detached anchor after layout has settled.
     func clearDetachedAnchor() {
+        detachedAnchorGeneration &+= 1
         detachedAnchorIP = nil
         detachedAnchorItemID = nil
         frozenOffsetY = nil

@@ -269,10 +269,12 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         /// Prepared when an explicit jump starts, spent when its row arrives.
         private var navigationArrivalHaptic: UIImpactFeedbackGenerator?
 
-        var hiddenCount = 0
-        var hasOlderServerPage = false
         var workLineByID: [String: QuietTimelineWorkLine] = [:]
-        var renderWindowStep = 0
+        /// Timeline extent when the last automatic earlier-rows request fired;
+        /// nil means armed. A reveal or a loaded page changes the extent and
+        /// re-arms, while a page load that fails or stays in flight waits for
+        /// the next drag instead of refiring on every scroll frame.
+        var earlierRowsRequestMark: EarlierRowsRequestMark?
         var streamingAssistantID: String?
         var audioPlayer: AudioPlayerService?
         var audioLifecycleCoordinator: AudioLifecycleCoordinator? {
@@ -524,7 +526,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
         private var workLineReplacementIDByPreviousID: [String: String] = [:]
         private var previousItemByID: [String: ChatItem] = [:]
         private var previousStreamingAssistantID: String?
-        private var previousHiddenCount = 0
+        private(set) var previousHiddenCount = 0
         private var previousHasOlderServerPage = false
         private var previousItemCount = 0
         private var previousShowsWorkingIndicator = false
@@ -976,8 +978,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             let sessionScopeChanged = context.didChangeSessionScope(for: configuration)
             let agentPresentationChanged = context.didChangeAgentPresentation(for: configuration)
             let chromeStyleChanged = context.didChangeChromeStyle(for: configuration)
-            hiddenCount = configuration.hiddenCount
-            hasOlderServerPage = configuration.hasOlderServerPage
             workLineReplacementIDByPreviousID = Dictionary(uniqueKeysWithValues:
                 previousWorkLineByID.compactMap { previousID, previousLine in
                     guard configuration.workLineByID[previousID] == nil else { return nil }
@@ -992,7 +992,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             )
             workLineByID = configuration.workLineByID
             currentWorkLineByID = configuration.workLineByID
-            renderWindowStep = configuration.renderWindowStep
             streamingAssistantID = configuration.streamingAssistantID
             updateLiveTailItemIDs(in: collectionView, configuration: configuration)
             let expandedChanged = (reducer?.expandedItemIDs ?? [])
@@ -1317,6 +1316,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             // the rendered suffix is replaced. A later window shift can move
             // the same item to a new index path. Skip when a viewport jump is
             // pending: the identity pin would fight relative-Y restoration.
+            var readerPosition: AnchoredCollectionView.DetachedReaderPosition?
             if let anchoredCV = collectionView as? AnchoredCollectionView {
                 let detached = !(scrollController?.isCurrentlyNearBottom ?? true)
                 anchoredCV.isDetachedFromBottom = detached
@@ -1333,6 +1333,7 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                     anchoredCV.remapDetachedAnchorItemID(
                         using: workLineReplacementIDByPreviousID
                     )
+                    readerPosition = anchoredCV.detachedReaderPosition
                 }
             }
 
@@ -1382,8 +1383,6 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
                 previousIDs: previousIDs,
                 nextItemByID: applyPlan.nextItemByID,
                 previousItemByID: previousItemByID,
-                hiddenCount: configuration.hiddenCount,
-                previousHiddenCount: previousHiddenCount,
                 streamingAssistantID: configuration.streamingAssistantID,
                 previousStreamingAssistantID: previousStreamingAssistantID,
                 sessionId: configuration.sessionId,
@@ -1424,12 +1423,22 @@ struct ChatTimelineCollectionHost: UIViewRepresentable {
             if detached {
                 let layoutToken = ChatTimelinePerf.beginLayoutPass(itemCount: applyPlan.nextIDs.count, sessionId: configuration.sessionId)
                 collectionView.layoutIfNeeded()
-                if !workLineReplacementIDByPreviousID.isEmpty,
+                if let readerPosition,
                    let anchoredCollectionView = collectionView as? AnchoredCollectionView {
-                    anchoredCollectionView.restoreRemappedDetachedAnchorPosition()
-                    DispatchQueue.main.async { [weak anchoredCollectionView] in
-                        anchoredCollectionView?.layoutIfNeeded()
-                        anchoredCollectionView?.restoreRemappedDetachedAnchorPosition()
+                    anchoredCollectionView.restoreDetachedReaderPosition(readerPosition)
+                    if !workLineReplacementIDByPreviousID.isEmpty {
+                        DispatchQueue.main.async { [weak anchoredCollectionView] in
+                            // A finger that landed since the apply owns the
+                            // viewport; replaying the old Y would snap it back.
+                            guard let anchoredCollectionView,
+                                  !anchoredCollectionView.isTracking,
+                                  !anchoredCollectionView.isDragging,
+                                  !anchoredCollectionView.isDecelerating else {
+                                return
+                            }
+                            anchoredCollectionView.layoutIfNeeded()
+                            anchoredCollectionView.restoreDetachedReaderPosition(readerPosition)
+                        }
                     }
                 }
                 ChatTimelinePerf.endLayoutPass(layoutToken)
