@@ -29,7 +29,10 @@ export const GROK_VOICE_DEFAULT_MODEL = "grok-voice-latest";
 export const GROK_VOICE_DEFAULT_VOICE = "eve";
 const INPUT_SAMPLE_RATE = 16_000;
 const OUTPUT_SAMPLE_RATE = 24_000;
-/** s16le mono at the output rate. */
+/** s16le mono at the input and output rates. */
+const INPUT_BYTES_PER_MS = (INPUT_SAMPLE_RATE * 2) / 1000;
+/** Output gaps longer than this are a pause between replies, not network jitter. */
+const REPLY_GAP_MS = 1_000;
 const OUTPUT_BYTES_PER_MS = (OUTPUT_SAMPLE_RATE * 2) / 1000;
 const START_TIMEOUT_MS = 10_000;
 const DELEGATE_TOOL = "delegate_to_pi";
@@ -89,7 +92,7 @@ type XaiEvent = {
   transcript?: string;
   delta?: string;
   response_id?: string;
-  response?: { metadata?: Record<string, unknown> | null };
+  response?: { metadata?: Record<string, unknown> | null; status?: string };
   error?: { message?: string; code?: string };
 };
 
@@ -137,6 +140,30 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
   /** Rejects a start still waiting for xAI, so a hang-up mid-connect ends it at once. */
   private abortStart: ((error: Error) => void) | undefined;
   private readonly now: () => number;
+  /** Logged once when the call's Grok session ends; see `logCallSummary`. */
+  private readonly stats = {
+    readyAt: 0,
+    inputBytes: 0,
+    userTurns: 0,
+    xaiReplies: 0,
+    piUpdateReplies: 0,
+    cancelledReplies: 0,
+    delegations: 0,
+    outputBytes: 0,
+    /** Longest wait between two audio chunks of one reply, as sent to the phone. */
+    maxOutputGapMs: 0,
+    lastOutputAt: 0,
+    /**
+     * How far one reply's audio fell behind real time: the playback buffer a phone needs
+     * to play that reply without a gap. Measured from the reply's first chunk.
+     */
+    maxNeededBufferMs: 0,
+    replyFirstOutputAt: 0,
+    replyOutputMs: 0,
+    /** Time from the user's turn ending to the first reply audio, worst case. */
+    maxReplyLatencyMs: 0,
+    turnEndedAt: 0,
+  };
 
   constructor(private readonly options: GrokVoiceOptions) {
     this.now = options.now ?? Date.now;
@@ -191,6 +218,7 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
           if (event.type === "session.created") this.configureSession(socket);
           else if (event.type === "session.updated") {
             this.ready = true;
+            this.stats.readyAt = this.now();
             done();
           } else if (event.type === "error") {
             fail(
@@ -229,7 +257,9 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
   feedAudio(pcm: Buffer): void {
     if (!this.ready || this.stopped || pcm.length === 0) return;
     const socket = this.socket;
-    if (socket?.readyState === OPEN) socket.send(pcm);
+    if (socket?.readyState !== OPEN) return;
+    this.stats.inputBytes += pcm.length;
+    socket.send(pcm);
   }
 
   /** Adds a Pi result to the conversation and asks Grok to say it once it has finished speaking. */
@@ -250,6 +280,7 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
   async stop(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
+    this.logCallSummary("stopped");
     this.abortStart?.(new Error(ENDED_BEFORE_READY));
     this.clearResponseTimer();
     this.closeSocket();
@@ -315,6 +346,7 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
         // A non-empty partial is the client's barge-in signal, so show one at once.
         this.playbackEndsAt = this.now();
         this.userSpeaking = true;
+        this.stats.userTurns += 1;
         this.turn += 1;
         if (this.assistantSpeaking) {
           this.assistantSpeaking = false;
@@ -325,6 +357,7 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
         return;
       case "input_audio_buffer.speech_stopped":
         this.userSpeaking = false;
+        this.stats.turnEndedAt = this.now();
         // xAI commits the turn and answers it itself (server VAD); wait for that reply.
         this.awaitTurnReply();
         await handler({ type: "user_speech_ended" });
@@ -356,10 +389,15 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
       }
       case "response.created": {
         this.responseActive = true;
+        this.stats.lastOutputAt = 0; // gaps are measured within one reply
+        this.stats.replyFirstOutputAt = 0;
+        this.stats.replyOutputMs = 0;
         this.respondedWithSpeech = false;
         const metadata = event.response?.metadata;
         const ours = metadata?.[RESPONSE_SOURCE_KEY] === OWN_RESPONSE_SOURCE;
         this.responseFromAdapter = ours;
+        if (ours) this.stats.piUpdateReplies += 1;
+        else this.stats.xaiReplies += 1;
         const current = ours && metadata?.[RESPONSE_ID_KEY] === this.ownCreateId;
         if (!ours) {
           // xAI's own reply to the user's turn.
@@ -383,6 +421,9 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
         return;
       case "response.done":
         this.responseActive = false;
+        // A reply that only called a tool must not stretch the latency to a later reply.
+        this.stats.turnEndedAt = 0;
+        if (event.response?.status === "cancelled") this.stats.cancelledReplies += 1;
         if (this.assistantSpeaking) {
           this.assistantSpeaking = false;
           await handler({ type: "assistant_speech_stopped" });
@@ -410,6 +451,23 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
       );
     }
     const now = this.now();
+    this.stats.outputBytes += pcm.length;
+    const gap = now - this.stats.lastOutputAt;
+    if (this.stats.lastOutputAt > 0 && gap < REPLY_GAP_MS) {
+      this.stats.maxOutputGapMs = Math.max(this.stats.maxOutputGapMs, gap);
+    }
+    if (this.stats.turnEndedAt > 0) {
+      this.stats.maxReplyLatencyMs = Math.max(
+        this.stats.maxReplyLatencyMs,
+        now - this.stats.turnEndedAt,
+      );
+      this.stats.turnEndedAt = 0;
+    }
+    this.stats.lastOutputAt = now;
+    if (this.stats.replyFirstOutputAt === 0) this.stats.replyFirstOutputAt = now;
+    const behind = now - this.stats.replyFirstOutputAt - this.stats.replyOutputMs;
+    this.stats.maxNeededBufferMs = Math.max(this.stats.maxNeededBufferMs, behind);
+    this.stats.replyOutputMs += pcm.length / OUTPUT_BYTES_PER_MS;
     this.playbackEndsAt = Math.max(this.playbackEndsAt, now) + pcm.length / OUTPUT_BYTES_PER_MS;
     this.playbackSink?.(pcm);
   }
@@ -434,6 +492,7 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
             utteranceId: randomUUID(),
             text: request,
           });
+          this.stats.delegations += 1;
           output = {
             status: "delegated",
             note: "Pi is working; results arrive as [Pi update] messages.",
@@ -539,10 +598,30 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
 
   private async endFromRemote(reason: string): Promise<void> {
     this.stopped = true;
+    this.logCallSummary(reason);
     this.clearResponseTimer();
     const handler = this.handler;
     this.handler = undefined;
     if (handler) await handler({ type: "disconnected", reason });
+  }
+
+  /** One line per Grok session: enough to tell echo barge-in, network gaps, and slow replies apart. */
+  private logCallSummary(ended: string): void {
+    const st = this.stats;
+    log.info("grok_voice.call_summary", {
+      ended,
+      connectedMs: st.readyAt > 0 ? this.now() - st.readyAt : 0,
+      inputMs: Math.round(st.inputBytes / INPUT_BYTES_PER_MS),
+      outputMs: Math.round(st.outputBytes / OUTPUT_BYTES_PER_MS),
+      userTurns: st.userTurns,
+      xaiReplies: st.xaiReplies,
+      piUpdateReplies: st.piUpdateReplies,
+      cancelledReplies: st.cancelledReplies,
+      delegations: st.delegations,
+      maxOutputGapMs: Math.round(st.maxOutputGapMs),
+      maxNeededBufferMs: Math.round(st.maxNeededBufferMs),
+      maxReplyLatencyMs: Math.round(st.maxReplyLatencyMs),
+    });
   }
 
   private closeSocket(): void {

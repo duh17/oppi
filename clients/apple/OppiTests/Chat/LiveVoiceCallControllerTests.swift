@@ -487,9 +487,10 @@ struct LiveVoiceCallControllerTests {
         #expect(harness.audio.isCapturing)
     }
 
-    @Test("A newer delegation update cancels the previous playback generation")
-    func newerUpdateCancelsPlaybackGeneration() async throws {
+    @Test("A delegation update shows its text without cutting off speech already playing")
+    func delegationUpdateKeepsPlayback() async throws {
         let harness = try await startedHarness()
+        let stopsBefore = harness.audio.playbackStops
         harness.channel.emitAudio(Data([1]))
         await waitUntil { harness.audio.played == [Data([1])] }
 
@@ -507,12 +508,12 @@ struct LiveVoiceCallControllerTests {
                 )
             )
         )
-        await waitUntil { harness.audio.playbackStops >= 1 }
+        await waitUntil { harness.controller.statusText == "three open sessions" }
 
         harness.channel.emitAudio(Data([2]))
         await waitUntil { harness.audio.played == [Data([1]), Data([2])] }
+        #expect(harness.audio.playbackStops == stopsBefore)
         #expect(harness.controller.isLive)
-        #expect(harness.controller.statusText == "three open sessions")
     }
 
     @Test("Finish during an unconfirmed start still ends the orphaned server call")

@@ -104,6 +104,97 @@ final class LiveVoiceAudioOwner: LiveVoiceAudioOwning {
     }
 }
 
+/// Jitter buffer for Live Voice playback, kept apart from AVFoundation so it is testable.
+///
+/// Network audio arrives in uneven chunks. Playing each one the moment it lands turns every
+/// late chunk into an audible gap, so a reply starts only once `primeFrames` are queued (or
+/// `primeWait` has passed, for short replies), and the queue re-primes whenever it runs dry.
+struct LiveVoicePlaybackScheduler {
+    enum Decision: Equatable {
+        /// Keep the chunk until the queue is primed.
+        case hold
+        /// Play everything held so far, then this chunk.
+        case startWithHeld
+        /// Already playing: queue the chunk behind the others.
+        case schedule
+    }
+
+    /// One call's playback, logged when the call's audio stops.
+    struct Stats: Equatable {
+        var chunks = 0
+        var receivedFrames = 0
+        /// Longest wait between two chunks of the same reply, in milliseconds.
+        var maxGapMs = 0
+        /// The queue ran dry and more audio of the same reply arrived soon after.
+        var underruns = 0
+        /// Queued audio dropped because the user talked over the reply.
+        var flushes = 0
+    }
+
+    static let sampleRate = 24_000
+    static let primeFrames = sampleRate * 180 / 1000
+    static let primeWait: TimeInterval = 0.3
+    /// Gaps longer than this are a pause between replies, not jitter.
+    static let replyGap: TimeInterval = 1.0
+
+    private(set) var stats = Stats()
+    private var priming = true
+    private var heldFrames = 0
+    private var queuedFrames = 0
+    private var lastArrival: TimeInterval?
+    private var drainedAt: TimeInterval?
+
+    mutating func receive(frames: Int, at now: TimeInterval) -> Decision {
+        stats.chunks += 1
+        stats.receivedFrames += frames
+        if let lastArrival, now - lastArrival < Self.replyGap {
+            stats.maxGapMs = max(stats.maxGapMs, Int(((now - lastArrival) * 1000).rounded()))
+        }
+        lastArrival = now
+        guard priming else {
+            queuedFrames += frames
+            return .schedule
+        }
+        if heldFrames == 0, let drainedAt, now - drainedAt < Self.replyGap {
+            stats.underruns += 1
+        }
+        heldFrames += frames
+        guard heldFrames >= Self.primeFrames else { return .hold }
+        startHeld()
+        return .startWithHeld
+    }
+
+    /// The prime wait ran out; true when held audio should start now.
+    mutating func primeTimedOut() -> Bool {
+        guard priming, heldFrames > 0 else { return false }
+        startHeld()
+        return true
+    }
+
+    mutating func played(frames: Int, at now: TimeInterval) {
+        queuedFrames = max(0, queuedFrames - frames)
+        guard !priming, queuedFrames == 0 else { return }
+        priming = true
+        drainedAt = now
+    }
+
+    /// Drops held and queued audio. Only a drop the user caused counts as a flush.
+    mutating func flush(userTalked: Bool) {
+        if userTalked, heldFrames > 0 || queuedFrames > 0 { stats.flushes += 1 }
+        priming = true
+        heldFrames = 0
+        queuedFrames = 0
+        drainedAt = nil
+        lastArrival = nil
+    }
+
+    private mutating func startHeld() {
+        priming = false
+        queuedFrames += heldFrames
+        heldFrames = 0
+    }
+}
+
 /// One play-and-record session so Live Voice capture can coexist with playback.
 @MainActor
 final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlaybackEngine {
@@ -112,8 +203,18 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
     private var player: AVAudioPlayerNode?
     private var playbackFormat: AVAudioFormat?
     private var tapInstalled = false
+    private var scheduler = LiveVoicePlaybackScheduler()
+    private var held: [AVAudioPCMBuffer] = []
+    /// Bumped on every flush so callbacks from dropped buffers are ignored.
+    private var generation = 0
+    private var primeTimer: Task<Void, Never>?
+    private var echoCancellation = false
+    private var onPCM: (@Sendable (Data) -> Void)?
+    private var observers: [NSObjectProtocol] = []
+    private var recoveries = 0
 
     func start(onPCM: @escaping @Sendable (Data) -> Void) throws {
+        // The session is set up here, once per capture start, never per played chunk.
         try activateSession()
         if audioEngine == nil {
             audioEngine = AVAudioEngine()
@@ -125,6 +226,9 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
             engine.inputNode.removeTap(onBus: 0)
             tapInstalled = false
         }
+        self.onPCM = onPCM
+        observeAudioChanges(of: engine)
+        enableEchoCancellation(on: engine)
         // Install the mic tap on a bare engine. Attaching the 24 kHz playback
         // graph first makes inputNode.outputFormat report 0 Hz on device.
         try LiveVoiceCaptureEngineHelper.installTap(engine: engine, onPCM: onPCM)
@@ -146,12 +250,25 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
     }
 
     func stopPlayback() {
+        dropPlayback(userTalked: true)
+    }
+
+    private func dropPlayback(userTalked: Bool) {
+        generation &+= 1
+        primeTimer?.cancel()
+        primeTimer = nil
+        held.removeAll()
+        scheduler.flush(userTalked: userTalked)
         player?.stop()
         player?.reset()
     }
 
     func teardown() {
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }
+        observers.removeAll()
+        onPCM = nil
         stopCapture()
+        let stats = scheduler.stats
         stopPlayback()
         audioEngine?.stop()
         if let player {
@@ -160,30 +277,159 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
         player = nil
         playbackFormat = nil
         audioEngine = nil
+        Self.logCallAudio(stats, echoCancellation: echoCancellation, recoveries: recoveries)
+        scheduler = LiveVoicePlaybackScheduler()
+        echoCancellation = false
+        recoveries = 0
     }
 
     func play(_ pcm: Data) {
-        guard !pcm.isEmpty else { return }
-        do {
-            try activateSession()
-            if audioEngine == nil {
-                audioEngine = AVAudioEngine()
-            }
-            guard let engine = audioEngine else { return }
-            try attachPlayback(to: engine)
-            if !engine.isRunning {
-                engine.prepare()
-                try engine.start()
-            }
-        } catch {
-            return
-        }
-        guard let player, let format = playbackFormat,
+        // Audio before the call's engine exists has nowhere to play.
+        guard !pcm.isEmpty, let player, let format = playbackFormat,
               let buffer = LiveVoiceCaptureEngineHelper.pcm16LEBuffer(data: pcm, format: format) else {
             return
         }
+        switch scheduler.receive(frames: Int(buffer.frameLength), at: ProcessInfo.processInfo.systemUptime) {
+        case .hold:
+            held.append(buffer)
+            armPrimeTimer()
+        case .startWithHeld:
+            held.append(buffer)
+            startHeld()
+        case .schedule:
+            schedule(buffer, on: player)
+        }
+    }
+
+    private func armPrimeTimer() {
+        guard primeTimer == nil else { return }
+        let generation = generation
+        primeTimer = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(LiveVoicePlaybackScheduler.primeWait))
+            guard let self, !Task.isCancelled, self.generation == generation else { return }
+            self.primeTimer = nil
+            if self.scheduler.primeTimedOut() { self.startHeld() }
+        }
+    }
+
+    private func startHeld() {
+        primeTimer?.cancel()
+        primeTimer = nil
+        guard let player else { return }
+        // A restart that failed earlier left the engine stopped; a stopped player plays nothing.
+        if audioEngine?.isRunning == false { restartEngine(reason: "stopped_at_reply") }
+        let buffers = held
+        held.removeAll()
+        for buffer in buffers { schedule(buffer, on: player) }
         if !player.isPlaying { player.play() }
-        player.scheduleBuffer(buffer)
+    }
+
+    private func schedule(_ buffer: AVAudioPCMBuffer, on player: AVAudioPlayerNode) {
+        let generation = generation
+        let frames = Int(buffer.frameLength)
+        player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.generation == generation else { return }
+                self.scheduler.played(frames: frames, at: ProcessInfo.processInfo.systemUptime)
+            }
+        }
+    }
+
+    /// AirPods connecting, a phone call or Siri, or a speaker change stops the engine, and no
+    /// more audio plays or records until it restarts. Restart it with the same graph.
+    private func observeAudioChanges(of engine: AVAudioEngine) {
+        guard observers.isEmpty else { return }
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.recover(reason: "configuration_change") }
+        })
+        #if os(iOS)
+        observers.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] note in
+            let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            guard raw.flatMap(AVAudioSession.InterruptionType.init(rawValue:)) == .ended else { return }
+            MainActor.assumeIsolated { self?.recover(reason: "interruption_ended") }
+        })
+        #endif
+    }
+
+    private func recover(reason: String) {
+        guard let engine = audioEngine else { return }
+        recoveries += 1
+        // Queued audio was lost with the stopped engine; start the next reply primed.
+        dropPlayback(userTalked: false)
+        if isCapturing, let onPCM {
+            if tapInstalled { engine.inputNode.removeTap(onBus: 0) }
+            tapInstalled = false
+            do {
+                try LiveVoiceCaptureEngineHelper.installTap(engine: engine, onPCM: onPCM)
+                tapInstalled = true
+            } catch {
+                Self.logRestartFailure(reason: reason, step: "mic_tap", error: error)
+            }
+        }
+        // Playback restarts even if the mic could not; the next reply retries a failed start.
+        restartEngine(reason: reason)
+    }
+
+    private func restartEngine(reason: String) {
+        guard let engine = audioEngine, !engine.isRunning else { return }
+        do {
+            try activateSession()
+            engine.prepare()
+            try engine.start()
+        } catch {
+            Self.logRestartFailure(reason: reason, step: "engine", error: error)
+        }
+    }
+
+    private static func logRestartFailure(reason: String, step: String, error: Error) {
+        ClientLog.warning("LiveVoice", "Audio restart failed", metadata: [
+            "reason": reason,
+            "step": step,
+            "error_domain": (error as NSError).domain,
+            "error_code": String((error as NSError).code),
+        ])
+    }
+
+    /// Voice processing cancels the speaker's echo from the mic. Without it the server hears
+    /// Grok's own voice, takes it for the user talking over the reply, and cuts the reply off.
+    private func enableEchoCancellation(on engine: AVAudioEngine) {
+        // Voice processing can only change on a stopped engine (unmute restarts capture on a
+        // running one).
+        guard !engine.isRunning, !engine.inputNode.isVoiceProcessingEnabled else { return }
+        do {
+            try engine.inputNode.setVoiceProcessingEnabled(true)
+            echoCancellation = true
+        } catch {
+            ClientLog.warning("LiveVoice", "Echo cancellation unavailable", metadata: [
+                "error_domain": (error as NSError).domain,
+                "error_code": String((error as NSError).code),
+            ])
+        }
+    }
+
+    private static func logCallAudio(
+        _ stats: LiveVoicePlaybackScheduler.Stats,
+        echoCancellation: Bool,
+        recoveries: Int
+    ) {
+        ClientLog.info("LiveVoice", "Call playback", metadata: [
+            "chunks": String(stats.chunks),
+            "received_ms": String(stats.receivedFrames * 1000 / LiveVoicePlaybackScheduler.sampleRate),
+            "max_gap_ms": String(stats.maxGapMs),
+            "underruns": String(stats.underruns),
+            "flushes": String(stats.flushes),
+            "echo_cancellation": String(echoCancellation),
+            "audio_restarts": String(recoveries),
+        ], flush: true)
     }
 
     private func activateSession() throws {
@@ -202,7 +448,10 @@ final class LiveVoiceDuplexCaptureEngine: LiveVoiceCaptureEngine, LiveVoicePlayb
     private func attachPlayback(to engine: AVAudioEngine) throws {
         guard player == nil else { return }
         let playerNode = AVAudioPlayerNode()
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: 24_000, channels: 1) else {
+        guard let format = AVAudioFormat(
+            standardFormatWithSampleRate: Double(LiveVoicePlaybackScheduler.sampleRate),
+            channels: 1
+        ) else {
             throw VoiceInputError.internalError("Cannot create Live Voice playback format")
         }
         engine.attach(playerNode)
@@ -256,16 +505,24 @@ enum LiveVoiceCaptureEngineHelper {
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { buffer, _ in
             let outputBuffer: AVAudioPCMBuffer
             if let converter {
-                let frameCapacity = AVAudioFrameCount(
+                let frameCapacity = AVAudioFrameCount(ceil(
                     Double(buffer.frameLength) * targetFormat.sampleRate / inputFormat.sampleRate
-                )
+                ))
                 guard let converted = AVAudioPCMBuffer(
                     pcmFormat: targetFormat,
                     frameCapacity: frameCapacity
                 ) else { return }
 
                 var error: NSError?
+                // Supply each tap buffer once. Returning it on every request repeats mic
+                // audio to the server whenever the converter asks for more input.
+                nonisolated(unsafe) var suppliedInput = false
                 converter.convert(to: converted, error: &error) { _, outStatus in
+                    guard !suppliedInput else {
+                        outStatus.pointee = .noDataNow
+                        return nil
+                    }
+                    suppliedInput = true
                     outStatus.pointee = .haveData
                     return buffer
                 }

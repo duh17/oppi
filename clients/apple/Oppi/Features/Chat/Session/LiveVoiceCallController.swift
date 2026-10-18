@@ -255,7 +255,8 @@ final class LiveVoiceCallController {
         case .error(let message, _, _):
             failClosed(message, closeChannel: true)
         case .voiceDelegationUpdate(let update):
-            audio?.stopPlayback()
+            // Status only. Playback stops when the user talks (a new partial transcript);
+            // an update must not cut off speech already playing.
             if !update.text.isEmpty, approvalSummary == nil {
                 statusText = update.text
             }

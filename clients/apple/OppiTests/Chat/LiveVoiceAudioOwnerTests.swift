@@ -88,6 +88,62 @@ struct LiveVoiceAudioOwnerTests {
     }
 }
 
+@Suite("LiveVoicePlaybackScheduler")
+struct LiveVoicePlaybackSchedulerTests {
+    /// 60 ms of 24 kHz audio, about one network chunk.
+    private let chunk = 1_440
+
+    @Test("A reply waits for 180 ms of audio, then plays continuously")
+    func primesBeforePlaying() {
+        var scheduler = LiveVoicePlaybackScheduler()
+        do { let decision = scheduler.receive(frames: chunk, at: 0); #expect(decision == .hold) }
+        do { let decision = scheduler.receive(frames: chunk, at: 0.05); #expect(decision == .hold) }
+        do { let decision = scheduler.receive(frames: chunk, at: 0.1); #expect(decision == .startWithHeld) }
+        do { let decision = scheduler.receive(frames: chunk, at: 0.15); #expect(decision == .schedule) }
+        do { let started = scheduler.primeTimedOut(); #expect(!started) }
+    }
+
+    @Test("A short reply starts when the prime wait runs out")
+    func shortReplyStartsOnTimeout() {
+        var scheduler = LiveVoicePlaybackScheduler()
+        do { let decision = scheduler.receive(frames: chunk, at: 0); #expect(decision == .hold) }
+        do { let started = scheduler.primeTimedOut(); #expect(started) }
+        do { let decision = scheduler.receive(frames: chunk, at: 0.05); #expect(decision == .schedule) }
+    }
+
+    @Test("A queue that runs dry mid-reply counts an underrun and re-primes")
+    func countsUnderrunAndReprimes() {
+        var scheduler = LiveVoicePlaybackScheduler()
+        for i in 0..<3 { _ = scheduler.receive(frames: chunk, at: Double(i) * 0.01) }
+        scheduler.played(frames: chunk * 3, at: 0.2)
+        do { let decision = scheduler.receive(frames: chunk, at: 0.5); #expect(decision == .hold) }
+        #expect(scheduler.stats.underruns == 1)
+        #expect(scheduler.stats.maxGapMs == 480)
+
+        // A new reply after a pause is not an underrun, and its gap is not jitter.
+        var fresh = LiveVoicePlaybackScheduler()
+        _ = fresh.receive(frames: chunk * 3, at: 0)
+        fresh.played(frames: chunk * 3, at: 0.2)
+        _ = fresh.receive(frames: chunk, at: 3)
+        #expect(fresh.stats.underruns == 0)
+        #expect(fresh.stats.maxGapMs == 0)
+    }
+
+    @Test("Talking over a reply drops its queued audio and starts the next reply primed")
+    func flushDropsQueue() {
+        var scheduler = LiveVoicePlaybackScheduler()
+        _ = scheduler.receive(frames: chunk * 3, at: 0)
+        scheduler.flush(userTalked: true)
+        scheduler.flush(userTalked: true)
+        #expect(scheduler.stats.flushes == 1)
+        _ = scheduler.receive(frames: chunk * 3, at: 0.4)
+        scheduler.flush(userTalked: false) // an audio restart, not the user
+        #expect(scheduler.stats.flushes == 1)
+        do { let decision = scheduler.receive(frames: chunk, at: 0.5); #expect(decision == .hold) }
+        #expect(scheduler.stats.underruns == 0)
+    }
+}
+
 @MainActor
 private final class FakeLiveVoicePlaybackEngine: LiveVoicePlaybackEngine {
     private(set) var played: [Data] = []
