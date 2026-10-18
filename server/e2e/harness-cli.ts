@@ -11,7 +11,7 @@ import {
   E2E_MODEL,
   applyAppleE2EBootstrapEnv,
   bootstrapAppleE2E,
-  ensureMLXServerReady,
+  ensureE2EModelReady,
   startServer,
   stopServer,
 } from "./harness.ts";
@@ -40,9 +40,8 @@ async function main(): Promise<void> {
 async function appleBootstrap(): Promise<void> {
   applyAppleE2EBootstrapEnv();
 
-  const ready = await ensureMLXServerReady();
-  if (!ready) {
-    throw new Error("Local model server is not ready");
+  if (!(await ensureE2EModelReady())) {
+    throw new Error(`Model lane ${E2E_MODEL} is not ready`);
   }
 
   await startServer();

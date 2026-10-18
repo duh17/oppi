@@ -4,7 +4,7 @@ End-to-end tests exercise the HTTP/TLS compatibility path against native or cont
 
 ## Prerequisites
 
-- The HTTP/TLS suites require mlx-serve at `http://127.0.0.1:11234` with `ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit` loaded. The harness fails in strict mode if that chat model is absent; it does not fall back to an image model.
+- Model-backed suites run `anthropic/claude-haiku-5-5` through your Pi Anthropic login in `~/.pi/agent/auth.json` (override with `E2E_SOURCE_PI_AGENT_DIR`). Run `pi` and `/login` first. In strict mode the harness fails when that login is missing.
 - Explicit Docker Compose mode requires Docker (OrbStack recommended).
 - The Tailscale benchmark requires local `tailscale`, `ssh`, `rsync`, and `scp` commands, plus a separately provisioned macOS peer reachable through batch-mode SSH. The peer requires Node.js, npm, Tailscale, and npm registry access. The runner installs locked dependencies in a unique `/tmp` directory, then removes it.
 
@@ -57,7 +57,7 @@ Relevant feature-story dispositions from `.internal/reports/feature-user-story-s
 ## Running
 
 ```bash
-# Preferred local HTTP/TLS mode: spawns the server directly and requires mlx-serve
+# Preferred local HTTP/TLS mode: spawns the server directly
 cd server && E2E_NATIVE=1 npm run test:e2e
 
 # Explicit Docker Compose HTTP/TLS mode
@@ -76,21 +76,20 @@ cd server && \
   npm run bench:tailscale-network
 ```
 
-On Mac Studio, do not add writable repository, worktree, report, or output bind mounts to the Docker lane. The current E2E compose file builds from a copied context, mounts its generated `models.json` read-only, and stores server state in a named volume. Use native mode for normal local iteration.
+On Mac Studio, do not add writable repository, worktree, report, or output bind mounts to the Docker lane. The current E2E compose file builds from a copied context, mounts the generated Haiku-lane `auth.json` and `settings.json` (see `model-lane.ts`), and stores server state in a named volume. Use native mode for normal local iteration.
 
 ## Configuration
 
-| Env var                    | Default                             | Description                                                                                               |
-| -------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `E2E_PORT`                 | `17760`                             | Server port                                                                                               |
-| `E2E_MODEL`                | pinned                              | `mlx-serve/ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit` after `/v1/models` verification              |
-| `E2E_MLX_SERVE_URL`        | `http://127.0.0.1:11234`            | Host mlx-serve endpoint (omit `/v1`)                                                                      |
-| `E2E_MLX_SERVE_DOCKER_URL` | `http://host.docker.internal:11234` | Container-to-host endpoint (omit `/v1`)                                                                   |
-| `E2E_NATIVE`               | `0`                                 | `1` to skip Docker, run server natively                                                                   |
-| `E2E_KEEP_NATIVE_DATA_DIR` | unset                               | `1` to preserve the isolated native data dir and `server.log` after a test run                            |
-| `E2E_SERVER_DIR`           | unset                               | Override native server package dir for tarball/install validation                                         |
-| `E2E_TLS_MODE`             | `self-signed`                       | Native mode TLS setting. Apple `/pair` and `/auth/*` require HTTPS; do not use `disabled` for iOS pairing |
-| `OPPI_E2E_UI_HARNESS`      | `0`                                 | Enables `/e2e/ui/...` injection routes for Apple extension UI snapshot tests                              |
+| Env var                    | Default       | Description                                                                                               |
+| -------------------------- | ------------- | --------------------------------------------------------------------------------------------------------- |
+| `E2E_PORT`                 | `17760`       | Server port                                                                                               |
+| `E2E_SOURCE_PI_AGENT_DIR`  | `~/.pi/agent` | Pi agent dir whose Anthropic login supplies the E2E access token                                          |
+| `E2E_ANTHROPIC_EXTENSION`  | unset         | Pi extension linked into the isolated agent dir to send subscription requests (native mode only)          |
+| `E2E_NATIVE`               | `0`           | `1` to skip Docker, run server natively                                                                   |
+| `E2E_KEEP_NATIVE_DATA_DIR` | unset         | `1` to preserve the isolated native data dir and `server.log` after a test run                            |
+| `E2E_SERVER_DIR`           | unset         | Override native server package dir for tarball/install validation                                         |
+| `E2E_TLS_MODE`             | `self-signed` | Native mode TLS setting. Apple `/pair` and `/auth/*` require HTTPS; do not use `disabled` for iOS pairing |
+| `OPPI_E2E_UI_HARNESS`      | `0`           | Enables `/e2e/ui/...` injection routes for Apple extension UI snapshot tests                              |
 
 Tailscale benchmark-only variables:
 
@@ -106,6 +105,7 @@ Tailscale benchmark-only variables:
 e2e/
 ├── harness.ts                         # Shared: Docker/native/package lifecycle, API/WS/bootstrap helpers
 ├── harness-cli.ts                     # Thin CLI wrapper for non-Vitest harness callers
+├── model-lane.ts                      # Haiku model lane: isolated Pi auth + settings
 ├── pairing-flow.e2e.test.ts           # Suite 1: pairing flow
 ├── paired-session.e2e.test.ts         # Suite 2: already-paired session flow
 ├── docker-compose.e2e.yml             # HTTP/TLS Docker server config
@@ -118,10 +118,10 @@ e2e/
 
 The harness supports two modes:
 
-- **Docker mode** (default): builds and starts `oppi-e2e` through Docker Compose, with mlx-serve reached via `host.docker.internal`
+- **Docker mode** (default): builds and starts `oppi-e2e` through Docker Compose
 - **Native mode** (`E2E_NATIVE=1`): builds the server locally, starts it as a child process in a temp directory, and skips Docker cleanup
 - **Packaged native mode** (`E2E_NATIVE=1 E2E_SERVER_DIR=/path/to/node_modules/oppi-server`): runs the installed package tarball through the same native harness without rebuilding source
 
-Both modes generate a temporary `models.json` for the pinned mlx-serve chat model after verifying it in `/v1/models`. Model-backed test workspaces use a server-visible main checkout: an isolated directory under the native data dir or Docker's `/root/workspace` tmpfs. Docker mode also requires mlx-serve to accept requests from `host.docker.internal`.
+Both modes give the server an isolated Pi agent dir from `model-lane.ts`: `auth.json` holds only a current Anthropic access token (Pi refreshes your login first if it expired), and `settings.json` sets `enabledModels` to Haiku so sessions created without a model use it. Your refresh token never leaves `~/.pi/agent`. Anthropic bills a subscription token sent through Pi's built-in provider as extra usage, so a subscription login also needs `E2E_ANTHROPIC_EXTENSION` pointing at a Pi extension that sends those requests the way Claude Code does. Shell wrappers call `node server/e2e/model-lane.ts write <pi-agent-dir>`. Model-backed test workspaces use a server-visible main checkout: an isolated directory under the native data dir or Docker's `/root/workspace` tmpfs.
 
-Apple E2E scripts remain responsible for Xcode and simulator orchestration. Server-bootstrap details should flow through this harness shape: model discovery, server lifecycle, pairing, fixture workspace creation, invite files, and the guarded extension UI injection route.
+Apple E2E scripts remain responsible for Xcode and simulator orchestration. Server-bootstrap details should flow through this harness shape: the model lane, server lifecycle, pairing, fixture workspace creation, invite files, and the guarded extension UI injection route.

@@ -6,7 +6,8 @@
  * - Docker mode (default): spins up oppi-e2e container
  * - Native mode (E2E_NATIVE=1): starts server as child process (faster iteration)
  *
- * Requires mlx-serve on 127.0.0.1:11234 with the pinned E2E chat model loaded.
+ * Model-backed suites run Claude Haiku through the developer's Pi Anthropic
+ * login (see model-lane.ts).
  */
 
 import { execSync, spawn, type ChildProcess } from "node:child_process";
@@ -27,6 +28,10 @@ import { basename, join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import WebSocket from "ws";
 
+import { E2E_MODEL, resolveE2EAnthropicToken, writeE2EModelLane } from "./model-lane.ts";
+
+export { E2E_MODEL } from "./model-lane.ts";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HARNESS_SERVER_DIR = join(__dirname, "..");
 const TARGET_SERVER_DIR = resolve(process.env.E2E_SERVER_DIR || HARNESS_SERVER_DIR);
@@ -35,10 +40,6 @@ const TARGET_SERVER_ENTRY = join(TARGET_SERVER_DIR, "dist", "src", "cli.js");
 // ── Configuration ──
 
 export const E2E_PORT = Number(process.env.E2E_PORT || 17760);
-const MLX_SERVE_MODEL_ID = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit";
-export const MLX_SERVE_HOST_URL = process.env.E2E_MLX_SERVE_URL ?? "http://127.0.0.1:11234";
-export const MLX_SERVE_DOCKER_URL =
-  process.env.E2E_MLX_SERVE_DOCKER_URL ?? "http://host.docker.internal:11234";
 export const ADMIN_TOKEN = "e2e-admin-token";
 
 /** Model-backed E2E workspaces need a main checkout path visible to the server. */
@@ -47,41 +48,6 @@ export function e2eWorkspaceHostMount(): string {
   const dataDir = process.env.E2E_NATIVE_DATA_DIR;
   if (!dataDir) throw new Error("[e2e] Native workspace mount requires E2E_NATIVE_DATA_DIR");
   return join(dataDir, "workspace");
-}
-
-// Resolved after local model server probe
-export let E2E_MODEL = "";
-export let E2E_MODEL_ID = "";
-
-async function discoverLocalModelId(): Promise<string | null> {
-  const res = await fetch(`${MLX_SERVE_HOST_URL}/v1/models`);
-  if (!res.ok) return null;
-  const data = (await res.json()) as { data?: { id: string }[] };
-  return data.data?.some((model) => model.id === MLX_SERVE_MODEL_ID) ? MLX_SERVE_MODEL_ID : null;
-}
-
-function makeModelsConfig(baseUrl: string, modelId: string): Record<string, unknown> {
-  return {
-    providers: {
-      "mlx-serve": {
-        baseUrl: `${baseUrl}/v1`,
-        apiKey: "DUMMY",
-        api: "openai-completions",
-        models: [
-          {
-            id: modelId,
-            name: "E2E MLX Serve Model",
-            contextWindow: 32768,
-            maxTokens: 8192,
-            input: ["text"],
-            reasoning: true,
-            compat: { thinkingFormat: "qwen" },
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          },
-        ],
-      },
-    },
-  };
 }
 
 const BOOT_TIMEOUT_MS = 300_000;
@@ -165,26 +131,16 @@ function applySelfSignedTlsBypass(): void {
   }
 }
 
-// ── Local model server check ──
+// ── Model lane check ──
 
-export async function ensureMLXServerReady(): Promise<boolean> {
-  E2E_MODEL_ID = "";
-  E2E_MODEL = "";
+/** True when the developer's Pi Anthropic login can serve the Haiku lane. */
+export async function ensureE2EModelReady(): Promise<boolean> {
   try {
-    const modelId = await discoverLocalModelId();
-    if (!modelId) {
-      console.warn(
-        `[e2e] mlx-serve at ${MLX_SERVE_HOST_URL} lacks pinned model ${MLX_SERVE_MODEL_ID}`,
-      );
-      return false;
-    }
-
-    E2E_MODEL_ID = modelId;
-    E2E_MODEL = `mlx-serve/${modelId}`;
-    console.log(`[e2e] mlx-serve ready at ${MLX_SERVE_HOST_URL}, model: ${modelId}`);
+    await resolveE2EAnthropicToken();
+    console.log(`[e2e] Model lane ready: ${E2E_MODEL}`);
     return true;
-  } catch {
-    console.warn("[e2e] mlx-serve not reachable at", MLX_SERVE_HOST_URL);
+  } catch (err) {
+    console.warn(err instanceof Error ? err.message : String(err));
     return false;
   }
 }
@@ -232,7 +188,8 @@ export async function restartServerPreservingData(): Promise<void> {
   }
 }
 
-let dockerModelsJson: string | null = null;
+/** Host dir holding the container's Pi auth.json and settings.json mounts. */
+let dockerPiAgentDir: string | null = null;
 
 async function canReachHealthOver(scheme: E2ETransportScheme): Promise<boolean> {
   if (scheme === "https") {
@@ -294,16 +251,12 @@ async function startDockerServer(): Promise<void> {
     console.warn("[e2e] Docker compose cleanup failed before startup; continuing");
   }
 
-  // Route the pinned mlx-serve model through the Docker host.
-  const modelId = E2E_MODEL_ID || (await discoverLocalModelId());
-  if (!modelId) throw new Error(`[e2e] mlx-serve lacks pinned model ${MLX_SERVE_MODEL_ID}`);
-
-  const tmpModels = join(tmpdir(), `oppi-e2e-models-${Date.now()}.json`);
-  writeFileSync(
-    tmpModels,
-    JSON.stringify(makeModelsConfig(MLX_SERVE_DOCKER_URL, modelId), null, 2),
+  dockerPiAgentDir = mkdtempSync(join(tmpdir(), "oppi-e2e-pi-agent-"));
+  // The container cannot follow a host extension link.
+  await writeE2EModelLane(dockerPiAgentDir, undefined, "");
+  console.warn(
+    "[e2e] Docker cannot load an Anthropic subscription extension; a subscription login is billed as extra usage. Use E2E_NATIVE=1.",
   );
-  dockerModelsJson = tmpModels;
 
   execSync(`docker compose -f ${composeFile} up -d --build --wait --wait-timeout 300`, {
     cwd: HARNESS_SERVER_DIR,
@@ -311,7 +264,8 @@ async function startDockerServer(): Promise<void> {
     env: {
       ...process.env,
       E2E_PORT: String(E2E_PORT),
-      E2E_MODELS_JSON: tmpModels,
+      E2E_PI_AUTH_JSON: join(dockerPiAgentDir, "auth.json"),
+      E2E_PI_SETTINGS_JSON: join(dockerPiAgentDir, "settings.json"),
     },
   });
 
@@ -343,9 +297,9 @@ async function stopDockerServer(): Promise<void> {
     console.warn("[e2e] Docker compose down failed (may already be stopped)");
   }
 
-  if (dockerModelsJson) {
-    rmSync(dockerModelsJson, { force: true });
-    dockerModelsJson = null;
+  if (dockerPiAgentDir) {
+    rmSync(dockerPiAgentDir, { recursive: true, force: true });
+    dockerPiAgentDir = null;
   }
 }
 
@@ -384,16 +338,9 @@ async function startNativeServer(): Promise<void> {
   process.env.E2E_TRANSPORT_SCHEME = transportScheme;
   applySelfSignedTlsBypass();
 
-  // Generate a self-contained models.json so the native server always uses
-  // the probed local model instead of relying on the developer's global config.
-  const modelId = E2E_MODEL_ID || (await discoverLocalModelId());
-  if (!modelId) throw new Error(`[e2e] mlx-serve lacks pinned model ${MLX_SERVE_MODEL_ID}`);
-  const piDir = join(nativeDataDir, "pi-agent");
-  mkdirSync(piDir, { recursive: true });
-  writeFileSync(
-    join(piDir, "models.json"),
-    JSON.stringify(makeModelsConfig(MLX_SERVE_HOST_URL, modelId), null, 2),
-  );
+  // A self-contained Pi agent dir: the Haiku lane only, never the developer's
+  // models, settings, or refresh tokens.
+  await writeE2EModelLane(join(nativeDataDir, "pi-agent"));
 
   await launchNativeServerProcess();
   console.log("[e2e] Native server healthy");
@@ -485,6 +432,8 @@ async function stopNativeServer(): Promise<void> {
 
   if (nativeDataDir) {
     if (process.env.E2E_KEEP_NATIVE_DATA_DIR === "1") {
+      // Keep logs and state, not the Anthropic access token.
+      rmSync(join(nativeDataDir, "pi-agent", "auth.json"), { force: true });
       console.warn(`[e2e] Preserving native data dir for debugging: ${nativeDataDir}`);
     } else {
       rmSync(nativeDataDir, { recursive: true, force: true });

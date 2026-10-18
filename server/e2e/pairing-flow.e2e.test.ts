@@ -9,7 +9,7 @@
  *   5. Device token authenticates all subsequent API calls
  *   6. Device can list workspaces, create sessions, and access split streams
  *
- * Requires: Docker or native server, mlx-serve on 127.0.0.1:11234 with the pinned chat model
+ * Requires: Docker or native server, a Pi Anthropic login for the Haiku model lane (e2e/model-lane.ts)
  */
 
 import { describe, it, expect, beforeAll, inject } from "vitest";

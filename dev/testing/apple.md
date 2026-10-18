@@ -325,17 +325,16 @@ cd clients/apple
 
 Prerequisites:
 
-- mlx-serve OpenAI-compatible endpoint on `http://127.0.0.1:11234`
-- loaded chat model `ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit` (the harness fails instead of using another model)
+- a Pi Anthropic login in `~/.pi/agent/auth.json` (`pi`, then `/login`). E2E sessions run `anthropic/claude-haiku-5-5`; the server gets only a current access token, never the refresh token. A subscription login also needs `E2E_ANTHROPIC_EXTENSION` (see `server/e2e/README.md`). See `server/e2e/model-lane.ts`.
 
 #### Durable sessions and the faux model
 
-Two opt-in `sim-test` switches, both native-only. Without them every E2E keeps classic sessions on mlx-serve.
+Two opt-in `sim-test` switches, both native-only. Without them every E2E keeps classic sessions on Haiku.
 
 | Switch | Effect |
 | --- | --- |
 | `--durable` (`OPPI_E2E_DURABLE=1`) | Sets `experimental.serverDurable` on the E2E server and passes `TEST_RUNNER_OPPI_E2E_SESSION_ENGINE=durable`, so `E2ETestCase.createSession()` creates sessions with `engine: "durable"`. Sessions the app creates itself, such as the launch auto-create, stay classic. |
-| `--faux-model` (`OPPI_E2E_FAUX_MODEL=1`) | Needs `--durable`. Skips the mlx-serve probe, starts the server with `OPPI_E2E_FAUX_PROVIDER=1`, and writes Pi `settings.json` defaulting to `oppi-e2e-faux/oppi-e2e-faux-1`. |
+| `--faux-model` (`OPPI_E2E_FAUX_MODEL=1`) | Needs `--durable`. Skips the Haiku model lane, starts the server with `OPPI_E2E_FAUX_PROVIDER=1`, and writes Pi `settings.json` defaulting to `oppi-e2e-faux/oppi-e2e-faux-1`. |
 
 The faux model is pi-ai's faux provider with a fixed script (`server/src/e2e-faux-provider.ts`). Every request gets the same reply for the same prompt: it echoes the last user text and ends with `End of faux reply.`, streamed at 10 tokens per second (about 8 seconds), so a test can observe the live row before the reply lands. The server registers it only when both `OPPI_E2E_UI_HARNESS=1` and `OPPI_E2E_FAUX_PROVIDER=1` are in its environment. No config key, route, or app request turns it on. It is registered on the server-wide model runtime, which only durable sessions use; classic sessions cannot select it.
 

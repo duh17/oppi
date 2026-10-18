@@ -2,6 +2,9 @@ import XCTest
 
 /// Focused Quick Session coverage kept outside the release gate.
 final class QuickSessionE2ETests: E2ETestCase {
+    /// The E2E server's model lane (server/e2e/model-lane.ts).
+    private static let e2eModel = "anthropic/claude-haiku-5-5"
+
     override var e2eLaunchesSessionsInboxOnly: Bool { true }
 
     @MainActor
@@ -22,10 +25,14 @@ final class QuickSessionE2ETests: E2ETestCase {
         let expectedWorkspaceId = try e2eWorkspaceId()
 
         tap(app.buttons["session.toolbar.model"], named: "quick session model picker", timeout: 5)
-        let modelRow = firstElement(identifierPrefix: "model.picker.row.")
-        XCTAssertTrue(waitForElementToExist(modelRow, timeout: 20), "Model picker did not show any selectable model")
-        let selectedModel = String(modelRow.identifier.dropFirst("model.picker.row.".count))
-        tap(modelRow, named: "first model row", timeout: 1)
+        let modelSearch = app.searchFields["Search models\u{2026}"]
+        if !modelSearch.exists { app.swipeDown() }
+        tap(modelSearch, named: "search models")
+        modelSearch.typeText("Haiku 5.5")
+        let selectedModel = Self.e2eModel
+        let modelRow = app.descendants(matching: .any)["model.picker.row.\(selectedModel)"].firstMatch
+        XCTAssertTrue(waitForElementToExist(modelRow, timeout: 20), "Model picker did not show the E2E Haiku model")
+        tap(modelRow, named: "E2E Haiku model row", timeout: 1)
         XCTAssertTrue(waitForElementToExist(input, timeout: 10), "Quick Session input did not return after model selection")
 
         tap(app.buttons["session.toolbar.thinking"], named: "quick session thinking menu", timeout: 5)
@@ -65,8 +72,8 @@ final class QuickSessionE2ETests: E2ETestCase {
         XCTAssertTrue(waitForElementToExist(app.collectionViews["workspace.sessionList"], timeout: 20))
         let initialModels = try e2eLabAPIJSON(method: "GET", path: "/models")["models"] as? [[String: Any]] ?? []
         let modelId = try XCTUnwrap(
-            initialModels.compactMap { $0["id"] as? String }.first { $0.hasPrefix("mlx-serve/") },
-            "The isolated E2E server must expose its pinned mlx-serve model"
+            initialModels.compactMap { $0["id"] as? String }.first { $0 == Self.e2eModel },
+            "The isolated E2E server must expose the Haiku model lane"
         )
         let originalPiDefault = initialModels.first(where: { $0["isDefault"] as? Bool == true })?["id"] as? String
         XCTAssertNil(originalPiDefault, "The isolated E2E Pi settings must have no default before this test")
@@ -83,8 +90,8 @@ final class QuickSessionE2ETests: E2ETestCase {
         tap(app.buttons["session.toolbar.model"], named: "Agent model picker")
         let agentModelSearch = app.searchFields["Search models…"]
         if !agentModelSearch.exists { app.swipeDown() }
-        tap(agentModelSearch, named: "search for pinned Agent model")
-        agentModelSearch.typeText("E2E MLX Serve Model")
+        tap(agentModelSearch, named: "search for the Haiku Agent model")
+        agentModelSearch.typeText("Haiku 5.5")
         let agentStar = app.buttons["Set as default"]
         if !waitForElementToExist(agentStar, timeout: 5) {
             print("[e2e] Agent model picker accessibility: \(app.debugDescription)")
@@ -108,8 +115,8 @@ final class QuickSessionE2ETests: E2ETestCase {
         tap(app.buttons["session.toolbar.model"], named: "Pi model picker")
         let piModelSearch = app.searchFields["Search models…"]
         if !piModelSearch.exists { app.swipeDown() }
-        tap(piModelSearch, named: "search for pinned Pi model")
-        piModelSearch.typeText("E2E MLX Serve Model")
+        tap(piModelSearch, named: "search for the Haiku Pi model")
+        piModelSearch.typeText("Haiku 5.5")
         let piStar = app.buttons["Set as default"]
         if !waitForElementToExist(piStar, timeout: 5) {
             print("[e2e] Pi model picker accessibility: \(app.debugDescription)")
@@ -212,13 +219,13 @@ final class QuickSessionE2ETests: E2ETestCase {
 
     @MainActor
     private func assertThinkingMenuRunsFromMaxToOff() {
+        // Haiku 5.5, the E2E model, has no Minimal level.
         let expectedOptions = [
             (id: "max", label: "Max"),
             (id: "xhigh", label: "XHigh"),
             (id: "high", label: "High"),
             (id: "medium", label: "Medium"),
             (id: "low", label: "Low"),
-            (id: "minimal", label: "Minimal"),
             (id: "off", label: "Off"),
         ]
         let options = expectedOptions.map { thinkingOption($0.id) }
@@ -260,12 +267,6 @@ final class QuickSessionE2ETests: E2ETestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         XCTAssertTrue(focusPredicate.evaluate(with: element), "Text input did not gain keyboard focus")
-    }
-
-    @MainActor
-    private func firstElement(identifierPrefix: String) -> XCUIElement {
-        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", identifierPrefix)
-        return app.descendants(matching: .any).matching(predicate).firstMatch
     }
 }
 

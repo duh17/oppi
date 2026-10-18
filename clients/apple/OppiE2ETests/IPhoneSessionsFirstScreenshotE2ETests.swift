@@ -608,11 +608,13 @@ final class IPhoneSessionsFirstScreenshotE2ETests: E2ETestCase {
 
         let expectedWorkspaceId = try e2eWorkspaceId()
         tap(app.buttons["session.toolbar.model"], named: "schedule model picker")
-        let modelTitle = app.staticTexts["E2E MLX Serve Model"]
-        XCTAssertTrue(modelTitle.waitForExistence(timeout: 20), "Schedule model picker had no model")
-        let modelIdentifier = app.staticTexts.matching(
-            NSPredicate(format: "label BEGINSWITH %@", "mlx-serve/")
-        ).firstMatch
+        let modelSearch = app.searchFields["Search models…"]
+        if !modelSearch.exists { app.swipeDown() }
+        tap(modelSearch, named: "search schedule models")
+        modelSearch.typeText("Haiku 5.5")
+        let modelTitle = app.staticTexts["Claude Haiku 5.5"]
+        XCTAssertTrue(modelTitle.waitForExistence(timeout: 20), "Schedule model picker had no Haiku model")
+        let modelIdentifier = app.staticTexts["anthropic/claude-haiku-5-5"]
         XCTAssertTrue(modelIdentifier.waitForExistence(timeout: 5), "Schedule model ID was not visible")
         let selectedModel = modelIdentifier.label
         tap(modelTitle, named: "schedule model")

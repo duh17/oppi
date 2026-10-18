@@ -1,4 +1,13 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,8 +19,6 @@ import {
   bindE2EAccessTokenFile,
   currentE2EAccessToken,
   dockerStartupCleanupCommand,
-  ensureMLXServerReady,
-  E2E_MODEL,
   E2EPairingError,
   enrollE2EDevice,
   e2eWorkspaceHostMount,
@@ -23,6 +30,7 @@ import {
   refreshE2EAccessToken,
   resetE2EAuthSessions,
 } from "../e2e/harness.js";
+import { E2E_MODEL, writeE2EModelLane } from "../e2e/model-lane.js";
 
 function requestPath(url: string | URL): string {
   return new URL(String(url), "http://127.0.0.1").pathname;
@@ -56,20 +64,45 @@ describe("E2E harness helpers", () => {
     vi.unstubAllEnvs();
   });
 
-  it("requires the pinned mlx-serve chat model instead of selecting an image model", async () => {
-    const pinned = "ddalcu/Qwen3.8-Flash-Next-MLX-Serve-mixed-4-8bit";
-    const image = "ddalcu/Qwen-Image-2.1-MLX-Serve-8bit";
-    const fetchModels = vi.fn(async (url: string) => {
-      expect(url).toBe("http://127.0.0.1:11234/v1/models");
-      return jsonResponse({ data: [{ id: image }, { id: pinned }] });
-    });
-    vi.stubGlobal("fetch", fetchModels);
-    await expect(ensureMLXServerReady()).resolves.toBe(true);
-    expect(E2E_MODEL).toBe(`mlx-serve/${pinned}`);
+  it("gives the isolated E2E agent only the Anthropic token and scopes it to Haiku", async () => {
+    const root = mkdtempSync(join(tmpdir(), "oppi-e2e-lane-"));
+    try {
+      const source = join(root, "source");
+      const isolated = join(root, "isolated");
+      mkdirSync(source);
+      writeFileSync(
+        join(source, "auth.json"),
+        JSON.stringify({
+          anthropic: { type: "api_key", key: "sk-ant-test-key" },
+          xai: { type: "api_key", key: "xai-secret" },
+        }),
+      );
 
-    fetchModels.mockResolvedValueOnce(jsonResponse({ data: [{ id: image }] }));
-    await expect(ensureMLXServerReady()).resolves.toBe(false);
-    expect(E2E_MODEL).toBe("");
+      const extension = join(root, "anthropic-provider");
+      mkdirSync(extension);
+      await writeE2EModelLane(isolated, source, extension);
+
+      expect(JSON.parse(readFileSync(join(isolated, "auth.json"), "utf8"))).toEqual({
+        anthropic: { type: "api_key", key: "sk-ant-test-key" },
+      });
+      expect(statSync(join(isolated, "auth.json")).mode & 0o777).toBe(0o600);
+      expect(JSON.parse(readFileSync(join(isolated, "settings.json"), "utf8"))).toEqual({
+        enabledModels: [E2E_MODEL],
+      });
+      expect(realpathSync(join(isolated, "extensions", "anthropic-provider"))).toBe(
+        realpathSync(extension),
+      );
+
+      writeFileSync(
+        join(source, "auth.json"),
+        JSON.stringify({ xai: { type: "api_key", key: "x" } }),
+      );
+      await expect(writeE2EModelLane(join(root, "other"), source, undefined)).rejects.toThrow(
+        /Anthropic login/,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("provides a server-visible workspace mount in native and Docker E2E modes", () => {

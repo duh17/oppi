@@ -8,7 +8,7 @@
  *   4. Session deletion while the bound session stream is open
  *   5. Follow-up queue execution during an active turn
  *
- * Requires: Docker or native server, mlx-serve on 127.0.0.1:11234 with the pinned chat model
+ * Requires: Docker or native server, a Pi Anthropic login for the Haiku model lane (e2e/model-lane.ts)
  */
 
 import { describe, it, expect, beforeAll, inject } from "vitest";
@@ -245,7 +245,7 @@ describe("E2E: Advanced Session Lifecycle", { timeout: 600_000 }, () => {
         { startIndex, timeoutMs: 300_000 },
       );
 
-      // The local mlx-serve model may or may not produce thinking_delta events at level "low" —
+      // The model may or may not produce thinking_delta events at level "low" —
       // we only assert the command didn't cause errors (no fatal error events).
       const fatalErrors = stream.events
         .slice(startIndex)
