@@ -57,8 +57,10 @@ enum SSHTerminalTopBarAttention {
     }
 }
 
-/// Docked software keyboard (or its accessory) covering the bottom of the
-/// terminal. A floating iPad keyboard is not "up" for auto-hide.
+/// Docked software keyboard covering the bottom of this terminal's display.
+/// A floating iPad keyboard is not "up". A keyboard on the Duo's other
+/// display is not "up". Keyboard frames in notifications are screen
+/// coordinates; convert through the window scene's screen.
 enum SSHTerminalTopBarKeyboard {
     struct Animation {
         var duration: TimeInterval
@@ -68,7 +70,20 @@ enum SSHTerminalTopBarKeyboard {
     static func isUp(endFrameInView: CGRect, viewBounds: CGRect) -> Bool {
         let overlap = endFrameInView.intersection(viewBounds)
         guard overlap.height > 1, overlap.width > 1 else { return false }
-        return endFrameInView.maxY >= viewBounds.maxY - 2
+        // Docked to this view's bottom (phone, Duo inner, iPad docked),
+        // even when the keyboard is only as wide as one Duo panel.
+        return overlap.maxY >= viewBounds.maxY - 2
+    }
+
+    static func endFrameInView(_ screenFrame: CGRect, view: UIView) -> CGRect {
+        guard let window = view.window else {
+            return view.convert(screenFrame, from: nil)
+        }
+        if let space = window.windowScene?.screen.coordinateSpace {
+            let inWindow = window.convert(screenFrame, from: space)
+            return view.convert(inWindow, from: window)
+        }
+        return view.convert(screenFrame, from: window)
     }
 
     static func animation(duration: TimeInterval, curve: UInt) -> Animation {

@@ -565,7 +565,7 @@ final class SSHTerminalViewController: UIViewController {
 
     private func keyboardWillChange(endFrame: CGRect, duration: TimeInterval, curve: UInt) {
         guard view.window != nil else { return }
-        let end = view.convert(endFrame, from: nil)
+        let end = SSHTerminalTopBarKeyboard.endFrameInView(endFrame, view: view)
         let up = SSHTerminalTopBarKeyboard.isUp(endFrameInView: end, viewBounds: view.bounds)
         if !up { temporaryReveal = false }
         keyboardUp = up

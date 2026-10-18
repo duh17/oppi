@@ -83,6 +83,31 @@ struct SSHTerminalTopBarTests {
             )
         )
     }
+
+    @Test func dockedKeyboardOnADuoInnerDisplayIsUpAndTheOtherDisplayIsNot() {
+        let inner = CGRect(x: 0, y: 0, width: 1376, height: 892)
+        #expect(
+            SSHTerminalTopBarKeyboard.isUp(
+                endFrameInView: CGRect(x: 0, y: 556, width: 1376, height: 336),
+                viewBounds: inner
+            )
+        )
+        #expect(
+            SSHTerminalTopBarKeyboard.isUp(
+                endFrameInView: CGRect(x: 200, y: 556, width: 976, height: 336),
+                viewBounds: inner
+            ),
+            "a docked keyboard need not span the whole Duo panel"
+        )
+        let outer = CGRect(x: 0, y: 0, width: 430, height: 892)
+        #expect(
+            !SSHTerminalTopBarKeyboard.isUp(
+                endFrameInView: CGRect(x: 500, y: 556, width: 800, height: 336),
+                viewBounds: outer
+            ),
+            "a keyboard on the other Duo display must not auto-hide the bar"
+        )
+    }
 }
 
 @Suite("AppPreferences.SSHTerminal", .serialized)
