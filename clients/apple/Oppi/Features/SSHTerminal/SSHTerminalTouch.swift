@@ -27,29 +27,80 @@ enum SSHTerminalDragTarget: Equatable {
     }
 }
 
-/// Convert finger travel into wheel notches for mouse-reporting apps.
-///
-/// One notch is three cell-rows of travel, matching the common 3-lines-per-notch
-/// default (xterm, vim, Herdr). Herdr content then tracks the finger 1:1.
-/// tmux (five lines per notch) runs a little ahead. Remainder carries across
-/// events in one gesture. Sign: finger down is wheel-up (content follows the
-/// finger).
+/// One wheel notch is three cell-rows of finger travel, matching the common
+/// 3-lines-per-notch default (xterm, vim, Herdr). Herdr content then tracks
+/// the finger 1:1. tmux (five lines per notch) runs a little ahead.
 enum SSHTerminalWheelScaling {
     static let cellsPerEvent: CGFloat = 3
+}
 
-    struct Accumulator {
-        var remainder: CGFloat = 0
+/// Turns finger travel into whole steps (one ↑/↓ per row, one wheel notch per
+/// three rows) for an app that scrolls itself. The remote only moves whole
+/// lines, so content stays within about half a step of the finger: a step is
+/// sent once travel passes the halfway point, not after a full step. The
+/// first step comes after half a step, not a whole one. Reversing a step
+/// takes `hysteresis` more travel, so a finger wobbling at the halfway point
+/// does not send ↑↓↑. Remainder carries across events in one gesture. Sign:
+/// finger down is negative (wheel-up, ↑): content follows the finger.
+struct SSHTerminalStepQuantizer {
+    static let hysteresis: CGFloat = 3
+    var remainder: CGFloat = 0
 
-        /// Finger translation in the view (positive is down). Returns signed
-        /// wheel steps: negative is wheel-up, positive is wheel-down.
-        mutating func steps(travel: CGFloat, cellHeight: CGFloat) -> Int {
-            guard cellHeight > 0 else { return 0 }
-            remainder -= travel
-            let step = cellHeight * SSHTerminalWheelScaling.cellsPerEvent
-            let count = Int(remainder / step)
-            remainder -= CGFloat(count) * step
-            return count
-        }
+    /// Finger translation in the view (positive is down). Returns signed steps.
+    mutating func steps(travel: CGFloat, step: CGFloat) -> Int {
+        guard step > 0 else { return 0 }
+        remainder -= travel
+        guard abs(remainder) >= step / 2 + Self.hysteresis else { return 0 }
+        let count = Int((remainder / step).rounded())
+        remainder -= CGFloat(count) * step
+        return count
+    }
+}
+
+/// Where local history draws for a scroll offset: the top viewport row, and how
+/// far the grid moves up into that row in whole device pixels so glyphs stay
+/// on the pixel grid. Past either end the grid stays on the first or last row
+/// and moves by `bounce` points (positive is down) for the rubber band.
+struct SSHTerminalHistoryPosition: Equatable {
+    var row: Int
+    var shiftPixels: Int
+    var bounce: CGFloat
+
+    static func resolve(
+        offset: CGFloat, maxOffset: CGFloat, lastRow: Int, cellHeight: CGFloat, scale: CGFloat
+    ) -> Self {
+        guard cellHeight > 0 else { return .init(row: 0, shiftPixels: 0, bounce: 0) }
+        if offset < 0 { return .init(row: 0, shiftPixels: 0, bounce: -offset) }
+        if offset >= maxOffset { return .init(row: lastRow, shiftPixels: 0, bounce: maxOffset - offset) }
+        let row = min(lastRow, Int((offset / cellHeight).rounded(.down)))
+        let shift = Int(((offset - CGFloat(row) * cellHeight) * max(scale, 1)).rounded())
+        return .init(row: row, shiftPixels: shift, bounce: 0)
+    }
+}
+
+/// UIScrollView's pan starts about 10 pt after the finger starts moving and
+/// then trails the finger by that much for the whole drag. Local history
+/// instead follows from the first move: before the pan starts, the grid is
+/// drawn `lead` above the scroll view's offset, and the first drag callback
+/// moves contentOffset to where the grid already is, so nothing jumps.
+/// `deadZone` keeps the jitter of a tap or a touch-and-hold from moving text.
+enum SSHTerminalHistoryFingerLead {
+    static let deadZone: CGFloat = 2
+
+    /// Content travel for finger travel (both positive down).
+    static func lead(fingerTravel: CGFloat) -> CGFloat {
+        let magnitude = max(0, abs(fingerTravel) - deadZone)
+        return fingerTravel < 0 ? -magnitude : magnitude
+    }
+
+    /// The offset that puts content under the finger once the drag starts.
+    /// It never pushes past an end further than the scroll view already is,
+    /// so the native rubber band keeps its own position.
+    static func dragOffset(
+        start: CGFloat, current: CGFloat, fingerTravel: CGFloat, maxOffset: CGFloat
+    ) -> CGFloat {
+        let target = start - lead(fingerTravel: fingerTravel)
+        return min(max(target, min(0, current)), max(maxOffset, current))
     }
 }
 
@@ -65,8 +116,8 @@ enum SSHTerminalAppScrollTranslation {
 /// history offset cannot become PTY input, and a fake app-surface offset cannot
 /// jump local history.
 struct SSHTerminalAppScrollAccumulator {
-    var wheelRemainder = SSHTerminalWheelScaling.Accumulator()
-    var altRemainder: CGFloat = 0
+    var wheelSteps = SSHTerminalStepQuantizer()
+    var altSteps = SSHTerminalStepQuantizer()
     var lastOffset: CGFloat = 0
     var pendingWheelSteps = 0
     var pendingAltRows = 0
@@ -78,8 +129,8 @@ struct SSHTerminalAppScrollAccumulator {
     }
 
     mutating func resetGesture() {
-        wheelRemainder = SSHTerminalWheelScaling.Accumulator()
-        altRemainder = 0
+        wheelSteps = SSHTerminalStepQuantizer()
+        altSteps = SSHTerminalStepQuantizer()
         pendingWheelSteps = 0
         pendingAltRows = 0
         pendingWheelCell = nil
@@ -103,16 +154,14 @@ struct SSHTerminalAppScrollAccumulator {
         guard cellHeight > 0, travel != 0 else { return }
         switch action {
         case .mouseWheel:
-            pendingWheelSteps += wheelRemainder.steps(travel: travel, cellHeight: cellHeight)
+            pendingWheelSteps += wheelSteps.steps(
+                travel: travel, step: cellHeight * SSHTerminalWheelScaling.cellsPerEvent
+            )
             if let wheelCell {
                 pendingWheelCell = wheelCell
             }
         case .alternateKeys:
-            altRemainder -= travel
-            let rows = Int(altRemainder / cellHeight)
-            guard rows != 0 else { return }
-            altRemainder -= CGFloat(rows) * cellHeight
-            pendingAltRows += rows
+            pendingAltRows += altSteps.steps(travel: travel, step: cellHeight)
         case .history:
             break
         }

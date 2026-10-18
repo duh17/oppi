@@ -563,6 +563,55 @@ struct SSHTerminalMetalTests {
         )
     }
 
+    @Test func historyShiftDrawsTheRowBelowTheViewportIntoTheGap() throws {
+        let harness = try Harness(columns: 2, rows: 3)
+        defer { harness.finish() }
+        harness.engine.setColors(
+            foreground: .init(r: 255, g: 255, b: 255), background: .init(r: 0, g: 0, b: 0), dark: true
+        )
+        // Six lines, each a solid background so a pixel names its line.
+        func color(_ line: Int) -> (UInt8, UInt8, UInt8) { (UInt8(40 * line), UInt8(200 - 30 * line), 90) }
+        let lines = (0..<6).map { line in
+            let c = color(line)
+            return "\u{1b}[48;2;\(c.0);\(c.1);\(c.2)m  \u{1b}[0m"
+        }
+        harness.engine.receive(Data(("\u{1b}[?25l" + lines.joined(separator: "\r\n")).utf8))
+        #expect(harness.engine.frame().rowsBelowViewport == 0, "nothing below the live screen")
+
+        harness.engine.scrollToRow(1)
+        let frame = harness.engine.frame()
+        #expect(frame.rowsBelowViewport == 2)
+        #expect(frame.rows.count == 5)
+
+        // A viewport-sized target, as on screen, shifted up half a row.
+        let cell = harness.metrics.cellSize
+        let width = Int(cell.width * 2)
+        let height = Int(cell.height * 3)
+        let shift = Int(cell.height / 2)
+        let texture = try #require(harness.renderer.makeOffscreenTexture(width: width, height: height))
+        let cost = harness.renderer.encodeOffscreen(
+            frame: frame, cursorColor: SIMD4(1, 1, 1, 0.65), texture: texture,
+            waitUntilCompleted: true, shiftPixels: shift
+        )
+        #expect(cost.completed)
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        bytes.withUnsafeMutableBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            texture.getBytes(base, bytesPerRow: width * 4, from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
+        }
+        func line(atY y: Int) -> Int? {
+            let offset = (y * width + width / 2) * 4
+            let rgb = (bytes[offset + 2], bytes[offset + 1], bytes[offset])
+            return (0..<6).first { color($0) == rgb }
+        }
+        // Screen row 0 starts halfway into line 1; the bottom gap shows
+        // line 4, the first row under the viewport.
+        #expect(line(atY: 1) == 1)
+        #expect(line(atY: Int(cell.height) - shift - 2) == 1)
+        #expect(line(atY: Int(cell.height) - shift + 2) == 2)
+        #expect(line(atY: height - 2) == 4)
+    }
+
     @MainActor
     private final class Harness {
         let engine: SSHTerminalEngine

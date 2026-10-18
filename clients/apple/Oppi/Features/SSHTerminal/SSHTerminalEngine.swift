@@ -29,7 +29,11 @@ struct SSHTerminalCell {
 }
 
 struct SSHTerminalFrame {
+    /// Viewport rows, then `rowsBelowViewport` history rows under them. A
+    /// history scroll that stops between rows shifts the grid up by part of a
+    /// row and draws those into the gap at the bottom.
     let rows: [[SSHTerminalCell]]
+    let rowsBelowViewport: Int
     let cursor: GhosttyRenderStateCursor
     let background: GhosttyColorRgb
     /// Rows rebuilt on this snapshot. Empty when the picture did not change.
@@ -113,6 +117,11 @@ final class SSHTerminalEngine {
         var altScroll = GhosttyTerminalModeConfig(mode: ghostty_mode_new(1007, false), value: true)
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_MODE_DEFAULT, &altScroll)
         ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_MODE, &altScroll)
+        // Two rows under the viewport cover a grid shifted up by up to one row
+        // plus the part-row strip under the last whole row. libghostty only
+        // captures rows that exist, so the live screen reads none.
+        var overscan = GhosttyRenderStateOverscan(above: 0, below: 2)
+        ghostty_render_state_set(render, GHOSTTY_RENDER_STATE_OPTION_OVERSCAN, &overscan)
     }
 
     isolated deinit {
@@ -261,8 +270,11 @@ final class SSHTerminalEngine {
         ghostty_render_state_get(render, GHOSTTY_RENDER_STATE_DATA_COLS, &cols)
         ghostty_render_state_get(render, GHOSTTY_RENDER_STATE_DATA_ROWS, &rowCount)
         ghostty_render_state_get(render, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &rowIterator)
+        var overscan = GhosttyRenderStateOverscan()
+        ghostty_render_state_get(render, GHOSTTY_RENDER_STATE_DATA_OVERSCAN, &overscan)
+        let captured = Int(rowCount) + Int(overscan.below)
         let full = forceFullRebuild || cachedRows.isEmpty || dirty == GHOSTTY_RENDER_STATE_DIRTY_FULL
-            || cachedRows.count != Int(rowCount) || (cachedRows.first?.count ?? 0) != Int(cols)
+            || cachedRows.count != captured || (cachedRows.first?.count ?? 0) != Int(cols)
         var rebuilt = IndexSet()
         if full {
             var rows = [[SSHTerminalCell]]()
@@ -291,7 +303,10 @@ final class SSHTerminalEngine {
         }
         cachedCursor = cursor
         ghostty_render_state_clean(render)
-        return .init(rows: cachedRows, cursor: cursor, background: background, rebuiltRows: rebuilt)
+        return .init(
+            rows: cachedRows, rowsBelowViewport: cachedRows.count - Int(rowCount),
+            cursor: cursor, background: background, rebuiltRows: rebuilt
+        )
     }
 
     /// One row of cells. A single scalar is stored as `UInt32`; only combining

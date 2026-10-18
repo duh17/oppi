@@ -535,6 +535,9 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
     struct Uniforms {
         var viewportX: Float
         var viewportY: Float
+        /// Whole pixels the grid moves up: a history scroll between rows.
+        var shiftY: Float = 0
+        var pad: Float = 0
     }
 
     let device: MTLDevice
@@ -635,11 +638,15 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         rowCache.removeAll(keepingCapacity: true)
     }
 
+    /// `shiftPixels` moves every row, cursor included, up by that many whole
+    /// pixels. Only the uniform changes, so a shift-only frame reuses every
+    /// cached row.
     func encode(
         frame: SSHTerminalFrame,
         cursorColor: SIMD4<Float>,
         drawable: CAMetalDrawable,
-        fullRebuild: Bool = true
+        fullRebuild: Bool = true,
+        shiftPixels: Int = 0
     ) -> SSHTerminalMetalFrameCost {
         encode(
             frame: frame,
@@ -647,7 +654,8 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             target: drawable.texture,
             drawable: drawable,
             waitUntilCompleted: false,
-            fullRebuild: fullRebuild
+            fullRebuild: fullRebuild,
+            shiftPixels: shiftPixels
         )
     }
 
@@ -656,7 +664,8 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         cursorColor: SIMD4<Float>,
         texture: MTLTexture,
         waitUntilCompleted: Bool,
-        fullRebuild: Bool = true
+        fullRebuild: Bool = true,
+        shiftPixels: Int = 0
     ) -> SSHTerminalMetalFrameCost {
         encode(
             frame: frame,
@@ -664,7 +673,8 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
             target: texture,
             drawable: nil,
             waitUntilCompleted: waitUntilCompleted,
-            fullRebuild: fullRebuild
+            fullRebuild: fullRebuild,
+            shiftPixels: shiftPixels
         )
     }
 
@@ -686,7 +696,8 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
         target: MTLTexture,
         drawable: CAMetalDrawable?,
         waitUntilCompleted: Bool,
-        fullRebuild: Bool
+        fullRebuild: Bool,
+        shiftPixels: Int
     ) -> SSHTerminalMetalFrameCost {
         let failed = SSHTerminalMetalFrameCost(
             encodeNanos: 0, submitted: false, completed: false, status: .error,
@@ -783,7 +794,9 @@ final class SSHTerminalMetalRenderer: @unchecked Sendable {
                 miss: .transient, reason: "makeRenderCommandEncoder returned nil"
             )
         }
-        var uniforms = Uniforms(viewportX: Float(target.width), viewportY: Float(target.height))
+        var uniforms = Uniforms(
+            viewportX: Float(target.width), viewportY: Float(target.height), shiftY: Float(shiftPixels)
+        )
         let backgrounds = packed.backgrounds
         let glyphs = packed.glyphs
         let overlays = packed.overlays

@@ -14,6 +14,8 @@ struct CellInstance {
 
 struct Uniforms {
     float2 viewport;
+    float shiftY;
+    float pad;
 };
 
 struct VertexOut {
@@ -38,7 +40,7 @@ vertex VertexOut ssh_terminal_vertex(
 ) {
     CellInstance cell = instances[iid];
     float2 corner = kCorners[vid];
-    float2 pixel = cell.origin + corner * cell.size;
+    float2 pixel = cell.origin + corner * cell.size - float2(0, uniforms.shiftY);
     float2 ndc = float2(
         pixel.x / uniforms.viewport.x * 2.0 - 1.0,
         1.0 - pixel.y / uniforms.viewport.y * 2.0

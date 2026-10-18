@@ -33,18 +33,81 @@ struct SSHTerminalTouchTests {
         #expect(SSHTerminalDragTarget.resolve(mouseReporting: true) == .mouse)
     }
 
-    @Test func wheelScalingEmitsOneNotchPerThreeCellsAndKeepsRemainder() {
-        var wheel = SSHTerminalWheelScaling.Accumulator()
-        let cell: CGFloat = 17
-        #expect(SSHTerminalWheelScaling.cellsPerEvent == 3)
-        // Finger down 3 cells: one wheel-up (negative steps).
-        #expect(wheel.steps(travel: 3 * cell, cellHeight: cell) == -1)
-        // Another 2 cells: not yet a notch.
-        #expect(wheel.steps(travel: 2 * cell, cellHeight: cell) == 0)
-        // 1 more: second notch.
-        #expect(wheel.steps(travel: 1 * cell, cellHeight: cell) == -1)
-        // Reverse 3 cells: one wheel-down.
-        #expect(wheel.steps(travel: -3 * cell, cellHeight: cell) == 1)
+    @Test func appStepsLandWithinHalfAStepOfTheFingerAndIgnoreAWobble() {
+        let notch: CGFloat = 3 * 17
+        let hysteresis = SSHTerminalStepQuantizer.hysteresis
+        var wheel = SSHTerminalStepQuantizer()
+        // Finger down (positive travel) is wheel-up (negative steps). The
+        // first notch comes past half a notch, not after a whole one.
+        #expect(wheel.steps(travel: notch / 2 + hysteresis - 1, step: notch) == 0)
+        #expect(wheel.steps(travel: 2, step: notch) == -1)
+        // Every later notch is one notch of travel apart.
+        #expect(wheel.steps(travel: notch - 2, step: notch) == 0)
+        #expect(wheel.steps(travel: 2, step: notch) == -1)
+        // Backing off less than twice the hysteresis sends nothing back.
+        #expect(wheel.steps(travel: -(2 * hysteresis - 1), step: notch) == 0)
+        #expect(wheel.steps(travel: -2, step: notch) == 1)
+
+        // Over a slow drag the remote's line count stays within half a step
+        // (plus hysteresis) of the finger, for one-row arrows as well.
+        for step in [17, notch] as [CGFloat] {
+            var quantizer = SSHTerminalStepQuantizer()
+            var sent = 0
+            var finger: CGFloat = 0
+            for _ in 0..<400 {
+                finger += 1.3
+                sent += quantizer.steps(travel: 1.3, step: step)
+                #expect(abs(finger + CGFloat(sent) * step) <= step / 2 + hysteresis + 1.3)
+            }
+        }
+    }
+
+    @Test func historyDrawsAtTheScrollOffsetToTheDevicePixel() {
+        let cell: CGFloat = 17.2
+        let maxOffset = cell * 200
+        for scale in [2, 3] as [CGFloat] {
+            // A slow drag from the live end: every offset is drawn where the
+            // scroll view is, so content moves 1:1 and never steps a row.
+            for tenths in 0..<600 {
+                let offset = maxOffset - CGFloat(tenths) / 10
+                let position = SSHTerminalHistoryPosition.resolve(
+                    offset: offset, maxOffset: maxOffset, lastRow: 200, cellHeight: cell, scale: scale
+                )
+                let drawn = CGFloat(position.row) * cell + CGFloat(position.shiftPixels) / scale
+                #expect(abs(drawn - offset) <= 0.5 / scale + 0.0001, "offset \(offset) drawn at \(drawn)")
+                #expect(position.bounce == 0)
+            }
+        }
+        let first = SSHTerminalHistoryPosition.resolve(
+            offset: maxOffset - 1, maxOffset: maxOffset, lastRow: 200, cellHeight: cell, scale: 3
+        )
+        #expect(first.row == 199, "the row above the live screen shows on the first point of travel")
+        let live = SSHTerminalHistoryPosition.resolve(
+            offset: maxOffset + 8, maxOffset: maxOffset, lastRow: 200, cellHeight: cell, scale: 3
+        )
+        #expect(live == .init(row: 200, shiftPixels: 0, bounce: -8), "past the live end only the rubber band moves")
+        let top = SSHTerminalHistoryPosition.resolve(
+            offset: -5, maxOffset: maxOffset, lastRow: 200, cellHeight: cell, scale: 3
+        )
+        #expect(top == .init(row: 0, shiftPixels: 0, bounce: 5))
+    }
+
+    @Test func historyFollowsTheFingerBeforeThePanAndDoesNotJumpWhenItStarts() {
+        let lead = SSHTerminalHistoryFingerLead.self
+        #expect(lead.lead(fingerTravel: lead.deadZone) == 0, "a tap's jitter moves nothing")
+        #expect(lead.lead(fingerTravel: 11) == 11 - lead.deadZone)
+        #expect(lead.lead(fingerTravel: -11) == -(11 - lead.deadZone))
+
+        // The pan starts at 11 pt of finger travel and UIScrollView has
+        // already moved 1 pt; the grid showed `start - lead` before that.
+        let start: CGFloat = 1000
+        let shown = start - lead.lead(fingerTravel: 11)
+        let moved = lead.dragOffset(start: start, current: start - 1, fingerTravel: 11, maxOffset: 2000)
+        #expect(moved == shown, "the drag continues where the grid already is")
+
+        // At an end the lead never adds a rubber band the scroll view lacks.
+        #expect(lead.dragOffset(start: 0, current: -0.5, fingerTravel: 11, maxOffset: 2000) == -0.5)
+        #expect(lead.dragOffset(start: 2000, current: 2000, fingerTravel: -11, maxOffset: 2000) == 2000)
     }
 
     @Test func appScrollOffsetDeltaMatchesPanFingerTravelAndWheelSteps() {
@@ -53,10 +116,10 @@ struct SSHTerminalTouchTests {
             previousOffset: 400, currentOffset: 400 - 3 * cell
         )
         #expect(travel == 3 * cell, "finger down decreases offset")
-        var wheel = SSHTerminalWheelScaling.Accumulator()
-        #expect(wheel.steps(travel: travel, cellHeight: cell) == -1)
+        var wheel = SSHTerminalStepQuantizer()
+        #expect(wheel.steps(travel: travel, step: 3 * cell) == -1)
 
-        var fling = SSHTerminalWheelScaling.Accumulator()
+        var fling = SSHTerminalStepQuantizer()
         var total = 0
         var offset: CGFloat = 800
         // Decelerating offsets like a native fling (offset falling toward 0).
@@ -66,7 +129,7 @@ struct SSHTerminalTouchTests {
                 travel: SSHTerminalAppScrollTranslation.fingerTravel(
                     previousOffset: offset, currentOffset: next
                 ),
-                cellHeight: cell
+                step: 3 * cell
             )
             offset = next
         }
@@ -312,6 +375,33 @@ struct SSHTerminalTouchTests {
             cellHeight: cellHeight
         )
         #expect(abs(scroll.contentSize.height - expected) < 0.6)
+    }
+
+    @Test func historyRestingBetweenRowsStaysUntilTheViewportMoves() throws {
+        let channel = try SSHTerminalChannel()
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        let mounted = try MountedTouchGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let engine = channel.engine
+        engine.receive(Data((1...300).map { "line \($0)\r\n" }.joined().utf8))
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        let scroll = try #require(grid.subviews.compactMap { $0 as? UIScrollView }.first)
+        let cell = SSHTerminalCellMetrics.codeFont().cellSize.height
+
+        // A fling that came to rest 5 pt into row 120.
+        engine.scrollToRow(120)
+        scroll.contentOffset = CGPoint(x: 0, y: 120 * cell + 5)
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        #expect(abs(scroll.contentOffset.y - (120 * cell + 5)) < 0.01, "the frame sync must not snap a rest to a row")
+        #expect(engine.scrollbar.offset == 120)
+
+        engine.backToLive()
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        let bar = engine.scrollbar
+        #expect(abs(scroll.contentOffset.y - CGFloat(bar.offset) * cell) < 0.01, "Back to Live lands on the live row")
     }
 
     @Test func longPressTapIgnoreClearsWhenTheTapFailedOrTheNextTouchBegins() {

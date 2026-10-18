@@ -61,6 +61,7 @@ struct SSHTerminalGridPerfBench {
             engine: engine, renderer: renderer, texture: texture
         )
         let emoji = Self.onceEmoji(engine: engine, renderer: renderer, texture: texture)
+        let history = try Self.measureHistoryScroll(renderer: renderer, texture: texture)
         let idle = try Self.measureIdleTicks()
 
         print("SSH_TERMINAL_AFTER method=metal_full_rebuild_48x40_scale2 warmup=2 iterations=7 alternate_two_screens configuration=Debug")
@@ -69,6 +70,8 @@ struct SSHTerminalGridPerfBench {
         print("SSH_TERMINAL_AFTER styled_cold_atlas_frame_ms=\(Self.ms(cold.frameNs)) styled_cold_atlas_encode_ms=\(Self.ms(cold.encodeNs)) styled_cold_atlas_total_ms=\(Self.ms(cold.totalNs))")
         print("SSH_TERMINAL_AFTER dirty_one_row_encode_ms=\(Self.ms(dirtySamples.encodeNs.median)) dirty_one_row_encode_p95_ms=\(Self.ms(dirtySamples.encodeNs.p95)) dirty_rebuilt_rows=\(dirtySamples.rebuilt) dirty_reused_rows=\(dirtySamples.reused)")
         print("SSH_TERMINAL_AFTER color_emoji_encode_ms=\(Self.ms(emoji.encodeNs)) color_emoji_completed=\(emoji.completed)")
+        print("SSH_TERMINAL_AFTER history_subrow_shift_encode_ms=\(Self.ms(history.shift.encodeNs.median)) history_subrow_shift_encode_p95_ms=\(Self.ms(history.shift.encodeNs.p95)) history_subrow_shift_reused_rows=\(history.shift.reused)")
+        print("SSH_TERMINAL_AFTER history_row_step_frame_ms=\(Self.ms(history.row.frameNs.median)) history_row_step_encode_ms=\(Self.ms(history.row.encodeNs.median)) history_row_step_total_ms=\(Self.ms(history.row.totalNs.median)) history_row_step_rows=\(history.row.rebuilt)")
         print("SSH_TERMINAL_AFTER idle_display_link_ticks_over_2s=\(idle.ticks) idle_display_link_running=\(idle.running)")
         print("METRIC ssh_terminal_plain_frame_us=\(String(format: "%.1f", Double(plain.frameNs.median) / 1_000))")
         print("METRIC ssh_terminal_plain_encode_us=\(String(format: "%.1f", Double(plain.encodeNs.median) / 1_000))")
@@ -77,6 +80,8 @@ struct SSHTerminalGridPerfBench {
         print("METRIC ssh_terminal_styled_cold_encode_us=\(String(format: "%.1f", Double(cold.encodeNs) / 1_000))")
         print("METRIC ssh_terminal_dirty_one_row_encode_us=\(String(format: "%.1f", Double(dirtySamples.encodeNs.median) / 1_000))")
         print("METRIC ssh_terminal_color_emoji_encode_us=\(String(format: "%.1f", Double(emoji.encodeNs) / 1_000))")
+        print("METRIC ssh_terminal_history_subrow_shift_encode_us=\(String(format: "%.1f", Double(history.shift.encodeNs.median) / 1_000))")
+        print("METRIC ssh_terminal_history_row_step_total_us=\(String(format: "%.1f", Double(history.row.totalNs.median) / 1_000))")
         print("METRIC ssh_terminal_idle_display_link_ticks_2s=\(idle.ticks)")
         #expect(plain.encodeNs.median > 0)
         #expect(styled.encodeNs.median > 0)
@@ -85,6 +90,9 @@ struct SSHTerminalGridPerfBench {
         #expect(dirtySamples.encodeNs.median > 0)
         #expect(dirtySamples.reused >= Self.rows - 2, "dirty-one-row must reuse the rest of the grid")
         #expect(emoji.completed, "color-emoji cell presented in one frame")
+        #expect(history.shift.completed && history.row.completed, "history scroll frames presented")
+        #expect(history.shift.reused == Self.rows + 2, "a sub-row shift reuses every row, overscan included")
+        #expect(history.row.rebuilt == Self.rows + 2, "a row step rebuilds the viewport and the two rows below it")
         #expect(idle.ticks == 0, "idle display link must not tick for 2s after pause")
         #expect(!idle.running)
     }
@@ -193,6 +201,60 @@ struct SSHTerminalGridPerfBench {
     ) -> Sample {
         engine.receive(Data("\u{1b}[2J\u{1b}[H\u{1F600} \u{23FA}\r\n".utf8))
         return once(engine: engine, renderer: renderer, texture: texture, fullRebuild: true)
+    }
+
+    /// A history drag: frames that only move the grid within a row, and
+    /// frames that step the viewport one row (plus the two overscan rows).
+    private static func measureHistoryScroll(
+        renderer: SSHTerminalMetalRenderer, texture: MTLTexture, warmup: Int = 2, iterations: Int = 7
+    ) throws -> (shift: SampleSet, row: SampleSet) {
+        let engine = try SSHTerminalEngine(
+            geometry: .init(columns: columns, rows: rows, cellWidth: 8, cellHeight: 17)
+        ) { _ in }
+        let line = String(repeating: "history ", count: columns / 8)
+        engine.receive(Data((0..<400).map { "\u{1b}[3\($0 % 7 + 1)m\(line)\u{1b}[0m" }.joined(separator: "\r\n").utf8))
+        var row = 200
+        engine.scrollToRow(row)
+        _ = once(engine: engine, renderer: renderer, texture: texture, fullRebuild: true)
+        var shiftEncodes: [UInt64] = []
+        var shiftReused = 0
+        var shiftCompleted = false
+        for i in 0..<(warmup + iterations) {
+            let cost = renderer.encodeOffscreen(
+                frame: engine.frame(), cursorColor: SIMD4(1, 1, 1, 0.65), texture: texture,
+                waitUntilCompleted: true, fullRebuild: false, shiftPixels: 1 + i % 30
+            )
+            if i >= warmup {
+                shiftEncodes.append(cost.encodeNanos)
+                shiftReused = cost.reusedRowCount
+                shiftCompleted = shiftCompleted || cost.completed
+            }
+        }
+        var rowFrames: [UInt64] = []
+        var rowEncodes: [UInt64] = []
+        var rowRebuilt = 0
+        var rowCompleted = false
+        for i in 0..<(warmup + iterations) {
+            row -= 1
+            engine.scrollToRow(row)
+            let sample = once(engine: engine, renderer: renderer, texture: texture, fullRebuild: false)
+            if i >= warmup {
+                rowFrames.append(sample.frameNs)
+                rowEncodes.append(sample.encodeNs)
+                rowRebuilt = sample.rebuilt
+                rowCompleted = rowCompleted || sample.completed
+            }
+        }
+        return (
+            SampleSet(
+                frameNs: Percentiles(median: 0, p95: 0), encodeNs: percentiles(shiftEncodes),
+                completed: shiftCompleted, reused: shiftReused
+            ),
+            SampleSet(
+                frameNs: percentiles(rowFrames), encodeNs: percentiles(rowEncodes),
+                completed: rowCompleted, rebuilt: rowRebuilt
+            )
+        )
     }
 
     private static func measureIdleTicks() throws -> (ticks: UInt64, running: Bool) {
