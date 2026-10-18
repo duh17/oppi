@@ -126,6 +126,12 @@ final class NativeMermaidBlockView: UIView {
     private var renderTask: Task<Void, Never>?
     /// Lays the shown diagram out again once a width change settles.
     private let resizeSettle = MermaidWidthSettle()
+    /// The shown raster outlived the turn that installed it, so it has been
+    /// on screen. Width changes in that same turn are the host still
+    /// settling its first layout, not a resize.
+    private var rasterHasBeenOnScreen = false
+    /// The host asked for a synchronous render (exports, static readers).
+    private var rendersSynchronously = false
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
 
@@ -251,9 +257,9 @@ final class NativeMermaidBlockView: UIView {
         }
         // A raster already on screen is resizing (rotation, split view,
         // Stage Manager): keep showing it scaled and lay out once the width
-        // stops changing, not at every step. Before the first raster lands
-        // the new width is the one it first shows at, so lay out now.
-        if displayedRasterRequest != nil {
+        // stops changing, not at every step. Until then the new width is the
+        // one it first shows at, so lay out now.
+        if displayedRasterRequest != nil, rasterHasBeenOnScreen {
             resizeSettle.schedule { [weak self] in self?.relayoutForCurrentWidth() }
         } else {
             relayoutForCurrentWidth()
@@ -279,6 +285,7 @@ final class NativeMermaidBlockView: UIView {
         invalidateRasterRequest()
         pendingDiagram = nil
         resizeSettle.cancel()
+        rendersSynchronously = false
 
         codeBlockView.isHidden = false
         diagramClipView.isHidden = true
@@ -316,6 +323,7 @@ final class NativeMermaidBlockView: UIView {
 
     private func renderDiagramSync(code: String, palette: ThemePalette, explicitWidth: CGFloat?) {
         resizeSettle.cancel()
+        rendersSynchronously = true
         let usesExactWidth = explicitWidth != nil
         currentCode = code
         currentPalette = palette
@@ -415,6 +423,32 @@ final class NativeMermaidBlockView: UIView {
                 request: request,
                 invalidateHostLayout: true
             )
+        }
+    }
+
+    /// The host now knows the width it will show this view at. A diagram
+    /// that was waiting for a width lays out at it, so the host's first
+    /// measurement already includes the diagram's height. Until a raster has
+    /// been on screen the latest host width wins: SwiftUI lays a view out at
+    /// a passing width or two before the one it shows.
+    func adoptHostLayoutWidth(_ width: CGFloat) {
+        guard let code = currentCode, width.isFinite, width > 0 else { return }
+        if let pending = pendingDiagram {
+            if pending.isSync {
+                renderDiagramSync(code: code, palette: pending.palette, explicitWidth: width)
+            } else {
+                renderDiagram(code: code, palette: pending.palette, explicitWidth: width)
+            }
+            return
+        }
+        guard isShowingDiagram, !rasterHasBeenOnScreen,
+              let desired = desiredRasterRequest,
+              abs(desired.rasterWidth - width) > Self.exactReaderRasterWidthSlop else { return }
+        let palette = currentPalette ?? ThemeRuntimeState.currentPalette()
+        if rendersSynchronously {
+            renderDiagramSync(code: code, palette: palette, explicitWidth: width)
+        } else {
+            renderDiagram(code: code, palette: palette, explicitWidth: width)
         }
     }
 
@@ -576,6 +610,11 @@ final class NativeMermaidBlockView: UIView {
         displayedRasterRequest = request
         inFlightRasterRequest = nil
         renderTask = nil
+        rasterHasBeenOnScreen = false
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.displayedRasterRequest == request else { return }
+            self.rasterHasBeenOnScreen = true
+        }
 
         let availableWidth = bounds.width > 0 ? bounds.width : request.rasterWidth
         // Decide from the pre-swap state. An inactive 200pt default is not a

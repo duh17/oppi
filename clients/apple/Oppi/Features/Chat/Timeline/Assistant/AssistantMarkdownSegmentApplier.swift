@@ -339,6 +339,16 @@ final class AssistantMarkdownSegmentApplier {
     /// their ordinary bounds/window width resolution.
     var preparationWidth: CGFloat?
 
+    /// The host learned the width it lays this content out at after the
+    /// segments were applied. Later applies prepare at it, and diagrams that
+    /// were waiting for a width lay out now, before the host measures.
+    func adoptHostLayoutWidth(_ width: CGFloat) {
+        preparationWidth = width
+        for mermaidView in mermaidViews.values {
+            mermaidView.adoptHostLayoutWidth(width)
+        }
+    }
+
     /// Runway probes prepare image metadata/decode without creating WKWebView.
     /// A real cell activates SVG display when it installs the prepared view.
     var preparesImagesForDisplay = true

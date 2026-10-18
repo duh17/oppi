@@ -166,11 +166,13 @@ final class ToolExpandedHostedSurface {
     }
 
     /// Notebook cell. Reuses the mounted view so output deltas do not
-    /// rebuild it. Returns true when the row should remeasure.
+    /// rebuild it. `width` is the viewport width when the row knows it
+    /// before layout. Returns true when the row should remeasure.
     @discardableResult
     func installNotebook(
         _ plan: NotebookCellPlan,
-        pressure: StreamingRenderPolicy.ResourcePressure = .nominal
+        pressure: StreamingRenderPolicy.ResourcePressure,
+        width: CGFloat?
     ) -> Bool {
         let cell: NotebookCellView
         let mounted: Bool
@@ -183,6 +185,7 @@ final class ToolExpandedHostedSurface {
             mountContentView(cell)
             mounted = true
         }
+        cell.hostLayoutWidth = width
         return cell.apply(plan, pressure: pressure) || mounted
     }
 

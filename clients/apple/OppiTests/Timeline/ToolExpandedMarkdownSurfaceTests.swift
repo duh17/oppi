@@ -350,6 +350,7 @@ private final class SurfaceHarness {
             resourceAccess: .empty,
             sourceFilePath: nil,
             resourcePressure: .nominal,
+            viewportWidth: nil,
             viewportFollowsTail: false,
             wasVisible: surface.isViewportActive,
             previousText: nil,

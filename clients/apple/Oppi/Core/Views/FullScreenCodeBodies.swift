@@ -5884,6 +5884,9 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
     private var mermaidLayoutWidth: CGFloat?
     /// Lays the diagram out again once a width change settles.
     private let mermaidResizeSettle = MermaidWidthSettle()
+    /// The current layout outlived the turn that built it, so it has been on
+    /// screen; width changes in that turn are still the first layout.
+    private var mermaidLayoutHasBeenOnScreen = false
     #if DEBUG
     private(set) var debugMermaidLayoutCountForTesting = 0
     #endif
@@ -6006,10 +6009,11 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
     /// a reader column, or a split-view pane) and lays it out again when that
     /// width changes. No height cap: full screen scrolls and zooms instead.
     ///
-    /// The first layout runs at once. Later width changes (rotation, split
-    /// view, Stage Manager) keep the current diagram until the width settles,
-    /// then lay out once; a width that maps to the same layout width changes
-    /// nothing, so the reader's zoom stays.
+    /// Until a layout has been on screen, every width lays out at once. After
+    /// that, width changes (rotation, split view, Stage Manager) keep the
+    /// current diagram until the width settles, then lay out once; a width
+    /// that maps to the same layout width changes nothing, so the reader's
+    /// zoom stays.
     private func layoutMermaidForCurrentWidth(settled: Bool = false) {
         guard let source = mermaidSource, let zoomable = mermaidPicker, bounds.width > 0 else { return }
         let config = DocumentRenderPipeline.mermaidConfiguration(theme: source.theme, availableWidth: bounds.width)
@@ -6017,11 +6021,17 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
             mermaidResizeSettle.cancel()
             return
         }
-        if mermaidLayoutWidth != nil, !settled {
+        if mermaidLayoutHasBeenOnScreen, !settled {
             mermaidResizeSettle.schedule { [weak self] in self?.layoutMermaidForCurrentWidth(settled: true) }
             return
         }
+        mermaidResizeSettle.cancel()
         mermaidLayoutWidth = config.maxWidth
+        mermaidLayoutHasBeenOnScreen = false
+        DispatchQueue.main.async { [weak self, width = config.maxWidth] in
+            guard let self, self.mermaidLayoutWidth == width else { return }
+            self.mermaidLayoutHasBeenOnScreen = true
+        }
         #if DEBUG
         debugMermaidLayoutCountForTesting += 1
         #endif

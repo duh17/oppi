@@ -41,6 +41,9 @@ struct MarkdownContentViewWrapper: UIViewRepresentable {
         let fallbackWidth = uiView.superview?.bounds.width ?? uiView.bounds.width
         let width = proposal.width ?? fallbackWidth
         guard width > 0 else { return nil }
+        // SwiftUI shows the view at the width it measures; diagrams lay out
+        // at it now so this measurement already includes them.
+        uiView.hostLayoutWidth = width
 
         let fitting = uiView.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),

@@ -8,6 +8,10 @@ struct CompactionTimelineRowConfiguration: UIContentConfiguration {
     let interactionContext: TimelineInteractionContext?
     let itemID: String?
     var resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
+    /// Width the timeline lays this row out at; nil before it has one. A
+    /// new cell has no bounds when it is configured, and the summary's
+    /// diagrams need the real width before the row is first sized.
+    var rowWidth: CGFloat?
 
     init(
         presentation: ChatTimelineCollectionHost.Controller.CompactionPresentation,
@@ -154,8 +158,8 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
             containerView.topAnchor.constraint(equalTo: topAnchor),
             containerView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            stackView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 10),
-            stackView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -10),
+            stackView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: Self.contentInset),
+            stackView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -Self.contentInset),
             stackView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 8),
             stackView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -8),
 
@@ -231,6 +235,7 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
             detailMarkdownBottom?.isActive = showMarkdown
 
             if showMarkdown {
+                detailMarkdownView.hostLayoutWidth = configuration.rowWidth.map { $0 - 2 * Self.contentInset }
                 detailMarkdownView.apply(
                     configuration: .make(
                         content: trimmedDetail,
@@ -278,6 +283,9 @@ final class CompactionTimelineRowContentView: UIView, UIContentView, TimelineRow
             expandButton.accessibilityLabel = nil
         }
     }
+
+    /// Horizontal inset of the header and summary inside the row.
+    private static let contentInset: CGFloat = 10
 
     private static func style(
         for phase: ChatTimelineCollectionHost.Controller.CompactionPresentation.Phase,

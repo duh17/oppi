@@ -57,6 +57,11 @@ struct ToolTimelineRowConfiguration: UIContentConfiguration {
     var reviewCommentSelectionRouter: ReviewCommentSelectionRouter? = nil
     var reviewCommentSessionId: String? = nil
     var resourcePressure: StreamingRenderPolicy.ResourcePressure = .nominal
+    /// Width the timeline lays this row out at; nil outside the timeline or
+    /// before it has a width. A new cell has no bounds when it is
+    /// configured, and Markdown diagrams need the real width before the row
+    /// is first sized.
+    var rowWidth: CGFloat? = nil
     /// Bound source identity and file providers for this row's Markdown viewport and
     /// its full-screen reader. Tool Markdown hosts file reads only, so inline media
     /// providers stay unset here.
@@ -329,6 +334,16 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             timelineItemId: currentConfiguration.itemID,
             sourceSurfaceOverride: .toolExpandedText
         )
+    }
+
+    /// Width of the row body, which Markdown in the row fills: from the
+    /// timeline's row width when given (bounds are zero in a new cell and
+    /// stale during a resize), else from bounds.
+    private var bodyLayoutWidth: CGFloat? {
+        let rowWidth = currentConfiguration.rowWidth ?? (bounds.width > 0 ? bounds.width : nil)
+        guard let rowWidth else { return nil }
+        let width = rowWidth - 2 * ToolTimelineRowLayoutBuilder.bodyHorizontalInset
+        return width > 0 ? width : nil
     }
 
     private var perfSessionId: String? {
@@ -778,6 +793,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             resourceAccess: currentConfiguration.resourceAccess,
             sourceFilePath: markdownRewriteSourceFilePath,
             resourcePressure: currentConfiguration.resourcePressure,
+            viewportWidth: bodyLayoutWidth,
             viewportFollowsTail: expandedShouldAutoFollow,
             wasVisible: wasVisible,
             previousText: expandedRenderedText,
@@ -1130,6 +1146,7 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
             inspectionSupplementView = supplement
             if supplement.superview == nil { bodyStack.insertArrangedSubview(supplement, at: 0) }
             supplement.isHidden = false
+            supplement.hostLayoutWidth = bodyLayoutWidth
             supplement.apply(configuration: .make(content: text, isStreaming: false,
                 themeID: ThemeRuntimeState.currentThemeID(), textSelectionEnabled: true,
                 resourceAccess: configuration.resourceAccess, perfSurface: .toolExpanded))
@@ -1900,7 +1917,11 @@ final class ToolTimelineRowContentView: UIView, UIContentView, UIScrollViewDeleg
                 scheduleHostedRemeasure()
             }
         case .notebook(let plan):
-            if hostedSurface.installNotebook(plan, pressure: currentConfiguration.resourcePressure) {
+            if hostedSurface.installNotebook(
+                plan,
+                pressure: currentConfiguration.resourcePressure,
+                width: bodyLayoutWidth
+            ) {
                 scheduleHostedRemeasure()
             }
         }

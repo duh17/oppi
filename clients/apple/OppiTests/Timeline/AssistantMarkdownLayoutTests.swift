@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -559,6 +560,253 @@ struct AssistantMarkdownLayoutTests {
         #expect(abs((mermaidView.debugDiagramHeightConstantForTesting ?? 0) - reserved) <= 0.5)
         #expect(abs(cell.frame.height - rowHeight) <= 0.5, "row height changed after first display")
         #expect(mermaidView.debugRenderCountForTesting == 1, "one layout at the timeline width")
+    }
+
+    enum MermaidTimelineHost: String, CaseIterable, Sendable {
+        case compactionDetail
+        case readToolDone
+        case readToolStreaming
+    }
+
+    /// Every other timeline row that shows markdown builds its diagram before
+    /// the row has bounds, as the assistant row does. Each lays the diagram
+    /// out once, at the width the row shows it at, before the row is first
+    /// sized, so the row keeps that height when the raster lands.
+    @Test(.timeLimit(.minutes(1)), arguments: MermaidTimelineHost.allCases)
+    func mermaidInOtherTimelineRowsReservesItsHeightOnce(host: MermaidTimelineHost) async throws {
+        let label = "Host \(host.rawValue)"
+        let isFixture: @Sendable (String) -> Bool = { $0.contains(label) }
+        let rasterGate = AsyncOneShotGate()
+        let installed = AsyncOneShotGate()
+        NativeMermaidBlockView.testHooks = .init(
+            beforeAsyncRaster: { code in
+                if isFixture(code) { await rasterGate.wait() }
+            },
+            didShowDiagram: { code in
+                if isFixture(code) { installed.open() }
+            }
+        )
+        defer {
+            NativeMermaidBlockView.testHooks = .init()
+            rasterGate.open()
+        }
+
+        let wh = makeWindowedTimelineHarness(
+            sessionId: "mermaid-host-\(host.rawValue)",
+            frame: CGRect(x: 0, y: 0, width: 820, height: 1_000)
+        )
+        defer { wh.window.isHidden = true }
+        var forcedRemeasures = 0
+        ToolTimelineRowPresentationHelpers.forcedEnclosingLayoutInvalidationHookForTesting = { target in
+            if target === wh.collectionView { forcedRemeasures += 1 }
+        }
+        defer { ToolTimelineRowPresentationHelpers.forcedEnclosingLayoutInvalidationHookForTesting = nil }
+        let markdown = """
+        Diagram:
+
+        ```mermaid
+        flowchart LR
+            A[Receive webhook] --> B[Validate signature] --> C[Enqueue job]
+            C --> D[Worker picks up] --> E[\(label)]
+        ```
+        """
+        switch host {
+        case .compactionDetail:
+            wh.reducer.expandedItemIDs.insert("host-item")
+            wh.applyItems(
+                [.systemEvent(id: "host-item", message: "Context compacted: \(markdown)")],
+                isBusy: false
+            )
+        case .readToolDone, .readToolStreaming:
+            let isDone = host == .readToolDone
+            wh.toolArgsStore.set(["path": .string("docs/README.md")], for: "host-item")
+            wh.toolArgsStore.setInputPresentation(ToolFileFactsFixture.readInput, for: "host-item")
+            wh.toolArgsStore.setOutputPresentation(
+                .init(kind: "fileContent", provenance: "result"), for: "host-item"
+            )
+            wh.reducer.expandedItemIDs.insert("host-item")
+            wh.toolOutputStore.append(markdown, to: "host-item")
+            wh.applyItems(
+                [.toolCall(
+                    id: "host-item", tool: "read", argsSummary: "path: docs/README.md",
+                    outputPreview: "Diagram:", outputByteCount: markdown.utf8.count,
+                    isError: false, isDone: isDone
+                )],
+                isBusy: !isDone
+            )
+        }
+        // One pass, as a frame commit runs it.
+        wh.window.layoutIfNeeded()
+
+        let cell = try #require(wh.collectionView.cellForItem(at: IndexPath(item: 0, section: 0)))
+        let mermaidView = try #require(timelineFirstView(ofType: NativeMermaidBlockView.self, in: cell.contentView))
+        let reserved = try #require(mermaidView.debugDiagramHeightConstantForTesting)
+        let rowHeight = cell.frame.height
+        #expect(mermaidView.debugDiagramHeightConstraintIsActiveForTesting)
+        #expect(mermaidView.debugRenderCountForTesting == 1)
+        #expect(forcedRemeasures == 0, "the row was sized before its diagram had a height")
+
+        rasterGate.open()
+        await installed.wait()
+        wh.window.layoutIfNeeded()
+        wh.collectionView.layoutIfNeeded()
+
+        #expect(abs(mermaidView.bounds.width - 360) > 8, "the row shows the diagram away from the old guess")
+        #expect(abs((mermaidView.debugRasterWidthForTesting ?? 0) - mermaidView.bounds.width) <= 0.5)
+        #expect(abs((mermaidView.debugDiagramHeightConstantForTesting ?? 0) - reserved) <= 0.5)
+        #expect(abs(cell.frame.height - rowHeight) <= 0.5, "row height changed after first display")
+        #expect(mermaidView.debugRenderCountForTesting == 1, "one layout at the row's width")
+    }
+
+    enum MermaidMarkdownHost: String, CaseIterable, Sendable {
+        case toolInspectionSupplement
+        case notebookOutput
+        case extensionMarkdownBlock
+        case swiftUIMarkdown
+    }
+
+    /// Every other surface that shows Markdown builds its diagram before it
+    /// is attached, then measures at the width it will show it at. The first
+    /// measurement already holds the diagram's height, and attaching at that
+    /// width lays it out no second time and keeps that height.
+    @Test(.timeLimit(.minutes(1)), arguments: MermaidMarkdownHost.allCases)
+    func mermaidInMarkdownHostKeepsItsFirstMeasuredHeight(host: MermaidMarkdownHost) async throws {
+        let width: CGFloat = 700
+        let label = "Surface \(host.rawValue)"
+        let isFixture: @Sendable (String) -> Bool = { $0.contains(label) }
+        let rasterGate = AsyncOneShotGate()
+        // Every install, in order: a synchronous host shows a raster during
+        // its first layout, and any relayout lands later.
+        let (shows, showContinuation) = AsyncStream<Void>.makeStream()
+        NativeMermaidBlockView.testHooks = .init(
+            beforeAsyncRaster: { code in
+                if isFixture(code) { await rasterGate.wait() }
+            },
+            didShowDiagram: { code in
+                if isFixture(code) { showContinuation.yield() }
+            }
+        )
+        defer {
+            NativeMermaidBlockView.testHooks = .init()
+            rasterGate.open()
+            showContinuation.finish()
+        }
+        let markdown = """
+        Diagram:
+
+        ```mermaid
+        flowchart LR
+            A[Receive webhook] --> B[Validate signature] --> C[Enqueue job]
+            C --> D[Worker picks up] --> E[\(label)]
+        ```
+        """
+
+        let root: UIView
+        /// The host's height for the surface: what a UIKit host measures, or
+        /// the frame SwiftUI gave the bridged view.
+        var measure: () -> CGFloat
+        var hostingController: UIViewController?
+        func fitting(_ view: UIView) -> CGFloat {
+            view.systemLayoutSizeFitting(
+                CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+        }
+        switch host {
+        case .toolInspectionSupplement:
+            var context = ToolPresentationBuilder.Context(
+                args: ["command": .string("echo ok")], details: nil, expandedItemIDs: ["tool"],
+                fullOutput: "ok", isLoadingOutput: false, callSegments: nil
+            )
+            context.inputPresentation = .init(fields: ["command": .init(role: "command", language: "shell")])
+            context.outputPresentation = .init(kind: "terminal")
+            var configuration = ToolPresentationBuilder.build(
+                itemID: "tool", tool: "bash", argsSummary: "echo ok", outputPreview: "ok",
+                isError: false, isDone: true, context: context
+            )
+            configuration.inspectionSupplement = markdown
+            configuration.rowWidth = width
+            let row = ToolTimelineRowContentView(configuration: configuration)
+            root = row
+            measure = { fitting(row) }
+        case .notebookOutput:
+            let cell = NotebookCellView()
+            cell.hostLayoutWidth = width
+            cell.apply(NotebookCellPlan(
+                sources: [.init(label: nil, language: "yaml", code: "action: draw")],
+                inputIsCode: false, metadata: [], calls: [], omittedCalls: 0, callsIncomplete: false,
+                output: .rich(markdown), availabilityNote: nil, running: false, failed: false
+            ))
+            root = cell
+            measure = { fitting(cell) }
+        case .extensionMarkdownBlock:
+            let controller = UIHostingController(rootView: ExtensionNativeBlocksView(
+                content: .blocks([.markdown(base: ExtensionUIBlockBase(id: "md", accessibility: nil), markdown: markdown)]),
+                sizing: .capped(maxHeight: 2_000)
+            ))
+            hostingController = controller
+            root = controller.view
+            measure = { 0 }
+        case .swiftUIMarkdown:
+            let controller = UIHostingController(rootView: MarkdownContentViewWrapper(content: markdown))
+            hostingController = controller
+            root = controller.view
+            measure = { 0 }
+        }
+
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: 1_000))
+        defer { window.isHidden = true }
+        let firstHeight: CGFloat
+        if let hostingController {
+            // SwiftUI measures the bridged view at the window's width, then
+            // places it, in one layout pass.
+            window.rootViewController = hostingController
+            window.makeKeyAndVisible()
+            window.layoutIfNeeded()
+            let bridged = try #require(
+                timelineFirstView(ofType: ExtensionNativeBlockScrollView.self, in: root) as UIView?
+                    ?? timelineFirstView(ofType: AssistantMarkdownContentView.self, in: root)
+            )
+            measure = { bridged.frame.height }
+            firstHeight = measure()
+        } else {
+            firstHeight = measure()
+            window.frame.size.height = max(firstHeight, 1)
+            root.translatesAutoresizingMaskIntoConstraints = true
+            root.frame = window.bounds
+            window.addSubview(root)
+            window.makeKeyAndVisible()
+            window.layoutIfNeeded()
+        }
+        let mermaidView = try #require(timelineFirstView(ofType: NativeMermaidBlockView.self, in: root))
+        #expect(mermaidView.debugDiagramHeightConstraintIsActiveForTesting, "measured with the diagram's height")
+        // A UIKit host measures once, at the width it shows. SwiftUI probes a
+        // few widths first, and each probe before display may lay out again.
+        let layoutsBeforeDisplay = mermaidView.debugRenderCountForTesting
+        if hostingController == nil {
+            #expect(layoutsBeforeDisplay == 1, "laid out once, at the width it is shown at")
+        }
+
+        rasterGate.open()
+        func showsItsWidth() -> Bool {
+            mermaidView.debugRenderedImageForTesting != nil
+                && abs((mermaidView.debugRasterWidthForTesting ?? 0) - mermaidView.bounds.width) <= 0.5
+        }
+        if !showsItsWidth() {
+            for await _ in shows where showsItsWidth() { break }
+        }
+        window.layoutIfNeeded()
+        #expect(abs(mermaidView.bounds.width - 360) > 8, "shown away from the old guess")
+        #expect(
+            abs((mermaidView.debugRasterWidthForTesting ?? 0) - mermaidView.bounds.width) <= 0.5,
+            "raster \(mermaidView.debugRasterWidthForTesting ?? 0), shown \(mermaidView.bounds.width)"
+        )
+        #expect(abs(measure() - firstHeight) <= 0.5, "height changed after first display")
+        #expect(
+            mermaidView.debugRenderCountForTesting == layoutsBeforeDisplay,
+            "no layout after first display"
+        )
     }
 
     /// A closed fence during a busy turn still reserves graphical height. Open

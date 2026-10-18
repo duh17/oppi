@@ -2,6 +2,9 @@ import UIKit
 
 @MainActor
 enum ToolTimelineRowLayoutBuilder {
+    /// Inset of the row body from each side of the card.
+    static let bodyHorizontalInset: CGFloat = 8
+
     struct Constraints {
         let toolLeading: NSLayoutConstraint
         let toolWidth: NSLayoutConstraint
@@ -68,8 +71,8 @@ enum ToolTimelineRowLayoutBuilder {
             trailingStack.centerYAnchor.constraint(equalTo: statusImageView.centerYAnchor),
             trailingStack.trailingAnchor.constraint(equalTo: borderView.trailingAnchor, constant: -8),
 
-            bodyStack.leadingAnchor.constraint(equalTo: borderView.leadingAnchor, constant: 8),
-            bodyStack.trailingAnchor.constraint(equalTo: borderView.trailingAnchor, constant: -8),
+            bodyStack.leadingAnchor.constraint(equalTo: borderView.leadingAnchor, constant: bodyHorizontalInset),
+            bodyStack.trailingAnchor.constraint(equalTo: borderView.trailingAnchor, constant: -bodyHorizontalInset),
             bodyStack.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
             bodyStack.bottomAnchor.constraint(equalTo: borderView.bottomAnchor, constant: -6),
         ]
@@ -147,8 +150,8 @@ enum ToolTimelineRowLayoutBuilder {
             trailingStack.centerYAnchor.constraint(equalTo: statusImageView.centerYAnchor),
             trailingStack.trailingAnchor.constraint(equalTo: borderView.trailingAnchor, constant: -8),
 
-            bodyStack.leadingAnchor.constraint(equalTo: borderView.leadingAnchor, constant: 8),
-            bodyStack.trailingAnchor.constraint(equalTo: borderView.trailingAnchor, constant: -8),
+            bodyStack.leadingAnchor.constraint(equalTo: borderView.leadingAnchor, constant: bodyHorizontalInset),
+            bodyStack.trailingAnchor.constraint(equalTo: borderView.trailingAnchor, constant: -bodyHorizontalInset),
             bodyStack.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
             bodyStack.bottomAnchor.constraint(equalTo: borderView.bottomAnchor, constant: -6),
 

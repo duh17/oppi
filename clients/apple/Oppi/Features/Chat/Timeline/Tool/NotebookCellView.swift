@@ -68,6 +68,35 @@ final class NotebookCellView: UIView, UITextViewDelegate {
     private var fittedHeightByWidth: [Int: CGFloat] = [:]
     private var fittedWidthBucket: Int?
 
+    /// Width the host lays this cell out at, when it knows before layout (a
+    /// timeline row configured in a new cell). Formatted output's diagrams
+    /// lay out at their share of it before the cell is first measured.
+    var hostLayoutWidth: CGFloat? {
+        didSet {
+            guard hostLayoutWidth != oldValue else { return }
+            fittedHeightByWidth.removeAll()
+            for view in markdownViews(in: attachmentStack) {
+                view.hostLayoutWidth = richOutputWidth
+            }
+        }
+    }
+
+    /// Outputs sit right of the rail: its offset, its width, the gap after
+    /// it, and the trailing inset.
+    private enum AttachmentInset {
+        static let railLeading: CGFloat = 0.5
+        static let railWidth: CGFloat = 2
+        static let gap: CGFloat = 11
+        static let trailing: CGFloat = 2
+        static let horizontal = railLeading + railWidth + gap + trailing
+    }
+
+    private var richOutputWidth: CGFloat? {
+        guard let hostLayoutWidth else { return nil }
+        let width = hostLayoutWidth - AttachmentInset.horizontal
+        return width > 0 ? width : nil
+    }
+
     #if DEBUG
     nonisolated(unsafe) static var deferredHighlightDelayForTesting: Duration?
     private(set) var debugDeferredHighlightCountForTesting = 0
@@ -255,12 +284,12 @@ final class NotebookCellView: UIView, UITextViewDelegate {
             cardStack.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
             cardStack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
             // The rail continues the card's accent edge down through the outputs.
-            rail.leadingAnchor.constraint(equalTo: attachments.leadingAnchor, constant: 0.5),
-            rail.widthAnchor.constraint(equalToConstant: 2),
+            rail.leadingAnchor.constraint(equalTo: attachments.leadingAnchor, constant: AttachmentInset.railLeading),
+            rail.widthAnchor.constraint(equalToConstant: AttachmentInset.railWidth),
             rail.topAnchor.constraint(equalTo: attachments.topAnchor),
             rail.bottomAnchor.constraint(equalTo: attachments.bottomAnchor),
-            attachmentStack.leadingAnchor.constraint(equalTo: rail.trailingAnchor, constant: 11),
-            attachmentStack.trailingAnchor.constraint(equalTo: attachments.trailingAnchor, constant: -2),
+            attachmentStack.leadingAnchor.constraint(equalTo: rail.trailingAnchor, constant: AttachmentInset.gap),
+            attachmentStack.trailingAnchor.constraint(equalTo: attachments.trailingAnchor, constant: -AttachmentInset.trailing),
             attachmentStack.topAnchor.constraint(equalTo: attachments.topAnchor, constant: 2),
             attachmentStack.bottomAnchor.constraint(equalTo: attachments.bottomAnchor, constant: -2),
         ])
@@ -554,6 +583,7 @@ final class NotebookCellView: UIView, UITextViewDelegate {
                 : Trimmed(markdown, lines: InlineLimit.richLines, characters: InlineLimit.richCharacters)
             let view = AssistantMarkdownContentView()
             view.accessibilityIdentifier = "tool.notebook.output"
+            view.hostLayoutWidth = richOutputWidth
             view.apply(configuration: .make(
                 content: shown.text,
                 isStreaming: plan.running,

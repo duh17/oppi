@@ -59,6 +59,13 @@ struct ExtensionNativeBlockContext {
 @MainActor
 protocol ExtensionNativeBlockRendering: UIView {
     func apply(_ block: ExtensionUINativeBlock, context: ExtensionNativeBlockContext)
+    /// The host is about to measure at, and show this block at, `width`.
+    /// Blocks whose height depends on width before layout use it.
+    func adoptLayoutWidth(_ width: CGFloat)
+}
+
+extension ExtensionNativeBlockRendering {
+    func adoptLayoutWidth(_ width: CGFloat) {}
 }
 
 // MARK: - Fonts and colors
@@ -246,6 +253,13 @@ final class ExtensionNativeBlockStackView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    /// Hands `width`, the width this stack is shown at, to its blocks.
+    func adoptLayoutWidth(_ width: CGFloat) {
+        for case let block as any ExtensionNativeBlockRendering in stackView.arrangedSubviews {
+            block.adoptLayoutWidth(width)
+        }
+    }
+
     func apply(_ content: ExtensionNativeBlockContent, context: ExtensionNativeBlockContext) {
         switch content {
         case .blocks(let blocks):
@@ -413,6 +427,10 @@ final class ExtensionNativeMarkdownBlockView: UIView, ExtensionNativeBlockRender
             renderingMode: .staticReader
         ))
         invalidateIntrinsicContentSize()
+    }
+
+    func adoptLayoutWidth(_ width: CGFloat) {
+        markdownView.hostLayoutWidth = width
     }
 
     override func systemLayoutSizeFitting(
@@ -623,16 +641,22 @@ final class ExtensionNativeSectionBlockView: UIView, ExtensionNativeBlockRenderi
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: Self.inset),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.inset),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.inset),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.inset),
         ])
         children.spacing = 6
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    private static let inset: CGFloat = 10
+
+    func adoptLayoutWidth(_ width: CGFloat) {
+        children.adoptLayoutWidth(width - 2 * Self.inset)
+    }
 
     func apply(_ block: ExtensionUINativeBlock, context: ExtensionNativeBlockContext) {
         guard case .section(let base, let title, let subtitle, let blocks) = block else { return }
@@ -1417,6 +1441,12 @@ final class ExtensionNativeBlockScrollView: UIView, UIGestureRecognizerDelegate 
         return CGSize(width: UIView.noIntrinsicMetric, height: viewportHeight(for: width))
     }
 
+    /// The host will show this viewport at `width`, the width SwiftUI
+    /// proposes. Blocks lay out what depends on width before it is measured.
+    func adoptLayoutWidth(_ width: CGFloat) {
+        blockStack.adoptLayoutWidth(max(1, width - contentInsets.leading - contentInsets.trailing))
+    }
+
     /// Height the capped viewport wants at `width`: its content, at most `maxHeight`.
     func viewportHeight(for width: CGFloat) -> CGFloat {
         let content = contentHeight(for: width)
@@ -1555,6 +1585,7 @@ struct ExtensionNativeBlocksView: UIViewRepresentable {
         guard case .capped = sizing else { return nil }
         let width = proposal.width ?? uiView.bounds.width
         guard width.isFinite, width > 0 else { return nil }
+        uiView.adoptLayoutWidth(width)
         return CGSize(width: width, height: uiView.viewportHeight(for: width))
     }
 }

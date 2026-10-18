@@ -63,17 +63,25 @@ extension ChatTimelineCollectionHost.Controller {
         }
     }
 
-    /// Width an assistant row lays its markdown out at: the layout's row
-    /// column inside the bubble's margins and padding. Nil before the
-    /// timeline has a width.
-    func assistantMarkdownWidth() -> CGFloat? {
+    /// Width every row is laid out at: the layout's row column. Rows hand
+    /// it to blocks whose height depends on width (diagrams) before a new
+    /// cell has bounds. Nil before the timeline has a width.
+    func timelineRowWidth() -> CGFloat? {
         guard let collectionView, collectionView.bounds.width > 1 else { return nil }
-        let column = ChatTimelineCachedHeightLayout.rowColumn(
+        let width = ChatTimelineCachedHeightLayout.rowColumn(
             boundsWidth: collectionView.bounds.width,
             safeAreaInsets: collectionView.safeAreaInsets
-        )
+        ).width
+        return width > 0 ? width : nil
+    }
+
+    /// Width an assistant row lays its markdown out at: the row column
+    /// inside the bubble's margins and padding. Nil before the timeline has
+    /// a width.
+    func assistantMarkdownWidth() -> CGFloat? {
+        guard let rowWidth = timelineRowWidth() else { return nil }
         let card = chromeStyle.assistantBubble
-        let width = column.width
+        let width = rowWidth
             - card.margins.leading - card.margins.trailing
             - card.padding.leading - card.padding.trailing
         return width > 0 ? width : nil
@@ -282,7 +290,7 @@ extension ChatTimelineCollectionHost.Controller {
                 onToggleExpand = nil
             }
 
-            return CompactionTimelineRowConfiguration(
+            var configuration = CompactionTimelineRowConfiguration(
                 presentation: compaction,
                 isExpanded: isExpanded,
                 onToggleExpand: onToggleExpand,
@@ -290,6 +298,8 @@ extension ChatTimelineCollectionHost.Controller {
                 itemID: itemID,
                 resourcePressure: resourcePressure
             )
+            configuration.rowWidth = timelineRowWidth()
+            return configuration
         }
 
         return SystemTimelineRowConfiguration(message: message)
@@ -524,6 +534,7 @@ extension ChatTimelineCollectionHost.Controller {
             fallback: configuration.expandedContent
         )
         configuration.resourcePressure = resourcePressure
+        configuration.rowWidth = timelineRowWidth()
         if let intent = configuration.currentFileOpenIntent,
            let onOpenCurrentFile {
             configuration.openCurrentFile = {

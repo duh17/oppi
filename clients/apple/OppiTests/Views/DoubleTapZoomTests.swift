@@ -119,6 +119,10 @@ struct DoubleTapZoomTests {
         body.layoutIfNeeded()
         let diagram = try #require(timelineFirstView(ofType: ZoomableGraphicalView.self, in: body))
         #expect(body.debugMermaidLayoutCountForTesting == 1, "the first width lays out at once")
+        // The first layout reaches the screen before anyone resizes it.
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async { continuation.resume() }
+        }
 
         diagram.debugToggleZoomForTesting(at: CGPoint(x: 200, y: 40))
         let zoomed = diagram.debugZoomScaleForTesting

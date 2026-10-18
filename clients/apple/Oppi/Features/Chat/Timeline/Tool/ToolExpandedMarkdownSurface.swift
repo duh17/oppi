@@ -31,6 +31,9 @@ final class ToolExpandedMarkdownSurface {
         let resourceAccess: MarkdownResourceAccess
         let sourceFilePath: String?
         let resourcePressure: StreamingRenderPolicy.ResourcePressure
+        /// Width the row lays the viewport out at, when known before layout
+        /// (a new cell). The live view's diagrams lay out at it up front.
+        let viewportWidth: CGFloat?
         /// Row-level tail-follow flag before this apply. Seeds the reader
         /// position handed across when a live viewport completes.
         let viewportFollowsTail: Bool
@@ -60,6 +63,9 @@ final class ToolExpandedMarkdownSurface {
         /// Another surface took over the expanded viewport; parsed content goes.
         case replaced
     }
+
+    /// How much narrower than the viewport the live view is laid out.
+    private static let liveHorizontalInset: CGFloat = 12
 
     /// Incremental viewport, the host's active view while the tool streams.
     let liveView = AssistantMarkdownContentView()
@@ -103,7 +109,7 @@ final class ToolExpandedMarkdownSurface {
 
         let liveWidth = liveView.widthAnchor.constraint(
             equalTo: viewport.frameLayoutGuide.widthAnchor,
-            constant: -12
+            constant: -Self.liveHorizontalInset
         )
         let completedWidth = completedContainer.widthAnchor.constraint(
             equalTo: viewport.frameLayoutGuide.widthAnchor,
@@ -191,6 +197,7 @@ final class ToolExpandedMarkdownSurface {
             removeCompletedViewport()
             self.themeID = themeID
             liveView.accessibilityIdentifier = Self.accessibilityIdentifier(itemID: input.itemID)
+            liveView.hostLayoutWidth = input.viewportWidth.map { $0 - Self.liveHorizontalInset }
             liveView.apply(configuration: .make(
                 content: input.text,
                 isStreaming: true,
