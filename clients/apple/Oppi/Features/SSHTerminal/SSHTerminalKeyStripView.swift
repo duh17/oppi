@@ -215,7 +215,7 @@ final class SSHTerminalKeyStripView: UIView {
             }
         }
         let pageButton = SSHTerminalKeyButton()
-        pageButton.apply(title: "\(index + 1)/\(pages.count)", colors: colors)
+        pageButton.apply(title: "\(index + 1)/\(pages.count)", colors: colors, compactTitle: true)
         pageButton.accessibilityIdentifier = "sshTerminal.composer.page"
         pageButton.accessibilityLabel = "Key page \(index + 1) of \(pages.count), \(page.title)"
         pageButton.accessibilityHint = "Shows \(next.title)"
@@ -323,7 +323,7 @@ final class SSHTerminalKeyStripView: UIView {
             self?.handlers.sendArrow(arrowKey) ?? false
         }
         arrow.tintColor = foreground
-        arrow.applyTitleColor(foreground)
+        arrow.applyChrome(title: label, color: foreground)
         arrow.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         arrow.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         keys.addArrangedSubview(arrow)
@@ -372,7 +372,8 @@ final class SSHTerminalKeyButton: UIButton {
         title: String?,
         systemImage: String? = nil,
         colors: ComposerThemeColors,
-        selected: Bool = false
+        selected: Bool = false,
+        compactTitle: Bool = false
     ) {
         var config = UIButton.Configuration.plain()
         config.cornerStyle = .capsule
@@ -380,7 +381,9 @@ final class SSHTerminalKeyButton: UIButton {
         config.background.backgroundColor = selected
             ? colors.fg.withAlphaComponent(0.18)
             : .clear
-        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10)
+        let horizontal: CGFloat = compactTitle ? 6 : 10
+        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: horizontal, bottom: 6, trailing: horizontal)
+        config.titleLineBreakMode = compactTitle ? .byClipping : .byTruncatingTail
         config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
             var outgoing = incoming
             outgoing.font = .monospacedSystemFont(ofSize: 14, weight: .medium)
@@ -394,5 +397,9 @@ final class SSHTerminalKeyButton: UIButton {
             )
         }
         configuration = config
+        if compactTitle {
+            titleLabel?.numberOfLines = 1
+            setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
     }
 }

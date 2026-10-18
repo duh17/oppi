@@ -39,15 +39,13 @@ final class SSHTerminalArrowButton: UIButton {
         heldKey = key
         sendArrow = send
         super.init(frame: .zero)
-        setTitle(label, for: .normal)
-        titleLabel?.font = .monospacedSystemFont(ofSize: 14, weight: .medium)
-        titleLabel?.adjustsFontSizeToFitWidth = true
         accessibilityIdentifier = id
         accessibilityLabel = "Move cursor \(label)"
         accessibilityHint = "Hold to repeat. Drag while held to change direction and speed."
         configurationUpdateHandler = { button in
             button.alpha = button.isEnabled ? (button.isHighlighted ? 0.82 : 1) : 0.45
         }
+        applyChrome(title: label, color: .label)
         addAction(UIAction { [weak self] _ in
             guard let self else { return }
             _ = self.sendArrow(self.heldKey)
@@ -79,15 +77,22 @@ final class SSHTerminalArrowButton: UIButton {
 
     override func tintColorDidChange() {
         super.tintColorDidChange()
-        // UIButton subclasses are custom buttons; unlike system buttons,
-        // they do not automatically use the inherited terminal-bar tint.
-        applyTitleColor()
+        applyChrome(title: configuration?.title, color: tintColor ?? .label)
     }
 
-    func applyTitleColor(_ color: UIColor? = nil) {
-        let color = color ?? tintColor ?? .label
-        setTitleColor(color, for: .normal)
-        setTitleColor(color.withAlphaComponent(0.82), for: .highlighted)
+    func applyChrome(title: String?, color: UIColor) {
+        var config = UIButton.Configuration.plain()
+        config.cornerStyle = .capsule
+        config.baseForegroundColor = color
+        config.background.backgroundColor = .clear
+        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10)
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
+            var outgoing = incoming
+            outgoing.font = .monospacedSystemFont(ofSize: 14, weight: .medium)
+            return outgoing
+        }
+        config.title = title
+        configuration = config
     }
 
     override func didMoveToWindow() {
