@@ -148,7 +148,7 @@ import {
   type DictationConfig,
 } from "./dictation-types.js";
 import { createSttProvider, resolveSttBearerToken } from "./create-stt-provider.js";
-import { GrokVoiceMediaAdapter } from "./grok-live-voice.js";
+import { GrokVoiceMediaAdapter, grokVoiceFromTts } from "./grok-live-voice.js";
 import { StreamingSttProvider } from "./stt-provider.js";
 import { DEFAULT_XAI_STT_MODEL } from "./xai-stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
@@ -1445,6 +1445,7 @@ export class Server {
       // Same xAI credential path as Grok dictation and read aloud: sign-in first, then API key.
       createGrokVoice: () =>
         new GrokVoiceMediaAdapter({
+          voice: grokVoiceFromTts(this.storage.getConfig().tts),
           resolveApiKey: () =>
             resolveSttBearerToken("xai", {
               getAuth: async (providerId) => this.modelRuntime?.getAuth(providerId),

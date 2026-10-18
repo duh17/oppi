@@ -19,6 +19,8 @@ import { WebSocket } from "ws";
 import type { VoiceDelegationUpdate, VoiceFrontendEventHandler } from "./continuous-voice.js";
 import type { VoiceMediaAdapter } from "./continuous-voice-media.js";
 import { createLogger } from "./logger.js";
+import { resolveTtsProvider } from "./speech-synthesis.js";
+import type { ServerConfig } from "./types.js";
 
 const log = createLogger({ base: { component: "grok_live_voice" } });
 
@@ -40,6 +42,15 @@ export const GROK_VOICE_INSTRUCTIONS = [
   "Messages that begin with [Pi update] come from Pi, not the user. Relay each one in one or two spoken sentences. Never claim work is done, failed, or approved unless a Pi update says so.",
   "You cannot approve permission requests. If Pi is blocked on an approval, tell the user to answer it on screen.",
 ].join(" ");
+
+/**
+ * Grok's voice for a call: the read-aloud voice when read aloud also speaks through Grok,
+ * so replies and calls sound the same. An http voice (a Yuwp name) means nothing to xAI.
+ */
+export function grokVoiceFromTts(tts: ServerConfig["tts"]): string {
+  const voice = tts?.voice?.trim();
+  return voice && resolveTtsProvider(tts) === "xai" ? voice : GROK_VOICE_DEFAULT_VOICE;
+}
 
 /** The subset of a `ws` socket the adapter uses; tests supply a fake. */
 export interface GrokVoiceSocket {

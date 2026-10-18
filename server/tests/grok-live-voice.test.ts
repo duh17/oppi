@@ -6,7 +6,11 @@ import {
 } from "../src/continuous-voice-call.js";
 import { VoiceCallMediaCoordinator } from "../src/continuous-voice-media.js";
 import { VoiceApprovalBridge } from "../src/continuous-voice.js";
-import { GrokVoiceMediaAdapter, type GrokVoiceSocket } from "../src/grok-live-voice.js";
+import {
+  GrokVoiceMediaAdapter,
+  grokVoiceFromTts,
+  type GrokVoiceSocket,
+} from "../src/grok-live-voice.js";
 
 /** Stands in for the xAI realtime socket; the test plays the server side. */
 class FakeXaiSocket implements GrokVoiceSocket {
@@ -375,6 +379,30 @@ describe("Grok Voice media", () => {
         response: { type: "extension_ui_response", id: "request-1", confirmed: true },
       },
     ]);
+  });
+
+  it("speaks in the read-aloud voice only when read aloud also uses Grok", async () => {
+    expect(grokVoiceFromTts({ provider: "xai", voice: "rex" })).toBe("rex");
+    expect(grokVoiceFromTts({ endpoint: "https://api.x.ai", voice: "ara" })).toBe("ara");
+    // A Yuwp voice name means nothing to xAI.
+    expect(
+      grokVoiceFromTts({ provider: "http", endpoint: "http://127.0.0.1:7938", voice: "elena" }),
+    ).toBe("eve");
+    expect(grokVoiceFromTts({ provider: "xai" })).toBe("eve");
+    expect(grokVoiceFromTts(undefined)).toBe("eve");
+
+    const socket = new FakeXaiSocket("wss://example.test", {});
+    const adapter = new GrokVoiceMediaAdapter({
+      voice: grokVoiceFromTts({ provider: "xai", voice: "rex" }),
+      resolveApiKey: async () => "xai-token",
+      createSocket: () => socket,
+    });
+    const starting = adapter.start(async () => {});
+    await flush();
+    socket.server({ type: "session.created" });
+    socket.server({ type: "session.updated" });
+    await starting;
+    expect(socket.json[0].session.voice).toBe("rex");
   });
 
   it("ends the media session when xAI hangs up mid-call", async () => {
