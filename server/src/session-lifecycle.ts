@@ -177,31 +177,62 @@ export class SessionLifecycleCoordinator {
 
     const timeoutMs = this.deps.getSessionIdleTimeoutMs();
     const timer = setTimeout(() => {
-      const idleActive = this.deps.getActiveSession(key);
-      if (!idleActive) {
-        return;
-      }
+      void this.expireIdle(key, timer, timeoutMs);
+    }, timeoutMs);
 
-      if (hasPendingUserReplyDialog(idleActive)) {
-        log.info("session_lifecycle.idle_timeout.held_for_dialog", {
-          sessionId: idleActive.session.id,
-          key,
-          timeoutMs,
-        });
-        this.resetIdleTimer(key);
-        return;
-      }
+    this.idleTimers.set(key, timer);
+  }
 
-      log.info("session_lifecycle.idle_timeout", {
+  private async expireIdle(key: string, timer: NodeJS.Timeout, timeoutMs: number): Promise<void> {
+    const idleActive = this.deps.getActiveSession(key);
+    if (!idleActive) {
+      return;
+    }
+
+    if (hasPendingUserReplyDialog(idleActive)) {
+      log.info("session_lifecycle.idle_timeout.held_for_dialog", {
         sessionId: idleActive.session.id,
         key,
         timeoutMs,
       });
-      this.pendingIdleTimeoutKeys.add(key);
-      this.stopSessionObserved(idleActive.session.id);
-    }, timeoutMs);
+      this.resetIdleTimer(key);
+      return;
+    }
 
-    this.idleTimers.set(key, timer);
+    // A running background job or a supervised child wakes this session when it
+    // finishes. Stopping now would kill that job or drop the child's report.
+    let pendingWake = false;
+    try {
+      pendingWake = await idleActive.sdkBackend.hasPendingWake();
+    } catch (error) {
+      log.warn("session_lifecycle.idle_timeout.pending_wake_check_failed", {
+        sessionId: idleActive.session.id,
+        key,
+        error: safeErrorMessage(error),
+      });
+    }
+    // Input, a stop, or a new turn while the check ran replaced or cleared this timer.
+    if (this.idleTimers.get(key) !== timer || this.deps.getActiveSession(key) !== idleActive) {
+      return;
+    }
+    if (pendingWake) {
+      log.info("session_lifecycle.idle_timeout.held_for_pending_wake", {
+        sessionId: idleActive.session.id,
+        key,
+        timeoutMs,
+      });
+      this.resetIdleTimer(key);
+      return;
+    }
+
+    log.info("session_lifecycle.idle_timeout", {
+      sessionId: idleActive.session.id,
+      key,
+      timeoutMs,
+    });
+    this.idleTimers.delete(key);
+    this.pendingIdleTimeoutKeys.add(key);
+    this.stopSessionObserved(idleActive.session.id);
   }
 
   clearIdleTimer(key: string): void {

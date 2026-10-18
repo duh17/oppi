@@ -243,6 +243,26 @@ describe("session restart resume", () => {
     expect(storage.listRestartResume()).toEqual([{ sessionId: "busy", wasBusy: true }]);
   });
 
+  it("continues an idle session whose background job dies with the server", async () => {
+    const { storage, workspace } = makeStorage();
+    const ws = { workspaceId: workspace.id };
+    const live = [
+      saveSession(storage, "waiting-on-job", { ...ws, status: "ready" }),
+      saveSession(storage, "idle", { ...ws, status: "ready" }),
+    ];
+    recordLiveSessionsForRestart(storage, live, new Set(["waiting-on-job"]));
+    for (const session of live) saveSession(storage, session.id, { ...session, status: "stopped" });
+
+    const deps = makeDeps(storage, () => "ready");
+    const results = await resumeSessionsAfterRestart(deps);
+
+    expect(Object.fromEntries(results.map((r) => [r.sessionId, r.outcome]))).toEqual({
+      "waiting-on-job": "continued",
+      idle: "resumed",
+    });
+    expect(deps.sendPrompt.mock.calls).toEqual([["waiting-on-job", RESTART_CONTINUE_PROMPT]]);
+  });
+
   it("keeps a session busy when a shutdown record and a crash both queue it", () => {
     const { storage, workspace } = makeStorage();
     const live = saveSession(storage, "s1", { workspaceId: workspace.id, status: "busy" });

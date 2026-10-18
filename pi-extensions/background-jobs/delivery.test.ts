@@ -9,6 +9,8 @@ import {
 	formatJobResultBatch,
 	nextIdleFlushDelay,
 	shutdownDelivery,
+	STARTED_ENTRY,
+	unreportedJobs,
 } from "./delivery.ts";
 
 describe("background result batches", () => {
@@ -92,8 +94,50 @@ describe("background result batches", () => {
 		expect(buffer.pendingCount()).toBe(0);
 		expect(buffer.enqueue({ jobId: "bash-1", status: "completed", text: "late" })).toBe(false);
 		taken?.undo();
-		expect(buffer.pendingIds()).toEqual(["bash-1"]);
+		expect(buffer.pendingKeys()).toEqual(["bash-1"]);
 		expect(buffer.enqueue({ jobId: "bash-2", status: "failed", text: "two" })).toBe(true);
 		expect(buffer.take()?.batch.jobIds).toEqual(["bash-1", "bash-2"]);
+	});
+
+	test("a reported job from an earlier process does not hide a new job with the same id", () => {
+		const buffer = createResultBuffer();
+		buffer.enqueue({ key: "old:bash-1", jobId: "bash-1", status: "interrupted", text: "lost" });
+		buffer.take();
+		expect(buffer.enqueue({ key: "new:bash-1", jobId: "bash-1", status: "completed", text: "done" })).toBe(true);
+	});
+});
+
+describe("jobs lost with their process", () => {
+	const started = (key: string, jobId: string, sessionId = "s1") => ({
+		type: "custom",
+		customType: STARTED_ENTRY,
+		data: { key, sessionId, jobId, command: `run ${key}`, cwd: "/w" },
+	});
+	const reported = (keys: string[]) => ({
+		type: "custom_message",
+		customType: "background-job",
+		details: { keys },
+	});
+
+	test("only backgrounded jobs that never reached the transcript are reported, by run", () => {
+		const lost = unreportedJobs([
+			started("run-a:bash-1", "bash-1"),
+			started("run-a:bash-2", "bash-2"),
+			reported(["run-a:bash-1"]),
+			// The next process restarts ids at bash-1; its delivery must not cover run-a's jobs.
+			started("run-b:bash-1", "bash-1"),
+			reported(["run-b:bash-1", "run-a:unrelated"]),
+		], "s1");
+		expect(lost.map((job) => job.key)).toEqual(["run-a:bash-2"]);
+		expect(lost[0]?.command).toBe("run run-a:bash-2");
+	});
+
+	test("a lost job reported once is not reported again", () => {
+		expect(unreportedJobs([started("run-a:bash-2", "bash-2"), reported(["run-a:bash-2"])], "s1")).toEqual([]);
+	});
+
+	test("a fork does not report jobs its source session may still be running", () => {
+		// A fork copies the source's entries, including a job still running there.
+		expect(unreportedJobs([started("run-a:bash-1", "bash-1", "source")], "fork")).toEqual([]);
 	});
 });

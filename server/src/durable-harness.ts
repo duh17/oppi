@@ -426,6 +426,25 @@ export class SessionHost {
   }
 
   /**
+   * Whether conversation `id` still waits on work that reports back into it: a background
+   * child's reporter, or a background job not yet delivered. Stopping the session aborts the
+   * reporters, so the idle timeout waits for these.
+   */
+  async hasPendingWake(id: ConversationId): Promise<boolean> {
+    if (!this.opening || this.closed || this.closing) return false;
+    const { harness } = await this.opening;
+    const live = await harness.inspect(BACKGROUND_CONTEXT);
+    if (
+      live.tasks.some(
+        ({ record }) => record.conversationId === id && record.kind === SESSION_REPORTER_TASK,
+      )
+    )
+      return true;
+    const jobs = await harness.snapshot(DurableJobs, id, BACKGROUND_CONTEXT);
+    return jobs?.jobs.some((job) => job.decision === "background" && !job.delivered) ?? false;
+  }
+
+  /**
    * Stop (not composer abort) of a session: its background children's reporters would
    * submit a follow-up and start a new turn on the stopped conversation. Aborts only
    * those reporters; the children, and background jobs, keep running.

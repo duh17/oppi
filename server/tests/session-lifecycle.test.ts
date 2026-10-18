@@ -2214,6 +2214,7 @@ function makeLifecycleActiveSession(overrides?: Partial<Session>): SessionLifecy
       isDisposed: false,
       dispose: vi.fn(),
       onShutdownCleanupComplete: vi.fn(),
+      hasPendingWake: vi.fn(async () => false),
     } as never,
     workspaceId: "ws-1",
     pendingUIRequests: new Map(),
@@ -2278,34 +2279,69 @@ describe("SessionLifecycleCoordinator.resetIdleTimer", () => {
     vi.useRealTimers();
   });
 
-  it("stops idle sessions after the configured timeout", () => {
+  it("stops idle sessions after the configured timeout", async () => {
     const active = makeLifecycleActiveSession();
     const deps = makeLifecycleDeps(active);
     const coordinator = new SessionLifecycleCoordinator(deps);
 
     coordinator.resetIdleTimer("key");
 
-    vi.advanceTimersByTime(299_999);
+    await vi.advanceTimersByTimeAsync(299_999);
     expect(deps.stopSession).not.toHaveBeenCalled();
 
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(deps.stopSession).toHaveBeenCalledWith("session-1");
   });
 
-  it("clears previous timer on reset", () => {
+  it("clears previous timer on reset", async () => {
     const active = makeLifecycleActiveSession();
     const deps = makeLifecycleDeps(active);
     const coordinator = new SessionLifecycleCoordinator(deps);
 
     coordinator.resetIdleTimer("key");
-    vi.advanceTimersByTime(200_000);
+    await vi.advanceTimersByTimeAsync(200_000);
     coordinator.resetIdleTimer("key");
 
-    vi.advanceTimersByTime(200_000);
+    await vi.advanceTimersByTimeAsync(200_000);
     expect(deps.stopSession).not.toHaveBeenCalled();
 
-    vi.advanceTimersByTime(100_000);
+    await vi.advanceTimersByTimeAsync(100_000);
     expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+  });
+
+  it("keeps a session that still waits on a job or child until that wake clears", async () => {
+    const active = makeLifecycleActiveSession();
+    let pending = true;
+    active.sdkBackend.hasPendingWake = vi.fn(async () => pending) as never;
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.resetIdleTimer("key");
+    await vi.advanceTimersByTimeAsync(300_000);
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(deps.stopSession).not.toHaveBeenCalled();
+
+    pending = false;
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(deps.stopSession).toHaveBeenCalledWith("session-1");
+  });
+
+  it("does not stop when input resets the timer while the wake check runs", async () => {
+    const active = makeLifecycleActiveSession();
+    let answer: (pending: boolean) => void = () => {};
+    active.sdkBackend.hasPendingWake = vi.fn(
+      () => new Promise<boolean>((resolve) => (answer = resolve)),
+    ) as never;
+    const deps = makeLifecycleDeps(active);
+    const coordinator = new SessionLifecycleCoordinator(deps);
+
+    coordinator.resetIdleTimer("key");
+    await vi.advanceTimersByTimeAsync(300_000);
+    coordinator.clearIdleTimer("key");
+    answer(false);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(deps.stopSession).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -2349,27 +2385,27 @@ describe("SessionLifecycleCoordinator.resetIdleTimer", () => {
     ],
   ] as const)(
     "resets the idle timer instead of stopping when a pending %s dialog is waiting",
-    (_method, request) => {
+    async (_method, request) => {
       const active = makeLifecycleActiveSession();
       active.pendingUIRequests.set(request.id, request as ExtensionUIRequest);
       const deps = makeLifecycleDeps(active);
       const coordinator = new SessionLifecycleCoordinator(deps);
 
       coordinator.resetIdleTimer("key");
-      vi.advanceTimersByTime(300_000);
+      await vi.advanceTimersByTimeAsync(300_000);
 
       expect(deps.stopSession).not.toHaveBeenCalled();
 
-      vi.advanceTimersByTime(300_000);
+      await vi.advanceTimersByTimeAsync(300_000);
       expect(deps.stopSession).not.toHaveBeenCalled();
 
       active.pendingUIRequests.clear();
-      vi.advanceTimersByTime(300_000);
+      await vi.advanceTimersByTimeAsync(300_000);
       expect(deps.stopSession).toHaveBeenCalledWith("session-1");
     },
   );
 
-  it("still stops when a pending UI request is not a user-reply dialog", () => {
+  it("still stops when a pending UI request is not a user-reply dialog", async () => {
     const active = makeLifecycleActiveSession();
     active.pendingUIRequests.set("notify-1", {
       type: "extension_ui_request",
@@ -2381,12 +2417,12 @@ describe("SessionLifecycleCoordinator.resetIdleTimer", () => {
     const coordinator = new SessionLifecycleCoordinator(deps);
 
     coordinator.resetIdleTimer("key");
-    vi.advanceTimersByTime(300_000);
+    await vi.advanceTimersByTimeAsync(300_000);
 
     expect(deps.stopSession).toHaveBeenCalledWith("session-1");
   });
 
-  it("still stops when a pending ask has no questions", () => {
+  it("still stops when a pending ask has no questions", async () => {
     const active = makeLifecycleActiveSession();
     active.pendingUIRequests.set("ask-empty", {
       type: "extension_ui_request",
@@ -2398,7 +2434,7 @@ describe("SessionLifecycleCoordinator.resetIdleTimer", () => {
     const coordinator = new SessionLifecycleCoordinator(deps);
 
     coordinator.resetIdleTimer("key");
-    vi.advanceTimersByTime(300_000);
+    await vi.advanceTimersByTimeAsync(300_000);
 
     expect(deps.stopSession).toHaveBeenCalledWith("session-1");
   });
@@ -2470,7 +2506,7 @@ describe("SessionLifecycleCoordinator auto-stop settle", () => {
     expect(deps.stopSession).not.toHaveBeenCalled();
   });
 
-  it("when autoStop is absent, idle timer still used", () => {
+  it("when autoStop is absent, idle timer still used", async () => {
     const active = makeLifecycleActiveSession({ status: "ready" });
     const deps = makeLifecycleDeps(active);
     const coordinator = new SessionLifecycleCoordinator(deps);
@@ -2479,10 +2515,10 @@ describe("SessionLifecycleCoordinator auto-stop settle", () => {
 
     expect(deps.stopSession).not.toHaveBeenCalled();
 
-    vi.advanceTimersByTime(299_999);
+    await vi.advanceTimersByTimeAsync(299_999);
     expect(deps.stopSession).not.toHaveBeenCalled();
 
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(deps.stopSession).toHaveBeenCalledWith("session-1");
   });
 

@@ -1112,6 +1112,15 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
     return this.active.get(this.sessionKey(sessionId))?.session;
   }
 
+  /** Live sessions waiting on work that dies with this server process (see restart resume). */
+  getSessionIdsLosingWorkOnRestart(): Set<string> {
+    const ids = new Set<string>();
+    for (const active of this.active.values()) {
+      if (active.sdkBackend.holdsWorkLostOnRestart) ids.add(active.session.id);
+    }
+    return ids;
+  }
+
   /** Return replayable extension UI notifications and pending dialogs for stream re-subscribe. */
   getPendingUIRequestMessages(sessionId: string): ServerMessage[] {
     return buildPendingExtensionUIRequestMessages(this.active.get(this.sessionKey(sessionId)));

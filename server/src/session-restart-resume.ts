@@ -51,19 +51,30 @@ type RestartStorage = Pick<
   | "saveSession"
 >;
 
-/** A session caught mid-stop was on its way out; do not bring it back. */
-function restartEntry(session: Session): RestartResumeEntry | undefined {
+/**
+ * A session caught mid-stop was on its way out; do not bring it back. An idle session
+ * waiting on work the restart kills (a background job in the server process) counts as
+ * busy, so it gets the continuation prompt instead of waiting for a wake that never comes.
+ */
+function restartEntry(
+  session: Session,
+  losesWork: ReadonlySet<string> = new Set(),
+): RestartResumeEntry | undefined {
   if (session.status === "stopping" || !canResumeAfterRestart(session)) return undefined;
-  return { sessionId: session.id, wasBusy: session.status === "busy" };
+  return { sessionId: session.id, wasBusy: session.status === "busy" || losesWork.has(session.id) };
 }
 
-/** Graceful stop: remember live sessions before the stop flow marks them stopped. */
+/**
+ * Graceful stop: remember live sessions before the stop flow marks them stopped.
+ * `losesWork` names sessions whose pending wake dies with this process.
+ */
 export function recordLiveSessionsForRestart(
   storage: Pick<Storage, "queueRestartResume">,
   liveSessions: readonly Session[],
+  losesWork: ReadonlySet<string> = new Set(),
   nowMs: number = Date.now(),
 ): RestartResumeEntry[] {
-  const entries = liveSessions.flatMap((session) => restartEntry(session) ?? []);
+  const entries = liveSessions.flatMap((session) => restartEntry(session, losesWork) ?? []);
   storage.queueRestartResume(entries, nowMs);
   if (entries.length > 0) {
     log.info("session_restart.recorded", { source: "shutdown", sessions: entries });

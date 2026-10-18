@@ -33,7 +33,9 @@ import {
   type Skill,
   type ToolDefinition,
   type ToolInfo,
+  type EventBus,
   SessionManager as PiSessionManager,
+  createEventBus,
   DefaultResourceLoader,
   ModelRuntime,
   ModelRegistry,
@@ -956,6 +958,39 @@ export function forkPiSessionFrom(
  *   backend.abort();
  *   backend.dispose();
  */
+/**
+ * Pi event-bus channel where an extension announces work that will wake its session later,
+ * such as running background jobs or supervised children. Payload: `{ source, count,
+ * survivesRestart? }`, the extension's current total; `count: 0` withdraws it. Work that does
+ * not survive a restart makes a restart prompt the session. See docs/extensions.md.
+ */
+export const PENDING_WAKE_CHANNEL = "oppi:pending-wake:v1";
+
+export interface PendingWakeTracker {
+  pending(): boolean;
+  lostOnRestart(): boolean;
+}
+
+/** Listen on `bus` for the extensions' current pending wakes. */
+export function trackPendingWake(bus: EventBus): PendingWakeTracker {
+  const holds = new Map<string, { survivesRestart: boolean }>();
+  bus.on(PENDING_WAKE_CHANNEL, (data) => {
+    const { source, count, survivesRestart } = (data ?? {}) as {
+      source?: unknown;
+      count?: unknown;
+      survivesRestart?: unknown;
+    };
+    if (typeof source !== "string" || !source) return;
+    if (typeof count === "number" && Number.isFinite(count) && count > 0)
+      holds.set(source, { survivesRestart: survivesRestart === true });
+    else holds.delete(source);
+  });
+  return {
+    pending: () => holds.size > 0,
+    lostOnRestart: () => [...holds.values()].some((hold) => !hold.survivesRestart),
+  };
+}
+
 export class SdkBackend implements AgentBackend {
   private static readonly DEFAULT_STEERING_MODE = "all" as const;
   private static readonly DEFAULT_FOLLOW_UP_MODE = "one-at-a-time" as const;
@@ -1029,6 +1064,7 @@ export class SdkBackend implements AgentBackend {
   private queueReconciliationRequired = false;
   private disposed = false;
   private localCleanupFailures: string[] = [];
+  private readonly pendingWake: PendingWakeTracker;
 
   private constructor(
     runtime: AgentSessionRuntime,
@@ -1043,7 +1079,9 @@ export class SdkBackend implements AgentBackend {
     assertSelectedResourcesAvailableBeforeReload?: () => void,
     consumeSelectedResourceReloadError?: () => Error | undefined,
     uiBridge?: SdkUiBridge,
+    pendingWake: PendingWakeTracker = { pending: () => false, lostOnRestart: () => false },
   ) {
+    this.pendingWake = pendingWake;
     this.runtime = runtime;
     this.emitEvent = emitEvent;
     this.oppiSessionId = oppiSessionId;
@@ -1142,6 +1180,10 @@ export class SdkBackend implements AgentBackend {
     };
     let bridgeDisposed = false;
     const backendRef: { current?: SdkBackend } = {};
+    // One bus for every loader this backend builds, so a reload or session replacement
+    // keeps reporting pending wakes to the same listener.
+    const extensionEvents = createEventBus();
+    const pendingWake = trackPendingWake(extensionEvents);
     const uiBridge = new SdkUiBridge(
       onEvent,
       () => bridgeDisposed || backendRef.current?.disposed === true,
@@ -1336,6 +1378,7 @@ export class SdkBackend implements AgentBackend {
         cwd: hostCwd,
         agentDir: runtimeAgentDir,
         settingsManager,
+        eventBus: extensionEvents,
         appendSystemPromptOverride: (base) => buildCurrentAppendSystemPrompt(base),
         extensionFactories: [
           createLifecycleJournalExtension(sessionManager),
@@ -1668,6 +1711,7 @@ export class SdkBackend implements AgentBackend {
       () => assertSelectedResourcesAvailableBeforeReload?.(),
       () => consumeSelectedResourceReloadError?.(),
       uiBridge,
+      pendingWake,
     );
 
     backendRef.current = backend;
@@ -2335,6 +2379,14 @@ export class SdkBackend implements AgentBackend {
 
   get isDisposed(): boolean {
     return this.disposed;
+  }
+
+  async hasPendingWake(): Promise<boolean> {
+    return this.pendingWake.pending();
+  }
+
+  get holdsWorkLostOnRestart(): boolean {
+    return this.pendingWake.lostOnRestart();
   }
 
   get isStreaming(): boolean {

@@ -1167,7 +1167,11 @@ export class Server {
         if (!settled) log.warn("session_restart.drain_timeout", { ms: RESTART_RESUME_DRAIN_MS });
       }
       try {
-        recordLiveSessionsForRestart(this.storage, this.liveSessions());
+        recordLiveSessionsForRestart(
+          this.storage,
+          this.liveSessions(),
+          this.sessions.getSessionIdsLosingWorkOnRestart(),
+        );
       } catch (error: unknown) {
         // Losing the resume record must not keep sessions running past shutdown.
         log.error("session_restart.record_failed", { error: safeErrorMessage(error) });

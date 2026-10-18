@@ -31,6 +31,7 @@ import {
 	CALLER_ENV,
 	hasPendingSupervision,
 	isFailedWaitEnvelope,
+	watchedIds,
 	launchPlan,
 	missingModelError,
 	launchReceipt,
@@ -47,6 +48,11 @@ import {
 } from "./supervise.ts";
 
 const WIDGET_KEY = "subagents";
+/**
+ * Oppi keeps an idle session alive while an extension reports work on this Pi event-bus
+ * channel that will wake it. Plain Pi has no listener, so the emit is a no-op there.
+ */
+const PENDING_WAKE_CHANNEL = "oppi:pending-wake:v1";
 const CREATE_TIMEOUT_MS = 30_000;
 const GET_TIMEOUT_MS = 8_000;
 const OBSERVATION_WAIT_SEC = 4 * 60;
@@ -169,7 +175,21 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 	let refreshGeneration = 0;
 	let waitFailures = 0;
 	let failureWarned = false;
+	let announcedWake = 0;
 	const stalls = new Map<string, StallState>();
+
+	// Supervised children that will still wake this session. A paused supervision wakes nobody.
+	const announceWake = () => {
+		const count = closed || failureWarned ? 0 : watchedIds(watched, settledIds).length;
+		if (count === announcedWake) return;
+		announcedWake = count;
+		try {
+			// session_start re-arms supervision from stored entries, so a restart loses nothing.
+			pi.events.emit(PENDING_WAKE_CHANNEL, { source: WIDGET_KEY, count, survivesRestart: true });
+		} catch {
+			// A stale runtime has no listeners left.
+		}
+	};
 
 	const refreshWidget = () => {
 		const ui = latestUi;
@@ -317,6 +337,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		if (waitFailures >= 3) {
 			if (!failureWarned) {
 				failureWarned = true;
+				announceWake();
 				deliverKind(
 					"failure",
 					"Subagent wait failed. Supervision is paused. The children are still running; open them from the widget. Do not poll.",
@@ -365,6 +386,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 
 	const armWait = () => {
 		stopWait();
+		announceWake();
 		const plan = waitPlan(watched, settledIds);
 		if (closed || (plan.eitherIds.length === 0 && plan.idleIds.length === 0)) return;
 		const generation = waitGeneration;
@@ -557,6 +579,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 				const remaining = waitPlan(watched, settledIds);
 				if (remaining.eitherIds.length === 0 && remaining.idleIds.length === 0) stopWait();
 				else armWait();
+				announceWake();
 				return { content: [{ type: "text", text: `Stopped supervising ${id}. The session keeps running. This session will not be woken for it.` }] };
 			}
 			if (!parentId) {
@@ -641,6 +664,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
 		refreshGeneration += 1;
 		refreshQueued = false;
 		stopWait();
+		announceWake();
 	});
 
 	pi.on("cache_warming_decision", (event) =>

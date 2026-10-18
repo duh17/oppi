@@ -498,6 +498,29 @@ describe("native Durable background jobs", () => {
     expect(f.counts()).toEqual({ executions: 1, cancellations: 1 });
   });
 
+  it("holds the idle timeout while a background job runs, and releases it once delivered", async () => {
+    const f = await fixture([
+      tool("background_job", { action: "start", command: "controlled command" }),
+      answer(),
+      answer(),
+    ]);
+    await prompt(f.root);
+    await f.entered.promise;
+    const host = await new DurableHarness(f.dir).attachOpened(
+      "jobs-host",
+      { harness: f.harness, storage: f.durableStorage, models: f.models },
+      { createdAt: Date.now(), cwd: f.dir },
+    );
+    await host.releaseResume();
+    await f.root.waitForIdle(context);
+    expect(await host.hasPendingWake(f.root.id)).toBe(true);
+
+    f.finish.resolve();
+    await delivery(f.harness, f.root);
+    await f.root.waitForIdle(context);
+    expect(await host.hasPendingWake(f.root.id)).toBe(false);
+  });
+
   it("background abort crosses the ownership boundary and kills the execution", async () => {
     const f = await fixture([
       tool("background_job", { action: "start", command: "controlled command" }),

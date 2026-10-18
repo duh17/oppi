@@ -35,6 +35,18 @@ export interface AgentBackend {
   readonly showCacheMissNotices: boolean;
   readonly cacheMissModelPriceSource: CacheMissModelPriceSource;
 
+  /**
+   * Whether work this session started will wake it later: a running background job, or a
+   * supervised child that reports back. The idle timeout waits while this is true, because
+   * stopping the session drops that wake.
+   */
+  hasPendingWake(): Promise<boolean>;
+  /**
+   * Whether part of that pending wake dies with this server process, so a restart must
+   * prompt the session to continue instead of leaving it idle.
+   */
+  readonly holdsWorkLostOnRestart: boolean;
+
   prompt(
     message: string,
     options?: {

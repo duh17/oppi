@@ -21,6 +21,7 @@ import { createLocalBashOperations } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -30,6 +31,11 @@ import {
 	createResultBuffer,
 	nextIdleFlushDelay,
 	shutdownDelivery,
+	formatJobResultBatch,
+	STARTED_ENTRY,
+	unreportedJobs,
+	unreportedJobText,
+	type JobResultBatch,
 } from "./delivery.ts";
 import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import {
@@ -48,6 +54,32 @@ import {
 
 const PILL_KEY = "background-jobs";
 const AUTO_STOP_LOOKUP_TIMEOUT_MS = 5_000;
+/**
+ * Oppi keeps an idle session alive while an extension reports work on this Pi event-bus
+ * channel that will wake it. Plain Pi has no listener, so the emit is a no-op there.
+ */
+const PENDING_WAKE_CHANNEL = "oppi:pending-wake:v1";
+
+/**
+ * Lost-job notices queued for a session's next turn, by session id. Pi keeps that queue across
+ * `/reload`, which loads a fresh instance of this extension, so the new instance must not queue
+ * them again. Stop, a session switch, and a restart drop the queue, and with it this entry.
+ */
+const QUEUED_LOST_JOBS = Symbol.for("oppi.background-jobs.queued-lost-jobs");
+function queuedLostJobs(sessionId: string): Set<string> {
+	const slot = globalThis as { [QUEUED_LOST_JOBS]?: Map<string, Set<string>> };
+	const bySession = (slot[QUEUED_LOST_JOBS] ??= new Map());
+	let keys = bySession.get(sessionId);
+	if (!keys) bySession.set(sessionId, (keys = new Set()));
+	return keys;
+}
+function forgetQueuedLostJobs(sessionId: string): void {
+	(globalThis as { [QUEUED_LOST_JOBS]?: Map<string, Set<string>> })[QUEUED_LOST_JOBS]?.delete(sessionId);
+}
+
+function batchDetails(batch: JobResultBatch): Record<string, unknown> {
+	return { keys: batch.keys, jobIds: batch.jobIds, statuses: batch.statuses, omitted: batch.omitted };
+}
 
 function widgetStyle(theme: {
 	fg: (
@@ -150,19 +182,54 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 	// auto-stop; its idle timeout ignores open runs, so holding there protects
 	// nothing. Asked lazily, at most once per session, only when a hold would start.
 	let autoStopLookup: Promise<boolean | undefined> | undefined;
+	// Job ids restart at bash-1 in every instance; this run id makes stored keys unique.
+	const run = randomUUID();
+	const keyFor = (jobId: string) => `${run}:${jobId}`;
+	let announcedWake = 0;
+	let sessionId: string | undefined;
 	const buffer = createResultBuffer();
 	const cancelFlush = () => {
 		if (flushTimer) clearTimeout(flushTimer);
 		flushTimer = undefined;
 		flushStartedAt = undefined;
+		announceWake();
+	};
+	const announceWake = () => {
+		// A buffered result wakes the session only through a scheduled flush or a running turn.
+		// After a Stop it waits for the next input, so it holds nothing.
+		const delivering = !idle || flushTimer !== undefined;
+		const count = closed
+			? 0
+			: manager.visibleRunning().length + (delivering ? buffer.pendingCount() : 0);
+		if (count === announcedWake) return;
+		announcedWake = count;
+		try {
+			pi.events.emit(PENDING_WAKE_CHANNEL, { source: PILL_KEY, count });
+		} catch {
+			// A stale runtime has no listeners left.
+		}
+	};
+	const recordStart = (ctx: ExtensionContext, jobId: string, command: string) => {
+		try {
+			pi.appendEntry(STARTED_ENTRY, {
+				key: keyFor(jobId),
+				sessionId: ctx.sessionManager.getSessionId(),
+				jobId,
+				command: command.trim(),
+				cwd: ctx.cwd,
+			});
+		} catch {
+			// Without the record, only a later restart's report of this job is lost.
+		}
 	};
 	const refreshPill = () => {
+		announceWake();
 		const ui = latestUi;
 		if (!ui) return;
-		const pending = new Set(buffer.pendingIds());
+		const pending = new Set(buffer.pendingKeys());
 		const visible = manager
 			.list()
-			.filter((job) => job.backgrounded && (job.status === "running" || pending.has(job.id)));
+			.filter((job) => job.backgrounded && (job.status === "running" || pending.has(keyFor(job.id))));
 		const pill = backgroundPill(visible);
 		if (!pill) {
 			ui.setStatus(PILL_KEY, undefined);
@@ -252,11 +319,7 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 			const taken = buffer.take();
 			if (!taken) return;
 			try {
-				sendBatch(taken.batch.content, {
-					jobIds: taken.batch.jobIds,
-					statuses: taken.batch.statuses,
-					omitted: taken.batch.omitted,
-				});
+				sendBatch(taken.batch.content, batchDetails(taken.batch));
 			} catch {
 				taken.undo();
 			}
@@ -264,6 +327,7 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 			if (buffer.pendingCount() > 0) scheduleIdleFlush();
 		}, next.delay);
 		flushTimer.unref?.();
+		announceWake();
 	};
 	const drainBoundary = (event: TurnEndEvent | AgentBeforeSettleEvent) => {
 		if (event.outcome !== "completed") {
@@ -288,11 +352,7 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 					customType: "background-job",
 					content: taken.batch.content,
 					display: true,
-					details: {
-						jobIds: taken.batch.jobIds,
-						statuses: taken.batch.statuses,
-						omitted: taken.batch.omitted,
-					},
+					details: batchDetails(taken.batch),
 				},
 			],
 			...(decision.continue ? { continue: true } : {}),
@@ -303,7 +363,12 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 		onChange: refreshPill,
 		onDeliver: (delivery) => {
 			if (closed) return;
-			buffer.enqueue({ jobId: delivery.jobId, status: delivery.status, text: delivery.text });
+			buffer.enqueue({
+				key: keyFor(delivery.jobId),
+				jobId: delivery.jobId,
+				status: delivery.status,
+				text: delivery.text,
+			});
 			wakeTurnWait?.();
 			refreshPill();
 			if (idle && !suppressIdleWake) scheduleIdleFlush();
@@ -346,6 +411,7 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 				prefix: shell.shellCommandPrefix,
 				session: sessionExports(ctx),
 			});
+			if (result.backgrounded && result.jobId) recordStart(ctx, result.jobId, params.command);
 			refreshPill();
 			return {
 				content: [{ type: "text", text: result.text }],
@@ -430,6 +496,7 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 					isError: true,
 				};
 			}
+			recordStart(ctx, started.jobId, params.command);
 			return {
 				content: [{ type: "text", text: `${started.notice}\n\ncommand: ${params.command.trim()}` }],
 				details: { jobId: started.jobId, status: "running" },
@@ -446,6 +513,34 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 		idle = true;
 		suppressIdleWake = false;
 		rememberUi(ctx);
+		// Jobs this session backgrounded in an earlier process died with it. Tell the agent
+		// with its next turn without starting one: Oppi's restart resume prompts a session
+		// that was waiting on them, and after an explicit Stop the user decides what runs next.
+		// A record stays unreported until that turn puts it in the transcript.
+		sessionId = ctx.sessionManager.getSessionId();
+		const queued = queuedLostJobs(sessionId);
+		let lost = unreportedJobs(ctx.sessionManager.getEntries(), sessionId)
+			.filter((job) => !queued.has(job.key))
+			.map((job) => ({
+				key: job.key,
+				jobId: job.jobId,
+				status: "interrupted",
+				text: unreportedJobText(job),
+			}));
+		while (lost.length > 0) {
+			const batch = formatJobResultBatch(lost);
+			if (!batch) break;
+			try {
+				pi.sendMessage(
+					{ customType: "background-job", content: batch.content, display: true, details: batchDetails(batch) },
+					{ deliverAs: "nextTurn" },
+				);
+			} catch {
+				break;
+			}
+			for (const key of batch.keys) queued.add(key);
+			lost = lost.filter((item) => !queued.has(item.key));
+		}
 		refreshPill();
 	});
 
@@ -498,6 +593,7 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 		const settled = consumeSettleSuppression(suppressIdleWake);
 		suppressIdleWake = settled.suppressIdleWake;
 		if (settled.flush) scheduleIdleFlush();
+		announceWake();
 	});
 
 	pi.on("tool_call", (event) => {
@@ -520,7 +616,9 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.on("session_shutdown", (_event: SessionShutdownEvent) => {
+	pi.on("session_shutdown", (event: SessionShutdownEvent) => {
+		// Only a reload keeps Pi's next-turn queue, and the lost-job notices in it.
+		if (sessionId && event.reason !== "reload") forgetQueuedLostJobs(sessionId);
 		generation += 1;
 		closed = true;
 		wakeTurnWait?.();
@@ -529,11 +627,7 @@ export default function backgroundJobsExtension(pi: ExtensionAPI) {
 		while (buffer.pendingCount() > 0) {
 			const taken = buffer.take();
 			if (!taken) break;
-			const details = {
-				jobIds: taken.batch.jobIds,
-				statuses: taken.batch.statuses,
-				omitted: taken.batch.omitted,
-			};
+			const details = batchDetails(taken.batch);
 			const append = () => {
 				pi.sendMessage(
 					{

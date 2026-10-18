@@ -16,6 +16,8 @@ export const RESULT_GUIDANCE =
 export type ActivityOutcome = "completed" | "aborted" | "error";
 
 export interface PendingJobResult {
+	/** Unique across processes. Job ids restart at bash-1 in every extension instance. Defaults to jobId. */
+	key?: string;
 	jobId: string;
 	status: string;
 	text: string;
@@ -23,10 +25,13 @@ export interface PendingJobResult {
 
 export interface JobResultBatch {
 	content: string;
+	keys: string[];
 	jobIds: string[];
 	statuses: string[];
 	omitted: number;
 }
+
+const keyOf = (result: PendingJobResult): string => result.key ?? result.jobId;
 
 export interface BoundaryDelivery {
 	/** Append the batch to the transcript. */
@@ -60,6 +65,7 @@ export function formatJobResultBatch(
 	}
 	return {
 		content: parts.join("\n"),
+		keys: included.map(keyOf),
 		jobIds: included.map((result) => result.jobId),
 		statuses: included.map((result) => result.status),
 		omitted,
@@ -112,10 +118,60 @@ export function nextIdleFlushDelay(
 	};
 }
 
+/** Custom entry recording a backgrounded job, so a later process can tell it never reported. */
+export const STARTED_ENTRY = "background-job-started";
+
+export interface StartedJobRecord {
+	key: string;
+	jobId: string;
+	command: string;
+	cwd: string;
+}
+
+/**
+ * Backgrounded jobs whose result never reached the transcript. Their process died with the
+ * previous extension instance (server restart, reload, crash, or stop). A delivered batch
+ * names its jobs in `details.keys`. Only records `sessionId` wrote count: a fork copies the
+ * source's records while the source may still be running those jobs.
+ */
+export function unreportedJobs(entries: readonly unknown[], sessionId: string): StartedJobRecord[] {
+	const started = new Map<string, StartedJobRecord>();
+	const reported = new Set<string>();
+	for (const entry of entries) {
+		if (!entry || typeof entry !== "object") continue;
+		const item = entry as { type?: unknown; customType?: unknown; data?: unknown; details?: unknown };
+		if (item.type === "custom" && item.customType === STARTED_ENTRY) {
+			const data = item.data as (Partial<StartedJobRecord> & { sessionId?: unknown }) | undefined;
+			if (typeof data?.key !== "string" || typeof data.jobId !== "string" || data.sessionId !== sessionId) continue;
+			started.set(data.key, {
+				key: data.key,
+				jobId: data.jobId,
+				command: typeof data.command === "string" ? data.command : "",
+				cwd: typeof data.cwd === "string" ? data.cwd : "",
+			});
+		} else if (item.type === "custom_message" && item.customType === "background-job") {
+			const keys = (item.details as { keys?: unknown } | undefined)?.keys;
+			if (Array.isArray(keys)) for (const key of keys) if (typeof key === "string") reported.add(key);
+		}
+	}
+	return [...started.values()].filter((job) => !reported.has(job.key));
+}
+
+export function unreportedJobText(job: StartedJobRecord): string {
+	return [
+		`Background job ${job.jobId} never reported back: the session restarted, reloaded, or was stopped while it ran, which killed it. Whether it finished is unknown, and it was not rerun. Check its effects before relying on them. If the session was stopped on purpose, do not rerun it unless the user asks.`,
+		"",
+		`command: ${job.command}`,
+		`cwd: ${job.cwd}`,
+		"",
+		"This is the final result. Do not poll for this job.",
+	].join("\n");
+}
+
 export interface ResultBuffer {
 	enqueue(result: PendingJobResult): boolean;
 	pendingCount(): number;
-	pendingIds(): string[];
+	pendingKeys(): string[];
 	take(budget?: number): { batch: JobResultBatch; undo: () => void } | undefined;
 	clear(): void;
 }
@@ -124,12 +180,12 @@ export function createResultBuffer(): ResultBuffer {
 	const pending: PendingJobResult[] = [];
 	const handedOff = new Set<string>();
 
-	const remove = (ids: readonly string[]): PendingJobResult[] => {
-		const taken = new Set(ids);
+	const remove = (keys: readonly string[]): PendingJobResult[] => {
+		const taken = new Set(keys);
 		const removed: PendingJobResult[] = [];
 		for (let index = pending.length - 1; index >= 0; index -= 1) {
 			const item = pending[index];
-			if (!item || !taken.has(item.jobId)) continue;
+			if (!item || !taken.has(keyOf(item))) continue;
 			removed.push(item);
 			pending.splice(index, 1);
 		}
@@ -138,7 +194,8 @@ export function createResultBuffer(): ResultBuffer {
 
 	return {
 		enqueue(result: PendingJobResult): boolean {
-			if (!result.jobId || handedOff.has(result.jobId) || pending.some((item) => item.jobId === result.jobId)) {
+			const key = keyOf(result);
+			if (!key || handedOff.has(key) || pending.some((item) => keyOf(item) === key)) {
 				return false;
 			}
 			pending.push(result);
@@ -147,18 +204,18 @@ export function createResultBuffer(): ResultBuffer {
 		pendingCount(): number {
 			return pending.length;
 		},
-		pendingIds(): string[] {
-			return pending.map((item) => item.jobId);
+		pendingKeys(): string[] {
+			return pending.map(keyOf);
 		},
 		take(budget = RESULT_BATCH_BUDGET): { batch: JobResultBatch; undo: () => void } | undefined {
 			const batch = formatJobResultBatch(pending, budget);
 			if (!batch) return undefined;
-			const removed = remove(batch.jobIds);
-			for (const id of batch.jobIds) handedOff.add(id);
+			const removed = remove(batch.keys);
+			for (const key of batch.keys) handedOff.add(key);
 			return {
 				batch,
 				undo: () => {
-					for (const id of batch.jobIds) handedOff.delete(id);
+					for (const key of batch.keys) handedOff.delete(key);
 					pending.unshift(...removed);
 				},
 			};

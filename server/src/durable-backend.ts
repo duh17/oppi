@@ -796,6 +796,11 @@ export class DurableBackend implements AgentBackend {
   get isDisposed(): boolean {
     return this.disposed;
   }
+  hasPendingWake(): Promise<boolean> {
+    return this.host.hasPendingWake(this.conversation.id);
+  }
+  /** Durable tasks recover after a restart and report an interrupted job themselves. */
+  readonly holdsWorkLostOnRestart = false;
   get isStreaming(): boolean {
     return this.live.run !== undefined;
   }
