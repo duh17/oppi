@@ -353,6 +353,23 @@ struct MermaidMindmapRendererTests {
         #expect(atBubble == unbounded)
     }
 
+    @Test func outlineTheInlineHeightCapWouldShrinkMoreKeepsTheBranches() {
+        let renderer = MermaidRenderer()
+        let diagram = MermaidParser().parse(Self.architectureMindmap)
+        let inline = RenderConfiguration(
+            fontSize: 14, maxWidth: 360, theme: .fallback, displayMode: .document,
+            maxDisplayHeight: MermaidInlinePresentation.maxHeight
+        )
+        let natural = renderer.boundingBox(renderer.layout(diagram, configuration: .default(maxWidth: 5000)))
+        let atInline = renderer.boundingBox(renderer.layout(diagram, configuration: inline))
+        // The outline is narrow but too tall for the 400pt inline cap.
+        #expect(atInline == natural, "inline keeps the branching layout")
+        #expect(inline.displayScale(for: atInline) >= inline.displayScale(for: natural))
+
+        let fullScreen = renderer.boundingBox(renderer.layout(diagram, configuration: .default(maxWidth: 360)))
+        #expect(fullScreen.width <= 360, "without a height cap the outline fits and is used")
+    }
+
     @Test func singleNodeLayoutIsCompact() throws {
         let diagram = MindmapDiagram(root: MindmapNode(
             label: "Solo",

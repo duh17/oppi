@@ -363,7 +363,7 @@ enum MermaidTextUtils {
     private static let lineMetricsStore = LineMetricsStore()
 
     /// Immutable after init; CTLine is safe to draw from any thread.
-    private final class CachedLineMetrics: @unchecked Sendable {
+    fileprivate final class CachedLineMetrics: @unchecked Sendable {
         let line: CTLine
         let paddedSize: CGSize
         let boundsWidth: CGFloat
@@ -387,7 +387,7 @@ enum MermaidTextUtils {
         return "\(fontName)|\(fontSize)|\(isMarkdown ? "1" : "0")|\(text)" as NSString
     }
 
-    private static func lineMetrics(
+    fileprivate static func lineMetrics(
         _ text: String,
         font: CTFont,
         fontSize: CGFloat,
@@ -500,29 +500,10 @@ enum MermaidTextUtils {
         isMarkdown: Bool = false,
         in ctx: CGContext
     ) {
-        let spacing = lineSpacing ?? fontSize * 0.3
-        let textSize = measureText(
-            text,
-            font: font,
-            fontSize: fontSize,
-            lineSpacing: spacing,
-            isMarkdown: isMarkdown
-        )
-        let x = rect.midX - textSize.width / 2
-        let y = rect.midY - textSize.height / 2
-
-        drawText(
-            text,
-            at: CGPoint(x: x, y: y),
-            width: textSize.width,
-            font: font,
-            fontSize: fontSize,
-            foregroundColor: foregroundColor,
-            alignment: .center,
-            lineSpacing: spacing,
-            isMarkdown: isMarkdown,
-            in: ctx
-        )
+        MermaidPreparedText(
+            text, font: font, fontSize: fontSize, color: foregroundColor,
+            isMarkdown: isMarkdown, lineSpacing: lineSpacing
+        ).draw(centeredIn: rect, in: ctx)
     }
 
     /// Draw text at a position, supporting multi-line text.
@@ -541,33 +522,10 @@ enum MermaidTextUtils {
         isMarkdown: Bool = false,
         in ctx: CGContext
     ) {
-        let spacing = lineSpacing ?? fontSize * 0.3
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-
-        var currentY = origin.y
-
-        for line in lines {
-            let metrics = lineMetrics(line, font: font, fontSize: fontSize, isMarkdown: isMarkdown)
-            let lineHeight = max(metrics.boundsHeight, fontSize * 1.4)
-
-            let x: CGFloat
-            switch alignment {
-            case .left:
-                x = origin.x
-            case .center:
-                let blockWidth = width ?? metrics.boundsWidth
-                x = origin.x + (blockWidth - metrics.boundsWidth) / 2
-            case .right:
-                let blockWidth = width ?? metrics.boundsWidth
-                x = origin.x + (blockWidth - metrics.boundsWidth)
-            }
-
-            ctx.saveGState()
-            ctx.setFillColor(foregroundColor)
-            drawCTLine(metrics.line, at: CGPoint(x: x, y: currentY), fontSize: fontSize, in: ctx)
-            ctx.restoreGState()
-            currentY += lineHeight + spacing
-        }
+        MermaidPreparedText(
+            text, font: font, fontSize: fontSize, color: foregroundColor,
+            isMarkdown: isMarkdown, lineSpacing: lineSpacing
+        ).draw(at: origin, width: width, alignment: alignment, in: ctx)
     }
 
     // MARK: - Single CTLine drawing
@@ -589,5 +547,97 @@ enum MermaidTextUtils {
         ctx.textPosition = .zero
         CTLineDraw(line, ctx)
         ctx.restoreGState()
+    }
+}
+
+/// Text measured and typeset once, then drawn as the cached CoreText lines
+/// `MermaidTextUtils` measured it with.
+///
+/// The one text placement path for Mermaid: `MermaidTextUtils.drawText`
+/// draws through it, and renderers that move typesetting out of draw build
+/// it at layout time. Line height, spacing, and per-line alignment match
+/// `measureText`, so `size` is exactly what `measureText` reports. Lines
+/// take their color from the context fill, set here at draw time. CTLine is
+/// immutable, so drawing from any thread is safe.
+struct MermaidPreparedText: @unchecked Sendable {
+    private struct Line {
+        let metrics: MermaidTextUtils.CachedLineMetrics
+        let top: CGFloat
+    }
+
+    private let lines: [Line]
+    private let fontSize: CGFloat
+    private let color: CGColor
+    /// The size `MermaidTextUtils.measureText` reports for the same text.
+    let size: CGSize
+
+    init(
+        _ text: String,
+        font: CTFont,
+        fontSize: CGFloat,
+        color: CGColor,
+        isMarkdown: Bool = false,
+        lineSpacing: CGFloat? = nil
+    ) {
+        let spacing = lineSpacing ?? fontSize * 0.3
+        var top: CGFloat = 0
+        var width: CGFloat = 0
+        var lines: [Line] = []
+        for piece in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let metrics = MermaidTextUtils.lineMetrics(
+                String(piece), font: font, fontSize: fontSize, isMarkdown: isMarkdown
+            )
+            if !lines.isEmpty { top += spacing }
+            lines.append(Line(metrics: metrics, top: top))
+            top += metrics.paddedSize.height
+            width = max(width, metrics.paddedSize.width)
+        }
+        self.lines = lines
+        self.fontSize = fontSize
+        self.color = color
+        size = lines.count <= 1
+            ? (lines.first?.metrics.paddedSize ?? CGSize(width: fontSize * 2, height: fontSize * 1.4))
+            : CGSize(width: max(width, fontSize * 2), height: max(top, fontSize * 1.4))
+    }
+
+    /// Lines aligned within `width` (each line's own width when nil);
+    /// `origin` is the block's top-left.
+    func draw(
+        at origin: CGPoint,
+        width: CGFloat? = nil,
+        alignment: MermaidTextUtils.TextAlignment = .left,
+        in ctx: CGContext
+    ) {
+        ctx.saveGState()
+        ctx.setFillColor(color)
+        for line in lines {
+            let lineWidth = line.metrics.boundsWidth
+            let x: CGFloat
+            switch alignment {
+            case .left: x = origin.x
+            case .center: x = origin.x + ((width ?? lineWidth) - lineWidth) / 2
+            case .right: x = origin.x + (width ?? lineWidth) - lineWidth
+            }
+            MermaidTextUtils.drawCTLine(
+                line.metrics.line,
+                at: CGPoint(x: x, y: origin.y + line.top),
+                fontSize: fontSize,
+                in: ctx
+            )
+        }
+        ctx.restoreGState()
+    }
+
+    /// Lines centered on each other across `size.width`; `origin` is the block's top-left.
+    func drawCentered(at origin: CGPoint, in ctx: CGContext) {
+        draw(at: origin, width: size.width, alignment: .center, in: ctx)
+    }
+
+    /// The block centered in `rect`, lines centered on each other.
+    func draw(centeredIn rect: CGRect, in ctx: CGContext) {
+        drawCentered(
+            at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2),
+            in: ctx
+        )
     }
 }

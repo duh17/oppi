@@ -30,6 +30,11 @@ enum MermaidClassRenderer {
         let minBoxWidth: CGFloat
         let maxBoxWidth: CGFloat
         let minCompartmentHeight: CGFloat
+        /// Space between the text of two relationship labels in neighboring
+        /// lanes. Natural spacing leaves the chips apart; the tight variant
+        /// packs lanes closer, so it adds both chips' padding to keep a
+        /// visible gap between them.
+        let labelLaneGap: CGFloat
 
         /// `tight` is the fit-to-width variant: half the sibling gap, and
         /// three quarters of the rank gap when ranks run across (`tightRanks`),
@@ -48,6 +53,7 @@ enum MermaidClassRenderer {
             // inspection path, per the fidelity contract).
             self.maxBoxWidth = max(maxWidth - fontSize * 3, fontSize * 12)
             self.minCompartmentHeight = fontSize * 0.9
+            self.labelLaneGap = fontSize * 0.5 + (tight ? MermaidClassRenderer.labelChipPadding(fontSize) * 2 : 0)
         }
     }
 
@@ -118,9 +124,11 @@ enum MermaidClassRenderer {
     // MARK: - Public entry point
 
     /// Lays out at the natural size; only when that is wider than `maxWidth`
-    /// tries, in order, turning a left-to-right diagram top to bottom (below
-    /// `MermaidFlowchartRenderer.directionBreakpoint`) and tighter spacing in
-    /// the narrower direction. The first that fits wins, else the narrowest.
+    /// tries, least change first, tighter spacing, then turning a
+    /// left-to-right diagram top to bottom (below
+    /// `MermaidFlowchartRenderer.directionBreakpoint`), then the turned
+    /// diagram with tighter spacing. `RenderFitChoice` keeps whichever shows
+    /// largest on screen, counting the inline height cap.
     nonisolated static func layout(
         _ diagram: ClassDiagram,
         configuration: RenderConfiguration
@@ -133,25 +141,30 @@ enum MermaidClassRenderer {
         }
 
         let limit = configuration.maxWidth
-        var best = arrange(diagram, configuration: configuration, tight: false)
-        guard best.size.width > limit else { return finish(best, diagram: diagram, configuration: configuration) }
+        let natural = arrange(diagram, configuration: configuration, tight: false)
+        var choice = RenderFitChoice(natural: natural, size: natural.size, configuration: configuration)
+        guard choice.needsFit else { return finish(natural, diagram: diagram, configuration: configuration) }
 
-        func fits(_ candidate: Arrangement) -> Bool {
-            if candidate.size.width < best.size.width { best = candidate }
-            return candidate.size.width <= limit
+        // No arrangement is narrower than its widest box.
+        let widestBox = (natural.boxes.map(\.rect.width).max() ?? 0) + natural.constants.outerMargin * 2
+        let runsAcross = diagram.direction == .LR || diagram.direction == .RL
+        // Across, tight spacing halves the sibling gaps that stack boxes, so it
+        // can come out shorter.
+        if choice.canImprove(minimumWidth: widestBox, minimumHeight: runsAcross ? 0 : nil) {
+            let tight = arrange(diagram, configuration: configuration, tight: true)
+            choice.consider(tight, size: tight.size)
         }
-
-        var chart = diagram
-        if limit < MermaidFlowchartRenderer.directionBreakpoint,
-           diagram.direction == .LR || diagram.direction == .RL {
+        if limit < MermaidFlowchartRenderer.directionBreakpoint, runsAcross,
+           choice.canImprove(minimumWidth: widestBox) {
             let turned = ClassDiagram(direction: .TB, classes: diagram.classes, relations: diagram.relations)
-            let naturalWidth = best.size.width
             let candidate = arrange(turned, configuration: configuration, tight: false)
-            if fits(candidate) { return finish(candidate, diagram: turned, configuration: configuration) }
-            if best.size.width < naturalWidth { chart = turned }
+            choice.consider(candidate, size: candidate.size)
+            if candidate.size.width > limit, choice.canImprove(minimumWidth: widestBox) {
+                let tightTurned = arrange(turned, configuration: configuration, tight: true)
+                choice.consider(tightTurned, size: tightTurned.size)
+            }
         }
-        _ = fits(arrange(chart, configuration: configuration, tight: true))
-        return finish(best, diagram: diagram, configuration: configuration)
+        return finish(choice.best, diagram: diagram, configuration: configuration)
     }
 
     private static func arrange(
@@ -345,7 +358,7 @@ enum MermaidClassRenderer {
     ) -> CGFloat {
         let font = bodyFont(constants.fontSize)
         let isHorizontal = diagram.direction == .LR || diagram.direction == .RL
-        let padding = labelLaneGap(constants)
+        let padding = constants.labelLaneGap
         var extra: CGFloat = 0
         var byFrom: [String: [ClassRelation]] = [:]
         for relation in diagram.relations {
@@ -364,15 +377,9 @@ enum MermaidClassRenderer {
         return extra
     }
 
-    /// Space between the text of two labels in neighboring lanes: both chips'
-    /// padding plus a visible gap, so packed chips never touch.
-    private static func labelLaneGap(_ constants: LayoutConstants) -> CGFloat {
-        constants.fontSize * 0.5 + labelChipPadding(constants) * 2
-    }
-
     /// Background chip padding around a relationship label.
-    private static func labelChipPadding(_ constants: LayoutConstants) -> CGFloat {
-        constants.fontSize * 0.25
+    private static func labelChipPadding(_ fontSize: CGFloat) -> CGFloat {
+        fontSize * 0.25
     }
 
     /// Pack labels that share a rank corridor into non-overlapping cross-axis lanes.
@@ -383,7 +390,7 @@ enum MermaidClassRenderer {
     ) -> [PreparedEdge] {
         let isHorizontal = direction == .LR || direction == .RL
         let font = bodyFont(constants.fontSize)
-        let padding = labelLaneGap(constants)
+        let padding = constants.labelLaneGap
 
         struct Item {
             let index: Int
@@ -1031,7 +1038,7 @@ enum MermaidClassRenderer {
         in ctx: CGContext
     ) {
         let textSize = label.size
-        let padding = labelChipPadding(constants)
+        let padding = labelChipPadding(constants.fontSize)
         let background = CGRect(
             x: mid.x - textSize.width / 2 - padding,
             y: mid.y - textSize.height / 2 - padding,

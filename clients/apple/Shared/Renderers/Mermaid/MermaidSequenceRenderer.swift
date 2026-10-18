@@ -355,30 +355,35 @@ enum MermaidSequenceRenderer {
     /// Lays the diagram out at its natural spacing. Only when that is wider
     /// than `configuration.maxWidth` does it retry with tight spacing and
     /// labels wrapped to a per-participant budget (at most three extra
-    /// passes), keeping the first pass that fits, else the narrowest.
-    /// Text stays at `configuration.fontSize`; view scaling is the fallback.
+    /// passes, each narrower). `RenderFitChoice` keeps whichever pass shows
+    /// largest on screen, so wrapping that makes the diagram taller than the
+    /// inline height cap allows is not used. Text stays at
+    /// `configuration.fontSize`; view scaling is the fallback.
     private static func prepare(
         _ diagram: SequenceDiagram,
         configuration: RenderConfiguration
     ) -> PreparedSequenceLayout {
         let natural = prepare(diagram, configuration: configuration, labelBudget: nil)
+        let size = { (layout: PreparedSequenceLayout) in CGSize(width: layout.totalWidth, height: layout.totalHeight) }
+        var choice = RenderFitChoice(natural: natural, size: size(natural), configuration: configuration)
+        guard choice.needsFit, !diagram.participants.isEmpty else { return natural }
         let available = configuration.maxWidth
-        guard natural.totalWidth > available + 0.5, !diagram.participants.isEmpty else {
-            return natural
-        }
         let floor = configuration.fontSize * 4
         let count = CGFloat(diagram.participants.count)
         var budget = max(floor, (available - configuration.fontSize * 1.5) / count)
-        var best = natural
+        // The first pass also tightens spacing, which can lower the height.
+        var minimumHeight: CGFloat? = 0
         for _ in 0..<3 {
+            guard choice.canImprove(minimumWidth: 0, minimumHeight: minimumHeight) else { break }
+            minimumHeight = nil
             let candidate = prepare(diagram, configuration: configuration, labelBudget: budget)
-            if candidate.totalWidth < best.totalWidth { best = candidate }
+            choice.consider(candidate, size: size(candidate))
             if candidate.totalWidth <= available + 0.5 { break }
             let next = max(floor, budget - (candidate.totalWidth - available) / count)
             guard next < budget - 0.5 else { break }
             budget = next
         }
-        return best
+        return choice.best
     }
 
     /// One layout pass. `labelBudget == nil` is the natural layout. A budget

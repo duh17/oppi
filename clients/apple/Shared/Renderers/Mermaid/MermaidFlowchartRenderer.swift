@@ -302,25 +302,33 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
     // MARK: - Fit to width
 
     /// Lays the diagram out at its natural size and, only when that is wider
-    /// than `maxWidth`, tries up to three narrower variants in order of how
-    /// much they change the drawing:
+    /// than `maxWidth`, tries variants ranked least change first:
     ///
-    /// 1. Below `directionBreakpoint`, turn a left-to-right root to run top to
-    ///    bottom, along with any left-to-right subgraph that is too wide alone.
-    ///    Other subgraph directions stay as written.
-    /// 2. Tighter node, rank, and subgraph spacing.
-    /// 3. Tighter spacing plus narrower label wrapping.
+    /// 1. Tighter node, rank, and subgraph spacing.
+    /// 2. Tighter spacing plus narrower label wrapping.
+    /// 3. Below `directionBreakpoint`, turn a left-to-right root to run top to
+    ///    bottom, along with any left-to-right subgraph that is too wide alone
+    ///    (other subgraph directions stay as written), then the turned
+    ///    diagram with tighter spacing.
     ///
-    /// The first variant that fits wins. Otherwise the narrowest one does and
-    /// the surface scales it. Text always stays at `fontSize`.
+    /// `RenderFitChoice` keeps whichever shows largest on screen, counting the
+    /// inline height cap; ties go to the smaller change. So a tiny overflow
+    /// that tight spacing fixes never turns the diagram, and a turn that
+    /// comes out too tall is not used. Text always stays at `fontSize`.
+    ///
+    /// Each pass is a full layout on the caller's thread, so a variant is
+    /// skipped when one already shows at full size or when a cheap lower
+    /// bound on its size (`fitWidthFloor`, `fitHeightFloor`) rules out
+    /// beating the best. Smaller changes whose bound allows a fit go first;
+    /// the rest are laid out after the turn, and only if they could still win.
     private func layoutFlowchart(
         _ flowchart: FlowchartDiagram,
         configuration: RenderConfiguration
     ) -> FlowchartLayout {
         let limit = configuration.maxWidth
-        var best = measured(layoutFlowchartPass(flowchart, configuration: configuration))
-        guard best.width > limit else { return finalized(best) }
-        let natural = best
+        let natural = measured(layoutFlowchartPass(flowchart, configuration: configuration))
+        var choice = RenderFitChoice(natural: natural, size: natural.size, configuration: configuration)
+        guard choice.needsFit else { return finalized(natural) }
 
         // Tighter corridors can leave the router no clear lane. A variant that
         // drops an edge the natural layout drew is never used.
@@ -328,43 +336,104 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             layout.graphResult.edgePaths.count(where: { $0.points.count >= 2 })
         }
         let naturalRoutedEdges = routedEdgeCount(natural.layout)
-
-        /// Keeps the narrower layout; true when it fits.
-        func fits(_ layout: FlowchartLayout) -> Bool {
-            guard routedEdgeCount(layout) >= naturalRoutedEdges else { return false }
+        /// Offers `layout` to the choice; returns its padded size.
+        @discardableResult
+        func consider(_ layout: FlowchartLayout, changeRank: Int) -> CGSize {
             let candidate = measured(layout)
-            if candidate.width < best.width { best = candidate }
-            return candidate.width <= limit
+            if routedEdgeCount(layout) >= naturalRoutedEdges {
+                choice.consider(candidate, size: candidate.size, changeRank: changeRank)
+            }
+            return candidate.size
         }
-
-        var chart = flowchart
-        if limit < Self.directionBreakpoint,
-           let turned = turnedFlowchart(flowchart, naturalFrames: natural.layout.subgraphFrames, limit: limit) {
-            if fits(layoutFlowchartPass(turned, configuration: configuration)) { return finalized(best) }
-            // Tighten whichever direction came out narrower.
-            if best.width < natural.width { chart = turned }
+        func runsAcross(_ direction: FlowDirection) -> Bool {
+            direction == .LR || direction == .RL
         }
 
         var tight = self
         tight.fit.tight = true
-        tight.fit.tightRanks = chart.direction == .LR || chart.direction == .RL
-        if fits(tight.layoutFlowchartPass(chart, configuration: configuration)) { return finalized(best) }
+        tight.fit.tightRanks = runsAcross(flowchart.direction)
+        var narrow = tight
+        narrow.fit.narrowLabels = true
 
-        tight.fit.narrowLabels = true
-        if tight.rewrapsLabels(of: natural.layout) {
-            _ = fits(tight.layoutFlowchartPass(chart, configuration: configuration))
+        let naturalWidths = natural.layout.graphResult.nodePositions.mapValues(\.width)
+        let widestNode = (naturalWidths.values.max() ?? 0) + flowchartOuterPadding * 2
+        let tightFloor = max(
+            tight.fitWidthFloor(natural.layout, nodeWidths: naturalWidths),
+            tight.spacingWidthFloor(natural.layout, naturalWidth: natural.size.width, widestNode: widestNode)
+        )
+        let narrowLabels = narrow.rewrappedLabels(of: natural.layout)
+        var narrowFloor = narrowLabels.map { narrow.fitWidthFloor(natural.layout, nodeWidths: $0.nodeWidths) }
+        let tightHeightFloor = fitHeightFloor(flowchart, naturalHeight: natural.size.height)
+
+        // Smaller changes that could fit go first, so a fit there ends the
+        // search before any turn is laid out.
+        var tightWidth: CGFloat?
+        var triedNarrow = false
+        if tightFloor <= limit, choice.canImprove(minimumWidth: tightFloor, minimumHeight: tightHeightFloor) {
+            tightWidth = consider(tight.layoutFlowchartPass(flowchart, configuration: configuration), changeRank: 1).width
         }
-        return finalized(best)
+        // Tight spacing that came out wider than natural re-packed parts into
+        // fewer, wider rows. Narrower labels share that spacing and its
+        // packing budget, so the narrow pass would re-pack the same way and
+        // is skipped; `RenderFitChoice` would reject it as wider anyway.
+        func narrowCanBeNarrower() -> Bool {
+            (tightWidth ?? 0) <= natural.size.width + 0.5
+        }
+        // Across, width is the ranks side by side, so narrower labels can
+        // shorten the tight layout by at most how much the labels shrank.
+        func boundNarrowByTight() {
+            guard let tightWidth, let narrowLabels, let floor = narrowFloor,
+                  runsAcross(flowchart.direction) else { return }
+            narrowFloor = max(floor, tightWidth - narrowLabels.totalShrink)
+        }
+        boundNarrowByTight()
+        if let narrowFloor, narrowFloor <= limit, narrowCanBeNarrower(),
+           choice.canImprove(minimumWidth: narrowFloor, minimumHeight: tightHeightFloor) {
+            consider(narrow.layoutFlowchartPass(flowchart, configuration: configuration), changeRank: 2)
+            triedNarrow = true
+        }
+
+        if limit < Self.directionBreakpoint,
+           choice.canImprove(minimumWidth: widestNode),
+           let turned = turnedFlowchart(flowchart, naturalFrames: natural.layout.subgraphFrames, limit: limit) {
+            let turnedSize = consider(layoutFlowchartPass(turned, configuration: configuration), changeRank: 3)
+            // Tighter spacing narrows the turned diagram only when its own
+            // width, not its height, is what still overflows.
+            var tightTurned = self
+            tightTurned.fit.tight = true
+            tightTurned.fit.tightRanks = runsAcross(turned.direction)
+            if turnedSize.width > limit,
+               choice.canImprove(
+                minimumWidth: widestNode,
+                minimumHeight: fitHeightFloor(turned, naturalHeight: turnedSize.height)
+               ) {
+                consider(tightTurned.layoutFlowchartPass(turned, configuration: configuration), changeRank: 4)
+            }
+        }
+
+        // Then the smaller changes that cannot fit but could still show
+        // larger than the best. Both keep the natural ranks, and narrower
+        // wrapping only adds lines, so they share the tight height bound.
+        if tightWidth == nil,
+           choice.canImprove(minimumWidth: tightFloor, minimumHeight: tightHeightFloor) {
+            tightWidth = consider(tight.layoutFlowchartPass(flowchart, configuration: configuration), changeRank: 1).width
+            boundNarrowByTight()
+        }
+        if !triedNarrow, let narrowFloor, narrowCanBeNarrower(),
+           choice.canImprove(minimumWidth: narrowFloor, minimumHeight: tightHeightFloor) {
+            consider(narrow.layoutFlowchartPass(flowchart, configuration: configuration), changeRank: 2)
+        }
+        return finalized(choice.best)
     }
 
-    /// A laid-out candidate with its edge label placement and padded width,
+    /// A laid-out candidate with its edge label placement and padded size,
     /// computed once and reused when it becomes the final layout.
     private struct MeasuredFlowchart {
         let layout: FlowchartLayout
         let labels: [Int: EdgeLabelLayout]
         let bounds: CGRect
-        /// Same as `boundingBox(layout).width`.
-        let width: CGFloat
+        /// Same as `boundingBox(layout)`.
+        let size: CGSize
     }
 
     private func measured(_ layout: FlowchartLayout) -> MeasuredFlowchart {
@@ -374,26 +443,128 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             layout: layout,
             labels: labels,
             bounds: bounds,
-            width: bounds.width + flowchartOuterPadding * 2
+            size: CGSize(
+                width: bounds.width + flowchartOuterPadding * 2,
+                height: bounds.height + flowchartOuterPadding * 2
+            )
         )
     }
 
-    /// Whether this renderer's label wrapping would break any node or edge
-    /// label differently from `layout`. A narrow-label pass that rewraps
-    /// nothing would only repeat the tight pass.
-    private func rewrapsLabels(of layout: FlowchartLayout) -> Bool {
+    /// Labels under this renderer's wrapping: each node's width, and how
+    /// much narrower all labels got in total (nodes plus edge labels). Nil
+    /// when that wrapping breaks no label differently from `layout` (a
+    /// narrow-label pass would only repeat the tight pass).
+    private func rewrappedLabels(
+        of layout: FlowchartLayout
+    ) -> (nodeWidths: [String: CGFloat], totalShrink: CGFloat)? {
         let font = CTFontCreateWithName("Helvetica" as CFString, layout.fontSize, nil)
-        for node in layout.flowchart.nodes where !node.isMarkdown {
-            let wrapped = wrapFlowNodeLabel(node.label, shape: node.shape, font: font, fontSize: layout.fontSize)
-            if wrapped != layout.nodeLabels[node.id] { return true }
+        var rewraps = false
+        var widths: [String: CGFloat] = [:]
+        var shrink: CGFloat = 0
+        for node in layout.flowchart.nodes {
+            let label = node.isMarkdown
+                ? node.label
+                : wrapFlowNodeLabel(node.label, shape: node.shape, font: font, fontSize: layout.fontSize)
+            if label != layout.nodeLabels[node.id] { rewraps = true }
+            let textSize = measureText(label, font: font, fontSize: layout.fontSize, isMarkdown: node.isMarkdown)
+            let width = padForShape(textSize, shape: node.shape, fontSize: layout.fontSize).width
+            widths[node.id] = width
+            shrink += max(0, (layout.graphResult.nodePositions[node.id]?.width ?? width) - width)
         }
+        let (labelFont, labelFontSize) = flowEdgeLabelFont(fontSize: layout.fontSize)
         for (index, edge) in layout.flowchart.edges.enumerated() {
-            guard let label = edge.label, !label.isEmpty, index < layout.edgeKeys.count else { continue }
-            if wrapFlowEdgeLabel(label, fontSize: layout.fontSize) != layout.edgeLabels[layout.edgeKeys[index]] {
-                return true
-            }
+            guard let label = edge.label, !label.isEmpty, index < layout.edgeKeys.count,
+                  let current = layout.edgeLabels[layout.edgeKeys[index]] else { continue }
+            let wrapped = wrapFlowEdgeLabel(label, fontSize: layout.fontSize)
+            guard wrapped != current else { continue }
+            rewraps = true
+            shrink += max(0, measureText(current, font: labelFont, fontSize: labelFontSize).width
+                - measureText(wrapped, font: labelFont, fontSize: labelFontSize).width)
         }
-        return false
+        return rewraps ? (widths, shrink) : nil
+    }
+
+    /// A lower bound on the padded height of `chart` laid out with tight
+    /// spacing (and any wrapping), given its height at natural spacing.
+    /// Only a top-down diagram of one connected part without subgraphs has
+    /// one: tight spacing keeps its rank gaps and narrower wrapping only adds
+    /// lines. Across, tight spacing halves the sibling gaps that stack nodes,
+    /// and packed parts or subgraph contents can rewrap onto fewer rows, so
+    /// those have no useful bound.
+    private func fitHeightFloor(_ chart: FlowchartDiagram, naturalHeight: CGFloat) -> CGFloat {
+        guard chart.direction != .LR, chart.direction != .RL, chart.subgraphs.isEmpty else { return 0 }
+        var parent = Dictionary(uniqueKeysWithValues: chart.nodes.map { ($0.id, $0.id) })
+        func root(_ id: String) -> String {
+            var id = id
+            while let next = parent[id], next != id { id = next }
+            return id
+        }
+        for edge in chart.edges where parent[edge.from] != nil && parent[edge.to] != nil {
+            parent[root(edge.from)] = root(edge.to)
+        }
+        let parts = Set(chart.nodes.map { root($0.id) }).count
+        return parts <= 1 ? naturalHeight : 0
+    }
+
+    /// A lower bound on the padded width of `natural` laid out again with
+    /// this renderer's tighter spacing and the same labels. Tightening only
+    /// scales the space between nodes: rank gaps by `rankGapScale` across,
+    /// sibling gaps by `siblingGapScale` where they run across (a top-down
+    /// root or subgraph), and subgraph side padding. Node widths and the
+    /// outer padding stay, and at least the widest node lies on any span.
+    private func spacingWidthFloor(_ natural: FlowchartLayout, naturalWidth: CGFloat, widestNode: CGFloat) -> CGFloat {
+        let fontSize = natural.fontSize
+        var naturalSpacing = self
+        naturalSpacing.fit = FlowFit()
+        func directions(_ subgraph: FlowSubgraph) -> [FlowDirection?] {
+            [subgraph.direction] + subgraph.subgraphs.flatMap(directions)
+        }
+        let subgraphDirections = natural.flowchart.subgraphs.flatMap(directions)
+        let runsAcross = { (direction: FlowDirection?) in direction == .LR || direction == .RL }
+        let allAcross = runsAcross(natural.flowchart.direction)
+            && subgraphDirections.allSatisfy { $0 == nil || runsAcross($0) }
+        let gapScale = allAcross ? rankGapScale : min(rankGapScale, siblingGapScale)
+        let sidePadding = naturalSpacing.subgraphHorizontalPadding(fontSize: fontSize)
+        let padScale = subgraphHorizontalPadding(fontSize: fontSize) / max(sidePadding, 1)
+        // `widestNode` already includes the outer padding.
+        let flexible = max(0, naturalWidth - widestNode)
+        let padding = min(flexible, CGFloat(subgraphDirections.count) * 2 * sidePadding)
+        return widestNode + gapScale * (flexible - padding) + padScale * padding
+    }
+
+    /// A lower bound on the padded width of a variant of `natural` that keeps
+    /// its direction and ranks, with nodes `nodeWidths` wide and this
+    /// renderer's spacing. Spacing and wrapping never change ranks, which
+    /// come from the graph alone. A left-to-right root without subgraphs is
+    /// at least its ranks side by side (each as wide as its widest node)
+    /// with the base rank gap between them; anything else is at least its
+    /// widest node.
+    private func fitWidthFloor(_ natural: FlowchartLayout, nodeWidths: [String: CGFloat]) -> CGFloat {
+        let padding = flowchartOuterPadding * 2
+        let widest = (nodeWidths.values.max() ?? 0) + padding
+        let direction = natural.flowchart.direction
+        guard direction == .LR || direction == .RL, natural.flowchart.subgraphs.isEmpty else { return widest }
+        // Nodes of one rank share a column, so their natural x extents
+        // overlap; distinct ranks are separated by a rank gap.
+        let columns = natural.graphResult.nodePositions
+            .map { (id: $0.key, minX: $0.value.minX, maxX: $0.value.maxX) }
+            .sorted { $0.minX < $1.minX }
+        var ranks = 0
+        var total: CGFloat = 0
+        var columnMaxX = -CGFloat.infinity
+        var columnWidest: CGFloat = 0
+        for node in columns {
+            if node.minX >= columnMaxX {
+                total += columnWidest
+                ranks += 1
+                columnWidest = 0
+            }
+            columnMaxX = max(columnMaxX, node.maxX)
+            columnWidest = max(columnWidest, nodeWidths[node.id] ?? 0)
+        }
+        total += columnWidest
+        let gaps = CGFloat(max(ranks - 1, 0)) * flowRankGap(fontSize: natural.fontSize)
+        return max(widest, total + gaps + padding)
     }
 
     /// The diagram turned to run top to bottom: a left-to-right root, and any
@@ -2814,6 +2985,10 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             let regionCount: Int
             let title: MermaidPreparedText?
             let titleRect: CGRect
+            /// The title could not move clear of every edge in its band, so
+            /// it is painted after the edges on a backing in the cluster fill:
+            /// a crossing edge passes behind the text, never over it.
+            let titleBacking: CGRect?
         }
 
         fileprivate struct Edge {
@@ -2879,6 +3054,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                 width: max(1, rect.width - 20),
                 height: max(fontSize * 1.4, subgraphTitleHeight(fontSize: fontSize) - 6)
             )
+            let placement = titleText.map { subgraphTitlePlacement($0.size, in: band, avoiding: edgeInk) }
             subgraphs.append(FlowDrawPlan.Subgraph(
                 rect: rect,
                 fill: parseStyleColor(style["fill"], theme: theme) ?? defaultSubgraphFill,
@@ -2886,7 +3062,8 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                 lineWidth: parseLineWidth(style["stroke-width"]) ?? 1,
                 regionCount: subgraph.regionCount,
                 title: titleText,
-                titleRect: titleText.map { subgraphTitleRect($0.size, in: band, avoiding: edgeInk) } ?? band
+                titleRect: placement?.rect ?? band,
+                titleBacking: placement?.backing
             ))
             subgraph.subgraphs.forEach(collect)
         }
@@ -2964,17 +3141,33 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
     /// Where a cluster title sits in its band: centered, unless an edge that
     /// enters or leaves the cluster runs through the centered text (common
     /// once a diagram runs top to bottom); then the left or right end of the
-    /// band, whichever is clear.
-    private func subgraphTitleRect(_ size: CGSize, in band: CGRect, avoiding edges: [[CGPoint]]) -> CGRect {
+    /// band, whichever is clear. When no spot is clear (a cluster too narrow
+    /// to step aside), the title stays centered with a backing rect so the
+    /// edge is painted behind it.
+    private func subgraphTitlePlacement(
+        _ size: CGSize,
+        in band: CGRect,
+        avoiding edges: [[CGPoint]]
+    ) -> (rect: CGRect, backing: CGRect?) {
         let width = min(size.width, band.width)
         let candidates = [band.midX - width / 2, band.minX, band.maxX - width].map {
             CGRect(x: $0, y: band.minY, width: width, height: band.height)
         }
         let clearance: CGFloat = 3
-        return candidates.first { candidate in
+        if let clear = candidates.first(where: { candidate in
             let obstacle = [candidate.insetBy(dx: -clearance, dy: 0)]
             return !edges.contains { pathIntersectsObstacles($0, obstacles: obstacle) }
-        } ?? candidates[0]
+        }) {
+            return (clear, nil)
+        }
+        let rect = candidates[0]
+        let text = CGRect(
+            x: rect.midX - size.width / 2,
+            y: rect.midY - size.height / 2,
+            width: size.width,
+            height: size.height
+        )
+        return (rect, text.insetBy(dx: -clearance, dy: -1))
     }
 
     private func edgeKey(_ layout: FlowchartLayout, index: Int) -> String {
@@ -3023,7 +3216,9 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
                     ctx: ctx
                 )
             }
-            subgraph.title?.draw(centeredIn: subgraph.titleRect, in: ctx)
+            if subgraph.titleBacking == nil {
+                subgraph.title?.draw(centeredIn: subgraph.titleRect, in: ctx)
+            }
         }
 
         // Strokes, then arrowheads, then labels. Interleaving let later shared
@@ -3045,6 +3240,12 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             ctx.addLines(between: triangle)
             ctx.closePath()
             ctx.fillPath()
+        }
+        for subgraph in plan.subgraphs {
+            guard let backing = subgraph.titleBacking, let title = subgraph.title else { continue }
+            ctx.setFillColor(subgraph.fill)
+            ctx.fill(backing)
+            title.draw(centeredIn: subgraph.titleRect, in: ctx)
         }
         ctx.setFillColor(layout.theme.background)
         for label in plan.labels {
@@ -3948,78 +4149,5 @@ private extension FlowEdgeStyle {
         case .arrow, .dotted, .thick, .biArrow, .cross, .biCross, .circle, .biCircle: true
         case .open, .invisible: false
         }
-    }
-}
-
-/// Text measured and typeset once at layout time, then drawn as prebuilt
-/// CoreText lines.
-///
-/// Places lines exactly like `MermaidTextUtils.drawText` (same line height,
-/// spacing, and per-line centering), so a renderer can move typesetting out
-/// of draw without moving a pixel. Drawing builds no attributed strings,
-/// lines, or fonts. CTLine is immutable, so drawing from any thread is safe.
-struct MermaidPreparedText: @unchecked Sendable {
-    private struct Line {
-        let line: CTLine
-        let width: CGFloat
-        let top: CGFloat
-    }
-
-    private let lines: [Line]
-    private let fontSize: CGFloat
-    /// The size `MermaidTextUtils.measureText` reports for the same text.
-    let size: CGSize
-
-    init(_ text: String, font: CTFont, fontSize: CGFloat, color: CGColor, isMarkdown: Bool = false) {
-        let spacing = fontSize * 0.3
-        var top: CGFloat = 0
-        var lines: [Line] = []
-        for piece in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = CTLineCreateWithAttributedString(MermaidTextUtils.attributedLabel(
-                String(piece),
-                font: font,
-                fontSize: fontSize,
-                foregroundColor: color,
-                isMarkdown: isMarkdown
-            ))
-            let bounds = CTLineGetBoundsWithOptions(line, [])
-            lines.append(Line(line: line, width: bounds.width, top: top))
-            top += max(bounds.height, fontSize * 1.4) + spacing
-        }
-        self.lines = lines
-        self.fontSize = fontSize
-        size = MermaidTextUtils.measureText(text, font: font, fontSize: fontSize, isMarkdown: isMarkdown)
-    }
-
-    /// Left-aligned lines; `origin` is the block's top-left.
-    func draw(at origin: CGPoint, in ctx: CGContext) {
-        for line in lines {
-            MermaidTextUtils.drawCTLine(
-                line.line,
-                at: CGPoint(x: origin.x, y: origin.y + line.top),
-                fontSize: fontSize,
-                in: ctx
-            )
-        }
-    }
-
-    /// Lines centered on each other across `size.width`; `origin` is the block's top-left.
-    func drawCentered(at origin: CGPoint, in ctx: CGContext) {
-        for line in lines {
-            MermaidTextUtils.drawCTLine(
-                line.line,
-                at: CGPoint(x: origin.x + (size.width - line.width) / 2, y: origin.y + line.top),
-                fontSize: fontSize,
-                in: ctx
-            )
-        }
-    }
-
-    /// The block centered in `rect`, lines centered on each other.
-    func draw(centeredIn rect: CGRect, in ctx: CGContext) {
-        drawCentered(
-            at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2),
-            in: ctx
-        )
     }
 }

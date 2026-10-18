@@ -20,7 +20,8 @@ import Foundation
 /// timeline fills the chat bubble and long event text wraps and truncates
 /// with an ellipsis instead of overflowing. An LR timeline with too many
 /// periods to fit `maxWidth` side by side is drawn top-down instead, which
-/// always fits the width and grows in height.
+/// always fits the width and grows in height, unless the surface's height
+/// cap would then shrink it more than the side-by-side layout.
 enum MermaidTimelineRenderer {
 
     // MARK: - Layout constants
@@ -157,10 +158,14 @@ enum MermaidTimelineRenderer {
         if diagram.direction == .TD {
             return buildLayoutTD(diagram, configuration: configuration)
         }
+        // Top-down is used only when it shows larger on screen: a long
+        // timeline the inline height cap would shrink more stays across.
         let across = buildLayoutLR(diagram, configuration: configuration)
-        guard across.size.width > configuration.maxWidth else { return across }
+        var choice = RenderFitChoice(natural: across, size: across.size, configuration: configuration)
+        guard choice.canImprove(minimumWidth: 0) else { return across }
         let down = buildLayoutTD(diagram, configuration: configuration)
-        return down.size.width < across.size.width ? down : across
+        choice.consider(down, size: down.size)
+        return choice.best
     }
 
     private static func buildLayoutLR(

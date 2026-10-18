@@ -1348,6 +1348,71 @@ struct MermaidRendererTests {
         }
     }
 
+    private static func inline(maxWidth: CGFloat) -> RenderConfiguration {
+        RenderConfiguration(
+            fontSize: 14, maxWidth: maxWidth, theme: .fallback, displayMode: .document,
+            maxDisplayHeight: MermaidInlinePresentation.maxHeight
+        )
+    }
+
+    @Test(arguments: [true, false])
+    func tinyOverflowTightensSpacingInsteadOfTurning(inline: Bool) throws {
+        // A few points too wide at its natural spacing.
+        let source = """
+            flowchart LR
+               A -- text --> B -- text2 --> C
+            """
+        let natural = fitLayout(source, maxWidth: 2_000)
+        let naturalWidth = renderer.boundingBox(natural).width
+        let limit = naturalWidth - 3
+        let layout = renderer.layout(
+            parser.parse(source),
+            configuration: inline ? Self.inline(maxWidth: limit) : .default(maxWidth: limit)
+        )
+        #expect(renderer.boundingBox(layout).width <= limit, "tight spacing alone fits")
+        let a = try #require(layout.graphResult.nodePositions["A"])
+        let b = try #require(layout.graphResult.nodePositions["B"])
+        #expect(b.minX >= a.maxX, "A=\(a) B=\(b) must stay left to right")
+    }
+
+    @Test func turnTheInlineHeightCapWouldShrinkMoreIsNotUsedInline() throws {
+        // Turning this top to bottom fits the width but comes out much taller
+        // than the inline cap, so inline it would show smaller than the
+        // natural layout. Full screen has no cap and takes the turn.
+        let source = """
+            flowchart LR
+              subgraph TOP
+                direction TB
+                subgraph B1
+                    direction RL
+                    i1 -->f1
+                end
+                subgraph B2
+                    direction BT
+                    i2 -->f2
+                end
+              end
+              A --> TOP --> B
+              B1 --> B2
+            """
+        let diagram = parser.parse(source)
+        let inlineConfig = Self.inline(maxWidth: 360)
+        let natural = renderer.layout(diagram, configuration: .default(maxWidth: 2_000))
+        let naturalScale = inlineConfig.displayScale(for: renderer.boundingBox(natural))
+
+        let inlineLayout = renderer.layout(diagram, configuration: inlineConfig)
+        #expect(inlineConfig.displayScale(for: renderer.boundingBox(inlineLayout)) >= naturalScale)
+        let inlineA = try #require(inlineLayout.graphResult.nodePositions["A"])
+        let inlineB = try #require(inlineLayout.graphResult.nodePositions["B"])
+        #expect(inlineB.minX >= inlineA.maxX, "inline keeps the root left to right")
+
+        let fullScreen = renderer.layout(diagram, configuration: .default(maxWidth: 360))
+        #expect(renderer.boundingBox(fullScreen).width <= 360)
+        let a = try #require(fullScreen.graphResult.nodePositions["A"])
+        let b = try #require(fullScreen.graphResult.nodePositions["B"])
+        #expect(b.minY >= a.maxY, "without a height cap the turn fits and is used")
+    }
+
     private struct OverlappingTrunk {
         let coord: CGFloat
         let overlap: ClosedRange<CGFloat>

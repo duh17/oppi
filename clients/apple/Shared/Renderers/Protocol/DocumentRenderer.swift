@@ -52,6 +52,11 @@ struct RenderConfiguration: Sendable {
     /// in inline vs fullscreen (e.g. LaTeX display mode vs inline mode).
     let displayMode: RenderDisplayMode
 
+    /// Tallest the surface shows content before scaling it down (the inline
+    /// diagram cap). Nil when the surface scrolls or zooms instead
+    /// (full screen, export), so height never shrinks the content.
+    var maxDisplayHeight: CGFloat? = nil
+
     static func `default`(maxWidth: CGFloat = 360) -> Self {
         Self(
             fontSize: 14,
@@ -59,6 +64,84 @@ struct RenderConfiguration: Sendable {
             theme: .fallback,
             displayMode: .document
         )
+    }
+
+    /// Scale the surface shows content of `size` at: 1 when it fits, else
+    /// whatever fits it within `maxWidth` and `maxDisplayHeight`.
+    func displayScale(for size: CGSize) -> CGFloat {
+        guard size.width > 0, size.height > 0 else { return 1 }
+        var scale = min(1, maxWidth / size.width)
+        if let maxDisplayHeight {
+            scale = min(scale, maxDisplayHeight / size.height)
+        }
+        return scale
+    }
+}
+
+/// Picks among layouts of one diagram by the scale each will be shown at,
+/// so text stays as large as possible on screen.
+///
+/// Candidates rank least change first, starting with the natural layout:
+/// tighter spacing, then narrower wrapping, then a turned direction or an
+/// alternate arrangement. The choice shows the largest; ties go to the
+/// smaller change, and it never shows smaller than the natural layout.
+struct RenderFitChoice<Candidate> {
+    private(set) var best: Candidate
+    private(set) var bestScale: CGFloat
+    private var bestSize: CGSize
+    private var bestRank = 0
+    private let naturalWidth: CGFloat
+    private let configuration: RenderConfiguration
+    /// Only overflowing the width starts fitting. A diagram that fits the
+    /// width keeps its natural layout even when the height cap shrinks it.
+    let needsFit: Bool
+
+    /// Scale gains below this are ties.
+    private static var tolerance: CGFloat { 0.001 }
+
+    init(natural: Candidate, size: CGSize, configuration: RenderConfiguration) {
+        best = natural
+        bestSize = size
+        bestScale = configuration.displayScale(for: size)
+        naturalWidth = size.width
+        self.configuration = configuration
+        needsFit = size.width > configuration.maxWidth + 0.5
+    }
+
+    /// Whether a candidate could still show larger than the best, so it is
+    /// worth laying out. `minimumWidth` and `minimumHeight` are lower bounds
+    /// on the candidate's size. A nil `minimumHeight` means the candidate is
+    /// no shorter than the best so far: wrapping and turning trade width for
+    /// height, so such a candidate cannot help once the height cap is what
+    /// shrinks the best.
+    func canImprove(minimumWidth: CGFloat, minimumHeight: CGFloat? = nil) -> Bool {
+        guard needsFit, bestScale < 1 - Self.tolerance else { return false }
+        var ceiling: CGFloat = minimumWidth > 0 ? min(1, configuration.maxWidth / minimumWidth) : 1
+        if let cap = configuration.maxDisplayHeight {
+            let height = minimumHeight ?? bestSize.height
+            if height > 0 { ceiling = min(ceiling, cap / height) }
+        }
+        return ceiling > bestScale + Self.tolerance
+    }
+
+    /// Keeps `candidate` when it shows larger than the best so far, or as
+    /// large with a smaller change. `changeRank` orders candidates by how
+    /// much they change the drawing (natural is 0); callers that offer them
+    /// least change first can omit it, and a tie then keeps the earlier one.
+    /// Variants exist to narrow a diagram that overflows the width; one that
+    /// comes out wider than the natural layout (packed parts rearranged into
+    /// a shorter, wider block) is never used.
+    mutating func consider(_ candidate: Candidate, size: CGSize, changeRank: Int? = nil) {
+        guard size.width <= naturalWidth + 0.5 else { return }
+        let scale = configuration.displayScale(for: size)
+        let rank = changeRank ?? Int.max
+        let wins = scale > bestScale + Self.tolerance
+            || (scale >= bestScale - Self.tolerance && rank < bestRank)
+        guard wins else { return }
+        best = candidate
+        bestScale = scale
+        bestSize = size
+        bestRank = rank
     }
 }
 

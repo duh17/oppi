@@ -111,13 +111,15 @@ enum MermaidMindmapRenderer {
         case .tidyTree:
             layoutResult = tidyTreeLayout(for: diagram.root, constants: constants)
         }
-        // A branching layout wider than the view falls back to the outline,
-        // which grows down instead of across and wraps labels to the width.
-        if layoutResult.size.width > configuration.maxWidth {
+        // A branching layout wider than the view may fall back to the
+        // outline, which grows down instead of across and wraps labels to the
+        // width. It is used only when it shows larger on screen: a tall
+        // outline the inline height cap would shrink more keeps the branches.
+        var choice = RenderFitChoice(natural: layoutResult, size: layoutResult.size, configuration: configuration)
+        if choice.canImprove(minimumWidth: 0) {
             let outline = outlineLayout(for: diagram.root, constants: constants, maxWidth: configuration.maxWidth)
-            if outline.size.width < layoutResult.size.width {
-                layoutResult = outline
-            }
+            choice.consider(outline, size: outline.size)
+            layoutResult = choice.best
         }
 
         let positioned = layoutResult.positioned

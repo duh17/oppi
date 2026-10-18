@@ -114,9 +114,12 @@ enum MermaidERRenderer {
     // MARK: - Public entry point
 
     /// Lays out at the natural size; only when that is wider than `maxWidth`
-    /// tries, in order, turning a left-to-right diagram top to bottom (below
-    /// `MermaidFlowchartRenderer.directionBreakpoint`) and tighter spacing in
-    /// the narrower direction. The first that fits wins, else the narrowest.
+    /// tries, least change first, tighter spacing (top-down only: tight
+    /// spacing halves sibling gaps, which run across only there), then
+    /// turning a left-to-right diagram top to bottom (below
+    /// `MermaidFlowchartRenderer.directionBreakpoint`), then the turned
+    /// diagram with tighter spacing. `RenderFitChoice` keeps whichever shows
+    /// largest on screen, counting the inline height cap.
     nonisolated static func layout(
         _ diagram: ERDiagram,
         configuration: RenderConfiguration
@@ -148,25 +151,28 @@ enum MermaidERRenderer {
         }
 
         let limit = configuration.maxWidth
-        var best = arrange(diagram, configuration: configuration, tight: false)
-        guard best.size.width > limit else { return finish(best, configuration: configuration) }
+        let natural = arrange(diagram, configuration: configuration, tight: false)
+        var choice = RenderFitChoice(natural: natural, size: natural.size, configuration: configuration)
+        guard choice.needsFit else { return finish(natural, configuration: configuration) }
 
-        func fits(_ candidate: Arrangement) -> Bool {
-            if candidate.size.width < best.size.width { best = candidate }
-            return candidate.size.width <= limit
+        // No arrangement is narrower than its widest table.
+        let widestTable = (natural.tables.map(\.rect.width).max() ?? 0) + natural.constants.outerMargin * 2
+        let runsAcross = diagram.direction == .LR || diagram.direction == .RL
+        if !runsAcross, choice.canImprove(minimumWidth: widestTable) {
+            let tight = arrange(diagram, configuration: configuration, tight: true)
+            choice.consider(tight, size: tight.size)
         }
-
-        var chart = diagram
-        if limit < MermaidFlowchartRenderer.directionBreakpoint,
-           diagram.direction == .LR || diagram.direction == .RL {
+        if limit < MermaidFlowchartRenderer.directionBreakpoint, runsAcross,
+           choice.canImprove(minimumWidth: widestTable) {
             let turned = ERDiagram(direction: .TB, entities: diagram.entities, relationships: diagram.relationships)
-            let naturalWidth = best.size.width
             let candidate = arrange(turned, configuration: configuration, tight: false)
-            if fits(candidate) { return finish(candidate, configuration: configuration) }
-            if best.size.width < naturalWidth { chart = turned }
+            choice.consider(candidate, size: candidate.size)
+            if candidate.size.width > limit, choice.canImprove(minimumWidth: widestTable) {
+                let tightTurned = arrange(turned, configuration: configuration, tight: true)
+                choice.consider(tightTurned, size: tightTurned.size)
+            }
         }
-        _ = fits(arrange(chart, configuration: configuration, tight: true))
-        return finish(best, configuration: configuration)
+        return finish(choice.best, configuration: configuration)
     }
 
     private static func arrange(
