@@ -373,6 +373,36 @@ export function dropBuildDescriptionsMissingVendor(appleDir: string, derivedData
   }
 }
 
+// Recency (ms) of each slot whose DerivedData under buildBase already holds a
+// build for this checkout; cold or missing slots are absent. A build leaves
+// Build/Intermediates.noindex behind, and every xcodebuild invocation writes a
+// fresh activity log into Logs/Build, so the newest entry there is the last time
+// the slot built. The pool-N directory mtime is not used: it only moves when its
+// direct children are added or removed.
+export function warmDerivedDataRecency(buildBase: string, slots: number[]): Map<number, number> {
+  const warm = new Map<number, number>();
+  for (const slot of slots) {
+    const root = join(buildBase, `pool-${slot}`);
+    try {
+      const intermediates = join(root, "Build", "Intermediates.noindex");
+      if (readdirSync(intermediates).length === 0) continue;
+      const logs = join(root, "Logs", "Build");
+      let newest = 0;
+      try {
+        for (const name of readdirSync(logs)) {
+          newest = Math.max(newest, statSync(join(logs, name)).mtimeMs);
+        }
+      } catch {
+        // No build logs: fall back to the build products themselves.
+      }
+      warm.set(slot, newest || statSync(intermediates).mtimeMs);
+    } catch {
+      // Missing or unreadable DerivedData is cold.
+    }
+  }
+  return warm;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv, cwd: string, scriptDir: string): PoolConfig {
   let oppiRootFromEnv = false;
   let oppiRoot = env.OPPI_ROOT ?? "";
@@ -1042,6 +1072,7 @@ async function acquireRunSlot(
       devices,
       runtime,
       config.deviceType,
+      warmDerivedDataRecency(config.buildBase, slotNumbers(config)),
     )) {
       if (session.canceled) {
         die("canceled while waiting for a simulator slot");

@@ -139,6 +139,33 @@ describe("sim-pool-simctl", () => {
     ).toEqual([1, 0]);
   });
 
+  test("acquire order is warm by recency, then matching device, then the rest", () => {
+    const runtime = "com.apple.CoreSimulator.SimRuntime.iOS-27-0";
+    const deviceType = "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro";
+    const device = (slot: number) => ({
+      udid: `U${slot}`,
+      name: `Oppi-Pool-${slot}`,
+      state: "Shutdown",
+      isAvailable: true,
+      deviceTypeIdentifier: deviceType,
+      runtime,
+    });
+    const devices = [device(2), device(5)];
+    const slots = [0, 1, 2, 3, 4, 5];
+    // Slot 3 is the most recently built, slot 4 older; neither has a device.
+    const warm = new Map([
+      [4, 100],
+      [3, 200],
+    ]);
+    expect(preferredAcquireSlots(slots, devices, runtime, deviceType, warm)).toEqual([3, 4, 2, 5, 0, 1]);
+    // Without warm DerivedData the order is the device-match order.
+    expect(preferredAcquireSlots(slots, devices, runtime, deviceType)).toEqual([2, 5, 0, 1, 3, 4]);
+    // A warm slot that also has a device still ranks by recency, ahead of a device-only slot.
+    expect(preferredAcquireSlots(slots, devices, runtime, deviceType, new Map([[5, 1]]))).toEqual([5, 2, 0, 1, 3, 4]);
+    // Equal recency keeps slot order.
+    expect(preferredAcquireSlots(slots, devices, runtime, deviceType, new Map([[4, 7], [1, 7]]))).toEqual([1, 4, 2, 5, 0, 3]);
+  });
+
   test("latest-stable skips beta runtimes", () => {
     const runtimes = [
       {

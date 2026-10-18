@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -22,6 +22,7 @@ import {
   treeCpu,
   treeCpuRate,
   validateCommandGuardrails,
+  warmDerivedDataRecency,
 } from "./sim-pool-ops";
 import { CommandSession } from "./sim-pool-supervise";
 
@@ -465,6 +466,31 @@ describe("sim-pool checkout targeting", () => {
     const otherCheckout = description("pool-0", "ddd", missing("/elsewhere/clients/apple"));
     dropBuildDescriptionsMissingVendor(appleDir, join(buildBase, "pool-0"));
     expect([poisoned, poisonedOtherSlot, healthy, otherCheckout].map(existsSync)).toEqual([false, true, true, true]);
+  });
+
+  test("warm DerivedData is ranked by the newest build log, not the pool directory mtime", () => {
+    const buildBase = join(tempCheckout("warm"), "clients", "apple", ".build");
+    const at = (path: string, seconds: number) => utimesSync(path, seconds, seconds);
+    const warm = (slot: number, logSeconds: number | undefined, dirSeconds: number) => {
+      const root = join(buildBase, `pool-${slot}`);
+      mkdirSync(join(root, "Build", "Intermediates.noindex", "Oppi.build"), { recursive: true });
+      if (logSeconds != null) {
+        mkdirSync(join(root, "Logs", "Build"), { recursive: true });
+        const log = join(root, "Logs", "Build", "build.xcactivitylog");
+        writeFileSync(log, "log");
+        at(log, logSeconds);
+      }
+      at(root, dirSeconds);
+    };
+    warm(0, 100, 900); // built long ago, but its directory mtime is the newest
+    warm(1, 500, 100);
+    warm(2, undefined, 100); // products only, no activity log
+    mkdirSync(join(buildBase, "pool-3", "Build", "Intermediates.noindex"), { recursive: true }); // created, never built
+    mkdirSync(join(buildBase, "pool-4", "ModuleCache.noindex"), { recursive: true }); // no build products
+    const recency = warmDerivedDataRecency(buildBase, [0, 1, 2, 3, 4, 5]);
+    expect([...recency.keys()].sort()).toEqual([0, 1, 2]);
+    expect(recency.get(1)!).toBeGreaterThan(recency.get(0)!);
+    expect(recency.get(0)).toBe(100_000);
   });
 
   test("applyRunCheckout fails before xcodebuild when prebuilt frameworks cannot be prepared", () => {

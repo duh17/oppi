@@ -126,23 +126,33 @@ export function shouldSkipPoolSlot(found: {
   return found.match == null && found.mismatches.length > 0;
 }
 
+// Order in which to try slots. A slot whose DerivedData is already built for this
+// checkout (`warm`: slot -> recency in ms) comes first, newest first, because it
+// skips a cold compile; then slots with a matching simulator device; then the
+// rest. Each group keeps the caller's slot order. Only the order changes: the
+// slot lock still decides whether a run may use a slot and its DerivedData.
 export function preferredAcquireSlots(
   slots: number[],
   devices: SimulatorDevice[],
   runtime: string,
   deviceType: string,
+  warm: ReadonlyMap<number, number> = new Map(),
 ): number[] {
+  const warmSlots: number[] = [];
   const preferred: number[] = [];
   const fallback: number[] = [];
   for (const slot of slots) {
-    const found = findMatchingPoolDevice(devices, slot, runtime, deviceType);
-    if (found.match) {
+    if (warm.has(slot)) {
+      warmSlots.push(slot);
+    } else if (findMatchingPoolDevice(devices, slot, runtime, deviceType).match) {
       preferred.push(slot);
     } else {
       fallback.push(slot);
     }
   }
-  return [...preferred, ...fallback];
+  // Array.prototype.sort is stable, so equal recency keeps slot order.
+  warmSlots.sort((a, b) => (warm.get(b) ?? 0) - (warm.get(a) ?? 0));
+  return [...warmSlots, ...preferred, ...fallback];
 }
 
 export function deviceState(devices: SimulatorDevice[], udid: string): string | undefined {
