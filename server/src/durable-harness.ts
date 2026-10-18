@@ -707,6 +707,18 @@ export class SessionHost {
           models: shared.models,
           registry: shared.registry,
           settings: shared.settings,
+          // Without a handler pi-durable drops every failure that does not fail the calling
+          // operation: a throwing hook, extension, or commit listener, a task kept on an old
+          // definition. The storage error that fails the Harness is reported here too, then
+          // `recover` handles it.
+          onReport: (error) => {
+            const cause = error instanceof Error ? error.cause : undefined;
+            log.warn("durable_store.report", {
+              storeId: this.storeId,
+              error: safeErrorMessage(error),
+              ...(cause === undefined ? {} : { cause: safeErrorMessage(cause) }),
+            });
+          },
           env: async ({ conversationId, cwd, read }, context) => {
             const runtime = await read.snapshot(DurableRuntime, conversationId, context);
             if (runtime?.kind !== "sandbox") {
