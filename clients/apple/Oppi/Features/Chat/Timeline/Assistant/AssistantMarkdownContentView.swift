@@ -204,6 +204,10 @@ final class AssistantMarkdownContentView: UIView {
     var imagePreparationContext: TimelineImagePreparationContext? {
         didSet { segmentApplier.imagePreparationContext = imagePreparationContext }
     }
+    /// Width the host will lay this view out at, when it knows before
+    /// layout (a timeline row configured in a new cell). Preferred over
+    /// `bounds`, which is zero in a new cell and stale after a resize.
+    var hostLayoutWidth: CGFloat?
 
     /// Width at which Auto Layout last captured `intrinsicContentSize`.
     /// The intrinsic height is width-dependent (320pt fallback while bounds is
@@ -288,7 +292,9 @@ final class AssistantMarkdownContentView: UIView {
         currentConfig = config
         stackView.spacing = config.readerPreferences?.spacing.markdownStackSpacing ?? 8
 
-        if bounds.width > 0 {
+        if let hostLayoutWidth, hostLayoutWidth.isFinite, hostLayoutWidth > 0 {
+            segmentApplier.preparationWidth = hostLayoutWidth
+        } else if bounds.width > 0 {
             segmentApplier.preparationWidth = bounds.width
         }
         let cycleStart = MarkdownStreamingPerf.timestampNs()

@@ -686,13 +686,14 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func mermaidInlineDiagramRecomputesPresentationWhenWidthChanges() async throws {
-        // About 280pt wide left to right: a 330pt bubble shows it as written,
+    @Test(.timeLimit(.minutes(1))) func mermaidInlineDiagramRecomputesPresentationWhenWidthChanges() async throws {
+        // About 300pt wide left to right: a 330pt bubble shows it as written,
         // and a 210pt bubble lays it out top to bottom (and scales what still
-        // overflows the 240pt minimum layout width).
+        // overflows the 240pt minimum layout width). The last label keeps
+        // this source unique so the process-wide hook reports only this view.
         let mermaidCode = """
         flowchart LR
-            A[Alpha] --> B[Beta] --> C[Gamma]
+            A[Alpha] --> B[Beta] --> C[Gamma resize]
         """
 
         let view = NativeMermaidBlockView()
@@ -717,14 +718,18 @@ struct AssistantTimelineRowContentViewTests {
         let narrowFrame = view.debugDiagramImageFrameForTesting
         let narrowImage = view.debugRenderedImageForTesting
 
+        let installed = AsyncOneShotGate()
+        NativeMermaidBlockView.testHooks = .init(didShowDiagram: { code in
+            if code == mermaidCode { installed.open() }
+        })
+        defer { NativeMermaidBlockView.testHooks = .init() }
+
         container.frame.size.width = 330
         container.setNeedsLayout()
         container.layoutIfNeeded()
 
         // The new width lays the diagram out again; wait for that raster.
-        for _ in 0..<200 where view.debugRenderedImageForTesting === narrowImage {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        await installed.wait()
         container.layoutIfNeeded()
         let wideImage = view.debugRenderedImageForTesting
         #expect(wideImage !== narrowImage, "a wider bubble re-lays out the diagram")
@@ -750,6 +755,60 @@ struct AssistantTimelineRowContentViewTests {
             abs(wideHeight - narrowHeight) > 5,
             "Inline height should follow the width change (narrow=\(narrowHeight), wide=\(wideHeight))"
         )
+    }
+
+    /// A diagram applied before its view has a width (a row built while
+    /// detached) reserves nothing until the view is attached. It then lays
+    /// out once, at the width it is shown at, and the raster keeps that
+    /// height, so the row never jumps after it first appears.
+    @MainActor
+    @Test(.timeLimit(.minutes(1)), arguments: [700, 340] as [CGFloat])
+    func mermaidAppliedWhileDetachedLaysOutOnceAtTheAttachedWidth(width: CGFloat) async throws {
+        let mermaidCode = """
+        flowchart LR
+            A[Receive webhook] --> B[Validate signature] --> C[Enqueue job]
+            C --> D[Worker picks up] --> E[Write row \(Int(width))]
+        """
+        let installed = AsyncOneShotGate()
+        NativeMermaidBlockView.testHooks = .init(didShowDiagram: { code in
+            if code == mermaidCode { installed.open() }
+        })
+        defer { NativeMermaidBlockView.testHooks = .init() }
+
+        let palette = ThemeRuntimeState.currentPalette()
+        let view = NativeMermaidBlockView()
+        view.applyAsDiagram(code: mermaidCode, palette: palette)
+        #expect(!view.debugDiagramHeightConstraintIsActiveForTesting, "no height before a real width")
+        #expect(view.debugRenderCountForTesting == 0)
+
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 900))
+        view.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+        container.layoutIfNeeded()
+
+        let reserved = try #require(view.debugDiagramHeightConstantForTesting)
+        #expect(view.debugDiagramHeightConstraintIsActiveForTesting)
+        let expected = DocumentRenderPipeline.layoutGraphical(
+            parser: MermaidParser(),
+            renderer: MermaidRenderer(),
+            text: mermaidCode,
+            config: NativeMermaidBlockView.configuration(theme: palette.renderTheme, availableWidth: width)
+        )
+        #expect(
+            abs(reserved - MermaidInlinePresentation(naturalSize: expected.size, availableWidth: width).height) <= 0.5,
+            "reserved height must come from the attached width"
+        )
+
+        await installed.wait()
+        container.layoutIfNeeded()
+        #expect(abs((view.debugDiagramHeightConstantForTesting ?? 0) - reserved) <= 0.5)
+        #expect(abs((view.debugRasterWidthForTesting ?? 0) - width) <= 0.5)
+        #expect(view.debugRenderCountForTesting == 1, "one layout at the real width, not a guess and a redo")
     }
 
     @MainActor

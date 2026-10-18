@@ -5879,6 +5879,9 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
     private let themeID: ThemeID
     private var latexZoomContentView: UIView?
     private(set) var mermaidPicker: ZoomableGraphicalView?
+    private var mermaidSource: (text: String, theme: RenderTheme)?
+    /// Width the current diagram layout was built for; 0 before the first.
+    private var mermaidLayoutWidth: CGFloat = 0
     private let reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private let reviewCommentSourceContext: ReviewCommentSourceContext?
 
@@ -5899,20 +5902,11 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
 
         switch content {
         case .mermaid(let text):
-            // ZoomableGraphicalView has its own scroll + zoom — embed directly
-            let layout = DocumentRenderPipeline.layoutGraphical(
-                parser: MermaidParser(), renderer: MermaidRenderer(), text: text,
-                config: DocumentRenderPipeline.mermaidConfiguration(
-                    theme: palette.renderTheme,
-                    availableWidth: Self.mermaidContainerWidth()
-                )
-            )
-            let zoomable = ZoomableGraphicalView(
-                size: layout.size, draw: layout.draw
-            )
-            zoomable.configureSemanticPick(map: layout.semanticMap) { [weak self] target in
-                self?.presentSemanticComment(for: target)
-            }
+            // ZoomableGraphicalView has its own scroll + zoom — embed directly.
+            // The diagram is laid out once this body has a width
+            // (`layoutMermaidForCurrentWidth`).
+            mermaidSource = (text, palette.renderTheme)
+            let zoomable = ZoomableGraphicalView(size: CGSize(width: 1, height: 1), draw: { _, _ in })
             mermaidPicker = zoomable
             zoomable.translatesAutoresizingMaskIntoConstraints = false
             addSubview(zoomable)
@@ -5998,15 +5992,28 @@ final class NativeFullScreenRenderedDocumentBody: UIView, UIScrollViewDelegate {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// Full screen fits the diagram to its own width rather than the bubble's.
-    /// The body is built before it has bounds and fills the presenting window,
-    /// so the key window's width stands in for the container width.
-    private static func mermaidContainerWidth() -> CGFloat {
-        let windows = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-        let window = windows.first(where: \.isKeyWindow) ?? windows.first
-        return window?.bounds.width ?? DocumentRenderPipeline.mermaidFallbackLayoutWidth
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layoutMermaidForCurrentWidth()
+    }
+
+    /// Full screen fits the diagram to this body's own width (a full window,
+    /// a reader column, or a split-view pane) and lays it out again when that
+    /// width changes. No height cap: full screen scrolls and zooms instead.
+    private func layoutMermaidForCurrentWidth() {
+        guard let source = mermaidSource, let zoomable = mermaidPicker,
+              bounds.width > 0, abs(bounds.width - mermaidLayoutWidth) > 0.5 else { return }
+        mermaidLayoutWidth = bounds.width
+        let layout = DocumentRenderPipeline.layoutGraphical(
+            parser: MermaidParser(), renderer: MermaidRenderer(), text: source.text,
+            config: DocumentRenderPipeline.mermaidConfiguration(theme: source.theme, availableWidth: bounds.width)
+        )
+        zoomable.update(size: layout.size, draw: layout.draw)
+        zoomable.configureSemanticPick(map: layout.semanticMap) { [weak self] target in
+            self?.presentSemanticComment(for: target)
+        }
+        // Pick availability is known only now; let the host refresh its controls.
+        zoomable.onPickStateChange?(zoomable.isPickingObjects, zoomable.hasSelectedTarget)
     }
 
     private func presentSemanticComment(for target: SemanticTarget) {

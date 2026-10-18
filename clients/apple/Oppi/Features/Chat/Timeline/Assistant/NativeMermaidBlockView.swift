@@ -12,9 +12,12 @@ import UIKit
 /// export support (image, PDF, source). No inline zoom — keeps the view
 /// simple and avoids UIScrollView gesture conflicts.
 ///
-/// The diagram is laid out for the bubble's width (graph families turn,
-/// tighten, or rewrap to fit it). Whatever still overflows is scaled to fit
-/// the bubble, capped at 400pt tall. Full screen lays out for its own width.
+/// The diagram is laid out for the bubble's width and the 400pt inline
+/// height cap (renderers pick the arrangement that shows largest there).
+/// Whatever still overflows is scaled to fit the bubble, capped at 400pt
+/// tall. Full screen lays out for its own width. No height is reserved
+/// until the view knows a real width, so a row never changes height when
+/// it first settles.
 @MainActor
 final class NativeMermaidBlockView: UIView {
     struct RasterResult: @unchecked Sendable {
@@ -32,10 +35,7 @@ final class NativeMermaidBlockView: UIView {
                     parser: MermaidParser(),
                     renderer: MermaidRenderer(),
                     text: code,
-                    config: DocumentRenderPipeline.mermaidConfiguration(
-                        theme: theme,
-                        availableWidth: availableWidth
-                    )
+                    config: NativeMermaidBlockView.configuration(theme: theme, availableWidth: availableWidth)
                 ).map { RasterResult(image: $0.image, size: $0.size) }
             },
             renderAsync: { code, availableWidth, theme in
@@ -47,13 +47,20 @@ final class NativeMermaidBlockView: UIView {
                         parser: MermaidParser(),
                         renderer: MermaidRenderer(),
                         text: code,
-                        config: DocumentRenderPipeline.mermaidConfiguration(
-                            theme: theme,
-                            availableWidth: availableWidth
-                        )
+                        config: NativeMermaidBlockView.configuration(theme: theme, availableWidth: availableWidth)
                     ).map { RasterResult(image: $0.image, size: $0.size) }
                 }.value
             }
+        )
+    }
+
+    /// Inline layout: the bubble width and the inline height cap, so the
+    /// renderer picks the arrangement that shows largest in the bubble.
+    nonisolated static func configuration(theme: RenderTheme, availableWidth: CGFloat) -> RenderConfiguration {
+        DocumentRenderPipeline.mermaidConfiguration(
+            theme: theme,
+            availableWidth: availableWidth,
+            maxDisplayHeight: MermaidInlinePresentation.maxHeight
         )
     }
 
@@ -110,6 +117,9 @@ final class NativeMermaidBlockView: UIView {
     /// Exact in-flight request so layout cannot start a duplicate render.
     private var inFlightRasterRequest: RasterRequest?
     private var rasterRequestGeneration: UInt = 0
+    /// A diagram applied before the view had a real width. It is laid out
+    /// on the first layout pass that has one, never at a guessed width.
+    private var pendingDiagram: (palette: ThemePalette, isSync: Bool)?
     private var requiresExactRasterWidth = false
     private var renderTask: Task<Void, Never>?
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
@@ -206,6 +216,16 @@ final class NativeMermaidBlockView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
 
+        if let pending = pendingDiagram, bounds.width > 0, let code = currentCode {
+            pendingDiagram = nil
+            if pending.isSync {
+                renderDiagramSync(code: code, palette: pending.palette, explicitWidth: nil)
+            } else {
+                renderDiagram(code: code, palette: pending.palette, explicitWidth: nil)
+            }
+            return
+        }
+
         // Async renders can complete before Auto Layout settles the final
         // message-bubble width. Keep the current bitmap's height in sync
         // immediately, then redraw if this width is not what we rastered.
@@ -237,6 +257,7 @@ final class NativeMermaidBlockView: UIView {
         let wasShowingDiagram = isShowingDiagram
 
         invalidateRasterRequest()
+        pendingDiagram = nil
 
         codeBlockView.isHidden = false
         diagramClipView.isHidden = true
@@ -266,8 +287,21 @@ final class NativeMermaidBlockView: UIView {
         palette: ThemePalette,
         availableWidth explicitWidth: CGFloat? = nil
     ) {
+        #if DEBUG
+        debugApplyAsDiagramCallCount += 1
+        #endif
+        renderDiagramSync(code: code, palette: palette, explicitWidth: explicitWidth)
+    }
+
+    private func renderDiagramSync(code: String, palette: ThemePalette, explicitWidth: CGFloat?) {
         let usesExactWidth = explicitWidth != nil
-        let availableWidth = resolvedAvailableWidth(explicitWidth)
+        currentCode = code
+        currentPalette = palette
+        guard let availableWidth = resolvedAvailableWidth(explicitWidth) else {
+            deferUntilWidth(palette: palette, isSync: true)
+            return
+        }
+        pendingDiagram = nil
         let theme = palette.renderTheme
         let request = RasterRequest(
             code: code,
@@ -276,12 +310,7 @@ final class NativeMermaidBlockView: UIView {
             usesExactWidth: usesExactWidth
         )
         applyDiagramChrome(palette)
-        currentCode = code
-        currentPalette = palette
         requiresExactRasterWidth = usesExactWidth
-        #if DEBUG
-        debugApplyAsDiagramCallCount += 1
-        #endif
         guard let generation = beginRasterRequest(request, replacesInFlight: true) else { return }
         #if DEBUG
         debugRenderCount += 1
@@ -308,9 +337,21 @@ final class NativeMermaidBlockView: UIView {
         palette: ThemePalette,
         availableWidth explicitWidth: CGFloat? = nil
     ) {
+        #if DEBUG
+        debugApplyAsDiagramCallCount += 1
+        #endif
+        renderDiagram(code: code, palette: palette, explicitWidth: explicitWidth)
+    }
+
+    private func renderDiagram(code: String, palette: ThemePalette, explicitWidth: CGFloat?) {
         currentPalette = palette
+        currentCode = code
         let usesExactWidth = explicitWidth != nil
-        let availableWidth = resolvedAvailableWidth(explicitWidth)
+        guard let availableWidth = resolvedAvailableWidth(explicitWidth) else {
+            deferUntilWidth(palette: palette, isSync: false)
+            return
+        }
+        pendingDiagram = nil
         let theme = palette.renderTheme
         let request = RasterRequest(
             code: code,
@@ -319,11 +360,7 @@ final class NativeMermaidBlockView: UIView {
             usesExactWidth: usesExactWidth
         )
         applyDiagramChrome(palette)
-        currentCode = code
         requiresExactRasterWidth = usesExactWidth
-        #if DEBUG
-        debugApplyAsDiagramCallCount += 1
-        #endif
         guard let generation = beginRasterRequest(request) else { return }
         #if DEBUG
         debugRenderCount += 1
@@ -373,14 +410,30 @@ final class NativeMermaidBlockView: UIView {
 
     // MARK: - Private
 
-    private func resolvedAvailableWidth(_ explicitWidth: CGFloat? = nil) -> CGFloat {
+    /// The width this view will be shown at: the caller's, else its own or
+    /// its container's bounds. Nil while detached and unsized; the layout
+    /// depends on width, so there is nothing safe to guess.
+    private func resolvedAvailableWidth(_ explicitWidth: CGFloat? = nil) -> CGFloat? {
         if let explicitWidth, explicitWidth.isFinite, explicitWidth > 0 {
             return explicitWidth
         }
-        return bounds.width > 0
-            ? bounds.width
-            : ((superview?.bounds.width).flatMap { $0 > 0 ? $0 : nil }
-                ?? DocumentRenderPipeline.mermaidFallbackLayoutWidth)
+        if bounds.width > 0 { return bounds.width }
+        if let width = superview?.bounds.width, width > 0 { return width }
+        return nil
+    }
+
+    /// Drops any older request and waits for `layoutSubviews` to supply a
+    /// real width. The view keeps showing what it showed before.
+    private func deferUntilWidth(palette: ThemePalette, isSync: Bool) {
+        if desiredRasterRequest != nil || inFlightRasterRequest != nil {
+            rasterRequestGeneration &+= 1
+            renderTask?.cancel()
+            renderTask = nil
+            desiredRasterRequest = nil
+            inFlightRasterRequest = nil
+        }
+        pendingDiagram = (palette, isSync)
+        setNeedsLayout()
     }
 
     private func rasterWidthMismatch(
@@ -456,10 +509,7 @@ final class NativeMermaidBlockView: UIView {
             parser: MermaidParser(),
             renderer: MermaidRenderer(),
             text: code,
-            config: DocumentRenderPipeline.mermaidConfiguration(
-                theme: theme,
-                availableWidth: availableWidth
-            )
+            config: Self.configuration(theme: theme, availableWidth: availableWidth)
         )
         guard layout.size.width > 0, layout.size.height > 0,
               DocumentRenderPipeline.naturalRasterBudget.permits(

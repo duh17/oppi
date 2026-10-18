@@ -36,6 +36,11 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     var chromeStyle: ChatTimelineChromeStyle
     /// Read-aloud control state; nil hides the speaker (no server TTS or still streaming).
     var speech: AssistantMessageSpeech?
+    /// Width the row's markdown will be laid out at, from the timeline's
+    /// column. A new cell has no bounds when it is configured, and blocks
+    /// whose height depends on width (diagrams) need the real one up front.
+    /// Nil when the timeline has no width yet.
+    var markdownWidth: CGFloat?
 
     var renderedMarkdownSource: String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -305,6 +310,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         // The segment applier settles only the newly appended TextKit range.
         markdownView.preparedBlocks = configuration.preparedBlocks
         markdownView.imagePreparationContext = configuration.imagePreparationContext
+        markdownView.hostLayoutWidth = configuration.markdownWidth
         let reviewCommentSourceContext = configuration.interactionContext?.sourceContext(
             surface: .assistantProse,
             timelineItemId: configuration.itemID

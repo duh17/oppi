@@ -40,6 +40,7 @@ extension ChatTimelineCollectionHost.Controller {
         if !rowConfiguration.isStreaming {
             rowConfiguration.speech = assistantSpeech(itemID: itemID, text: rowConfiguration.text)
         }
+        rowConfiguration.markdownWidth = assistantMarkdownWidth()
         return rowConfiguration
     }
 
@@ -60,6 +61,22 @@ extension ChatTimelineCollectionHost.Controller {
         return AssistantMessageSpeech(state: state, failure: failure) { [weak audioPlayer] in
             audioPlayer?.toggleSpeech(messageID: itemID) { try await read(text) }
         }
+    }
+
+    /// Width an assistant row lays its markdown out at: the layout's row
+    /// column inside the bubble's margins and padding. Nil before the
+    /// timeline has a width.
+    func assistantMarkdownWidth() -> CGFloat? {
+        guard let collectionView, collectionView.bounds.width > 1 else { return nil }
+        let column = ChatTimelineCachedHeightLayout.rowColumn(
+            boundsWidth: collectionView.bounds.width,
+            safeAreaInsets: collectionView.safeAreaInsets
+        )
+        let card = chromeStyle.assistantBubble
+        let width = column.width
+            - card.margins.leading - card.margins.trailing
+            - card.padding.leading - card.padding.trailing
+        return width > 0 ? width : nil
     }
 
     func assistantBaseRowConfiguration(itemID: String, item: ChatItem) -> AssistantTimelineRowConfiguration? {

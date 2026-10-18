@@ -500,6 +500,67 @@ struct AssistantMarkdownLayoutTests {
         )
     }
 
+    /// A new timeline cell is configured before it has bounds. The timeline
+    /// hands the row its markdown width up front, so a diagram whose layout
+    /// depends on width (this one runs left to right at tablet width and
+    /// would turn top to bottom at phone width) reserves its height once, at
+    /// the width it is shown at, and keeps it when the raster lands.
+    @Test(.timeLimit(.minutes(1)), arguments: [820, 375] as [CGFloat])
+    func newMermaidRowReservesItsHeightOnceAtTheTimelineWidth(windowWidth: CGFloat) async throws {
+        let isFixture: @Sendable (String) -> Bool = { $0.contains("E[Timeline width \(Int(windowWidth))]") }
+        let rasterGate = AsyncOneShotGate()
+        let installed = AsyncOneShotGate()
+        NativeMermaidBlockView.testHooks = .init(
+            beforeAsyncRaster: { code in
+                if isFixture(code) { await rasterGate.wait() }
+            },
+            didShowDiagram: { code in
+                if isFixture(code) { installed.open() }
+            }
+        )
+        defer {
+            NativeMermaidBlockView.testHooks = .init()
+            rasterGate.open()
+        }
+
+        let wh = makeWindowedTimelineHarness(
+            sessionId: "assistant-mermaid-timeline-width-\(Int(windowWidth))",
+            frame: CGRect(x: 0, y: 0, width: windowWidth, height: 1_000)
+        )
+        let message = """
+        Diagram:
+
+        ```mermaid
+        flowchart LR
+            A[Receive webhook] --> B[Validate signature] --> C[Enqueue job]
+            C --> D[Worker picks up] --> E[Timeline width \(Int(windowWidth))]
+        ```
+        """
+        wh.applyItems(
+            [.assistantMessage(id: "msg-width", text: message, timestamp: Date(timeIntervalSince1970: 0))],
+            isBusy: false
+        )
+        wh.window.layoutIfNeeded()
+        wh.collectionView.layoutIfNeeded()
+
+        let cell = try #require(wh.collectionView.cellForItem(at: IndexPath(item: 0, section: 0)))
+        let mermaidView = try #require(timelineFirstView(ofType: NativeMermaidBlockView.self, in: cell.contentView))
+        let reserved = try #require(mermaidView.debugDiagramHeightConstantForTesting)
+        let rowHeight = cell.frame.height
+        #expect(mermaidView.debugDiagramHeightConstraintIsActiveForTesting)
+        #expect(mermaidView.debugRenderCountForTesting == 1)
+
+        rasterGate.open()
+        await installed.wait()
+        wh.window.layoutIfNeeded()
+        wh.collectionView.layoutIfNeeded()
+
+        #expect(abs((mermaidView.debugRasterWidthForTesting ?? 0) - mermaidView.bounds.width) <= 0.5)
+        #expect(abs((mermaidView.debugDiagramHeightConstantForTesting ?? 0) - reserved) <= 0.5)
+        #expect(abs(cell.frame.height - rowHeight) <= 0.5, "row height changed after first display")
+        #expect(mermaidView.debugRenderCountForTesting == 1, "one layout at the timeline width")
+    }
+
     /// A closed fence during a busy turn still reserves graphical height. Open
     /// fences stay code; `isBusy` must not keep a completed fence on the
     /// placeholder path.

@@ -65,34 +65,41 @@ enum DocumentRenderPipeline {
         maxBytes: 64 * 1_024 * 1_024
     )
 
-    /// Mermaid lays out for the width it will be shown at. Renderers that can
-    /// adapt (graph families) lay out naturally first and only turn, tighten,
-    /// or rewrap when that does not fit `maxWidth`; whatever still overflows
-    /// scales to fit inline. Text stays at `fontSize` either way.
+    /// Mermaid lays out for the width it will be shown at. Renderers lay out
+    /// naturally first; families with alternatives (tighter spacing, narrower
+    /// wrapping, a turned direction, an outline or top-down arrangement)
+    /// try them only when that does not fit `maxWidth`, and keep whichever
+    /// shows largest on screen. Whatever still overflows scales to fit.
+    /// Text stays at `fontSize` either way.
     ///
     /// `availableWidth` is the surface's content width (bubble, reader column,
     /// full-screen container). It is clamped to `mermaidLayoutWidthRange` so a
-    /// transient tiny or huge width cannot produce a degenerate layout. The
-    /// layout cache and raster cache key on the clamped width, so callers that
-    /// pass the same available width (fence-close height reservation and the
-    /// raster it reserves for) get the same geometry.
-    static func mermaidConfiguration(theme: RenderTheme, availableWidth: CGFloat) -> RenderConfiguration {
+    /// transient tiny or huge width cannot produce a degenerate layout.
+    /// `maxDisplayHeight` is the surface's height cap (inline diagrams);
+    /// full screen and export pass nil because they scroll or zoom. The
+    /// layout and raster caches key on both, so callers that pass the same
+    /// values (fence-close height reservation and the raster it reserves
+    /// for) get the same geometry.
+    static func mermaidConfiguration(
+        theme: RenderTheme,
+        availableWidth: CGFloat,
+        maxDisplayHeight: CGFloat? = nil
+    ) -> RenderConfiguration {
         RenderConfiguration(
             fontSize: 14,
             maxWidth: mermaidLayoutWidth(forAvailableWidth: availableWidth),
             theme: theme,
-            displayMode: .document
+            displayMode: .document,
+            maxDisplayHeight: maxDisplayHeight
         )
     }
 
     private static func mermaidLayoutWidth(forAvailableWidth width: CGFloat) -> CGFloat {
-        guard width.isFinite, width > 0 else { return mermaidFallbackLayoutWidth }
-        return min(max(width.rounded(), mermaidLayoutWidthRange.lowerBound), mermaidLayoutWidthRange.upperBound)
+        let width = width.isFinite ? width.rounded() : mermaidLayoutWidthRange.lowerBound
+        return min(max(width, mermaidLayoutWidthRange.lowerBound), mermaidLayoutWidthRange.upperBound)
     }
 
     private static let mermaidLayoutWidthRange: ClosedRange<CGFloat> = 240...900
-    /// Phone bubble width, for a surface that has no width yet.
-    static let mermaidFallbackLayoutWidth: CGFloat = 360
 
     // MARK: - Render Cache
 
@@ -243,7 +250,12 @@ enum DocumentRenderPipeline {
         config: RenderConfiguration,
         scale: CGFloat
     ) -> NSString {
-        "\(kind)|\(config.fontSize)|\(Int(config.maxWidth.rounded()))|\(config.displayMode)|\(scale)|\(renderThemeSignature(config.theme))|\(text)" as NSString
+        "\(kind)|\(config.fontSize)|\(Int(config.maxWidth.rounded()))|\(heightCapKey(config))|\(config.displayMode)|\(scale)|\(renderThemeSignature(config.theme))|\(text)" as NSString
+    }
+
+    /// The height cap picks among layouts, so it is part of the geometry key.
+    private static func heightCapKey(_ config: RenderConfiguration) -> String {
+        config.maxDisplayHeight.map { "h\(Int($0.rounded()))" } ?? "-"
     }
 
     private static func parseCacheKey(kind: String, text: String) -> NSString {
@@ -255,7 +267,7 @@ enum DocumentRenderPipeline {
         text: String,
         config: RenderConfiguration
     ) -> NSString {
-        "\(kind)|\(config.fontSize)|\(Int(config.maxWidth.rounded()))|\(config.displayMode)|\(renderThemeSignature(config.theme))|\(text)" as NSString
+        "\(kind)|\(config.fontSize)|\(Int(config.maxWidth.rounded()))|\(heightCapKey(config))|\(config.displayMode)|\(renderThemeSignature(config.theme))|\(text)" as NSString
     }
 
     private static func renderThemeSignature(_ theme: RenderTheme) -> String {
