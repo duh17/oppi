@@ -90,6 +90,63 @@ struct LiveVoiceCallControllerTests {
         #expect(memory.sessionId(forServer: "server-1") == "voice-created")
     }
 
+    @Test("A call remembered from a voice session that no longer resumes starts fresh")
+    func staleSessionCallStartsFresh() async throws {
+        let sessions = FakeLiveVoiceSessionGateway()
+        sessions.resumeError = LiveVoiceTestError.missing
+        let channel = FakeLiveVoiceCallChannel()
+        let memory = FakeLiveVoiceSessionMemory()
+        memory.store(sessionId: "stale-voice", forServer: "server-1")
+        memory.store(
+            callIdentity: LiveVoiceCallIdentity(callId: "old-call", clientCallId: "old-client", eventSeq: 9),
+            forServer: "server-1"
+        )
+        let controller = LiveVoiceCallController(
+            sessions: sessions,
+            channel: channel,
+            memory: memory,
+            serverKey: "server-1"
+        )
+
+        let startTask = Task { await controller.start() }
+        await waitUntil { !channel.openedSessionIds.isEmpty }
+        channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
+        await waitUntil { !channel.sent.isEmpty }
+        // Attaching "old-call" here is what failed with "Voice call belongs to a different control session".
+        #expect(sentTypes(channel.sent) == ["voice_call_start"])
+        #expect(startPayload(channel.sent.first) != "old-client")
+        channel.emit(.voiceCallState(Self.snapshot(callId: "call-1", eventSeq: 1, leaseEpoch: 1)))
+        await startTask.value
+        #expect(controller.isLive)
+        #expect(controller.lastError == nil)
+    }
+
+    @Test("A remembered call the server rejects is replaced by a new call, not an error")
+    func rejectedStoredCallStartsFresh() async throws {
+        let harness = try await startedHarness()
+        await harness.controller.leave()
+
+        let restart = Task { await harness.controller.start() }
+        await waitUntil { harness.channel.openedSessionIds.count == 2 }
+        harness.channel.emit(.streamConnected(userName: "owner", serverDictationAvailable: false))
+        await waitUntil { sentTypes(harness.channel.sent).contains("voice_call_attach") }
+        let attach = harness.channel.sent.last { $0.typeLabel == "voice_call_attach" }
+        harness.channel.emit(.commandResult(
+            command: "voice_call_attach",
+            requestId: requestId(of: attach),
+            success: false,
+            data: nil,
+            error: "Voice call has ended"
+        ))
+        await waitUntil { sentTypes(harness.channel.sent).last == "voice_call_start" }
+        harness.channel.emit(.voiceCallState(Self.snapshot(callId: "call-2", eventSeq: 1, leaseEpoch: 1)))
+        await restart.value
+
+        #expect(harness.controller.isLive)
+        #expect(harness.controller.callState?.callId == "call-2")
+        #expect(harness.controller.lastError == nil)
+    }
+
     @Test("Reconnect attaches the existing call instead of starting another")
     func reconnectAttachesExistingCall() async throws {
         let harness = try await startedHarness()

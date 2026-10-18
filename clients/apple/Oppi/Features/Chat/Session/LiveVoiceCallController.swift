@@ -57,6 +57,8 @@ final class LiveVoiceCallController {
     @ObservationIgnored private var didConfirmCall = false
     @ObservationIgnored private var startSent = false
     @ObservationIgnored private var pendingRequestId: String?
+    /// Request id of an attach to a call remembered from an earlier start.
+    @ObservationIgnored private var storedAttachRequestId: String?
     @ObservationIgnored private var orphanFinishAction: FinishAction?
     @ObservationIgnored private var startGeneration: UInt64 = 0
     @ObservationIgnored private var startWaiter: StartWaiter?
@@ -110,6 +112,7 @@ final class LiveVoiceCallController {
         orphanFinishAction = nil
         pendingRequestId = nil
         didConfirmCall = false
+        storedAttachRequestId = nil
         startSent = false
         callState = nil
         approvalSummary = nil
@@ -119,8 +122,14 @@ final class LiveVoiceCallController {
         prepareIdentityForNewStart()
 
         do {
+            let previousSessionId = memory.sessionId(forServer: serverKey)
             let session = try await resolveSession(using: sessions)
             guard generation == startGeneration else { return }
+            // A remembered call belongs to the voice session it started on. A new session
+            // (the old one could not resume) cannot attach to it.
+            if session.id != previousSessionId, memory.callIdentity(forServer: serverKey) != nil {
+                forgetStoredCall()
+            }
             memory.store(sessionId: session.id, forServer: serverKey)
             let stream = channel.open(sessionId: session.id)
             await withCheckedContinuation { continuation in
@@ -228,6 +237,14 @@ final class LiveVoiceCallController {
                 failClosed("Live Voice ended.", closeChannel: true)
             }
         case .commandResult(_, let requestId, let success, _, let error):
+            if !success, requestId != nil, requestId == storedAttachRequestId {
+                // The remembered call is gone (ended, or the server no longer has it):
+                // start a new one instead of failing the call the user just asked for.
+                storedAttachRequestId = nil
+                forgetStoredCall()
+                await sendStart()
+                return
+            }
             if !success {
                 failClosed(error ?? "Live Voice failed.", closeChannel: true)
                 return
@@ -356,11 +373,17 @@ final class LiveVoiceCallController {
         if let identity = memory.callIdentity(forServer: serverKey) {
             clientCallId = identity.clientCallId
             await sendAttach(callId: identity.callId, lastEventSeq: identity.eventSeq)
+            storedAttachRequestId = pendingRequestId
             return
         }
         if !startSent {
             await sendStart()
         }
+    }
+
+    private func forgetStoredCall() {
+        memory.clearCallIdentity(forServer: serverKey)
+        clientCallId = UUID().uuidString
     }
 
     private func sendStart() async {
@@ -481,6 +504,7 @@ final class LiveVoiceCallController {
         startSent = false
         pendingRequestId = nil
         orphanFinishAction = nil
+        storedAttachRequestId = nil
         callState = nil
         approvalSummary = nil
         if closeChannel {
@@ -499,6 +523,7 @@ final class LiveVoiceCallController {
         startSent = false
         pendingRequestId = nil
         orphanFinishAction = nil
+        storedAttachRequestId = nil
         callState = nil
         approvalSummary = nil
         lastError = nil
