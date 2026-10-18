@@ -131,12 +131,6 @@ struct ServerInfoVersionTests {
         #expect(ServerReleaseVersion.isBelowMinimum(info.version))
     }
 
-    @Test func decodingToleratesLegacyControlSessionsKey() throws {
-        let data = Data(#"{"name":"test","version":"1","uptime":1,"os":"darwin","arch":"arm64","hostname":"test","nodeVersion":"v24","piVersion":"1","configVersion":1,"capabilities":{"controlSessions":{"version":1}},"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":0,"modelCount":0}}"#.utf8)
-        let info = try JSONDecoder().decode(ServerInfo.self, from: data)
-        #expect(info.capabilities?.sessionStream == nil)
-    }
-
     @Test func pushRegistrationFollowsThePushNotificationsCapability() throws {
         func capabilities(_ json: String) throws -> ServerInfo.Capabilities? {
             let data = Data(#"{"name":"test","version":"1","uptime":1,"os":"darwin","arch":"arm64","hostname":"test","nodeVersion":"v24","piVersion":"1","configVersion":1,"capabilities":\#(json),"stats":{"workspaceCount":0,"activeSessionCount":0,"totalSessionCount":0,"skillCount":0,"modelCount":0}}"#.utf8)

@@ -5,15 +5,7 @@ import Testing
 
 @Suite("Session inbox compose chrome")
 struct SessionInboxComposeChromeTests {
-    @Test func allSessionsShowsDictationWhenIdle() {
-        #expect(
-            SessionInboxComposeChrome.showsDictationShortcut(
-                hasActivePlayback: false
-            )
-        )
-    }
-
-    @Test func workspaceListShowsDictationWhenIdle() {
+    @Test func showsDictationWhenIdle() {
         #expect(
             SessionInboxComposeChrome.showsDictationShortcut(
                 hasActivePlayback: false
