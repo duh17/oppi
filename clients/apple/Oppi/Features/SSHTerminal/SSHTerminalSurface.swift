@@ -80,6 +80,10 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private var sceneActive = true
     private var appliedTheme: ThemeID?
     private var lastGeometry: SSHTerminalGeometry?
+    /// A keyboard transition or leaving the screen: layout inside that motion
+    /// does not resize the terminal. The screen sends the settled size itself.
+    private var resizeHeld = false
+    private var reportGeometryOnLayout = false
     private var keyStrip: SSHTerminalKeyStripView?
     /// A hardware key is sent from pressesBegan only. While one is down,
     /// insertText/deleteBackward and the edit-menu paste are echoes of the
@@ -293,17 +297,38 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             }
         }
         renderer?.setMetrics(metrics, scale: scale)
-        let geometry = SSHTerminalGeometry(
-            columns: min(500, max(1, Int(bounds.width / cellSize.width))),
-            rows: min(300, max(1, Int(bounds.height / cellSize.height))),
-            cellWidth: Int(cellSize.width * scale), cellHeight: Int(cellSize.height * scale))
-        if geometry != lastGeometry {
+        if !resizeHeld, let geometry = geometry(for: bounds.size),
+           geometry != lastGeometry || reportGeometryOnLayout {
             lastGeometry = geometry
+            reportGeometryOnLayout = false
             channel.resize(geometry)
             needsPaint = true
         }
         syncHistoryScrollFromEngine()
         updateTouchMode()
+    }
+
+    /// The terminal grid that fits `size` with the current cell metrics.
+    func geometry(for size: CGSize) -> SSHTerminalGeometry? {
+        let scale = traitCollection.displayScale
+        guard size.width > 0, size.height > 0, scale > 0 else { return nil }
+        return SSHTerminalGeometry(
+            columns: min(500, max(1, Int(size.width / cellSize.width))),
+            rows: min(300, max(1, Int(size.height / cellSize.height))),
+            cellWidth: Int(cellSize.width * scale), cellHeight: Int(cellSize.height * scale))
+    }
+
+    func holdResize() {
+        resizeHeld = true
+    }
+
+    /// The next layout reports the current size even if it matches the last
+    /// one; the channel drops a same-size repeat.
+    func releaseResize() {
+        guard resizeHeld else { return }
+        resizeHeld = false
+        reportGeometryOnLayout = true
+        setNeedsLayout()
     }
 
     /// Only a different theme changes colors.

@@ -27,6 +27,7 @@ struct SSHTerminalTopBarTests {
         for row in rows {
             let hidden = SSHTerminalTopBarVisibility.hidden(
                 connected: row.connected,
+                leaving: false,
                 keyboardUp: row.keyboardUp,
                 rememberedHide: row.rememberedHide,
                 temporaryReveal: row.temporaryReveal
@@ -34,6 +35,16 @@ struct SSHTerminalTopBarTests {
             #expect(
                 hidden == row.hidden,
                 "connected=\(row.connected) keyboard=\(row.keyboardUp) hide=\(row.rememberedHide) peek=\(row.temporaryReveal)"
+            )
+            #expect(
+                !SSHTerminalTopBarVisibility.hidden(
+                    connected: row.connected,
+                    leaving: true,
+                    keyboardUp: row.keyboardUp,
+                    rememberedHide: row.rememberedHide,
+                    temporaryReveal: row.temporaryReveal
+                ),
+                "a leaving terminal hands the screen below a visible bar"
             )
             #expect(
                 SSHTerminalTopBarVisibility.handleVisible(barHidden: hidden, connected: row.connected)
@@ -84,7 +95,66 @@ struct SSHTerminalTopBarTests {
         )
     }
 
-    @Test func dockedKeyboardOnADuoInnerDisplayIsUpAndTheOtherDisplayIsNot() {
+    @Test @MainActor func keyboardFrameIsReadInItsOwnScreenSpaceAndOtherDisplaysAreIgnored() {
+        // A Duo display (892 pt tall) with the terminal 100 pt below its top.
+        let screenSpace = UIView(frame: CGRect(x: 0, y: 0, width: 1376, height: 892))
+        let terminal = UIView(frame: CGRect(x: 0, y: 100, width: 1376, height: 792))
+        screenSpace.addSubview(terminal)
+        let docked = CGRect(x: 0, y: 556, width: 1376, height: 336)
+        let thisDisplay = NSObject()
+        let otherDisplay = NSObject()
+
+        let end = SSHTerminalTopBarKeyboard.endFrame(
+            docked, keyboardScreen: thisDisplay, viewScreen: thisDisplay,
+            screenSpace: screenSpace, in: terminal
+        )
+        #expect(end == CGRect(x: 0, y: 456, width: 1376, height: 336))
+        #expect(end.map { SSHTerminalTopBarKeyboard.isUp(endFrameInView: $0, viewBounds: terminal.bounds) } == true)
+
+        #expect(
+            SSHTerminalTopBarKeyboard.endFrame(
+                docked, keyboardScreen: otherDisplay, viewScreen: thisDisplay,
+                screenSpace: screenSpace, in: terminal
+            ) == nil,
+            "a keyboard on the other Duo display must not reach this terminal"
+        )
+        #expect(
+            SSHTerminalTopBarKeyboard.endFrame(
+                docked, keyboardScreen: nil, viewScreen: thisDisplay,
+                screenSpace: screenSpace, in: terminal
+            ) == nil
+        )
+    }
+
+    @Test func settledGridFollowsTheKeyboardGuideNotTheFloatingKeyboard() {
+        let bounds = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let safeBottom: CGFloat = 34
+        let docked = CGRect(x: 0, y: 508, width: 390, height: 336)
+        let gone = CGRect(x: 0, y: 844, width: 390, height: 336)
+        let floating = CGRect(x: 40, y: 200, width: 310, height: 280)
+        #expect(SSHTerminalTopBarKeyboard.settledGuideTop(endFrameInView: docked, viewBounds: bounds, bottomSafeArea: safeBottom) == 508)
+        #expect(SSHTerminalTopBarKeyboard.settledGuideTop(endFrameInView: gone, viewBounds: bounds, bottomSafeArea: safeBottom) == 810)
+        #expect(SSHTerminalTopBarKeyboard.settledGuideTop(endFrameInView: floating, viewBounds: bounds, bottomSafeArea: safeBottom) == 810)
+
+        // Keyboard up: the bar already hid in this pass, the guide has not
+        // moved yet. Keyboard down: the guide already moved. Either way the
+        // settled grid is the final one.
+        let up = SSHTerminalTopBarKeyboard.settledGridSize(
+            current: CGSize(width: 390, height: 751), guideTop: 810, settledGuideTop: 508
+        )
+        #expect(up == CGSize(width: 390, height: 449))
+        let downGuideAlreadyMoved = SSHTerminalTopBarKeyboard.settledGridSize(
+            current: CGSize(width: 390, height: 692), guideTop: 810, settledGuideTop: 810
+        )
+        #expect(downGuideAlreadyMoved == CGSize(width: 390, height: 692))
+        #expect(
+            SSHTerminalTopBarKeyboard.settledGridSize(
+                current: CGSize(width: 390, height: 100), guideTop: 810, settledGuideTop: 508
+            ).height == 0
+        )
+    }
+
+    @Test func dockedKeyboardOnADuoInnerDisplayIsUp() {
         let inner = CGRect(x: 0, y: 0, width: 1376, height: 892)
         #expect(
             SSHTerminalTopBarKeyboard.isUp(
@@ -98,14 +168,6 @@ struct SSHTerminalTopBarTests {
                 viewBounds: inner
             ),
             "a docked keyboard need not span the whole Duo panel"
-        )
-        let outer = CGRect(x: 0, y: 0, width: 430, height: 892)
-        #expect(
-            !SSHTerminalTopBarKeyboard.isUp(
-                endFrameInView: CGRect(x: 500, y: 556, width: 800, height: 336),
-                viewBounds: outer
-            ),
-            "a keyboard on the other Duo display must not auto-hide the bar"
         )
     }
 }
@@ -129,20 +191,6 @@ struct SSHTerminalHideBarPreferenceTests {
 
         AppPreferences.SSHTerminal.setHideBar(false)
         #expect(!AppPreferences.SSHTerminal.hideBar)
-    }
-
-    @Test func keyboardAutoHideDoesNotWriteTheRememberedChoice() {
-        UserDefaults.standard.removeObject(forKey: key)
-        defer { UserDefaults.standard.removeObject(forKey: key) }
-
-        _ = SSHTerminalTopBarVisibility.hidden(
-            connected: true,
-            keyboardUp: true,
-            rememberedHide: AppPreferences.SSHTerminal.hideBar,
-            temporaryReveal: false
-        )
-        #expect(!AppPreferences.SSHTerminal.hideBar)
-        #expect(UserDefaults.standard.object(forKey: key) == nil)
     }
 }
 

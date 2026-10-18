@@ -242,6 +242,11 @@ final class SSHTerminalChannel {
     private var queuedBytes = 0
     private var pump: Task<Void, Never>?
     private var resizeTask: Task<Void, Never>?
+    /// Last size sent on this connection.
+    private var remoteGeometry: SSHTerminalGeometry?
+    /// Latest size a terminal screen laid out. Nil until one has: the PTY
+    /// opened at its own default, and the screen's first layout sends the size.
+    private var requestedGeometry: SSHTerminalGeometry?
     static let maximumQueuedBytes = 128 * 1024
 
     init() throws {
@@ -257,7 +262,8 @@ final class SSHTerminalChannel {
         connected = true
         connecting = false
         reason = "Connected"
-        resize(engine.geometry)
+        remoteGeometry = nil
+        if let requestedGeometry { resize(requestedGeometry) }
     }
 
     /// A remote copy (Herdr's copy-on-select, tmux, an agent's /copy) lands on
@@ -432,15 +438,17 @@ final class SSHTerminalChannel {
     }
 
     func resize(_ geometry: SSHTerminalGeometry) {
+        requestedGeometry = geometry
         // Both local and remote grid changes share the same coalesced geometry.
         resizeTask?.cancel()
         resizeTask = Task { [weak self] in
-            // Keyboard + nav bar share one ~250 ms animation, sometimes in two
-            // frame callbacks. Coalesce so the remote PTY gets one SIGWINCH.
-            do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+            do { try await Task.sleep(for: .milliseconds(80)) } catch { return }
             guard let self else { return }
             self.engine.resize(geometry)
-            guard self.connected, let connection = self.connection else { return }
+            // The remote shell already has this size: a repeat would only
+            // send another window-change request.
+            guard self.connected, let connection = self.connection, geometry != self.remoteGeometry else { return }
+            self.remoteGeometry = geometry
             do {
                 try await connection.resize(columns: geometry.columns, rows: geometry.rows,
                                             pixelWidth: geometry.pixelWidth, pixelHeight: geometry.pixelHeight)
@@ -448,6 +456,12 @@ final class SSHTerminalChannel {
                 if !Task.isCancelled { self.close(reason: "Terminal resize failed: \(Self.message(error))") }
             }
         }
+    }
+
+    /// Drops a size not yet applied: it belonged to a screen that is leaving.
+    func cancelPendingResize() {
+        resizeTask?.cancel()
+        resizeTask = nil
     }
 
     /// Close rather than silently losing bytes while the process is suspended.

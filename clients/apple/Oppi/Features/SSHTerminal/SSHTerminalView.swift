@@ -30,14 +30,19 @@ enum SSHTerminalTopBarGesture {
 /// Temporary reveal stays until the keyboard goes down. It does not re-hide on
 /// a keystroke (that would resize the remote PTY again) and does not write the
 /// remembered Hide Bar choice.
+///
+/// A terminal that is leaving (popped, swiped back, or covered by a push)
+/// shows the shared bar: the incoming screen needs its Back and title, and
+/// the keyboard going down on the way out must not hide it again.
 enum SSHTerminalTopBarVisibility {
     static func hidden(
         connected: Bool,
+        leaving: Bool,
         keyboardUp: Bool,
         rememberedHide: Bool,
         temporaryReveal: Bool
     ) -> Bool {
-        guard connected else { return false }
+        guard connected, !leaving else { return false }
         let wantsHide = rememberedHide || keyboardUp
         let revealed = temporaryReveal && keyboardUp
         return wantsHide && !revealed
@@ -59,8 +64,8 @@ enum SSHTerminalTopBarAttention {
 
 /// Docked software keyboard covering the bottom of this terminal's display.
 /// A floating iPad keyboard is not "up". A keyboard on the Duo's other
-/// display is not "up". Keyboard frames in notifications are screen
-/// coordinates; convert through the window scene's screen.
+/// display is ignored: the notification's object is the keyboard's screen,
+/// and its frame is in that screen's coordinate space.
 enum SSHTerminalTopBarKeyboard {
     struct Animation {
         var duration: TimeInterval
@@ -75,15 +80,33 @@ enum SSHTerminalTopBarKeyboard {
         return overlap.maxY >= viewBounds.maxY - 2
     }
 
-    static func endFrameInView(_ screenFrame: CGRect, view: UIView) -> CGRect {
-        guard let window = view.window else {
-            return view.convert(screenFrame, from: nil)
-        }
-        if let space = window.windowScene?.screen.coordinateSpace {
-            let inWindow = window.convert(screenFrame, from: space)
-            return view.convert(inWindow, from: window)
-        }
-        return view.convert(screenFrame, from: window)
+    /// The keyboard's end frame in `view`, or nil when the keyboard is on
+    /// another display than the view's (or the notification names none).
+    static func endFrame(
+        _ frame: CGRect,
+        keyboardScreen: AnyObject?,
+        viewScreen: AnyObject?,
+        screenSpace: any UICoordinateSpace,
+        in view: any UICoordinateSpace
+    ) -> CGRect? {
+        guard let keyboardScreen, let viewScreen, keyboardScreen === viewScreen else { return nil }
+        return screenSpace.convert(frame, to: view)
+    }
+
+    /// Where the keyboard layout guide's top settles, in view coordinates.
+    /// The guide follows a docked keyboard and otherwise rests on the bottom
+    /// safe area; it does not follow a floating keyboard.
+    static func settledGuideTop(endFrameInView: CGRect, viewBounds: CGRect, bottomSafeArea: CGFloat) -> CGFloat {
+        let safeBottom = viewBounds.maxY - bottomSafeArea
+        guard isUp(endFrameInView: endFrameInView, viewBounds: viewBounds) else { return safeBottom }
+        return min(endFrameInView.minY, safeBottom)
+    }
+
+    /// The grid's size once the keyboard settles. The grid's top is already
+    /// final (the bar changed in this layout pass); its bottom moves with the
+    /// keyboard guide, with or without the chat bar between them.
+    static func settledGridSize(current: CGSize, guideTop: CGFloat, settledGuideTop: CGFloat) -> CGSize {
+        CGSize(width: current.width, height: max(0, current.height + settledGuideTop - guideTop))
     }
 
     static func animation(duration: TimeInterval, curve: UInt) -> Animation {

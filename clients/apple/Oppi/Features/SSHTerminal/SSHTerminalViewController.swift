@@ -54,6 +54,12 @@ final class SSHTerminalViewController: UIViewController {
     private var composerFocusRequest = 0
     private var keyboardUp = false
     private var temporaryReveal = false
+    /// Popped, swiped back, or covered by a push: the bar belongs to the
+    /// incoming screen and this screen's layout no longer sizes the shell.
+    private var isLeaving = false
+    private var keyboardTransition = 0
+    private var resizeHoldTask: Task<Void, Never>?
+    private var backSwipe: SSHTerminalBackSwipe?
     private var reconnectOnReturn = false
     private var attention = SSHTerminalAttention()
     private let attentionFeedback = SSHTerminalAttentionFeedback()
@@ -121,8 +127,9 @@ final class SSHTerminalViewController: UIViewController {
             let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0
             let curve = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
             let end = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect ?? .zero
+            let screen = notification.object as? UIScreen
             MainActor.assumeIsolated {
-                self?.keyboardWillChange(endFrame: end, duration: duration, curve: curve)
+                self?.keyboardWillChange(endFrame: end, screen: screen, duration: duration, curve: curve)
             }
         }
         setNeedsUpdateProperties()
@@ -131,12 +138,16 @@ final class SSHTerminalViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         isOnScreen = true
+        isLeaving = false
+        gridView?.releaseResize()
         applyTopBarHidden(connected: channel.connected, animated: animated)
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         isOnScreen = true
+        backSwipe?.uninstall()
+        backSwipe = SSHTerminalBackSwipe(navigation: navigationController)
         // Remote clipboard writes apply only while this screen is in front.
         channel.isViewed = AppScenePhase.shared.phase == .active
         attentionFeedback.prepare()
@@ -150,6 +161,24 @@ final class SSHTerminalViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateComposerHeight()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        backSwipe?.uninstall()
+        backSwipe = nil
+        // A pop (Back or swipe) or a push has already changed the top screen.
+        // Do not read isMovingFromParent here: while this screen presents a
+        // sheet, reading it now leaves it false in viewDidDisappear.
+        let leavingTop = navigationController.map { $0.topViewController !== self } ?? false
+        guard leavingTop || isBeingDismissed else { return }
+        isLeaving = true
+        // The keyboard going down and the pop move this screen's layout
+        // through sizes the shell must not get. Return sends the real size.
+        resizeHoldTask?.cancel()
+        gridView?.holdResize()
+        channel.cancelPendingResize()
+        applyTopBarHidden(connected: channel.connected, animated: animated)
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -519,6 +548,7 @@ final class SSHTerminalViewController: UIViewController {
     private func barShouldHide(connected: Bool) -> Bool {
         SSHTerminalTopBarVisibility.hidden(
             connected: connected,
+            leaving: isLeaving,
             keyboardUp: keyboardUp,
             rememberedHide: AppPreferences.SSHTerminal.hideBar,
             temporaryReveal: temporaryReveal
@@ -542,39 +572,81 @@ final class SSHTerminalViewController: UIViewController {
         handle.apply(themeID: themeID, attentionPending: hide && attentionPending())
     }
 
-    private func applyTopBarHidden(
-        connected: Bool,
-        animated: Bool,
-        keyboard: SSHTerminalTopBarKeyboard.Animation? = nil
-    ) {
+    private func applyTopBarHidden(connected: Bool, animated: Bool) {
         let hide = barShouldHide(connected: connected)
-        let themeID = lastThemeID ?? ThemeRuntimeState.currentThemeID()
-        updateHandle(connected: connected, themeID: themeID)
-        guard isOnScreen, !isMovingFromParent else { return }
-        guard navigationController?.isNavigationBarHidden != hide else { return }
-        if let keyboard {
-            UIView.animate(withDuration: keyboard.duration, delay: 0, options: keyboard.options) {
-                self.navigationController?.setNavigationBarHidden(hide, animated: false)
-                self.navigationController?.view.layoutIfNeeded()
-                self.view.layoutIfNeeded()
-            }
-        } else {
-            navigationController?.setNavigationBarHidden(hide, animated: animated)
-        }
+        updateHandle(connected: connected, themeID: lastThemeID ?? ThemeRuntimeState.currentThemeID())
+        guard isOnScreen, navigationController?.isNavigationBarHidden != hide else { return }
+        navigationController?.setNavigationBarHidden(hide, animated: animated)
     }
 
-    private func keyboardWillChange(endFrame: CGRect, duration: TimeInterval, curve: UInt) {
-        guard view.window != nil else { return }
-        let end = SSHTerminalTopBarKeyboard.endFrameInView(endFrame, view: view)
+    /// One resize per keyboard transition. Layout-driven resizes are held,
+    /// the bar's end state is laid out inside the keyboard's animation, and
+    /// the grid size the keyboard settles at is sent once. Layout passes in
+    /// between (the bar, the chat bar, and the keyboard guide move in
+    /// separate passes) are ignored until the transition ends; the release
+    /// sends the real size only if the prediction missed.
+    private func keyboardWillChange(endFrame: CGRect, screen: UIScreen?, duration: TimeInterval, curve: UInt) {
+        guard let viewScreen = view.window?.windowScene?.screen,
+              let end = SSHTerminalTopBarKeyboard.endFrame(
+                endFrame,
+                keyboardScreen: screen,
+                viewScreen: viewScreen,
+                screenSpace: viewScreen.coordinateSpace,
+                in: view
+              )
+        else { return }
         let up = SSHTerminalTopBarKeyboard.isUp(endFrameInView: end, viewBounds: view.bounds)
         if !up { temporaryReveal = false }
         keyboardUp = up
-        guard isOnScreen, !isMovingFromParent else { return }
-        applyTopBarHidden(
-            connected: channel.connected,
-            animated: false,
-            keyboard: SSHTerminalTopBarKeyboard.animation(duration: duration, curve: curve)
+        let connected = channel.connected
+        guard isOnScreen, !isLeaving, let gridView else {
+            updateHandle(connected: connected, themeID: lastThemeID ?? ThemeRuntimeState.currentThemeID())
+            return
+        }
+        keyboardTransition &+= 1
+        let transition = keyboardTransition
+        gridView.holdResize()
+        updateHandle(connected: connected, themeID: lastThemeID ?? ThemeRuntimeState.currentThemeID())
+        resizeHoldTask?.cancel()
+        resizeHoldTask = Task { [weak self, weak gridView] in
+            // The chat bar's text view finishes editing after this
+            // notification and drops its key strip. Lay out and measure once
+            // that has happened, still inside the keyboard's animation.
+            await Task.yield()
+            guard let self, let gridView, transition == self.keyboardTransition, !self.isLeaving else { return }
+            self.settleKeyboardTransition(end: end, grid: gridView, duration: duration, curve: curve)
+            do { try await Task.sleep(for: .seconds(max(duration, 0.25) + 0.15)) } catch { return }
+            guard transition == self.keyboardTransition, !self.isLeaving else { return }
+            gridView.releaseResize()
+        }
+    }
+
+    private func settleKeyboardTransition(
+        end: CGRect,
+        grid gridView: SSHTerminalGridView,
+        duration: TimeInterval,
+        curve: UInt
+    ) {
+        let hide = barShouldHide(connected: channel.connected)
+        let animation = SSHTerminalTopBarKeyboard.animation(duration: duration, curve: curve)
+        UIView.animate(withDuration: animation.duration, delay: 0, options: animation.options) {
+            if self.navigationController?.isNavigationBarHidden != hide {
+                self.navigationController?.setNavigationBarHidden(hide, animated: false)
+            }
+            self.updateComposerHeight()
+            self.navigationController?.view.layoutIfNeeded()
+            self.view.layoutIfNeeded()
+        }
+        let settled = SSHTerminalTopBarKeyboard.settledGridSize(
+            current: gridView.bounds.size,
+            guideTop: view.keyboardLayoutGuide.layoutFrame.minY,
+            settledGuideTop: SSHTerminalTopBarKeyboard.settledGuideTop(
+                endFrameInView: end,
+                viewBounds: view.bounds,
+                bottomSafeArea: view.safeAreaInsets.bottom
+            )
         )
+        if let geometry = gridView.geometry(for: settled) { channel.resize(geometry) }
     }
 
     // MARK: - Overlays
@@ -1133,5 +1205,49 @@ final class SSHTerminalViewController: UIViewController {
     private func reduceMotionChanged() {
         reduceMotion = UIAccessibility.isReduceMotionEnabled
         setNeedsUpdateProperties()
+    }
+}
+
+/// Back swipe while the bar is hidden. The navigation controller's own
+/// delegate filters touches through a private event check that refuses every
+/// touch while the bar is hidden, and this screen hides it for Hide Bar and
+/// for the keyboard. While the terminal is on top, this delegate answers with
+/// the navigation controller's public decisions only: same edge, same Back
+/// button exclusion, same begin rule.
+private final class SSHTerminalBackSwipe: NSObject, UIGestureRecognizerDelegate {
+    private weak var navigation: UINavigationController?
+    private weak var original: (any UIGestureRecognizerDelegate)?
+
+    init?(navigation: UINavigationController?) {
+        guard let navigation, let gesture = navigation.interactivePopGestureRecognizer else { return nil }
+        self.navigation = navigation
+        original = gesture.delegate
+        super.init()
+        gesture.delegate = self
+    }
+
+    func uninstall() {
+        guard let gesture = navigation?.interactivePopGestureRecognizer, gesture.delegate === self else { return }
+        gesture.delegate = original
+    }
+
+    func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        original?.gestureRecognizer?(gesture, shouldReceive: touch) ?? true
+    }
+
+    func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
+        guard let navigation, navigation.viewControllers.count > 1 else { return false }
+        return original?.gestureRecognizerShouldBegin?(gesture) ?? true
+    }
+
+    func gestureRecognizer(
+        _ gesture: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+    ) -> Bool {
+        original?.gestureRecognizer?(gesture, shouldRecognizeSimultaneouslyWith: other) ?? false
+    }
+
+    func gestureRecognizer(_ gesture: UIGestureRecognizer, shouldRequireFailureOf other: UIGestureRecognizer) -> Bool {
+        original?.gestureRecognizer?(gesture, shouldRequireFailureOf: other) ?? false
     }
 }

@@ -179,6 +179,22 @@ struct SSHTerminalTests {
         channel.close(reason: "done")
     }
 
+    @Test func aSizeTheRemoteShellAlreadyHasIsNotSentAgain() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        let first = SSHTerminalGeometry(columns: 44, rows: 45, cellWidth: 18, cellHeight: 34)
+        let second = SSHTerminalGeometry(columns: 44, rows: 28, cellWidth: 18, cellHeight: 34)
+        var resizes = fixture.resizes.makeAsyncIterator()
+        channel.resize(first)
+        #expect(await resizes.next() == first)
+        channel.resize(first)
+        try await Task.sleep(for: .milliseconds(200))
+        channel.resize(second)
+        #expect(await resizes.next() == second, "the repeat of \(first) must not reach the shell")
+        channel.close(reason: "done")
+    }
+
     @Test func backpressurePreservesInputOrderWithinOneSession() async throws {
         let fixture = TerminalConnectionFixture()
         let channel = try SSHTerminalChannel()
@@ -1063,8 +1079,6 @@ struct SSHTerminalTests {
         let fixture = TerminalConnectionFixture()
         let channel = try SSHTerminalChannel()
         channel.opened(fixture)
-        var resizes = fixture.resizes.makeAsyncIterator()
-        _ = await resizes.next() // the coalesced opening resize has been applied
         let queue = SSHTerminalEventQueue()
         for chunk in 0..<50 { queue.push(.data(Data("line \(chunk)\r\n".utf8))) }
         queue.push(.data(Data("\u{1b}]2;built\u{7}".utf8)))
@@ -1176,6 +1190,57 @@ struct SSHTerminalTests {
         window.isHidden = true
         window.rootViewController = nil
         channel.close(reason: "done")
+    }
+
+    @Test func leavingWithTheKeyboardBarHiddenGivesTheScreenBelowItsBar() async throws {
+        let channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture())
+        let terminal = SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
+        let root = UIViewController()
+        let nav = UINavigationController(rootViewController: root)
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = nav
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            channel.close(reason: "done")
+        }
+        nav.pushViewController(terminal, animated: false)
+        nav.view.layoutIfNeeded()
+        #expect(!nav.isNavigationBarHidden)
+
+        func keyboard(top: CGFloat) {
+            let frame = window.convert(
+                CGRect(x: 0, y: top, width: window.bounds.width, height: 336),
+                to: scene.screen.coordinateSpace
+            )
+            NotificationCenter.default.post(
+                name: UIResponder.keyboardWillChangeFrameNotification,
+                object: scene.screen,
+                userInfo: [
+                    UIResponder.keyboardFrameEndUserInfoKey: frame,
+                    UIResponder.keyboardAnimationDurationUserInfoKey: 0.0,
+                    UIResponder.keyboardAnimationCurveUserInfoKey: 7,
+                ]
+            )
+        }
+        keyboard(top: window.bounds.maxY - 336)
+        // The bar moves on the next main-actor turn, inside the keyboard's animation.
+        for _ in 0..<50 where !nav.isNavigationBarHidden {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(nav.isNavigationBarHidden, "a docked keyboard on this screen hides the bar")
+
+        nav.popViewController(animated: false)
+        // The keyboard goes down on the way out; that must not re-hide the bar.
+        keyboard(top: window.bounds.maxY)
+        try await Task.sleep(for: .milliseconds(100))
+        nav.view.layoutIfNeeded()
+        #expect(nav.topViewController === root)
+        #expect(!nav.isNavigationBarHidden, "the screen below needs its Back and title")
     }
 
     @Test func inputAndPasteBannersSitOnAMaterialCard() async throws {
