@@ -130,6 +130,7 @@ Example:
 - **Client:** Audio served with a generic type plays, and a clip that cannot play says why. Several audio cards in one message no longer collapse onto each other.
 - **Client/Server:** Messages an extension adds to the transcript appear while the chat is open.
 - **Client:** SSH Terminal **Paste** no longer asks "Allow Paste?" every time.
+- **Client:** SSH Terminal: holding Delete on the on-screen keyboard repeats while typing in the terminal. A dictated phrase with a newline asks first, like a multi-line paste.
 - **Client:** About This Server explains when the server is outdated but no newer version exists yet.
 - **Client:** The code mode reader has **Viewing Options** for text size and wrapping.
 - **Client:** Editing a staged review comment shows one Save and one Cancel.

@@ -500,8 +500,74 @@ struct SSHTerminalTests {
         input.insertText("に")
         input.unmarkText()
         #expect(await bytes.next() == Data("に".utf8))
+        input.insertText("に")
+        #expect(await bytes.next() == Data("に".utf8))
+        // Unmark first: the keyboard's echo in the same turn is dropped, and
+        // the same character typed on a later turn sends again.
+        input.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+        input.unmarkText()
+        input.insertText("に")
         input.insertText("z")
+        #expect(await bytes.next() == Data("に".utf8))
         #expect(await bytes.next() == Data("z".utf8))
+        input.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+        input.unmarkText()
+        #expect(await bytes.next() == Data("に".utf8))
+        await Task.yield()
+        input.insertText("に")
+        #expect(await bytes.next() == Data("に".utf8))
+        channel.close(reason: "done")
+    }
+
+    @Test func softwareTextThatCouldRunACommandGoesThroughPasteConfirmation() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        var pasted = [String?]()
+        let grid = SSHTerminalGridView(channel: channel, paste: { pasted.append($0) }, followChanged: { _ in })
+        let input = grid as UITextInput
+        var bytes = fixture.bytes.makeAsyncIterator()
+        // Writing Tools and similar system edits replace a range.
+        let whole = try #require(input.textRange(from: input.beginningOfDocument, to: input.endOfDocument))
+        input.replace(whole, withText: "ls\n")
+        // Dictation inserts its phrase in one call.
+        input.insertText("echo hi\nrm -rf build")
+        input.insertText("\u{1b}[A")
+        #expect(pasted == ["ls\n", "echo hi\nrm -rf build", "\u{1b}[A"])
+        // A lone Return from the keyboard is still Enter, and nothing else was sent.
+        input.insertText("\n")
+        #expect(await bytes.next() == Data("\r".utf8))
+        input.insertText("a\tb")
+        #expect(await bytes.next() == Data("a".utf8))
+        #expect(await bytes.next() == Data("\t".utf8))
+        #expect(await bytes.next() == Data("b".utf8))
+        #expect(pasted.count == 3)
+        channel.close(reason: "done")
+    }
+
+    @Test func softwareDeleteKeepsRepeatingAfterTheCaretIsMoved() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        grid.frame = CGRect(x: 0, y: 0, width: 320, height: 240)
+        let input = grid as UITextInput
+        var bytes = fixture.bytes.makeAsyncIterator()
+        // The space-bar trackpad and hit tests try to park the caret at the start.
+        input.beginFloatingCursor?(at: .zero)
+        input.updateFloatingCursor?(at: .zero)
+        input.endFloatingCursor?()
+        input.selectedTextRange = input.textRange(from: input.beginningOfDocument, to: input.beginningOfDocument)
+        if let start = input.closestPosition(to: .zero) {
+            input.selectedTextRange = input.textRange(from: start, to: start)
+        }
+        for _ in 0..<3 {
+            // UIKit repeats ⌫ only while a character precedes the caret.
+            let caret = try #require(input.selectedTextRange?.start)
+            #expect(input.position(from: caret, offset: -1) != nil)
+            input.deleteBackward()
+            #expect(await bytes.next() == Data([127]))
+        }
         channel.close(reason: "done")
     }
 

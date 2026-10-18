@@ -178,6 +178,9 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     var smartInsertDeleteType: UITextSmartInsertDeleteType { get { .no } set { _ = newValue } }
     var spellCheckingType: UITextSpellCheckingType { get { .no } set { _ = newValue } }
     var inlinePredictionType: UITextInlinePredictionType { get { .no } set { _ = newValue } }
+    var textContentType: UITextContentType? { get { nil } set { _ = newValue } }
+    /// Writing Tools rewrites through `replace`, which would type its result.
+    var writingToolsBehavior: UIWritingToolsBehavior { get { .none } set { _ = newValue } }
     var keyboardType: UIKeyboardType { get { .asciiCapable } set { _ = newValue } }
     override var inputAccessoryView: UIView? { bar }
 
@@ -394,6 +397,13 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         for action in actions {
             switch action {
             case .insert(let text):
+                // Dictation, Writing Tools, and system replacements can hand
+                // over a phrase at once. A lone Return is Enter; any other
+                // text that could run a command takes the paste confirmation.
+                if text != "\n", text != "\r", SSHTerminalEngine.pasteNeedsConfirmation(text) {
+                    requestPaste(text)
+                    continue
+                }
                 for character in text {
                     let piece = String(character)
                     let key = Self.logicalKey(piece)
@@ -507,6 +517,9 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
 
     override func becomeFirstResponder() -> Bool {
+        // Hide shortcut-bar items such as Write with Siri, which insert text.
+        inputAssistantItem.leadingBarButtonGroups = []
+        inputAssistantItem.trailingBarButtonGroups = []
         let became = super.becomeFirstResponder()
         // Deferred: this can run inside a layout or observation pass.
         if became { Task { @MainActor [rawKeyboardChanged] in rawKeyboardChanged(true) } }

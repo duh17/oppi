@@ -49,14 +49,41 @@ struct SSHTerminalTextInputTests {
         #expect(storage.insertText("に", hardwareKeysDown: false) == [.insert("に")])
         #expect(storage.unmarkText(hardwareKeysDown: false).isEmpty)
         #expect(storage.markedText == nil)
+        // The same character typed next is a new keystroke, not an echo.
+        #expect(storage.insertText("に", hardwareKeysDown: false) == [.insert("に")])
     }
 
-    @Test func markedTextDoesNotSendUntilUnmarkThenMatchingInsert() {
+    @Test func unmarkThenEchoedInsertSendsOnceAndLaterRepeatsSend() {
         var storage = SSHTerminalTextInputStorage()
         #expect(storage.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0)).isEmpty)
         #expect(storage.unmarkText(hardwareKeysDown: false) == [.insert("に")])
         #expect(storage.insertText("に", hardwareKeysDown: false).isEmpty)
-        #expect(storage.insertText("x", hardwareKeysDown: false) == [.insert("x")])
+        #expect(storage.insertText("に", hardwareKeysDown: false) == [.insert("に")])
+
+        // An echo that never comes expires on the owner's next turn.
+        #expect(storage.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0)).isEmpty)
+        #expect(storage.unmarkText(hardwareKeysDown: false) == [.insert("に")])
+        let stale = storage.commitEchoGeneration
+        #expect(storage.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0)).isEmpty)
+        #expect(storage.unmarkText(hardwareKeysDown: false) == [.insert("に")])
+        // The first commit's expiry must not drop the second commit's guard.
+        storage.expireCommitEcho(generation: stale)
+        #expect(storage.awaitsCommitEcho)
+        storage.expireCommitEcho(generation: storage.commitEchoGeneration)
+        #expect(storage.insertText("に", hardwareKeysDown: false) == [.insert("に")])
+    }
+
+    @Test func caretStaysAtTheEndSoDeleteKeepsRepeating() {
+        var storage = SSHTerminalTextInputStorage()
+        let end = storage.utf16Count
+        storage.select(utf16Range: 0..<0)
+        #expect(storage.selectedUTF16 == end..<end)
+        #expect(storage.deleteBackward(hardwareKeysDown: false) == [.backspace])
+        #expect(storage.selectedUTF16.lowerBound > 0)
+        // Inside a composition the IME still moves its own caret.
+        #expect(storage.setMarkedText("にほ", selectedRange: NSRange(location: 2, length: 0)).isEmpty)
+        storage.select(utf16Range: 1..<1)
+        #expect(storage.selectedUTF16 == 1..<1)
     }
 
     @Test func deleteDuringMarkedTextEditsCompositionOnly() {

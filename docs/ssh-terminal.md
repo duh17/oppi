@@ -51,6 +51,7 @@ The file is read once each time that program changes, through a side command on 
 
 Photos and files from **+** or a pasted image are saved on the host before Send, in an owner-only `oppi-ssh` folder under `$TMPDIR` (or `/tmp`), over the same SSH connection. The prompt then lists each file's path on its own line, so the agent can read it. Each file is limited to 32 MB.
 
+- In direct typing, holding ⌫ on the on-screen keyboard repeats. Text the keyboard hands over in one piece, such as a dictated phrase, that contains a newline or a control character asks first, like a multi-line paste, and is then pasted as one block. Return alone is Enter. Writing Tools is off there, and the space-bar cursor does not move the shell's cursor.
 - With the keyboard hidden, a tap starts typing: into the terminal when that is the input (a shell, or after the keyboard button or **Type in Terminal**), even if the app asked for mouse input; into the input bar for an agent.
 - While the direct keyboard is up and an app asks for mouse input (Herdr, tmux with `mouse on`, many TUIs), a tap is a click at the cell and the keyboard stays up. Hide that keyboard with ⌄ on its bar. A tap hides the keyboard only when the app did not ask for mouse input.
 - While the chat bar is the input and an app asks for mouse input, that tap is a click at the cell.

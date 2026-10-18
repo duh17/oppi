@@ -13,39 +13,38 @@ struct SSHTerminalTextInputStorage {
 
     private(set) var text: String
     private(set) var markedText: String?
-    /// UTF-16 selection in `text`.
+    /// UTF-16 selection in `text`. Pinned to the end unless text is marked.
     private(set) var selectedUTF16: Range<Int>
-    /// Last IME commit, so `unmarkText` then `insertText` does not double-send.
-    private var lastCommitted: String?
+    /// A commit `unmarkText` already sent. The keyboard may echo it through
+    /// `insertText` in the same call stack; only that echo is dropped. The
+    /// owner calls `expireCommitEcho` on the next main turn so a later,
+    /// identical keystroke still sends.
+    private var unmarkedCommit: String?
+    private(set) var commitEchoGeneration = 0
 
     var utf16Count: Int { text.utf16.count }
+    var awaitsCommitEcho: Bool { unmarkedCommit != nil }
 
     init(text: String = Self.filler) {
         self.text = text
         markedText = nil
-        lastCommitted = nil
+        unmarkedCommit = nil
         let end = text.utf16.count
         selectedUTF16 = end..<end
     }
 
     mutating func insertText(_ string: String, hardwareKeysDown: Bool) -> [Action] {
         let pending = markedText
+        let echo = unmarkedCommit
+        unmarkedCommit = nil
         refill()
         guard !hardwareKeysDown else { return [] }
-        if pending != nil {
-            lastCommitted = string
-            return string.isEmpty ? [] : [.insert(string)]
-        }
-        if lastCommitted == string {
-            lastCommitted = nil
-            return []
-        }
-        lastCommitted = nil
+        if pending == nil, echo == string { return [] }
         return string.isEmpty ? [] : [.insert(string)]
     }
 
     mutating func deleteBackward(hardwareKeysDown: Bool) -> [Action] {
-        lastCommitted = nil
+        unmarkedCommit = nil
         if let marked = markedText, !marked.isEmpty {
             var next = marked
             next.removeLast()
@@ -66,7 +65,7 @@ struct SSHTerminalTextInputStorage {
     }
 
     mutating func setMarkedText(_ markedText: String?, selectedRange: NSRange) -> [Action] {
-        lastCommitted = nil
+        unmarkedCommit = nil
         let next = markedText ?? ""
         if next.isEmpty {
             self.markedText = nil
@@ -82,21 +81,20 @@ struct SSHTerminalTextInputStorage {
         return []
     }
 
+    /// A commit already sent by `insertText` cleared the mark, so the
+    /// `unmarkText` that follows it finds nothing and sends nothing.
     mutating func unmarkText(hardwareKeysDown: Bool) -> [Action] {
         let committed = markedText
-        markedText = nil
+        unmarkedCommit = nil
         refill()
-        guard !hardwareKeysDown else {
-            lastCommitted = nil
-            return []
-        }
-        guard let committed, !committed.isEmpty else { return [] }
-        if lastCommitted == committed {
-            lastCommitted = nil
-            return []
-        }
-        lastCommitted = committed
+        guard !hardwareKeysDown, let committed, !committed.isEmpty else { return [] }
+        unmarkedCommit = committed
+        commitEchoGeneration &+= 1
         return [.insert(committed)]
+    }
+
+    mutating func expireCommitEcho(generation: Int) {
+        if generation == commitEchoGeneration { unmarkedCommit = nil }
     }
 
     mutating func replace(utf16Range: Range<Int>, with string: String, hardwareKeysDown: Bool) -> [Action] {
@@ -106,13 +104,18 @@ struct SSHTerminalTextInputStorage {
                 selectedRange: NSRange(location: string.utf16.count, length: 0)
             )
         }
+        unmarkedCommit = nil
         refill()
         guard !hardwareKeysDown else { return [] }
         if string.isEmpty { return [.backspace] }
         return [.insert(string)]
     }
 
+    /// Outside a composition the caret stays after the filler, so ⌫ always
+    /// has a character to delete and keeps repeating. The space-bar trackpad
+    /// and hit tests would otherwise park it at 0, where UIKit stops deleting.
     mutating func select(utf16Range: Range<Int>) {
+        guard markedText != nil else { return }
         let end = utf16Count
         let lower = min(max(utf16Range.lowerBound, 0), end)
         let upper = min(max(utf16Range.upperBound, 0), end)
@@ -120,7 +123,7 @@ struct SSHTerminalTextInputStorage {
     }
 
     mutating func reset() {
-        lastCommitted = nil
+        unmarkedCommit = nil
         refill()
     }
 
@@ -192,6 +195,11 @@ extension SSHTerminalGridView {
 
     func unmarkText() {
         applyTextInput(textInputStorage.unmarkText(hardwareKeysDown: ignoresSoftwareKeyEcho))
+        guard textInputStorage.awaitsCommitEcho else { return }
+        let generation = textInputStorage.commitEchoGeneration
+        Task { @MainActor [weak self] in
+            self?.textInputStorage.expireCommitEcho(generation: generation)
+        }
     }
 
     func textRange(from fromPosition: UITextPosition, to toPosition: UITextPosition) -> UITextRange? {
@@ -258,9 +266,8 @@ extension SSHTerminalGridView {
 
     func selectionRects(for range: UITextRange) -> [UITextSelectionRect] { [] }
 
-    func closestPosition(to point: CGPoint) -> UITextPosition? {
-        point.x < bounds.midX ? beginningOfDocument : endOfDocument
-    }
+    /// Hit tests never move the dummy caret off the end; see `select`.
+    func closestPosition(to point: CGPoint) -> UITextPosition? { endOfDocument }
 
     func closestPosition(to point: CGPoint, within range: UITextRange) -> UITextPosition? {
         guard let position = closestPosition(to: point) else { return nil }
@@ -271,6 +278,13 @@ extension SSHTerminalGridView {
         if current > max(start, end) { return start <= end ? range.end : range.start }
         return position
     }
+
+    // The space-bar trackpad drives these. No-ops keep the dummy caret at the
+    // end, so the trackpad cannot stop held ⌫ from repeating. Moving the
+    // shell cursor with it is not supported.
+    func beginFloatingCursor(at point: CGPoint) {}
+    func updateFloatingCursor(at point: CGPoint) {}
+    func endFloatingCursor() {}
 
     func characterRange(at point: CGPoint) -> UITextRange? {
         guard let position = closestPosition(to: point) else { return nil }
