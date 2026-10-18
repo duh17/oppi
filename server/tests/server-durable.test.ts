@@ -2586,7 +2586,11 @@ describe("server durable managed runtime", () => {
     const f = await fixture([fauxAssistantMessage("CONFIG_OK")]);
     await f.manager.startSession(f.session.id, f.workspace);
     expect(
-      await f.manager.runCommand(f.session.id, { type: "set_model", model: "faux/faux-1" }),
+      await f.manager.runCommand(f.session.id, {
+        type: "set_model",
+        provider: "faux",
+        modelId: "faux-1",
+      }),
     ).toMatchObject({ success: true, provider: "faux", id: "faux-1" });
     expect(
       await f.manager.runCommand(f.session.id, { type: "set_thinking_level", level: "high" }),

@@ -1,4 +1,5 @@
 import type { ShareSessionAction, ShareSessionRedactionPolicyInput } from "./session-share.js";
+import { isThinkingLevel, type ThinkingLevel } from "./thinking-levels.js";
 import type { ClientMessage, ConversationStreamAttach, ConversationStreamOlder } from "./types.js";
 
 export function toRecord(value: unknown): Record<string, unknown> {
@@ -30,6 +31,29 @@ export function readRequiredString(value: unknown, fieldName: string): string {
 
 export function readOptionalBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+/** A toggle must be a real boolean: `!!"false"` would turn it on. */
+export function readRequiredBoolean(value: unknown, fieldName: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`Invalid payload: expected ${fieldName}`);
+  }
+  return value;
+}
+
+export function readQueueMode(value: unknown): "all" | "one-at-a-time" {
+  if (value !== "all" && value !== "one-at-a-time") {
+    throw new Error("Invalid payload: expected mode");
+  }
+  return value;
+}
+
+export function readThinkingLevel(value: unknown): ThinkingLevel {
+  const level = readRequiredString(value, "level");
+  if (!isThinkingLevel(level)) {
+    throw new Error("Invalid payload: expected level");
+  }
+  return level;
 }
 
 export function readShareSessionAction(command: Record<string, unknown>): ShareSessionAction {
@@ -73,15 +97,6 @@ function readOptionalRequestId(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function validateSetModel(command: Record<string, unknown>): void {
-  const model = readOptionalString(command.model);
-  const provider = readOptionalString(command.provider);
-  const modelId = readOptionalString(command.modelId);
-  if (!model && !(provider && modelId)) {
-    throw new Error("Invalid set_model payload: expected model or provider+modelId");
-  }
-}
-
 function validateRequiredMessage(command: Record<string, unknown>): void {
   // Empty prompt text is still a valid turn; only the field presence/type is required.
   if (typeof command.message !== "string") {
@@ -107,10 +122,19 @@ function validateKnownCommand(type: string, command: Record<string, unknown>): v
       readRequiredString(command.itemId, "itemId");
       return;
     case "set_model":
-      validateSetModel(command);
+      readRequiredString(command.provider, "provider");
+      readRequiredString(command.modelId, "modelId");
       return;
     case "set_thinking_level":
-      readRequiredString(command.level, "level");
+      readThinkingLevel(command.level);
+      return;
+    case "set_auto_compaction":
+    case "set_auto_retry":
+      readRequiredBoolean(command.enabled, "enabled");
+      return;
+    case "set_steering_mode":
+    case "set_follow_up_mode":
+      readQueueMode(command.mode);
       return;
     case "set_session_name":
       readRequiredString(command.name, "name");
@@ -157,12 +181,8 @@ function validateKnownCommand(type: string, command: Record<string, unknown>): v
     case "reload":
     case "new_session":
     case "compact":
-    case "set_auto_compaction":
     case "get_fork_messages":
     case "get_session_tree":
-    case "set_steering_mode":
-    case "set_follow_up_mode":
-    case "set_auto_retry":
     case "abort_retry":
     case "abort_bash":
     case "get_commands":

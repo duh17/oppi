@@ -17,9 +17,12 @@ import {
 import {
   readOptionalBoolean,
   readOptionalString,
+  readQueueMode,
+  readRequiredBoolean,
   readRequiredString,
   readShareSessionAction,
   readShareSessionRedactionPolicy,
+  readThinkingLevel,
 } from "./session-command-parse.js";
 import { normalizeCommandError } from "./session-protocol.js";
 import { shareSession } from "./session-share.js";
@@ -28,7 +31,6 @@ import { readSessionTreeFilterMode, serializeSessionTree } from "./session-tree.
 import type { AgentBackend } from "./agent-backend.js";
 import type { Session, ServerMessage } from "./types.js";
 import type { SessionRuntimeTransactionPermit } from "./session-runtime-transaction.js";
-import type { ThinkingLevel } from "./thinking-levels.js";
 
 const log = createLogger({ base: { component: "session_commands" } });
 
@@ -106,15 +108,10 @@ export class SessionCommandCoordinator {
     [
       "set_model",
       async (backend, cmd) => {
-        const modelFromCommand = readOptionalString(cmd.model);
-        const provider = readOptionalString(cmd.provider);
-        const modelId = readOptionalString(cmd.modelId);
-        const modelFromParts = provider && modelId ? composeModelId(provider, modelId) : undefined;
-        const model = modelFromCommand ?? modelFromParts;
-        if (!model) {
-          throw new Error("Invalid set_model payload: expected model or provider+modelId");
-        }
-
+        const model = composeModelId(
+          readRequiredString(cmd.provider, "provider"),
+          readRequiredString(cmd.modelId, "modelId"),
+        );
         const persist = readOptionalBoolean(cmd.persist) === true;
         const result = await backend.setModel(model, persist ? { persist: true } : undefined);
         if (!result.success) {
@@ -126,16 +123,14 @@ export class SessionCommandCoordinator {
 
     [
       "cycle_model",
-      (backend, cmd) =>
-        backend.withRuntimeLifecycleTransaction("cycle_model", async () =>
-          backend.cycleModel(cmd.direction as never),
-        ),
+      (backend) =>
+        backend.withRuntimeLifecycleTransaction("cycle_model", async () => backend.cycleModel()),
     ],
 
     [
       "set_thinking_level",
       async (backend, cmd) => {
-        const level = readRequiredString(cmd.level, "level") as ThinkingLevel;
+        const level = readThinkingLevel(cmd.level);
         if (readOptionalBoolean(cmd.persist) === true) {
           await backend.setThinkingLevel(level, { persist: true });
         } else {
@@ -196,32 +191,36 @@ export class SessionCommandCoordinator {
     [
       "set_auto_compaction",
       (session, cmd) => {
-        session.setAutoCompactionEnabled(!!cmd.enabled);
-        return { enabled: !!cmd.enabled };
+        const enabled = readRequiredBoolean(cmd.enabled, "enabled");
+        session.setAutoCompactionEnabled(enabled);
+        return { enabled };
       },
     ],
 
     [
       "set_steering_mode",
       (session, cmd) => {
-        session.setSteeringMode(cmd.mode as "all" | "one-at-a-time");
-        return { mode: cmd.mode };
+        const mode = readQueueMode(cmd.mode);
+        session.setSteeringMode(mode);
+        return { mode };
       },
     ],
 
     [
       "set_follow_up_mode",
       (session, cmd) => {
-        session.setFollowUpMode(cmd.mode as "all" | "one-at-a-time");
-        return { mode: cmd.mode };
+        const mode = readQueueMode(cmd.mode);
+        session.setFollowUpMode(mode);
+        return { mode };
       },
     ],
 
     [
       "set_auto_retry",
       (session, cmd) => {
-        session.setAutoRetryEnabled(!!cmd.enabled);
-        return { enabled: !!cmd.enabled };
+        const enabled = readRequiredBoolean(cmd.enabled, "enabled");
+        session.setAutoRetryEnabled(enabled);
+        return { enabled };
       },
     ],
 
