@@ -1,9 +1,7 @@
-import SwiftUI
 import UIKit
 
-/// Live SSH terminal: UIKit owns the screen, bar, grid, notices, and lists.
-/// The chat bar is still SwiftUI `SSHTerminalComposer`, hosted through
-/// `HostFactory.content` until slice D replaces it.
+/// Live SSH terminal: UIKit owns the screen, bar, grid, notices, lists, and
+/// chat bar (`ComposerBarController` in a terminal configuration).
 @MainActor
 final class SSHTerminalViewController: UIViewController {
     private(set) var channel: SSHTerminalChannel
@@ -28,7 +26,14 @@ final class SSHTerminalViewController: UIViewController {
     private let copyNotice = SSHTerminalCopyNoticeView()
     private let backToLive = SSHTerminalBackToLiveButton()
     private let statusGlyph = SSHTerminalStatusGlyphButton()
-    private var composerHost: HostedContentController?
+    private var composerBar: ComposerBarController?
+    private var composerSession: SSHTerminalComposerHost?
+    private var composerKeyStrip: SSHTerminalKeyStripView?
+    private var composerContainer: UIView?
+    private var sendFailureLabel: UILabel?
+    private var dictationFailureView: ComposerDictationFailureView?
+    private var composerHeightConstraint: NSLayoutConstraint?
+    private var lastAppliedComposerFocus = 0
     private var gridBottomToKeyboard: NSLayoutConstraint?
     private var gridBottomToComposer: NSLayoutConstraint?
 
@@ -121,6 +126,11 @@ final class SSHTerminalViewController: UIViewController {
         setNeedsUpdateProperties()
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateComposerHeight()
+    }
+
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         let leaving = isMovingFromParent || isBeingDismissed
@@ -142,6 +152,7 @@ final class SSHTerminalViewController: UIViewController {
         // Leaving the screen does not close the terminal: `SSHTerminalRegistry`
         // owns the channel, and Disconnect or the host's lifecycle ends it.
         guard leaving else { return }
+        composerSession?.releaseVoice()
         session?.showsTerminal = false
         if let defaultsObserver {
             NotificationCenter.default.removeObserver(defaultsObserver)
@@ -366,7 +377,7 @@ final class SSHTerminalViewController: UIViewController {
         reconnectOnReturn = false
         channel = next
         channel.isViewed = isOnScreen && AppScenePhase.shared.phase == .active
-        unembedComposer()
+        destroyComposer()
         gridView?.removeFromSuperview()
         let grid = makeGrid()
         gridView = grid
@@ -386,8 +397,8 @@ final class SSHTerminalViewController: UIViewController {
     }
 
     private func applyTheme(_ themeID: ThemeID) {
-        let palette = themeID.palette
-        view.backgroundColor = UIColor(palette.bg)
+        let theme = themeID.appTheme
+        view.backgroundColor = UIColor(theme.bg.primary)
         overrideUserInterfaceStyle = themeID.preferredColorScheme == .light ? .light : .dark
     }
 
@@ -575,65 +586,224 @@ final class SSHTerminalViewController: UIViewController {
         let show = inputMode == .chat && !rawKeyboard
         if show {
             embedComposer()
+            refreshComposerChrome()
+            if composerFocusRequest != lastAppliedComposerFocus {
+                lastAppliedComposerFocus = composerFocusRequest
+                composerSession?.requestFocus()
+            }
         } else {
             unembedComposer()
         }
     }
 
-    private func embedComposer() {
-        let root = HostFactory.root(near: self)
-        let content = composerView()
-        if let host = composerHost {
-            host.setContent(content)
-            return
-        }
-        guard let root else { return }
-        let host = HostFactory.content(content, root: root)
-        host.view.translatesAutoresizingMaskIntoConstraints = false
-        host.view.backgroundColor = .clear
-        host.sizingOptions = .intrinsicContentSize
-        host.safeAreaRegions = []
-        addChild(host)
-        view.addSubview(host.view)
-        host.didMove(toParent: self)
-        composerHost = host
-        gridBottomToKeyboard?.isActive = false
-        guard let gridView else { return }
-        let bottom = gridView.bottomAnchor.constraint(equalTo: host.view.topAnchor)
-        gridBottomToComposer = bottom
-        NSLayoutConstraint.activate([
-            host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            host.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
-            bottom,
-        ])
+    private func serverConnection() -> ServerConnection? {
+        composerConnection ?? HostFactory.root(near: self)?.coordinator.activeConnection
     }
 
-    private func unembedComposer() {
-        guard let host = composerHost else { return }
-        gridBottomToComposer?.isActive = false
-        gridBottomToComposer = nil
-        gridBottomToKeyboard?.isActive = true
-        host.willMove(toParent: nil)
-        host.view.removeFromSuperview()
-        host.removeFromParent()
-        composerHost = nil
-    }
+    private func makeComposer() {
+        let themeID = lastThemeID ?? ThemeRuntimeState.currentThemeID()
+        let session = SSHTerminalComposerHost(
+            channel: channel,
+            connection: serverConnection(),
+            draftStore: HostFactory.root(near: self)?.composerDraftStore,
+            themeID: themeID,
+            showRawKeyboard: { [weak self] in self?.showTerminalKeyboard() }
+        )
+        session.onNeedsLayout = { [weak self] in self?.updateComposerHeight() }
+        session.onFailureChange = { [weak self] message in self?.applySendFailure(message) }
 
-    private func composerView() -> AnyView {
-        var composer = AnyView(
-            SSHTerminalComposer(
-                channel: channel,
-                focusRequest: composerFocusRequest,
-                profile: keymap.profile,
-                userFile: keymap.userFile,
+        let bar = ComposerBarController()
+        session.attach(bar)
+        _ = bar.view
+
+        let strip = SSHTerminalKeyStripView(
+            role: .composer,
+            handlers: SSHTerminalKeyStripView.Handlers(
+                sendStrokes: { [weak self] strokes in self?.channel.keys(strokes) },
+                sendKey: { [weak self] key in _ = self?.channel.key(key) },
+                sendArrow: { [weak self] key in self?.channel.key(key) ?? false },
                 showRawKeyboard: { [weak self] in self?.showTerminalKeyboard() }
             )
         )
-        if let composerConnection {
-            composer = AnyView(composer.environment(composerConnection))
+        bar.installKeyStrip(strip)
+
+        let container = UIStackView()
+        container.axis = .vertical
+        container.alignment = .fill
+        container.spacing = 4
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.backgroundColor = .clear
+        container.isLayoutMarginsRelativeArrangement = true
+        container.layoutMargins = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+
+        let dictation = ComposerDictationFailureView()
+        dictation.isHidden = true
+        dictation.onRetry = { [weak session] in session?.retryVoice() }
+
+        let failure = UILabel()
+        failure.font = UIFont.preferredFont(forTextStyle: .caption1)
+        failure.numberOfLines = 0
+        failure.accessibilityIdentifier = "sshTerminal.composer.failure"
+        failure.isHidden = true
+
+        bar.view.translatesAutoresizingMaskIntoConstraints = false
+        bar.view.backgroundColor = .clear
+        let dictationWrap = UIView()
+        dictation.translatesAutoresizingMaskIntoConstraints = false
+        dictationWrap.addSubview(dictation)
+        NSLayoutConstraint.activate([
+            dictation.leadingAnchor.constraint(equalTo: dictationWrap.leadingAnchor, constant: 16),
+            dictation.trailingAnchor.constraint(equalTo: dictationWrap.trailingAnchor, constant: -16),
+            dictation.topAnchor.constraint(equalTo: dictationWrap.topAnchor),
+            dictation.bottomAnchor.constraint(equalTo: dictationWrap.bottomAnchor),
+        ])
+        let failureWrap = UIView()
+        failure.translatesAutoresizingMaskIntoConstraints = false
+        failureWrap.addSubview(failure)
+        NSLayoutConstraint.activate([
+            failure.leadingAnchor.constraint(equalTo: failureWrap.leadingAnchor, constant: 16),
+            failure.trailingAnchor.constraint(equalTo: failureWrap.trailingAnchor, constant: -16),
+            failure.topAnchor.constraint(equalTo: failureWrap.topAnchor),
+            failure.bottomAnchor.constraint(equalTo: failureWrap.bottomAnchor),
+        ])
+        dictationWrap.isHidden = true
+        failureWrap.isHidden = true
+        container.addArrangedSubview(dictationWrap)
+        container.addArrangedSubview(failureWrap)
+        container.addArrangedSubview(bar.view)
+
+        composerSession = session
+        composerBar = bar
+        composerKeyStrip = strip
+        composerContainer = container
+        dictationFailureView = dictation
+        sendFailureLabel = failure
+    }
+
+    private func embedComposer() {
+        if composerBar == nil { makeComposer() }
+        guard let bar = composerBar, let container = composerContainer, bar.parent !== self else {
+            return
         }
-        return composer
+        addChild(bar)
+        view.addSubview(container)
+        bar.didMove(toParent: self)
+        gridBottomToKeyboard?.isActive = false
+        guard let gridView else { return }
+        let bottom = gridView.bottomAnchor.constraint(equalTo: container.topAnchor)
+        gridBottomToComposer = bottom
+        let height = container.heightAnchor.constraint(equalToConstant: 60)
+        composerHeightConstraint = height
+        NSLayoutConstraint.activate([
+            container.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            container.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+            bottom,
+            height,
+        ])
+        Task { await composerSession?.prepareVoice() }
+        updateComposerHeight()
+    }
+
+    private func unembedComposer() {
+        guard let bar = composerBar, bar.parent === self else { return }
+        composerKeyStrip?.stopRepeating()
+        composerSession?.releaseVoice()
+        bar.view.endEditing(true)
+        gridBottomToComposer?.isActive = false
+        gridBottomToComposer = nil
+        composerHeightConstraint?.isActive = false
+        composerHeightConstraint = nil
+        gridBottomToKeyboard?.isActive = true
+        bar.willMove(toParent: nil)
+        composerContainer?.removeFromSuperview()
+        bar.removeFromParent()
+    }
+
+    private func destroyComposer() {
+        unembedComposer()
+        composerBar = nil
+        composerSession = nil
+        composerKeyStrip = nil
+        composerContainer = nil
+        sendFailureLabel = nil
+        dictationFailureView = nil
+        lastAppliedComposerFocus = 0
+    }
+
+    private func refreshComposerChrome() {
+        let themeID = lastThemeID ?? ThemeRuntimeState.currentThemeID()
+        composerSession?.connection = serverConnection()
+        composerSession?.draftStore = HostFactory.root(near: self)?.composerDraftStore
+        composerSession?.refreshChrome(
+            themeID: themeID,
+            reduceMotion: reduceMotion,
+            connected: channel.connected
+        )
+        let colors = ComposerThemeColors(palette: themeID.palette)
+        composerKeyStrip?.handlers.sendStrokes = { [weak self] strokes in self?.channel.keys(strokes) }
+        composerKeyStrip?.handlers.sendKey = { [weak self] key in _ = self?.channel.key(key) }
+        composerKeyStrip?.handlers.sendArrow = { [weak self] key in self?.channel.key(key) ?? false }
+        composerKeyStrip?.handlers.showRawKeyboard = { [weak self] in self?.showTerminalKeyboard() }
+        composerKeyStrip?.apply(
+            profile: keymap.profile,
+            userFile: keymap.userFile,
+            colors: colors,
+            foreground: colors.fg,
+            background: colors.bg
+        )
+        applySendFailure(composerSession?.sendFailure)
+        applyDictationFailure()
+        composerBar?.apply()
+        updateComposerHeight()
+    }
+
+    private func applySendFailure(_ message: String?) {
+        guard let label = sendFailureLabel else { return }
+        let themeID = lastThemeID ?? ThemeRuntimeState.currentThemeID()
+        let colors = ComposerThemeColors(palette: themeID.palette)
+        label.text = message
+        label.textColor = colors.red
+        let hidden = message == nil || message?.isEmpty == true
+        label.isHidden = hidden
+        label.superview?.isHidden = hidden
+        updateComposerHeight()
+    }
+
+    private func applyDictationFailure() {
+        guard let banner = dictationFailureView else { return }
+        let themeID = lastThemeID ?? ThemeRuntimeState.currentThemeID()
+        let colors = ComposerThemeColors(palette: themeID.palette)
+        if let failure = ComposerShared.captureFailure(composerSession?.voiceManager, owner: .inlineComposer) {
+            banner.apply(message: failure.message, colors: colors)
+            banner.isHidden = false
+            banner.superview?.isHidden = false
+        } else {
+            banner.isHidden = true
+            banner.superview?.isHidden = true
+        }
+        updateComposerHeight()
+    }
+
+    private func updateComposerHeight() {
+        guard let bar = composerBar, let container = composerContainer,
+              container.superview != nil else { return }
+        let width = max(view.bounds.width, 1)
+        let barHeight = bar.sizeThatFits(width: width).height
+        let dictation: CGFloat = dictationFailureView?.isHidden == false
+            ? (dictationFailureView?.systemLayoutSizeFitting(
+                CGSize(width: max(width - 32, 1), height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height ?? 0) + 4
+            : 0
+        let failure: CGFloat = sendFailureLabel?.isHidden == false
+            ? (sendFailureLabel?.sizeThatFits(CGSize(width: max(width - 32, 1), height: .greatestFiniteMagnitude)).height ?? 0)
+            : 0
+        let height = max(barHeight + dictation + failure, 1)
+        if abs((composerHeightConstraint?.constant ?? 0) - height) > 0.5 {
+            composerHeightConstraint?.constant = height
+        }
     }
 
     // MARK: - Mode

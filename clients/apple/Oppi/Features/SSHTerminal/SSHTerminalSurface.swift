@@ -79,8 +79,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
     private var sceneActive = true
     private var appliedTheme: ThemeID?
     private var lastGeometry: SSHTerminalGeometry?
-    private var modifierButtons: [(button: UIButton, modifier: GhosttyMods, label: String)] = []
-    private var arrowButtons: [SSHTerminalArrowButton] = []
+    private var keyStrip: SSHTerminalKeyStripView?
     /// A hardware key is sent from pressesBegan only. While one is down,
     /// UIKeyInput's insertText/deleteBackward and the edit-menu paste are
     /// echoes of the same press and must not send again.
@@ -110,11 +109,8 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
     private var isSyncingHistoryScroll = false
     private var lastFollow = true
     private var bar: UIView?
-    private var barKeys: UIStackView?
     /// The foreground program's actions, inserted after Paste.
     private var keyActions: [SSHTerminalKeyAction] = []
-    private var keyActionButtons: [UIButton] = []
-    private var pasteControl: UIPasteControl?
     private var foreground = UIColor.label
 
     private var metalLayer: CAMetalLayer? { metalHost.metalLayer }
@@ -305,9 +301,9 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         let background = UIColor(theme.bg.primary)
         backgroundColor = background
         metalHost.backgroundColor = background
-        bar?.backgroundColor = background
+        bar?.backgroundColor = .clear
         bar?.tintColor = foreground
-        installPasteControl(background: background)
+        applyKeyStripTheme(background: background)
         channel.engine.setColors(foreground: foreground.terminalRGB, background: background.terminalRGB,
                                  dark: themeID.preferredColorScheme != .light)
         historyScroll.indicatorStyle = themeID.preferredColorScheme == .light ? .black : .white
@@ -392,13 +388,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
         showModifiers()
     }
     func showModifiers() {
-        for entry in modifierButtons {
-            let armed = channel.modifierLatch.isArmed(entry.modifier)
-            entry.button.setTitle(entry.label, for: .normal)
-            entry.button.isSelected = armed
-            entry.button.backgroundColor = armed ? tintColor.withAlphaComponent(0.2) : .clear
-            entry.button.accessibilityValue = armed ? "On" : "Off"
-        }
+        keyStrip?.showModifiers()
     }
     /// Direct typing owns a tap while the keyboard is down, including after
     /// switching off the chat bar, so it can come back even when the app asked
@@ -524,7 +514,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
     override func resignFirstResponder() -> Bool {
         hardwarePresses.removeAll()
         keyRepeater.stop()
-        arrowButtons.forEach { $0.stopRepeating() }
+        keyStrip?.stopRepeating()
         let resigned = super.resignFirstResponder()
         if resigned { Task { @MainActor [rawKeyboardChanged] in rawKeyboardChanged(false) } }
         return resigned
@@ -948,124 +938,70 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
     }
 
     func setKeyActions(_ actions: [SSHTerminalKeyAction]) {
-        guard actions != keyActions, let barKeys,
-              let paste = barKeys.arrangedSubviews.first(where: { $0.accessibilityIdentifier == "sshTerminal.paste" }),
-              let anchor = barKeys.arrangedSubviews.firstIndex(of: paste) else { return }
         keyActions = actions
-        keyActionButtons.forEach { $0.removeFromSuperview() }
-        keyActionButtons = actions.enumerated().map { offset, action in
-            let button = Self.barButton(action.title, id: "sshTerminal.action.\(action.id)") { [weak self] in
-                self?.channel.keys(action.strokes)
-            }
-            // Words, unlike the one-glyph keys, need room to read apart.
-            var configuration = UIButton.Configuration.plain()
-            configuration.title = action.title
-            configuration.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8)
-            configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
-                var attributes = attributes
-                attributes.font = .monospacedSystemFont(ofSize: 14, weight: .medium)
-                return attributes
-            }
-            button.configuration = configuration
-            button.accessibilityHint = "Sends \(action.keyLabel)"
-            barKeys.insertArrangedSubview(button, at: anchor + 1 + offset)
-            return button
-        }
+        keyStrip?.setProgramActions(actions)
     }
 
     private func makeAccessoryBar() -> UIView {
-        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 400, height: 48))
-        scroll.autoresizingMask = [.flexibleWidth]
-        scroll.showsHorizontalScrollIndicator = false
-        let stack = UIStackView()
-        stack.axis = .horizontal
-        stack.spacing = 2
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        scroll.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 4),
-            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -4),
-            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
-            stack.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor),
-        ])
-        barKeys = stack
-        func button(_ label: String, id: String, action: @escaping () -> Void) -> UIButton {
-            let button = Self.barButton(label, id: "sshTerminal.\(id)", action: action)
-            stack.addArrangedSubview(button)
-            return button
-        }
-        for fixed in SSHTerminalKeymap.fixed {
-            if let modifier = fixed.modifier {
-                let modifierButton = button(fixed.label, id: fixed.id) { [weak self] in
+        var colors = ComposerThemeColors.placeholder
+        colors.fg = foreground
+        colors.bg = barBackgroundColor()
+        let strip = SSHTerminalKeyStripView(
+            role: .accessory,
+            handlers: SSHTerminalKeyStripView.Handlers(
+                sendStrokes: { [weak self] strokes in self?.channel.keys(strokes) },
+                sendKey: { [weak self] key in self?.accessoryKey(key) },
+                sendArrow: { [weak self] key in
+                    guard let self, self.isFirstResponder, self.channel.connected,
+                          !self.channel.inputClosed else { return false }
+                    self.accessoryKey(key)
+                    return true
+                },
+                toggleModifier: { [weak self] modifier in
                     guard let self else { return }
                     self.channel.modifierLatch.toggle(modifier)
                     self.showModifiers()
-                }
-                modifierButton.accessibilityLabel = "\(fixed.label) modifier"
-                modifierButtons.append((modifierButton, modifier, fixed.label))
-            } else if let stroke = fixed.stroke {
-                if SSHTerminalArrowRepeat.isArrow(stroke.key) {
-                    let arrow = SSHTerminalArrowButton(label: fixed.label, key: stroke.key,
-                                                      id: "sshTerminal.\(fixed.id)") { [weak self] key in
-                        guard let self, self.isFirstResponder, self.channel.connected,
-                              !self.channel.inputClosed else { return false }
-                        self.accessoryKey(key)
-                        return true
-                    }
-                    arrow.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-                    stack.addArrangedSubview(arrow)
-                    arrowButtons.append(arrow)
-                } else {
-                    _ = button(fixed.label, id: fixed.id) { [weak self] in self?.accessoryKey(stroke.key) }
-                }
-            }
-        }
-        showModifiers()
-        installPasteControl(background: nil)
-        let chat = button("", id: "useChatBar") { [weak self] in
-            guard let self else { return }
-            self.useChatBar()
-            _ = self.resignFirstResponder()
-        }
-        chat.setImage(UIImage(systemName: "text.bubble"), for: .normal)
-        chat.accessibilityLabel = "Use chat bar"
-        let hide = button("⌄", id: "hideKeyboard") { [weak self] in self?.resignFirstResponder() }
-        hide.accessibilityLabel = "Hide keyboard"
-        return scroll
+                },
+                modifierArmed: { [weak self] modifier in
+                    self?.channel.modifierLatch.isArmed(modifier) ?? false
+                },
+                pasteTarget: self,
+                useChatBar: { [weak self] in
+                    guard let self else { return }
+                    self.useChatBar()
+                    _ = self.resignFirstResponder()
+                },
+                hideKeyboard: { [weak self] in _ = self?.resignFirstResponder() }
+            )
+        )
+        strip.apply(
+            profile: nil,
+            userFile: nil,
+            actions: keyActions,
+            colors: colors,
+            foreground: foreground,
+            background: barBackgroundColor()
+        )
+        keyStrip = strip
+        return strip
     }
 
-    /// UIPasteControl ignores tint and fixes its configuration at init, so a
-    /// theme change replaces it in place, after the keys and before the
-    /// program's actions.
-    private func installPasteControl(background: UIColor?) {
-        guard let barKeys else { return }
-        let style = UIPasteControl.Configuration()
-        style.displayMode = .labelOnly
-        style.cornerStyle = .capsule
-        style.baseForegroundColor = foreground
-        style.baseBackgroundColor = background
-        let paste = UIPasteControl(configuration: style)
-        paste.target = self
-        paste.accessibilityIdentifier = "sshTerminal.paste"
-        paste.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-        if let old = pasteControl, let index = barKeys.arrangedSubviews.firstIndex(of: old) {
-            old.removeFromSuperview()
-            barKeys.insertArrangedSubview(paste, at: index)
-        } else {
-            barKeys.addArrangedSubview(paste)
-        }
-        pasteControl = paste
+    private func applyKeyStripTheme(background: UIColor) {
+        var colors = ComposerThemeColors.placeholder
+        colors.fg = foreground
+        colors.bg = background
+        keyStrip?.apply(
+            profile: nil,
+            userFile: nil,
+            actions: keyActions,
+            colors: colors,
+            foreground: foreground,
+            background: background
+        )
     }
 
-    private static func barButton(_ label: String, id: String, action: @escaping () -> Void) -> UIButton {
-        let button = UIButton(type: .system)
-        button.setTitle(label, for: .normal)
-        button.titleLabel?.font = .monospacedSystemFont(ofSize: 14, weight: .medium)
-        button.accessibilityIdentifier = id
-        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-        button.addAction(UIAction { _ in action() }, for: .touchUpInside)
-        return button
+    private func barBackgroundColor() -> UIColor {
+        backgroundColor ?? .systemBackground
     }
 
     private static func logicalKey(_ text: String) -> GhosttyKey {

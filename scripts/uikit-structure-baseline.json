@@ -316,6 +316,9 @@
     "clients/apple/Oppi/Features/Chat/Composer/MicButtonLabel.swift": {
       "import SwiftUI": 1
     },
+    "clients/apple/Oppi/Features/Chat/Composer/SSHTerminalComposerHost.swift": {
+      "import SwiftUI": 1
+    },
     "clients/apple/Oppi/Features/Chat/Composer/SlashCommandSuggestionList.swift": {
       "import SwiftUI": 1
     },
@@ -551,15 +554,6 @@
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Review/WorkspaceReviewFileDetailView.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalArrowControl.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalComposer.swift": {
-      "import SwiftUI": 1
-    },
-    "clients/apple/Oppi/Features/SSHTerminal/SSHTerminalViewController.swift": {
       "import SwiftUI": 1
     },
     "clients/apple/Oppi/Features/Schedules/ScheduleManagementView.swift": {

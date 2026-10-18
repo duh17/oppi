@@ -1,6 +1,5 @@
 import Foundation
 import GhosttyVt
-import SwiftUI
 import Testing
 import UIKit
 @testable import Oppi
@@ -382,8 +381,8 @@ struct SSHTerminalTests {
     }
 
     @Test func armedModifiersNeverRouteComposerDraftChangesToTheTerminal() async throws {
-        // Mount the real composer so a draft write runs its actual SwiftUI
-        // observers. Programmatic writes model transcript updates at the draft
+        // Mount the real UIKit composer so a draft write runs its text-view
+        // delegate. Programmatic writes model transcript updates at the draft
         // boundary; this does not exercise microphone capture or ASR.
         let rewrites = [
             ("typing", ["c", "cd", "cdx"]),
@@ -398,15 +397,13 @@ struct SSHTerminalTests {
                 let channel = try SSHTerminalChannel()
                 channel.opened(fixture)
                 channel.event(.writabilityChanged(false))
-                let mounted = try MountedTerminalTestView(SSHTerminalComposer(
-                    channel: channel, focusRequest: 0, profile: nil, userFile: nil, showRawKeyboard: {}
-                ))
+                let mounted = try MountedTerminalComposer(channel: channel)
                 defer { mounted.dismiss(); channel.close(reason: "done") }
                 let textView = try #require(mounted.find { $0 is PastableUITextView } as? PastableUITextView)
                 let delegate = try #require(textView.delegate)
                 #expect(
-                    delegate is ComposerBarController || delegate is PastableTextView.Coordinator,
-                    "Terminal chat bar must use the UIKit composer or PastableTextView coordinator"
+                    delegate is ComposerBarController,
+                    "Terminal chat bar must use the UIKit composer"
                 )
                 channel.modifierLatch.toggle(modifier)
                 for draft in drafts {
@@ -499,6 +496,63 @@ struct SSHTerminalTests {
             #expect(channel.modifierLatch.modifiers == 0)
         }
         channel.close(reason: "done")
+    }
+
+    @Test func chatBarAndAccessoryShareOneKeyStripAndStableIdentifiers() {
+        let composer = SSHTerminalKeyStripView(role: .composer, handlers: .init())
+        composer.apply(
+            profile: SSHTerminalKeymap.profile(for: "pi"),
+            userFile: nil,
+            colors: .placeholder,
+            foreground: .label,
+            background: .black
+        )
+        composer.layoutIfNeeded()
+        func find(_ root: UIView, _ id: String) -> UIView? {
+            if root.accessibilityIdentifier == id { return root }
+            for child in root.subviews {
+                if let match = find(child, id) { return match }
+            }
+            return nil
+        }
+        func findType(_ root: UIView, _ match: (UIView) -> Bool) -> UIView? {
+            if match(root) { return root }
+            for child in root.subviews {
+                if let found = findType(child, match) { return found }
+            }
+            return nil
+        }
+        #expect(find(composer, "sshTerminal.composer.page") != nil)
+        #expect(find(composer, "sshTerminal.composer.rawKeyboard") != nil)
+        if let page = find(composer, "sshTerminal.composer.page") as? UIButton {
+            page.sendActions(for: .touchUpInside)
+            composer.layoutIfNeeded()
+        }
+        #expect(findType(composer) { $0 is SSHTerminalArrowButton } != nil)
+        if let page = find(composer, "sshTerminal.composer.page") as? UIButton {
+            page.sendActions(for: .touchUpInside)
+            composer.layoutIfNeeded()
+        }
+        #expect(find(composer, "sshTerminal.composer.escape") != nil)
+        #expect(find(composer, "sshTerminal.composer.tab") != nil)
+        #expect(find(composer, "sshTerminal.composer.ctrl-c") != nil)
+
+        let accessory = SSHTerminalKeyStripView(role: .accessory, handlers: .init())
+        accessory.apply(
+            profile: nil,
+            userFile: nil,
+            colors: .placeholder,
+            foreground: .label,
+            background: .black
+        )
+        accessory.layoutIfNeeded()
+        #expect(find(accessory, "sshTerminal.escape") != nil)
+        #expect(find(accessory, "sshTerminal.control") != nil)
+        #expect(find(accessory, "sshTerminal.tab") != nil)
+        #expect(find(accessory, "sshTerminal.paste") != nil)
+        #expect(find(accessory, "sshTerminal.useChatBar") != nil)
+        #expect(find(accessory, "sshTerminal.hideKeyboard") != nil)
+        #expect(findType(accessory) { $0 is SSHTerminalArrowButton } != nil)
     }
 
     @Test func navigationBarIgnoresOrdinaryScrollsAndNeedsADeliberatePull() {
@@ -822,8 +876,8 @@ struct SSHTerminalTests {
         #expect(runs[0].input == Data([1, 2, 3]))
         #expect(runs[0].command.hasPrefix("sh -c 'umask 077;"))
 
-        #expect(SSHTerminalComposer.prompt("  what is this?\n", paths: ["/tmp/a.png", "/tmp/b.png"]) == "what is this?\n\n/tmp/a.png\n/tmp/b.png")
-        #expect(SSHTerminalComposer.prompt("", paths: ["/tmp/a.png"]) == "/tmp/a.png")
+        #expect(SSHTerminalComposerHost.prompt("  what is this?\n", paths: ["/tmp/a.png", "/tmp/b.png"]) == "what is this?\n\n/tmp/a.png\n/tmp/b.png")
+        #expect(SSHTerminalComposerHost.prompt("", paths: ["/tmp/a.png"]) == "/tmp/a.png")
     }
 
     @Test func pasteLineCountIgnoresATrailingTerminator() {
@@ -1055,18 +1109,40 @@ private final class MountedTerminalTestController {
 }
 
 @MainActor
-private final class MountedTerminalTestView<Content: View> {
-    let host: UIHostingController<Content>
+private final class MountedTerminalComposer {
+    let session: SSHTerminalComposerHost
+    let bar: ComposerBarController
+    let wrapper: UIViewController
     let window: UIWindow
 
-    init(_ content: Content) throws {
-        host = UIHostingController(rootView: content)
+    init(channel: SSHTerminalChannel) throws {
+        session = SSHTerminalComposerHost(
+            channel: channel,
+            connection: nil,
+            draftStore: nil,
+            themeID: ThemeRuntimeState.currentThemeID(),
+            showRawKeyboard: {}
+        )
+        bar = ComposerBarController()
+        session.attach(bar)
+        _ = bar.view
+        bar.apply()
+        wrapper = UIViewController()
+        wrapper.addChild(bar)
+        bar.view.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.view.addSubview(bar.view)
+        NSLayoutConstraint.activate([
+            bar.view.leadingAnchor.constraint(equalTo: wrapper.view.leadingAnchor),
+            bar.view.trailingAnchor.constraint(equalTo: wrapper.view.trailingAnchor),
+            bar.view.bottomAnchor.constraint(equalTo: wrapper.view.bottomAnchor),
+        ])
+        bar.didMove(toParent: wrapper)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        window.rootViewController = host
+        window.rootViewController = wrapper
         window.makeKeyAndVisible()
-        host.view.layoutIfNeeded()
+        wrapper.view.layoutIfNeeded()
     }
 
     func dismiss() {
@@ -1075,19 +1151,17 @@ private final class MountedTerminalTestView<Content: View> {
     }
 
     func update() async {
-        // Let the mounted SwiftUI graph process the write and any resulting
-        // onChange writeback before checking the draft and terminal sink.
         for _ in 0..<3 {
             await withCheckedContinuation { continuation in
                 DispatchQueue.main.async { continuation.resume() }
             }
-            host.view.setNeedsLayout()
-            host.view.layoutIfNeeded()
+            wrapper.view.setNeedsLayout()
+            wrapper.view.layoutIfNeeded()
         }
     }
 
     func find(_ predicate: (UIView) -> Bool) -> UIView? {
-        find(in: host.view, matching: predicate)
+        find(in: wrapper.view, matching: predicate)
     }
 
     func find(in view: UIView, matching predicate: (UIView) -> Bool) -> UIView? {

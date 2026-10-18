@@ -1,5 +1,4 @@
 import GhosttyVt
-import SwiftUI
 import UIKit
 
 /// The held arrow is the default inside a 12pt dead zone. Outside it, the
@@ -41,15 +40,20 @@ final class SSHTerminalArrowButton: UIButton {
         sendArrow = send
         super.init(frame: .zero)
         setTitle(label, for: .normal)
-        setTitleColor(tintColor, for: .normal)
         titleLabel?.font = .monospacedSystemFont(ofSize: 14, weight: .medium)
+        titleLabel?.adjustsFontSizeToFitWidth = true
         accessibilityIdentifier = id
         accessibilityLabel = "Move cursor \(label)"
         accessibilityHint = "Hold to repeat. Drag while held to change direction and speed."
+        configurationUpdateHandler = { button in
+            button.alpha = button.isEnabled ? (button.isHighlighted ? 0.82 : 1) : 0.45
+        }
         addAction(UIAction { [weak self] _ in
             guard let self else { return }
             _ = self.sendArrow(self.heldKey)
         }, for: .touchUpInside)
+        widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         let hold = UILongPressGestureRecognizer(target: self, action: #selector(held(_:)))
         hold.minimumPressDuration = 0.35
         addGestureRecognizer(hold)
@@ -66,11 +70,24 @@ final class SSHTerminalArrowButton: UIButton {
 
     override func accessibilityActivate() -> Bool { sendArrow(heldKey) }
 
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.insetBy(
+            dx: min(0, (bounds.width - 44) / 2),
+            dy: min(0, (bounds.height - 44) / 2)
+        ).contains(point)
+    }
+
     override func tintColorDidChange() {
         super.tintColorDidChange()
         // UIButton subclasses are custom buttons; unlike system buttons,
         // they do not automatically use the inherited terminal-bar tint.
-        setTitleColor(tintColor, for: .normal)
+        applyTitleColor()
+    }
+
+    func applyTitleColor(_ color: UIColor? = nil) {
+        let color = color ?? tintColor ?? .label
+        setTitleColor(color, for: .normal)
+        setTitleColor(color.withAlphaComponent(0.82), for: .highlighted)
     }
 
     override func didMoveToWindow() {
@@ -111,23 +128,3 @@ final class SSHTerminalArrowButton: UIButton {
     }
 }
 
-struct SSHTerminalArrowControl: UIViewRepresentable {
-    let label: String
-    let key: GhosttyKey
-    let id: String
-    let send: (GhosttyKey) -> Bool
-    @Environment(\.theme) private var theme
-
-    func makeUIView(context: Context) -> SSHTerminalArrowButton {
-        SSHTerminalArrowButton(label: label, key: key, id: id, send: send)
-    }
-
-    func updateUIView(_ view: SSHTerminalArrowButton, context: Context) {
-        view.sendArrow = send
-        view.tintColor = UIColor(theme.text.primary)
-    }
-
-    static func dismantleUIView(_ view: SSHTerminalArrowButton, coordinator: ()) {
-        view.stopRepeating()
-    }
-}

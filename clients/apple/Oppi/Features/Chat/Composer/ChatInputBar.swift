@@ -149,7 +149,6 @@ struct ChatInputBar: View {
     var inputAccessibilityIdentifier: String = "chat.input"
     var sendAccessibilityIdentifier: String = "chat.send"
     var actionRow: ComposerActionRow = .init()
-    var keyStripSlot: AnyView? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.theme) private var theme
@@ -215,7 +214,6 @@ struct ChatInputBar: View {
                 inputAccessibilityIdentifier: inputAccessibilityIdentifier,
                 sendAccessibilityIdentifier: sendAccessibilityIdentifier,
                 actionRow: actionRow,
-                keyStripSlot: keyStripSlot,
                 palette: themeID.palette,
                 reduceMotion: reduceMotion,
                 composerDraftStore: composerDraftStore,
@@ -614,7 +612,6 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
     var inputAccessibilityIdentifier: String
     var sendAccessibilityIdentifier: String
     var actionRow: ComposerActionRow
-    var keyStripSlot: AnyView?
     var palette: ThemePalette
     var reduceMotion: Bool
     var composerDraftStore: ComposerDraftStore?
@@ -670,7 +667,6 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
         weak var controller: ComposerBarController?
         private var askHost: HostedContentController?
         private var tipHost: HostedContentController?
-        private var keyStripHost: HostedContentController?
         private var slotRefreshScheduled = false
 
         init(parent: ChatInputBarHost) {
@@ -714,7 +710,7 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
                 focusRequestID: parent.focusRequestID,
                 keyboardLanguage: parent.keyboardLanguage,
                 askHeight: parent.askHeight,
-                keyStripHeight: parent.keyStripSlot == nil ? 0 : ComposerInputMetrics.controlDiameter,
+                keyStripHeight: 0,
                 mediaImportEpoch: parent.mediaImportGate?.epoch ?? 0
             )
         }
@@ -906,7 +902,6 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
                 self?.slotRefreshScheduled = false
                 self?.updateAsk()
                 self?.updateTip()
-                self?.updateKeyStrip()
             }
         }
 
@@ -1026,25 +1021,6 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
             }
         }
 
-        private func updateKeyStrip() {
-            guard let controller else { return }
-            guard let slot = parent.keyStripSlot else {
-                controller.installKeyStrip(nil)
-                return
-            }
-            guard let root = HostFactory.root(near: controller) else { return }
-            if let keyStripHost {
-                keyStripHost.setContent(slot)
-                keyStripHost.view.backgroundColor = .clear
-                controller.installKeyStrip(keyStripHost)
-            } else {
-                let hosted = HostFactory.content(slot, root: root)
-                hosted.sizingOptions = []
-                hosted.view.backgroundColor = .clear
-                keyStripHost = hosted
-                controller.installKeyStrip(hosted)
-            }
-        }
     }
 }
 

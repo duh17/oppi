@@ -656,7 +656,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     private let busyModeButton = ComposerGlassPillButton()
     let keyStripContainer = UIView()
     private var keyStripHeightConstraint: NSLayoutConstraint?
-    private var keyStripChild: UIViewController?
+    private var keyStripView: UIView?
     private let leadingScroll = ComposerPillScrollView()
     private let leadingStack = ComposerPillStackView()
     private let spacer = UIView()
@@ -831,8 +831,20 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         return true
     }
 
-    func installKeyStrip(_ child: UIViewController?) {
-        embed(child, in: keyStripContainer, stored: &keyStripChild)
+    func installKeyStrip(_ view: UIView?) {
+        if keyStripView === view { return }
+        keyStripView?.removeFromSuperview()
+        keyStripView = view
+        guard let view else { return }
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.backgroundColor = .clear
+        keyStripContainer.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: keyStripContainer.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: keyStripContainer.trailingAnchor),
+            view.topAnchor.constraint(equalTo: keyStripContainer.topAnchor),
+            view.bottomAnchor.constraint(equalTo: keyStripContainer.bottomAnchor),
+        ])
     }
 
     private func embed(_ child: UIViewController?, in container: UIView, stored: inout UIViewController?) {
