@@ -4,6 +4,8 @@ import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { ExtensionUIState } from "./extension-ui-state.js";
 import { gitTrustForWorkspace } from "./git-safe.js";
 import { getGitStatus } from "./git-status.js";
+import { createLogger } from "./logger.js";
+import { safeErrorMessage } from "./log-utils.js";
 import {
   programRunFor,
   syncProgramStatus,
@@ -28,6 +30,8 @@ import type { Storage } from "./storage.js";
 import { isThinkingLevel } from "./thinking-levels.js";
 import { normalizeMutationToolName } from "./tool-mutations.js";
 import type { Session, ServerMessage } from "./types.js";
+
+const log = createLogger({ base: { component: "session_events" } });
 
 function estimateCharsFromContent(content: unknown): number {
   if (typeof content === "string") {
@@ -590,7 +594,14 @@ export class SessionEventProcessor {
       timerKey,
       setTimeout(() => {
         this.gitStatusTimers.delete(timerKey);
-        void this.emitGitStatusNow(key, wsId, worktreeId, timerKey, generation);
+        // A rejected probe from a timer would reach the process handler and stop the server.
+        this.emitGitStatusNow(key, wsId, worktreeId, timerKey, generation).catch((err: unknown) => {
+          log.warn("session_events.git_status_failed", {
+            workspaceId: wsId,
+            worktreeId,
+            error: safeErrorMessage(err),
+          });
+        });
       }, SessionEventProcessor.GIT_STATUS_DEBOUNCE_MS),
     );
   }

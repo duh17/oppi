@@ -484,6 +484,27 @@ describe("SessionBroadcaster", () => {
       expect(saved).toHaveLength(1); // no extra save
     });
 
+    it("keeps saving the batch when one row fails and retries that row on the next flush", () => {
+      const { broadcaster, activeSessions, saved, deps } = createHarness(100);
+      activeSessions.set("k1", makeActive(makeSession("s1")));
+      activeSessions.set("k2", makeActive(makeSession("s2")));
+      let failS1 = true;
+      const save = deps.saveSession;
+      deps.saveSession = (session) => {
+        if (session.id === "s1" && failS1) throw new Error("SQLITE_FULL: database or disk is full");
+        save(session);
+      };
+
+      broadcaster.markSessionDirty("k1");
+      broadcaster.markSessionDirty("k2");
+      expect(() => vi.advanceTimersByTime(100)).not.toThrow();
+      expect(saved.map((s) => s.id)).toEqual(["s2"]);
+
+      failS1 = false;
+      vi.advanceTimersByTime(100);
+      expect(saved.map((s) => s.id)).toEqual(["s2", "s1"]);
+    });
+
     it("persistSessionNow removes from dirty set and saves immediately", () => {
       const { broadcaster, activeSessions, saved } = createHarness(100);
       const session = makeSession("s1");

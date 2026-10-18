@@ -161,8 +161,18 @@ export class SessionBroadcaster {
         continue;
       }
 
-      this.syncProgramStatus(key);
-      this.deps.saveSession(active.session);
+      // This runs from a timer: a throw would reach the process handler and stop the server,
+      // and would skip every later row. A failed row stays dirty for the next flush.
+      try {
+        this.syncProgramStatus(key);
+        this.deps.saveSession(active.session);
+      } catch (err) {
+        log.error("session_broadcast.save_failed", {
+          sessionId: active.session.id,
+          error: safeErrorMessage(err),
+        });
+        this.markSessionDirty(key);
+      }
     }
   }
 
