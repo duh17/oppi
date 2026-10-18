@@ -566,10 +566,19 @@ struct MermaidPreparedText: @unchecked Sendable {
     }
 
     private let lines: [Line]
+    private let font: CTFont
     private let fontSize: CGFloat
     private let color: CGColor
     /// The size `MermaidTextUtils.measureText` reports for the same text.
     let size: CGSize
+
+    private init(lines: [Line], font: CTFont, fontSize: CGFloat, color: CGColor, size: CGSize) {
+        self.lines = lines
+        self.font = font
+        self.fontSize = fontSize
+        self.color = color
+        self.size = size
+    }
 
     init(
         _ text: String,
@@ -593,11 +602,52 @@ struct MermaidPreparedText: @unchecked Sendable {
             width = max(width, metrics.paddedSize.width)
         }
         self.lines = lines
+        self.font = font
         self.fontSize = fontSize
         self.color = color
         size = lines.count <= 1
             ? (lines.first?.metrics.paddedSize ?? CGSize(width: fontSize * 2, height: fontSize * 1.4))
             : CGSize(width: max(width, fontSize * 2), height: max(top, fontSize * 1.4))
+    }
+
+    /// The same text with every line wider than `width` cut at the end with
+    /// an ellipsis, so the block is at most `width` wide. Nil when not even
+    /// the ellipsis fits.
+    func truncated(toWidth width: CGFloat) -> MermaidPreparedText? {
+        guard lines.contains(where: { $0.metrics.paddedSize.width > width }) else { return self }
+        let token = CTLineCreateWithAttributedString(NSAttributedString(
+            string: "…",
+            attributes: [
+                NSAttributedString.Key(kCTFontAttributeName as String): font,
+                NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true,
+            ]
+        ))
+        var cut: [Line] = []
+        var widest: CGFloat = 0
+        for line in lines {
+            var metrics = line.metrics
+            if metrics.paddedSize.width > width {
+                guard let truncated = CTLineCreateTruncatedLine(metrics.line, Double(width), .end, token) else {
+                    return nil
+                }
+                let bounds = CTLineGetBoundsWithOptions(truncated, [])
+                metrics = MermaidTextUtils.CachedLineMetrics(
+                    line: truncated,
+                    paddedSize: CGSize(width: min(width, bounds.width), height: metrics.paddedSize.height),
+                    boundsWidth: bounds.width,
+                    boundsHeight: bounds.height
+                )
+            }
+            widest = max(widest, metrics.paddedSize.width)
+            cut.append(Line(metrics: metrics, top: line.top))
+        }
+        return MermaidPreparedText(
+            lines: cut,
+            font: font,
+            fontSize: fontSize,
+            color: color,
+            size: CGSize(width: min(width, widest), height: size.height)
+        )
     }
 
     /// Lines aligned within `width` (each line's own width when nil);

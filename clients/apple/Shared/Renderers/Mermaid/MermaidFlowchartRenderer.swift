@@ -364,6 +364,9 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         let narrowLabels = narrow.rewrappedLabels(of: natural.layout)
         var narrowFloor = narrowLabels.map { narrow.fitWidthFloor(natural.layout, nodeWidths: $0.nodeWidths) }
         let tightHeightFloor = fitHeightFloor(flowchart, naturalHeight: natural.size.height)
+        // A rank is as tall as its tallest node, so the diagram gets shorter
+        // by at most the sum of how much each node got shorter.
+        let narrowHeightFloor = max(0, tightHeightFloor - (narrowLabels?.heightShrink ?? 0))
 
         // Smaller changes that could fit go first, so a fit there ends the
         // search before any turn is laid out.
@@ -388,7 +391,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         }
         boundNarrowByTight()
         if let narrowFloor, narrowFloor <= limit, narrowCanBeNarrower(),
-           choice.canImprove(minimumWidth: narrowFloor, minimumHeight: tightHeightFloor) {
+           choice.canImprove(minimumWidth: narrowFloor, minimumHeight: narrowHeightFloor) {
             consider(narrow.layoutFlowchartPass(flowchart, configuration: configuration), changeRank: 2)
             triedNarrow = true
         }
@@ -412,15 +415,15 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         }
 
         // Then the smaller changes that cannot fit but could still show
-        // larger than the best. Both keep the natural ranks, and narrower
-        // wrapping only adds lines, so they share the tight height bound.
+        // larger than the best. Both keep the natural ranks; the narrow
+        // bound also allows for nodes that rewrapping made shorter.
         if tightWidth == nil,
            choice.canImprove(minimumWidth: tightFloor, minimumHeight: tightHeightFloor) {
             tightWidth = consider(tight.layoutFlowchartPass(flowchart, configuration: configuration), changeRank: 1).width
             boundNarrowByTight()
         }
         if !triedNarrow, let narrowFloor, narrowCanBeNarrower(),
-           choice.canImprove(minimumWidth: narrowFloor, minimumHeight: tightHeightFloor) {
+           choice.canImprove(minimumWidth: narrowFloor, minimumHeight: narrowHeightFloor) {
             consider(narrow.layoutFlowchartPass(flowchart, configuration: configuration), changeRank: 2)
         }
         return finalized(choice.best)
@@ -450,26 +453,32 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
         )
     }
 
-    /// Labels under this renderer's wrapping: each node's width, and how
-    /// much narrower all labels got in total (nodes plus edge labels). Nil
-    /// when that wrapping breaks no label differently from `layout` (a
-    /// narrow-label pass would only repeat the tight pass).
+    /// Labels under this renderer's wrapping: each node's width, how much
+    /// narrower all labels got in total (nodes plus edge labels), and how
+    /// much shorter all nodes got in total. Wrapping narrower adds lines,
+    /// but a diamond's height grows with its text width and a circle's
+    /// with its longer side, so those can come out shorter. Nil when that
+    /// wrapping breaks no label differently from `layout` (a narrow-label
+    /// pass would only repeat the tight pass).
     private func rewrappedLabels(
         of layout: FlowchartLayout
-    ) -> (nodeWidths: [String: CGFloat], totalShrink: CGFloat)? {
+    ) -> (nodeWidths: [String: CGFloat], totalShrink: CGFloat, heightShrink: CGFloat)? {
         let font = CTFontCreateWithName("Helvetica" as CFString, layout.fontSize, nil)
         var rewraps = false
         var widths: [String: CGFloat] = [:]
         var shrink: CGFloat = 0
+        var heightShrink: CGFloat = 0
         for node in layout.flowchart.nodes {
             let label = node.isMarkdown
                 ? node.label
                 : wrapFlowNodeLabel(node.label, shape: node.shape, font: font, fontSize: layout.fontSize)
             if label != layout.nodeLabels[node.id] { rewraps = true }
             let textSize = measureText(label, font: font, fontSize: layout.fontSize, isMarkdown: node.isMarkdown)
-            let width = padForShape(textSize, shape: node.shape, fontSize: layout.fontSize).width
-            widths[node.id] = width
-            shrink += max(0, (layout.graphResult.nodePositions[node.id]?.width ?? width) - width)
+            let size = padForShape(textSize, shape: node.shape, fontSize: layout.fontSize)
+            widths[node.id] = size.width
+            let natural = layout.graphResult.nodePositions[node.id]?.size ?? size
+            shrink += max(0, natural.width - size.width)
+            heightShrink += max(0, natural.height - size.height)
         }
         let (labelFont, labelFontSize) = flowEdgeLabelFont(fontSize: layout.fontSize)
         for (index, edge) in layout.flowchart.edges.enumerated() {
@@ -481,14 +490,14 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             shrink += max(0, measureText(current, font: labelFont, fontSize: labelFontSize).width
                 - measureText(wrapped, font: labelFont, fontSize: labelFontSize).width)
         }
-        return rewraps ? (widths, shrink) : nil
+        return rewraps ? (widths, shrink, heightShrink) : nil
     }
 
     /// A lower bound on the padded height of `chart` laid out with tight
-    /// spacing (and any wrapping), given its height at natural spacing.
+    /// spacing and the same labels, given its height at natural spacing.
     /// Only a top-down diagram of one connected part without subgraphs has
-    /// one: tight spacing keeps its rank gaps and narrower wrapping only adds
-    /// lines. Across, tight spacing halves the sibling gaps that stack nodes,
+    /// one: tight spacing keeps its rank gaps. Across, tight spacing halves
+    /// the sibling gaps that stack nodes,
     /// and packed parts or subgraph contents can rewrap onto fewer rows, so
     /// those have no useful bound.
     private func fitHeightFloor(_ chart: FlowchartDiagram, naturalHeight: CGFloat) -> CGFloat {
@@ -3041,20 +3050,24 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             guard let rect = subgraphFrame(subgraph, layout: layout) else { return }
             let style = layout.styleDirectives[subgraph.id] ?? [:]
             let title = subgraph.title ?? subgraph.id
-            let titleText = title.isEmpty ? nil : MermaidPreparedText(
-                title,
-                font: titleFont,
-                fontSize: titleFontSize,
-                color: parseStyleColor(style["color"], theme: theme) ?? theme.foreground,
-                isMarkdown: subgraph.isMarkdown
-            )
             let band = CGRect(
                 x: rect.minX + 10,
                 y: rect.minY + 4,
                 width: max(1, rect.width - 20),
                 height: max(fontSize * 1.4, subgraphTitleHeight(fontSize: fontSize) - 6)
             )
-            let placement = titleText.map { subgraphTitlePlacement($0.size, in: band, avoiding: edgeInk) }
+            // A title wider than its cluster is cut to the band, so neither
+            // the text nor its backing reaches past the cluster's edges.
+            let titleText = title.isEmpty ? nil : MermaidPreparedText(
+                title,
+                font: titleFont,
+                fontSize: titleFontSize,
+                color: parseStyleColor(style["color"], theme: theme) ?? theme.foreground,
+                isMarkdown: subgraph.isMarkdown
+            ).truncated(toWidth: band.width)
+            let placement = titleText.map {
+                subgraphTitlePlacement($0.size, in: band, cluster: rect, avoiding: edgeInk)
+            }
             subgraphs.append(FlowDrawPlan.Subgraph(
                 rect: rect,
                 fill: parseStyleColor(style["fill"], theme: theme) ?? defaultSubgraphFill,
@@ -3147,6 +3160,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
     private func subgraphTitlePlacement(
         _ size: CGSize,
         in band: CGRect,
+        cluster: CGRect,
         avoiding edges: [[CGPoint]]
     ) -> (rect: CGRect, backing: CGRect?) {
         let width = min(size.width, band.width)
@@ -3167,7 +3181,7 @@ struct MermaidFlowchartRenderer: GraphicalDocumentRenderer, Sendable {
             width: size.width,
             height: size.height
         )
-        return (rect, text.insetBy(dx: -clearance, dy: -1))
+        return (rect, text.insetBy(dx: -clearance, dy: -1).intersection(cluster))
     }
 
     private func edgeKey(_ layout: FlowchartLayout, index: Int) -> String {

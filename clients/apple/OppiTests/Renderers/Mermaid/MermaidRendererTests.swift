@@ -1413,6 +1413,93 @@ struct MermaidRendererTests {
         #expect(b.minY >= a.maxY, "without a height cap the turn fits and is used")
     }
 
+    @Test func narrowWrappingThatShortensRoundNodesIsUsedUnderTheInlineCap() throws {
+        // A circle is as tall as its longer side, so wrapping these labels
+        // narrower makes every node shorter as well as narrower. The column
+        // is too tall for the inline cap, and only narrower wrapping shows
+        // it larger.
+        let source = """
+            flowchart TD
+                A((Check the incoming request headers)) --> B((Validate the session token now))
+                B --> C{Look up the account settings first}
+                C --> D((Write the audit record entry))
+            """
+        let diagram = parser.parse(source)
+        let natural = renderer.layout(diagram, configuration: .default(maxWidth: 2_000))
+        let naturalSize = renderer.boundingBox(natural)
+        let limit = naturalSize.width - 20
+        let inlineConfig = Self.inline(maxWidth: limit)
+        let naturalScale = inlineConfig.displayScale(for: naturalSize)
+        try #require(
+            MermaidInlinePresentation.maxHeight / naturalSize.height < limit / naturalSize.width,
+            "the height cap, not the width, limits the natural layout: \(naturalSize)"
+        )
+
+        let fitted = renderer.layout(diagram, configuration: inlineConfig)
+        let fittedScale = inlineConfig.displayScale(for: renderer.boundingBox(fitted))
+        #expect(fittedScale > naturalScale + 0.05, "natural \(naturalScale), fitted \(fittedScale)")
+        let naturalA = try #require(natural.graphResult.nodePositions["A"])
+        let fittedA = try #require(fitted.graphResult.nodePositions["A"])
+        let fittedB = try #require(fitted.graphResult.nodePositions["B"])
+        #expect(fittedA.height < naturalA.height, "the circle rewraps narrower and shorter")
+        #expect(fittedB.minY >= fittedA.maxY, "the diagram keeps running top to bottom")
+    }
+
+    @Test(arguments: [false, true])
+    func subgraphTitleWiderThanItsClusterStaysInsideIt(crossedByEdge: Bool) throws {
+        // One small node leaves the cluster far narrower than its title. An
+        // edge through the title band forces the title onto a backing.
+        let source = crossedByEdge
+            ? """
+            flowchart TD
+                A[a] --> X
+                subgraph S[Release candidates waiting for the final sign off]
+                    X[x]
+                end
+            """
+            : """
+            flowchart TD
+                subgraph S[Release candidates waiting for the final sign off]
+                    X[x]
+                end
+            """
+        let layout = renderer.layout(parser.parse(source), configuration: .default(maxWidth: 2_000))
+        let cluster = try #require(layout.subgraphFrames["S"])
+        let box = renderer.boundingBox(layout)
+        var content = CGRect(origin: .zero, size: layout.graphResult.totalSize).union(cluster)
+        for point in layout.graphResult.edgePaths.flatMap(\.points) {
+            // The renderer's margin around edge ink: 0.7 em at 14pt.
+            content = content.union(CGRect(x: point.x, y: point.y, width: 0, height: 0).insetBy(dx: -9.8, dy: -9.8))
+        }
+        let padding = (box.width - content.width) / 2
+        let left = Int((cluster.minX - content.minX + padding).rounded(.down)) - 1
+        let right = Int((cluster.maxX - content.minX + padding).rounded(.up)) + 1
+        let top = Int(cluster.minY - content.minY + padding)
+        try #require(left > 2 || right < Int(box.width) - 2, "the canvas has room beside the cluster")
+
+        let width = Int(box.width.rounded(.up))
+        let height = Int(box.height.rounded(.up))
+        let ctx = try #require(CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        ctx.translateBy(x: 0, y: CGFloat(height))
+        ctx.scaleBy(x: 1, y: -1)
+        renderer.draw(layout, in: ctx, at: .zero)
+        let pixels = try #require(ctx.data).assumingMemoryBound(to: UInt8.self)
+
+        // The title band is the cluster's top rows; nothing in them may be
+        // painted beside the cluster.
+        var spilled = 0
+        for y in max(0, top)..<min(height, top + 24) {
+            for x in 0..<width where x < left || x > right {
+                if pixels[y * width * 4 + x * 4 + 3] != 0 { spilled += 1 }
+            }
+        }
+        #expect(spilled == 0, "\(spilled) title pixels outside cluster \(cluster) in a \(box) canvas")
+    }
+
     private struct OverlappingTrunk {
         let coord: CGFloat
         let overlap: ClosedRange<CGFloat>
