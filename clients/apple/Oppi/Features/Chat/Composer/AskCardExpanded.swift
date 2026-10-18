@@ -120,6 +120,9 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
     private let closeDetailsButton = UIButton(type: .system)
     private let cancelConfirmButton = UIButton(type: .system)
     private let confirmButton = UIButton(type: .system)
+    /// Pushes Cancel and Confirm trailing in the one-row layout; not in the
+    /// stacked layout.
+    private let pinnedSpacer = UIView()
     nonisolated(unsafe) private var inputModeObserver: NSObjectProtocol?
 
     deinit {
@@ -339,8 +342,11 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
             Task { await self?.handleDictationTap() }
         }, for: .touchUpInside)
         micButton.accessibilityIdentifier = "ask.voiceInput"
+        // The mic draws at 32 pt and takes touches across a 44 pt band; the
+        // field's padding has room for the band, the row passes it through.
+        micButton.minimumHitSide = AskCard.quietControlMinimumHitSize
 
-        let inputRow = UIStackView(arrangedSubviews: [micButton, customTextView])
+        let inputRow = AskAnswerInputRow(arrangedSubviews: [micButton, customTextView])
         inputRow.axis = .horizontal
         inputRow.alignment = .bottom
         inputRow.spacing = 8
@@ -398,7 +404,7 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
         confirmButton.addAction(UIAction { [weak self] _ in
             self?.submitPinnedConfirmation(value: ExtensionUIRequest.confirmValue)
         }, for: .touchUpInside)
-        let pinnedSpacer = UIView()
+        pinnedSpacer.isUserInteractionEnabled = false
         pinnedSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         pinnedStack.axis = .horizontal
         pinnedStack.alignment = .center
@@ -482,6 +488,14 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
         backButton.configuration?.baseForegroundColor = colors.blue
 
         guard let question = currentQuestion else { return }
+        // The markdown view skips an unchanged configuration, so this only
+        // re-renders for a new question or a theme change (new palette).
+        markdownView.apply(configuration: .make(
+            content: question.question,
+            isStreaming: false,
+            themeID: ThemeRuntimeState.currentThemeID(),
+            textSelectionEnabled: true
+        ))
         let pageChanged = builtRequest?.id != request.id || builtPage != currentPage
         if builtRequest != request || builtPage != currentPage {
             rebuildPage(question)
@@ -526,15 +540,9 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
         applyMic()
     }
 
-    /// New request or page: markdown and option rows rebuild once; selection
-    /// changes afterwards update rows in place.
+    /// New request or page: option rows rebuild once; selection changes
+    /// afterwards update rows in place.
     private func rebuildPage(_ question: AskQuestion) {
-        markdownView.apply(configuration: .make(
-            content: question.question,
-            isStreaming: false,
-            themeID: ThemeRuntimeState.currentThemeID(),
-            textSelectionEnabled: true
-        ))
         optionRows.forEach { $0.removeFromSuperview() }
         optionRows = []
         if !usesPinnedConfirmationActions {
@@ -683,8 +691,11 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
         guard vertical != (pinnedStack.axis == .vertical) else { return }
         let ordered: [UIView] = vertical
             ? [confirmButton, cancelConfirmButton, closeDetailsButton]
-            : [closeDetailsButton, pinnedStack.arrangedSubviews.first { $0.superview != nil && !($0 is UIButton) } ?? UIView(), cancelConfirmButton, confirmButton]
+            : [closeDetailsButton, pinnedSpacer, cancelConfirmButton, confirmButton]
         pinnedStack.arrangedSubviews.forEach { pinnedStack.removeArrangedSubview($0) }
+        // removeArrangedSubview keeps the view as a subview; drop the spacer
+        // outright so the stacked layout has nothing but its buttons.
+        pinnedSpacer.removeFromSuperview()
         ordered.forEach { pinnedStack.addArrangedSubview($0) }
         pinnedStack.axis = vertical ? .vertical : .horizontal
         pinnedStack.alignment = vertical ? .fill : .center
@@ -1022,5 +1033,15 @@ final class AskCardExpandedViewController: UIViewController, RouterModalContaine
         guard focusedQuestionId == currentQuestion?.id else { return }
         focusedQuestionId = nil
         applyChrome()
+    }
+}
+
+/// Answer row that does not clip its children's touch bands (the mic's band
+/// reaches past the row's height) to its own bounds.
+private final class AskAnswerInputRow: UIStackView {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        super.point(inside: point, with: event) || arrangedSubviews.contains { view in
+            !view.isHidden && view.point(inside: convert(point, to: view), with: event)
+        }
     }
 }

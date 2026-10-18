@@ -45,6 +45,88 @@ struct AskCardExpandedTests {
         #expect(markdownFrame.maxY <= optionFrame.minY, "question overlaps the options")
     }
 
+    @Test("A theme change recolors the open question the way a fresh sheet draws it")
+    func themeChangeRecolorsQuestion() throws {
+        let original = ThemeRuntimeState.currentThemeID()
+        defer { ThemeRuntimeState.setThemeID(original) }
+        let request = Self.singleSelectRequest()
+
+        ThemeRuntimeState.setThemeID(.dark)
+        let (sheet, window) = Self.host(request)
+        defer { window.rootViewController = nil; window.isHidden = true }
+        let darkColor = try Self.questionColor(in: sheet)
+
+        ThemeRuntimeState.setThemeID(.light)
+        sheet.apply(
+            request: request, currentPage: 0, answers: [:],
+            colors: ComposerThemeColors(palette: ThemeID.light.palette), reduceMotion: true
+        )
+        Self.layout(sheet)
+        let recolored = try Self.questionColor(in: sheet)
+
+        let (fresh, freshWindow) = Self.host(request)
+        defer { freshWindow.rootViewController = nil; freshWindow.isHidden = true }
+        let freshLight = try Self.questionColor(in: fresh)
+        #expect(darkColor != freshLight)
+        #expect(recolored == freshLight, "question kept \(recolored) after the switch to light")
+    }
+
+    @Test("The answer field's 32 pt mic takes touches across a 44 pt band")
+    func answerMicHasFullTouchTarget() throws {
+        let (sheet, window) = Self.host(
+            Self.singleSelectRequest(),
+            voiceInputManager: VoiceInputManager(systemAccess: MockVoiceInputSystemAccess())
+        )
+        defer { window.rootViewController = nil; window.isHidden = true }
+        let mic = try #require(Self.subview(identifier: "ask.voiceInput", in: sheet.view))
+        #expect(!mic.isHidden)
+        let frame = mic.convert(mic.bounds, to: sheet.view)
+        #expect(frame.width < 44 && frame.height < 44, "mic glyph grew to \(frame.size)")
+        let band = frame.insetBy(dx: (frame.width - 44) / 2, dy: (frame.height - 44) / 2)
+        for point in [
+            CGPoint(x: band.minX + 1, y: band.midY),
+            CGPoint(x: band.maxX - 1, y: band.midY),
+            CGPoint(x: band.midX, y: band.minY + 1),
+            CGPoint(x: band.midX, y: band.maxY - 1),
+        ] {
+            #expect(sheet.view.hitTest(point, with: nil) === mic, "tap at \(point) missed the mic \(frame)")
+        }
+        let outside = CGPoint(x: band.midX, y: band.maxY + 2)
+        #expect(sheet.view.hitTest(outside, with: nil) !== mic)
+    }
+
+    private static func host(
+        _ request: AskRequest,
+        voiceInputManager: VoiceInputManager? = nil
+    ) -> (AskCardExpandedViewController, UIWindow) {
+        let sheet = AskCardExpandedViewController()
+        sheet.voiceInputManager = voiceInputManager
+        sheet.apply(
+            request: request, currentPage: 0, answers: [:],
+            colors: ComposerThemeColors(palette: ThemeRuntimeState.currentPalette()), reduceMotion: true
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = sheet
+        window.makeKeyAndVisible()
+        layout(sheet)
+        return (sheet, window)
+    }
+
+    private static func layout(_ sheet: UIViewController) {
+        for _ in 0..<3 {
+            sheet.view.setNeedsLayout()
+            sheet.view.layoutIfNeeded()
+        }
+    }
+
+    private static func questionColor(in sheet: UIViewController) throws -> UIColor {
+        let markdown = try #require(firstSubview(of: AssistantMarkdownContentView.self, in: sheet.view))
+        let text = try #require(allSubviews(in: markdown).compactMap { $0 as? UITextView }.first {
+            ($0.text ?? "").contains("testing approach")
+        })
+        return try #require(text.attributedText.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor)
+    }
+
     private static func allSubviews(in view: UIView) -> [UIView] {
         view.subviews + view.subviews.flatMap(allSubviews(in:))
     }

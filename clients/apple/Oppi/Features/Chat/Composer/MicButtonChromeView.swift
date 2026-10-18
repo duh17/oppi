@@ -16,6 +16,10 @@ final class MicButtonChromeView: UIControl {
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
 
     private var diameter: CGFloat = 44
+    /// Touch side for a mic drawn smaller than a comfortable target: touches
+    /// land across this band around the bounds, which the superviews must
+    /// not clip. Zero keeps the drawn bounds.
+    var minimumHitSide: CGFloat = 0
     private var isRecording = false
     private var isPreparing = false
     private var isProcessing = false
@@ -48,6 +52,10 @@ final class MicButtonChromeView: UIControl {
 
     override var intrinsicContentSize: CGSize {
         CGSize(width: diameter, height: diameter)
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        ComposerHitTarget.contains(point, in: bounds, minimumSide: minimumHitSide)
     }
 
     override func layoutSubviews() {

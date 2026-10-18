@@ -181,7 +181,7 @@ final class ComposerCircleActionButton: UIButton {
 enum ComposerHitTarget {
     static let minimumSide: CGFloat = 44
 
-    static func contains(_ point: CGPoint, in bounds: CGRect) -> Bool {
+    static func contains(_ point: CGPoint, in bounds: CGRect, minimumSide: CGFloat = ComposerHitTarget.minimumSide) -> Bool {
         bounds.insetBy(
             dx: min(0, (bounds.width - minimumSide) / 2),
             dy: min(0, (bounds.height - minimumSide) / 2)
