@@ -985,6 +985,15 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
             leadingStack.bottomAnchor.constraint(equalTo: leadingScroll.contentLayoutGuide.bottomAnchor),
             leadingStack.heightAnchor.constraint(equalTo: leadingScroll.frameLayoutGuide.heightAnchor),
         ])
+        // A scroll view has no intrinsic width, so beside the spacer its width is
+        // ambiguous and Auto Layout may collapse it to zero, hiding every pill.
+        // Prefer the pills' width; below the trailing stack's compression
+        // resistance so a crowded row scrolls instead of squeezing Cancel.
+        let leadingFitsContent = leadingScroll.frameLayoutGuide.widthAnchor.constraint(
+            equalTo: leadingScroll.contentLayoutGuide.widthAnchor
+        )
+        leadingFitsContent.priority = UILayoutPriority(UILayoutPriority.defaultLow.rawValue - 1)
+        leadingFitsContent.isActive = true
         trailingStack.axis = .horizontal
         trailingStack.alignment = .center
         trailingStack.spacing = 6

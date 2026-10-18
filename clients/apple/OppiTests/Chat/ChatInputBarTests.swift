@@ -1752,6 +1752,70 @@ struct ChatInputBarTests {
         window.isHidden = true
     }
 
+    @Test("Review quick comments stay visible between the attach and cancel buttons")
+    func reviewQuickCommentChipsAreVisible() throws {
+        let host = ComposerBarTestHost()
+        let templates = QuickCommentTemplate.builtInDefaults
+        // Chat shows the session toolbar first; commenting swaps the row in place.
+        host.content.actionRow = .sessionToolbar(
+            modelTitle: "routes",
+            modelProvider: nil,
+            thinkingLevel: .medium,
+            thinkingTint: .systemBlue,
+            supportedThinkingLevels: ThinkingLevel.allCases,
+            colors: .placeholder,
+            onModelTap: {},
+            onThinkingSelect: { _ in },
+            onSaveThinkingAsDefault: nil
+        )
+        let controller = ComposerBarController()
+        controller.host = host
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.apply()
+        controller.view.layoutIfNeeded()
+
+        host.content.actionRow = ComposerActionRow(
+            leading: templates.map { template in
+                .reviewChip(
+                    id: "chat.reviewComment.\(template.id.uuidString)",
+                    title: template.title,
+                    systemImage: template.systemImage,
+                    onTap: {}
+                )
+            },
+            trailing: [.reviewCancel {}],
+            leadingScrolls: true
+        )
+        controller.apply()
+        controller.view.layoutIfNeeded()
+
+        let first = try #require(descendant(
+            in: controller.view,
+            identifier: "chat.reviewComment.\(templates[0].id.uuidString)"
+        ))
+        let cancel = try #require(descendant(in: controller.view, identifier: "chat.reviewComment.cancel"))
+        let scroll = try #require(first.superview?.superview)
+        let chipFrame = first.convert(first.bounds, to: window)
+        let visibleFrame = scroll.convert(scroll.bounds, to: window)
+        // Auto Layout may pick any solution the constraints allow; on device it
+        // once handed the whole row to the spacer. Walk the alternatives.
+        let settledWidth = scroll.bounds.width
+        for _ in 0..<6 {
+            scroll.exerciseAmbiguityInLayout()
+            #expect(scroll.bounds.width == settledWidth)
+        }
+        #expect(chipFrame.width > 40)
+        #expect(visibleFrame.contains(chipFrame))
+        #expect(chipFrame.maxX <= cancel.convert(cancel.bounds, to: window).minX)
+        // Four default chips overflow an iPhone row: they scroll, Cancel keeps its size.
+        #expect(cancel.bounds.width >= 32)
+        #expect((scroll as? UIScrollView).map { $0.contentSize.width > $0.bounds.width } == true)
+        window.rootViewController = nil
+        window.isHidden = true
+    }
+
     private func showsExpand(in root: UIView) -> Bool {
         if root.accessibilityIdentifier == "chat.expand", !root.isHidden { return true }
         return root.subviews.contains { showsExpand(in: $0) }
