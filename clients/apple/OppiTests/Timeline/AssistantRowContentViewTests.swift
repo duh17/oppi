@@ -1,4 +1,5 @@
 import Foundation
+import os
 import SwiftUI
 import Testing
 import UIKit
@@ -801,6 +802,61 @@ struct AssistantTimelineRowContentViewTests {
         #expect(abs((view.debugDiagramHeightConstantForTesting ?? 0) - reserved) <= 0.5)
         #expect(abs((view.debugRasterWidthForTesting ?? 0) - width) <= 0.5)
         #expect(view.debugRenderCountForTesting == 1, "one layout at the real width, not a guess and a redo")
+    }
+
+    /// A live resize (rotation, split view, Stage Manager) steps the width
+    /// many times. The shown raster stays up, scaled, while the width moves,
+    /// and the diagram is laid out once, at the width it settles at.
+    @MainActor
+    @Test(.timeLimit(.minutes(1))) func mermaidLiveResizeLaysOutOnceAtTheSettledWidth() async throws {
+        let mermaidCode = """
+        flowchart LR
+            A[Receive webhook] --> B[Validate signature] --> C[Enqueue job]
+            C --> D[Worker picks up] --> E[Live resize]
+        """
+        let gates = [AsyncOneShotGate(), AsyncOneShotGate()]
+        let installs = OSAllocatedUnfairLock(initialState: 0)
+        NativeMermaidBlockView.testHooks = .init(didShowDiagram: { code in
+            guard code == mermaidCode else { return }
+            let index = installs.withLock { count in
+                defer { count += 1 }
+                return count
+            }
+            if index < gates.count { gates[index].open() }
+        })
+        defer { NativeMermaidBlockView.testHooks = .init() }
+
+        let palette = ThemeRuntimeState.currentPalette()
+        let view = NativeMermaidBlockView()
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: 700, height: 900))
+        view.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+        container.layoutIfNeeded()
+        view.applyAsDiagram(code: mermaidCode, palette: palette, availableWidth: 700)
+        await gates[0].wait()
+        container.layoutIfNeeded()
+        let shownImage = view.debugRenderedImageForTesting
+        #expect(view.debugRenderCountForTesting == 1)
+
+        for width in stride(from: 699.5, through: 420, by: -6.5) {
+            container.frame.size.width = width
+            container.layoutIfNeeded()
+            #expect(view.debugRenderCountForTesting == 1, "no layout while the width is changing (\(width))")
+            #expect(view.debugRenderedImageForTesting === shownImage, "the shown raster stays up, scaled")
+            #expect(view.debugDiagramImageFrameForTesting.width <= width + 0.5)
+        }
+        let settled = container.frame.width
+
+        await gates[1].wait()
+        container.layoutIfNeeded()
+        #expect(view.debugRenderCountForTesting == 2, "one layout once the width settles")
+        #expect(abs((view.debugRasterWidthForTesting ?? 0) - settled) <= 0.5)
+        #expect(installs.withLock { $0 } == 2)
     }
 
     @MainActor

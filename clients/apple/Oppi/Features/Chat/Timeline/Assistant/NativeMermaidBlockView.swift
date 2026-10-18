@@ -17,7 +17,9 @@ import UIKit
 /// Whatever still overflows is scaled to fit the bubble, capped at 400pt
 /// tall. Full screen lays out for its own width. No height is reserved
 /// until the view knows a real width, so a row never changes height when
-/// it first settles.
+/// it first settles. When the width changes after a raster is shown, that
+/// raster stays up, scaled, until the width settles; then the diagram is
+/// laid out once at the final width.
 @MainActor
 final class NativeMermaidBlockView: UIView {
     struct RasterResult: @unchecked Sendable {
@@ -122,6 +124,8 @@ final class NativeMermaidBlockView: UIView {
     private var pendingDiagram: (palette: ThemePalette, isSync: Bool)?
     private var requiresExactRasterWidth = false
     private var renderTask: Task<Void, Never>?
+    /// Lays the shown diagram out again once a width change settles.
+    private let resizeSettle = MermaidWidthSettle()
     private var reviewCommentSelectionRouter: ReviewCommentSelectionRouter?
     private var reviewCommentSourceContext: ReviewCommentSourceContext?
 
@@ -241,13 +245,29 @@ final class NativeMermaidBlockView: UIView {
         }
         layoutDiagramContent()
 
-        if rasterWidthMismatch(bounds.width), let code = currentCode {
-            applyAsDiagram(
-                code: code,
-                palette: currentPalette ?? ThemeRuntimeState.currentPalette(),
-                availableWidth: requiresExactRasterWidth ? bounds.width : nil
-            )
+        guard rasterWidthMismatch(bounds.width) else {
+            resizeSettle.cancel()
+            return
         }
+        // A raster already on screen is resizing (rotation, split view,
+        // Stage Manager): keep showing it scaled and lay out once the width
+        // stops changing, not at every step. Before the first raster lands
+        // the new width is the one it first shows at, so lay out now.
+        if displayedRasterRequest != nil {
+            resizeSettle.schedule { [weak self] in self?.relayoutForCurrentWidth() }
+        } else {
+            relayoutForCurrentWidth()
+        }
+    }
+
+    private func relayoutForCurrentWidth() {
+        guard isShowingDiagram, bounds.width > 0, rasterWidthMismatch(bounds.width),
+              let code = currentCode else { return }
+        applyAsDiagram(
+            code: code,
+            palette: currentPalette ?? ThemeRuntimeState.currentPalette(),
+            availableWidth: requiresExactRasterWidth ? bounds.width : nil
+        )
     }
 
     // MARK: - Public API
@@ -258,6 +278,7 @@ final class NativeMermaidBlockView: UIView {
 
         invalidateRasterRequest()
         pendingDiagram = nil
+        resizeSettle.cancel()
 
         codeBlockView.isHidden = false
         diagramClipView.isHidden = true
@@ -294,6 +315,7 @@ final class NativeMermaidBlockView: UIView {
     }
 
     private func renderDiagramSync(code: String, palette: ThemePalette, explicitWidth: CGFloat?) {
+        resizeSettle.cancel()
         let usesExactWidth = explicitWidth != nil
         currentCode = code
         currentPalette = palette
@@ -344,6 +366,7 @@ final class NativeMermaidBlockView: UIView {
     }
 
     private func renderDiagram(code: String, palette: ThemePalette, explicitWidth: CGFloat?) {
+        resizeSettle.cancel()
         currentPalette = palette
         currentCode = code
         let usesExactWidth = explicitWidth != nil
@@ -706,6 +729,31 @@ extension NativeMermaidBlockView {
     var debugDiagramImageFrameForTesting: CGRect { diagramImageView.frame }
 }
 #endif
+
+/// Runs one action after a view's width stops changing. Each `schedule`
+/// restarts the wait, so a live resize (rotation, split view, Stage Manager)
+/// costs one Mermaid layout at the settled width instead of one per step.
+@MainActor
+final class MermaidWidthSettle {
+    static let delay: Duration = .milliseconds(150)
+
+    private var task: Task<Void, Never>?
+
+    func schedule(_ action: @escaping @MainActor () -> Void) {
+        task?.cancel()
+        task = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.delay)
+            guard !Task.isCancelled, let self else { return }
+            self.task = nil
+            action()
+        }
+    }
+
+    func cancel() {
+        task?.cancel()
+        task = nil
+    }
+}
 
 /// How a natural-size diagram sits in an inline bubble.
 ///

@@ -505,6 +505,7 @@ final class ZoomableGraphicalView: UIView, UIScrollViewDelegate {
     }
 
 #if DEBUG
+    var debugNaturalSizeForTesting: CGSize { naturalSize }
     var debugZoomScaleForTesting: CGFloat { scrollView.zoomScale }
     var debugFitScaleForTesting: CGFloat { currentFitScale() }
     var debugDoubleTapRecognizerCountForTesting: Int {

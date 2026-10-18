@@ -100,6 +100,50 @@ struct DoubleTapZoomTests {
         #expect(abs(hosted.diagram.debugZoomScaleForTesting - zoomed) < 0.02)
     }
 
+    /// A live resize (rotation, split view, Stage Manager) lays the full
+    /// screen diagram out once, at the width it settles at, and a resize that
+    /// keeps the same layout width leaves the reader's zoom alone.
+    @Test(.timeLimit(.minutes(1))) func fullScreenDiagramLaysOutOnceWhenAResizeSettles() async throws {
+        let body = NativeFullScreenRenderedDocumentBody(
+            content: .mermaid("""
+            flowchart LR
+                A[Receive webhook] --> B[Validate signature] --> C[Enqueue job]
+                C --> D[Worker picks up] --> E[Write to database] --> F[Notify subscribers]
+            """),
+            themeID: .dark,
+            palette: ThemeID.dark.palette,
+            reviewCommentSelectionRouter: nil,
+            reviewCommentSourceContext: nil
+        )
+        body.frame = CGRect(x: 0, y: 0, width: 1_000, height: 700)
+        body.layoutIfNeeded()
+        let diagram = try #require(timelineFirstView(ofType: ZoomableGraphicalView.self, in: body))
+        #expect(body.debugMermaidLayoutCountForTesting == 1, "the first width lays out at once")
+
+        diagram.debugToggleZoomForTesting(at: CGPoint(x: 200, y: 40))
+        let zoomed = diagram.debugZoomScaleForTesting
+        #expect(zoomed > diagram.debugFitScaleForTesting + 0.05)
+        // Past the widest layout width every step maps to the same layout.
+        for width in stride(from: 1_010, through: 1_200, by: 10) {
+            body.frame.size.width = CGFloat(width)
+            body.layoutIfNeeded()
+        }
+        try await Task.sleep(for: MermaidWidthSettle.delay * 3)
+        body.layoutIfNeeded()
+        #expect(body.debugMermaidLayoutCountForTesting == 1)
+        #expect(abs(diagram.debugZoomScaleForTesting - zoomed) < 0.02, "same layout, so the zoom stays")
+
+        for width in stride(from: 1_000, through: 380, by: -20) {
+            body.frame.size.width = CGFloat(width)
+            body.layoutIfNeeded()
+            #expect(body.debugMermaidLayoutCountForTesting == 1, "no layout while the width is changing")
+        }
+        try await Task.sleep(for: MermaidWidthSettle.delay * 3)
+        body.layoutIfNeeded()
+        #expect(body.debugMermaidLayoutCountForTesting == 2, "one layout once the width settles")
+        #expect(diagram.debugNaturalSizeForTesting.width <= 380, "laid out for the settled width")
+    }
+
     @Test func diagramUsesDoubleTapNotSingleTapForZoom() {
         let hosted = makeDiagram()
 
