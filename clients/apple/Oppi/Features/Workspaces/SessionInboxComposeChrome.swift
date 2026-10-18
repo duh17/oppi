@@ -44,11 +44,8 @@ enum SessionInboxComposeChrome {
 
     /// Mic is a one-tap path into Quick Session. Hide it when now-playing
     /// already owns the bar.
-    static func showsDictationShortcut(
-        voiceInputEnabled: Bool,
-        hasActivePlayback: Bool
-    ) -> Bool {
-        voiceInputEnabled && !hasActivePlayback
+    static func showsDictationShortcut(hasActivePlayback: Bool) -> Bool {
+        !hasActivePlayback
     }
 
     /// Folder stays in the trailing capsule on both lists. Enabled whenever a

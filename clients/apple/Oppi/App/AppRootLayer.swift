@@ -390,26 +390,24 @@ private struct ExtensionDialogSheet: View {
             editorTextBeforeRecording = nil
             editorPendingAttachments = []
             editorPendingRepoPointers = []
-            if ReleaseFeatures.voiceInputEnabled {
-                let manager = editorVoiceInputManager
-                await ComposerShared.cancelVoiceInputOnDismiss(manager: manager)
-                if Task.isCancelled { return }
-                configureEditorVoiceInput(manager)
-                if Task.isCancelled {
-                    if let generation = editorVoiceComposerGeneration {
-                        manager.endComposer(generation: generation)
-                        editorVoiceComposerGeneration = nil
-                    }
-                    return
+            let manager = editorVoiceInputManager
+            await ComposerShared.cancelVoiceInputOnDismiss(manager: manager)
+            if Task.isCancelled { return }
+            configureEditorVoiceInput(manager)
+            if Task.isCancelled {
+                if let generation = editorVoiceComposerGeneration {
+                    manager.endComposer(generation: generation)
+                    editorVoiceComposerGeneration = nil
                 }
-                await manager.prewarm(source: "extension_editor_task")
-                if Task.isCancelled {
-                    if let generation = editorVoiceComposerGeneration {
-                        manager.endComposer(generation: generation)
-                        editorVoiceComposerGeneration = nil
-                    }
-                    return
+                return
+            }
+            await manager.prewarm(source: "extension_editor_task")
+            if Task.isCancelled {
+                if let generation = editorVoiceComposerGeneration {
+                    manager.endComposer(generation: generation)
+                    editorVoiceComposerGeneration = nil
                 }
+                return
             }
         }
         .onAppear { isVisible = true }
@@ -474,7 +472,7 @@ private struct ExtensionDialogSheet: View {
             onFileSuggestionQuery: nil,
             session: nil,
             thinkingLevel: .medium,
-            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? editorVoiceInputManager : nil,
+            voiceInputManager: editorVoiceInputManager,
             onPrepareVoiceInput: prepareEditorVoiceInput,
             onSend: submitCurrentValue,
             onModelTap: {},

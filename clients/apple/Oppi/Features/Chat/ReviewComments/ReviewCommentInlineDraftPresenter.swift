@@ -414,7 +414,7 @@ final class ReviewCommentInlineDraftView: UIView, UITextViewDelegate {
         inputRow.layer.borderWidth = 1
         inputRow.layer.borderColor = UIColor(palette.cyan).withAlphaComponent(0.18).cgColor
 
-        if ReleaseFeatures.voiceInputEnabled, router.voiceInputManager != nil {
+        if router.voiceInputManager != nil {
             configureMicButton(palette: palette)
             inputRow.addArrangedSubview(micButton)
         }

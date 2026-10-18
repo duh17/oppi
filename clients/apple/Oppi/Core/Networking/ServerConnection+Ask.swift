@@ -12,7 +12,7 @@ extension ServerConnection {
         ) {
             syncWorkspaceSummary(workspaceId: workspaceId)
         }
-        if inserted, ReleaseFeatures.localAttentionNotificationsEnabled {
+        if inserted {
             AttentionNotificationService.shared.notifyAskIfNeeded(
                 ask,
                 activeSessionId: focusedSessionId,
@@ -65,9 +65,7 @@ extension ServerConnection {
             sessionId: sessionId
         )
         askRequestStore.remove(for: sessionId)
-        if ReleaseFeatures.localAttentionNotificationsEnabled {
-            AttentionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
-        }
+        AttentionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
 
         if let removedWorkspaceId {
             syncWorkspaceSummary(workspaceId: removedWorkspaceId)
@@ -98,9 +96,7 @@ extension ServerConnection {
             _ = askRequestStore.set(ask, for: sessionId)
         }
 
-        if ReleaseFeatures.localAttentionNotificationsEnabled {
-            AttentionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
-        }
+        AttentionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
 
         if let workspaceId = attentionWorkspaceId(
             explicitWorkspaceId: workspaceId ?? asks.first?.workspaceId,
@@ -160,16 +156,14 @@ extension ServerConnection {
             changedSessionIds.insert(removal.sessionId)
         }
 
-        if ReleaseFeatures.localAttentionNotificationsEnabled {
-            for sessionId in changedSessionIds {
-                AttentionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
-                if let nextAsk = askRequestStore.pending(for: sessionId) {
-                    AttentionNotificationService.shared.notifyAskIfNeeded(
-                        nextAsk,
-                        activeSessionId: focusedSessionId,
-                        hidesQuestionText: askTextIsLocked(nextAsk)
-                    )
-                }
+        for sessionId in changedSessionIds {
+            AttentionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
+            if let nextAsk = askRequestStore.pending(for: sessionId) {
+                AttentionNotificationService.shared.notifyAskIfNeeded(
+                    nextAsk,
+                    activeSessionId: focusedSessionId,
+                    hidesQuestionText: askTextIsLocked(nextAsk)
+                )
             }
         }
 

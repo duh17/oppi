@@ -68,10 +68,6 @@ final class MacAttentionNotificationService: NSObject, UNUserNotificationCenterD
     }
 
     func configureForLaunch() {
-        guard ReleaseFeatures.localAttentionNotificationsEnabled else {
-            return
-        }
-
         let center = UNUserNotificationCenter.current()
         center.delegate = self
 
@@ -91,9 +87,6 @@ final class MacAttentionNotificationService: NSObject, UNUserNotificationCenterD
     }
 
     func notifyAskIfNeeded(_ ask: AskRequest) {
-        guard ReleaseFeatures.localAttentionNotificationsEnabled else {
-            return
-        }
         guard postedAskIdBySession[ask.sessionId] != ask.id else {
             return
         }

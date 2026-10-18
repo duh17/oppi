@@ -5,28 +5,17 @@ import Testing
 
 @Suite("Session inbox compose chrome")
 struct SessionInboxComposeChromeTests {
-    @Test func allSessionsShowsDictationWhenVoiceIsOnAndIdle() {
+    @Test func allSessionsShowsDictationWhenIdle() {
         #expect(
             SessionInboxComposeChrome.showsDictationShortcut(
-                voiceInputEnabled: true,
                 hasActivePlayback: false
             )
         )
     }
 
-    @Test func hidesDictationWhenVoiceIsOff() {
-        #expect(
-            !SessionInboxComposeChrome.showsDictationShortcut(
-                voiceInputEnabled: false,
-                hasActivePlayback: false
-            )
-        )
-    }
-
-    @Test func workspaceListShowsDictationWhenVoiceIsOnAndIdle() {
+    @Test func workspaceListShowsDictationWhenIdle() {
         #expect(
             SessionInboxComposeChrome.showsDictationShortcut(
-                voiceInputEnabled: true,
                 hasActivePlayback: false
             )
         )
@@ -35,7 +24,6 @@ struct SessionInboxComposeChromeTests {
     @Test func hidesDictationWhileNowPlayingOwnsTheBar() {
         #expect(
             !SessionInboxComposeChrome.showsDictationShortcut(
-                voiceInputEnabled: true,
                 hasActivePlayback: true
             )
         )
@@ -394,32 +382,22 @@ struct SessionInboxSearchScopeTests {
 
 @Suite("Quick Session dictation launch")
 struct QuickSessionDictationLaunchTests {
-    @Test func autoStartsOnlyWhenPendingReadyAndEnabled() {
+    @Test func autoStartsOnlyWhenPendingAndReady() {
         #expect(
             QuickSessionDictationLaunch.shouldAutoStartDictation(
                 pendingStart: true,
-                voiceInputEnabled: true,
                 isComposerReady: true
             )
         )
         #expect(
             !QuickSessionDictationLaunch.shouldAutoStartDictation(
                 pendingStart: false,
-                voiceInputEnabled: true,
                 isComposerReady: true
             )
         )
         #expect(
             !QuickSessionDictationLaunch.shouldAutoStartDictation(
                 pendingStart: true,
-                voiceInputEnabled: false,
-                isComposerReady: true
-            )
-        )
-        #expect(
-            !QuickSessionDictationLaunch.shouldAutoStartDictation(
-                pendingStart: true,
-                voiceInputEnabled: true,
                 isComposerReady: false
             )
         )
@@ -428,20 +406,12 @@ struct QuickSessionDictationLaunchTests {
     @Test func micSkipsTypingFocusAndPencilKeepsIt() {
         #expect(
             QuickSessionDictationLaunch.afterComposerReady(
-                pendingStart: true,
-                voiceInputEnabled: true
+                pendingStart: true
             ) == .startDictation
         )
         #expect(
             QuickSessionDictationLaunch.afterComposerReady(
-                pendingStart: false,
-                voiceInputEnabled: true
-            ) == .focusForTyping
-        )
-        #expect(
-            QuickSessionDictationLaunch.afterComposerReady(
-                pendingStart: true,
-                voiceInputEnabled: false
+                pendingStart: false
             ) == .focusForTyping
         )
     }

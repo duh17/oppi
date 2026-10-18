@@ -210,10 +210,8 @@ final class AppLockService {
     /// in the foreground with the user present. Playback, including Picture in
     /// Picture, is never affected by App Lock.
     static func clearContentShownBeforeAppLock() {
-        if ReleaseFeatures.localAttentionNotificationsEnabled {
-            AttentionNotificationService.shared.removeLockSensitiveNotifications()
-            AttentionNotificationService.shared.removePairingNotifications()
-        }
+        AttentionNotificationService.shared.removeLockSensitiveNotifications()
+        AttentionNotificationService.shared.removePairingNotifications()
     }
 
     var timeout: AppLockTimeout { machine.timeout }

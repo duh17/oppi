@@ -1984,10 +1984,6 @@ final class OppiApp {
     }
 
     private func setupNotifications() async {
-        guard ReleaseFeatures.localAttentionNotificationsEnabled else {
-            return
-        }
-
         let notificationService = AttentionNotificationService.shared
         notificationService.configureForLaunch()
 

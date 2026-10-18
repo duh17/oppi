@@ -954,9 +954,7 @@ struct ChatView: View {
             }
             .task {
                 // Pre-warm voice input pipeline in background (model check + transcriber creation)
-                if ReleaseFeatures.voiceInputEnabled {
-                    await voiceInputManager.prewarm(source: "chat_view_task")
-                }
+                await voiceInputManager.prewarm(source: "chat_view_task")
             }
             .task(id: ReviewCommentLoadKey(localScopeId: reviewCommentLocalScopeId, sessionId: sessionId)) {
                 loadReviewCommentsIfPossible()
@@ -1435,7 +1433,7 @@ struct ChatView: View {
                     placeholderOverride: activeReviewCommentRequest == nil ? nil : "Comment…",
                     sendProgressText: attachmentPreparationText ?? actionHandler.sendProgressText,
                     isStopping: isStopping,
-                    voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
+                    voiceInputManager: voiceInputManager,
                     onPrepareVoiceInput: prepareChatVoiceInput,
                     showForceStop: actionHandler.showForceStop,
                     isForceStopInFlight: actionHandler.isForceStopInFlight,
@@ -1746,7 +1744,7 @@ struct ChatView: View {
                 saveReviewComment(body: body, request: request)
             },
             inlineQuickComments: QuickCommentTemplate.quickCommentTemplates(quickCommentTemplateStore.templates),
-            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
+            voiceInputManager: voiceInputManager,
             stash: reviewComments
         )
     }
@@ -3095,7 +3093,7 @@ struct ChatView: View {
             },
             session: session,
             thinkingLevel: chatState.thinkingLevel,
-            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
+            voiceInputManager: voiceInputManager,
             onPrepareVoiceInput: prepareChatVoiceInput,
             onSend: { sendComposerAction(draftClearance: .afterSuccess) },
             onModelTap: { showModelPicker = true },

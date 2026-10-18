@@ -351,16 +351,14 @@ extension ServerConnection {
             asks: response.attention.asks,
             workspaceSessionIds: workspaceSessionIds
         )
-        if ReleaseFeatures.localAttentionNotificationsEnabled {
-            for sessionId in changedAskSessionIds {
-                AttentionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
-                if let nextAsk = askRequestStore.pending(for: sessionId) {
-                    AttentionNotificationService.shared.notifyAskIfNeeded(
-                        nextAsk,
-                        activeSessionId: focusedSessionId,
-                        hidesQuestionText: askTextIsLocked(nextAsk)
-                    )
-                }
+        for sessionId in changedAskSessionIds {
+            AttentionNotificationService.shared.cancelAskNotification(sessionId: sessionId)
+            if let nextAsk = askRequestStore.pending(for: sessionId) {
+                AttentionNotificationService.shared.notifyAskIfNeeded(
+                    nextAsk,
+                    activeSessionId: focusedSessionId,
+                    hidesQuestionText: askTextIsLocked(nextAsk)
+                )
             }
         }
 

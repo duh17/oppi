@@ -92,8 +92,9 @@ private final class PairingDenyBudget: @unchecked Sendable {
 /// - App is foregrounded but the request is for a different session
 ///
 /// This keeps agent questions and extension prompts visible while working across sessions.
-/// Pushes that reach the app in the foreground show here too, unless the user is already
-/// looking at that session. Remote APNs registration lives in `PushRegistration`.
+/// Of the pushes that reach the app in the foreground, only failed-run and agent-message
+/// pushes show here, and not for the session on screen; Needs-you pushes are dropped.
+/// Remote APNs registration lives in `PushRegistration`.
 @MainActor
 final class AttentionNotificationService: NSObject, UNUserNotificationCenterDelegate {
     static let shared = AttentionNotificationService()

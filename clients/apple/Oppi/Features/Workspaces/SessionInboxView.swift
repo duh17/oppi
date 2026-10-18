@@ -1106,7 +1106,6 @@ struct SessionInboxView: View {
         SessionInboxComposeLauncher(
             joinsVerticalRail: joinsRail,
             showsDictation: SessionInboxComposeChrome.showsDictationShortcut(
-                voiceInputEnabled: ReleaseFeatures.voiceInputEnabled,
                 hasActivePlayback: sessionListHasActivePlayback
             ),
             hasActivePlayback: sessionListHasActivePlayback,

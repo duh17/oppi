@@ -434,7 +434,7 @@ struct QuickSessionSheet: View {
                 modelOverride: effectiveModelId ?? modelPresentation.pillText,
                 providerOverride: modelPresentation.pillProvider,
                 thinkingLevel: effectiveThinkingLevel,
-                voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
+                voiceInputManager: voiceInputManager,
                 onPrepareVoiceInput: prepareVoiceInputForSelectedServer,
                 onSend: handleSend,
                 onModelTap: { showModelPicker = true },
@@ -563,7 +563,7 @@ struct QuickSessionSheet: View {
                 allowsEmptySubmit: selectedAgentId == nil && !engineDecision.blocksLaunch,
                 sendProgressText: nil,
                 isStopping: false,
-                voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
+                voiceInputManager: voiceInputManager,
                 onPrepareVoiceInput: prepareVoiceInputForSelectedServer,
                 showForceStop: false,
                 isForceStopInFlight: false,
@@ -1053,13 +1053,11 @@ struct QuickSessionSheet: View {
             selectedServerId = coordinator.activeServerId
         }
 
-        if ReleaseFeatures.voiceInputEnabled {
-            let manager = VoiceInputManager.shared
-            voiceInputManager = manager
-            await ComposerShared.cancelVoiceInputOnDismiss(manager: manager)
-            if Task.isCancelled { return }
-            configureVoiceInputForSelectedServer(manager)
-        }
+        let manager = VoiceInputManager.shared
+        voiceInputManager = manager
+        await ComposerShared.cancelVoiceInputOnDismiss(manager: manager)
+        if Task.isCancelled { return }
+        configureVoiceInputForSelectedServer(manager)
 
         if let pendingPayload = QuickSessionTrigger.shared.consumePendingPayload() {
             applyInitialPayload(pendingPayload)
@@ -1070,8 +1068,7 @@ struct QuickSessionSheet: View {
         if Task.isCancelled { return }
 
         let readyAction = QuickSessionDictationLaunch.afterComposerReady(
-            pendingStart: pendingDictation,
-            voiceInputEnabled: ReleaseFeatures.voiceInputEnabled
+            pendingStart: pendingDictation
         )
         // ChatInputBar owns startVoiceInput (suppress keyboard, then record).
         // Starting from the sheet raced the bar and left the keyboard up.

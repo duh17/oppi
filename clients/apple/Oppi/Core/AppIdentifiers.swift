@@ -13,22 +13,8 @@ enum AppIdentifiers {
     static let workspaceSidebarExpandedKey = "workspace.sidebar.workspaces.expanded"
 }
 
-/// Shipping toggles for first release hardening.
-///
-/// Keep these centralized so we can re-enable features intentionally
-/// once reliability is proven.
+/// Features held back from the shipping build until they are reliable.
 enum ReleaseFeatures {
-    /// Local, in-process notifications for attention requests received while
-    /// the app has launched. Remote push is separate: it needs a paired server's
-    /// `capabilities.pushNotifications` relay and the user's opt-in (`PushRegistration`).
-    static let localAttentionNotificationsEnabled = true
-
-    /// Composer microphone button + on-device speech-to-text via SpeechAnalyzer.
-    static let voiceInputEnabled = true
-
-    /// Native saved-agent and schedule management screens.
-    static let agentAndScheduleManagementEnabled = true
-
     /// iPhone Remote Screen viewer in the workspace sidebar.
     /// Keep hidden until the current-still capture path is reliable.
     static let desktopStillEnabled = false

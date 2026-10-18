@@ -173,7 +173,7 @@ struct ExpandedComposerView: View {
 
     private var showsControlRow: Bool {
         showsAttachmentControls
-            || (showsVoiceInputControl && ReleaseFeatures.voiceInputEnabled && voiceInputManager != nil)
+            || (showsVoiceInputControl && voiceInputManager != nil)
             || showsSessionToolbar
     }
 
@@ -328,7 +328,7 @@ struct ExpandedComposerView: View {
             text = prefix + manager.currentTranscript
         }
         .onChange(of: keyboardLanguage) { _, newLanguage in
-            guard ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager else { return }
+            guard let manager = voiceInputManager else { return }
             guard AppPreferences.Keyboard.normalize(newLanguage) != nil else { return }
             Task {
                 await manager.prewarm(
@@ -377,7 +377,7 @@ struct ExpandedComposerView: View {
                         attachMenu
                     }
 
-                    if showsVoiceInputControl, ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager {
+                    if showsVoiceInputControl, let manager = voiceInputManager {
                         micButton(manager: manager)
                     }
 

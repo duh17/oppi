@@ -289,7 +289,7 @@ struct GuidedControlSessionComposer: View {
                 allowsEmptySubmit: allowsEmptyRequest,
                 sendProgressText: nil,
                 isStopping: false,
-                voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
+                voiceInputManager: voiceInputManager,
                 onPrepareVoiceInput: prepareVoiceInput,
                 showForceStop: false,
                 isForceStopInFlight: false,
@@ -532,20 +532,18 @@ struct GuidedControlSessionComposer: View {
             selectedWorkspace = workspaces.first
         }
 
-        if ReleaseFeatures.voiceInputEnabled {
-            let manager = VoiceInputManager.shared
-            await ComposerShared.cancelVoiceInputOnDismiss(manager: manager)
-            if Task.isCancelled { return }
-            configureVoiceInput(manager)
-            if Task.isCancelled {
-                if let generation = voiceComposerGeneration {
-                    manager.endComposer(generation: generation)
-                    voiceComposerGeneration = nil
-                }
-                return
+        let manager = VoiceInputManager.shared
+        await ComposerShared.cancelVoiceInputOnDismiss(manager: manager)
+        if Task.isCancelled { return }
+        configureVoiceInput(manager)
+        if Task.isCancelled {
+            if let generation = voiceComposerGeneration {
+                manager.endComposer(generation: generation)
+                voiceComposerGeneration = nil
             }
-            voiceInputManager = manager
+            return
         }
+        voiceInputManager = manager
 
         if let apiClient {
             await chatState.refreshModelCache(api: apiClient)

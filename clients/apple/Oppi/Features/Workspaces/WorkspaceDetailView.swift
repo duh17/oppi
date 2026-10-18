@@ -918,7 +918,6 @@ struct WorkspaceDetailView: View {
         SessionInboxComposeLauncher(
             joinsVerticalRail: joinsRail,
             showsDictation: SessionInboxComposeChrome.showsDictationShortcut(
-                voiceInputEnabled: ReleaseFeatures.voiceInputEnabled,
                 hasActivePlayback: connection.audioPlayer.hasActivePlayback
             ),
             hasActivePlayback: connection.audioPlayer.hasActivePlayback,

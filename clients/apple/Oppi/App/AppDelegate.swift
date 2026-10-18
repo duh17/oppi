@@ -23,9 +23,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // Before any scene connects: a cold launch with App Lock on must show
         // the lock cover before content.
         AppLockCoverController.shared.start()
-        if ReleaseFeatures.localAttentionNotificationsEnabled {
-            AttentionNotificationService.shared.configureForLaunch()
-        }
+        AttentionNotificationService.shared.configureForLaunch()
         // Also on a background launch: iOS wakes Oppi when the relay starts a Live
         // Activity, so Oppi can hand the relay the new card's update token.
         LiveActivityManager.shared.startObservingSystem()

@@ -66,7 +66,7 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
             allowsEmptySubmit: true,
             sendProgressText: uploading ? "Uploading" : nil,
             isStopping: false,
-            voiceInputManager: ReleaseFeatures.voiceInputEnabled ? voiceInputManager : nil,
+            voiceInputManager: voiceInputManager,
             showForceStop: false,
             isForceStopInFlight: false,
             askRequest: nil,
@@ -111,7 +111,7 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
     }
 
     func prepareVoice() async {
-        guard ReleaseFeatures.voiceInputEnabled, connection != nil else { return }
+        guard connection != nil else { return }
         let manager = VoiceInputManager.shared
         await ComposerShared.cancelVoiceInputOnDismiss(manager: manager)
         if Task.isCancelled { return }

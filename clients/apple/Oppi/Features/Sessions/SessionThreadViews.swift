@@ -817,7 +817,6 @@ private struct SessionThreadDetailContentView: View {
         let hasActivePlayback = connection?.audioPlayer.hasActivePlayback ?? false
         return SessionInboxCompactComposeBar(
             showsDictation: SessionInboxComposeChrome.showsDictationShortcut(
-                voiceInputEnabled: ReleaseFeatures.voiceInputEnabled,
                 hasActivePlayback: hasActivePlayback
             ),
             hasActivePlayback: hasActivePlayback,

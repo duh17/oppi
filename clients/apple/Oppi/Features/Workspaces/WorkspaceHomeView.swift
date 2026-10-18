@@ -232,13 +232,11 @@ enum WorkspaceUtilityNavTarget: Hashable {
 
     var isReleaseEnabled: Bool {
         switch self {
-        case .schedules, .agents:
-            ReleaseFeatures.agentAndScheduleManagementEnabled
         case .desktopStill:
             ReleaseFeatures.desktopStillEnabled || AppPreferences.Experiments.desktopLiveViewEnabled
         case .sshTerminal:
             AppPreferences.Experiments.sshTerminalEnabled && SSHTerminalProfileStore().hasConfiguredHost
-        case .skills, .extensions, .mcpServers, .manageServers, .serverMetrics, .appSettings:
+        case .schedules, .agents, .skills, .extensions, .mcpServers, .manageServers, .serverMetrics, .appSettings:
             true
         }
     }

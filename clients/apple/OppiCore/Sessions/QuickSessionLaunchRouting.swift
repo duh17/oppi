@@ -276,20 +276,15 @@ enum QuickSessionDictationLaunch {
 
     static func shouldAutoStartDictation(
         pendingStart: Bool,
-        voiceInputEnabled: Bool,
         isComposerReady: Bool
     ) -> Bool {
-        pendingStart && voiceInputEnabled && isComposerReady
+        pendingStart && isComposerReady
     }
 
     /// Mic skips keyboard focus so recording can start as soon as the bar is up.
-    static func afterComposerReady(
-        pendingStart: Bool,
-        voiceInputEnabled: Bool
-    ) -> AfterReadyAction {
+    static func afterComposerReady(pendingStart: Bool) -> AfterReadyAction {
         shouldAutoStartDictation(
             pendingStart: pendingStart,
-            voiceInputEnabled: voiceInputEnabled,
             isComposerReady: true
         ) ? .startDictation : .focusForTyping
     }

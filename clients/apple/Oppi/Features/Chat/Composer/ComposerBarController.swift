@@ -1676,7 +1676,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     }
 
     private func applyMicChrome() {
-        guard let host, ReleaseFeatures.voiceInputEnabled, let manager = host.content.voiceInputManager else {
+        guard let host, let manager = host.content.voiceInputManager else {
             micButton.isHidden = true
             return
         }
@@ -2095,7 +2095,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         let lang = textView.textInputMode?.primaryLanguage
         host?.setKeyboardLanguage(lang)
         AppPreferences.Keyboard.save(lang)
-        if ReleaseFeatures.voiceInputEnabled, let manager = host?.content.voiceInputManager,
+        if let manager = host?.content.voiceInputManager,
            AppPreferences.Keyboard.normalize(lang) != nil {
             Task {
                 await manager.prewarm(keyboardLanguage: lang, source: "inline_keyboard_change")

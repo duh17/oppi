@@ -436,11 +436,9 @@ final class ScopedLockService {
     /// text or session name; they follow the lock now. The Live Activity shows
     /// counts only.
     static func clearContentShownBeforeLock(_ scope: ScopedLockScope) {
-        if ReleaseFeatures.localAttentionNotificationsEnabled {
-            AttentionNotificationService.shared.removeLockSensitiveNotifications()
-            if case .server(let serverId) = scope {
-                AttentionNotificationService.shared.removePairingNotifications(serverId: serverId)
-            }
+        AttentionNotificationService.shared.removeLockSensitiveNotifications()
+        if case .server(let serverId) = scope {
+            AttentionNotificationService.shared.removePairingNotifications(serverId: serverId)
         }
     }
 }

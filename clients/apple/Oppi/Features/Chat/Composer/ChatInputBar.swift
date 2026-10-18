@@ -976,7 +976,7 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
                 onIgnoreAll: { [weak self] complete in
                     self?.controller?.submitAskResponse(request: request, answers: nil, completion: complete)
                 },
-                voiceInputManager: ReleaseFeatures.voiceInputEnabled ? parent.voiceInputManager : nil,
+                voiceInputManager: parent.voiceInputManager,
                 submittedRequestID: controller?.askSubmittedRequestID,
                 responseFailed: controller?.askFailed(for: request) ?? false,
                 autoAdvanceController: parent.autoAdvanceController

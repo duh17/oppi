@@ -98,8 +98,7 @@ struct AskCardExpanded: View {
             applyDictationTranscript(voiceInputManager?.currentTranscript ?? "", for: questionId)
         }
         .onChange(of: keyboardLanguage) { _, newLanguage in
-            guard ReleaseFeatures.voiceInputEnabled,
-                  let manager = voiceInputManager,
+            guard let manager = voiceInputManager,
                   AppPreferences.Keyboard.normalize(newLanguage) != nil else { return }
             Task {
                 await manager.prewarm(
@@ -315,7 +314,7 @@ struct AskCardExpanded: View {
 
     @ViewBuilder
     private func dictationButton(for question: AskQuestion) -> some View {
-        if ReleaseFeatures.voiceInputEnabled, let manager = voiceInputManager {
+        if let manager = voiceInputManager {
             let ownsActiveQuestion = dictationQuestionId == question.id
             let presentation = ownsActiveQuestion
                 ? ComposerShared.micButtonPresentation(for: manager, owner: .askCard)
