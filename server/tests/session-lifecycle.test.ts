@@ -1367,21 +1367,6 @@ describe("SessionManager event translation", () => {
     expect(reindexSession).toHaveBeenCalledWith("s1");
   });
 
-  it("removes ephemeral sessions from search index instead of reindexing", () => {
-    const { manager } = makeManagerHarness({ status: "busy", ephemeral: true });
-    const reindexSession = vi.fn();
-    const deleteSession = vi.fn();
-    manager.searchIndex = { reindexSession, deleteSession };
-
-    feedEvent(manager, "s1", {
-      type: "message_end",
-      message: { role: "assistant", content: [{ type: "text", text: "ignored" }] },
-    });
-
-    expect(deleteSession).toHaveBeenCalledWith("s1");
-    expect(reindexSession).not.toHaveBeenCalled();
-  });
-
   it("updates lastActivity on events", () => {
     const { manager, session } = makeManagerHarness({ status: "busy" });
     const before = session.lastActivity;

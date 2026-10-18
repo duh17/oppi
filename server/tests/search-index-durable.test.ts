@@ -146,9 +146,7 @@ describe("SearchIndex durable sessions", () => {
 
     // A new turn is picked up through the agent_end path.
     await f.turn("pangolin follow-up", "axolotl reply");
-    updateSearchIndexForSessionEvent(index, { getSession: () => session }, session.id, {
-      type: "agent_end",
-    } as never);
+    updateSearchIndexForSessionEvent(index, session.id, { type: "agent_end" } as never);
     await vi.waitFor(() => expect(index.search("axolotl")).toHaveLength(1));
     expect(index.search("pangolin")).toHaveLength(1);
     expect(index.search("zebrafish")).toHaveLength(1);

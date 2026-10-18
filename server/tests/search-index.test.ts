@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { SearchIndex } from "../src/search-index.js";
+import { updateSearchIndexForSessionEvent } from "../src/session-search-indexing.js";
 import { openDatabase } from "../src/sqlite-compat.js";
 import type { Session } from "../src/types.js";
 
@@ -1715,6 +1716,31 @@ describe("SearchIndex turn-end indexing", () => {
       await index.indexSession(session.id);
       expect(index.search("delete race token", "ws-1")).toEqual([]);
       expect(index.search("delete race later token", "ws-1")).toEqual([]);
+    } finally {
+      index.close();
+    }
+  });
+
+  it("never indexes an incognito session at turn end", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "search-index-incognito-"));
+    cleanupPaths.add(dataDir);
+    const incognito = makeFileSession(dataDir, "sess-incognito", "wombat secret", "reply", {
+      ephemeral: true,
+    });
+    const visible = makeFileSession(dataDir, "sess-visible", "wombat public", "reply");
+    const sessions = new Map([
+      [incognito.id, incognito],
+      [visible.id, visible],
+    ]);
+    const index = new SearchIndex(dataDir, (id) => sessions.get(id));
+
+    try {
+      for (const session of [incognito, visible]) {
+        updateSearchIndexForSessionEvent(index, session.id, { type: "agent_end" } as never);
+      }
+      // Joins the turn-end job each call started.
+      await Promise.all([index.indexSession(incognito.id), index.indexSession(visible.id)]);
+      expect(index.search("wombat", "ws-1").map((hit) => hit.sessionId)).toEqual([visible.id]);
     } finally {
       index.close();
     }

@@ -392,14 +392,13 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         return;
       }
       this.agentEventCoordinator.handlePiEvent(key, data);
+      updateSearchIndexForSessionEvent(this.searchIndex, key, data);
     } catch (error: unknown) {
       log.error("sessions.pi_event_handler.failed", {
         sessionId: key,
         error: error instanceof Error ? error.message : String(error),
       });
     }
-
-    updateSearchIndexForSessionEvent(this.searchIndex, this.storage, key, data);
   }
 
   // ─── Extension UI Protocol ───

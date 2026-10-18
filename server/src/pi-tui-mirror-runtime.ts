@@ -1998,7 +1998,7 @@ export class PiTuiMirrorRuntime extends EventEmitter implements AgentRuntimeTran
   private ingestAgentEvent(active: MirrorActiveSession, rawEvent: AgentSessionEvent): void {
     const event = rawEvent as SessionBackendEvent;
     this.agentEventCoordinator.handlePiEvent(active.session.id, event);
-    updateSearchIndexForSessionEvent(this.searchIndex, this.storage, active.session.id, event);
+    updateSearchIndexForSessionEvent(this.searchIndex, active.session.id, event);
   }
 
   private broadcast(sessionId: string, message: ServerMessage): number {
