@@ -9,7 +9,7 @@ export interface WorkspaceWorktree {
   branch: string | null;
   /** Short HEAD sha when available. */
   headSha: string | null;
-  /** True for the workspace hostMount checkout used by older sessions. */
+  /** True for the workspace hostMount checkout, used by sessions with no `worktreeId` or `"main"`. */
   isMain: boolean;
   /** True when the checkout came from git worktree discovery. */
   isGitRepo: boolean;

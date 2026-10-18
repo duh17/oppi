@@ -2,8 +2,9 @@ import Foundation
 
 /// A git checkout available inside a workspace.
 ///
-/// Sessions bind to a worktree at creation time. Older sessions without a
-/// `worktreeId` use the implicit main checkout.
+/// Sessions bind to a worktree at creation time. A session with no
+/// `worktreeId` (for example a quick-action session on Main) or `"main"`
+/// uses the implicit main checkout.
 struct WorkspaceWorktree: Identifiable, Codable, Sendable, Equatable, Hashable {
     let id: String
     let name: String

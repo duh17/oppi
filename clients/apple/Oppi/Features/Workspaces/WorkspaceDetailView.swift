@@ -1001,7 +1001,8 @@ struct WorkspaceDetailView: View {
                 resetWorktreeScopedState()
             }
         } catch {
-            // Worktree discovery is best-effort for older servers. Keep the main checkout visible.
+            // Worktree discovery is best-effort: older servers lack the route, and sandbox
+            // workspaces answer 409. Keep the main checkout visible.
             if worktrees.isEmpty {
                 worktrees = visibleWorktrees
             }
