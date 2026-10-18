@@ -111,6 +111,7 @@ Example:
 
 ### Fixed
 
+- **Client:** A message sent from Quick Session no longer comes back as the draft the next time you open Quick Session.
 - **Server:** An idle session no longer stops after an hour while it still waits on a background job or a supervised subagent, so the lead now wakes when that work finishes. Extensions can hold the idle timeout the same way; see [Pending wake](docs/extensions.md#pending-wake-extension-api).
 - **Server:** A background job killed by a server restart, reload, or Stop is now reported to the agent with its next turn instead of being silently lost. After a server restart (not a crash), an idle session that was waiting on a job gets the same continuation prompt as a session stopped mid-turn, so it wakes and learns which job died.
 - **Server:** Durable sessions now log failures that pi-durable does not hand back to the caller, such as a throwing extension hook or listener, as `durable_store.report` warnings in the server log. Before, they were dropped silently.

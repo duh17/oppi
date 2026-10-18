@@ -186,6 +186,8 @@ struct QuickSessionSheet: View {
     @State private var showExpandedComposer = false
     @State private var isInitialized = false
     @State private var isCreating = false
+    /// The message a successful launch sent. The closing sheet must not save it back as a draft.
+    @State private var launchedDraftPayload: ComposerDraftPayload?
     @State private var agentSubmitAttempt: AgentQuickSessionSubmitAttempt?
     @State private var error: String?
     @State private var launchFailure: AgentLaunchFailureResponse?
@@ -1145,13 +1147,19 @@ struct QuickSessionSheet: View {
         }
     }
 
-    @discardableResult
-    private func persistQuickSessionDraft() -> ComposerDraftRecord? {
-        let payload = ComposerDraftPayload(
+    private var currentDraftPayload: ComposerDraftPayload {
+        ComposerDraftPayload(
             text: text,
             repoPointers: pendingRepoPointers.map(\.composerDraftPointer),
             attachments: pendingAttachments.map(\.composerDraftMetadata)
         )
+    }
+
+    @discardableResult
+    private func persistQuickSessionDraft() -> ComposerDraftRecord? {
+        let payload = currentDraftPayload
+        // A text view echo while the sheet closes would resurrect the sent message.
+        if let launchedDraftPayload, launchedDraftPayload == payload { return nil }
         let data: [String: Data] = Dictionary(uniqueKeysWithValues: pendingAttachments.compactMap { attachment -> (String, Data)? in
             guard let data = attachment.composerDraftData else { return nil }
             return (attachment.id, data)
@@ -1492,7 +1500,8 @@ struct QuickSessionSheet: View {
         let modelId = effectiveModelId
         let thinking = thinkingLevel
         let agentThinking = agentThinkingOverride
-        let submittedDraftRevision = persistQuickSessionDraft()?.revision
+        let submittedPayload = currentDraftPayload
+        let submittedDraft = persistQuickSessionDraft()?.payload
 
         isCreating = true
         error = nil
@@ -1673,7 +1682,10 @@ struct QuickSessionSheet: View {
                     autoSendAttachments: autoSendAttachments
                 )
 
-                composerDraftStore?.clearQuickSessionDraft(ifRevision: submittedDraftRevision)
+                launchedDraftPayload = submittedPayload
+                if let submittedDraft {
+                    composerDraftStore?.clearQuickSessionDraft(ifPayload: submittedDraft)
+                }
                 onDismiss()
             } catch {
                 if let failure = error as? AgentLaunchFailureResponse {

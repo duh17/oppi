@@ -326,7 +326,7 @@ struct ComposerDraftStoreTests {
         #expect(relaunchedBeforeDebouncedClear.quickSessionDraftText.isEmpty)
     }
 
-    @Test func quickSessionRevisionGuardPreservesNewerTyping() async throws {
+    @Test func quickSessionSendClearPreservesNewerTyping() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
         let store = fixture.makeStore()
@@ -335,10 +335,28 @@ struct ComposerDraftStoreTests {
         let submitted = try #require(store.setQuickSessionDraftText("submitted draft"))
         let newer = try #require(store.setQuickSessionDraftText("newer draft"))
 
-        #expect(!store.clearQuickSessionDraft(ifRevision: submitted.revision))
+        #expect(!store.clearQuickSessionDraft(ifPayload: submitted.payload))
         #expect(store.quickSessionDraftText == "newer draft")
-        #expect(store.clearQuickSessionDraft(ifRevision: newer.revision))
+        #expect(store.clearQuickSessionDraft(ifPayload: newer.payload))
         #expect(store.quickSessionDraftText.isEmpty)
+    }
+
+    /// The sent text saved again between Send and the clear is still the sent message.
+    @Test func quickSessionSendClearsSentTextSavedAgain() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = fixture.makeStore()
+        await store.load()
+
+        let submitted = try #require(store.setQuickSessionDraftText("sent message"))
+        try #require(store.setQuickSessionDraftText("sent message"))
+
+        #expect(store.clearQuickSessionDraft(ifPayload: submitted.payload))
+        #expect(store.quickSessionDraftText.isEmpty)
+
+        let relaunched = fixture.makeStore()
+        await relaunched.load()
+        #expect(relaunched.quickSessionDraftText.isEmpty)
     }
 
     @Test func isolatesDraftsByServerWorkspaceAndSession() async throws {

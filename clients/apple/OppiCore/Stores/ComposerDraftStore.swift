@@ -535,10 +535,16 @@ final class ComposerDraftStore {
         saveLifecycleFallback(records[key])
     }
 
+    /// Clears the Quick Session draft after a send when it still holds the sent
+    /// message. Matching content, not the save revision: the composer can save the
+    /// same text again between Send and the clear, and that copy must go too.
+    /// Different text is newer typing and stays.
     @discardableResult
-    func clearQuickSessionDraft(ifRevision revision: UInt64?) -> Bool {
-        guard let key = Self.quickSessionDraftKey, let revision else { return false }
-        return clearDraft(for: key, ifRevision: revision)
+    func clearQuickSessionDraft(ifPayload payload: ComposerDraftPayload) -> Bool {
+        guard let key = Self.quickSessionDraftKey,
+              let current = records[key],
+              current.payload == payload else { return false }
+        return clearDraft(for: key, ifRevision: current.revision)
     }
 
     @discardableResult

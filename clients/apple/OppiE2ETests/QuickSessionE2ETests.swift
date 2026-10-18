@@ -166,6 +166,54 @@ final class QuickSessionE2ETests: E2ETestCase {
         dismissQuickSession()
     }
 
+    /// A sent Quick Session must not come back as the next Quick Session's draft,
+    /// whether it started from All Sessions or from a workspace's session list.
+    @MainActor
+    func testSentQuickSessionDoesNotReturnAsDraft() {
+        XCTAssertTrue(
+            waitForElementToExist(app.collectionViews["workspace.sessionList"], timeout: 20),
+            "Sessions inbox did not appear"
+        )
+
+        sendQuickSessionAndReturn("E2E_QS_SENT_FROM_INBOX \(UUID().uuidString.prefix(8))")
+        openQuickSession()
+        XCTAssertEqual(
+            app.textViews["chat.input"].value as? String, "",
+            "A message sent from All Sessions came back as the Quick Session draft"
+        )
+        dismissQuickSession()
+
+        let sessionList = app.collectionViews["workspace.sessionList"]
+        sessionList.swipeDown()
+        tap(app.buttons["workspace.sidebar.open"], named: "workspace sidebar", timeout: 10)
+        tap(app.buttons["workspace.open.e2e-workspace"], named: "E2E workspace", timeout: 10)
+        XCTAssertTrue(sessionList.waitForExistence(timeout: 15), "Workspace session list did not appear")
+
+        sendQuickSessionAndReturn("E2E_QS_SENT_FROM_WORKSPACE \(UUID().uuidString.prefix(8))")
+        openQuickSession()
+        XCTAssertEqual(
+            app.textViews["chat.input"].value as? String, "",
+            "A message sent from a workspace came back as the Quick Session draft"
+        )
+        dismissQuickSession()
+    }
+
+    /// Sends `text` through Quick Session, waits for the new chat, and goes back
+    /// to the session list the Quick Session opened from.
+    @MainActor
+    private func sendQuickSessionAndReturn(_ text: String) {
+        openQuickSession()
+        let input = app.textViews["chat.input"]
+        replaceText(in: input, with: text)
+        tap(app.buttons["chat.send"], named: "quick session send", timeout: 5)
+        _ = waitForFocusedSessionId(timeout: 30)
+        XCTAssertTrue(waitForTimelineTextContaining(text, timeout: 30), "Sent prompt did not reach the new chat")
+
+        tap(app.buttons["chat.toolbar.back"], named: "chat back button", timeout: 5)
+        let launcher = app.buttons["workspace.quickSession.start"]
+        XCTAssertTrue(waitForElementToExist(launcher, timeout: 10), "Did not return to the session list")
+    }
+
     @MainActor
     private func assertModelPickerDismissed() {
         let title = app.navigationBars["Models"]
