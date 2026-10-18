@@ -863,8 +863,7 @@ private func successfulServerInfo(appEventStream: Bool = false) -> ServerInfo {
             sessionStream: .init(version: 1),
             dictationStream: nil,
             appEventStream: appEventStream ? .init(version: 1) : nil,
-            extensionNativeUI: nil,
-            controlSessions: nil
+            extensionNativeUI: nil
         ),
         stats: .init(
             workspaceCount: 0,

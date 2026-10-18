@@ -237,7 +237,7 @@ struct GuidedControlSessionComposer: View {
     }
 
     private var isAvailable: Bool {
-        apiClient != nil && connection.controlSessionsAvailable && selectedWorkspace != nil
+        apiClient != nil && selectedWorkspace != nil
     }
 
     private var stacksControls: Bool {
@@ -487,7 +487,7 @@ struct GuidedControlSessionComposer: View {
     }
 
     private var resolvedPlaceholder: String {
-        guard apiClient != nil, connection.controlSessionsAvailable else {
+        guard apiClient != nil else {
             return "Connect to use guided \(domainTitle.lowercased()) setup"
         }
         guard selectedWorkspace != nil else { return "Choose a workspace first" }

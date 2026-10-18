@@ -1726,8 +1726,7 @@ struct ConnectionCoordinatorTests {
                 sessionStream: .init(version: 1),
                 dictationStream: nil,
                 appEventStream: appEvents ? .init(version: 1) : nil,
-                extensionNativeUI: nil,
-                controlSessions: nil
+                extensionNativeUI: nil
             ),
             stats: .init(
                 workspaceCount: 0,

@@ -559,8 +559,7 @@ private func badgeServerInfo() -> ServerInfo {
             sessionStream: .init(version: 1),
             dictationStream: nil,
             appEventStream: nil,
-            extensionNativeUI: nil,
-            controlSessions: nil
+            extensionNativeUI: nil
         ),
         stats: .init(
             workspaceCount: 0,

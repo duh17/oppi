@@ -208,7 +208,6 @@ struct WorkspaceCreateView: View {
             }
 
             if let connection = coordinator.connection(for: server.id),
-               connection.controlSessionsAvailable,
                connection.apiClient != nil {
                 Section {
                     UseOppiSessionRow(
@@ -334,7 +333,6 @@ struct WorkspaceCreateView: View {
             }
 
             if let connection = coordinator.connection(for: server.id),
-               connection.controlSessionsAvailable,
                connection.apiClient != nil {
                 Section {
                     UseOppiSessionRow(

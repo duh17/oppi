@@ -253,8 +253,7 @@ private func foregroundRecoveryServerInfo() -> ServerInfo {
             sessionStream: .init(version: 1),
             dictationStream: nil,
             appEventStream: .init(version: 1),
-            extensionNativeUI: nil,
-            controlSessions: nil
+            extensionNativeUI: nil
         ),
         stats: .init(
             workspaceCount: 0,

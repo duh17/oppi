@@ -138,7 +138,7 @@ struct WorkspaceSettingsRootView: View {
                 }
             }
 
-            if connection.controlSessionsAvailable, apiClient != nil {
+            if apiClient != nil {
                 Section {
                     UseOppiSessionRow(
                         supportingText: "Work with Oppi to revise this Workspace.",

@@ -147,8 +147,6 @@ final class ServerConnection {
     private var lanCandidateGeneration: UInt64 = 0
     private var transportConfigurationGeneration: UInt64 = 0
     private var activeTransportConfigurationGenerations: Set<UInt64> = []
-    var dictationStreamAvailable = false
-    var appEventStreamAvailable = false
     private(set) var appEventStreamTransportState: ServerHealth.TransportState = .disconnected
     /// Identity of the current connected app-event window. Equality only.
     private(set) var appEventStreamConnectedAt: Date?
@@ -204,7 +202,7 @@ final class ServerConnection {
     }
 
     func disableSplitStreamsForUnsupportedEndpoint() {
-        dictationStreamAvailable = false
+        dictationStreamUnsupportedByEndpoint = true
         missingRequiredSplitStreamCapabilities = ServerInfo.Capabilities.requiredSplitStreamCapabilityNames
         streamCapabilitiesRefreshFailed = false
         clearFocusedSessionStreamEndpoint()
@@ -259,17 +257,26 @@ final class ServerConnection {
     /// Whether the server has server dictation configured (remote dictation server or another STT backend).
     /// Updated from server capabilities and `stream_connected` messages.
     private(set) var serverDictationAvailable = false
-    private(set) var controlSessionsAvailable = false
+    /// Last capabilities snapshot from `/server/info`; nil until loaded and after a transport reset.
+    /// The `*Available` flags below read it.
+    private(set) var serverCapabilities: ServerInfo.Capabilities?
+    /// Set when the dictation stream endpoint answered 404/405/426/501. Overrides the snapshot's
+    /// dictation flag until the next capabilities load or transport reset.
+    private var dictationStreamUnsupportedByEndpoint = false
+    var dictationStreamAvailable: Bool {
+        !dictationStreamUnsupportedByEndpoint && serverCapabilities?.dictationStream?.version ?? 0 >= 1
+    }
+    var appEventStreamAvailable: Bool { serverCapabilities?.appEventStream?.version ?? 0 >= 1 }
     /// The server accepts durable-engine creates. With the experiment on, new sessions default durable.
-    private(set) var durableSessionsAvailable = false
+    var durableSessionsAvailable: Bool { serverCapabilities?.durableSessions?.version ?? 0 >= 1 }
     /// The server replicates durable conversations on the focused socket (`capabilities.conversationStream`).
-    private(set) var conversationStreamAvailable = false
+    var conversationStreamAvailable: Bool { serverCapabilities?.conversationStream?.version ?? 0 >= 1 }
     /// The server advertises experimental live H.264 (`capabilities.desktopLiveView`).
-    private(set) var desktopLiveViewAvailable = false
+    var desktopLiveViewAvailable: Bool { serverCapabilities?.desktopLiveView?.version ?? 0 >= 1 }
     /// The server reads messages aloud (`capabilities.speech`, `POST /speech`).
-    private(set) var speechAvailable = false
+    var speechAvailable: Bool { serverCapabilities?.speech?.version ?? 0 >= 1 }
     /// Relay the server pushes through (`capabilities.pushNotifications`); nil when it does not.
-    private(set) var pushRelay: URL?
+    var pushRelay: URL? { serverCapabilities?.pushRelay }
 
     /// The server pushes and the user turned push on for it, so it skips this device's push
     /// only while this device holds a live stream.
@@ -1009,13 +1016,8 @@ final class ServerConnection {
         }
         self.endpointSelection = endpointSelection
         self.connectedServerVersion = nil
-        self.dictationStreamAvailable = false
-        self.durableSessionsAvailable = false
-        self.conversationStreamAvailable = false
-        self.desktopLiveViewAvailable = false
-        self.speechAvailable = false
-        self.pushRelay = nil
-        self.appEventStreamAvailable = false
+        self.serverCapabilities = nil
+        self.dictationStreamUnsupportedByEndpoint = false
         self.appEventStreamTransportState = .disconnected
         self.missingRequiredSplitStreamCapabilities = []
         self.streamCapabilitiesLoaded = false
@@ -1394,10 +1396,6 @@ final class ServerConnection {
                 // session entry retries /server/info instead of returning nil forever.
                 self.streamCapabilitiesRefreshFailed = true
                 if !hadLoadedCapabilities {
-                    self.dictationStreamAvailable = false
-                    self.appEventStreamAvailable = false
-                    self.desktopLiveViewAvailable = false
-                    self.speechAvailable = false
                     self.disconnectAppEventStream()
                     self.missingRequiredSplitStreamCapabilities = []
                     self.streamCapabilitiesLoaded = false
@@ -1427,15 +1425,9 @@ final class ServerConnection {
     ) {
         connectedServerVersion = info.version
         let capabilities = info.capabilities
-        dictationStreamAvailable = capabilities?.dictationStream?.version ?? 0 >= 1
-        appEventStreamAvailable = capabilities?.appEventStream?.version ?? 0 >= 1
-        controlSessionsAvailable = capabilities?.controlSessions?.version ?? 0 >= 1
-        durableSessionsAvailable = capabilities?.durableSessions?.version ?? 0 >= 1
-        conversationStreamAvailable = capabilities?.conversationStream?.version ?? 0 >= 1
-        desktopLiveViewAvailable = capabilities?.desktopLiveView?.version ?? 0 >= 1
-        speechAvailable = capabilities?.speech?.version ?? 0 >= 1
         let previousRelay = pushRelay
-        pushRelay = capabilities?.pushRelay
+        serverCapabilities = capabilities
+        dictationStreamUnsupportedByEndpoint = false
         // Only a server that pushes, and that the user opted in for, gets this device's push
         // key, once per configuration. Otherwise the app never registers with APNs or the
         // relay, and never asks for notification permission.
@@ -3130,16 +3122,25 @@ final class ServerConnection {
         speech: Bool = false,
         pushRelay: URL? = nil
     ) {
-        dictationStreamAvailable = dictationStream
-        durableSessionsAvailable = durableSessions
-        conversationStreamAvailable = conversationStream
-        desktopLiveViewAvailable = desktopLiveView
-        speechAvailable = speech
-        self.pushRelay = pushRelay
-        appEventStreamAvailable = appEventStream
-        var missing: [String] = []
-        if !sessionStream { missing.append("sessionStream") }
-        missingRequiredSplitStreamCapabilities = missing
+        func version(_ enabled: Bool) -> ServerInfo.CapabilityVersion? {
+            enabled ? ServerInfo.CapabilityVersion(version: 1) : nil
+        }
+        let capabilities = ServerInfo.Capabilities(
+            sessionStream: version(sessionStream),
+            dictationStream: version(dictationStream),
+            appEventStream: version(appEventStream),
+            extensionNativeUI: nil,
+            durableSessions: version(durableSessions),
+            conversationStream: version(conversationStream),
+            desktopLiveView: version(desktopLiveView),
+            speech: version(speech),
+            pushNotifications: pushRelay.map {
+                ServerInfo.PushNotificationsCapability(version: 1, relay: $0.absoluteString)
+            }
+        )
+        serverCapabilities = capabilities
+        dictationStreamUnsupportedByEndpoint = false
+        missingRequiredSplitStreamCapabilities = capabilities.missingRequiredSplitStreamCapabilities
         streamCapabilitiesLoaded = true
     }
 #endif
