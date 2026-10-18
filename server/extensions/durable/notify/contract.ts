@@ -18,7 +18,8 @@ export const NOTIFY_BODY_MAX = 200;
 
 export const NOTIFY_DESCRIPTION =
   "Send a push notification to the user's phone when there is a result they must read: " +
-  "a report, a review, or a decision outside a question. Most turns do not need one. " +
+  "a report, a review, or a decision outside a question, or when the user asked to be " +
+  "notified about something. Most turns do not need one. " +
   "Questions, approvals, and failed runs already notify the user on their own.";
 
 export const NOTIFY_GUIDELINES = [
@@ -27,6 +28,8 @@ export const NOTIFY_GUIDELINES = [
     "Never for progress, for each step, or " +
     "for a turn that ends while you keep working (waiting on a background job or a subagent).",
   "Call it at most once per finished piece of work, as your last step before ending the turn.",
+  "If the user asked to be notified about something, such as 'notify me when the tests " +
+    "finish', call notify when it happens, even in the middle of longer work.",
   "Title: the outcome in a few words, such as 'Push relay fix landed'. Body: one or two " +
     "sentences that say what to read and where.",
   "Do not call notify before ask; ask already alerts the user.",
