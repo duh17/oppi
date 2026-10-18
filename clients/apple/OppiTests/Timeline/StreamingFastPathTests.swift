@@ -571,9 +571,8 @@ struct StreamingFastPathTests {
         )
         #expect(!completedCell.isStreamingAssistant)
         #expect(completedCell.cachedStreamingHeight == nil)
-        // A finished reply gains its Copy bar; anything beyond that is blank tail.
+        // Anything beyond the content and a read-aloud bar is blank tail.
         let actionBarHeight = assistantActionBarHeight(in: completedCell.contentView)
-        #expect(actionBarHeight > 0)
         #expect(
             abs(completedCell.frame.height - contentSizedHeight - actionBarHeight) < 1,
             "Completed assistant should return to its content-sized height without a blank tail"

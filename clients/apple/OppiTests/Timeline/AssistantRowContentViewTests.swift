@@ -454,24 +454,21 @@ struct AssistantTimelineRowContentViewTests {
     }
 
     @MainActor
-    @Test func copyButtonCopiesTheWholeFinishedReply() throws {
-        let text = "## Plan\n\nFirst `step`, then [docs](https://example.com)."
+    @Test func finishedReplyHasNoActionBarWithoutServerReadAloud() throws {
         let view = AssistantTimelineRowContentView(configuration: AssistantTimelineRowConfiguration(
-            text: text, isStreaming: false, canFork: false, onFork: nil, itemID: "a1"
+            text: "## Plan\n\nFirst step.", isStreaming: false, canFork: false, onFork: nil, itemID: "a1"
         ))
 
-        let copy = try #require(actionButton("copy", in: view))
-        #expect(isShown(copy, in: view))
         let readAloud = try #require(actionButton("readAloud", in: view))
-        #expect(!isShown(readAloud, in: view), "No server read aloud, no speaker")
-
-        UIPasteboard.general.string = "sentinel"
-        copy.sendActions(for: .primaryActionTriggered)
-        #expect(UIPasteboard.general.string == text)
+        #expect(!isShown(readAloud, in: view))
+        let size = fittedTimelineSize(for: view, width: 390)
+        view.frame = CGRect(origin: .zero, size: size)
+        view.layoutIfNeeded()
+        #expect(assistantActionBarHeight(in: view) == 0)
     }
 
     @MainActor
-    @Test func actionButtonsAreFullTouchTargetsInsideTheRow() throws {
+    @Test func readAloudButtonIsAFullTouchTargetInsideTheRow() throws {
         for style in [ChatTimelineChromeStyle.standard, .conversation] {
             let view = AssistantTimelineRowContentView(configuration: AssistantTimelineRowConfiguration(
                 text: "Answer.", isStreaming: false, canFork: false, onFork: nil, itemID: "a1",
@@ -482,17 +479,15 @@ struct AssistantTimelineRowContentViewTests {
             view.frame = CGRect(origin: .zero, size: size)
             view.layoutIfNeeded()
 
-            for name in ["copy", "readAloud"] {
-                let button = try #require(actionButton(name, in: view))
-                let frame = button.convert(button.bounds, to: view)
-                #expect(frame.width >= 44 && frame.height >= 44, "\(name) in \(style)")
-                // Every corner of the 44pt target reaches the button, not the text or bubble.
-                for point in [
-                    CGPoint(x: frame.minX + 1, y: frame.minY + 1),
-                    CGPoint(x: frame.maxX - 1, y: frame.maxY - 1),
-                ] {
-                    #expect(view.hitTest(point, with: nil) === button, "\(name) at \(point) in \(style)")
-                }
+            let button = try #require(actionButton("readAloud", in: view))
+            let frame = button.convert(button.bounds, to: view)
+            #expect(frame.width >= 44 && frame.height >= 44, "\(style)")
+            // Every corner of the 44pt target reaches the button, not the text or bubble.
+            for point in [
+                CGPoint(x: frame.minX + 1, y: frame.minY + 1),
+                CGPoint(x: frame.maxX - 1, y: frame.maxY - 1),
+            ] {
+                #expect(view.hitTest(point, with: nil) === button, "\(point) in \(style)")
             }
         }
     }
@@ -505,15 +500,12 @@ struct AssistantTimelineRowContentViewTests {
             text: "Partial", isStreaming: true, canFork: false, onFork: nil, itemID: "a1", speech: speech
         )
         let view = AssistantTimelineRowContentView(configuration: streaming)
-        let copy = try #require(actionButton("copy", in: view))
         let readAloud = try #require(actionButton("readAloud", in: view))
-        #expect(!isShown(copy, in: view))
         #expect(!isShown(readAloud, in: view))
 
         view.configuration = AssistantTimelineRowConfiguration(
             text: "Partial, now done.", isStreaming: false, canFork: false, onFork: nil, itemID: "a1", speech: speech
         )
-        #expect(isShown(copy, in: view))
         #expect(isShown(readAloud, in: view))
         #expect(readAloud.accessibilityLabel == "Read Aloud")
         readAloud.sendActions(for: .primaryActionTriggered)

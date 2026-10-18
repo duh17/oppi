@@ -8,9 +8,9 @@ import UIKit
 /// Each coalesced text tail lands immediately, then settles with one short
 /// range-only fade; there is no per-character typewriter.
 ///
-/// Long press and double-tap belong to native text selection. A finished reply
-/// shows a small action bar: Copy for the whole message and, when the server
-/// offers read aloud, a speaker that reads it with the server's TTS provider.
+/// Long press and double-tap belong to native text selection. When the server
+/// offers read aloud, a finished reply shows a speaker under it that reads the
+/// reply with the server's TTS provider.
 struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     let text: String
     let isStreaming: Bool
@@ -93,7 +93,7 @@ struct AssistantTimelineRowConfiguration: UIContentConfiguration {
     }
 }
 
-final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowInteractionProvider {
+final class AssistantTimelineRowContentView: UIView, UIContentView {
     /// Guard against non-finite/absurd Auto Layout results without truncating
     /// legitimately huge assistant messages. Very long review/write-up turns can
     /// exceed 10k points on phone-width layouts.
@@ -134,16 +134,6 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
     private var appliedChromeStyle: ChatTimelineChromeStyle?
 
     private var currentConfiguration: AssistantTimelineRowConfiguration
-
-    // MARK: - TimelineRowInteractionProvider
-
-    var copyableText: String? {
-        let text = currentConfiguration.text
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        return text
-    }
-
-    var interactionFeedbackView: UIView { bubbleContainer }
 
     init(configuration: AssistantTimelineRowConfiguration) {
         self.currentConfiguration = configuration
@@ -226,7 +216,7 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         bubbleContainer.clipsToBounds = true
 
         iconBadge.translatesAutoresizingMaskIntoConstraints = false
-        // Decorative: on a one-line reply the Copy target reaches up beside it.
+        // Decorative: on a one-line reply the speaker target reaches up beside it.
         iconBadge.isUserInteractionEnabled = false
         iconBadge.setContentCompressionResistancePriority(.required, for: .horizontal)
         iconBadge.setContentHuggingPriority(.required, for: .horizontal)
@@ -241,7 +231,6 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         contentStack.addArrangedSubview(markdownView)
         contentStack.addArrangedSubview(actionBar)
         contentStack.setCustomSpacing(-AssistantMessageActionBar.overlapAboveBar, after: markdownView)
-        actionBar.onCopy = { [weak self] in self?.performCopy() }
         actionBar.onToggleSpeech = { [weak self] in self?.currentConfiguration.speech?.toggle() }
 
         addSubview(bubbleContainer)
@@ -298,7 +287,6 @@ final class AssistantTimelineRowContentView: UIView, UIContentView, TimelineRowI
         bubbleContainer.backgroundColor = configuration.chromeStyle.assistantFill(from: palette)
         actionBar.apply(
             itemID: configuration.itemID,
-            showsCopy: !configuration.isStreaming && copyableText != nil,
             speech: configuration.isStreaming ? nil : configuration.speech,
             tint: UIColor(palette.comment)
         )
@@ -352,18 +340,16 @@ struct AssistantMessageSpeech {
     let toggle: () -> Void
 }
 
-/// Copy and read-aloud controls under a finished assistant message.
+/// Read-aloud control under a finished assistant message.
 private final class AssistantMessageActionBar: UIView {
-    var onCopy: (() -> Void)?
     var onToggleSpeech: (() -> Void)?
 
-    private let copyButton = UIButton(type: .system)
     private let speechButton = UIButton(type: .system)
     private let failureLabel = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        let stack = UIStackView(arrangedSubviews: [copyButton, speechButton, failureLabel])
+        let stack = UIStackView(arrangedSubviews: [speechButton, failureLabel])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .horizontal
         stack.alignment = .center
@@ -372,18 +358,14 @@ private final class AssistantMessageActionBar: UIView {
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            // Each glyph starts its 44pt button, so the first sits flush with
-            // the text and every touch target stays inside the bubble.
+            // The glyph starts its 44pt button, so it sits flush with the
+            // text and the touch target stays inside the bubble.
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
-            copyButton.heightAnchor.constraint(equalToConstant: Self.touchTarget),
-            copyButton.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.touchTarget),
             speechButton.heightAnchor.constraint(equalToConstant: Self.touchTarget),
             speechButton.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.touchTarget),
         ])
 
-        configure(copyButton, symbol: "doc.on.doc", label: String(localized: "Copy"))
-        copyButton.addAction(UIAction { [weak self] _ in self?.onCopy?() }, for: .primaryActionTriggered)
         configure(speechButton, symbol: "speaker.wave.2", label: String(localized: "Read Aloud"))
         speechButton.addAction(UIAction { [weak self] _ in self?.onToggleSpeech?() }, for: .primaryActionTriggered)
 
@@ -396,7 +378,7 @@ private final class AssistantMessageActionBar: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    /// Only the buttons take touches; the rest of the bar, which overlaps the
+    /// Only the button takes touches; the rest of the bar, which overlaps the
     /// space under the last line, passes them to the message text.
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)
@@ -417,14 +399,9 @@ private final class AssistantMessageActionBar: UIView {
         button.accessibilityLabel = label
     }
 
-    /// Hidden while streaming or when there is nothing to copy.
-    func apply(itemID: String?, showsCopy: Bool, speech: AssistantMessageSpeech?, tint: UIColor) {
-        isHidden = !showsCopy && speech == nil
-        copyButton.isHidden = !showsCopy
-        copyButton.tintColor = tint
-        copyButton.accessibilityIdentifier = itemID.map { "chat.timeline.assistant.\($0).copy" }
-
-        speechButton.isHidden = speech == nil
+    /// Hidden while streaming or when the server offers no read aloud.
+    func apply(itemID: String?, speech: AssistantMessageSpeech?, tint: UIColor) {
+        isHidden = speech == nil
         speechButton.tintColor = tint
         speechButton.accessibilityIdentifier = itemID.map { "chat.timeline.assistant.\($0).readAloud" }
         let state = speech?.state ?? .idle

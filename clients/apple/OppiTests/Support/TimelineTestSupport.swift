@@ -148,8 +148,8 @@ func timelineRenderedTableText(in tableView: NativeTableBlockView) -> String {
         .joined(separator: "\n")
 }
 
-/// Height a finished assistant row adds below its Markdown for the Copy /
-/// read-aloud bar (bar plus spacing); 0 while the bar is hidden.
+/// Height a finished assistant row adds below its Markdown for the read-aloud
+/// bar (bar plus spacing); 0 while the bar is hidden.
 @MainActor
 func assistantActionBarHeight(in row: UIView) -> CGFloat {
     guard let markdown = timelineFirstView(ofType: AssistantMarkdownContentView.self, in: row),

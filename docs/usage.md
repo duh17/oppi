@@ -74,7 +74,7 @@ Assistant output can open markdown, code, diffs, and other documents in full-scr
 - **On-device** uses Apple's speech APIs on the phone. Audio stays on the device. Submitting the transcript still sends the prompt to the paired server.
 - **Server** streams audio to the paired server, which forwards it to the configured speech-to-text backend.
 
-Long-press or double-tap a message to select text. A finished assistant reply has **Copy**, which copies the whole reply as Markdown, and, when the server has read aloud configured, a speaker that reads the reply aloud with the server's voice (tap again to stop). See [Read aloud](server-configuration.md#read-aloud).
+Long-press or double-tap a message to select text. When the server has read aloud configured, a finished assistant reply has a speaker that reads the reply aloud with the server's voice (tap again to stop). See [Read aloud](server-configuration.md#read-aloud).
 
 Selecting text shows a microphone first in the edit menu, followed by **Comment**. The microphone opens the same comment draft (the chat input bar, or the inline comment box in full-screen viewers) and starts dictating into it.
 

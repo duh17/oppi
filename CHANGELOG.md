@@ -83,7 +83,7 @@ Example:
 
 ### Changed
 
-- **Client:** Long-press and double-tap on your messages and assistant replies select text instead of opening a Copy menu or copying the whole message. A finished reply has a **Copy** button underneath for the whole message.
+- **Client:** Long-press and double-tap on your messages and assistant replies select text instead of opening a Copy menu or copying the whole message.
 - **Client:** **Settings → Chat → Style** picks Full, Compact, or Chat. Chat is a messaging layout: your prompts are bubbles and each turn's work folds into one pill. It replaces the Compact Turns toggle.
 - **Client:** Mermaid diagrams lay out for the width they are shown at, in chat and full screen, instead of one phone-sized canvas that was then shrunk. A diagram that would overflow tightens its spacing, rewraps labels, or turns top to bottom (or, for mindmaps and timelines, switches to an outline or top-down layout), whichever keeps its text largest.
 - **Client:** Scrolling up in a chat loads earlier messages before you reach the top, without moving what you are reading. The **Show earlier messages** button is gone.
