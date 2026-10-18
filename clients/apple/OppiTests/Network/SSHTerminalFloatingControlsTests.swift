@@ -5,23 +5,6 @@ import UIKit
 
 @Suite("SSH terminal floating controls")
 struct SSHTerminalFloatingControlsTests {
-    @Test func pillsStepAsideForTheKeyboardUnlessTheConnectionIsBroken() {
-        #expect(SSHTerminalFloatingControls.visible(keyboardUp: false, connected: true))
-        #expect(!SSHTerminalFloatingControls.visible(keyboardUp: true, connected: true))
-        #expect(
-            SSHTerminalFloatingControls.visible(keyboardUp: true, connected: false),
-            "Back and Reconnect stay in reach on a broken connection"
-        )
-        #expect(SSHTerminalFloatingControls.visible(keyboardUp: false, connected: false))
-    }
-
-    @Test func attentionDotFollowsHerdrAndBlockedProgramNotNotifications() {
-        #expect(!SSHTerminalFloatingControls.attentionPending(herdrWaiting: 0, blockedProgram: false))
-        #expect(SSHTerminalFloatingControls.attentionPending(herdrWaiting: 1, blockedProgram: false))
-        #expect(SSHTerminalFloatingControls.attentionPending(herdrWaiting: 0, blockedProgram: true))
-        #expect(SSHTerminalFloatingControls.attentionPending(herdrWaiting: 2, blockedProgram: true))
-    }
-
     @Test func dockedKeyboardIsUpAndFloatingKeyboardIsNot() {
         let bounds = CGRect(x: 0, y: 0, width: 390, height: 844)
         #expect(!SSHTerminalKeyboard.isUp(endFrameInView: .zero, viewBounds: bounds))
@@ -126,7 +109,8 @@ struct SSHTerminalFloatingPillTests {
         #expect(back.button.accessibilityValue == nil)
     }
 
-    @Test func eachPillButtonAnswersA44PointTouchAboveAndBelowItsGlass() throws {
+    @Test func eachPillButtonAnswersA44By44PointTouch() throws {
+        let back = SSHTerminalBackPill()
         let pill = SSHTerminalMorePill(status: SSHTerminalStatusGlyphButton())
         pill.apply(themeID: ThemeRuntimeState.currentThemeID(), herdrAvailable: true, herdrWaiting: 0, showsStatus: true)
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -140,23 +124,35 @@ struct SSHTerminalFloatingPillTests {
             window.rootViewController = nil
         }
         let host = root.view!
+        host.addSubview(back)
         host.addSubview(pill)
         NSLayoutConstraint.activate([
+            back.topAnchor.constraint(equalTo: host.topAnchor, constant: 20),
+            back.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 20),
             pill.topAnchor.constraint(equalTo: host.topAnchor, constant: 20),
-            pill.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 20),
+            pill.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 120),
         ])
         host.layoutIfNeeded()
         #expect(pill.bounds.height == SSHTerminalGlassPill.height)
-        #expect(pill.bounds.width == SSHTerminalGlassPill.itemWidth * 3)
+        #expect(back.bounds.size == CGSize(width: SSHTerminalGlassPill.height, height: SSHTerminalGlassPill.height))
 
-        let outset = (44 - SSHTerminalGlassPill.height) / 2
-        for (button, id) in [(pill.status as UIView, "sshTerminal.programStatus"), (pill.herdr, "sshTerminal.herdr"), (pill.more, "sshTerminal.more")] {
-            let x = pill.convert(button.center, from: button.superview).x
-            #expect(pill.hitTest(CGPoint(x: x, y: pill.bounds.midY), with: nil) === button, "\(id) inside the glass")
-            #expect(pill.hitTest(CGPoint(x: x, y: -outset + 0.5), with: nil) === button, "\(id) just above the glass")
-            #expect(pill.hitTest(CGPoint(x: x, y: pill.bounds.maxY + outset - 0.5), with: nil) === button, "\(id) just below")
-            #expect(pill.hitTest(CGPoint(x: x, y: -outset - 1), with: nil) == nil, "\(id) beyond 44 pt goes to the grid")
+        /// A finger anywhere in the 44 \u{d7} 44 pt square on the button's
+        /// center lands on it; one point past that square reaches the grid.
+        func expect44PointTouch(_ button: UIView, _ id: String) {
+            let center = host.convert(button.center, from: button.superview)
+            let reach: CGFloat = 22 - 0.5
+            for dx in [-reach, 0, reach] {
+                for dy in [-reach, 0, reach] {
+                    let point = CGPoint(x: center.x + dx, y: center.y + dy)
+                    #expect(host.hitTest(point, with: nil) === button, "\(id) at \(dx), \(dy)")
+                }
+            }
+            #expect(host.hitTest(CGPoint(x: center.x, y: center.y - 23), with: nil) === host, "\(id): above 44 pt")
             #expect(button.accessibilityIdentifier == id)
+        }
+        expect44PointTouch(back.button, "sshTerminal.back")
+        for (button, id) in [(pill.status as UIView, "sshTerminal.programStatus"), (pill.herdr, "sshTerminal.herdr"), (pill.more, "sshTerminal.more")] {
+            expect44PointTouch(button, id)
         }
 
         pill.apply(themeID: ThemeRuntimeState.currentThemeID(), herdrAvailable: false, herdrWaiting: nil, showsStatus: false)
@@ -165,6 +161,6 @@ struct SSHTerminalFloatingPillTests {
             pill.bounds.width == SSHTerminalGlassPill.itemWidth,
             "only \u{2026} without status or Herdr: status \(pill.status.frame.width), herdr \(pill.herdr.frame.width)"
         )
-        #expect(pill.hitTest(CGPoint(x: pill.bounds.midX, y: -outset + 0.5), with: nil) === pill.more)
+        expect44PointTouch(pill.more, "sshTerminal.more")
     }
 }

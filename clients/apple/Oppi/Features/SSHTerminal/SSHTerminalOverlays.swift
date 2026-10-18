@@ -10,12 +10,13 @@ final class SSHTerminalPassthroughView: UIView {
 
 /// Glass capsule for the terminal's floating controls. The glass is 36 pt
 /// tall so it covers as little of the grid as it can; a touch up to 4 pt
-/// above or below it still reaches the nearest button, so each one answers
-/// a 44 pt target.
+/// outside it still reaches the nearest button. Items are 44 pt wide, and
+/// the 36 pt Back circle gets the same 4 pt at its sides, so every button
+/// answers a 44 × 44 pt touch.
 class SSHTerminalGlassPill: UIView {
     static let height: CGFloat = 36
-    static let itemWidth: CGFloat = 38
-    private static let touchOutset = (44 - height) / 2
+    static let itemWidth: CGFloat = 44
+    static let touchOutset = (44 - height) / 2
 
     let stack = UIStackView()
     private let glass = UIVisualEffectView(effect: {
@@ -54,7 +55,7 @@ class SSHTerminalGlassPill: UIView {
     required init?(coder: NSCoder) { nil }
 
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        bounds.insetBy(dx: 0, dy: -Self.touchOutset).contains(point)
+        bounds.insetBy(dx: -Self.touchOutset, dy: -Self.touchOutset).contains(point)
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
@@ -62,7 +63,7 @@ class SSHTerminalGlassPill: UIView {
             return nil
         }
         if bounds.contains(point), let hit = super.hitTest(point, with: event), hit !== self { return hit }
-        // Above or below the glass: the button in that column.
+        // Around the glass: the nearest button's column.
         let buttons = stack.arrangedSubviews.filter { !$0.isHidden && $0.isUserInteractionEnabled }
         return buttons.min {
             abs(convert($0.center, from: stack).x - point.x) < abs(convert($1.center, from: stack).x - point.x)
