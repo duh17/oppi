@@ -42,9 +42,14 @@ else
   npm install --ignore-scripts
 fi
 
+# The package build also copies the bundled docs and durable package manifests;
+# the server refuses to open its durable runtime without them.
 echo "Building..."
-"$RT" node_modules/@typescript/native/bin/tsc
-chmod +x dist/src/cli.js
+if [[ "$RT" == "bun" ]]; then
+  bun run build
+else
+  npm run build
+fi
 
 # Start
 if [[ "${1:-}" == "--install" ]]; then
