@@ -81,7 +81,6 @@ struct ChatView: View {
 
     @Environment(ServerConnection.self) private var connection
     @Environment(ChatSessionState.self) private var chatState
-    @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var durableSessionsExperimentEnabled = false
     @Environment(AskRequestStore.self) private var askRequestStore
     @Environment(SessionStore.self) private var sessionStore
     @Environment(AudioPlayerService.self) private var audioPlayer
@@ -1743,7 +1742,7 @@ struct ChatView: View {
             cost: session?.cost,
             terminalMirrorIndicator: TerminalMirrorIndicatorPresentation(session: session),
             maxWidth: chatPrincipalTitleMaxWidth,
-            showsDurableLabel: durableSessionsExperimentEnabled && session?.engine == .durable,
+            isDurableEngine: session?.engine == .durable,
             subtitle: conversationTitleSubtitle
         )
     }
@@ -3219,7 +3218,12 @@ struct ChatSessionTitleView: View {
     let terminalMirrorIndicator: TerminalMirrorIndicatorPresentation?
     let maxWidth: CGFloat
     /// Durable Sessions experiment: marks a durable-engine session.
-    var showsDurableLabel = false
+    var isDurableEngine = false
+    /// Read here, not in `ChatView`: SwiftUI invalidates an `@AppStorage`
+    /// reader on every `UserDefaults` write in the process, whatever the key,
+    /// and in the chat's body each write rebuilt the whole chat and its
+    /// timeline host.
+    @AppStorage(AppPreferences.Experiments.durableSessionsKey) private var durableSessionsExperimentEnabled = false
     /// Conversation layout: model and thinking under the title, e.g.
     /// "gpt-5 \u{00B7} High".
     var subtitle: String? = nil
@@ -3268,7 +3272,7 @@ struct ChatSessionTitleView: View {
                 TerminalMirrorIndicatorView(presentation: terminalMirrorIndicator)
             }
 
-            if showsDurableLabel {
+            if isDurableEngine && durableSessionsExperimentEnabled {
                 Text("Durable")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.themeComment)

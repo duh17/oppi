@@ -56,6 +56,32 @@ struct ChatViewOutlineColdStateTests {
         #expect(snapshot.controllerOwnedApplyCount >= 1)
     }
 
+    /// Telemetry, crash context, and system classes write `UserDefaults` at
+    /// any moment; none of that is chat state.
+    @Test func unrelatedDefaultsWriteDoesNotRebuildTimelineHost() async {
+        let fixture = makeMountedChatView()
+        defer { fixture.tearDown() }
+
+        let settled = await settleMountedChatView(fixture)
+        #expect(settled, "Expected ChatView timeline to settle before the write")
+        fixture.host.view.layoutIfNeeded()
+
+        let key = "oppi.tests.unrelated-defaults-write"
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+        ChatTimelinePerf.reset()
+        UserDefaults.standard.set(UUID().uuidString, forKey: key)
+
+        // A rebuild lands on the next render pass; give it a few.
+        let rebuilt = await waitForTimelineCondition(timeoutMs: 300) {
+            await MainActor.run {
+                fixture.host.view.setNeedsLayout()
+                fixture.host.view.layoutIfNeeded()
+                return ChatTimelinePerf.snapshot().hostUpdateUIViewCount > 0
+            }
+        }
+        #expect(!rebuilt, "A UserDefaults write must not rebuild ChatView or call updateUIView")
+    }
+
     @Test func sessionRebindIsolatesOldReducerFromHostUpdates() async throws {
         let sessionA = "cold-a-\(UUID().uuidString)"
         let sessionB = "cold-b-\(UUID().uuidString)"
