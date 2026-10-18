@@ -2,28 +2,6 @@ import Foundation
 import Observation
 import UIKit
 
-/// Starts and ends the background task that keeps live terminals running for
-/// the grace period. `UIApplication` in the app; a fake in tests.
-@MainActor
-protocol SSHBackgroundTasks {
-    /// Nil when iOS refuses. `expiration` runs on the main actor when iOS is
-    /// about to suspend the process; the task must be ended by then.
-    func begin(expiration: @escaping @MainActor () -> Void) -> UIBackgroundTaskIdentifier?
-    func end(_ task: UIBackgroundTaskIdentifier)
-}
-
-@MainActor
-struct UIApplicationBackgroundTasks: SSHBackgroundTasks {
-    func begin(expiration: @escaping @MainActor () -> Void) -> UIBackgroundTaskIdentifier? {
-        let task = UIApplication.shared.beginBackgroundTask(withName: "oppi.ssh.terminal.grace", expirationHandler: expiration)
-        return task == .invalid ? nil : task
-    }
-
-    func end(_ task: UIBackgroundTaskIdentifier) {
-        UIApplication.shared.endBackgroundTask(task)
-    }
-}
-
 /// Owns every live SSH terminal for the app, so a terminal outlives the screen
 /// that opened it.
 ///
@@ -88,7 +66,8 @@ final class SSHTerminalRegistry {
     @ObservationIgnored private var attempts: [UUID: Attempt] = [:]
     @ObservationIgnored private var inBackground = false
     @ObservationIgnored private var grace: Grace?
-    @ObservationIgnored private let backgroundTasks: any SSHBackgroundTasks
+    /// Keeps live terminals running for the grace period.
+    @ObservationIgnored private let backgroundTasks: any AppBackgroundTasks
     @ObservationIgnored private let sleep: @Sendable (Duration) async throws -> Void
     @ObservationIgnored private let experimentEnabled: @MainActor () -> Bool
     @ObservationIgnored private var flagObserver: FlagObserver?
@@ -101,7 +80,7 @@ final class SSHTerminalRegistry {
     }
 
     init(
-        backgroundTasks: any SSHBackgroundTasks = UIApplicationBackgroundTasks(),
+        backgroundTasks: any AppBackgroundTasks = UIApplicationBackgroundTasks(name: "oppi.ssh.terminal.grace"),
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
         defaults: UserDefaults = .standard,
         experimentEnabled: @escaping @MainActor () -> Bool = { AppPreferences.Experiments.sshTerminalEnabled }

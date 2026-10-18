@@ -1,23 +1,70 @@
 import os
 import UIKit
 
+/// Starts and ends one UIKit background task. `UIApplication` in the app; a fake in tests.
+@MainActor
+protocol AppBackgroundTasks {
+    /// Nil when iOS refuses. `expiration` runs on the main actor when iOS is
+    /// about to suspend the process; the task must be ended by then.
+    func begin(expiration: @escaping @MainActor () -> Void) -> UIBackgroundTaskIdentifier?
+    func end(_ task: UIBackgroundTaskIdentifier)
+}
+
+@MainActor
+struct UIApplicationBackgroundTasks: AppBackgroundTasks {
+    let name: String
+
+    func begin(expiration: @escaping @MainActor () -> Void) -> UIBackgroundTaskIdentifier? {
+        let task = UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expiration)
+        return task == .invalid ? nil : task
+    }
+
+    func end(_ task: UIBackgroundTaskIdentifier) {
+        UIApplication.shared.endBackgroundTask(task)
+    }
+}
+
 /// Keeps the app process alive while agents are actively working.
 ///
-/// Uses `UIApplication.beginBackgroundTask` to prevent iOS from suspending
-/// the process when agents are in `busy` or `starting` status. This keeps
-/// the WebSocket alive so status updates arrive promptly and session re-entry
-/// doesn't require a multi-second TLS reconnect.
+/// Uses a background task to prevent iOS from suspending the process when
+/// agents are in `busy` or `starting` status. This keeps the WebSocket alive
+/// so status updates arrive promptly and session re-entry doesn't require a
+/// multi-second TLS reconnect.
 ///
 /// The task ends when:
 /// - All sessions leave busy/starting state (observed via polling)
 /// - The app returns to foreground (`end()` called)
-/// - iOS expires the background task (~30s, but often longer on modern devices)
+/// - iOS expires the background task (~30s, but often longer on modern devices).
+///   The streams then close with goingAway, as when nothing was busy, and the
+///   foreground reconnect reopens them. A task left running at expiration gets
+///   the process killed.
 @MainActor
-struct BackgroundKeepAlive {
+final class BackgroundKeepAlive {
     private static let log = Logger(subsystem: AppIdentifiers.subsystem, category: "BackgroundKeepAlive")
+    private static let pollInterval: Duration = .seconds(5)
 
-    private var taskID: UIBackgroundTaskIdentifier = .invalid
-    private var pollingTask: Task<Void, Never>?
+    /// One keep-alive window. A class: iOS may call the expiration handler
+    /// before `begin` returns, and a stale handler must recognize it is not
+    /// the current window.
+    private final class Window {
+        var identifier: UIBackgroundTaskIdentifier?
+        var polling: Task<Void, Never>?
+        /// The window is finished; its task is ended once its identifier is known.
+        var over = false
+        var taskEnded = false
+    }
+
+    private let backgroundTasks: any AppBackgroundTasks
+    private let sleep: @Sendable (Duration) async throws -> Void
+    private var window: Window?
+
+    init(
+        backgroundTasks: any AppBackgroundTasks = UIApplicationBackgroundTasks(name: "agent-keep-alive"),
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) {
+        self.backgroundTasks = backgroundTasks
+        self.sleep = sleep
+    }
 
     /// Shared predicate used both before starting and while polling. It must
     /// include inactive server connections because their agents continue work
@@ -31,17 +78,27 @@ struct BackgroundKeepAlive {
     }
 
     /// Begin background execution if any agent on any connection is active.
-    mutating func begin(coordinator: ConnectionCoordinator) {
-        guard taskID == .invalid else { return }
+    func begin(coordinator: ConnectionCoordinator) {
+        guard window == nil else { return }
 
-        taskID = UIApplication.shared.beginBackgroundTask(withName: "agent-keep-alive") {
+        // Set before `begin`: iOS may call the expiration handler before it returns.
+        let current = Window()
+        window = current
+        let identifier = backgroundTasks.begin { [weak self, weak coordinator] in
             Self.log.error("Background task expired by OS")
-            // Can't mutate self in the expiration handler directly,
-            // but the task will be invalidated. Next foreground `end()` cleans up.
+            guard let self else { return }
+            if self.window === current { coordinator?.prepareAllForBackground() }
+            self.finish(current)
         }
-
-        guard taskID != .invalid else {
+        guard let identifier else {
+            window = nil
             Self.log.warning("OS denied background task request")
+            return
+        }
+        current.identifier = identifier
+        if current.over {
+            // The expiration handler already ran inside `begin`.
+            finish(current)
             return
         }
 
@@ -50,17 +107,14 @@ struct BackgroundKeepAlive {
         Self.log.warning("Background keep-alive started (remaining: \(remainingDesc))")
 
         // Poll session status — end when no agents are busy.
-        let capturedTaskID = taskID
-        pollingTask = Task { @MainActor [weak coordinator] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(5))
-                guard !Task.isCancelled else { break }
-
-                guard let coordinator else { break }
-                if !Self.hasActiveAgent(in: coordinator.connections.values) {
+        current.polling = Task { [weak self, weak coordinator, sleep] in
+            while true {
+                do { try await sleep(Self.pollInterval) } catch { return }
+                guard !Task.isCancelled else { return }
+                guard let coordinator, Self.hasActiveAgent(in: coordinator.connections.values) else {
                     Self.log.info("No active agents — ending background keep-alive")
-                    UIApplication.shared.endBackgroundTask(capturedTaskID)
-                    break
+                    self?.finish(current)
+                    return
                 }
 
                 let left = UIApplication.shared.backgroundTimeRemaining
@@ -71,13 +125,19 @@ struct BackgroundKeepAlive {
     }
 
     /// End background execution (called on foreground or when no longer needed).
-    mutating func end() {
-        pollingTask?.cancel()
-        pollingTask = nil
+    func end() {
+        if let window { finish(window) }
+    }
 
-        if taskID != .invalid {
-            UIApplication.shared.endBackgroundTask(taskID)
-            taskID = .invalid
+    /// Ends this window's background task exactly once. Before `begin` returned
+    /// the identifier is unknown; `begin` ends it then.
+    private func finish(_ current: Window) {
+        if window === current { window = nil }
+        current.polling?.cancel()
+        current.over = true
+        if let identifier = current.identifier, !current.taskEnded {
+            current.taskEnded = true
+            backgroundTasks.end(identifier)
         }
     }
 }

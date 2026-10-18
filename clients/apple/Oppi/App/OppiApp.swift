@@ -433,7 +433,7 @@ final class OppiApp {
     @ObservationIgnored private var pendingSessionDeepLinkId: String?
     @ObservationIgnored private let resourceReferenceRequestCoordinator = ResourceReferenceRequestCoordinator()
     @ObservationIgnored private var foregroundReconnectGate = ForegroundReconnectGate()
-    @ObservationIgnored private var backgroundKeepAlive = BackgroundKeepAlive()
+    @ObservationIgnored private let backgroundKeepAlive = BackgroundKeepAlive()
     @ObservationIgnored private var scenePhase: ScenePhase = .inactive
     @ObservationIgnored private var appEventObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var hasConnectedScene = false

@@ -383,8 +383,9 @@ private final class SleepGate: Sendable {
     func open() { sink.yield(()) }
 }
 
+/// Shared by the background keep-alive tests.
 @MainActor
-private final class FakeBackgroundTasks: SSHBackgroundTasks {
+final class FakeBackgroundTasks: AppBackgroundTasks {
     var denies = false
     /// Runs the expiration handler before `begin` returns.
     var expireInsideBegin = false

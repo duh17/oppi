@@ -993,6 +993,37 @@ struct ConnectionCoordinatorTests {
         #expect(!BackgroundKeepAlive.hasActiveAgent(in: coordinator.connections.values))
     }
 
+    /// iOS kills the process when a background task is still running at expiration.
+    @Test(arguments: [false, true])
+    func keepAliveEndsItsTaskOnceWhenIOSExpiresIt(expireInsideBegin: Bool) {
+        let (coordinator, _) = makeCoordinator()
+        let tasks = FakeBackgroundTasks()
+        tasks.expireInsideBegin = expireInsideBegin
+        let keepAlive = BackgroundKeepAlive(backgroundTasks: tasks, sleep: { _ in try await Task.sleep(for: .seconds(3_600)) })
+
+        keepAlive.begin(coordinator: coordinator)
+        tasks.expire()
+        #expect(tasks.endedIDs == [tasks.identifier])
+
+        keepAlive.end() // foreground
+        #expect(tasks.endedCount == 1)
+    }
+
+    @Test func keepAliveEndsItsTaskOnceWhenAgentsGoIdleBeforeForeground() async {
+        let (coordinator, _) = makeCoordinator()
+        let tasks = FakeBackgroundTasks()
+        let keepAlive = BackgroundKeepAlive(backgroundTasks: tasks, sleep: { _ in })
+
+        keepAlive.begin(coordinator: coordinator)
+        await tasks.waitForEnd()
+        keepAlive.end() // foreground
+        #expect(tasks.endedIDs == [tasks.identifier])
+
+        // The next background starts a new window.
+        keepAlive.begin(coordinator: coordinator)
+        #expect(tasks.began == 2)
+    }
+
     @Test func foregroundRecoveryRefreshesInactiveBusyServer() async {
         let (coordinator, _) = makeCoordinator()
         let selected = makeServer(id: "sha256:fg-selected", name: "Selected")
