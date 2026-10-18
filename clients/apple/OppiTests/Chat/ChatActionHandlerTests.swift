@@ -227,6 +227,34 @@ struct ChatActionHandlerTests {
         #expect(queuedOperation != nil, "Prompt send should enqueue an async task")
     }
 
+    /// Leaving the chat closes its stream before the ack. A frame that already
+    /// went out then counts as sent, so the composer does not keep it as a draft.
+    /// The same lost ack with the chat still open fails the send as before.
+    @Test func unconfirmedSendCountsAsSentOnlyAfterChatLeft() async {
+        for leaves in [true, false] {
+            let (connection, pipe) = makeEventFlowAckTestConnection(timeout: .milliseconds(60))
+            connection._sendMessageForTesting = { _ in }
+            let handler = ChatActionHandler()
+            let outcome = SendOutcome()
+
+            _ = handler.sendPrompt(
+                text: "sent then left",
+                attachments: [],
+                isBusy: false,
+                connection: connection,
+                reducer: TimelineReducer(),
+                sessionId: "s1",
+                onDispatchStarted: { if leaves { handler.cleanup() } },
+                onSendSucceeded: { outcome.value = "succeeded" },
+                onAsyncFailure: { _, _ in outcome.value = "failed" }
+            )
+
+            #expect(await waitForTestCondition(timeout: .seconds(3)) { await outcome.value != nil })
+            #expect(outcome.value == (leaves ? "succeeded" : "failed"), "leaves=\(leaves)")
+            _ = pipe
+        }
+    }
+
     @Test func sendPromptIgnoresTapWhileSendInFlight() async {
         let handler = ChatActionHandler()
         let reducer = TimelineReducer()
@@ -1716,4 +1744,9 @@ struct ChatActionHandlerTests {
         #expect(hasRenameError)
     }
 
+}
+
+@MainActor
+private final class SendOutcome {
+    var value: String?
 }

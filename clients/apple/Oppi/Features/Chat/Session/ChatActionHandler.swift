@@ -20,6 +20,9 @@ final class ChatActionHandler {
     private(set) var sendAckStage: TurnAckStage?
     private(set) var reconnectFailureMessage: String?
     private var forceStopTask: Task<Void, Never>?
+    /// Set when the chat leaves (`cleanup()`), cleared by the next send. Leaving
+    /// closes the chat's stream, which fails a just-sent turn's ack wait.
+    private(set) var hasLeftChat = false
 
     /// Test seam: override async task launch to simulate scheduling races.
     var _launchTaskForTesting: (((@escaping @MainActor () async -> Void)) -> Void)?
@@ -114,6 +117,7 @@ final class ChatActionHandler {
         guard !isSending else { return text }
 
         isSending = true
+        hasLeftChat = false
         // Dispatch needs this chat's own live focused socket, re-checked inside
         // the task right before sending. Otherwise the stream is (re)bound first
         // and nothing is dispatched or shown as sent until it is ready.
@@ -190,6 +194,10 @@ final class ChatActionHandler {
                         try? await connection.requestMessageQueue(sessionIdOverride: sessionId)
                     }
                 } catch {
+                    if self.wasDeliveredBeforeChatLeft(error) {
+                        onSendSucceeded?()
+                        return
+                    }
                     connection.messageQueueStore.removeQueuedItem(
                         for: sessionId,
                         kind: queuedKind,
@@ -271,6 +279,11 @@ final class ChatActionHandler {
                         sessionStore: sessionStore
                     )
                 } catch {
+                    if self.wasDeliveredBeforeChatLeft(error) {
+                        onSendSucceeded?()
+                        self.isSending = false
+                        return
+                    }
                     self.clearSendStageNow()
                     self.recordUnconfirmedTurnIfNeeded(
                         error,
@@ -844,6 +857,14 @@ final class ChatActionHandler {
         )
     }
 
+    /// The turn frame reached the socket and only this chat's own leave lost
+    /// the ack (leaving closes its stream). Treat it as sent: failing it kept the
+    /// delivered message as the chat's draft, and reopening the chat showed it
+    /// again. A network failure while the chat is open still fails the send.
+    private func wasDeliveredBeforeChatLeft(_ error: Error) -> Bool {
+        hasLeftChat && error is TurnSendUnconfirmedError
+    }
+
     private func clearUnconfirmedTurn(clientTurnId: String) {
         if unconfirmedTurn?.clientTurnId == clientTurnId {
             unconfirmedTurn = nil
@@ -976,5 +997,6 @@ final class ChatActionHandler {
         clearSendStageNow()
         isSending = false
         isAwaitingSendReadiness = false
+        hasLeftChat = true
     }
 }

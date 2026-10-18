@@ -2356,7 +2356,9 @@ struct ChatView: View {
 
     @MainActor
     private func dismissKeyboardAfterSuccessfulComposerSubmissionIfIdle() {
-        guard composerDraftController.mode == .message,
+        // A send that settles after the chat left must not dismiss another screen's keyboard.
+        guard !actionHandler.hasLeftChat,
+              composerDraftController.mode == .message,
               composerDraftController.text.isEmpty,
               composerDraftController.repoPointers.isEmpty,
               pendingAttachments.isEmpty,
