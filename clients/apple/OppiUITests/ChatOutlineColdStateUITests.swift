@@ -96,7 +96,19 @@ final class ChatOutlineColdStateUITests: XCTestCase {
         XCTAssertEqual(
             diagnostic(app, "chat.outline.harness.hostUpdateUIViewCount"),
             "0",
-            "Streaming while Session Outline is open must not increment hostUpdateUIViewCount"
+            "Streaming into the open Session Outline must never re-render the chat"
+        )
+        // Opening the outline re-renders the chat only to follow a resize: a
+        // panel beside the chat narrows it once; a sheet over it does not.
+        let resized = diagnostic(app, "chat.outline.harness.openResizedTimeline") == "1"
+        let openUpdates = Int(diagnostic(app, "chat.outline.harness.openHostUpdateUIViewCount"))
+        XCTAssertNotNil(openUpdates, "Harness did not report the open-phase host update count")
+        XCTAssertLessThanOrEqual(
+            openUpdates ?? .max,
+            resized ? 1 : 0,
+            resized
+                ? "Opening Session Outline resized the timeline: at most one host update to follow it"
+                : "Opening Session Outline without resizing the timeline must not re-render the chat"
         )
         XCTAssertTrue(outlineBar.exists, "Open-outline stream must leave Session Outline presented")
 

@@ -1227,12 +1227,48 @@ struct ChatView: View {
         TrailingSidePanelPolicy.usesTrailingColumn(horizontalSizeClass: horizontalSizeClass)
     }
 
-    /// The open panel, wherever the width puts it.
-    private var activeSidePanel: ChatSidePanel? {
-        if isFilePanelVisible { return .files }
-        if showOutline { return .outline }
-        if showContextInspector { return .context }
-        return nil
+    /// The trailing column's panel, derived from the three open flags in the
+    /// modifier's own body. The flags are `@State`: deriving the column item in
+    /// the chat's body re-rendered the whole chat (its timeline included,
+    /// through `updateUIView`) on every open and close, the same as the modal
+    /// presenters' binding (`ChatAuxiliaryPresentation`). The Files toolbar
+    /// button still reads `isFilePanelVisible` in the body for its icon, tint,
+    /// and label, so opening Files still re-renders the chat.
+    private struct ChatTrailingSidePanel: ViewModifier {
+        let isActive: Bool
+        @Binding var isFilePanelVisible: Bool
+        @Binding var showOutline: Bool
+        @Binding var showContextInspector: Bool
+        let screen: (ChatSidePanel) -> RouterScreen
+
+        /// The open panel, wherever the width puts it.
+        private var activeSidePanel: ChatSidePanel? {
+            if isFilePanelVisible { return .files }
+            if showOutline { return .outline }
+            if showContextInspector { return .context }
+            return nil
+        }
+
+        func body(content: Content) -> some View {
+            content.routerTrailingColumn(
+                item: isActive ? activeSidePanel : nil,
+                minWidth: 320,
+                idealWidth: 400,
+                screen: screen
+            )
+        }
+    }
+
+    /// Tints a rail button while its panel is open in the trailing column. A
+    /// compact-width sheet covers the chat, so it needs no tint. The flag is
+    /// read here, not in the chat's body (`ChatTrailingSidePanel`).
+    private struct OpenPanelTint: ViewModifier {
+        let tracksOpenPanel: Bool
+        @Binding var isOpen: Bool
+
+        func body(content: Content) -> some View {
+            content.foregroundStyle(tracksOpenPanel && isOpen ? .themeBlue : .themeFg)
+        }
     }
 
     /// Outline and Context are UIKit screens; Files is hosted SwiftUI with the
@@ -1259,12 +1295,13 @@ struct ChatView: View {
             // its bar, timeline, and composer. The panel runs in its own
             // screen, so the chat's own values go on explicitly
             // (`chatSidePanel`).
-            .routerTrailingColumn(
-                item: usesTrailingSidePanel ? activeSidePanel : nil,
-                minWidth: 320,
-                idealWidth: 400,
+            .modifier(ChatTrailingSidePanel(
+                isActive: usesTrailingSidePanel,
+                isFilePanelVisible: $isFilePanelVisible,
+                showOutline: $showOutline,
+                showContextInspector: $showContextInspector,
                 screen: chatSidePanel
-            )
+            ))
             // On the side rail the system draws the title as its own strip
             // above the timeline. The rail session menu carries the name.
             .navigationTitle(railEdge == nil ? sessionDisplayName : "")
@@ -1699,7 +1736,7 @@ struct ChatView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(sidePanel && showOutline ? .themeBlue : .themeFg)
+        .modifier(OpenPanelTint(tracksOpenPanel: sidePanel, isOpen: $showOutline))
         .accessibilityLabel("Open session outline")
         .accessibilityIdentifier("chat.toolbar.outline")
     }

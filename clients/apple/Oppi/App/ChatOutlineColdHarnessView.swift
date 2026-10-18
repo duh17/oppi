@@ -71,6 +71,8 @@ struct ChatOutlineColdHarnessView: View {
     @State private var probe = ChatOutlineColdHarnessProbeState()
     @State private var pendingSeedSessionId: String?
     @State private var armStreamOnOutline = false
+    /// The timeline's width when the stream was armed, before the outline opens.
+    @State private var timelineWidthBeforeOpen: CGFloat = 0
 
     private var sessionId: String { session.id }
 
@@ -124,6 +126,7 @@ struct ChatOutlineColdHarnessView: View {
                 tryPendingSeed()
             }
             probeButton("Arm stream", id: "chat.outline.harness.armStream") {
+                timelineWidthBeforeOpen = timelineCollectionView()?.bounds.width ?? 0
                 armStreamOnOutline = true
             }
             probeButton("Reset perf", id: "chat.outline.harness.resetPerf") {
@@ -162,6 +165,13 @@ struct ChatOutlineColdHarnessView: View {
     private func tryArmedStream() {
         guard armStreamOnOutline, isOutlinePresented() else { return }
         armStreamOnOutline = false
+        // Two phases, measured apart: opening the outline (it may resize the
+        // chat, as a column beside it does), then streaming into it, which
+        // never re-renders the chat.
+        let openWidth = timelineCollectionView()?.bounds.width ?? 0
+        probe.openHostUpdateUIViewCount = ChatTimelinePerf.snapshot().hostUpdateUIViewCount
+        probe.openResizedTimeline = openWidth != timelineWidthBeforeOpen
+        ChatTimelinePerf.reset()
         stream()
     }
 
@@ -226,18 +236,28 @@ struct ChatOutlineColdHarnessView: View {
         return nil
     }
 
+    /// Whether Session Outline is on screen, as a modal (compact width) or the
+    /// trailing column (regular width, where nothing is presented): its
+    /// controller's root view sits in a window, whichever container holds it,
+    /// and no transition is running (a child reports its parent's: the sheet
+    /// presents the navigation controller around the outline).
     private func isOutlinePresented() -> Bool {
         for scene in UIApplication.shared.connectedScenes {
             guard let windowScene = scene as? UIWindowScene else { continue }
-            for window in windowScene.windows {
-                if let presented = window.rootViewController?.presentedViewController,
-                   !presented.isBeingPresented,
-                   presented.viewIfLoaded?.window != nil {
-                    return true
-                }
+            for window in windowScene.windows where containsSettledOutline(window) {
+                return true
             }
         }
         return false
+    }
+
+    private func containsSettledOutline(_ view: UIView) -> Bool {
+        if let outline = view.next as? SessionOutlineViewController,
+           outline.transitionCoordinator == nil,
+           outline.viewIfLoaded?.window != nil {
+            return true
+        }
+        return view.subviews.contains { containsSettledOutline($0) }
     }
 
     private func highlightedItemId(
@@ -363,6 +383,8 @@ private struct ChatOutlineColdHarnessDiagnostics: View {
             "chat.outline.harness.controllerOwnedApplyCount",
             String(probe.controllerOwnedApplyCount)
         )
+        diagnostic("chat.outline.harness.openHostUpdateUIViewCount", String(probe.openHostUpdateUIViewCount))
+        diagnostic("chat.outline.harness.openResizedTimeline", probe.openResizedTimeline ? "1" : "0")
         diagnostic("chat.outline.harness.topVisibleItemId", probe.topVisibleItemId)
         diagnostic("chat.outline.harness.targetItemId", probe.targetItemId)
         diagnostic("chat.outline.harness.highlightedItemId", probe.highlightedItemId)
@@ -387,6 +409,10 @@ private final class ChatOutlineColdHarnessProbeState {
     var outlineAvailable = false
     var hostUpdateUIViewCount = 0
     var controllerOwnedApplyCount = 0
+    /// `hostUpdateUIViewCount` when the outline finished opening, and whether
+    /// opening changed the timeline's width.
+    var openHostUpdateUIViewCount = 0
+    var openResizedTimeline = false
     var topVisibleItemId = ""
     var targetItemId = ChatOutlineColdHarnessConfig.targetItemID
     var highlightedItemId = ""
