@@ -478,6 +478,33 @@ struct SSHTerminalTests {
         }
     }
 
+    @Test func softwareTextInputMapsKeysAndCommitsMarkedTextOnce() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        let input = grid as UITextInput
+        #expect(grid is UITextInput)
+        #expect(input.spellCheckingType == .no)
+        #expect(input.autocorrectionType == .no)
+        #expect(input.hasText)
+        var bytes = fixture.bytes.makeAsyncIterator()
+        input.insertText("ab")
+        #expect(await bytes.next() == Data("a".utf8))
+        #expect(await bytes.next() == Data("b".utf8))
+        #expect(input.hasText)
+        input.deleteBackward()
+        #expect(await bytes.next() == Data([127]))
+        #expect(input.hasText)
+        input.setMarkedText("に", selectedRange: NSRange(location: 1, length: 0))
+        input.insertText("に")
+        input.unmarkText()
+        #expect(await bytes.next() == Data("に".utf8))
+        input.insertText("z")
+        #expect(await bytes.next() == Data("z".utf8))
+        channel.close(reason: "done")
+    }
+
     @Test func namedActionsPreserveBindingsAndLeaveTheModifierForExplicitKeys() async throws {
         let fixture = TerminalConnectionFixture()
         let channel = try SSHTerminalChannel()

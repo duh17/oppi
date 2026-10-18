@@ -54,8 +54,9 @@ struct SSHTerminalDisplayLinkPolicy: Equatable {
 
 /// Mounted work is only the viewport grid, not one UITextView for scrollback.
 /// libghostty owns history/reflow/alternate screen; UIKit paints copied cells
-/// at fixed positions and supplies UIKeyInput and physical-key events.
-final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+/// at fixed positions and supplies UITextInput and physical-key events.
+/// Software ⌫ auto-repeats only for UITextInput; UIKeyInput fires once.
+final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     let channel: SSHTerminalChannel
     let requestPaste: (String?) -> Void
     let followChanged: (Bool) -> Void
@@ -81,9 +82,18 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
     private var lastGeometry: SSHTerminalGeometry?
     private var keyStrip: SSHTerminalKeyStripView?
     /// A hardware key is sent from pressesBegan only. While one is down,
-    /// UIKeyInput's insertText/deleteBackward and the edit-menu paste are
-    /// echoes of the same press and must not send again.
+    /// insertText/deleteBackward and the edit-menu paste are echoes of the
+    /// same press and must not send again. Ended or cancelled presses are
+    /// ignored so a stale UIPress cannot swallow software ⌫ repeats.
     private var hardwarePresses = Set<UIPress>()
+    /// Dummy document the software keyboard deletes from; never echoed.
+    var textInputStorage = SSHTerminalTextInputStorage()
+    weak var inputDelegate: UITextInputDelegate?
+    var markedTextStyle: [NSAttributedString.Key: Any]?
+    lazy var textInputTokenizer: UITextInputTokenizer = UITextInputStringTokenizer(textInput: self)
+    var ignoresSoftwareKeyEcho: Bool {
+        hardwarePresses.contains { $0.phase != .ended && $0.phase != .cancelled }
+    }
     /// UIKit does not repeat pressesBegan for a held key, so repeats are ours.
     private let keyRepeater = SSHTerminalKeyRepeater()
     private var repeatingPress: UIPress?
@@ -166,6 +176,8 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
     var smartQuotesType: UITextSmartQuotesType { get { .no } set { _ = newValue } }
     var smartDashesType: UITextSmartDashesType { get { .no } set { _ = newValue } }
     var smartInsertDeleteType: UITextSmartInsertDeleteType { get { .no } set { _ = newValue } }
+    var spellCheckingType: UITextSpellCheckingType { get { .no } set { _ = newValue } }
+    var inlinePredictionType: UITextInlinePredictionType { get { .no } set { _ = newValue } }
     var keyboardType: UIKeyboardType { get { .asciiCapable } set { _ = newValue } }
     override var inputAccessoryView: UIView? { bar }
 
@@ -370,18 +382,28 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
     }
 
     func insertText(_ text: String) {
-        guard hardwarePresses.isEmpty else { return }
-        for character in text {
-            let text = String(character)
-            let key = Self.logicalKey(text)
-            channel.key(key, text: key == GHOSTTY_KEY_ENTER || key == GHOSTTY_KEY_TAB ? "" : text)
-        }
-        showModifiers()
+        applyTextInput(textInputStorage.insertText(text, hardwareKeysDown: ignoresSoftwareKeyEcho))
     }
 
     func deleteBackward() {
-        guard hardwarePresses.isEmpty else { return }
-        accessoryKey(GHOSTTY_KEY_BACKSPACE)
+        applyTextInput(textInputStorage.deleteBackward(hardwareKeysDown: ignoresSoftwareKeyEcho))
+    }
+
+    func applyTextInput(_ actions: [SSHTerminalTextInputStorage.Action]) {
+        guard !actions.isEmpty else { return }
+        for action in actions {
+            switch action {
+            case .insert(let text):
+                for character in text {
+                    let piece = String(character)
+                    let key = Self.logicalKey(piece)
+                    channel.key(key, text: key == GHOSTTY_KEY_ENTER || key == GHOSTTY_KEY_TAB ? "" : piece)
+                }
+            case .backspace:
+                channel.key(GHOSTTY_KEY_BACKSPACE)
+            }
+        }
+        showModifiers()
     }
     private func accessoryKey(_ key: GhosttyKey) {
         channel.key(key)
@@ -496,7 +518,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
     }
     /// The edit menu's Paste. iOS grants that read without the Allow Paste alert.
     override func paste(_ sender: Any?) {
-        guard hardwarePresses.isEmpty else { return }
+        guard !ignoresSoftwareKeyEcho else { return }
         requestPaste(UIPasteboard.general.string)
     }
 
@@ -513,6 +535,7 @@ final class SSHTerminalGridView: UIView, UIKeyInput, UIScrollViewDelegate, UIGes
     }
     override func resignFirstResponder() -> Bool {
         hardwarePresses.removeAll()
+        textInputStorage.reset()
         keyRepeater.stop()
         keyStrip?.stopRepeating()
         let resigned = super.resignFirstResponder()
