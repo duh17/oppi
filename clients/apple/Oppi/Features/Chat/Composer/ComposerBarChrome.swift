@@ -122,7 +122,7 @@ final class ComposerCircleActionButton: UIButton {
         foreground: UIColor,
         showsProgress: Bool,
         diameter: CGFloat = ComposerInputMetrics.controlDiameter,
-        font: UIImage.SymbolWeight = .semibold
+        symbol: UIImage.SymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 15, weight: .bold)
     ) {
         visualDiameter = diameter
         var config = UIButton.Configuration.plain()
@@ -138,20 +138,54 @@ final class ComposerCircleActionButton: UIButton {
             config.showsActivityIndicator = true
         } else {
             config.showsActivityIndicator = false
-            config.image = UIImage(
-                systemName: systemImage,
-                withConfiguration: UIImage.SymbolConfiguration(pointSize: diameter * 0.38, weight: font)
-            )
+            config.image = UIImage(systemName: systemImage)
+            config.preferredSymbolConfigurationForImage = symbol
         }
         configuration = config
         invalidateIntrinsicContentSize()
     }
 }
 
-/// Glass capsule used for attach and busy-mode, with a 44pt minimum hit region.
+/// The composer's action pills are shorter than a comfortable touch. Each pill,
+/// and each container that holds pills, accepts touches across a 44pt band
+/// around its bounds; the action row's own bounds still clip that band.
+enum ComposerHitTarget {
+    static let minimumSide: CGFloat = 44
+
+    static func contains(_ point: CGPoint, in bounds: CGRect) -> Bool {
+        bounds.insetBy(
+            dx: min(0, (bounds.width - minimumSide) / 2),
+            dy: min(0, (bounds.height - minimumSide) / 2)
+        ).contains(point)
+    }
+}
+
+/// Holds action pills without clipping their hit band to the pills' height.
+final class ComposerPillStackView: UIStackView {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        ComposerHitTarget.contains(point, in: bounds)
+    }
+}
+
+/// Scrolling row of action pills; see `ComposerPillStackView`.
+final class ComposerPillScrollView: UIScrollView {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        ComposerHitTarget.contains(point, in: bounds)
+    }
+}
+
+/// Glass capsule used for attach and busy-mode. Matches the SwiftUI
+/// `.glassEffect(.regular, in: Capsule())` pills: clear glass under plain
+/// content, so the label keeps the theme foreground instead of the dark
+/// glyphs a glass button configuration picks over the composer.
 final class ComposerGlassPillButton: UIButton {
+    private let glassView = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
+
     override init(frame: CGRect) {
         super.init(frame: frame)
+        glassView.isUserInteractionEnabled = false
+        glassView.clipsToBounds = true
+        insertSubview(glassView, at: 0)
         configurationUpdateHandler = { button in
             button.alpha = button.isEnabled ? (button.isHighlighted ? 0.82 : 1) : 0.45
         }
@@ -159,6 +193,14 @@ final class ComposerGlassPillButton: UIButton {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        glassView.frame = bounds
+        glassView.layer.cornerRadius = bounds.height / 2
+        glassView.layer.cornerCurve = .continuous
+        sendSubviewToBack(glassView)
+    }
 
     override var intrinsicContentSize: CGSize {
         if configuration?.title == nil, configuration?.image != nil {
@@ -168,10 +210,7 @@ final class ComposerGlassPillButton: UIButton {
     }
 
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        bounds.insetBy(
-            dx: min(0, (bounds.width - 44) / 2),
-            dy: min(0, (bounds.height - 44) / 2)
-        ).contains(point)
+        ComposerHitTarget.contains(point, in: bounds)
     }
 
     func apply(
@@ -182,11 +221,11 @@ final class ComposerGlassPillButton: UIButton {
         symbolPointSize: CGFloat = 13,
         weight: UIImage.SymbolWeight = .semibold
     ) {
-        var config = UIButton.Configuration.glass()
-        config.cornerStyle = .capsule
+        var config = UIButton.Configuration.plain()
+        config.background.backgroundColor = .clear
         config.baseForegroundColor = colors.fg
-        let vertical: CGFloat = title == nil ? 6 : 8
-        config.contentInsets = NSDirectionalEdgeInsets(top: vertical, leading: 12, bottom: vertical, trailing: 12)
+        let horizontal: CGFloat = title == nil ? 12 : 11
+        config.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: horizontal, bottom: 6, trailing: horizontal)
         config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { incoming in
             var outgoing = incoming
             outgoing.font = UIFont.preferredFont(forTextStyle: .caption1).withWeight(.semibold)
@@ -208,19 +247,25 @@ final class ComposerGlassPillButton: UIButton {
             config.imagePlacement = .trailing
             config.image = UIImage(
                 systemName: "chevron.up.chevron.down",
-                withConfiguration: UIImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+                withConfiguration: UIImage.SymbolConfiguration(
+                    pointSize: UIFont.preferredFont(forTextStyle: .caption2).pointSize,
+                    weight: .semibold
+                )
             )
             config.imagePadding = 5
         }
-        config.background.backgroundColor = colors.floatingFill
         configuration = config
         invalidateIntrinsicContentSize()
     }
 }
 
 /// Model / thinking / agent / workspace pill. Matches the SwiftUI `PillLabel`
-/// (caption2, 11pt icon, trailing chevron) with a 44pt hit target.
+/// (caption2, 11pt icon, trailing chevron, 21pt capsule) with a 44pt hit band.
 final class ComposerToolbarPillButton: UIButton {
+    private static let horizontalPadding: CGFloat = 10
+    private static let verticalPadding: CGFloat = 2
+    private static let minimumContentHeight: CGFloat = 17
+
     private let glassView = UIVisualEffectView(effect: UIGlassEffect(style: .regular))
     private let stack = UIStackView()
     private let iconView = UIImageView()
@@ -267,20 +312,30 @@ final class ComposerToolbarPillButton: UIButton {
             glassView.trailingAnchor.constraint(equalTo: trailingAnchor),
             glassView.topAnchor.constraint(equalTo: topAnchor),
             glassView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.horizontalPadding),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.horizontalPadding),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: Self.verticalPadding),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.verticalPadding),
             iconW,
             iconH,
             chevronView.widthAnchor.constraint(equalToConstant: 9),
             chevronView.heightAnchor.constraint(equalToConstant: 11),
-            stack.heightAnchor.constraint(greaterThanOrEqualToConstant: 17),
+            stack.heightAnchor.constraint(greaterThanOrEqualToConstant: Self.minimumContentHeight),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+
+    /// Sized by the label, not UIButton's empty-content default (about
+    /// 30×34), which squeezed the title away and made the pill tall.
+    override var intrinsicContentSize: CGSize {
+        let content = stack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        return CGSize(
+            width: ceil(content.width) + Self.horizontalPadding * 2,
+            height: max(ceil(content.height), Self.minimumContentHeight) + Self.verticalPadding * 2
+        )
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -297,10 +352,7 @@ final class ComposerToolbarPillButton: UIButton {
     }
 
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        bounds.insetBy(
-            dx: min(0, (bounds.width - 44) / 2),
-            dy: min(0, (bounds.height - 44) / 2)
-        ).contains(point)
+        ComposerHitTarget.contains(point, in: bounds)
     }
 
     func apply(
@@ -320,6 +372,7 @@ final class ComposerToolbarPillButton: UIButton {
         iconWidthConstraint?.constant = icon == nil ? 0 : 11
         iconHeightConstraint?.constant = icon == nil ? 0 : 11
         glassView.backgroundColor = colors.floatingFill.withAlphaComponent(0.001)
+        invalidateIntrinsicContentSize()
     }
 }
 

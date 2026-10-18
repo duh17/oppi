@@ -117,7 +117,11 @@ final class MicButtonChromeView: UIControl {
         orbView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(orbView)
 
-        imageView.contentMode = .scaleAspectFit
+        // Glyphs are drawn at their symbol point size, as `MicButtonLabel` does,
+        // and never size the button.
+        imageView.contentMode = .center
+        imageView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        imageView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         imageView.isUserInteractionEnabled = false
         imageView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(imageView)
@@ -247,7 +251,10 @@ final class MicButtonChromeView: UIControl {
         if listeningChrome {
             if engineBadge == .remote {
                 imageView.isHidden = false
-                imageView.image = UIImage(systemName: "cloud")
+                imageView.image = UIImage(
+                    systemName: "cloud",
+                    withConfiguration: UIImage.SymbolConfiguration(pointSize: diameter * 0.38, weight: .bold)
+                )
                 imageView.tintColor = indicator
                 textLabel.isHidden = true
             } else {
@@ -259,7 +266,10 @@ final class MicButtonChromeView: UIControl {
             }
         } else {
             imageView.isHidden = false
-            imageView.image = UIImage(systemName: "mic")
+            imageView.image = UIImage(
+                systemName: "mic",
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: diameter * 0.47, weight: .bold)
+            )
             imageView.tintColor = indicator.withAlphaComponent(engineBadge == .auto ? 0.75 : 1)
             textLabel.isHidden = true
         }

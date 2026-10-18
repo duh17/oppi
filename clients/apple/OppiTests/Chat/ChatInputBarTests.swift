@@ -1529,17 +1529,6 @@ struct ChatInputBarTests {
 
     @Test("Focus token stays pending until the field has a window and becomeFirstResponder succeeds")
     func focusRequestStaysPendingUntilWindowedBecomeFirstResponder() throws {
-        let source = try composerSource(named: "ComposerBarController.swift")
-        let attempt = try chatInputBarSourceSlice(
-            named: "private func attemptFocusIfRequested() {",
-            until: "private func applyTextHeight",
-            in: source
-        )
-        #expect(attempt.contains("guard textView.window != nil else { return }"))
-        #expect(attempt.contains("guard textView.becomeFirstResponder() else { return }"))
-        #expect(attempt.contains("host.consumeFocusRequest()"))
-        #expect(!attempt.contains("host?.consumeFocusRequest()\n            DispatchQueue.main.async"))
-
         let host = ComposerBarTestHost()
         host.content.focusRequestID = 7
         let controller = ComposerBarController()
@@ -1670,6 +1659,102 @@ struct ChatInputBarTests {
         )
         window.rootViewController = nil
         window.isHidden = true
+    }
+
+    @Test("A draft set outside typing (dictation, restore) shows expand once it reaches the inline budget")
+    func programmaticLongDraftShowsExpand() {
+        let host = ComposerBarTestHost()
+        let controller = ComposerBarController()
+        controller.host = host
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.view.layoutIfNeeded()
+        controller.apply()
+        #expect(!showsExpand(in: controller.view))
+
+        // One paragraph, no line breaks: it reaches the threshold only by wrapping.
+        host.text = String(repeating: "Dictated words keep flowing into the composer. ", count: 8)
+        controller.apply()
+        #expect(showsExpand(in: controller.view))
+
+        // Sending clears the draft without a keystroke.
+        host.text = ""
+        controller.apply()
+        #expect(!showsExpand(in: controller.view))
+        window.rootViewController = nil
+        window.isHidden = true
+    }
+
+    @Test("A busy bar keeps its idle height while the busy-mode tip is not presented")
+    func busyBarReservesNoSpaceForAbsentTip() {
+        let host = ComposerBarTestHost()
+        host.content.alwaysShowActionRow = false
+        // A draft keeps Send as the primary control in both states; an empty
+        // busy bar shows the slightly larger Stop instead.
+        host.text = "steer"
+        let controller = ComposerBarController()
+        controller.host = host
+        _ = controller.view
+        controller.apply()
+        let idle = controller.sizeThatFits(width: 390).height
+
+        host.content.isBusy = true
+        controller.apply()
+        #expect(controller.sizeThatFits(width: 390).height == idle)
+
+        controller.setBusyTipHeight(70)
+        #expect(controller.sizeThatFits(width: 390).height == idle + 70)
+        controller.setBusyTipHeight(0)
+        #expect(controller.sizeThatFits(width: 390).height == idle)
+
+        // A tip still showing when the turn ends must not hold space in the
+        // next busy turn before that turn's tip reports a height.
+        controller.setBusyTipHeight(70)
+        host.content.isBusy = false
+        controller.apply()
+        host.content.isBusy = true
+        controller.apply()
+        #expect(controller.sizeThatFits(width: 390).height == idle)
+    }
+
+    @Test("Toolbar pills size to their full title as short capsules")
+    func toolbarPillsFitTheirTitle() throws {
+        let host = ComposerBarTestHost()
+        host.content.actionRow = .sessionToolbar(
+            modelTitle: "routes",
+            modelProvider: nil,
+            thinkingLevel: .medium,
+            thinkingTint: .systemBlue,
+            supportedThinkingLevels: ThinkingLevel.allCases,
+            colors: .placeholder,
+            onModelTap: {},
+            onThinkingSelect: { _ in },
+            onSaveThinkingAsDefault: nil
+        )
+        let controller = ComposerBarController()
+        controller.host = host
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.apply()
+        controller.view.layoutIfNeeded()
+
+        let model = try #require(descendant(in: controller.view, identifier: "session.toolbar.model"))
+        let font = UIFont.monospacedDigitSystemFont(
+            ofSize: UIFont.preferredFont(forTextStyle: .caption2).pointSize,
+            weight: .medium
+        )
+        let titleWidth = ("routes" as NSString).size(withAttributes: [.font: font]).width
+        #expect(model.bounds.width >= titleWidth + 20)
+        #expect(model.bounds.height <= 24)
+        window.rootViewController = nil
+        window.isHidden = true
+    }
+
+    private func showsExpand(in root: UIView) -> Bool {
+        if root.accessibilityIdentifier == "chat.expand", !root.isHidden { return true }
+        return root.subviews.contains { showsExpand(in: $0) }
     }
 
     private func descendant(in root: UIView, identifier: String) -> UIView? {

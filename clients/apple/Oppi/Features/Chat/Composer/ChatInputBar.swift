@@ -157,7 +157,9 @@ struct ChatInputBar: View {
     @Environment(\.composerDraftStore) private var composerDraftStore
     @Environment(\.composerMediaImportGate) private var mediaImportGate
     @State private var askHeight: CGFloat = 0
-    @State private var askHeightRevision = 0
+    /// Bumped when a hosted slot (Ask card, busy-mode tip) changes height
+    /// outside a SwiftUI update, so SwiftUI measures the bar again.
+    @State private var slotHeightRevision = 0
     @State private var suppressKeyboard = false
     @State private var focusRequestID = 0
     @State private var keyboardLanguage: String?
@@ -219,7 +221,7 @@ struct ChatInputBar: View {
                 composerDraftStore: composerDraftStore,
                 mediaImportGate: mediaImportGate,
                 askHeight: $askHeight,
-                askHeightRevision: $askHeightRevision,
+                slotHeightRevision: $slotHeightRevision,
                 suppressKeyboard: $suppressKeyboard,
                 focusRequestID: $focusRequestID,
                 keyboardLanguage: $keyboardLanguage,
@@ -618,7 +620,7 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
     var composerDraftStore: ComposerDraftStore?
     var mediaImportGate: ComposerMediaImportGate?
     @Binding var askHeight: CGFloat
-    @Binding var askHeightRevision: Int
+    @Binding var slotHeightRevision: Int
     @Binding var suppressKeyboard: Bool
     @Binding var focusRequestID: Int
     @Binding var keyboardLanguage: String?
@@ -648,7 +650,7 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
         uiViewController controller: ComposerBarController,
         context: Context
     ) -> CGSize? {
-        _ = askHeightRevision
+        _ = slotHeightRevision
         let proposed = proposal.width ?? 0
         let fallback = controller.view.bounds.width
         let safeWidth: CGFloat
@@ -944,9 +946,15 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
             let next = max(height, 0)
             if abs(parent.askHeight - next) > 0.5 {
                 parent.askHeight = next
-                parent.askHeightRevision += 1
+                parent.slotHeightRevision += 1
             }
             controller?.setAskHeight(next)
+            controller?.view.invalidateIntrinsicContentSize()
+        }
+
+        private func commitTipHeight(_ height: CGFloat) {
+            guard controller?.setBusyTipHeight(height) == true else { return }
+            parent.slotHeightRevision += 1
             controller?.view.invalidateIntrinsicContentSize()
         }
 
@@ -991,11 +999,20 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
                 return
             }
             guard let root = HostFactory.root(near: controller) else { return }
+            // The tip claims height only while it is presented; report that so
+            // the bar does not keep an empty band once the tip is learned.
             let tip = FeatureEducationTipBannerHost(
                 tip: FeatureEducationTips.BusySendModeTip(),
                 descriptor: FeatureEducationTips.busySendMode,
                 contentInsets: EdgeInsets(top: 8, leading: 12, bottom: 2, trailing: 12)
             )
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.height
+            } action: { [weak self] height in
+                DispatchQueue.main.async {
+                    self?.commitTipHeight(height)
+                }
+            }
             if let tipHost {
                 tipHost.setContent(tip)
                 tipHost.view.backgroundColor = .clear

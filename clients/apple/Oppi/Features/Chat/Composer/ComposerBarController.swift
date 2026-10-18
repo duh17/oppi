@@ -612,8 +612,12 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     private var canvasReplacingAttachmentID: String?
     private var lastAskRequestID: String?
     private var lastSending = false
-    private let expandVisibilityLineThreshold = 5
+    /// The SwiftUI bar showed expand from the fourth visual line (its rounding
+    /// counted one line ahead of a threshold of five); keep that feel.
+    private let expandVisibilityLineThreshold = 4
     private let composerHorizontalPadding: CGFloat = 12
+    /// Text inset above and below the draft; the placeholder sits on the same line.
+    private let textVerticalInset: CGFloat = 6
 
     private let rootStack = UIStackView()
     private let forceStopButton = ComposerForceStopButton()
@@ -643,6 +647,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     private let busyTipContainer = UIView()
     private var busyTipHeightConstraint: NSLayoutConstraint?
     private var busyTipChild: UIViewController?
+    private var busyTipNaturalHeight: CGFloat = 0
     private let actionRowStack = UIStackView()
     private var actionRowMinHeight: NSLayoutConstraint?
     private let attachButton = ComposerGlassPillButton()
@@ -652,10 +657,10 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     let keyStripContainer = UIView()
     private var keyStripHeightConstraint: NSLayoutConstraint?
     private var keyStripChild: UIViewController?
-    private let leadingScroll = UIScrollView()
-    private let leadingStack = UIStackView()
+    private let leadingScroll = ComposerPillScrollView()
+    private let leadingStack = ComposerPillStackView()
     private let spacer = UIView()
-    private let trailingStack = UIStackView()
+    private let trailingStack = ComposerPillStackView()
     private var pillViews: [String: UIView] = [:]
     private let overlayExpand = UIButton(type: .system)
     nonisolated(unsafe) private var inputModeObserver: NSObjectProtocol?
@@ -713,7 +718,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
 
     func sizeThatFits(width: CGFloat) -> CGSize {
         let targetWidth = max(width, 1)
-        applyTextHeight(proposedWidth: targetWidth)
+        applyTextLayout(proposedWidth: targetWidth)
         let target = CGSize(width: targetWidth, height: UIView.layoutFittingCompressedSize.height)
         return view.systemLayoutSizeFitting(
             target,
@@ -813,6 +818,19 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         embed(child, in: busyTipContainer, stored: &busyTipChild)
     }
 
+    /// The hosted busy-mode tip's own height. It is zero while the tip is not
+    /// presented (closed, already learned, or ineligible), so a busy bar never
+    /// reserves an empty band for it.
+    /// Returns whether the height changed.
+    @discardableResult
+    func setBusyTipHeight(_ height: CGFloat) -> Bool {
+        let next = max(height, 0)
+        guard abs(busyTipNaturalHeight - next) > 0.5 else { return false }
+        busyTipNaturalHeight = next
+        applyChrome()
+        return true
+    }
+
     func installKeyStrip(_ child: UIViewController?) {
         embed(child, in: keyStripContainer, stored: &keyStripChild)
     }
@@ -899,13 +917,13 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         NSLayoutConstraint.activate([
             placeholderLabel.leadingAnchor.constraint(equalTo: textContainer.leadingAnchor),
             placeholderLabel.trailingAnchor.constraint(equalTo: textContainer.trailingAnchor),
-            placeholderLabel.topAnchor.constraint(equalTo: textContainer.topAnchor, constant: 4),
+            placeholderLabel.topAnchor.constraint(equalTo: textContainer.topAnchor, constant: textVerticalInset),
             textView.leadingAnchor.constraint(equalTo: textContainer.leadingAnchor),
             textView.trailingAnchor.constraint(equalTo: textContainer.trailingAnchor),
             textView.topAnchor.constraint(equalTo: textContainer.topAnchor),
             textView.bottomAnchor.constraint(equalTo: textContainer.bottomAnchor),
         ])
-        let textHeight = textView.heightAnchor.constraint(equalToConstant: ComposerInputMetrics.inlineTextMinHeight)
+        let textHeight = textView.heightAnchor.constraint(equalToConstant: oneLineTextHeight)
         textHeightConstraint = textHeight
         textHeight.isActive = true
         textContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -1062,7 +1080,12 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         textView.delegate = self
         textView.backgroundColor = .clear
         textView.clipsToBounds = true
-        textView.textContainerInset = UIEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
+        textView.textContainerInset = UIEdgeInsets(
+            top: textVerticalInset,
+            left: 0,
+            bottom: textVerticalInset,
+            right: 0
+        )
         textView.textContainer.lineFragmentPadding = 0
         textView.isScrollEnabled = true
         textView.isAccessibilityElement = true
@@ -1110,7 +1133,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         var config = UIButton.Configuration.plain()
         config.image = UIImage(
             systemName: "arrow.up.left.and.arrow.down.right",
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
         )
         config.contentInsets = .zero
         button.configuration = config
@@ -1180,9 +1203,14 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
             hasAskRequest: content.askRequest != nil
         )
         busyModeButton.isHidden = !showsBusy || !showActionRow
-        let tipHeight: CGFloat = showsBusy ? FeatureEducationTipBannerView.preferredHeight : 0
+        if !showsBusy {
+            // A tip shows once; each busy turn starts at zero until its tip
+            // reports a height, so a tip left up by the last turn holds no space.
+            busyTipNaturalHeight = 0
+        }
+        let tipHeight: CGFloat = showsBusy ? busyTipNaturalHeight : 0
         busyTipHeightConstraint?.constant = tipHeight
-        busyTipContainer.isHidden = !showsBusy
+        busyTipContainer.isHidden = tipHeight <= 0
         busyModeButton.apply(
             title: content.busyStreamingBehavior == .steer ? "Steering" : "Follow-up",
             systemImage: nil,
@@ -1200,19 +1228,6 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         attachButton.apply(title: nil, systemImage: "plus", colors: colors, symbolPointSize: 11)
         trailingAttachButton.apply(title: nil, systemImage: "plus", colors: colors, symbolPointSize: 11)
 
-        let maxLines = ChatInputBar.inlineTextMaxLines(
-            hasAskRequest: content.askRequest != nil,
-            hasAttachments: !content.pendingAttachments.isEmpty,
-            hasRepoPointers: !content.pendingRepoPointers.isEmpty
-        )
-        let showsExpand = ChatInputBar.shouldShowExpandButton(
-            allowsExpansion: content.allowsExpansion,
-            visualLineCount: inlineVisualLineCount,
-            threshold: expandVisibilityLineThreshold,
-            maxLines: maxLines
-        )
-        overlayExpand.isHidden = !(showsExpand && content.askRequest == nil)
-        expandInActionRow.isHidden = !(showsExpand && content.askRequest != nil && showActionRow)
         overlayExpand.tintColor = colors.comment
         expandInActionRow.tintColor = colors.comment
 
@@ -1222,7 +1237,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         spacer.isHidden = keyHeight > 0
 
         applyActionPills(content.actionRow, colors: colors, showActionRow: showActionRow)
-        applyTextView(content: content, colors: colors, maxLines: maxLines, showsExpand: showsExpand)
+        applyTextView(content: content, colors: colors)
         applyPrimaryButton(content: content, colors: colors)
         applyMicChrome()
         refreshPresentedPopover(content.actionRow)
@@ -1236,7 +1251,8 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
     }
 
     private func applyActionRowVisibility(_ showActionRow: Bool, minimumHeight: CGFloat, reduceMotion: Bool) {
-        let minHeight = max(minimumHeight, showActionRow ? 44 : 0)
+        // The row hugs its pills unless the surface asks for a taller row.
+        let minHeight = showActionRow ? minimumHeight : 0
         let visibilityChanged = lastShowActionRow.map { $0 != showActionRow } ?? false
         lastShowActionRow = showActionRow
         let applyFlags = {
@@ -1447,12 +1463,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         }
     }
 
-    private func applyTextView(
-        content: ComposerBarContent,
-        colors: ComposerThemeColors,
-        maxLines: Int,
-        showsExpand: Bool
-    ) {
+    private func applyTextView(content: ComposerBarContent, colors: ComposerThemeColors) {
         let display = composerDisplayText
         let visible = ComposerShared.visibleComposerText(display)
         placeholderLabel.text = content.placeholderOverride ?? ChatInputBar.composerPlaceholder(
@@ -1468,8 +1479,6 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         textView.tintColor = accent
         textView.accessibilityIdentifier = content.inputAccessibilityIdentifier
         applyComposerInputTraits(to: textView, autocorrectionEnabled: content.autocorrectionEnabled)
-        let trailing = ChatInputBar.composerTextTrailingPadding(showsExpandButton: showsExpand)
-        textView.textContainerInset.right = trailing
         textView.applyStyledText(
             visible,
             font: UIFont.preferredFont(forTextStyle: .body),
@@ -1498,7 +1507,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
             textView.setKeyboardSuppressed(content.suppressKeyboard)
         }
         attemptFocusIfRequested()
-        applyTextHeight(proposedWidth: view.bounds.width)
+        applyTextLayout(proposedWidth: view.bounds.width)
     }
 
     private func attemptFocusIfRequested() {
@@ -1515,7 +1524,16 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         }
     }
 
-    private func applyTextHeight(proposedWidth: CGFloat) {
+    /// One line of body text plus its insets: the draft's resting height.
+    private var oneLineTextHeight: CGFloat {
+        ceil(UIFont.preferredFont(forTextStyle: .body).lineHeight + textVerticalInset * 2)
+    }
+
+    /// Measures the draft as laid out at `proposedWidth`, then sizes the text
+    /// view and shows the expand control from that one measurement. Typed,
+    /// dictated, pasted, and restored text all pass through here, so each
+    /// reaches the expand threshold the same way.
+    private func applyTextLayout(proposedWidth: CGFloat) {
         guard let host else { return }
         let content = host.content
         let maxLines = ChatInputBar.inlineTextMaxLines(
@@ -1528,20 +1546,40 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         let showsMic = !micButton.isHidden
         let mic: CGFloat = showsMic ? ComposerInputMetrics.controlDiameter + 8 : 0
         let send: CGFloat = ComposerInputMetrics.controlDiameter + 8
+        let textWidth = proposedWidth - outer - rowPad - mic - send
+        // Before the first layout pass the bar has no width; SwiftUI measures
+        // it again at a real width.
+        guard textWidth > ComposerInputMetrics.controlDiameter else { return }
+
+        // Count lines without the expand gutter so showing the control cannot
+        // re-wrap the draft back under the threshold.
+        textView.textContainerInset.right = 0
+        var growth = ComposerInputMetrics.textViewGrowth(
+            for: textView,
+            fittingWidth: textWidth,
+            minHeight: oneLineTextHeight,
+            maxLines: maxLines
+        )
+        let lineHeight = max(textView.font?.lineHeight ?? 17, 1)
+        let lines = (growth.height - textVerticalInset * 2) / lineHeight
+        inlineVisualLineCount = max(1, Int(lines + 0.05))
         let showsExpand = ChatInputBar.shouldShowExpandButton(
             allowsExpansion: content.allowsExpansion,
             visualLineCount: inlineVisualLineCount,
             threshold: expandVisibilityLineThreshold,
             maxLines: maxLines
         )
-        let trailing: CGFloat = ChatInputBar.composerTextTrailingPadding(showsExpandButton: showsExpand)
-        let used = outer + rowPad + mic + send + trailing
-        let fitting = max(1, proposedWidth - used)
-        let growth = ComposerInputMetrics.textViewGrowth(
-            for: textView,
-            fittingWidth: fitting,
-            maxLines: maxLines
-        )
+        overlayExpand.isHidden = !(showsExpand && content.askRequest == nil)
+        expandInActionRow.isHidden = !(showsExpand && content.askRequest != nil && lastShowActionRow == true)
+        if showsExpand {
+            textView.textContainerInset.right = ChatInputBar.composerTextTrailingPadding(showsExpandButton: true)
+            growth = ComposerInputMetrics.textViewGrowth(
+                for: textView,
+                fittingWidth: textWidth,
+                minHeight: oneLineTextHeight,
+                maxLines: maxLines
+            )
+        }
         if textHeightConstraint?.constant != growth.height {
             textHeightConstraint?.constant = growth.height
         }
@@ -1590,7 +1628,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
                 stroke: colors.comment.withAlphaComponent(0.35),
                 foreground: colors.comment,
                 showsProgress: false,
-                font: .bold
+                symbol: UIImage.SymbolConfiguration(pointSize: 14, weight: .bold)
             )
             primaryButton.isEnabled = !submitted
             primaryButton.accessibilityIdentifier = "chat.askIgnore"
@@ -1606,7 +1644,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
                 foreground: foreground,
                 showsProgress: content.isStopping,
                 diameter: ComposerInputMetrics.controlDiameter + 2,
-                font: .bold
+                symbol: UIImage.SymbolConfiguration(pointSize: 14, weight: .bold)
             )
             primaryButton.isEnabled = !content.isStopping
             primaryButton.accessibilityIdentifier = "chat.stop"
@@ -2014,7 +2052,6 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         let incoming = textView.text ?? ""
         if let pastable = textView as? PastableUITextView,
            !pastable.shouldCommitUserEdit(incoming) {
-            notifyLineCount(textView)
             return
         }
         var next = incoming
@@ -2025,19 +2062,8 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         host?.setText(next)
         if let host {
             host.notifyFileSuggestionContext(for: host.content.text)
-            if host.content.text.isEmpty {
-                inlineVisualLineCount = 1
-            }
         }
-        notifyLineCount(textView)
         applyChrome()
-    }
-
-    private func notifyLineCount(_ textView: UITextView) {
-        let lineHeight = max(textView.font?.lineHeight ?? 17, 1)
-        let verticalInsets = textView.textContainerInset.top + textView.textContainerInset.bottom
-        let textHeight = max(textView.contentSize.height - verticalInsets, lineHeight)
-        inlineVisualLineCount = max(1, Int(ceil(textHeight / lineHeight)))
     }
 
     private func updateKeyboardLanguage() {
