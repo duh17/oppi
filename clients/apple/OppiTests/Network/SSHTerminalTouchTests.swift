@@ -92,24 +92,6 @@ struct SSHTerminalTouchTests {
         #expect(top == .init(row: 0, shiftPixels: 0, bounce: 5))
     }
 
-    @Test func historyFollowsTheFingerBeforeThePanAndDoesNotJumpWhenItStarts() {
-        let lead = SSHTerminalHistoryFingerLead.self
-        #expect(lead.lead(fingerTravel: lead.deadZone) == 0, "a tap's jitter moves nothing")
-        #expect(lead.lead(fingerTravel: 11) == 11 - lead.deadZone)
-        #expect(lead.lead(fingerTravel: -11) == -(11 - lead.deadZone))
-
-        // The pan starts at 11 pt of finger travel and UIScrollView has
-        // already moved 1 pt; the grid showed `start - lead` before that.
-        let start: CGFloat = 1000
-        let shown = start - lead.lead(fingerTravel: 11)
-        let moved = lead.dragOffset(start: start, current: start - 1, fingerTravel: 11, maxOffset: 2000)
-        #expect(moved == shown, "the drag continues where the grid already is")
-
-        // At an end the lead never adds a rubber band the scroll view lacks.
-        #expect(lead.dragOffset(start: 0, current: -0.5, fingerTravel: 11, maxOffset: 2000) == -0.5)
-        #expect(lead.dragOffset(start: 2000, current: 2000, fingerTravel: -11, maxOffset: 2000) == 2000)
-    }
-
     @Test func appScrollOffsetDeltaMatchesPanFingerTravelAndWheelSteps() {
         let cell: CGFloat = 17
         let travel = SSHTerminalAppScrollTranslation.fingerTravel(
@@ -402,6 +384,158 @@ struct SSHTerminalTouchTests {
         grid.layoutIfNeeded()
         let bar = engine.scrollbar
         #expect(abs(scroll.contentOffset.y - CGFloat(bar.offset) * cell) < 0.01, "Back to Live lands on the live row")
+    }
+
+    // The history touch tests below drive the grid the way UIKit does: finger
+    // moves before the pan starts (`leadHistory`), the pan's delegate
+    // callbacks, and a lift without a pan (`endHistoryLead`). The pan can end
+    // before UIScrollView moves content, so no drag `didScroll` arrives.
+
+    @Test func aDragLiftedBeforeTheScrollViewMovedLeavesHistoryUsable() throws {
+        let channel = try SSHTerminalChannel()
+        var reports: [Bool] = []
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { reports.append($0) })
+        let mounted = try MountedTouchGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let engine = channel.engine
+        engine.receive(Data((1...300).map { "line \($0)\r\n" }.joined().utf8))
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        let scroll = try #require(grid.subviews.compactMap { $0 as? UIScrollView }.first)
+        let cell = SSHTerminalCellMetrics.codeFont().cellSize
+        let live = scroll.contentOffset.y
+
+        // A nudge just past the pan threshold, lifted at once.
+        grid.leadHistory(fingerTravel: cell.height)
+        grid.scrollViewWillBeginDragging(scroll)
+        grid.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        let shown = live - (cell.height - SSHTerminalHistoryFingerLead.deadZone)
+        #expect(abs(scroll.contentOffset.y - shown) < 0.5, "history rests where the finger left it")
+        #expect(!engine.following)
+        #expect(reports.last == false)
+
+        engine.receive(Data((301...340).map { "line \($0)\r\n" }.joined().utf8))
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        let bar = engine.scrollbar
+        let grown = SSHTerminalHistoryLayout.contentHeight(
+            boundsHeight: scroll.bounds.height, totalRows: Int(bar.total),
+            viewportRows: Int(bar.len), cellHeight: cell.height
+        )
+        #expect(abs(scroll.contentSize.height - grown) < 0.6, "output still grows history")
+
+        grid.backToLive()
+        #expect(engine.following)
+        #expect(reports.last == true)
+        #expect(abs(scroll.contentOffset.y - (scroll.contentSize.height - scroll.bounds.height)) < 0.5)
+        // A double tap at the bottom edge of the top row copies that row.
+        let top = try #require(engine.selectWord(column: 5, row: 0))
+        UIPasteboard.general.string = ""
+        let point = CGPoint(x: (5 + 0.5) * cell.width, y: cell.height - 1)
+        grid.handleTap(at: point, now: 10)
+        grid.handleTap(at: point, now: 10.1)
+        #expect(UIPasteboard.general.string == top.text)
+    }
+
+    @Test func aTapAfterAFlickIntoHistoryStaysInHistory() throws {
+        let channel = try SSHTerminalChannel()
+        var reports: [Bool] = []
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { reports.append($0) })
+        let mounted = try MountedTouchGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let engine = channel.engine
+        engine.receive(Data((1...300).map { "line \($0)\r\n" }.joined().utf8))
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        let scroll = try #require(grid.subviews.compactMap { $0 as? UIScrollView }.first)
+        let cell = SSHTerminalCellMetrics.codeFont().cellSize.height
+        let live = scroll.contentOffset.y
+
+        // A flick whose next event after the pan starts is the lift.
+        grid.leadHistory(fingerTravel: cell)
+        grid.scrollViewWillBeginDragging(scroll)
+        grid.scrollViewDidEndDragging(scroll, willDecelerate: true)
+        let shown = live - (cell - SSHTerminalHistoryFingerLead.deadZone)
+        #expect(abs(scroll.contentOffset.y - shown) < 0.5, "the coast starts where the text is")
+        grid.scrollViewDidEndDecelerating(scroll)
+        #expect(!engine.following)
+
+        grid.endHistoryLead()
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        #expect(!engine.following, "a tap must not go back to live")
+        #expect(reports.last == false)
+    }
+
+    @Test func fingerDriftAtLiveNeverShowsBackToLive() throws {
+        let channel = try SSHTerminalChannel()
+        var reports: [Bool] = []
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { reports.append($0) })
+        let mounted = try MountedTouchGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let engine = channel.engine
+        engine.receive(Data((1...300).map { "line \($0)\r\n" }.joined().utf8))
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        let scroll = try #require(grid.subviews.compactMap { $0 as? UIScrollView }.first)
+        let live = scroll.contentOffset.y
+
+        grid.leadHistory(fingerTravel: 6)
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        grid.endHistoryLead()
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        #expect(!reports.contains(false), "a tap that drifts must not flash Back to Live: \(reports)")
+        #expect(engine.following)
+        #expect(abs(scroll.contentOffset.y - live) < 0.5)
+    }
+
+    @Test func aDragReleasedWithinHalfARowOfTheBottomIsLive() throws {
+        let channel = try SSHTerminalChannel()
+        var reports: [Bool] = []
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { reports.append($0) })
+        let mounted = try MountedTouchGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let engine = channel.engine
+        engine.receive(Data((1...300).map { "line \($0)\r\n" }.joined().utf8))
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        let scroll = try #require(grid.subviews.compactMap { $0 as? UIScrollView }.first)
+        let cell = SSHTerminalCellMetrics.codeFont().cellSize.height
+        let live = scroll.contentOffset.y
+
+        grid.leadHistory(fingerTravel: SSHTerminalHistoryFingerLead.deadZone + cell / 2 - 1)
+        grid.scrollViewWillBeginDragging(scroll)
+        grid.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        #expect(engine.following)
+        #expect(reports.last != false)
+        #expect(abs(scroll.contentOffset.y - live) < 0.5)
+    }
+
+    @Test func aTapOnTheStripBelowTheLastRowCopiesTheRowDrawnThere() throws {
+        let channel = try SSHTerminalChannel()
+        let grid = SSHTerminalGridView(channel: channel, paste: { _ in }, followChanged: { _ in })
+        let mounted = try MountedTouchGrid(grid)
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let engine = channel.engine
+        engine.receive(Data((1...300).map { "line \($0)\r\n" }.joined().utf8))
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        let scroll = try #require(grid.subviews.compactMap { $0 as? UIScrollView }.first)
+        let cell = SSHTerminalCellMetrics.codeFont().cellSize
+
+        // History resting 5 pt into the row whose top line is "line 121".
+        engine.scrollToRow(120)
+        scroll.contentOffset = CGPoint(x: 0, y: 120 * cell.height + 5)
+        grid.setNeedsLayout()
+        grid.layoutIfNeeded()
+        let rows = Int(engine.scrollbar.len)
+        UIPasteboard.general.string = ""
+        let point = CGPoint(x: (5 + 0.5) * cell.width, y: CGFloat(rows) * cell.height - 4)
+        grid.handleTap(at: point, now: 10)
+        grid.handleTap(at: point, now: 10.1)
+        #expect(UIPasteboard.general.string == "\(121 + rows)")
     }
 
     @Test func longPressTapIgnoreClearsWhenTheTapFailedOrTheNextTouchBegins() {

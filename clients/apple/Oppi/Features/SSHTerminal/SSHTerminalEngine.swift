@@ -582,12 +582,23 @@ final class SSHTerminalEngine {
         ghostty_selection_gesture_reset(selectionGesture, terminal)
     }
 
+    /// A row past the bottom is the history row drawn in the strip under the
+    /// viewport while history rests between rows. At live there is none, and
+    /// it falls back to the last viewport row.
     private func viewportRef(column: Int, row: Int) -> GhosttyGridRef? {
         let column = min(max(0, column), max(0, geometry.columns - 1))
+        if row >= geometry.rows,
+           let below = gridRef(.init(x: UInt16(column), y: UInt32(scrollbar.offset) + UInt32(geometry.rows)), tag: GHOSTTY_POINT_TAG_SCREEN) {
+            return below
+        }
         let row = min(max(0, row), max(0, geometry.rows - 1))
+        return gridRef(.init(x: UInt16(column), y: UInt32(row)), tag: GHOSTTY_POINT_TAG_VIEWPORT)
+    }
+
+    private func gridRef(_ coordinate: GhosttyPointCoordinate, tag: GhosttyPointTag) -> GhosttyGridRef? {
         var value = GhosttyPointValue()
-        value.coordinate = GhosttyPointCoordinate(x: UInt16(column), y: UInt32(row))
-        let point = GhosttyPoint(tag: GHOSTTY_POINT_TAG_VIEWPORT, value: value)
+        value.coordinate = coordinate
+        let point = GhosttyPoint(tag: tag, value: value)
         var ref = GhosttyGridRef()
         ref.size = MemoryLayout<GhosttyGridRef>.size
         guard ghostty_terminal_grid_ref(terminal, point, &ref) == GHOSTTY_SUCCESS else { return nil }
@@ -626,23 +637,24 @@ final class SSHTerminalEngine {
         guard ghostty_terminal_selection_ordered(
             terminal, &selection, GHOSTTY_SELECTION_ORDER_FORWARD, &ordered
         ) == GHOSTTY_SUCCESS else { return [] }
-        var start = GhosttyPointCoordinate()
-        var end = GhosttyPointCoordinate()
-        let startOK = ghostty_terminal_point_from_grid_ref(
-            terminal, &ordered.start, GHOSTTY_POINT_TAG_VIEWPORT, &start
-        ) == GHOSTTY_SUCCESS
-        let endOK = ghostty_terminal_point_from_grid_ref(
-            terminal, &ordered.end, GHOSTTY_POINT_TAG_VIEWPORT, &end
-        ) == GHOSTTY_SUCCESS
+        // Screen rows less the viewport's top, so a selection reaching the
+        // strip under the viewport (see `viewportRef`) highlights there too.
+        let viewportTop = Int(scrollbar.offset)
+        func visible(_ ref: inout GhosttyGridRef) -> (x: Int, y: Int)? {
+            var point = GhosttyPointCoordinate()
+            guard ghostty_terminal_point_from_grid_ref(
+                terminal, &ref, GHOSTTY_POINT_TAG_SCREEN, &point
+            ) == GHOSTTY_SUCCESS else { return nil }
+            return (Int(point.x), Int(point.y) - viewportTop)
+        }
         let lastCol = max(0, geometry.columns - 1)
-        let lastRow = max(0, geometry.rows - 1)
-        let startX = startOK ? Int(start.x) : 0
-        let startY = startOK ? Int(start.y) : 0
-        let endX = endOK ? Int(end.x) : lastCol
-        let endY = endOK ? Int(end.y) : lastRow
-        guard startOK || endOK else { return [] }
-        let top = max(0, min(startY, lastRow))
-        let bottom = max(0, min(endY, lastRow))
+        let lastRow = max(0, geometry.rows)
+        guard let start = visible(&ordered.start), let end = visible(&ordered.end),
+              start.y <= lastRow, end.y >= 0 else { return [] }
+        let (startX, startY) = start.y < 0 ? (0, 0) : start
+        let (endX, endY) = end.y > lastRow ? (lastCol, lastRow) : end
+        let top = startY
+        let bottom = endY
         if top == bottom {
             let lo = max(0, min(startX, endX))
             let hi = min(lastCol, max(startX, endX))

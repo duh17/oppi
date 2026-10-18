@@ -81,8 +81,9 @@ struct SSHTerminalHistoryPosition: Equatable {
 /// UIScrollView's pan starts about 10 pt after the finger starts moving and
 /// then trails the finger by that much for the whole drag. Local history
 /// instead follows from the first move: before the pan starts, the grid is
-/// drawn `lead` above the scroll view's offset, and the first drag callback
-/// moves contentOffset to where the grid already is, so nothing jumps.
+/// drawn `lead` above the scroll view's offset. When the pan takes over (its
+/// first move, or its end if it ended before moving content), contentOffset
+/// moves to where the grid already is, so nothing jumps.
 /// `deadZone` keeps the jitter of a tap or a touch-and-hold from moving text.
 enum SSHTerminalHistoryFingerLead {
     static let deadZone: CGFloat = 2
@@ -93,13 +94,13 @@ enum SSHTerminalHistoryFingerLead {
         return fingerTravel < 0 ? -magnitude : magnitude
     }
 
-    /// The offset that puts content under the finger once the drag starts.
+    /// The offset that shows content `lead` above where the drag started.
     /// It never pushes past an end further than the scroll view already is,
     /// so the native rubber band keeps its own position.
     static func dragOffset(
-        start: CGFloat, current: CGFloat, fingerTravel: CGFloat, maxOffset: CGFloat
+        start: CGFloat, current: CGFloat, lead: CGFloat, maxOffset: CGFloat
     ) -> CGFloat {
-        let target = start - lead(fingerTravel: fingerTravel)
+        let target = start - lead
         return min(max(target, min(0, current)), max(maxOffset, current))
     }
 }

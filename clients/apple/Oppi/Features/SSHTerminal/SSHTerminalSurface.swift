@@ -138,17 +138,21 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     private var highlightGeneration = 0
     private var isSyncingHistoryScroll = false
     /// Whole pixels the grid is drawn above its top history row, so a history
-    /// scroll glides between rows. Zero in app scroll modes.
+    /// scroll glides between rows. Zero in app scroll modes. A move within a
+    /// row changes only this and sets `needsPaint`; the engine's picture is
+    /// unchanged, so `onPictureChange` does not fire for it.
     private var historyShiftPixels = 0
     private var paintedShiftPixels = 0
     /// Finger travel shown before UIScrollView's pan starts; see
     /// `SSHTerminalHistoryFingerLead`. `leadStartedFollowing` is set while
     /// that lead is shown and says whether the live screen was followed when
-    /// it started, so a tap puts Back to Live state back as it was.
+    /// it started, so a tap puts Back to Live state back as it was. Until it
+    /// clears, the finger owns the picture: follow state is not published and
+    /// the engine does not move the scroll view.
     private var historyLead: CGFloat = 0
     private var leadStartedFollowing: Bool?
-    /// contentOffset when a history drag began, until the first drag callback
-    /// moves it under the finger.
+    /// contentOffset when a history pan began with a lead shown, until
+    /// `commitHistoryLead` hands the lead to the scroll view.
     private var historyDragStart: CGFloat?
     private var lastFollow = true
     private var bar: UIView?
@@ -677,6 +681,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
 
     func backToLive() {
+        clearHistoryLead()
         channel.engine.backToLive()
         syncHistoryScrollFromEngine()
         needsPaint = true
@@ -892,7 +897,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
         switch channel.engine.scrollAction {
         case .history:
-            moveHistoryDragUnderFinger()
+            commitHistoryLead(underFinger: true)
             applyHistoryScrollOffset()
         case .mouseWheel, .alternateKeys:
             consumeAppScrollOffset()
@@ -929,13 +934,17 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        guard scrollView === historyScroll, !decelerate else { return }
-        settleScroll()
+        guard scrollView === historyScroll else { return }
+        // A pan can end before it moved content (a short nudge, or a flick
+        // whose next event is the lift), so no drag callback committed the lead.
+        commitHistoryLead(underFinger: false)
+        guard !decelerate else { return }
+        settleScroll(nearLiveIsLive: true)
     }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         guard scrollView === historyScroll else { return }
-        settleScroll()
+        settleScroll(nearLiveIsLive: false)
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
@@ -1009,9 +1018,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         historyScroll.setContentOffset(historyScroll.contentOffset, animated: false)
         isSyncingHistoryScroll = false
         appScroll.resetGesture()
-        historyLead = 0
-        leadStartedFollowing = nil
-        historyDragStart = nil
+        clearHistoryLead()
         appliedScrollAction = action
         switch action {
         case .history:
@@ -1030,9 +1037,11 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
 
     private func syncHistoryScrollFromEngine() {
-        guard channel.engine.scrollAction == .history else { return }
+        // A lead scrolls the engine off live before the touch is known to be
+        // a drag; publishing that would flash Back to Live on a tap.
+        guard channel.engine.scrollAction == .history, leadStartedFollowing == nil else { return }
         publishFollowState()
-        guard !historyScroll.isDragging, !historyScroll.isDecelerating, leadStartedFollowing == nil else { return }
+        guard !historyScroll.isDragging, !historyScroll.isDecelerating else { return }
         applyEngineHistoryOffset()
     }
 
@@ -1118,8 +1127,8 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     }
 
     /// Before UIScrollView's pan starts, local history follows the finger.
-    /// Follow state is left alone until the touch becomes a drag.
-    private func leadHistory(fingerTravel: CGFloat) {
+    /// Follow state is not published until the touch becomes a drag.
+    func leadHistory(fingerTravel: CGFloat) {
         guard channel.engine.scrollAction == .history, appliedScrollAction == .history,
               dragTarget == nil, historyScroll.isScrollEnabled,
               !historyScroll.isDragging, !historyScroll.isDecelerating else { return }
@@ -1137,7 +1146,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     /// A tap, a touch and hold, or a lifted finger puts the grid back where
     /// the scroll view is. The pan's own cancel of these touches is skipped:
     /// that drag keeps the grid where it is.
-    private func endHistoryLead() {
+    func endHistoryLead() {
         let pan = historyScroll.panGestureRecognizer.state
         guard let wasFollowing = leadStartedFollowing, !historyScroll.isDragging,
               pan != .began, pan != .changed else { return }
@@ -1154,24 +1163,34 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         requestDisplayLink()
     }
 
-    /// The first drag callback moves the scroll view to where the grid
-    /// already is, so the drag continues from under the finger.
-    private func moveHistoryDragUnderFinger() {
-        guard let start = historyDragStart, historyScroll.isDragging else { return }
-        historyDragStart = nil
-        historyLead = 0
-        leadStartedFollowing = nil
-        guard let firstTouchY = historyScroll.firstTouchY else { return }
+    /// The pan took over from the lead: the scroll view moves to where the
+    /// grid already is, and from here its offset alone places the grid. On
+    /// the pan's first move, `underFinger` puts content where the finger is
+    /// now, so the drag continues from under it. When the pan ended without
+    /// moving content, the scroll view moves to the lead last drawn.
+    private func commitHistoryLead(underFinger: Bool) {
+        guard let start = historyDragStart else { return }
+        var lead = historyLead
+        if underFinger, let firstTouchY = historyScroll.firstTouchY {
+            lead = SSHTerminalHistoryFingerLead.lead(
+                fingerTravel: historyScroll.panGestureRecognizer.location(in: self).y - firstTouchY
+            )
+        }
+        clearHistoryLead()
         let current = historyScroll.contentOffset.y
         let target = SSHTerminalHistoryFingerLead.dragOffset(
-            start: start, current: current,
-            fingerTravel: historyScroll.panGestureRecognizer.location(in: self).y - firstTouchY,
-            maxOffset: historyMaxOffset
+            start: start, current: current, lead: lead, maxOffset: historyMaxOffset
         )
         guard abs(target - current) >= 0.5 else { return }
         isSyncingHistoryScroll = true
         historyScroll.contentOffset = CGPoint(x: 0, y: target)
         isSyncingHistoryScroll = false
+    }
+
+    private func clearHistoryLead() {
+        historyLead = 0
+        leadStartedFollowing = nil
+        historyDragStart = nil
     }
 
     private func consumeAppScrollOffset() {
@@ -1201,9 +1220,7 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
             appScroll.reseed(offset: historyScroll.contentOffset.y)
         }
         isSyncingHistoryScroll = false
-        historyLead = 0
-        leadStartedFollowing = nil
-        historyDragStart = nil
+        clearHistoryLead()
         if historyShiftPixels != 0 {
             historyShiftPixels = 0
             needsPaint = true
@@ -1211,11 +1228,11 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         applyGridTransform(bounce: 0)
     }
 
-    private func settleScroll() {
+    private func settleScroll(nearLiveIsLive: Bool) {
         flushPendingAppScroll()
         switch channel.engine.scrollAction {
         case .history:
-            settleHistoryScroll()
+            settleHistoryScroll(nearLiveIsLive: nearLiveIsLive)
         case .mouseWheel, .alternateKeys:
             prepareAppScrollSurface()
         }
@@ -1242,10 +1259,15 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         }
     }
 
-    private func settleHistoryScroll() {
+    /// `nearLiveIsLive`: a drag released within half a row of the bottom goes
+    /// back to live, as it did when history moved in whole rows.
+    private func settleHistoryScroll(nearLiveIsLive: Bool) {
         guard channel.engine.scrollAction == .history else { return }
-        publishFollowState()
-        if channel.engine.following {
+        // Backstop: no lead outlives the gesture that started it.
+        clearHistoryLead()
+        let nearLive = nearLiveIsLive
+            && historyScroll.contentOffset.y > historyMaxOffset - cellSize.height / 2
+        if channel.engine.following || nearLive {
             channel.engine.backToLive()
         }
         syncHistoryScrollFromEngine()
@@ -1468,34 +1490,54 @@ private final class SSHTerminalHistoryScrollView: UIScrollView {
     var touchBegan: (() -> Void)?
     var touchMoved: ((CGFloat) -> Void)?
     var touchEnded: (() -> Void)?
-    /// In the grid's coordinates, which do not scroll.
+    /// Where the first finger of this touch went down, in the grid's
+    /// coordinates, which do not scroll.
     var firstTouchY: CGFloat?
+    /// That finger. A second finger neither moves the lead nor resets
+    /// `firstTouchY`.
+    private var firstTouch: UITouch?
+
+    private func track(_ touches: Set<UITouch>, with event: UIEvent?) {
+        // Every finger on this view is new: a fresh touch, even if a lost
+        // end left an old one tracked.
+        let fresh = event?.touches(for: self).map { $0.isSubset(of: touches) } ?? true
+        guard firstTouch == nil || fresh, let touch = touches.first else { return }
+        firstTouch = touch
+        firstTouchY = touch.location(in: superview).y
+    }
+
+    /// True when the tracked finger is among `touches`, which then ends it.
+    private func untrack(_ touches: Set<UITouch>) -> Bool {
+        guard let firstTouch, touches.contains(firstTouch) else { return false }
+        self.firstTouch = nil
+        return true
+    }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        firstTouchY = touches.first.map { $0.location(in: superview).y }
+        track(touches, with: event)
         touchBegan?()
         super.touchesBegan(touches, with: event)
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        if let firstTouchY, let y = touches.first?.location(in: superview).y {
-            touchMoved?(y - firstTouchY)
+        if let firstTouch, touches.contains(firstTouch), let firstTouchY {
+            touchMoved?(firstTouch.location(in: superview).y - firstTouchY)
         }
         super.touchesMoved(touches, with: event)
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        touchEnded?()
+        if untrack(touches) { touchEnded?() }
         super.touchesEnded(touches, with: event)
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        touchEnded?()
+        if untrack(touches) { touchEnded?() }
         super.touchesCancelled(touches, with: event)
     }
 
     override func touchesShouldBegin(_ touches: Set<UITouch>, with event: UIEvent?, in view: UIView) -> Bool {
-        firstTouchY = touches.first.map { $0.location(in: superview).y }
+        track(touches, with: event)
         touchBegan?()
         return super.touchesShouldBegin(touches, with: event, in: view)
     }
