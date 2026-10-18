@@ -258,6 +258,18 @@ async function runUntilOutput(
   });
 }
 
+/**
+ * Just enough host state for a CLI command that talks to the local API: an owner token and TLS
+ * disabled. It is not a full `oppi init` (no identity keys, no init defaults). Written through
+ * Storage so a test that only exercises one later command spends a single CLI spawn instead of
+ * one per setup step.
+ */
+function seedConfiguredHost(dir: string): void {
+  const storage = new Storage(dir);
+  storage.rotateToken();
+  storage.updateConfig({ tls: { mode: "disabled" } });
+}
+
 async function getFreePort(): Promise<number> {
   return await new Promise((resolvePort, reject) => {
     const server = createServer();
@@ -2377,10 +2389,7 @@ describe("oppi local API commands", () => {
     await listenOnLocalApiFixture(api, cliDir);
 
     try {
-      expect(run(["init", "--yes", "--data-dir", cliDir]).exitCode).toBe(0);
-      expect(
-        run(["config", "set", "tls", '{"mode":"disabled"}'], { OPPI_DATA_DIR: cliDir }).exitCode,
-      ).toBe(0);
+      seedConfiguredHost(cliDir);
 
       const { stdout, exitCode } = await runAsync(["schedule", "list", "--json"], {
         OPPI_DATA_DIR: cliDir,
@@ -2423,17 +2432,8 @@ describe("local orchestration prerequisites", () => {
 
   it("requires a running local server after setup", async () => {
     const configuredDir = mkdtempSync(join(tmpdir(), "oppi-cli-server-required-"));
-    const port = await getFreePort();
     try {
-      expect(run(["init", "--yes", "--data-dir", configuredDir]).exitCode).toBe(0);
-      expect(
-        run(["config", "set", "tls", '{"mode":"disabled"}'], {
-          OPPI_DATA_DIR: configuredDir,
-        }).exitCode,
-      ).toBe(0);
-      expect(
-        run(["config", "set", "port", String(port)], { OPPI_DATA_DIR: configuredDir }).exitCode,
-      ).toBe(0);
+      seedConfiguredHost(configuredDir);
 
       const { stdout, exitCode } = await runAsync(["workspace", "list", "--json"], {
         OPPI_DATA_DIR: configuredDir,
