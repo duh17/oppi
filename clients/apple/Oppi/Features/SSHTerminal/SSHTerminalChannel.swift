@@ -435,7 +435,9 @@ final class SSHTerminalChannel {
         // Both local and remote grid changes share the same coalesced geometry.
         resizeTask?.cancel()
         resizeTask = Task { [weak self] in
-            do { try await Task.sleep(for: .milliseconds(80)) } catch { return }
+            // Keyboard + nav bar share one ~250 ms animation, sometimes in two
+            // frame callbacks. Coalesce so the remote PTY gets one SIGWINCH.
+            do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
             guard let self else { return }
             self.engine.resize(geometry)
             guard self.connected, let connection = self.connection else { return }

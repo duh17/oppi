@@ -52,7 +52,8 @@ final class SSHTerminalViewController: UIViewController {
     private var lastDetectedMode: SSHTerminalInputMode?
     private var focusComposerAfterRaw = false
     private var composerFocusRequest = 0
-    private var topBarHidden = false
+    private var keyboardUp = false
+    private var temporaryReveal = false
     private var reconnectOnReturn = false
     private var attention = SSHTerminalAttention()
     private let attentionFeedback = SSHTerminalAttentionFeedback()
@@ -69,6 +70,7 @@ final class SSHTerminalViewController: UIViewController {
     private var lastThemeID: ThemeID?
     private var defaultsObserver: NSObjectProtocol?
     private var reduceMotionObserver: NSObjectProtocol?
+    private var keyboardObserver: NSObjectProtocol?
 
     init(
         channel: SSHTerminalChannel,
@@ -111,7 +113,25 @@ final class SSHTerminalViewController: UIViewController {
         ) { [weak self] _ in
             self?.reduceMotionChanged()
         }
+        keyboardObserver = NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillChangeFrameNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0
+            let curve = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
+            let end = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect ?? .zero
+            MainActor.assumeIsolated {
+                self?.keyboardWillChange(endFrame: end, duration: duration, curve: curve)
+            }
+        }
         setNeedsUpdateProperties()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        isOnScreen = true
+        applyTopBarHidden(connected: channel.connected, animated: animated)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -162,6 +182,10 @@ final class SSHTerminalViewController: UIViewController {
         if let reduceMotionObserver {
             NotificationCenter.default.removeObserver(reduceMotionObserver)
             self.reduceMotionObserver = nil
+        }
+        if let keyboardObserver {
+            NotificationCenter.default.removeObserver(keyboardObserver)
+            self.keyboardObserver = nil
         }
     }
 
@@ -236,7 +260,7 @@ final class SSHTerminalViewController: UIViewController {
         navigationItem.title = channel.title.isEmpty ? "SSH Terminal" : channel.title
         updatePolling()
         updateBarItems(themeID: themeID)
-        updateTopBarHidden(connected: connected)
+        applyTopBarHidden(connected: connected, animated: true)
         updateBanners(connecting: connecting, connected: connected, networkChanged: networkChanged, themeID: themeID)
         updateNotice(themeID: themeID)
         updateCopyAndLive(themeID: themeID)
@@ -248,8 +272,6 @@ final class SSHTerminalViewController: UIViewController {
             gridView.applyTheme(themeID)
             gridView.needsPaint = true
         }
-        handle.isHidden = !(topBarHidden && connected)
-        handle.apply(themeID: themeID)
         attentionFeedback.apply(
             notice: visibleNotice,
             bell: channel.alerts.bell
@@ -270,7 +292,7 @@ final class SSHTerminalViewController: UIViewController {
         topStack.isLayoutMarginsRelativeArrangement = true
         topStack.layoutMargins = UIEdgeInsets(top: 8, left: 0, bottom: 0, right: 0)
 
-        handle.onShow = { [weak self] in self?.setTopBarHidden(false) }
+        handle.onShow = { [weak self] in self?.revealTopBar() }
         connectionBanner.onReconnect = { [weak self] in self?.reconnect() }
         noticeCard.onDismiss = { [weak self] key in
             self?.attention.dismiss(key)
@@ -381,7 +403,7 @@ final class SSHTerminalViewController: UIViewController {
         copyNoticeText = nil
         detached = false
         rawKeyboard = false
-        topBarHidden = false
+        temporaryReveal = false
         sawClosedForBackground = false
         reconnectOnReturn = false
         channel = next
@@ -435,7 +457,7 @@ final class SSHTerminalViewController: UIViewController {
         })
         if channel.connected {
             items.append(UIAction(title: "Hide Bar", image: UIImage(systemName: "chevron.up")) { [weak self] _ in
-                self?.setTopBarHidden(true)
+                self?.userChoseHideBar()
             })
             items.append(UIAction(
                 title: "Disconnect",
@@ -494,10 +516,65 @@ final class SSHTerminalViewController: UIViewController {
         }
     }
 
-    private func updateTopBarHidden(connected: Bool) {
-        let hide = topBarHidden && connected
+    private func barShouldHide(connected: Bool) -> Bool {
+        SSHTerminalTopBarVisibility.hidden(
+            connected: connected,
+            keyboardUp: keyboardUp,
+            rememberedHide: AppPreferences.SSHTerminal.hideBar,
+            temporaryReveal: temporaryReveal
+        )
+    }
+
+    private func attentionPending() -> Bool {
+        SSHTerminalTopBarAttention.pending(
+            herdrWaiting: herdr.snapshot?.needsAttention ?? 0,
+            blockedProgram: SSHTerminalProgramStatusPresentation.blockedNotice(
+                store: channel.programStatus,
+                isStopped: programIsStopped,
+                seenAt: SSHTerminalProgramStatusPresentation.seenAt
+            ) != nil
+        )
+    }
+
+    private func updateHandle(connected: Bool, themeID: ThemeID) {
+        let hide = barShouldHide(connected: connected)
+        handle.isHidden = !SSHTerminalTopBarVisibility.handleVisible(barHidden: hide, connected: connected)
+        handle.apply(themeID: themeID, attentionPending: hide && attentionPending())
+    }
+
+    private func applyTopBarHidden(
+        connected: Bool,
+        animated: Bool,
+        keyboard: SSHTerminalTopBarKeyboard.Animation? = nil
+    ) {
+        let hide = barShouldHide(connected: connected)
+        let themeID = lastThemeID ?? ThemeRuntimeState.currentThemeID()
+        updateHandle(connected: connected, themeID: themeID)
+        guard isOnScreen, !isMovingFromParent else { return }
         guard navigationController?.isNavigationBarHidden != hide else { return }
-        navigationController?.setNavigationBarHidden(hide, animated: true)
+        if let keyboard {
+            UIView.animate(withDuration: keyboard.duration, delay: 0, options: keyboard.options) {
+                self.navigationController?.setNavigationBarHidden(hide, animated: false)
+                self.navigationController?.view.layoutIfNeeded()
+                self.view.layoutIfNeeded()
+            }
+        } else {
+            navigationController?.setNavigationBarHidden(hide, animated: animated)
+        }
+    }
+
+    private func keyboardWillChange(endFrame: CGRect, duration: TimeInterval, curve: UInt) {
+        guard view.window != nil else { return }
+        let end = view.convert(endFrame, from: nil)
+        let up = SSHTerminalTopBarKeyboard.isUp(endFrameInView: end, viewBounds: view.bounds)
+        if !up { temporaryReveal = false }
+        keyboardUp = up
+        guard isOnScreen, !isMovingFromParent else { return }
+        applyTopBarHidden(
+            connected: channel.connected,
+            animated: false,
+            keyboard: SSHTerminalTopBarKeyboard.animation(duration: duration, curve: curve)
+        )
     }
 
     // MARK: - Overlays
@@ -881,9 +958,22 @@ final class SSHTerminalViewController: UIViewController {
         setNeedsUpdateProperties()
     }
 
-    private func setTopBarHidden(_ hidden: Bool) {
-        guard hidden != topBarHidden else { return }
-        topBarHidden = hidden
+    private func userChoseHideBar() {
+        temporaryReveal = false
+        AppPreferences.SSHTerminal.setHideBar(true)
+        applyTopBarHidden(connected: channel.connected, animated: true)
+        setNeedsUpdateProperties()
+    }
+
+    /// Chevron handle: a remembered show when the keyboard is down; a
+    /// temporary peek while it is up, without overwriting Hide Bar.
+    private func revealTopBar() {
+        if keyboardUp {
+            temporaryReveal = true
+        } else {
+            AppPreferences.SSHTerminal.setHideBar(false)
+        }
+        applyTopBarHidden(connected: channel.connected, animated: true)
         setNeedsUpdateProperties()
     }
 

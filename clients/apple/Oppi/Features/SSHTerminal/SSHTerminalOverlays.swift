@@ -19,6 +19,7 @@ final class SSHTerminalTopBarHandleView: UIView {
         return effect
     }())
     private let chevron = UIImageView()
+    private let attentionDot = UIView()
     private let button = UIButton(type: .custom)
 
     override init(frame: CGRect) {
@@ -45,6 +46,13 @@ final class SSHTerminalTopBarHandleView: UIView {
         button.accessibilityIdentifier = "sshTerminal.showBar"
         addSubview(button)
 
+        attentionDot.translatesAutoresizingMaskIntoConstraints = false
+        attentionDot.isUserInteractionEnabled = false
+        attentionDot.isAccessibilityElement = false
+        attentionDot.isHidden = true
+        attentionDot.layer.cornerRadius = 4
+        addSubview(attentionDot)
+
         let pan = UIPanGestureRecognizer(target: self, action: #selector(pulled(_:)))
         pan.minimumNumberOfTouches = 1
         button.addGestureRecognizer(pan)
@@ -62,14 +70,21 @@ final class SSHTerminalTopBarHandleView: UIView {
             button.bottomAnchor.constraint(equalTo: bottomAnchor),
             button.leadingAnchor.constraint(equalTo: leadingAnchor),
             button.trailingAnchor.constraint(equalTo: trailingAnchor),
+            attentionDot.widthAnchor.constraint(equalToConstant: 8),
+            attentionDot.heightAnchor.constraint(equalToConstant: 8),
+            attentionDot.trailingAnchor.constraint(equalTo: glass.trailingAnchor, constant: 2),
+            attentionDot.topAnchor.constraint(equalTo: glass.topAnchor, constant: -2),
         ])
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    func apply(themeID: ThemeID) {
+    func apply(themeID: ThemeID, attentionPending: Bool = false) {
         chevron.tintColor = UIColor(themeID.palette.fg)
+        attentionDot.backgroundColor = UIColor(themeID.palette.orange)
+        attentionDot.isHidden = !attentionPending
+        button.accessibilityValue = attentionPending ? "Attention pending" : nil
     }
 
     @objc private func pulled(_ gesture: UIPanGestureRecognizer) {
