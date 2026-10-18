@@ -1278,7 +1278,6 @@ struct ChatView: View {
     private var footerArea: some View {
         if Self.showsLiveVoiceBar(
             isLive: liveVoiceController.isLive,
-            isStopped: isStopped,
             lastError: liveVoiceController.lastError
         ) {
             LiveVoiceBarHost(
@@ -2147,11 +2146,9 @@ struct ChatView: View {
         }
     }
 
-    static func showsLiveVoiceBar(isLive: Bool, isStopped: Bool, lastError: String? = nil) -> Bool {
-        // Keep End available even when the focused chat session is stopped.
-        // The call and keepalive live on the hidden voice-control session.
-        // Start failures fail-closed but keep the bar until End so the error is visible.
-        _ = isStopped
+    static func showsLiveVoiceBar(isLive: Bool, lastError: String? = nil) -> Bool {
+        // The call lives on the hidden voice-control session, so a stopped chat keeps End.
+        // Start failures fail closed but keep the bar until End so the error is visible.
         return isLive || lastError != nil
     }
 

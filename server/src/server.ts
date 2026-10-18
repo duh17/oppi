@@ -1979,6 +1979,7 @@ export class Server {
       const sessionId = route.sessionStreamMatch.sessionId;
       const admitted = admitSessionRoute(this.storage, route.sessionStreamMatch, {
         workspaceMustExist: false,
+        voiceControlStream: true,
       });
       if (admitted.kind !== "ok") {
         ws.close(1008, "Session not found");

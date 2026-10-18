@@ -8,7 +8,10 @@ import type {
   VoiceDelegationUpdate,
 } from "./continuous-voice.js";
 import type { SttProvider, SttTranscriptUpdate } from "./stt-provider.js";
+import { createLogger } from "./logger.js";
 import { parseVoiceApprovalDecision } from "./voice-approval-bridge.js";
+
+const log = createLogger({ base: { component: "voice_media" } });
 
 /**
  * Media adapters speak only semantic frontend events. Local Yuwp and Grok Voice
@@ -328,7 +331,18 @@ export class VoiceCallMediaCoordinator {
     };
     this.sessions.set(input.frontend.connectionId, session);
     try {
-      await adapter.start((event) => this.handleEvent(session, event));
+      await adapter.start((event) =>
+        this.handleEvent(session, event).catch((error: unknown) => {
+          // A Grok delegation reports its failure back to the model as tool output.
+          if (event.type === "delegation_requested") throw error;
+          // Media events race End and detach; a stale one must not crash the server.
+          log.warn("voice_media.event_failed", {
+            callId: session.callId,
+            eventType: event.type,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }),
+      );
     } catch (error) {
       this.sessions.delete(input.frontend.connectionId);
       throw error;
@@ -385,10 +399,37 @@ export class VoiceCallMediaCoordinator {
         this.delegate(session, event.utteranceId, request);
         return;
       }
+      case "user_speech_started":
+        // Only a challenge the user could have heard before speaking may take this turn.
+        session.challengesHeard = new Set(
+          this.deps.calls.snapshot(session.callId).pendingApprovals.map((p) => p.challengeId),
+        );
+        return;
       case "user_transcript_final": {
         // The user's own words can answer a challenge; they never start Pi work.
-        const pending = this.pendingChallengeId(session);
-        if (pending) await this.answerApproval(session, pending, event.text.trim());
+        const heard = session.challengesHeard;
+        session.challengesHeard = undefined; // one answer per turn
+        const pending = this.deps.calls
+          .snapshot(session.callId)
+          .pendingApprovals.find((p) => heard?.has(p.challengeId));
+        if (pending) await this.answerApproval(session, pending.challengeId, event.text.trim());
+        return;
+      }
+      case "disconnected": {
+        // Our own detach unregisters first; a registered session means the backend hung up.
+        const connectionId = session.frontend.connectionId;
+        if (this.sessions.get(connectionId) !== session) return;
+        this.sessions.delete(connectionId);
+        log.warn("voice_media.backend_disconnected", {
+          callId: session.callId,
+          reason: event.reason,
+        });
+        // The ended state, like End, clears the phone's stored call so its next start is fresh.
+        const state = this.deps.calls.endCall(
+          { callId: session.callId, controllerLeaseEpoch: session.controllerLeaseEpoch },
+          session.frontend,
+        );
+        session.frontend.send({ type: "voice_call_state", ...state });
         return;
       }
       case "delegation_requested": {
@@ -441,4 +482,6 @@ interface MediaSession {
   controllerLeaseEpoch: number;
   frontend: VoiceCallFrontendConnection;
   adapter: VoiceMediaAdapter;
+  /** Challenges pending when the current user turn began. */
+  challengesHeard?: Set<string>;
 }

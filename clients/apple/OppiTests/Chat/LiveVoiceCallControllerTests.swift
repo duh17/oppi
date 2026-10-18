@@ -265,7 +265,6 @@ struct LiveVoiceCallControllerTests {
         #expect(harness.controller.statusText != "Listening")
         #expect(ChatView.showsLiveVoiceBar(
             isLive: harness.controller.isLive,
-            isStopped: false,
             lastError: harness.controller.lastError
         ))
         #expect(sentTypes(harness.channel.sent).contains("voice_call_end"))
@@ -279,7 +278,6 @@ struct LiveVoiceCallControllerTests {
         #expect(harness.controller.statusText == "Listening")
         #expect(!ChatView.showsLiveVoiceBar(
             isLive: harness.controller.isLive,
-            isStopped: false,
             lastError: harness.controller.lastError
         ))
     }
@@ -336,7 +334,6 @@ struct LiveVoiceCallControllerTests {
         #expect(harness.controller.statusText != "Listening")
         #expect(ChatView.showsLiveVoiceBar(
             isLive: harness.controller.isLive,
-            isStopped: false,
             lastError: harness.controller.lastError
         ))
         #expect(harness.channel.closed)
@@ -347,7 +344,6 @@ struct LiveVoiceCallControllerTests {
         #expect(harness.controller.statusText == "Listening")
         #expect(!ChatView.showsLiveVoiceBar(
             isLive: harness.controller.isLive,
-            isStopped: false,
             lastError: harness.controller.lastError
         ))
     }
@@ -412,7 +408,6 @@ struct LiveVoiceCallControllerTests {
         #expect(harness.controller.statusText == "Continuous voice control is unavailable")
         #expect(ChatView.showsLiveVoiceBar(
             isLive: harness.controller.isLive,
-            isStopped: false,
             lastError: harness.controller.lastError
         ))
         #expect(harness.channel.closed)
@@ -422,7 +417,6 @@ struct LiveVoiceCallControllerTests {
         #expect(harness.controller.lastError == nil)
         #expect(!ChatView.showsLiveVoiceBar(
             isLive: harness.controller.isLive,
-            isStopped: false,
             lastError: harness.controller.lastError
         ))
     }

@@ -12,31 +12,11 @@ struct LiveVoiceBarTests {
         #expect(LiveVoiceBarView.statusText(approvalSummary: nil) == "Listening")
     }
 
-    @Test("Footer keeps the composer until a live call is active")
-    func footerChoosesComposerUntilLive() {
-        #expect(!ChatView.showsLiveVoiceBar(isLive: false, isStopped: false))
-        #expect(ChatView.showsLiveVoiceBar(isLive: true, isStopped: false))
-        #expect(!ChatView.showsLiveVoiceBar(isLive: false, isStopped: true))
-        #expect(!ChatView.showsLiveVoiceBar(isLive: false, isStopped: false, lastError: nil))
-    }
-
-    @Test("Footer keeps the Live Voice bar when start failed closed with an error")
-    func footerKeepsBarForStartErrorUntilEnd() {
-        #expect(ChatView.showsLiveVoiceBar(
-            isLive: false,
-            isStopped: false,
-            lastError: "Create session HTTP 500: boom"
-        ))
-        #expect(ChatView.showsLiveVoiceBar(
-            isLive: false,
-            isStopped: true,
-            lastError: "Live Voice ASR is unavailable"
-        ))
-    }
-
-    @Test("Stopped focused session still keeps the Live Voice End affordance")
-    func stoppedSessionKeepsLiveVoiceEnd() {
-        #expect(ChatView.showsLiveVoiceBar(isLive: true, isStopped: true))
+    @Test("Footer shows the call bar while live, and after a failed start until End")
+    func footerShowsCallBarWhileLiveOrFailed() {
+        #expect(!ChatView.showsLiveVoiceBar(isLive: false))
+        #expect(ChatView.showsLiveVoiceBar(isLive: true))
+        #expect(ChatView.showsLiveVoiceBar(isLive: false, lastError: "Grok Voice disconnected (1011)"))
     }
 
     @Test("Mute and End reach their owner actions, and the state reads as its text")

@@ -1180,9 +1180,6 @@ export class SdkBackend implements AgentBackend {
     const managedSession = (session.runtime ?? "oppi") !== "pi-tui";
     const isolatedVoiceRuntime = isDeclaredVoiceControlSession(session);
     const voiceControlBridge = isolatedVoiceRuntime ? new VoicePiControlBridge() : undefined;
-    const unregisterVoiceBridge = voiceControlBridge
-      ? config.registerVoiceControlBridge?.(session.id, voiceControlBridge)
-      : undefined;
     const getMobileOutputGuideSettings =
       config.getMobileOutputGuideSettings ?? (() => DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS);
     const mobileOutputGuideSettingsHolder: MobileOutputGuideSettingsHolder = {
@@ -1737,6 +1734,10 @@ export class SdkBackend implements AgentBackend {
     const preBindMs = Date.now() - createStartMs;
     config.metrics?.record("server.session_create_sdk_ms", preBindMs);
 
+    // Registered once the backend owns its cleanup, so a failed create leaves no dead bridge.
+    const unregisterVoiceBridge = voiceControlBridge
+      ? config.registerVoiceControlBridge?.(session.id, voiceControlBridge)
+      : undefined;
     if (unregisterVoiceBridge) backend.setVoiceBridgeCleanup(unregisterVoiceBridge);
     try {
       await backend.bindCurrentSessionExtensions();

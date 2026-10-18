@@ -51,6 +51,15 @@ export function matchFocusedSessionStreamPath(path: string): FocusedSessionStrea
 
 type SessionMissing = { kind: "session-missing" };
 
+type AdmissionOptions = {
+  workspaceMustExist?: boolean;
+  /**
+   * The control stream also carries the hidden Live Voice runtime, which has no
+   * workspace. Its HTTP control routes stay closed to it.
+   */
+  voiceControlStream?: boolean;
+};
+
 // Per-family results list only the failures that family can produce, so each
 // HTTP boundary maps every kind to a response and has no silent arm.
 export function admitSessionRoute(
@@ -72,12 +81,12 @@ export function admitSessionRoute(
 export function admitSessionRoute(
   store: SessionRouteStore,
   route: SessionRouteScope,
-  options?: { workspaceMustExist?: boolean },
+  options?: AdmissionOptions,
 ): SessionRouteAdmission;
 export function admitSessionRoute(
   store: SessionRouteStore,
   route: SessionRouteScope,
-  options?: { workspaceMustExist?: boolean },
+  options?: AdmissionOptions,
 ): SessionRouteAdmission {
   if (route.scope === "workspace") {
     const workspaceMustExist = options?.workspaceMustExist !== false;
@@ -94,11 +103,10 @@ export function admitSessionRoute(
 
   const session = store.getSession(route.sessionId);
   if (!session) return { kind: "session-missing" };
-  // The hidden Live Voice runtime streams on the control route too: it has no workspace.
   if (
     route.scope === "control" &&
     !isControlRouteSession(session) &&
-    !isDeclaredVoiceControlSession(session)
+    !(options?.voiceControlStream && isDeclaredVoiceControlSession(session))
   ) {
     return { kind: "not-control" };
   }

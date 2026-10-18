@@ -323,7 +323,7 @@ export class BoundSessionStreamMux {
       workspaceId
         ? { scope: "workspace", workspaceId, sessionId }
         : { scope: "control", sessionId },
-      { workspaceMustExist: false },
+      { workspaceMustExist: false, voiceControlStream: true },
     );
     if (admitted.kind !== "ok") {
       ws.close(1008, "Session not found");

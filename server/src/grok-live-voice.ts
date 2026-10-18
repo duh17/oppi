@@ -33,6 +33,13 @@ const OUTPUT_SAMPLE_RATE = 24_000;
 const OUTPUT_BYTES_PER_MS = (OUTPUT_SAMPLE_RATE * 2) / 1000;
 const START_TIMEOUT_MS = 10_000;
 const DELEGATE_TOOL = "delegate_to_pi";
+const ENDED_BEFORE_READY = "Live Voice ended before Grok Voice connected";
+/** Marks this adapter's responses in the metadata xAI echoes back on `response.created`. */
+const RESPONSE_SOURCE_KEY = "oppi_source";
+const OWN_RESPONSE_SOURCE = "pi_update";
+const RESPONSE_ID_KEY = "oppi_response";
+/** How long to wait for xAI's reply to a user turn, or to our own create, before moving on. */
+const TURN_REPLY_WAIT_MS = 5_000;
 
 export const GROK_VOICE_INSTRUCTIONS = [
   "You are Oppi Live Voice, a hands-free voice front end for Pi, a coding agent running on the user's computer.",
@@ -82,6 +89,7 @@ type XaiEvent = {
   transcript?: string;
   delta?: string;
   response_id?: string;
+  response?: { metadata?: Record<string, unknown> | null };
   error?: { message?: string; code?: string };
 };
 
@@ -93,8 +101,10 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
   private playbackSink: ((pcm: Buffer) => void) | undefined;
   private ready = false;
   private stopped = false;
-  /** A response is being generated; `response.create` waits for `response.done`. */
-  private responding = false;
+  /** Between `response.created` and `response.done`. */
+  private responseActive = false;
+  /** The user finished a turn and xAI's own server-VAD reply has not been created yet. */
+  private replyExpected = false;
   /** The in-flight response produced speech, so a delegation needs no second acknowledgement. */
   private respondedWithSpeech = false;
   private assistantSpeaking = false;
@@ -104,6 +114,28 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
   private playbackEndsAt = 0;
   private readonly transcripts = new Map<string, string>();
   private readonly committedItems = new Set<string>();
+  /** Items whose final transcript went out. Later corrections never reach approval. */
+  private readonly finalItems = new Set<string>();
+  /** Between `speech_started` and the turn commit; Grok must not start talking over it. */
+  private userSpeaking = false;
+  /**
+   * The id of this adapter's `response.create` (Pi update, tool error) until xAI creates it.
+   * Flow control only: at most one is in flight. Which response is ours comes from the
+   * metadata xAI echoes on `response.created`, never from timing. xAI silently drops a create
+   * sent while another response runs, and does not echo our `event_id` on errors.
+   */
+  private ownCreateId: string | undefined;
+  private ownCreateTimer: ReturnType<typeof setTimeout> | undefined;
+  private ownCreateSequence = 0;
+  /** Counts user turns; a final belongs to the turn its item was committed in. */
+  private turn = 0;
+  private readonly itemTurns = new Map<string, number>();
+  /** Ends the wait for xAI's own reply to a user turn if that reply never comes. */
+  private turnReplyTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The in-flight response answers a Pi update, not the user, so it cannot start Pi work. */
+  private responseFromAdapter = false;
+  /** Rejects a start still waiting for xAI, so a hang-up mid-connect ends it at once. */
+  private abortStart: ((error: Error) => void) | undefined;
   private readonly now: () => number;
 
   constructor(private readonly options: GrokVoiceOptions) {
@@ -118,6 +150,7 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
     this.handler = handler;
     const apiKey = (await this.options.resolveApiKey())?.trim();
     if (!apiKey) throw new Error("Grok Voice needs an xAI sign-in or API key");
+    if (this.stopped) throw new Error(ENDED_BEFORE_READY);
     const model = this.options.model ?? GROK_VOICE_DEFAULT_MODEL;
     const url = `${this.options.endpoint ?? GROK_VOICE_ENDPOINT}?model=${encodeURIComponent(model)}`;
     const createSocket = this.options.createSocket ?? defaultCreateSocket;
@@ -133,6 +166,7 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
       const fail = (error: Error): void => {
         if (settled) return;
         settled = true;
+        this.abortStart = undefined;
         clearTimeout(timer);
         this.closeSocket();
         reject(error);
@@ -140,9 +174,11 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
       const done = (): void => {
         if (settled) return;
         settled = true;
+        this.abortStart = undefined;
         clearTimeout(timer);
         resolve();
       };
+      this.abortStart = fail;
       socket.on("message", (data, isBinary) => {
         if (this.socket !== socket) return;
         if (isBinary) {
@@ -165,7 +201,7 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
           }
           return;
         }
-        void this.handleEvent(event);
+        this.handleEvent(event).catch((error: unknown) => logEventFailure(event.type, error));
       });
       socket.on("error", (error) => {
         if (this.socket !== socket) return;
@@ -179,9 +215,14 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
           return;
         }
         this.socket = undefined;
-        if (!this.stopped) void this.endFromRemote(`Grok Voice disconnected (${code})`);
+        if (!this.stopped) {
+          this.endFromRemote(`Grok Voice disconnected (${code})`).catch((error: unknown) =>
+            logEventFailure("close", error),
+          );
+        }
       });
     });
+    if (this.stopped) throw new Error(ENDED_BEFORE_READY);
     await handler({ type: "connected" });
   }
 
@@ -209,6 +250,7 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
   async stop(): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
+    this.abortStart?.(new Error(ENDED_BEFORE_READY));
     this.clearResponseTimer();
     this.closeSocket();
     const handler = this.handler;
@@ -272,6 +314,8 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
         // Grok cancels its own response; the phone must drop audio it already queued.
         // A non-empty partial is the client's barge-in signal, so show one at once.
         this.playbackEndsAt = this.now();
+        this.userSpeaking = true;
+        this.turn += 1;
         if (this.assistantSpeaking) {
           this.assistantSpeaking = false;
           await handler({ type: "assistant_speech_stopped" });
@@ -280,16 +324,18 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
         await handler({ type: "user_transcript_partial", text: "…" });
         return;
       case "input_audio_buffer.speech_stopped":
+        this.userSpeaking = false;
+        // xAI commits the turn and answers it itself (server VAD); wait for that reply.
+        this.awaitTurnReply();
         await handler({ type: "user_speech_ended" });
         return;
       case "conversation.item.input_audio_transcription.updated":
       case "conversation.item.input_audio_transcription.completed": {
         const text = event.transcript?.trim();
         if (!text || !event.item_id) return;
-        const previous = this.transcripts.get(event.item_id);
         this.transcripts.set(event.item_id, text);
         if (this.committedItems.has(event.item_id)) {
-          if (text !== previous) await handler({ type: "user_transcript_final", text });
+          await this.emitFinal(event.item_id, text);
           return;
         }
         await handler({ type: "user_transcript_partial", text });
@@ -298,15 +344,37 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
       case "input_audio_buffer.committed": {
         if (!event.item_id) return;
         this.committedItems.add(event.item_id);
+        this.itemTurns.set(event.item_id, this.turn);
+        this.userSpeaking = false;
+        // xAI's own reply to this turn is coming (it may already be active); a held
+        // Pi update follows its response.done.
+        if (!this.responseActive) this.awaitTurnReply();
         const text = this.transcripts.get(event.item_id);
         await handler({ type: "user_transcript_partial", text: "" });
-        if (text) await handler({ type: "user_transcript_final", text });
+        if (text) await this.emitFinal(event.item_id, text);
         return;
       }
-      case "response.created":
-        this.responding = true;
+      case "response.created": {
+        this.responseActive = true;
         this.respondedWithSpeech = false;
+        const metadata = event.response?.metadata;
+        const ours = metadata?.[RESPONSE_SOURCE_KEY] === OWN_RESPONSE_SOURCE;
+        this.responseFromAdapter = ours;
+        const current = ours && metadata?.[RESPONSE_ID_KEY] === this.ownCreateId;
+        if (!ours) {
+          // xAI's own reply to the user's turn.
+          this.replyExpected = false;
+          this.clearTurnReplyTimer();
+        }
+        // Any other response that starts first (xAI's own, or a late reply to an older create)
+        // makes xAI drop our create in flight: queue the Pi update again for its response.done.
+        if (current) this.clearOwnCreate();
+        else if (this.ownCreateId) {
+          this.clearOwnCreate();
+          this.responseWanted = true;
+        }
         return;
+      }
       case "response.output_audio_transcript.delta":
         this.respondedWithSpeech = true;
         return;
@@ -314,7 +382,7 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
         await this.handleFunctionCall(event);
         return;
       case "response.done":
-        this.responding = false;
+        this.responseActive = false;
         if (this.assistantSpeaking) {
           this.assistantSpeaking = false;
           await handler({ type: "assistant_speech_stopped" });
@@ -337,7 +405,9 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
     if (pcm.length === 0 || this.stopped) return;
     if (!this.assistantSpeaking) {
       this.assistantSpeaking = true;
-      void this.handler?.({ type: "assistant_speech_started" });
+      this.handler?.({ type: "assistant_speech_started" })?.catch((error: unknown) =>
+        logEventFailure("audio", error),
+      );
     }
     const now = this.now();
     this.playbackEndsAt = Math.max(this.playbackEndsAt, now) + pcm.length / OUTPUT_BYTES_PER_MS;
@@ -348,7 +418,10 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
     const callId = event.call_id;
     if (!callId) return;
     let output: Record<string, string>;
-    if (event.name !== DELEGATE_TOOL) {
+    if (this.responseFromAdapter) {
+      // A reply to a Pi update or tool error: Pi's own output must not start more Pi work.
+      output = { status: "error", message: "Only the user can start Pi work. Ask them first." };
+    } else if (event.name !== DELEGATE_TOOL) {
       output = { status: "error", message: `Unknown tool ${event.name ?? ""}`.trim() };
     } else {
       const request = parseDelegateRequest(event.arguments);
@@ -378,6 +451,8 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
       item: { type: "function_call_output", call_id: callId, output: JSON.stringify(output) },
     });
     // Grok usually says "on it" in the same response; a second response would repeat it.
+    // A refused adapter reply gets no follow-up, so Pi output cannot loop through Grok.
+    if (this.responseFromAdapter) return;
     if (!this.respondedWithSpeech || output.status === "error") this.requestResponse();
   }
 
@@ -388,7 +463,10 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
   }
 
   private flushResponseRequest(): void {
-    if (!this.responseWanted || this.responding || this.stopped) return;
+    if (!this.responseWanted || this.stopped) return;
+    if (this.responseActive || this.replyExpected || this.ownCreateId || this.userSpeaking) {
+      return;
+    }
     const wait = this.playbackEndsAt - this.now();
     if (wait > 0) {
       if (!this.responseTimer) {
@@ -400,11 +478,56 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
       return;
     }
     this.responseWanted = false;
-    this.responding = true;
-    this.sendEvent({ type: "response.create" });
+    const id = `oppi-response-${++this.ownCreateSequence}`;
+    this.ownCreateId = id;
+    this.sendEvent({
+      type: "response.create",
+      // xAI echoes this on response.created: the reply to a Pi update is labeled exactly.
+      response: { metadata: { [RESPONSE_SOURCE_KEY]: OWN_RESPONSE_SOURCE, [RESPONSE_ID_KEY]: id } },
+    });
+    this.ownCreateTimer = setTimeout(() => {
+      // Never created (dropped or refused without a word): stop holding later updates back.
+      this.ownCreateTimer = undefined;
+      this.ownCreateId = undefined;
+      this.flushResponseRequest();
+    }, TURN_REPLY_WAIT_MS);
+  }
+
+  private clearOwnCreate(): void {
+    this.ownCreateId = undefined;
+    if (this.ownCreateTimer) clearTimeout(this.ownCreateTimer);
+    this.ownCreateTimer = undefined;
+  }
+
+  /** One final per user turn: a later, corrected transcript must not answer a second challenge. */
+  private async emitFinal(itemId: string, text: string): Promise<void> {
+    if (this.finalItems.has(itemId)) return;
+    // Words from an earlier turn arriving after the user spoke again: the coordinator's
+    // "heard before speaking" set belongs to the newer turn, so fail closed.
+    if (this.itemTurns.get(itemId) !== this.turn) return;
+    this.finalItems.add(itemId);
+    await this.handler?.({ type: "user_transcript_final", text });
+  }
+
+  private awaitTurnReply(): void {
+    this.replyExpected = true;
+    this.clearTurnReplyTimer();
+    this.turnReplyTimer = setTimeout(() => {
+      this.turnReplyTimer = undefined;
+      // No reply was created (an empty turn): stop waiting so a held Pi update can speak.
+      this.replyExpected = false;
+      this.flushResponseRequest();
+    }, TURN_REPLY_WAIT_MS);
+  }
+
+  private clearTurnReplyTimer(): void {
+    if (this.turnReplyTimer) clearTimeout(this.turnReplyTimer);
+    this.turnReplyTimer = undefined;
   }
 
   private clearResponseTimer(): void {
+    this.clearTurnReplyTimer();
+    this.clearOwnCreate();
     if (this.responseTimer) clearTimeout(this.responseTimer);
     this.responseTimer = undefined;
   }
@@ -431,6 +554,14 @@ export class GrokVoiceMediaAdapter implements VoiceMediaAdapter {
       // Teardown cannot block stop.
     }
   }
+}
+
+/** An event that outlives its call (a late Grok event after End) must not crash the server. */
+function logEventFailure(eventType: string | undefined, error: unknown): void {
+  log.warn("grok_voice.event_failed", {
+    eventType,
+    error: error instanceof Error ? error.message : String(error),
+  });
 }
 
 function parseEvent(data: Buffer): XaiEvent | undefined {

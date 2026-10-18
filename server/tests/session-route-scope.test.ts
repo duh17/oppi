@@ -144,6 +144,29 @@ describe("admitSessionRoute", () => {
     });
   });
 
+  it("admits the hidden Live Voice session on the control stream only, never its HTTP routes", () => {
+    const voice = session({
+      id: "voice-1",
+      workspaceId: undefined,
+      voice: { purpose: "voice-control" },
+    });
+    const lookup = store({ sessions: { "voice-1": voice, stray: undeclared } });
+    const route = { scope: "control", sessionId: "voice-1" } as const;
+
+    expect(admitSessionRoute(lookup, route)).toEqual({ kind: "not-control" });
+    expect(admitSessionRoute(lookup, route, { voiceControlStream: true })).toEqual({
+      kind: "ok",
+      session: voice,
+    });
+    expect(
+      admitSessionRoute(
+        lookup,
+        { scope: "control", sessionId: "stray" },
+        { voiceControlStream: true },
+      ),
+    ).toEqual({ kind: "not-control" });
+  });
+
   it("admits any existing session on the generic family, including declared control", () => {
     const lookup = store({ sessions: { "control-1": declared, "sess-1": owned } });
 

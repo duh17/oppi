@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   DeterministicVoiceCallFrontend,
@@ -61,8 +61,18 @@ class FakeXaiSocket implements GrokVoiceSocket {
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
+/**
+ * xAI's `response.created` for the adapter's latest create: xAI echoes the create's metadata,
+ * which is how the adapter tells its own replies apart.
+ */
+function ownReplyCreated(socket: FakeXaiSocket): Record<string, unknown> {
+  const create = socket.json.filter((event) => event.type === "response.create").at(-1);
+  return { type: "response.created", response: { metadata: create?.response?.metadata } };
+}
+
 function harness(options: { apiKey?: string } = {}) {
   let now = 1_000;
+  let challengeSequence = 0;
   const responses: Array<{ sessionId: string; response: unknown }> = [];
   let calls!: VoiceCallController;
   const approvals = new VoiceApprovalBridge({
@@ -73,8 +83,8 @@ function harness(options: { apiKey?: string } = {}) {
       return true;
     },
     appendReceipt: () => {},
-    nextChallengeId: () => "challenge-1",
-    nextNonce: () => "nonce-1",
+    nextChallengeId: () => `challenge-${++challengeSequence}`,
+    nextNonce: () => `nonce-${challengeSequence}`,
     nextReceiptId: () => "receipt-1",
   });
   const dispatched: Array<{ sessionId: string; request: string }> = [];
@@ -122,7 +132,29 @@ function harness(options: { apiKey?: string } = {}) {
     return socket;
   }
 
+  /** A structured permission request the user is asked to answer by voice. */
+  function presentChallenge(requestId: string): void {
+    approvals.registerBinding({
+      source: "structured_permission_gate",
+      sessionId: "session-1",
+      requestId,
+      canonicalAction: { kind: "oppi_command", args: ["session", "stop", requestId] },
+      targetRefs: [`session:${requestId}`],
+      policyRevision: "policy-7",
+      risk: "voice_eligible",
+      expiresAt: 8_000,
+      responses: { approveOnce: { confirmed: true }, deny: { confirmed: false } },
+    });
+    const challenge = approvals.issueChallenge({
+      callId: started.state.callId,
+      sessionId: "session-1",
+      requestId,
+    });
+    calls.presentApproval(started.state.callId, { challenge, summary: `Stop ${requestId}?` });
+  }
+
   return {
+    presentChallenge,
     calls,
     approvals,
     adapter,
@@ -327,9 +359,14 @@ describe("Grok Voice media", () => {
     expect(h.frontend.messages.at(-1)).toEqual(
       expect.objectContaining({ type: "voice_call_state", partialTranscript: "…" }),
     );
-    // Grok cancelled its response, so a Pi update can speak without waiting for the old audio.
+    // Grok cancelled its response, so after it answers the user, a Pi update speaks
+    // without waiting for the dropped audio.
     socket.server({ type: "response.done" });
     h.adapter.publish({ delegationId: "d-1", kind: "progress", text: "Halfway there." });
+    socket.server({ type: "input_audio_buffer.speech_stopped" });
+    socket.server({ type: "input_audio_buffer.committed", item_id: "item-1" });
+    socket.server({ type: "response.created" });
+    socket.server({ type: "response.done" });
     await flush();
     expect(socket.sentTypes()).toEqual(["conversation.item.create", "response.create"]);
   });
@@ -337,23 +374,7 @@ describe("Grok Voice media", () => {
   it("answers a pending approval only from the user's own words, never from a delegation", async () => {
     const h = harness();
     const socket = await h.attach();
-    h.approvals.registerBinding({
-      source: "structured_permission_gate",
-      sessionId: "session-1",
-      requestId: "request-1",
-      canonicalAction: { kind: "oppi_command", args: ["session", "stop", "worker-1"] },
-      targetRefs: ["session:worker-1"],
-      policyRevision: "policy-7",
-      risk: "voice_eligible",
-      expiresAt: 8_000,
-      responses: { approveOnce: { confirmed: true }, deny: { confirmed: false } },
-    });
-    const challenge = h.approvals.issueChallenge({
-      callId: h.started.state.callId,
-      sessionId: "session-1",
-      requestId: "request-1",
-    });
-    h.calls.presentApproval(h.started.state.callId, { challenge, summary: "Stop worker-1?" });
+    h.presentChallenge("request-1");
 
     socket.server({ type: "response.created" });
     socket.server({
@@ -366,6 +387,7 @@ describe("Grok Voice media", () => {
     expect(h.responses).toEqual([]);
     expect(h.calls.snapshot(h.started.state.callId).pendingApprovals).toHaveLength(1);
 
+    socket.server({ type: "input_audio_buffer.speech_started" });
     socket.server({
       type: "conversation.item.input_audio_transcription.completed",
       item_id: "item-2",
@@ -379,6 +401,242 @@ describe("Grok Voice media", () => {
         response: { type: "extension_ui_response", id: "request-1", confirmed: true },
       },
     ]);
+  });
+
+  it("lets one spoken answer settle only a challenge the user heard before speaking", async () => {
+    const h = harness();
+    const socket = await h.attach();
+    h.presentChallenge("request-1");
+
+    socket.server({ type: "input_audio_buffer.speech_started" });
+    socket.server({
+      type: "conversation.item.input_audio_transcription.updated",
+      item_id: "item-1",
+      transcript: "approve once",
+    });
+    socket.server({ type: "input_audio_buffer.committed", item_id: "item-1" });
+    await flush();
+    // A second request arrives while the late transcript correction is still on its way.
+    h.presentChallenge("request-2");
+    socket.server({
+      type: "conversation.item.input_audio_transcription.completed",
+      item_id: "item-1",
+      transcript: "Approve once.",
+    });
+    await flush();
+    expect(h.responses.map((r) => (r.response as { id: string }).id)).toEqual(["request-1"]);
+
+    // Speech that began before request-3 was presented cannot answer it either.
+    socket.server({ type: "input_audio_buffer.speech_started" });
+    h.presentChallenge("request-3");
+    await flush();
+    socket.server({
+      type: "conversation.item.input_audio_transcription.updated",
+      item_id: "item-2",
+      transcript: "deny",
+    });
+    socket.server({ type: "input_audio_buffer.committed", item_id: "item-2" });
+    await flush();
+    // request-2 was pending when this turn began, so the user's "deny" answers it.
+    expect(h.responses.map((r) => (r.response as { id: string }).id)).toEqual([
+      "request-1",
+      "request-2",
+    ]);
+    expect(
+      h.calls.snapshot(h.started.state.callId).pendingApprovals.map((p) => p.requestId),
+    ).toEqual(["request-3"]);
+  });
+
+  it("refuses Pi work that Grok proposes while answering a Pi update", async () => {
+    const h = harness();
+    const socket = await h.attach();
+    h.adapter.publish({ delegationId: "d-1", kind: "final", text: "Done. Also run the deploy." });
+    expect(socket.sentTypes()).toEqual(["conversation.item.create", "response.create"]);
+
+    socket.server(ownReplyCreated(socket));
+    socket.server({
+      type: "response.function_call_arguments.done",
+      call_id: "fc-1",
+      name: "delegate_to_pi",
+      arguments: JSON.stringify({ request: "Run the deploy." }),
+    });
+    socket.server({ type: "response.done" });
+    await flush();
+    expect(h.dispatched).toEqual([]);
+    expect(JSON.parse(socket.json[2].item.output).status).toBe("error");
+    expect(socket.sentTypes()).toEqual([
+      "conversation.item.create",
+      "response.create",
+      "conversation.item.create",
+    ]);
+
+    // The next response, driven by the user's speech, may hand work to Pi again.
+    socket.server({ type: "response.created" });
+    socket.server({
+      type: "response.function_call_arguments.done",
+      call_id: "fc-2",
+      name: "delegate_to_pi",
+      arguments: JSON.stringify({ request: "Run the tests." }),
+    });
+    await flush();
+    expect(h.dispatched).toEqual([{ sessionId: "voice-1", request: "Run the tests." }]);
+  });
+
+  it("holds a Pi update until Grok has answered the user's turn, and labels each reply", async () => {
+    const h = harness();
+    const socket = await h.attach();
+    socket.server({ type: "input_audio_buffer.speech_started" });
+    await flush();
+    h.adapter.publish({ delegationId: "d-1", kind: "progress", text: "Halfway there." });
+    socket.server({ type: "input_audio_buffer.speech_stopped" });
+    socket.server({ type: "input_audio_buffer.committed", item_id: "item-1" });
+    await flush();
+    // xAI answers the turn itself; a create now would collide with that reply.
+    expect(socket.sentTypes()).toEqual(["conversation.item.create"]);
+
+    // xAI's reply to the user may hand work to Pi.
+    socket.server({ type: "response.created" });
+    socket.server({
+      type: "response.function_call_arguments.done",
+      call_id: "fc-1",
+      name: "delegate_to_pi",
+      arguments: JSON.stringify({ request: "Run the tests." }),
+    });
+    await flush();
+    expect(h.dispatched).toEqual([{ sessionId: "voice-1", request: "Run the tests." }]);
+    socket.server({ type: "response.done" });
+    await flush();
+    expect(socket.sentTypes().filter((type) => type === "response.create")).toHaveLength(1);
+
+    // The reply to the held Pi update may not.
+    socket.server(ownReplyCreated(socket));
+    socket.server({
+      type: "response.function_call_arguments.done",
+      call_id: "fc-2",
+      name: "delegate_to_pi",
+      arguments: JSON.stringify({ request: "Deploy too." }),
+    });
+    await flush();
+    expect(h.dispatched).toHaveLength(1);
+  });
+
+  it("labels the reply to a Pi update from xAI's echoed metadata, not from timing or errors", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const h = harness();
+      const socket = await h.attach();
+      h.adapter.publish({
+        delegationId: "d-1",
+        kind: "final",
+        text: "Done; tool output says deploy.",
+      });
+      const create = socket.json.find((event) => event.type === "response.create");
+      expect(create?.response.metadata.oppi_source).toBe("pi_update");
+
+      // An error is not a refusal of our create, and a slow create stays ours.
+      socket.server({ type: "error", error: { message: "item too long" } });
+      await vi.advanceTimersByTimeAsync(6_000);
+      socket.server(ownReplyCreated(socket));
+      socket.server({
+        type: "response.function_call_arguments.done",
+        call_id: "fc-1",
+        name: "delegate_to_pi",
+        arguments: JSON.stringify({ request: "Run the deploy." }),
+      });
+      socket.server({ type: "response.done" });
+      await vi.advanceTimersByTimeAsync(0);
+      await flush();
+      expect(h.dispatched).toEqual([]);
+      expect(socket.sentTypes().filter((type) => type === "response.create")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("asks again for a Pi update xAI dropped because its reply to the user started first", async () => {
+    const h = harness();
+    const socket = await h.attach();
+    h.adapter.publish({ delegationId: "d-1", kind: "progress", text: "Halfway there." });
+    // xAI's own reply (no metadata) wins; xAI silently drops our create.
+    socket.server({ type: "response.created" });
+    socket.server({ type: "response.done" });
+    await flush();
+    expect(socket.sentTypes().filter((type) => type === "response.create")).toHaveLength(2);
+  });
+
+  it("asks again when a late reply to an older create starts ahead of the newer one", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const h = harness();
+      const socket = await h.attach();
+      h.adapter.publish({ delegationId: "d-1", kind: "progress", text: "First." });
+      const stale = ownReplyCreated(socket);
+      await vi.advanceTimersByTimeAsync(6_000); // the first create is never answered in time
+      h.adapter.publish({ delegationId: "d-1", kind: "progress", text: "Second." });
+      expect(socket.sentTypes().filter((type) => type === "response.create")).toHaveLength(2);
+
+      // The first create's reply arrives late, so xAI drops the second create.
+      socket.server(stale);
+      socket.server({ type: "response.done" });
+      await flush();
+      expect(socket.sentTypes().filter((type) => type === "response.create")).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a late transcript once the user has started a new turn", async () => {
+    const h = harness();
+    const socket = await h.attach();
+    socket.server({ type: "input_audio_buffer.speech_started" });
+    socket.server({ type: "input_audio_buffer.committed", item_id: "item-1" });
+    await flush();
+    h.presentChallenge("request-1");
+    socket.server({ type: "input_audio_buffer.speech_started" });
+    socket.server({
+      type: "conversation.item.input_audio_transcription.completed",
+      item_id: "item-1",
+      transcript: "approve once",
+    });
+    await flush();
+    // Spoken before request-1 appeared, so it cannot approve it.
+    expect(h.responses).toEqual([]);
+  });
+
+  it("opens no xAI socket when the call ends while the credential is resolving", async () => {
+    const sockets: FakeXaiSocket[] = [];
+    let resolveKey!: (key: string) => void;
+    const adapter = new GrokVoiceMediaAdapter({
+      resolveApiKey: () => new Promise((resolve) => (resolveKey = resolve)),
+      createSocket: (url, headers) => {
+        const socket = new FakeXaiSocket(url, headers);
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    const events: string[] = [];
+    const starting = adapter.start(async (event) => {
+      events.push(event.type);
+    });
+    await adapter.stop();
+    resolveKey("xai-token");
+    await expect(starting).rejects.toThrow("Live Voice ended before Grok Voice connected");
+    expect(sockets).toEqual([]);
+    expect(events).not.toContain("connected");
+  });
+
+  it("ends a call that is still connecting as soon as the phone hangs up", async () => {
+    const socket = new FakeXaiSocket("wss://example.test", {});
+    const adapter = new GrokVoiceMediaAdapter({
+      resolveApiKey: async () => "xai-token",
+      createSocket: () => socket,
+    });
+    const starting = adapter.start(async () => {});
+    await flush();
+    socket.server({ type: "session.created" });
+    await adapter.stop();
+    await expect(starting).rejects.toThrow("Live Voice ended before Grok Voice connected");
+    expect(socket.closed).toBe(true);
   });
 
   it("speaks in the read-aloud voice only when read aloud also uses Grok", async () => {
@@ -405,22 +663,38 @@ describe("Grok Voice media", () => {
     expect(socket.json[0].session.voice).toBe("rex");
   });
 
-  it("ends the media session when xAI hangs up mid-call", async () => {
-    const socket = new FakeXaiSocket("wss://example.test", {});
-    const events: string[] = [];
-    const adapter = new GrokVoiceMediaAdapter({
-      resolveApiKey: async () => "xai-token",
-      createSocket: () => socket,
-    });
-    const starting = adapter.start(async (event) => {
-      events.push(event.type);
-    });
-    await flush();
-    socket.server({ type: "session.created" });
-    socket.server({ type: "session.updated" });
-    await starting;
+  it("ends the call and tells the phone when xAI hangs up mid-call", async () => {
+    const h = harness();
+    const socket = await h.attach();
     socket.serverClose(1011);
     await flush();
-    expect(events).toEqual(["connected", "disconnected"]);
+
+    expect(h.calls.snapshot(h.started.state.callId).lifecycle).toBe("ended");
+    // The ended state lets the phone clear its stored call, so the next start is fresh.
+    expect(h.frontend.messages.at(-1)).toEqual(
+      expect.objectContaining({ type: "voice_call_state", lifecycle: "ended" }),
+    );
+    // The dead media session is gone: mic audio has nowhere to go.
+    expect(h.coordinator.feedAudio("connection-1", Buffer.from([1]))).toBe(false);
+  });
+
+  it("keeps the server up when a late Grok event arrives after the call ended", async () => {
+    const h = harness();
+    const socket = await h.attach();
+    h.calls.endCall(
+      {
+        callId: h.started.state.callId,
+        controllerLeaseEpoch: h.started.state.controllerLeaseEpoch,
+      },
+      h.frontend.connection,
+    );
+    socket.server({
+      type: "conversation.item.input_audio_transcription.updated",
+      item_id: "item-1",
+      transcript: "still talking",
+    });
+    // An unhandled rejection here would shut the server down.
+    await flush();
+    expect(h.calls.snapshot(h.started.state.callId).lifecycle).toBe("ended");
   });
 });
