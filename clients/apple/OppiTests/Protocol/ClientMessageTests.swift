@@ -298,6 +298,35 @@ struct ClientMessageTests {
         #expect(payload?["skills"] as? Bool == true)
     }
 
+
+    @Test func encodesContinuousVoiceControlCommands() throws {
+        let start = try decode(.voiceCallStart(clientCallId: "client-call-1", requestId: "voice-1"))
+        #expect(start["type"] as? String == "voice_call_start")
+        #expect(start["clientCallId"] as? String == "client-call-1")
+
+        let attach = try decode(.voiceCallAttach(callId: "call-1", lastEventSeq: 7, requestId: "voice-2"))
+        #expect(attach["type"] as? String == "voice_call_attach")
+        #expect(attach["callId"] as? String == "call-1")
+        #expect(attach["lastEventSeq"] as? Int == 7)
+
+        let detach = try decode(.voiceCallDetach(callId: "call-1", controllerLeaseEpoch: 3, requestId: "voice-3"))
+        #expect(detach["type"] as? String == "voice_call_detach")
+        #expect(detach["controllerLeaseEpoch"] as? Int == 3)
+
+        let approval = try decode(
+            .voiceApprovalResponse(
+                callId: "call-1",
+                controllerLeaseEpoch: 3,
+                challengeId: "challenge-1",
+                transcript: "approve once",
+                requestId: "voice-4"
+            )
+        )
+        #expect(approval["type"] as? String == "voice_approval_response")
+        #expect(approval["challengeId"] as? String == "challenge-1")
+        #expect(approval["transcript"] as? String == "approve once")
+    }
+
     // MARK: - Helpers
 
     private enum DecodeError: Error {

@@ -253,6 +253,10 @@ struct ControlSessionMetadata: Codable, Sendable, Equatable {
     }
 }
 
+struct VoiceControlSessionMetadata: Codable, Sendable, Equatable {
+    let purpose: String
+}
+
 /// Presentation-only subset of immutable session launch metadata.
 /// Execution identity remains server-owned through Agent ID and version.
 struct SessionLaunchMetadata: Codable, Sendable, Equatable {
@@ -407,6 +411,7 @@ struct Session: Identifiable, Sendable, Equatable {
     var supportsPersistingDefaults: Bool { runtime != .piTui }
     var mirror: PiTuiMirrorSessionMetadata? = nil
     var control: ControlSessionMetadata? = nil
+    var voice: VoiceControlSessionMetadata? = nil
     var launch: SessionLaunchMetadata? = nil
     /// Launching session; the inbox groups session threads by this edge.
     var parentSessionId: String? = nil
@@ -622,7 +627,7 @@ private enum SessionWireCodingKeys: String, CodingKey {
     case programStatus
     case model, messageCount, tokens, cost, changeStats
     case contextTokens, contextWindow, firstMessage, lastMessage
-    case thinkingLevel, runtime, mirror, control, launch, agentId, agentIcon, parentSessionId, ephemeral, warnings
+    case thinkingLevel, runtime, mirror, control, voice, launch, agentId, agentIcon, parentSessionId, ephemeral, warnings
     case pendingAskCount
     case engine, serverDurable
 }
@@ -656,6 +661,7 @@ private struct DecodedSessionWireFields {
     let runtime: SessionRuntimeKind?
     let mirror: PiTuiMirrorSessionMetadata?
     let control: ControlSessionMetadata?
+    let voice: VoiceControlSessionMetadata?
     let launch: SessionLaunchMetadata?
     let agentId: String?
     let agentIcon: IconChoice?
@@ -691,6 +697,7 @@ private struct DecodedSessionWireFields {
         runtime = try container.decodeIfPresent(SessionRuntimeKind.self, forKey: .runtime)
         mirror = try container.decodeIfPresent(PiTuiMirrorSessionMetadata.self, forKey: .mirror)
         control = try container.decodeIfPresent(ControlSessionMetadata.self, forKey: .control)
+        voice = try container.decodeIfPresent(VoiceControlSessionMetadata.self, forKey: .voice)
         launch = try container.decodeIfPresent(SessionLaunchMetadata.self, forKey: .launch)
         agentId = try container.decodeIfPresent(String.self, forKey: .agentId)
         agentIcon = try container.decodeIfPresent(IconChoice.self, forKey: .agentIcon)
@@ -768,6 +775,7 @@ private extension DecodedSessionWireFields {
             runtime: runtime,
             mirror: mirror,
             control: control,
+            voice: voice,
             launch: presentationLaunch,
             parentSessionId: parentSessionId,
             ephemeral: ephemeral,
@@ -838,6 +846,7 @@ extension Session: Codable {
         try c.encodeIfPresent(runtime, forKey: .runtime)
         try c.encodeIfPresent(mirror, forKey: .mirror)
         try c.encodeIfPresent(control, forKey: .control)
+        try c.encodeIfPresent(voice, forKey: .voice)
         try c.encodeIfPresent(launch, forKey: .launch)
         try c.encodeIfPresent(parentSessionId, forKey: .parentSessionId)
         try c.encodeIfPresent(ephemeral, forKey: .ephemeral)

@@ -12,6 +12,10 @@ import {
 import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { RuntimeDisconnectedError } from "./agent-runtime-transport.js";
 import { isControlConversation, isDeclaredControlSession } from "./control-session.js";
+import {
+  isDeclaredVoiceControlSession,
+  VOICE_CONTROL_SESSION_PURPOSE,
+} from "./voice-control-session.js";
 import { isPathWithinRoot } from "./git-utils.js";
 import { mintSessionId } from "./id.js";
 import {
@@ -487,6 +491,54 @@ export class SessionLifecycleService {
       owner: "oppi",
       startedSession: true,
       rebound: binding.rebound,
+    };
+  }
+
+  async createVoiceControlSession(params: { name?: string } = {}): Promise<{
+    session: Session;
+    createdSession: Session;
+  }> {
+    const now = Date.now();
+    const sessionName = params.name?.trim() || "Voice Control";
+    const session = this.deps.storage.createSession(sessionName);
+    session.workspaceId = undefined;
+    session.workspaceName = undefined;
+    session.worktreeId = undefined;
+    session.runtime = "oppi";
+    session.control = undefined;
+    session.voice = { purpose: VOICE_CONTROL_SESSION_PURPOSE };
+    session.lastActivity = now;
+    this.deps.storage.saveSession(session);
+    // Start immediately so the VoicePiControlBridge is registered before the
+    // Apple client opens the stream and sends the first utterance.
+    const started = await this.startManagedSession(session, undefined);
+    const createdSession = this.deps.ensureSessionContextWindow(started);
+    return {
+      session: createdSession,
+      createdSession,
+    };
+  }
+
+  async resumeVoiceControlSession(session: Session): Promise<OpenSessionResult> {
+    if (!isDeclaredVoiceControlSession(session) || session.control !== undefined) {
+      throw new SessionLifecycleError("Session is not a voice-control session", 400);
+    }
+    if (this.deps.sessionRuntimes.isSessionConnected(session.id)) {
+      const active = this.deps.sessionRuntimes.getActiveSession(session.id);
+      return {
+        session: active ? this.deps.ensureSessionContextWindow(active) : session,
+        owner: "oppi",
+        startedSession: false,
+        rebound: false,
+      };
+    }
+
+    const started = await this.startManagedSession(session, undefined);
+    return {
+      session: this.deps.ensureSessionContextWindow(started),
+      owner: "oppi",
+      startedSession: true,
+      rebound: false,
     };
   }
 

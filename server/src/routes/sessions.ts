@@ -32,6 +32,10 @@ import {
   interactionKindForCommand,
   recordCallerInteraction,
 } from "../session-interactions.js";
+import {
+  isDeclaredVoiceControlSession,
+  VOICE_CONTROL_SESSION_PURPOSE,
+} from "../voice-control-session.js";
 
 const CONTROL_SESSION_DOMAINS: ReadonlySet<string> = new Set<ControlSessionDomain>([
   "agents",
@@ -171,6 +175,23 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
         helpers.error(res, 400, "Session is not a control session");
         return null;
     }
+  }
+
+  function requireVoiceControlSession(sessionId: string, res: ServerResponse): Session | null {
+    const session = ctx.storage.getSession(sessionId);
+    if (!session) {
+      helpers.error(res, 404, "Session not found");
+      return null;
+    }
+    if (!isDeclaredVoiceControlSession(session) || session.control !== undefined) {
+      helpers.error(res, 400, "Session is not a voice-control session");
+      return null;
+    }
+    return session;
+  }
+
+  function parseVoiceControlPurpose(purpose: unknown): boolean {
+    return purpose === VOICE_CONTROL_SESSION_PURPOSE;
   }
 
   async function handleCreateWorkspaceSession(
@@ -671,7 +692,66 @@ export function createSessionRoutes(ctx: RouteContext, helpers: RouteHelpers): R
     }
   }
 
+  async function handleCreateVoiceControlSession(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const body = await helpers.parseBody<{ purpose?: unknown; name?: unknown }>(req);
+    if (!parseVoiceControlPurpose(body.purpose)) {
+      helpers.error(res, 400, "Invalid voice-control session purpose");
+      return;
+    }
+    if (body.name !== undefined && typeof body.name !== "string") {
+      helpers.error(res, 400, "Invalid voice-control session metadata");
+      return;
+    }
+    try {
+      const result = await lifecycle.createVoiceControlSession({
+        name: typeof body.name === "string" ? body.name : undefined,
+      });
+      // Hidden from lists: do not emit session_created or summary events.
+      helpers.json(res, { session: result.session }, 201);
+    } catch (error: unknown) {
+      if (error instanceof SessionLifecycleError) {
+        helpers.error(res, error.statusCode, error.message);
+        return;
+      }
+      helpers.error(res, 500, safeErrorMessage(error));
+    }
+  }
+
+  async function handleResumeVoiceControlSession(
+    session: Session,
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const body = await helpers.parseBody<{ purpose?: unknown }>(req);
+    if (body.purpose !== undefined && !parseVoiceControlPurpose(body.purpose)) {
+      helpers.error(res, 400, "Invalid voice-control session purpose");
+      return;
+    }
+    try {
+      const result = await lifecycle.resumeVoiceControlSession(session);
+      helpers.json(res, { session: result.session });
+    } catch (error: unknown) {
+      const status = error instanceof SessionLifecycleError ? error.statusCode : 500;
+      helpers.error(res, status, safeErrorMessage(error));
+    }
+  }
+
   return async ({ method, path, url, req, res }) => {
+    if (path === "/voice-control-sessions" && method === "POST") {
+      await handleCreateVoiceControlSession(req, res);
+      return true;
+    }
+
+    const voiceResumeMatch = path.match(/^\/voice-control-sessions\/([^/]+)\/resume$/);
+    if (voiceResumeMatch && method === "POST") {
+      const session = requireVoiceControlSession(voiceResumeMatch[1], res);
+      if (session) await handleResumeVoiceControlSession(session, req, res);
+      return true;
+    }
+
     if (path === "/control-sessions" && method === "POST") {
       await handleCreateControlSession(req, res);
       return true;

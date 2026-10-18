@@ -1,4 +1,5 @@
 import { isControlRouteSession } from "./control-session.js";
+import { isDeclaredVoiceControlSession } from "./voice-control-session.js";
 import type { Session, Workspace } from "./types.js";
 
 /**
@@ -93,7 +94,12 @@ export function admitSessionRoute(
 
   const session = store.getSession(route.sessionId);
   if (!session) return { kind: "session-missing" };
-  if (route.scope === "control" && !isControlRouteSession(session)) {
+  // The hidden Live Voice runtime streams on the control route too: it has no workspace.
+  if (
+    route.scope === "control" &&
+    !isControlRouteSession(session) &&
+    !isDeclaredVoiceControlSession(session)
+  ) {
     return { kind: "not-control" };
   }
   return { kind: "ok", session };

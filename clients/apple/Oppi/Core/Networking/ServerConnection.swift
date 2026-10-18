@@ -2933,6 +2933,31 @@ final class ServerConnection {
         )
     }
 
+    /// Dedicated voice-control stream. Must not steal the focused chat WebSocket.
+    func makeLiveVoiceWebSocketClient(sessionId: String) -> WebSocketClient? {
+        guard let selection = endpointSelection,
+              let credentials,
+              var components = URLComponents(url: selection.baseURL, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        components.scheme = selection.baseURL.scheme == "https" ? "wss" : "ws"
+        components.path = "/control-sessions/\(sessionId)/stream"
+        guard let streamURL = components.url else { return nil }
+
+        let client = WebSocketClient(
+            credentials: credentials,
+            preferredEndpoint: selection,
+            diagnosticRole: "live_voice",
+            diagnosticRemoteIdentity: nil,
+            tlsCertFingerprint: credentials.normalizedTLSCertFingerprint,
+            tlsServerName: selection.tlsServerName,
+            authSession: httpAuthSession
+        )
+        client.setPreferredEndpoint(selection)
+        client.setStreamURL(streamURL, sessionId: sessionId, workspaceId: nil)
+        return client
+    }
+
     func startAppEventStreamIfAvailable() {
         guard appEventStreamAvailable,
               let selection = endpointSelection,

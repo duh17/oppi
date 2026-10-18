@@ -52,6 +52,27 @@ struct SessionCodableTests {
         #expect(session.lastAgentReplyAt?.timeIntervalSince1970 == 1700003500)
     }
 
+    @Test func decodeHiddenVoiceControlSession() throws {
+        let json = """
+        {
+            "id": "voice-1",
+            "status": "ready",
+            "createdAt": 1700000000000,
+            "lastActivity": 1700000000000,
+            "messageCount": 0,
+            "tokens": {"input": 0, "output": 0},
+            "cost": 0,
+            "voice": {"purpose": "voice-control"}
+        }
+        """
+        let session = try JSONDecoder().decode(Session.self, from: json.data(using: .utf8)!)
+
+        #expect(session.id == "voice-1")
+        #expect(session.workspaceId == nil)
+        #expect(session.control == nil)
+        #expect(session.voice?.purpose == "voice-control")
+    }
+
     @Test func decodeMinimalSession() throws {
         let json = """
         {

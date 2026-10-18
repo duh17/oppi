@@ -7,6 +7,18 @@ import UIKit
 @Suite("ChatInputBar")
 @MainActor
 struct ChatInputBarTests {
+    @Test("Live Voice entry ends a recording or preparing dictation take first")
+    func liveVoiceEntryEndsDictation() async {
+        for state: VoiceInputManager.State in [.recording, .preparingModel] {
+            let manager = VoiceInputManager()
+            manager._testState = state
+            await ComposerShared.stopDictationBeforeLiveVoice(manager: manager)
+            #expect(manager.state == .idle)
+            #expect(!manager.isRecording)
+            #expect(!manager.isPreparing)
+        }
+    }
+
     @Test("Tap-to-type remains enabled while voice is active")
     func tapToTypeRemainsEnabledDuringVoiceStates() {
         #expect(ChatInputBar.allowKeyboardRestoreOnTap(voiceState: .recording))

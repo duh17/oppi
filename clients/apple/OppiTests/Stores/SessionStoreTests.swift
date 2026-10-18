@@ -57,6 +57,30 @@ struct SessionStorePartitioningTests {
         #expect(store.sessions(forServer: "nonexistent").isEmpty)
     }
 
+    @Test func listProjectionHidesHiddenVoiceControlSessions() {
+        let store = SessionStore()
+        store.switchServer(to: "srv1")
+        store.upsert(makeTestSession(id: "ws", workspaceId: "w1"))
+        var voice = makeTestSession(id: "voice", name: "Voice Control")
+        voice.voice = VoiceControlSessionMetadata(purpose: "voice-control")
+        store.upsert(voice)
+        var control = makeTestSession(id: "control")
+        control.control = ControlSessionMetadata(
+            domain: .schedules,
+            intent: .create,
+            targetId: nil,
+            targetName: nil
+        )
+        store.upsert(control)
+        store.upsert(makeTestSession(id: "leaked", name: "Voice Control"))
+        store.upsert(makeTestSession(id: "named", workspaceId: "w1", name: "Voice Control"))
+
+        #expect(Set(store.listProjectionSessions.map(\.id)) == Set(["ws", "control", "named"]))
+        #expect(!store.listProjectionSessions.map(\.id).contains("voice"))
+        #expect(!store.listProjectionSessions.map(\.id).contains("leaked"))
+        #expect(store.sessions.map(\.id).contains("voice"))
+    }
+
     @Test func listProjectionPartitionedByServerAndWorkspace() {
         let store = SessionStore()
         store.switchServer(to: "srv1")

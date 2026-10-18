@@ -43,6 +43,135 @@ struct AssistantMessageContentPart: Codable, Sendable, Equatable {
     }
 }
 
+enum VoiceCallLifecycleState: String, Codable, Sendable, Equatable {
+    case active
+    case ended
+}
+
+enum VoiceCallFrontendState: String, Codable, Sendable, Equatable {
+    case attached
+    case detached
+}
+
+enum VoiceCallDelegationState: String, Codable, Sendable, Equatable {
+    case delegated
+    case acknowledged
+    case working
+    case blocked
+    case completed
+}
+
+enum VoiceCallDelegationUpdateKind: String, Codable, Sendable, Equatable {
+    case delegated
+    case acknowledgement
+    case progress
+    case blocked
+    case final
+}
+
+struct VoiceCallDelegationSnapshot: Codable, Sendable, Equatable {
+    let delegationId: String
+    let utteranceId: String
+    let request: String
+    let state: VoiceCallDelegationState
+    let createdAt: Int64
+    let latestText: String?
+}
+
+struct VoiceCallApprovalPresentation: Codable, Sendable, Equatable {
+    let challengeId: String
+    let requestId: String
+    let summary: String
+    let targetRefs: [String]
+    let expiresAt: Int64
+}
+
+struct VoiceCallStateSnapshot: Codable, Sendable, Equatable {
+    let callId: String
+    let controlSessionId: String
+    let lifecycle: VoiceCallLifecycleState
+    let frontend: VoiceCallFrontendState
+    let controllerLeaseEpoch: Int
+    let controllerLeaseExpiresAt: Int64
+    let eventSeq: Int
+    let startedAt: Int64
+    let updatedAt: Int64
+    let delegations: [VoiceCallDelegationSnapshot]
+    let pendingApprovals: [VoiceCallApprovalPresentation]
+    let partialTranscript: String?
+
+    init(
+        callId: String,
+        controlSessionId: String,
+        lifecycle: VoiceCallLifecycleState,
+        frontend: VoiceCallFrontendState,
+        controllerLeaseEpoch: Int,
+        controllerLeaseExpiresAt: Int64,
+        eventSeq: Int,
+        startedAt: Int64,
+        updatedAt: Int64,
+        delegations: [VoiceCallDelegationSnapshot],
+        pendingApprovals: [VoiceCallApprovalPresentation],
+        partialTranscript: String? = nil
+    ) {
+        self.callId = callId
+        self.controlSessionId = controlSessionId
+        self.lifecycle = lifecycle
+        self.frontend = frontend
+        self.controllerLeaseEpoch = controllerLeaseEpoch
+        self.controllerLeaseExpiresAt = controllerLeaseExpiresAt
+        self.eventSeq = eventSeq
+        self.startedAt = startedAt
+        self.updatedAt = updatedAt
+        self.delegations = delegations
+        self.pendingApprovals = pendingApprovals
+        self.partialTranscript = partialTranscript
+    }
+}
+
+struct VoiceDelegationUpdateMessage: Sendable, Equatable {
+    let callId: String
+    let controlSessionId: String
+    let eventSeq: Int
+    let delegationId: String
+    let utteranceId: String
+    let kind: VoiceCallDelegationUpdateKind
+    let text: String
+    let createdAt: Int64
+}
+
+struct VoiceApprovalRequiredMessage: Sendable, Equatable {
+    let callId: String
+    let controlSessionId: String
+    let eventSeq: Int
+    let challengeId: String
+    let requestId: String
+    let summary: String
+    let targetRefs: [String]
+    let expiresAt: Int64
+}
+
+enum VoiceApprovalResultOutcome: String, Codable, Sendable, Equatable {
+    case delivered
+    case retry
+    case rejected
+}
+
+enum VoiceApprovalAuthorizingDecision: String, Codable, Sendable, Equatable {
+    case approveOnce = "approve_once"
+    case deny
+}
+
+struct VoiceApprovalResultMessage: Sendable, Equatable {
+    let callId: String
+    let controlSessionId: String
+    let eventSeq: Int
+    let challengeId: String
+    let outcome: VoiceApprovalResultOutcome
+    let decision: VoiceApprovalAuthorizingDecision?
+    let reason: String?
+}
+
 struct AudioStreamMessage: Sendable, Equatable {
     enum StreamEvent: String, Codable, Sendable {
         case metadata
@@ -125,6 +254,12 @@ enum ServerMessage: Sendable, Equatable {
 
     // Git status (workspace/worktree-level, pushed after file-mutating tool calls)
     case gitStatus(workspaceId: String, worktreeId: String?, status: GitStatus)
+
+    // Continuous voice control
+    case voiceCallState(VoiceCallStateSnapshot)
+    case voiceDelegationUpdate(VoiceDelegationUpdateMessage)
+    case voiceApprovalRequired(VoiceApprovalRequiredMessage)
+    case voiceApprovalResult(VoiceApprovalResultMessage)
 
     // Dictation (session audio stream)
     case dictationReady(provider: DictationProviderInfo?, contextApplied: Bool? = nil)
@@ -327,6 +462,12 @@ extension ServerMessage: Decodable {
         case attempt, maxAttempts, delayMs, errorMessage, finalError
         // git_status
         case workspaceId, worktreeId, status
+        // continuous voice control
+        case callId, controlSessionId, lifecycle, frontend
+        case controllerLeaseEpoch, controllerLeaseExpiresAt, eventSeq, startedAt, updatedAt
+        case delegations, pendingApprovals, delegationId, utteranceId, createdAt, latestText
+        case partialTranscript
+        case challengeId, targetRefs, expiresAt, outcome, decision, transcript
         // dictation
         case sttProvider, sttModel, contextApplied
         case text, snap, committedText, activeText
@@ -641,6 +782,66 @@ extension ServerMessage: Decodable {
             let status = try c.decode(GitStatus.self, forKey: .status)
             self = .gitStatus(workspaceId: workspaceId, worktreeId: worktreeId, status: status)
 
+        // ── Continuous voice control ──
+        case "voice_call_state":
+            self = .voiceCallState(
+                VoiceCallStateSnapshot(
+                    callId: try c.decode(String.self, forKey: .callId),
+                    controlSessionId: try c.decode(String.self, forKey: .controlSessionId),
+                    lifecycle: try c.decode(VoiceCallLifecycleState.self, forKey: .lifecycle),
+                    frontend: try c.decode(VoiceCallFrontendState.self, forKey: .frontend),
+                    controllerLeaseEpoch: try c.decode(Int.self, forKey: .controllerLeaseEpoch),
+                    controllerLeaseExpiresAt: try c.decode(Int64.self, forKey: .controllerLeaseExpiresAt),
+                    eventSeq: try c.decode(Int.self, forKey: .eventSeq),
+                    startedAt: try c.decode(Int64.self, forKey: .startedAt),
+                    updatedAt: try c.decode(Int64.self, forKey: .updatedAt),
+                    delegations: try c.decode([VoiceCallDelegationSnapshot].self, forKey: .delegations),
+                    pendingApprovals: try c.decode([VoiceCallApprovalPresentation].self, forKey: .pendingApprovals),
+                    partialTranscript: try c.decodeIfPresent(String.self, forKey: .partialTranscript)
+                )
+            )
+
+        case "voice_delegation_update":
+            self = .voiceDelegationUpdate(
+                VoiceDelegationUpdateMessage(
+                    callId: try c.decode(String.self, forKey: .callId),
+                    controlSessionId: try c.decode(String.self, forKey: .controlSessionId),
+                    eventSeq: try c.decode(Int.self, forKey: .eventSeq),
+                    delegationId: try c.decode(String.self, forKey: .delegationId),
+                    utteranceId: try c.decode(String.self, forKey: .utteranceId),
+                    kind: try c.decode(VoiceCallDelegationUpdateKind.self, forKey: .kind),
+                    text: try c.decode(String.self, forKey: .text),
+                    createdAt: try c.decode(Int64.self, forKey: .createdAt)
+                )
+            )
+
+        case "voice_approval_required":
+            self = .voiceApprovalRequired(
+                VoiceApprovalRequiredMessage(
+                    callId: try c.decode(String.self, forKey: .callId),
+                    controlSessionId: try c.decode(String.self, forKey: .controlSessionId),
+                    eventSeq: try c.decode(Int.self, forKey: .eventSeq),
+                    challengeId: try c.decode(String.self, forKey: .challengeId),
+                    requestId: try c.decode(String.self, forKey: .requestId),
+                    summary: try c.decode(String.self, forKey: .summary),
+                    targetRefs: try c.decode([String].self, forKey: .targetRefs),
+                    expiresAt: try c.decode(Int64.self, forKey: .expiresAt)
+                )
+            )
+
+        case "voice_approval_result":
+            self = .voiceApprovalResult(
+                VoiceApprovalResultMessage(
+                    callId: try c.decode(String.self, forKey: .callId),
+                    controlSessionId: try c.decode(String.self, forKey: .controlSessionId),
+                    eventSeq: try c.decode(Int.self, forKey: .eventSeq),
+                    challengeId: try c.decode(String.self, forKey: .challengeId),
+                    outcome: try c.decode(VoiceApprovalResultOutcome.self, forKey: .outcome),
+                    decision: try c.decodeIfPresent(VoiceApprovalAuthorizingDecision.self, forKey: .decision),
+                    reason: try c.decodeIfPresent(String.self, forKey: .reason)
+                )
+            )
+
         // ── Dictation ──
         case "dictation_ready":
             let providerName = try c.decodeIfPresent(String.self, forKey: .sttProvider)
@@ -825,6 +1026,10 @@ extension ServerMessage {
         case .extensionUINotification: "extensionUINotification"
         case .extensionUISettled: "extensionUISettled"
         case .gitStatus: "gitStatus"
+        case .voiceCallState: "voiceCallState"
+        case .voiceDelegationUpdate: "voiceDelegationUpdate"
+        case .voiceApprovalRequired: "voiceApprovalRequired"
+        case .voiceApprovalResult: "voiceApprovalResult"
         case .dictationReady: "dictationReady"
         case .dictationResult: "dictationResult"
         case .dictationFinal: "dictationFinal"

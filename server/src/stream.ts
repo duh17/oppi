@@ -35,6 +35,7 @@ import {
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
 import { admitSessionRoute } from "./session-route-scope.js";
+import { isDeclaredVoiceControlSession } from "./voice-control-session.js";
 import {
   parseClientCommand,
   parseConversationStreamAttach,
@@ -59,12 +60,18 @@ export interface StreamContext {
     session: Session,
     msg: ClientMessage,
     send: (msg: ServerMessage) => void,
-    meta?: { connId?: string },
+    meta?: {
+      connId?: string;
+      authenticatedDeviceId?: string;
+      sendAudio?: (pcm: Buffer) => void;
+    },
   ) => Promise<void>;
+  handleConnectionClosed?: (connectionId: string) => void;
   trackConnection: (ws: WebSocket) => void;
   untrackConnection: (ws: WebSocket) => void;
   dictationManager?: DictationManager;
   createDictationManager?: () => DictationManager | undefined;
+  handleVoiceAudio?: (connectionId: string, pcm: Buffer) => boolean;
 }
 
 // ─── Keepalive ───
@@ -270,16 +277,30 @@ export class BoundSessionStreamMux {
     sessionId: string,
     ws: WebSocket,
     upgradeReceivedAt?: number,
+    authenticatedDeviceId?: string,
   ): Promise<void> {
-    await this.handleScopedWebSocket(workspaceId, sessionId, ws, upgradeReceivedAt);
+    await this.handleScopedWebSocket(
+      workspaceId,
+      sessionId,
+      ws,
+      upgradeReceivedAt,
+      authenticatedDeviceId,
+    );
   }
 
   async handleControlWebSocket(
     sessionId: string,
     ws: WebSocket,
     upgradeReceivedAt?: number,
+    authenticatedDeviceId?: string,
   ): Promise<void> {
-    await this.handleScopedWebSocket(undefined, sessionId, ws, upgradeReceivedAt);
+    await this.handleScopedWebSocket(
+      undefined,
+      sessionId,
+      ws,
+      upgradeReceivedAt,
+      authenticatedDeviceId,
+    );
   }
 
   private async handleScopedWebSocket(
@@ -287,6 +308,7 @@ export class BoundSessionStreamMux {
     sessionId: string,
     ws: WebSocket,
     upgradeReceivedAt?: number,
+    authenticatedDeviceId?: string,
   ): Promise<void> {
     const connectedAt = Date.now();
     const metrics = this.ctx.metrics;
@@ -359,6 +381,7 @@ export class BoundSessionStreamMux {
       liveConnectionCleanup.run?.();
       stopConversationStream?.();
       stopConversationStream = undefined;
+      this.ctx.handleConnectionClosed?.(connId);
       stopPing();
       this.ctx.untrackConnection(ws);
       const reasonStr = reason?.toString() || "";
@@ -475,6 +498,11 @@ export class BoundSessionStreamMux {
 
     const sendForSession = (msg: ServerMessage): void => {
       send({ ...msg, sessionId }, true);
+    };
+
+    const sendAudio = (pcm: Buffer): void => {
+      if (ws.readyState !== WebSocket.OPEN || pcm.length === 0) return;
+      ws.send(pcm, { binary: true });
     };
 
     let liveConnections = this.liveSessionConnections.get(sessionId);
@@ -664,6 +692,7 @@ export class BoundSessionStreamMux {
       ws.on("message", (data, isBinary) => {
         queue = queue
           .then(async () => {
+            if (connectionClosed) return;
             msgRecv += 1;
 
             if (isBinary) {
@@ -671,6 +700,16 @@ export class BoundSessionStreamMux {
                 type: "binary",
                 path: "bound_session_stream",
               });
+              const pcm = toBuffer(data);
+              if (
+                isDeclaredVoiceControlSession(session) &&
+                this.ctx.handleVoiceAudio?.(connId, pcm)
+              ) {
+                metrics?.record("server.ws_binary_received_bytes", pcm.byteLength, {
+                  path: "bound_session_stream",
+                });
+                return;
+              }
               send({ type: "error", error: "Binary messages are not supported on session stream" });
               return;
             }
@@ -832,7 +871,7 @@ export class BoundSessionStreamMux {
                   targetSession,
                   { ...msg, sessionId },
                   sendForSession,
-                  { connId },
+                  { connId, authenticatedDeviceId, sendAudio },
                 );
               }
             }

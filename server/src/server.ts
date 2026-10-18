@@ -15,7 +15,7 @@ import { networkInterfaces, type NetworkInterfaceInfo } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { spawnSync } from "node:child_process";
-import { createPrivateKey, timingSafeEqual } from "node:crypto";
+import { createPrivateKey, randomUUID, timingSafeEqual } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import type { Storage } from "./storage.js";
 import {
@@ -43,6 +43,20 @@ import { ServerMetricCollector } from "./server-metric-collector.js";
 import { SearchIndex } from "./search-index.js";
 import { JsonlMetricWriter } from "./server-metric-writer.js";
 import { WsMessageHandler } from "./ws-message-handler.js";
+import { VoiceCallController } from "./continuous-voice-call.js";
+import {
+  selectLiveVoiceMediaAdapter,
+  VoiceCallMediaCoordinator,
+  YuwpLiveVoiceTts,
+  type VoiceMediaAdapter,
+} from "./continuous-voice-media.js";
+import { FileVoiceCallStore, voiceCallStorePath } from "./voice-call-store.js";
+import { VoiceApprovalBridge } from "./voice-approval-bridge.js";
+import {
+  FileVoiceApprovalReceiptStore,
+  voiceApprovalReceiptStorePath,
+} from "./voice-approval-receipt-store.js";
+import { VoicePermissionGate } from "./voice-permission-gate.js";
 import { PiTuiMirrorRuntime } from "./pi-tui-mirror-runtime.js";
 import { SessionRuntimes } from "./runtime-router.js";
 import {
@@ -57,6 +71,7 @@ import {
   matchFocusedSessionStreamPath,
   type FocusedSessionStreamPath,
 } from "./session-route-scope.js";
+import { authenticatedVoiceDeviceId } from "./voice-control-session.js";
 import { ServerResourceService } from "./server-resource-service.js";
 import { SessionLifecycleService } from "./session-lifecycle-service.js";
 import {
@@ -133,6 +148,7 @@ import {
   type DictationConfig,
 } from "./dictation-types.js";
 import { createSttProvider } from "./create-stt-provider.js";
+import { StreamingSttProvider } from "./stt-provider.js";
 import { DEFAULT_XAI_STT_MODEL } from "./xai-stt-provider.js";
 import { ProviderAuthManager } from "./provider-auth/provider-auth-manager.js";
 import { McpService } from "./mcp-service.js";
@@ -509,6 +525,8 @@ export class Server {
   private readonly serverUpdate: ServerUpdateService;
   // WebSocket message command dispatcher for full-session commands
   private wsMessageHandler!: WsMessageHandler;
+  private voiceCallController!: VoiceCallController;
+  private voiceMediaCoordinator!: VoiceCallMediaCoordinator;
   // Dictation pipeline capability source for ASR streams
   private dictationManager: DictationManager | undefined;
   private dictationConfig: DictationConfig | undefined;
@@ -607,13 +625,28 @@ export class Server {
     });
     this.sessionRuntimes = new SessionRuntimes(this.storage, this.sessions, this.mirrorRuntime);
 
-    this.wsMessageHandler = new WsMessageHandler({
-      sessions: this.sessionRuntimes,
-      ensureSessionContextWindow: (targetSession) =>
-        this.models.ensureSessionContextWindow(targetSession),
-      getModelCatalog: () => this.models.getAll(),
-      emitSessionSummary: (targetSession) =>
-        this.appEventStreamMux.emitSessionSummary(targetSession),
+    const voiceApprovalReceipts = new FileVoiceApprovalReceiptStore(
+      voiceApprovalReceiptStorePath(dataDir),
+    );
+    const voiceApprovalBridge = new VoiceApprovalBridge({
+      activeControllerLease: (callId) => this.voiceCallController.activeControllerLease(callId),
+      respondToUIRequest: (sessionId, response) =>
+        this.sessionRuntimes.respondToUIRequest(sessionId, response),
+      appendReceipt: (receipt) => voiceApprovalReceipts.append(receipt),
+      nextChallengeId: () => randomUUID(),
+      nextNonce: () => randomUUID(),
+      nextReceiptId: () => randomUUID(),
+    });
+    this.voiceCallController = new VoiceCallController({
+      nextCallId: () => randomUUID(),
+      persistence: new FileVoiceCallStore(voiceCallStorePath(dataDir)),
+      approvalAuthority: voiceApprovalBridge,
+      dispatchDelegation: (sessionId, delegation) =>
+        this.sessions.voiceControlBridges.dispatch(sessionId, delegation),
+    });
+    this.sessions.voicePermissionGate = new VoicePermissionGate({
+      bridge: voiceApprovalBridge,
+      calls: this.voiceCallController,
     });
 
     // Dictation pipeline. Dictation streams create one DictationManager per WebSocket.
@@ -633,6 +666,28 @@ export class Server {
       };
       this.dictationManager = this.createDictationManager();
     }
+    this.voiceMediaCoordinator = new VoiceCallMediaCoordinator({
+      createAdapter: () => this.createLiveVoiceMediaAdapter(),
+      calls: this.voiceCallController,
+      nextUtteranceId: () => randomUUID(),
+      nextDelegationId: () => randomUUID(),
+    });
+    this.sessions.voiceControlBridges.setUpdateHandler((sessionId, update) => {
+      const callId = this.voiceCallController.activeCallIdForControlSession(sessionId);
+      if (!callId) return;
+      this.voiceCallController.applyDelegationUpdate(callId, update);
+      void this.voiceMediaCoordinator.publish(callId, update);
+    });
+    this.wsMessageHandler = new WsMessageHandler({
+      sessions: this.sessionRuntimes,
+      ensureSessionContextWindow: (targetSession) =>
+        this.models.ensureSessionContextWindow(targetSession),
+      getModelCatalog: () => this.models.getAll(),
+      emitSessionSummary: (targetSession) =>
+        this.appEventStreamMux.emitSessionSummary(targetSession),
+      voiceCalls: this.voiceCallController,
+      voiceMedia: this.voiceMediaCoordinator,
+    });
 
     const streamContext = {
       storage: this.storage,
@@ -646,8 +701,14 @@ export class Server {
         session: Session,
         msg: ClientMessage,
         send: (msg: ServerMessage) => void,
-        meta?: { connId?: string },
+        meta?: { connId?: string; authenticatedDeviceId?: string },
       ) => this.wsMessageHandler.handleClientMessage(session, msg, send, meta),
+      handleConnectionClosed: (connectionId: string) => {
+        this.voiceCallController.disconnectConnection(connectionId);
+        void this.voiceMediaCoordinator.detach(connectionId);
+      },
+      handleVoiceAudio: (connectionId: string, pcm: Buffer) =>
+        this.voiceMediaCoordinator.feedAudio(connectionId, pcm),
       trackConnection: (ws: WebSocket) => this.trackConnection(ws),
       untrackConnection: (ws: WebSocket) => this.untrackConnection(ws),
       dictationManager: this.dictationManager,
@@ -1367,6 +1428,22 @@ export class Server {
     );
   }
 
+  private createLiveVoiceMediaAdapter(): VoiceMediaAdapter {
+    const asr = this.storage.getConfig().asr;
+    const endpoint = this.dictationConfig?.sttEndpoint ?? asr?.sttEndpoint;
+    const model = this.dictationConfig?.sttModel ?? DEFAULT_DICTATION_CONFIG.sttModel;
+    const ttsEndpoint =
+      this.storage.getConfig().runtimeEnv?.TTS_BASE_URL?.trim() || process.env.TTS_BASE_URL?.trim();
+    return selectLiveVoiceMediaAdapter({
+      liveVoiceBackend: asr?.liveVoiceBackend,
+      sttEndpoint: endpoint,
+      createStt: endpoint
+        ? () => new StreamingSttProvider({ endpoint, model }, globalThis.fetch)
+        : undefined,
+      tts: ttsEndpoint ? new YuwpLiveVoiceTts({ endpoint: ttsEndpoint }) : undefined,
+    });
+  }
+
   private trackConnection(ws: WebSocket): void {
     this.connections.add(ws);
   }
@@ -1812,6 +1889,10 @@ export class Server {
     }
     const principal = authResult.principal;
 
+    // Owner tokens can use ordinary APIs but cannot acquire voice-controller
+    // authority. Paired-device principals already carry a stable device ID for
+    // both short-lived access tokens and remaining legacy device tokens.
+    const authenticatedDeviceId = authenticatedVoiceDeviceId(principal);
     const sessionStreamMatch = matchFocusedSessionStreamPath(url.pathname);
     const appEventStreamMatch = url.pathname === "/app/events/stream";
     const dictationStreamMatch = url.pathname === "/dictation/stream";
@@ -1868,6 +1949,7 @@ export class Server {
         dictationStreamMatch,
         desktopViewStreamMatch,
         upgradeReceivedAt,
+        authenticatedDeviceId,
       });
     });
   }
@@ -1880,6 +1962,7 @@ export class Server {
       dictationStreamMatch: boolean;
       desktopViewStreamMatch: boolean;
       upgradeReceivedAt: number;
+      authenticatedDeviceId?: string;
     },
   ): void {
     if (route.sessionStreamMatch) {
@@ -1898,12 +1981,14 @@ export class Server {
           sessionId,
           ws,
           route.upgradeReceivedAt,
+          route.authenticatedDeviceId,
         );
       } else {
         void this.boundSessionStreamMux.handleControlWebSocket(
           sessionId,
           ws,
           route.upgradeReceivedAt,
+          route.authenticatedDeviceId,
         );
       }
       return;

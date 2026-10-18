@@ -30,9 +30,20 @@ final class MicButtonChromeView: UIControl {
     private var dictationStyle: DictationIndicatorStyle = .current
     nonisolated(unsafe) private var dictationStyleObserver: NSObjectProtocol?
 
+    /// Long-press menu, shown while `isContextMenuInteractionEnabled` is on. Tap still sends `.touchUpInside`.
+    var menuProvider: (() -> UIMenu?)?
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         setup()
+    }
+
+    override func contextMenuInteraction(
+        _ interaction: UIContextMenuInteraction,
+        configurationForMenuAtLocation location: CGPoint
+    ) -> UIContextMenuConfiguration? {
+        guard let menu = menuProvider?() else { return nil }
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in menu }
     }
 
     @available(*, unavailable)

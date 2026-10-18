@@ -305,4 +305,23 @@ describe("AppEventStreamMux", () => {
     expect(gitChanged).not.toHaveProperty("addedLines");
     expect(gitChanged).not.toHaveProperty("removedLines");
   });
+
+  it("does not announce hidden voice-control sessions on the app event stream", () => {
+    const { mux } = makeMux();
+    const ws = new FakeWebSocket();
+    mux.handleWebSocket(ws as unknown as WebSocket);
+    ws.sent.length = 0;
+
+    const voice: Session = {
+      ...makeSession("voice-1"),
+      workspaceId: undefined,
+      workspaceName: undefined,
+      name: "Voice Control",
+      voice: { purpose: "voice-control" },
+    };
+    mux.emitSessionCreated(voice);
+    mux.emitSessionSummary(voice);
+
+    expect(ws.sent).toEqual([]);
+  });
 });

@@ -119,6 +119,7 @@ struct ChatInputBar: View {
     let isStopping: Bool
     var voiceInputManager: VoiceInputManager?
     var onPrepareVoiceInput: ((VoiceInputManager) async throws -> Void)? = nil
+    var onLiveVoiceSelected: (() -> Void)? = nil
     let showForceStop: Bool
     let isForceStopInFlight: Bool
     var askRequest: AskRequest?
@@ -188,6 +189,7 @@ struct ChatInputBar: View {
                 isStopping: isStopping,
                 voiceInputManager: voiceInputManager,
                 onPrepareVoiceInput: onPrepareVoiceInput,
+                onLiveVoiceSelected: onLiveVoiceSelected,
                 showForceStop: showForceStop,
                 isForceStopInFlight: isForceStopInFlight,
                 askRequest: askRequest,
@@ -585,6 +587,7 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
     var isStopping: Bool
     var voiceInputManager: VoiceInputManager?
     var onPrepareVoiceInput: ((VoiceInputManager) async throws -> Void)?
+    var onLiveVoiceSelected: (() -> Void)?
     var showForceStop: Bool
     var isForceStopInFlight: Bool
     var askRequest: AskRequest?
@@ -684,6 +687,7 @@ private struct ChatInputBarHost: UIViewControllerRepresentable {
                 sendProgressText: parent.sendProgressText,
                 isStopping: parent.isStopping,
                 voiceInputManager: parent.voiceInputManager,
+                onLiveVoiceSelected: parent.onLiveVoiceSelected,
                 showForceStop: parent.showForceStop,
                 isForceStopInFlight: parent.isForceStopInFlight,
                 askRequest: parent.askRequest,

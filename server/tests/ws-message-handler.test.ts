@@ -5,6 +5,7 @@ import {
   getRecordedE2EUIResponses,
   recordSyntheticE2EUIRequest,
 } from "../src/e2e-ui-harness-state.js";
+import { VoiceCallController } from "../src/continuous-voice-call.js";
 import type { ClientMessage, ServerMessage, Session } from "../src/types.js";
 import { WsMessageHandler, type WsMessageHandlerDeps } from "../src/ws-message-handler.js";
 
@@ -43,6 +44,14 @@ function makeSession(id = "s1"): Session {
     messageCount: 0,
     tokens: { input: 0, output: 0 },
     cost: 0,
+  };
+}
+
+function makeVoiceControlSession(id = "voice-1"): Session {
+  return {
+    ...makeSession(id),
+    workspaceId: undefined,
+    voice: { purpose: "voice-control" },
   };
 }
 
@@ -307,6 +316,148 @@ describe("WsMessageHandler", () => {
     }
   });
 
+  it("routes continuous voice control only for the authenticated stream device", async () => {
+    const harness = makeHarness();
+    const voiceCalls = new VoiceCallController({ nextCallId: () => "call-1" });
+    harness.handler = new WsMessageHandler({
+      sessions: harness.sessions as unknown as WsMessageHandlerDeps["sessions"],
+      ensureSessionContextWindow: harness.ensureSessionContextWindow,
+      voiceCalls,
+    });
+
+    const voiceSession = makeVoiceControlSession();
+    await harness.handler.handleClientMessage(
+      voiceSession,
+      { type: "voice_call_start", clientCallId: "client-call-1", requestId: "voice-1" },
+      (message) => harness.sent.push(message),
+      { connId: "connection-1" },
+    );
+    expect(harness.sent).toEqual([
+      expect.objectContaining({
+        type: "command_result",
+        command: "voice_call_start",
+        success: false,
+        error: "Continuous voice requires an authenticated paired device",
+      }),
+    ]);
+
+    harness.sent.length = 0;
+    await harness.handler.handleClientMessage(
+      voiceSession,
+      { type: "voice_call_start", clientCallId: "client-call-1", requestId: "voice-2" },
+      (message) => harness.sent.push(message),
+      { connId: "connection-1", authenticatedDeviceId: "paired-device-1" },
+    );
+
+    expect(harness.sent).toEqual([
+      expect.objectContaining({
+        type: "voice_call_state",
+        callId: "call-1",
+        controlSessionId: "voice-1",
+        lifecycle: "active",
+        frontend: "attached",
+        controllerLeaseEpoch: 1,
+      }),
+      expect.objectContaining({
+        type: "command_result",
+        command: "voice_call_start",
+        requestId: "voice-2",
+        success: true,
+      }),
+    ]);
+  });
+
+  it("routes approval presentation and response without granting the voice tool authority", async () => {
+    const harness = makeHarness();
+    const submitTranscript = vi.fn(() => ({
+      kind: "delivered" as const,
+      decision: "approve_once" as const,
+    }));
+    const voiceCalls = new VoiceCallController({
+      nextCallId: () => "call-approval",
+      approvalAuthority: { submitTranscript },
+    });
+    harness.handler = new WsMessageHandler({
+      sessions: harness.sessions as unknown as WsMessageHandlerDeps["sessions"],
+      ensureSessionContextWindow: harness.ensureSessionContextWindow,
+      voiceCalls,
+    });
+    const meta = {
+      connId: "connection-approval",
+      authenticatedDeviceId: "paired-device-approval",
+    };
+    const send = (message: ServerMessage) => harness.sent.push(message);
+
+    const voiceSession = makeVoiceControlSession("tool-session");
+    await harness.handler.handleClientMessage(
+      voiceSession,
+      { type: "voice_call_start", clientCallId: "client-approval", requestId: "start" },
+      send,
+      meta,
+    );
+    const state = voiceCalls.snapshot("call-approval");
+    voiceCalls.presentApproval("call-approval", {
+      challenge: {
+        challengeId: "challenge-approval",
+        callId: "call-approval",
+        controllerLeaseId: `call-approval:${state.controllerLeaseEpoch}`,
+        controllerLeaseEpoch: state.controllerLeaseEpoch,
+        deviceId: "paired-device-approval",
+        sessionId: "tool-session",
+        requestId: "tool-request",
+        actionDigest: "digest",
+        targetRefs: ["command:npm-test"],
+        nonce: "nonce",
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 5_000,
+      },
+      summary: "Allow one test command?",
+    });
+    expect(harness.sent).toContainEqual(
+      expect.objectContaining({
+        type: "voice_approval_required",
+        challengeId: "challenge-approval",
+      }),
+    );
+
+    await harness.handler.handleClientMessage(
+      voiceSession,
+      {
+        type: "voice_approval_response",
+        callId: "call-approval",
+        controllerLeaseEpoch: state.controllerLeaseEpoch,
+        challengeId: "challenge-approval",
+        transcript: "approve once",
+        requestId: "approval-response",
+      },
+      send,
+      meta,
+    );
+
+    expect(submitTranscript).toHaveBeenCalledWith(
+      expect.objectContaining({
+        challengeId: "challenge-approval",
+        transcript: "approve once",
+      }),
+      { authenticatedDeviceId: "paired-device-approval" },
+    );
+    expect(harness.sent).toContainEqual(
+      expect.objectContaining({
+        type: "voice_approval_result",
+        challengeId: "challenge-approval",
+        outcome: "delivered",
+      }),
+    );
+    expect(harness.sent).toContainEqual(
+      expect.objectContaining({
+        type: "command_result",
+        command: "voice_approval_response",
+        requestId: "approval-response",
+        success: true,
+      }),
+    );
+  });
+
   it("forwards RPC commands with request IDs", async () => {
     const harness = makeHarness();
 
@@ -567,6 +718,57 @@ describe("WsMessageHandler", () => {
         error: "Unsupported command type: future_command_v99",
       },
     ]);
+  });
+
+  it("logs media attach failures with callId, sessionId, and error, then fail-closes", async () => {
+    const harness = makeHarness();
+    const voiceCalls = new VoiceCallController({ nextCallId: () => "call-attach-fail" });
+    const voiceMedia = {
+      attach: vi.fn(async () => {
+        throw new Error("Create session HTTP 500: boom");
+      }),
+      detach: vi.fn(async () => {}),
+    };
+    harness.handler = new WsMessageHandler({
+      sessions: harness.sessions as unknown as WsMessageHandlerDeps["sessions"],
+      ensureSessionContextWindow: harness.ensureSessionContextWindow,
+      voiceCalls,
+      voiceMedia: voiceMedia as unknown as WsMessageHandlerDeps["voiceMedia"],
+    });
+
+    const lines: string[] = [];
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
+      lines.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write);
+
+    try {
+      const voiceSession = makeVoiceControlSession("voice-control-1");
+      await harness.handler.handleClientMessage(
+        voiceSession,
+        { type: "voice_call_start", clientCallId: "client-call-1", requestId: "voice-attach-1" },
+        (message) => harness.sent.push(message),
+        { connId: "connection-1", authenticatedDeviceId: "paired-device-1" },
+      );
+
+      expect(harness.sent).toEqual([
+        expect.objectContaining({
+          type: "command_result",
+          command: "voice_call_start",
+          requestId: "voice-attach-1",
+          success: false,
+          error: "Create session HTTP 500: boom",
+        }),
+      ]);
+      expect(voiceCalls.snapshot("call-attach-fail").lifecycle).toBe("ended");
+      const payload = lines.join("\n");
+      expect(payload).toContain('"event":"ws.voice_media.attach_failed"');
+      expect(payload).toContain('"callId":"call-attach-fail"');
+      expect(payload).toContain('"sessionId":"voice-control-1"');
+      expect(payload).toContain("Create session HTTP 500: boom");
+    } finally {
+      stderr.mockRestore();
+    }
   });
 
   it("handles stop aliases through sendAbort and emits command_result", async () => {

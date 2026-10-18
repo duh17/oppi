@@ -110,6 +110,83 @@ export interface ShareSessionRedactionPolicy {
 export type TurnCommand = "prompt" | "steer" | "follow_up";
 export type TurnAckStage = "accepted" | "dispatched" | "started";
 
+export type VoiceCallLifecycleState = "active" | "ended";
+export type VoiceCallFrontendState = "attached" | "detached";
+export type VoiceCallDelegationState =
+  | "delegated"
+  | "acknowledged"
+  | "working"
+  | "blocked"
+  | "completed";
+export type VoiceCallDelegationUpdateKind =
+  | "delegated"
+  | "acknowledgement"
+  | "progress"
+  | "blocked"
+  | "final";
+
+export interface VoiceCallDelegationSnapshot {
+  delegationId: string;
+  utteranceId: string;
+  request: string;
+  state: VoiceCallDelegationState;
+  createdAt: number;
+  latestText?: string;
+}
+
+export interface VoiceCallApprovalPresentation {
+  challengeId: string;
+  requestId: string;
+  summary: string;
+  targetRefs: string[];
+  expiresAt: number;
+}
+
+export interface VoiceCallStateSnapshot {
+  callId: string;
+  controlSessionId: string;
+  lifecycle: VoiceCallLifecycleState;
+  frontend: VoiceCallFrontendState;
+  controllerLeaseEpoch: number;
+  controllerLeaseExpiresAt: number;
+  eventSeq: number;
+  startedAt: number;
+  updatedAt: number;
+  delegations: VoiceCallDelegationSnapshot[];
+  pendingApprovals: VoiceCallApprovalPresentation[];
+  partialTranscript?: string;
+}
+
+export interface VoiceDelegationUpdateMessage {
+  type: "voice_delegation_update";
+  callId: string;
+  controlSessionId: string;
+  eventSeq: number;
+  delegationId: string;
+  utteranceId: string;
+  kind: VoiceCallDelegationUpdateKind;
+  text: string;
+  createdAt: number;
+}
+
+export interface VoiceApprovalRequiredMessage extends VoiceCallApprovalPresentation {
+  type: "voice_approval_required";
+  callId: string;
+  controlSessionId: string;
+  eventSeq: number;
+}
+
+export interface VoiceApprovalResultMessage {
+  type: "voice_approval_result";
+  callId: string;
+  controlSessionId: string;
+  eventSeq: number;
+  challengeId: string;
+  outcome: "delivered" | "retry" | "rejected";
+  decision?: "approve_once" | "deny";
+  reason?: string;
+}
+
 /**
  * Client → Server messages.
  *
@@ -214,6 +291,32 @@ export type ClientMessage =
         value?: string;
         confirmed?: boolean;
         cancelled?: boolean;
+        requestId?: string;
+      }
+    // ── Continuous voice control (focused session stream) ──
+    | {
+        type: "voice_call_start";
+        clientCallId: string;
+        requestId?: string;
+      }
+    | {
+        type: "voice_call_attach";
+        callId: string;
+        lastEventSeq?: number;
+        requestId?: string;
+      }
+    | {
+        type: "voice_call_detach" | "voice_call_keepalive" | "voice_call_end";
+        callId: string;
+        controllerLeaseEpoch: number;
+        requestId?: string;
+      }
+    | {
+        type: "voice_approval_response";
+        callId: string;
+        controllerLeaseEpoch: number;
+        challengeId: string;
+        transcript: string;
         requestId?: string;
       }
     // ── Dictation (dedicated ASR stream) ──
@@ -706,6 +809,11 @@ export type ServerMessage =
         worktreeId?: string;
         status: GitStatus;
       }
+    // ── Continuous voice control ──
+    | ({ type: "voice_call_state" } & VoiceCallStateSnapshot)
+    | VoiceDelegationUpdateMessage
+    | VoiceApprovalRequiredMessage
+    | VoiceApprovalResultMessage
     // ── Dictation ──
     | {
         type: "dictation_ready";

@@ -59,6 +59,22 @@ describe("resolveSdkSessionCwdAsync", () => {
     }
   });
 
+  it("uses an owner-only internal cwd for declared voice-control sessions", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-voice-cwd-"));
+    const session = {
+      voice: { purpose: "voice-control" as const },
+    } as Pick<Session, "worktreeId" | "control" | "voice">;
+
+    try {
+      const cwd = await resolveSdkSessionCwdAsync(undefined, session, { dataDir });
+      expect(cwd).toBe(join(dataDir, "voice-control-sessions", "cwd"));
+      expect(lstatSync(cwd).isDirectory()).toBe(true);
+      expect(lstatSync(cwd).mode & 0o777).toBe(0o700);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a symlinked control-session parent before creating the cwd", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "oppi-control-cwd-link-"));
     const outside = mkdtempSync(join(tmpdir(), "oppi-control-cwd-outside-"));
@@ -282,6 +298,75 @@ describe("SdkBackend control sessions", () => {
     } finally {
       await reopened?.dispose();
       await first?.dispose();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("SdkBackend voice-control sessions", () => {
+  it("injects voice_update only into the hidden voice-control runtime", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-voice-runtime-"));
+    const voiceSession = makeSession({
+      workspaceId: undefined,
+      voice: { purpose: "voice-control" },
+    });
+    const controlSession = makeSession({
+      workspaceId: undefined,
+      control: { domain: "agents", intent: "create" },
+    });
+    let voice: SdkBackend | undefined;
+    let control: SdkBackend | undefined;
+
+    try {
+      voice = await SdkBackend.create({
+        session: voiceSession,
+        dataDir,
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+      control = await SdkBackend.create({
+        session: controlSession,
+        dataDir,
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+      });
+
+      expect(voice.session.getToolDefinition("voice_update")).toBeDefined();
+      expect(voice.session.getToolDefinition("oppi")).toBeUndefined();
+      expect(control.session.getToolDefinition("voice_update")).toBeUndefined();
+      expect(control.session.getToolDefinition("oppi")).toBeUndefined();
+      expect(voice.session.sessionManager.getCwd()).toBe(
+        join(dataDir, "voice-control-sessions", "cwd"),
+      );
+    } finally {
+      await voice?.dispose();
+      await control?.dispose();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("registers the voice-control bridge when the hidden session starts", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "oppi-voice-bridge-"));
+    const voiceSession = makeSession({
+      workspaceId: undefined,
+      voice: { purpose: "voice-control" },
+    });
+    const registered: string[] = [];
+    let voice: SdkBackend | undefined;
+    try {
+      voice = await SdkBackend.create({
+        session: voiceSession,
+        dataDir,
+        onEvent: vi.fn(),
+        onEnd: vi.fn(),
+        registerVoiceControlBridge: (sessionId) => {
+          registered.push(sessionId);
+          return () => {};
+        },
+      });
+      expect(registered).toEqual([voiceSession.id]);
+    } finally {
+      await voice?.dispose();
       rmSync(dataDir, { recursive: true, force: true });
     }
   });

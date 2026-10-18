@@ -60,6 +60,8 @@ import type { SessionStopTimers } from "./session-stop.js";
 import { notifySandboxWorkspaceActivity } from "./workspace-sandbox-lifecycle.js";
 import type { SdkUiBridge } from "./sdk-ui-bridge.js";
 import type { SessionNotifyPort } from "./session-push-notifier.js";
+import type { VoicePermissionGate } from "./voice-permission-gate.js";
+import { VoiceControlBridgeRegistry } from "./continuous-voice.js";
 
 const log = createLogger({ base: { component: "sessions" } });
 
@@ -121,6 +123,11 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
 
   /** Injected by the server for full-text search index updates. */
   searchIndex: SearchIndex | null = null;
+
+  /** Injected by the server to arm spoken approval from trusted Oppi permission gates. */
+  voicePermissionGate: Pick<VoicePermissionGate, "expectNextConfirm" | "observeRequest"> | null =
+    null;
+  readonly voiceControlBridges = new VoiceControlBridgeRegistry();
 
   private readonly mobileRenderers: MobileRendererRegistry;
   private mobileRenderersLoadStarted = false;
@@ -240,6 +247,8 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
       stopSession: (sessionId) => this.stopSession(sessionId),
       onFirstMessage: (session) => this.onFirstMessage?.(session),
       metrics: this.opsMetrics ?? undefined,
+      getRegisterVoiceControlBridge: () => (sessionId, bridge) =>
+        this.voiceControlBridges.register(sessionId, bridge),
     });
 
     this.broadcaster = bundle.broadcaster;
@@ -392,6 +401,9 @@ export class SessionManager extends EventEmitter implements AgentRuntimeTranspor
         return;
       }
       this.agentEventCoordinator.handlePiEvent(key, data);
+      if (data.type === "extension_ui_request") {
+        this.voicePermissionGate?.observeRequest(key, data);
+      }
       updateSearchIndexForSessionEvent(this.searchIndex, key, data);
     } catch (error: unknown) {
       log.error("sessions.pi_event_handler.failed", {

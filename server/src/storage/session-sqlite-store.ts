@@ -20,7 +20,7 @@ import type {
   WorkspaceSessionSummarySnapshot,
   WorkspaceStoppedTimeBucketSnapshot,
 } from "./session-dao.js";
-import { runSessionStateDeadSchemaCleanup } from "./session-state-cleanup-migration.js";
+import { runSessionStateDeadSchemaCleanup, tableColumns } from "./session-state-cleanup-migration.js";
 import {
   backfillContextTokensFromTrace,
   backfillCostFromTokens,
@@ -28,7 +28,7 @@ import {
 } from "./session-repair.js";
 
 const log = createLogger({ base: { component: "session_sqlite_store" } });
-const SCHEMA_VERSION = "9";
+const SCHEMA_VERSION = "10";
 
 interface SessionRow {
   id: string;
@@ -52,6 +52,7 @@ interface SessionRow {
   control_json: string | null;
   program_status_json: string | null;
   summary_json: string;
+  voice_purpose: string | null;
 }
 
 /**
@@ -123,7 +124,8 @@ const SESSION_COLUMNS = `
   durable_role,
   control_json,
   program_status_json,
-  summary_json
+  summary_json,
+  voice_purpose
 `;
 
 export class SessionSqliteStore {
@@ -492,6 +494,10 @@ export class SessionSqliteStore {
     // Ordered: the dead-schema cleanup drops columns of the old table shape before the rebuild.
     runSessionStateDeadSchemaCleanup(this.db, this.dataDir);
     runSessionColumnsRecordMigration(this.db, this.dataDir);
+    // Additive: the hidden Live Voice runtime's purpose. Older tables lack it.
+    if (!tableColumns(this.db, "session_state_sessions").has("voice_purpose")) {
+      this.db.exec("ALTER TABLE session_state_sessions ADD COLUMN voice_purpose TEXT");
+    }
     this.ensureSessionIndexesAndSchemaVersion();
     this.migrateStoredIconChoices();
   }
@@ -834,6 +840,7 @@ function buildSession(row: SessionRow): Session {
 
   const control = parseJsonValue<Session["control"]>(row.control_json, row.id, "control");
   if (control) session.control = control;
+  if (row.voice_purpose === "voice-control") session.voice = { purpose: "voice-control" };
 
   const programStatus = parseJsonValue<Session["programStatus"]>(
     row.program_status_json,
@@ -881,6 +888,7 @@ const SESSION_WRITE_COLUMNS = [
   "control_json",
   "program_status_json",
   "summary_json",
+  "voice_purpose",
 ] as const;
 
 function sessionRowValues(session: Session): unknown[] {
@@ -909,6 +917,7 @@ function sessionRowValues(session: Session): unknown[] {
     session.control ? JSON.stringify(session.control) : null,
     session.programStatus ? JSON.stringify(session.programStatus) : null,
     encodeSummaryCache(session),
+    session.voice?.purpose ?? null,
   ];
 }
 
@@ -1071,6 +1080,9 @@ function normalizeDeclaredSession(session: Session): Session {
   }
   if (session.control !== undefined && session.control !== null) {
     normalized.control = { ...session.control };
+  }
+  if (session.voice !== undefined && session.voice !== null) {
+    normalized.voice = { ...session.voice };
   }
   if (session.mirror !== undefined && session.mirror !== null) {
     normalized.mirror = session.mirror;

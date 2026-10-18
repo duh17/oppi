@@ -137,6 +137,9 @@ final class WebSocketClient {
 
     /// Test seam: observe whether a frame reaches the socket-send boundary.
     var _sendFrameForTesting: ((ClientMessage) -> Void)?
+    var _sendBinaryForTesting: ((Data) -> Void)?
+    /// Live Voice inbound PCM on the existing control stream. JSON stays on `.string`.
+    var onBinaryFrame: (@MainActor (Data) -> Void)?
 
     init(
         credentials: ServerCredentials,
@@ -314,6 +317,34 @@ final class WebSocketClient {
             throw error
         }
 
+    }
+
+    /// Send raw PCM on the focused Live Voice stream. Not the dictation path.
+    func sendBinary(_ data: Data, sessionId: String? = nil) async throws {
+        try requireMatchingBoundSession(sessionId)
+        if status != .connected {
+            let waited = try await waitForConnection()
+            if !waited {
+                throw WebSocketError.notConnected
+            }
+        }
+        try requireMatchingBoundSession(sessionId)
+        if let sendBinaryForTesting = _sendBinaryForTesting {
+            sendBinaryForTesting(data)
+            return
+        }
+        guard let ws = webSocket, status == .connected else {
+            throw WebSocketError.notConnected
+        }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            ws.send(.data(data)) { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
     }
 
     private func requireMatchingBoundSession(_ requestedSessionId: String?) throws {
@@ -732,6 +763,10 @@ final class WebSocketClient {
                     case .string(let s):
                         text = s
                     case .data(let d):
+                        if let onBinaryFrame = self?.onBinaryFrame {
+                            onBinaryFrame(d)
+                            continue
+                        }
                         text = String(data: d, encoding: .utf8) ?? ""
                     @unknown default:
                         continue

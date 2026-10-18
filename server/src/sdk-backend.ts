@@ -7,6 +7,8 @@
 
 import { AgentConfigurationError } from "./agent-launch-errors.js";
 import { safeErrorMessage } from "./log-utils.js";
+import { VoicePiControlBridge, type VoiceControlBridge } from "./continuous-voice.js";
+import { isDeclaredVoiceControlSession } from "./voice-control-session.js";
 import { createLogger } from "./logger.js";
 import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -417,7 +419,7 @@ export function resolveSessionSeedModel(
  */
 export async function resolveSdkSessionCwdAsync(
   workspace?: Workspace,
-  session?: Pick<Session, "workspaceId" | "worktreeId" | "control" | "serverDurable">,
+  session?: Pick<Session, "workspaceId" | "worktreeId" | "control" | "serverDurable" | "voice">,
   options: { dataDir?: string } = {},
 ): Promise<string> {
   const result = await resolveSessionWorkRoot(session ?? {}, workspace, options.dataDir, {
@@ -779,6 +781,8 @@ export interface SdkBackendConfig {
   hasUI?: () => boolean;
   /** Offers the agent `notify` tool while the server allows it for this session. */
   notify?: SessionNotifyPort;
+  /** Registers the hidden voice-control Pi bridge for Live Voice utterances. */
+  registerVoiceControlBridge?: (sessionId: string, bridge: VoiceControlBridge) => () => void;
 }
 
 type MobileOutputGuideSettingsHolder = {
@@ -1062,6 +1066,7 @@ export class SdkBackend implements AgentBackend {
   private runtimeTransaction = new SessionRuntimeTransaction();
   private requestedExclusiveOperations: Array<{ name: string }> = [];
   private queueReconciliationRequired = false;
+  private voiceBridgeCleanup: (() => void) | undefined;
   private disposed = false;
   private localCleanupFailures: string[] = [];
   private readonly pendingWake: PendingWakeTracker;
@@ -1173,6 +1178,11 @@ export class SdkBackend implements AgentBackend {
 
     const agentDefinition = config.agentDefinition;
     const managedSession = (session.runtime ?? "oppi") !== "pi-tui";
+    const isolatedVoiceRuntime = isDeclaredVoiceControlSession(session);
+    const voiceControlBridge = isolatedVoiceRuntime ? new VoicePiControlBridge() : undefined;
+    const unregisterVoiceBridge = voiceControlBridge
+      ? config.registerVoiceControlBridge?.(session.id, voiceControlBridge)
+      : undefined;
     const getMobileOutputGuideSettings =
       config.getMobileOutputGuideSettings ?? (() => DEFAULT_MOBILE_OUTPUT_GUIDE_SETTINGS);
     const mobileOutputGuideSettingsHolder: MobileOutputGuideSettingsHolder = {
@@ -1256,13 +1266,15 @@ export class SdkBackend implements AgentBackend {
         managed: managedSession,
         sandbox: sandboxMode,
       });
-      const selectedAgentExtensionPaths = await resolveSelectedAgentExtensionPaths(
-        selectedAgentExtensionIds,
-        hostCwd,
-        runtimeAgentDir,
-        settingsManager,
-        mcpBuiltinNames,
-      );
+      const selectedAgentExtensionPaths = isolatedVoiceRuntime
+        ? undefined
+        : await resolveSelectedAgentExtensionPaths(
+            selectedAgentExtensionIds,
+            hostCwd,
+            runtimeAgentDir,
+            settingsManager,
+            mcpBuiltinNames,
+          );
       // A sandbox gets only the global servers its owner picked, with stdio servers
       // run inside the VM. Servers connect at session_start, after the VM exists below.
       let sandboxVm: GondolinVm | undefined;
@@ -1382,24 +1394,31 @@ export class SdkBackend implements AgentBackend {
         appendSystemPromptOverride: (base) => buildCurrentAppendSystemPrompt(base),
         extensionFactories: [
           createLifecycleJournalExtension(sessionManager),
-          ...(config.notify ? [createNotifyExtension(session.id, config.notify)] : []),
-          ...createMcpBuiltinExtensions(mcpBuiltinNames, sandboxMcp),
-          ...(sandboxSkillCommand ? [sandboxSkillCommand] : []),
+          ...(voiceControlBridge
+            ? [voiceControlBridge.extension]
+            : [
+                ...(config.notify ? [createNotifyExtension(session.id, config.notify)] : []),
+                ...createMcpBuiltinExtensions(mcpBuiltinNames, sandboxMcp),
+                ...(sandboxSkillCommand ? [sandboxSkillCommand] : []),
+              ]),
         ],
-        ...(sandboxMode
-          ? {}
-          : selectedAgentSkillPaths !== undefined
-            ? { noSkills: true, additionalSkillPaths: selectedAgentSkillPaths }
-            : config.skillPaths
-              ? { additionalSkillPaths: config.skillPaths }
-              : {}),
-        ...(selectedAgentExtensionPaths !== undefined
-          ? {
-              noExtensions: true,
-              additionalExtensionPaths: selectedAgentExtensionPaths,
-            }
-          : {}),
-        ...(agentDefinition?.resources?.noContextFiles ? { noContextFiles: true } : {}),
+        // The hidden voice-control runtime loads no user resources: its only
+        // added surface is the voice_update bridge.
+        ...(isolatedVoiceRuntime
+          ? { noExtensions: true, noSkills: true, noPromptTemplates: true, noContextFiles: true }
+          : {
+              ...(sandboxMode
+                ? {}
+                : selectedAgentSkillPaths !== undefined
+                  ? { noSkills: true, additionalSkillPaths: selectedAgentSkillPaths }
+                  : config.skillPaths
+                    ? { additionalSkillPaths: config.skillPaths }
+                    : {}),
+              ...(selectedAgentExtensionPaths !== undefined
+                ? { noExtensions: true, additionalExtensionPaths: selectedAgentExtensionPaths }
+                : {}),
+              ...(agentDefinition?.resources?.noContextFiles ? { noContextFiles: true } : {}),
+            }),
         ...(agentDefinition?.instructions?.mode === "replace"
           ? { systemPromptOverride: () => agentDefinition.instructions?.text }
           : {}),
@@ -1718,6 +1737,7 @@ export class SdkBackend implements AgentBackend {
     const preBindMs = Date.now() - createStartMs;
     config.metrics?.record("server.session_create_sdk_ms", preBindMs);
 
+    if (unregisterVoiceBridge) backend.setVoiceBridgeCleanup(unregisterVoiceBridge);
     try {
       await backend.bindCurrentSessionExtensions();
     } catch (error) {
@@ -2424,9 +2444,19 @@ export class SdkBackend implements AgentBackend {
     };
   }
 
+  setVoiceBridgeCleanup(cleanup: () => void): void {
+    this.voiceBridgeCleanup = cleanup;
+  }
+
   private markLocallyDisposed(): void {
     if (this.disposed) return;
     this.disposed = true;
+    try {
+      this.voiceBridgeCleanup?.();
+    } catch {
+      // Bridge unregistration cannot block session dispose.
+    }
+    this.voiceBridgeCleanup = undefined;
 
     try {
       const cleanup = this.uiBridge.dispose();

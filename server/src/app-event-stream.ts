@@ -21,6 +21,7 @@ import type {
 } from "./types.js";
 import { createLogger } from "./logger.js";
 import { safeErrorMessage } from "./log-utils.js";
+import { isDeclaredVoiceControlSession } from "./voice-control-session.js";
 
 const APP_EVENT_STREAM_PATH = "/app/events/stream";
 const APP_EVENT_STREAM_PATH_TAG = "app_event_stream";
@@ -304,6 +305,9 @@ export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents
   }
 
   emitSessionSummary(session: Session): void {
+    if (isDeclaredVoiceControlSession(session)) {
+      return;
+    }
     const summary = this.summaryFromSession(session);
     this.emitSummary(summary);
   }
@@ -501,6 +505,9 @@ export class AppEventStreamMux implements AppEventEmitter, PairingApprovalEvents
   }
 
   private emitSessionLifecycle(type: AppEventSessionLifecycleType, session: Session): void {
+    if (isDeclaredVoiceControlSession(session)) {
+      return;
+    }
     const summary = this.summaryFromSession(session);
     this.recordSummaryFingerprint(summary);
     this.emit({

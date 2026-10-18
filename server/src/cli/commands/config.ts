@@ -102,6 +102,10 @@ export const SETTABLE_CONFIG_KEYS: Record<string, SettableConfigPath> = {
   "tts.model": { type: "string", desc: "TTS model id (http)" },
   "tts.voice": { type: "string", desc: "TTS voice id" },
   "tts.language": { type: "string", desc: "TTS language for xai (BCP-47 or auto)" },
+  "asr.liveVoiceBackend": {
+    type: "string",
+    desc: "Live Voice media backend: yuwp, cloud-duplex, gpt-live, or grok-voice",
+  },
   images: { type: "json", desc: "Image attachment preprocessing config JSON object" },
   "images.autoResize": { type: "boolean", desc: "Resize large image attachments before upload" },
   uploadStore: { type: "json", desc: "Upload store config JSON object" },

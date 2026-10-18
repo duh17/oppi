@@ -24,6 +24,7 @@ import type { SessionMessageQueueStore } from "./session-queue.js";
 import type { Storage } from "./storage.js";
 import type { ServerConfig, Session, Workspace } from "./types.js";
 import type { WorkspaceRuntime, WorkspaceSessionIdentity } from "./workspace-runtime.js";
+import type { VoiceControlBridge } from "./continuous-voice.js";
 
 const log = createLogger({ base: { component: "session_start" } });
 
@@ -56,6 +57,7 @@ export interface SessionStartCoordinatorDeps {
   durableHarness?: Promise<DurableHarness>;
   onUIBridgeReady?: (key: string, bridge: SdkUiBridge | undefined) => void;
   hasUI?: (key: string) => boolean;
+  registerVoiceControlBridge?: (sessionId: string, bridge: VoiceControlBridge) => () => void;
 }
 
 export class SessionStartCoordinator {
@@ -153,6 +155,9 @@ export class SessionStartCoordinator {
                   onUIBridgeReady: (bridge) => this.deps.onUIBridgeReady?.(key, bridge),
                   hasUI: () => this.deps.hasUI?.(key) ?? false,
                   notify: this.deps.getNotifyPort() ?? undefined,
+                  ...(this.deps.registerVoiceControlBridge
+                    ? { registerVoiceControlBridge: this.deps.registerVoiceControlBridge }
+                    : {}),
                 });
           this.deps.metrics?.record("server.session_create_ms", Date.now() - createStart);
 

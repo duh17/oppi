@@ -820,7 +820,13 @@ function normalizeConfig(
   // ASR / dictation pipeline config
   if ("asr" in obj && isRecord(obj.asr)) {
     const asr = obj.asr;
-    const allowedAsrKeys = new Set(["sttEndpoint", "backend", "provider", "sttModel"]);
+    const allowedAsrKeys = new Set([
+      "sttEndpoint",
+      "backend",
+      "provider",
+      "sttModel",
+      "liveVoiceBackend",
+    ]);
     const retiredAsrKeys = new Set(["extension"]);
 
     if ("extension" in asr) {
@@ -872,6 +878,20 @@ function normalizeConfig(
     } else if ("sttModel" in asr && asr.sttModel !== undefined && asr.sttModel !== "") {
       errors.push("config.asr.sttModel: expected string");
       changed = true;
+    }
+    if (asr.liveVoiceBackend !== undefined) {
+      if (
+        asr.liveVoiceBackend === "yuwp" ||
+        asr.liveVoiceBackend === "cloud-duplex" ||
+        asr.liveVoiceBackend === "gpt-live" ||
+        asr.liveVoiceBackend === "grok-voice"
+      ) {
+        asrConfig.liveVoiceBackend = asr.liveVoiceBackend;
+      } else {
+        errors.push(
+          "config.asr.liveVoiceBackend: expected yuwp, cloud-duplex, gpt-live, or grok-voice",
+        );
+      }
     }
     // An invalid explicit provider must not silently become the HTTP backend.
     if (Object.keys(asrConfig).length > 0 && (!("provider" in asr) || asrConfig.provider)) {

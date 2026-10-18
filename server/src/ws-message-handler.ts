@@ -16,6 +16,9 @@ import {
 } from "./model-resolution.js";
 import { runtimeLogTag } from "./session-runtime-capabilities.js";
 import { composeModelId } from "./session-state.js";
+import type { VoiceCallController, VoiceCallFrontendConnection } from "./continuous-voice-call.js";
+import type { VoiceCallMediaCoordinator } from "./continuous-voice-media.js";
+import { isDeclaredVoiceControlSession } from "./voice-control-session.js";
 import type {
   ChatAttachmentRef,
   ClientMessage,
@@ -45,6 +48,8 @@ export interface WsMessageHandlerDeps {
   /** Picker catalog (GET /models): enabled models whose provider has auth. */
   getModelCatalog: () => ModelInfo[];
   emitSessionSummary?: (session: Session) => void;
+  voiceCalls?: VoiceCallController;
+  voiceMedia?: VoiceCallMediaCoordinator;
 }
 
 export interface WsCommandMeta {
@@ -55,6 +60,8 @@ export interface WsCommandMeta {
    * the request's requestId is also delivered through `send`.
    */
   captureRuntimeResult?: boolean;
+  authenticatedDeviceId?: string;
+  sendAudio?: (pcm: Buffer) => void;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -161,6 +168,15 @@ export class WsMessageHandler {
         }
         return;
       }
+
+      case "voice_call_start":
+      case "voice_call_attach":
+      case "voice_call_detach":
+      case "voice_call_keepalive":
+      case "voice_call_end":
+      case "voice_approval_response":
+        await this.handleVoiceCommand(session, msg, send, meta);
+        return;
 
       // ── RPC passthrough — forward to pi and return result ──
       case "get_messages":
@@ -275,6 +291,167 @@ export class WsMessageHandler {
         return;
       }
     }
+  }
+
+  private async handleVoiceCommand(
+    session: Session,
+    msg: Extract<
+      ClientMessage,
+      {
+        type:
+          | "voice_call_start"
+          | "voice_call_attach"
+          | "voice_call_detach"
+          | "voice_call_keepalive"
+          | "voice_call_end"
+          | "voice_approval_response";
+      }
+    >,
+    send: (msg: ServerMessage) => void,
+    meta: WsCommandMeta,
+  ): Promise<void> {
+    const requestId = msg.requestId;
+    try {
+      const voiceCalls = this.deps.voiceCalls;
+      if (!voiceCalls) throw new Error("Continuous voice control is unavailable");
+      if (!isDeclaredVoiceControlSession(session)) {
+        throw new Error("Continuous voice requires a hidden voice-control session");
+      }
+      if (!meta.connId || !meta.authenticatedDeviceId) {
+        throw new Error("Continuous voice requires an authenticated paired device");
+      }
+      const frontend: VoiceCallFrontendConnection = {
+        connectionId: meta.connId,
+        authenticatedDeviceId: meta.authenticatedDeviceId,
+        send,
+        sendAudio: meta.sendAudio,
+      };
+
+      if (msg.type === "voice_call_start") {
+        const result = voiceCalls.startCall(
+          { controlSessionId: session.id, clientCallId: msg.clientCallId },
+          frontend,
+        );
+        await this.attachVoiceMedia(
+          result.state.callId,
+          result.state.controllerLeaseEpoch,
+          frontend,
+          session.id,
+        );
+        this.sendVoiceAttachResult(result, send);
+        if (requestId) {
+          send(
+            runtimeCommandSuccess(msg.type, requestId, {
+              callId: result.state.callId,
+              controllerLeaseEpoch: result.state.controllerLeaseEpoch,
+              eventSeq: result.state.eventSeq,
+            }),
+          );
+        }
+        return;
+      }
+
+      const existing = voiceCalls.snapshot(msg.callId);
+      if (existing.controlSessionId !== session.id) {
+        throw new Error("Voice call belongs to a different control session");
+      }
+
+      if (msg.type === "voice_call_attach") {
+        const result = voiceCalls.attachCall(
+          { callId: msg.callId, lastEventSeq: msg.lastEventSeq },
+          frontend,
+        );
+        await this.attachVoiceMedia(
+          result.state.callId,
+          result.state.controllerLeaseEpoch,
+          frontend,
+          session.id,
+        );
+        this.sendVoiceAttachResult(result, send);
+        if (requestId) {
+          send(
+            runtimeCommandSuccess(msg.type, requestId, {
+              callId: result.state.callId,
+              controllerLeaseEpoch: result.state.controllerLeaseEpoch,
+              eventSeq: result.state.eventSeq,
+            }),
+          );
+        }
+        return;
+      }
+
+      if (msg.type === "voice_approval_response") {
+        const result = await voiceCalls.submitApprovalTranscript(
+          {
+            callId: msg.callId,
+            controllerLeaseEpoch: msg.controllerLeaseEpoch,
+            challengeId: msg.challengeId,
+            transcript: msg.transcript,
+          },
+          frontend,
+        );
+        if (requestId) send(runtimeCommandSuccess(msg.type, requestId, result));
+        return;
+      }
+
+      const state =
+        msg.type === "voice_call_detach"
+          ? voiceCalls.detachCall(msg, frontend)
+          : msg.type === "voice_call_keepalive"
+            ? voiceCalls.keepAlive(msg, frontend)
+            : voiceCalls.endCall(msg, frontend);
+      if (msg.type === "voice_call_detach" || msg.type === "voice_call_end") {
+        await this.deps.voiceMedia?.detach(frontend.connectionId);
+      }
+      send({ type: "voice_call_state", ...state });
+      if (requestId) {
+        send(
+          runtimeCommandSuccess(msg.type, requestId, {
+            callId: state.callId,
+            controllerLeaseEpoch: state.controllerLeaseEpoch,
+            eventSeq: state.eventSeq,
+          }),
+        );
+      }
+    } catch (error) {
+      const message = safeErrorMessage(error);
+      if (requestId) {
+        send(runtimeCommandFailure(msg.type, requestId, message));
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private async attachVoiceMedia(
+    callId: string,
+    controllerLeaseEpoch: number,
+    frontend: VoiceCallFrontendConnection,
+    controlSessionId?: string,
+  ): Promise<void> {
+    const voiceMedia = this.deps.voiceMedia;
+    const voiceCalls = this.deps.voiceCalls;
+    if (!voiceMedia || !voiceCalls) return;
+    try {
+      await voiceMedia.attach({ callId, controllerLeaseEpoch, frontend });
+    } catch (error) {
+      const message = safeErrorMessage(error);
+      log.error("ws.voice_media.attach_failed", {
+        callId,
+        sessionId: controlSessionId,
+        error: message,
+      });
+      voiceCalls.endCall({ callId, controllerLeaseEpoch }, frontend);
+      throw error;
+    }
+  }
+
+  private sendVoiceAttachResult(
+    result: ReturnType<VoiceCallController["attachCall"]>,
+    send: (msg: ServerMessage) => void,
+  ): void {
+    for (const event of result.replay) send(event);
+    send({ type: "voice_call_state", ...result.state });
   }
 
   /**

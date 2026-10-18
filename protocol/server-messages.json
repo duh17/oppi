@@ -2,7 +2,7 @@
   "_meta": {
     "description": "Canonical ServerMessage JSON — updated by npm run protocol:fixtures:update",
     "generated": "static",
-    "messageCount": 68
+    "messageCount": 72
   },
   "messages": {
     "connected": {
@@ -1393,6 +1393,72 @@
           }
         ]
       }
+    },
+    "voice_call_state": {
+      "type": "voice_call_state",
+      "callId": "voice-call-1",
+      "controlSessionId": "control-session-1",
+      "lifecycle": "active",
+      "frontend": "detached",
+      "controllerLeaseEpoch": 4,
+      "controllerLeaseExpiresAt": 1739750520000,
+      "eventSeq": 12,
+      "startedAt": 1739750400000,
+      "updatedAt": 1739750490000,
+      "delegations": [
+        {
+          "delegationId": "delegation-1",
+          "utteranceId": "utterance-1",
+          "request": "Run the focused tests",
+          "state": "working",
+          "createdAt": 1739750410000,
+          "latestText": "The tests are running."
+        }
+      ],
+      "pendingApprovals": [
+        {
+          "challengeId": "challenge-1",
+          "requestId": "approval-request-1",
+          "summary": "Allow one focused test command?",
+          "targetRefs": [
+            "command:npm-test"
+          ],
+          "expiresAt": 1739750500000
+        }
+      ]
+    },
+    "voice_delegation_update": {
+      "type": "voice_delegation_update",
+      "callId": "voice-call-1",
+      "controlSessionId": "control-session-1",
+      "eventSeq": 13,
+      "delegationId": "delegation-1",
+      "utteranceId": "utterance-1",
+      "kind": "blocked",
+      "text": "Approval is required to continue.",
+      "createdAt": 1739750491000
+    },
+    "voice_approval_required": {
+      "type": "voice_approval_required",
+      "callId": "voice-call-1",
+      "controlSessionId": "control-session-1",
+      "eventSeq": 14,
+      "challengeId": "challenge-1",
+      "requestId": "approval-request-1",
+      "summary": "Allow one focused test command?",
+      "targetRefs": [
+        "command:npm-test"
+      ],
+      "expiresAt": 1739750500000
+    },
+    "voice_approval_result": {
+      "type": "voice_approval_result",
+      "callId": "voice-call-1",
+      "controlSessionId": "control-session-1",
+      "eventSeq": 15,
+      "challengeId": "challenge-1",
+      "outcome": "delivered",
+      "decision": "approve_once"
     },
     "dictation_ready": {
       "type": "dictation_ready",

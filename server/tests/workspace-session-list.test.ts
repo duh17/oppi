@@ -642,6 +642,37 @@ describe("workspace session list routes", () => {
     expect(response.active).toEqual([]);
   });
 
+  it("does not leak hidden voice-control sessions into the global recent list", async () => {
+    const mock = createMockContext();
+    const now = Date.parse("2026-05-13T12:00:00Z");
+    mock.storage.listAllWorkspaceSessionSnapshots.mockReturnValue([
+      makeSession({ id: "workspace-row", lastActivity: now - 1_000 }),
+    ]);
+    mock.storage.listSessions.mockReturnValue([
+      makeSession({ id: "workspace-row", lastActivity: now - 1_000 }),
+      makeSession({
+        id: "voice-row",
+        workspaceId: undefined,
+        lastActivity: now,
+        voice: { purpose: "voice-control" },
+      }),
+      makeSession({
+        id: "control-row",
+        workspaceId: undefined,
+        lastActivity: now + 1_000,
+        control: { domain: "schedules", intent: "create" },
+      }),
+    ]);
+
+    await dispatch(mock, "/sessions/recent", "https://localhost/sessions/recent");
+
+    const response = mock.responses[0]?.data as { sessions: Array<Session> };
+    expect(response.sessions.map((session) => session.id)).toEqual([
+      "control-row",
+      "workspace-row",
+    ]);
+  });
+
   it("counts pending mirror extension dialogs as workspace row attention", async () => {
     const mock = createMockContext();
     const now = Date.parse("2026-05-13T12:00:00Z");

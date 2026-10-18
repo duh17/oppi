@@ -969,6 +969,56 @@ struct ServerMessageTests {
         #expect(notification.nativeSurface?.nativeDisplayBlocks.count == 1)
     }
 
+    // MARK: - Continuous Voice Control
+
+    @Test func decodesVoiceCallStateWithoutProviderDetails() throws {
+        let json = #"{"type":"voice_call_state","callId":"call-1","controlSessionId":"control-1","lifecycle":"active","frontend":"detached","controllerLeaseEpoch":4,"controllerLeaseExpiresAt":5000,"eventSeq":12,"startedAt":1000,"updatedAt":4000,"delegations":[{"delegationId":"delegation-1","utteranceId":"utterance-1","request":"Run tests","state":"working","createdAt":1200,"latestText":"Running"}],"pendingApprovals":[{"challengeId":"challenge-1","requestId":"request-1","summary":"Allow the test command?","targetRefs":["command:npm-test"],"expiresAt":4800}]}"#
+        let msg = try ServerMessage.decode(from: json)
+        guard case .voiceCallState(let state) = msg else {
+            Issue.record("Expected .voiceCallState")
+            return
+        }
+        #expect(state.callId == "call-1")
+        #expect(state.controlSessionId == "control-1")
+        #expect(state.lifecycle == .active)
+        #expect(state.frontend == .detached)
+        #expect(state.controllerLeaseEpoch == 4)
+        #expect(state.eventSeq == 12)
+        #expect(state.delegations.first?.delegationId == "delegation-1")
+        #expect(state.delegations.first?.state == .working)
+        #expect(state.pendingApprovals.first?.challengeId == "challenge-1")
+    }
+
+    @Test func decodesVoiceDelegationAndApprovalEvents() throws {
+        let delegationJSON = #"{"type":"voice_delegation_update","callId":"call-1","controlSessionId":"control-1","eventSeq":8,"delegationId":"delegation-1","utteranceId":"utterance-1","kind":"blocked","text":"Approval required","createdAt":3000}"#
+        let delegation = try ServerMessage.decode(from: delegationJSON)
+        guard case .voiceDelegationUpdate(let update) = delegation else {
+            Issue.record("Expected .voiceDelegationUpdate")
+            return
+        }
+        #expect(update.kind == .blocked)
+        #expect(update.delegationId == "delegation-1")
+        #expect(update.eventSeq == 8)
+
+        let requiredJSON = #"{"type":"voice_approval_required","callId":"call-1","controlSessionId":"control-1","eventSeq":9,"challengeId":"challenge-1","requestId":"request-1","summary":"Allow the test command?","targetRefs":["command:npm-test"],"expiresAt":5000}"#
+        let required = try ServerMessage.decode(from: requiredJSON)
+        guard case .voiceApprovalRequired(let approval) = required else {
+            Issue.record("Expected .voiceApprovalRequired")
+            return
+        }
+        #expect(approval.challengeId == "challenge-1")
+        #expect(approval.targetRefs == ["command:npm-test"])
+
+        let resultJSON = #"{"type":"voice_approval_result","callId":"call-1","controlSessionId":"control-1","eventSeq":10,"challengeId":"challenge-1","outcome":"delivered","decision":"approve_once"}"#
+        let result = try ServerMessage.decode(from: resultJSON)
+        guard case .voiceApprovalResult(let approvalResult) = result else {
+            Issue.record("Expected .voiceApprovalResult")
+            return
+        }
+        #expect(approvalResult.outcome == .delivered)
+        #expect(approvalResult.decision == .approveOnce)
+    }
+
     // MARK: - Malformed / Edge Cases
 
     @Test func missingTypeFieldThrows() {

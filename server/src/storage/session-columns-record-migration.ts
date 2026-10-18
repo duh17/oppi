@@ -47,7 +47,8 @@ export function createSessionStateSessionsTable(db: SqliteDatabase, table: strin
       durable_role TEXT,
       control_json TEXT,
       program_status_json TEXT,
-      summary_json TEXT NOT NULL
+      summary_json TEXT NOT NULL,
+      voice_purpose TEXT
     );
   `);
 }

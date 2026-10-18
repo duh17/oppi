@@ -74,6 +74,19 @@ describe("buildSessionSummary", () => {
     expect(summary).not.toHaveProperty("serverDurable");
   });
 
+  it("omits hidden voice-control purpose from list summaries", () => {
+    const summary = buildSessionSummary(
+      makeSession({
+        workspaceId: undefined,
+        voice: { purpose: "voice-control" },
+      }),
+    );
+
+    expect(summary.workspaceId).toBeUndefined();
+    expect(summary).not.toHaveProperty("voice");
+    expect(summary.control).toBeUndefined();
+  });
+
   it("preserves explicit control-session metadata in list summaries", () => {
     const summary = buildSessionSummary(
       makeSession({

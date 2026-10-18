@@ -18,6 +18,8 @@ struct ComposerBarContent {
     var sendProgressText: String?
     var isStopping: Bool
     var voiceInputManager: VoiceInputManager?
+    /// Non-nil adds Live Voice to the mic button's long-press menu; tap stays dictation.
+    var onLiveVoiceSelected: (() -> Void)? = nil
     var showForceStop: Bool
     var isForceStopInFlight: Bool
     var askRequest: AskRequest?
@@ -1159,6 +1161,7 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
 
     private func installActions() {
         micButton.addAction(UIAction { [weak self] _ in self?.handleMicTap() }, for: .touchUpInside)
+        micButton.menuProvider = { [weak self] in self?.voiceEntryMenu() }
         primaryButton.addAction(UIAction { [weak self] _ in self?.handlePrimaryAction() }, for: .touchUpInside)
         forceStopButton.addAction(UIAction { [weak self] _ in self?.host?.performForceStop() }, for: .touchUpInside)
         expandInActionRow.addAction(UIAction { [weak self] _ in self?.host?.performExpand() }, for: .touchUpInside)
@@ -1717,6 +1720,43 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         micButton.isEnabled = presentation.isEnabled
         micButton.accessibilityLabel = presentation.accessibilityLabel
         micButton.accessibilityValue = presentation.accessibilityValue
+        let offersLiveVoice = host.content.onLiveVoiceSelected != nil
+        micButton.isContextMenuInteractionEnabled = offersLiveVoice
+        // VoiceOver reaches the same owner action as the long-press menu.
+        micButton.accessibilityCustomActions = offersLiveVoice
+            ? [UIAccessibilityCustomAction(name: "Live Voice") { [weak self] _ in
+                self?.handleLiveVoiceChoice()
+                return true
+            }]
+            : nil
+    }
+
+    static let liveVoiceMenuIdentifier = UIAction.Identifier("chat.voiceEntry.liveVoice")
+    static let dictationMenuIdentifier = UIAction.Identifier("chat.voiceEntry.dictation")
+
+    private func voiceEntryMenu() -> UIMenu? {
+        guard host?.content.onLiveVoiceSelected != nil else { return nil }
+        return UIMenu(title: "Voice", children: [
+            UIAction(
+                title: "Live Voice",
+                image: UIImage(systemName: "waveform"),
+                identifier: Self.liveVoiceMenuIdentifier
+            ) { [weak self] _ in self?.handleLiveVoiceChoice() },
+            UIAction(
+                title: "Dictation",
+                image: UIImage(systemName: "mic"),
+                identifier: Self.dictationMenuIdentifier
+            ) { [weak self] _ in self?.handleMicTap() },
+        ])
+    }
+
+    /// Live Voice owns the microphone, so an in-progress dictation take ends first.
+    private func handleLiveVoiceChoice() {
+        Task {
+            await ComposerShared.stopDictationBeforeLiveVoice(manager: host?.content.voiceInputManager)
+            applyChrome()
+            host?.content.onLiveVoiceSelected?()
+        }
     }
 
     @objc private func themeDidChange() {

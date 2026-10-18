@@ -89,6 +89,13 @@ function validateRequiredMessage(command: Record<string, unknown>): void {
   }
 }
 
+function readRequiredNumber(value: unknown, fieldName: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Invalid payload: expected ${fieldName}`);
+  }
+  return value;
+}
+
 function validateKnownCommand(type: string, command: Record<string, unknown>): void {
   switch (type) {
     case "prompt":
@@ -116,6 +123,26 @@ function validateKnownCommand(type: string, command: Record<string, unknown>): v
       return;
     case "extension_ui_response":
       readRequiredString(command.id, "id");
+      return;
+    case "voice_call_start":
+      readRequiredString(command.clientCallId, "clientCallId");
+      return;
+    case "voice_call_attach":
+      readRequiredString(command.callId, "callId");
+      return;
+    case "voice_call_detach":
+    case "voice_call_keepalive":
+    case "voice_call_end":
+      readRequiredString(command.callId, "callId");
+      readRequiredNumber(command.controllerLeaseEpoch, "controllerLeaseEpoch");
+      return;
+    case "voice_approval_response":
+      readRequiredString(command.callId, "callId");
+      readRequiredNumber(command.controllerLeaseEpoch, "controllerLeaseEpoch");
+      readRequiredString(command.challengeId, "challengeId");
+      if (typeof command.transcript !== "string") {
+        throw new Error("Invalid payload: expected transcript");
+      }
       return;
     case "abort":
     case "stop":

@@ -338,6 +338,54 @@ describe("Storage config validation", () => {
     expect(result.config?.asr?.sttEndpoint).toBe("http://localhost:9847");
   });
 
+  it("preserves asr.liveVoiceBackend for Yuwp vs cloud-duplex", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      asr: {
+        sttEndpoint: "http://127.0.0.1:7936",
+        liveVoiceBackend: "cloud-duplex",
+      },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(true);
+    expect(result.config?.asr?.liveVoiceBackend).toBe("cloud-duplex");
+  });
+
+  it("accepts reserved GPT Live and Grok Voice backend names", () => {
+    for (const liveVoiceBackend of ["gpt-live", "grok-voice"] as const) {
+      const result = Storage.validateConfig(
+        {
+          ...Storage.getDefaultConfig(dir),
+          asr: {
+            sttEndpoint: "http://127.0.0.1:7936",
+            liveVoiceBackend,
+          },
+        },
+        dir,
+        true,
+      );
+      expect(result.valid).toBe(true);
+      expect(result.config?.asr?.liveVoiceBackend).toBe(liveVoiceBackend);
+    }
+  });
+
+  it("rejects an unknown asr.liveVoiceBackend in strict mode", () => {
+    const raw = {
+      ...Storage.getDefaultConfig(dir),
+      asr: {
+        sttEndpoint: "http://127.0.0.1:7936",
+        liveVoiceBackend: "openai-realtime",
+      },
+    };
+
+    const result = Storage.validateConfig(raw, dir, true);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain(
+      "config.asr.liveVoiceBackend: expected yuwp, cloud-duplex, gpt-live, or grok-voice",
+    );
+  });
+
   it("rejects retired asr preserveAudio in strict mode", () => {
     const raw = {
       ...Storage.getDefaultConfig(dir),

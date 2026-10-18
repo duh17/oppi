@@ -107,6 +107,7 @@ struct ChatView: View {
     @State private var actionHandler = ChatActionHandler()
     @State private var voiceInputManager = VoiceInputManager.shared
     @State private var audioLifecycleCoordinator = AudioLifecycleCoordinator()
+    @State private var liveVoiceController = LiveVoiceCallController()
     @State private var composerDraftController: ChatComposerDraftController
 
     @State private var composerTextBeforeRecording: String?
@@ -1095,6 +1096,7 @@ struct ChatView: View {
                 // same session keeps its stream (late or repeated cleanup is a no-op).
                 sessionManager.cleanup()
                 Task {
+                    await liveVoiceController.leave()
                     if let composerDraftStore {
                         await composerDraftStore.flush()
                     }
@@ -1274,7 +1276,18 @@ struct ChatView: View {
 
     @ViewBuilder
     private var footerArea: some View {
-        if isStopped {
+        if Self.showsLiveVoiceBar(
+            isLive: liveVoiceController.isLive,
+            isStopped: isStopped,
+            lastError: liveVoiceController.lastError
+        ) {
+            LiveVoiceBar(
+                statusText: liveVoiceController.statusText,
+                isMuted: liveVoiceController.isMuted,
+                onMute: { liveVoiceController.toggleMute() },
+                onEnd: { Task { await liveVoiceController.end() } }
+            )
+        } else if isStopped {
             SessionEndedFooter(
                 session: session,
                 isResuming: actionHandler.isResuming,
@@ -1438,6 +1451,9 @@ struct ChatView: View {
                     isStopping: isStopping,
                     voiceInputManager: voiceInputManager,
                     onPrepareVoiceInput: prepareChatVoiceInput,
+                    onLiveVoiceSelected: {
+                        Task { await liveVoiceController.start(using: connection) }
+                    },
                     showForceStop: actionHandler.showForceStop,
                     isForceStopInFlight: actionHandler.isForceStopInFlight,
                     askRequest: composerAskRequest,
@@ -2101,6 +2117,14 @@ struct ChatView: View {
 
     static func shouldPauseTimelinePresentation(for phase: ScenePhase) -> Bool {
         phase == .inactive || phase == .background
+    }
+
+    static func showsLiveVoiceBar(isLive: Bool, isStopped: Bool, lastError: String? = nil) -> Bool {
+        // Keep End available even when the focused chat session is stopped.
+        // The call and keepalive live on the hidden voice-control session.
+        // Start failures fail-closed but keep the bar until End so the error is visible.
+        _ = isStopped
+        return isLive || lastError != nil
     }
 
     @MainActor

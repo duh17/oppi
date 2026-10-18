@@ -72,6 +72,20 @@ enum ClientMessage: Sendable {
     // ── Extension UI ──
     case extensionUIResponse(id: String, value: String? = nil, confirmed: Bool? = nil, cancelled: Bool? = nil, requestId: String? = nil)
 
+    // ── Continuous voice control (focused session stream) ──
+    case voiceCallStart(clientCallId: String, requestId: String? = nil)
+    case voiceCallAttach(callId: String, lastEventSeq: Int? = nil, requestId: String? = nil)
+    case voiceCallDetach(callId: String, controllerLeaseEpoch: Int, requestId: String? = nil)
+    case voiceCallKeepAlive(callId: String, controllerLeaseEpoch: Int, requestId: String? = nil)
+    case voiceCallEnd(callId: String, controllerLeaseEpoch: Int, requestId: String? = nil)
+    case voiceApprovalResponse(
+        callId: String,
+        controllerLeaseEpoch: Int,
+        challengeId: String,
+        transcript: String,
+        requestId: String? = nil
+    )
+
     // ── Dictation (session audio stream) ──
     case dictationStart(contextualStrings: [String] = [])
     case dictationStop
@@ -417,6 +431,45 @@ extension ClientMessage: Encodable {
             try c.encodeIfPresent(cancelled, forKey: .cancelled)
             try c.encodeIfPresent(reqId, forKey: .requestId)
 
+        // ── Continuous voice control ──
+        case .voiceCallStart(let clientCallId, let reqId):
+            try c.encode("voice_call_start", forKey: .type)
+            try c.encode(clientCallId, forKey: .clientCallId)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+        case .voiceCallAttach(let callId, let lastEventSeq, let reqId):
+            try c.encode("voice_call_attach", forKey: .type)
+            try c.encode(callId, forKey: .callId)
+            try c.encodeIfPresent(lastEventSeq, forKey: .lastEventSeq)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+        case .voiceCallDetach(let callId, let leaseEpoch, let reqId):
+            try c.encode("voice_call_detach", forKey: .type)
+            try c.encode(callId, forKey: .callId)
+            try c.encode(leaseEpoch, forKey: .controllerLeaseEpoch)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+        case .voiceCallKeepAlive(let callId, let leaseEpoch, let reqId):
+            try c.encode("voice_call_keepalive", forKey: .type)
+            try c.encode(callId, forKey: .callId)
+            try c.encode(leaseEpoch, forKey: .controllerLeaseEpoch)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+        case .voiceCallEnd(let callId, let leaseEpoch, let reqId):
+            try c.encode("voice_call_end", forKey: .type)
+            try c.encode(callId, forKey: .callId)
+            try c.encode(leaseEpoch, forKey: .controllerLeaseEpoch)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+        case .voiceApprovalResponse(
+            let callId,
+            let leaseEpoch,
+            let challengeId,
+            let transcript,
+            let reqId
+        ):
+            try c.encode("voice_approval_response", forKey: .type)
+            try c.encode(callId, forKey: .callId)
+            try c.encode(leaseEpoch, forKey: .controllerLeaseEpoch)
+            try c.encode(challengeId, forKey: .challengeId)
+            try c.encode(transcript, forKey: .transcript)
+            try c.encodeIfPresent(reqId, forKey: .requestId)
+
         // ── Dictation ──
         case .dictationStart(let contextualStrings):
             try c.encode("dictation_start", forKey: .type)
@@ -439,6 +492,7 @@ extension ClientMessage: Encodable {
         case customInstructions, entryId, filterMode
         case targetId, summarize, replaceInstructions, label
         case itemId
+        case clientCallId, callId, lastEventSeq, controllerLeaseEpoch, challengeId, transcript
     }
 }
 
@@ -481,6 +535,12 @@ extension ClientMessage {
         case .getCommands: return "get_commands"
         case .shareSession: return "share_session"
         case .extensionUIResponse: return "extension_ui_response"
+        case .voiceCallStart: return "voice_call_start"
+        case .voiceCallAttach: return "voice_call_attach"
+        case .voiceCallDetach: return "voice_call_detach"
+        case .voiceCallKeepAlive: return "voice_call_keepalive"
+        case .voiceCallEnd: return "voice_call_end"
+        case .voiceApprovalResponse: return "voice_approval_response"
         case .dictationStart: return "dictation_start"
         case .dictationStop: return "dictation_stop"
         case .dictationCancel: return "dictation_cancel"

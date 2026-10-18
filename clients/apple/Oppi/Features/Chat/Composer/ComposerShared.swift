@@ -921,6 +921,11 @@ enum ComposerShared {
         return true
     }
 
+    static func stopDictationBeforeLiveVoice(manager: VoiceInputManager?) async {
+        guard let manager, manager.isRecording || manager.isPreparing else { return }
+        await manager.cancelRecording()
+    }
+
     @discardableResult
     static func cancelOwnedVoiceInput(
         manager: VoiceInputManager?,
