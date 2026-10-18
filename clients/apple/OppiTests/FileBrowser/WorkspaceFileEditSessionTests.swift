@@ -212,6 +212,32 @@ struct WorkspaceFileEditSessionTests {
         #expect(harness.scripted.writeLog.isEmpty)
     }
 
+    /// A background save that outlives the budget, or one that finishes first:
+    /// the background task ends exactly once and the draft is kept until saved.
+    @Test(arguments: [true, false])
+    func backgroundSaveEndsItsTaskOnce(expiresBeforeTheWrite: Bool) async {
+        let harness = Harness()
+        let tasks = FakeBackgroundTasks()
+        let registry = WorkspaceFileEditSessionRegistry(observesBackground: false, backgroundTasks: tasks)
+        let session = harness.open()
+        registry.register(session)
+        harness.type(" slow", into: session)
+
+        registry.flushAllForBackground()
+        #expect(await eventually { harness.scripted.pending.count == 1 })
+        if expiresBeforeTheWrite {
+            tasks.expire()
+            #expect(tasks.endedIDs == [tasks.identifier])
+            #expect(harness.store.load(harness.identity)?.bytes == Data("hello slow".utf8))
+        }
+
+        harness.scripted.resolveNext(.saved(etag: tag("b")))
+        #expect(await eventually { session.status == .saved && tasks.endedCount > 0 })
+        tasks.expire()
+        try? await Task.sleep(for: .milliseconds(30))
+        #expect(tasks.endedIDs == [tasks.identifier])
+    }
+
     // MARK: Conflict, deletion, and refusal
 
     @Test func staleWriteStopsAutosaveKeepsDraftAndTyping() async {

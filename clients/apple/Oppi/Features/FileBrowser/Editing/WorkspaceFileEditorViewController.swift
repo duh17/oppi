@@ -11,8 +11,13 @@ final class WorkspaceFileEditSessionRegistry {
 
     private var sessions: [WorkspaceFileEditIdentity: WorkspaceFileEditSession] = [:]
     private var backgroundObserver: NSObjectProtocol?
+    private let backgroundTasks: any AppBackgroundTasks
 
-    init(observesBackground: Bool = true) {
+    init(
+        observesBackground: Bool = true,
+        backgroundTasks: any AppBackgroundTasks = UIApplicationBackgroundTasks(name: "workspace-file-save")
+    ) {
+        self.backgroundTasks = backgroundTasks
         guard observesBackground else { return }
         backgroundObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
@@ -41,13 +46,42 @@ final class WorkspaceFileEditSessionRegistry {
         let pending = sessions.values.filter { $0.hasUnsavedChanges }
         guard !pending.isEmpty else { return }
         for session in pending { session.flush() }
-        var taskID = UIBackgroundTaskIdentifier.invalid
-        taskID = UIApplication.shared.beginBackgroundTask(withName: "workspace-file-save") {
-            UIApplication.shared.endBackgroundTask(taskID)
+        let saveTask = SaveTask(backgroundTasks)
+        saveTask.identifier = backgroundTasks.begin {
+            // Out of time: keep each latest draft for the next launch.
+            for session in pending { session.checkpoint() }
+            saveTask.finish()
+        }
+        if saveTask.over {
+            // The expiration handler already ran inside `begin`.
+            saveTask.finish()
+            return
         }
         Task { @MainActor in
             for session in pending { await session.waitForInFlightWrite() }
-            UIApplication.shared.endBackgroundTask(taskID)
+            saveTask.finish()
+        }
+    }
+
+    /// The background task kept for in-flight writes. Expiration or the
+    /// finished writes, whichever comes first, ends it; the other does nothing.
+    /// iOS may call the expiration handler before `begin` returns.
+    @MainActor
+    private final class SaveTask {
+        private let backgroundTasks: any AppBackgroundTasks
+        var identifier: UIBackgroundTaskIdentifier?
+        private(set) var over = false
+        private var ended = false
+
+        init(_ backgroundTasks: any AppBackgroundTasks) {
+            self.backgroundTasks = backgroundTasks
+        }
+
+        func finish() {
+            over = true
+            guard let identifier, !ended else { return }
+            ended = true
+            backgroundTasks.end(identifier)
         }
     }
 }
