@@ -975,6 +975,133 @@ struct SSHTerminalTests {
         #expect(grid.bounds.size == before)
     }
 
+    @Test func cursorShiftKeepsTheCursorRowAboveAGrownChatBar() {
+        // 40 rows of 20 pt; the bar covers the bottom 100 pt.
+        let shift = { (row: Int?) in
+            SSHTerminalComposerOverlap.shift(gridHeight: 800, covered: 100, cursorRow: row, cellHeight: 20)
+        }
+        #expect(shift(39) == 100, "cursor on the last row: the whole cover")
+        #expect(shift(36) == 40, "just far enough: row 36 ends at 740, 40 below the bar's top")
+        #expect(shift(34) == 0, "a cursor already above the bar moves nothing")
+        #expect(shift(0) == 0)
+        #expect(shift(nil) == 0, "reading history moves nothing")
+        #expect(
+            shift(43) == 0,
+            "a cursor past the last row belongs to the size before the keyboard; no jump while the terminal catches up"
+        )
+        #expect(SSHTerminalComposerOverlap.shift(gridHeight: 800, covered: 0, cursorRow: 39, cellHeight: 20) == 0)
+        #expect(
+            SSHTerminalComposerOverlap.shift(gridHeight: 810, covered: 30, cursorRow: 39, cellHeight: 20) == 20,
+            "a partial row below the grid's last row counts as space"
+        )
+        #expect(
+            SSHTerminalComposerOverlap.shift(gridHeight: 800, covered: 50, cursorRow: 49, cellHeight: 16) == 64,
+            "whole rows: 50 pt of cover moves four 16 pt rows, so no row is cut at the top"
+        )
+    }
+
+    @Test func chatBarGrowsOverTheGridWithoutResizingTheTerminal() async throws {
+        let fixture = TerminalConnectionFixture()
+        let channel = try SSHTerminalChannel()
+        channel.opened(fixture)
+        let mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
+        )
+        defer { mounted.dismiss(); channel.close(reason: "done") }
+        let resizes = SSHTerminalResizeLog()
+        let collector = Task { @MainActor in
+            for await geometry in fixture.resizes { resizes.sizes.append(geometry) }
+        }
+        defer { collector.cancel() }
+        func settle() async throws {
+            for _ in 0..<4 {
+                await Task.yield()
+                mounted.host.view.setNeedsLayout()
+                mounted.host.view.layoutIfNeeded()
+            }
+            try await Task.sleep(for: .milliseconds(250))
+            mounted.host.view.layoutIfNeeded()
+        }
+
+        // A coding agent reports itself: the chat bar replaces direct typing.
+        channel.event(.data(Data("\u{1b}]7501;state=idle:app=pi\u{1b}\\".utf8)))
+        try await settle()
+        let textView = try #require(mounted.find { $0 is PastableUITextView } as? PastableUITextView)
+        let grid = try #require(mounted.controller.gridView)
+        // Fill the screen so the cursor sits on the bottom row, like an agent's prompt.
+        channel.event(.data(Data(String(repeating: "output\r\n", count: 120).utf8)))
+        channel.event(.data(Data("pi> ".utf8)))
+        try await settle()
+        let gridSize = grid.bounds.size
+        let sentBefore = resizes.sizes.count
+        #expect(sentBefore > 0, "the first layout sized the remote terminal")
+        #expect(grid.transform == .identity, "a resting chat bar covers nothing")
+
+        let container = try #require(sequence(first: textView as UIView, next: \.superview)
+            .first { $0.superview === mounted.controller.view })
+        let delegate = try #require(textView.delegate)
+        for draft in ["one", "one\ntwo\nthree", "one\ntwo\nthree\nfour\nfive\nsix"] {
+            textView.text = draft
+            delegate.textViewDidChange?(textView)
+            try await settle()
+            #expect(grid.bounds.size == gridSize, "\(draft.count) characters: the grid keeps its size")
+            #expect(resizes.sizes.count == sentBefore, "\(draft.count) characters: no remote resize")
+        }
+        let barTop = container.convert(CGPoint.zero, to: mounted.controller.view).y
+        let gridBottom = grid.convert(CGPoint(x: 0, y: grid.bounds.maxY), to: mounted.controller.view).y
+            + -grid.transform.ty
+        #expect(barTop < gridBottom - grid.cellSize.height, "six lines grow over the grid's bottom rows")
+        let cursorRow = channel.engine.cursorCell.row
+        let cursorBottom = grid.convert(
+            CGPoint(x: 0, y: CGFloat(cursorRow + 1) * grid.cellSize.height), to: mounted.controller.view
+        ).y
+        #expect(cursorBottom <= barTop + 0.5, "the cursor row stays above the chat bar")
+        #expect(grid.transform.ty < 0)
+
+        textView.text = ""
+        delegate.textViewDidChange?(textView)
+        try await settle()
+        #expect(grid.transform == .identity, "the picture returns when the bar shrinks")
+        #expect(grid.bounds.size == gridSize)
+        #expect(resizes.sizes.count == sentBefore)
+
+        // Focused, the bar rests with its key strip; a draft still grows over the grid.
+        #expect(textView.becomeFirstResponder())
+        try await settle()
+        try await Task.sleep(for: .milliseconds(600))
+        try await settle()
+        let focusedSize = grid.bounds.size
+        let focusedSent = resizes.sizes.count
+        for draft in ["one\ntwo\nthree\nfour\nfive\nsix", ""] {
+            textView.text = draft
+            delegate.textViewDidChange?(textView)
+            try await settle()
+            #expect(grid.bounds.size == focusedSize, "focused, \(draft.count) characters: the grid keeps its size")
+            #expect(resizes.sizes.count == focusedSent, "focused, \(draft.count) characters: no remote resize")
+        }
+
+        // Leaving and coming back with a long draft brings the key strip back.
+        textView.text = "one\ntwo\nthree\nfour\nfive\nsix"
+        delegate.textViewDidChange?(textView)
+        try await settle()
+        func keyStripShows() throws -> Bool {
+            let key = try #require(mounted.find { $0.accessibilityIdentifier == "sshTerminal.composer.rawKeyboard" })
+            return !sequence(first: key, next: \.superview).contains { $0.isHidden || $0.alpha < 0.01 }
+        }
+        #expect(try keyStripShows())
+        textView.resignFirstResponder()
+        try await settle()
+        try await Task.sleep(for: .milliseconds(600))
+        try await settle()
+        #expect(try !keyStripShows())
+        #expect(textView.becomeFirstResponder())
+        try await settle()
+        try await Task.sleep(for: .milliseconds(600))
+        try await settle()
+        #expect(try keyStripShows(), "refocusing with a draft shows the key strip again")
+        textView.resignFirstResponder()
+    }
+
     @Test func terminalBarsShareOneShotModifiersAndEncodeAllBaseKeys() async throws {
         let fixture = TerminalConnectionFixture()
         let channel = try SSHTerminalChannel()
@@ -1636,6 +1763,11 @@ private final class MountedTerminalComposer {
         }
         return nil
     }
+}
+
+@MainActor
+private final class SSHTerminalResizeLog {
+    var sizes: [SSHTerminalGeometry] = []
 }
 
 private actor TerminalConnectionFixture: SSHTerminalConnection {

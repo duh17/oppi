@@ -39,8 +39,16 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private var composerHeightConstraint: NSLayoutConstraint?
     private var lastAppliedComposerFocus = 0
     private var voicePrepareTask: Task<Void, Never>?
-    private var gridBottomToKeyboard: NSLayoutConstraint?
-    private var gridBottomToComposer: NSLayoutConstraint?
+    private let gridClip = UIView()
+    private var gridBottom: NSLayoutConstraint?
+    /// Overlay notices and Back to Live stay above a chat bar that grew.
+    private var overlayAboveComposer: NSLayoutConstraint?
+    /// The chat bar's resting height, which the grid leaves free. Changes
+    /// only with focus (the keyboard), width, or text size; never as the
+    /// draft grows.
+    private var composerReservedHeight: CGFloat = 0
+    /// How much of the grid's bottom the chat bar covers right now.
+    private var composerCoveredHeight: CGFloat = 0
 
     private var pendingPaste: String?
     private var pasteNotice: String?
@@ -166,6 +174,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateComposerHeight()
+        updateCursorShift()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -377,27 +386,53 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             backToLive.bottomAnchor.constraint(equalTo: overlay.bottomAnchor, constant: -8),
         ])
 
-        let grid = makeGrid()
-        gridView = grid
-        view.addSubview(grid)
+        gridClip.translatesAutoresizingMaskIntoConstraints = false
+        gridClip.clipsToBounds = true
+        view.addSubview(gridClip)
         view.addSubview(overlay)
-        let keyboardBottom = grid.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
-        gridBottomToKeyboard = keyboardBottom
         let controlsInset: CGFloat = 12
         NSLayoutConstraint.activate([
             // Clear of a landscape notch: the grid runs edge to edge, the
             // controls stay inside the safe area.
             backPill.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: controlsInset),
             morePill.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -controlsInset),
-            grid.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            grid.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            grid.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            keyboardBottom,
+            gridClip.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            gridClip.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            gridClip.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            gridClip.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        installGrid(makeGrid())
+    }
+
+    /// The grid ends the chat bar's resting height above the keyboard guide
+    /// (none without the chat bar); a taller chat bar overlaps it. The clip
+    /// hides rows the cursor shift moves above the grid's top.
+    private func installGrid(_ grid: SSHTerminalGridView) {
+        gridView = grid
+        gridClip.addSubview(grid)
+        let bottom = grid.bottomAnchor.constraint(
+            equalTo: view.keyboardLayoutGuide.topAnchor,
+            constant: composerContainer?.superview == nil ? 0 : -composerReservedHeight
+        )
+        gridBottom = bottom
+        let overlayBottom = overlay.bottomAnchor.constraint(equalTo: grid.bottomAnchor)
+        overlayBottom.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            grid.topAnchor.constraint(equalTo: gridClip.topAnchor),
+            grid.leadingAnchor.constraint(equalTo: gridClip.leadingAnchor),
+            grid.trailingAnchor.constraint(equalTo: gridClip.trailingAnchor),
+            bottom,
             overlay.topAnchor.constraint(equalTo: grid.topAnchor),
-            overlay.bottomAnchor.constraint(equalTo: grid.bottomAnchor),
+            overlayBottom,
             overlay.leadingAnchor.constraint(equalTo: grid.leadingAnchor),
             overlay.trailingAnchor.constraint(equalTo: grid.trailingAnchor),
         ])
+        // Output moves the cursor; keep its row above a grown chat bar.
+        let paint = channel.engine.onPictureChange
+        channel.engine.onPictureChange = { [weak self] in
+            paint?()
+            self?.cursorMayHaveMoved()
+        }
     }
 
     private func makeGrid() -> SSHTerminalGridView {
@@ -406,6 +441,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             paste: { [weak self] in self?.requestPaste($0) },
             followChanged: { [weak self] following in
                 self?.detached = !following
+                self?.updateCursorShift()
                 self?.setNeedsUpdateProperties()
             }
         )
@@ -449,21 +485,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         channel.isViewed = isOnScreen && AppScenePhase.shared.phase == .active
         destroyComposer()
         gridView?.removeFromSuperview()
-        let grid = makeGrid()
-        gridView = grid
-        view.insertSubview(grid, belowSubview: overlay)
-        let keyboardBottom = grid.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
-        gridBottomToKeyboard = keyboardBottom
-        NSLayoutConstraint.activate([
-            grid.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            grid.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            grid.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            keyboardBottom,
-            overlay.topAnchor.constraint(equalTo: grid.topAnchor),
-            overlay.bottomAnchor.constraint(equalTo: grid.bottomAnchor),
-            overlay.leadingAnchor.constraint(equalTo: grid.leadingAnchor),
-            overlay.trailingAnchor.constraint(equalTo: grid.trailingAnchor),
-        ])
+        installGrid(makeGrid())
     }
 
     private func applyTheme(_ themeID: ThemeID) {
@@ -842,18 +864,16 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         addChild(bar)
         view.addSubview(container)
         bar.didMove(toParent: self)
-        gridBottomToKeyboard?.isActive = false
-        guard let gridView else { return }
-        let bottom = gridView.bottomAnchor.constraint(equalTo: container.topAnchor)
-        gridBottomToComposer = bottom
         let height = container.heightAnchor.constraint(equalToConstant: 60)
         composerHeightConstraint = height
+        let overlayAbove = overlay.bottomAnchor.constraint(lessThanOrEqualTo: container.topAnchor)
+        overlayAboveComposer = overlayAbove
         NSLayoutConstraint.activate([
             container.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             container.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
-            bottom,
             height,
+            overlayAbove,
         ])
         voicePrepareTask?.cancel()
         voicePrepareTask = Task { [weak self] in
@@ -871,14 +891,17 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         composerKeyStrip?.stopRepeating()
         composerSession?.releaseVoice()
         bar.view.endEditing(true)
-        gridBottomToComposer?.isActive = false
-        gridBottomToComposer = nil
         composerHeightConstraint?.isActive = false
         composerHeightConstraint = nil
-        gridBottomToKeyboard?.isActive = true
+        overlayAboveComposer?.isActive = false
+        overlayAboveComposer = nil
         bar.willMove(toParent: nil)
         composerContainer?.removeFromSuperview()
         bar.removeFromParent()
+        composerReservedHeight = 0
+        composerCoveredHeight = 0
+        gridBottom?.constant = 0
+        updateCursorShift()
     }
 
     private func destroyComposer() {
@@ -967,6 +990,36 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         if abs((composerHeightConstraint?.constant ?? 0) - height) > 0.5 {
             composerHeightConstraint?.constant = height
         }
+        // The grid keeps only the bar's resting height. A longer draft,
+        // attachments, suggestions, and the failure banners grow over it,
+        // so the remote terminal is not resized while you compose.
+        let reserved = min(bar.restingHeight(fittedHeight: barHeight, width: width), height)
+        composerReservedHeight = reserved
+        composerCoveredHeight = height - reserved
+        if abs((gridBottom?.constant ?? 0) + reserved) > 0.5 {
+            gridBottom?.constant = -reserved
+        }
+    }
+
+    private func cursorMayHaveMoved() {
+        guard composerCoveredHeight > 0 else { return }
+        updateCursorShift()
+    }
+
+    /// Moves the grid's picture up so the program's cursor row stays above
+    /// a chat bar that grew over the grid. The grid's size does not change.
+    private func updateCursorShift() {
+        guard let gridView else { return }
+        let shift = SSHTerminalComposerOverlap.shift(
+            gridHeight: gridView.bounds.height,
+            covered: composerCoveredHeight,
+            cursorRow: detached ? nil : channel.engine.cursorCell.row,
+            cellHeight: gridView.cellSize.height
+        )
+        let scale = max(view.traitCollection.displayScale, 1)
+        let snapped = (shift * scale).rounded(.up) / scale
+        let transform = snapped > 0 ? CGAffineTransform(translationX: 0, y: -snapped) : .identity
+        if gridView.transform != transform { gridView.transform = transform }
     }
 
     // MARK: - Mode

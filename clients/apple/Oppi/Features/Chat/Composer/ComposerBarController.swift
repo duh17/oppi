@@ -742,6 +742,47 @@ final class ComposerBarController: UIViewController, UITextViewDelegate, PHPicke
         )
     }
 
+    /// The bar's height with a one-line draft and none of the rows that come
+    /// and go while composing: suggestions, attachments, file pills, Ask, the
+    /// busy tip, send progress, and Stop. The action row counts while it
+    /// shows (focus brings it, with the keyboard). A host that keeps its
+    /// content's size while the draft grows (the SSH terminal) reserves this
+    /// and lets the rest overlap.
+    ///
+    /// `fittedHeight` is `sizeThatFits(width:)` from this layout pass; the
+    /// draft's growth and each shown transient row come off it. Nothing is
+    /// hidden or resized to measure: the action row animates, and a stack
+    /// view loses track of a hidden flag flipped under it.
+    func restingHeight(fittedHeight: CGFloat, width: CGFloat) -> CGFloat {
+        guard let host else { return fittedHeight }
+        let control = ComposerInputMetrics.controlDiameter
+        let draft = textHeightConstraint?.constant ?? oneLineTextHeight
+        // The text row is as tall as its tallest item: the draft or a button.
+        var transient = max(draft, control) - max(oneLineTextHeight, control)
+        let rowWidth = max(width - (host.content.appliesOuterPadding ? 32 : 0), 1)
+        func fitted(_ row: UIView) -> CGFloat {
+            row.systemLayoutSizeFitting(
+                CGSize(width: rowWidth, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+        }
+        // Above the capsule, each with the stack's spacing.
+        for row in [forceStopButton, sendProgressView] as [UIView] where !row.isHidden {
+            transient += fitted(row) + rootStack.spacing
+        }
+        for panel in [slashPanel, filePanel] where !panel.isHidden {
+            transient += panel.measuredHeight + rootStack.spacing
+        }
+        // Inside the capsule, stacked without spacing.
+        if !askContainer.isHidden { transient += askHeightConstraint?.constant ?? 0 }
+        if !busyTipContainer.isHidden { transient += busyTipHeightConstraint?.constant ?? 0 }
+        for strip in [attachmentStripWrapper, filePillStripWrapper] where !strip.isHidden {
+            transient += fitted(strip)
+        }
+        return max(fittedHeight - transient, 0)
+    }
+
     func apply() {
         guard let host else { return }
         let content = host.content

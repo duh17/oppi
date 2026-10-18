@@ -21,6 +21,27 @@ enum SSHTerminalFloatingControls {
     }
 }
 
+/// The chat bar grows over the grid instead of shrinking it: the grid keeps
+/// the room for the bar at rest, so typing more lines, attachments, or
+/// suggestions never resizes the remote terminal. When the bar covers the
+/// row the program's cursor is on, the grid's picture moves up by the fewest
+/// whole rows that keep that row above the bar, as a chat transcript moves
+/// up for a growing composer. Whole rows leave no half-cut row at the top
+/// edge; the rows above slide under it until the bar shrinks. Reading
+/// history (not following live) moves nothing, and neither does a cursor
+/// below the grid's last row: the keyboard just resized the grid and the
+/// terminal has not taken the new size yet.
+enum SSHTerminalComposerOverlap {
+    static func shift(gridHeight: CGFloat, covered: CGFloat, cursorRow: Int?, cellHeight: CGFloat) -> CGFloat {
+        guard covered > 0, cellHeight > 0, let cursorRow,
+              cursorRow < Int(gridHeight / cellHeight) else { return 0 }
+        let cursorBottom = CGFloat(cursorRow + 1) * cellHeight
+        let needed = cursorBottom - (gridHeight - covered)
+        guard needed > 0 else { return 0 }
+        return (needed / cellHeight).rounded(.up) * cellHeight
+    }
+}
+
 /// Docked software keyboard covering the bottom of this terminal's display.
 /// A floating iPad keyboard is not "up". A keyboard on the Duo's other
 /// display is ignored: the notification's object is the keyboard's screen,

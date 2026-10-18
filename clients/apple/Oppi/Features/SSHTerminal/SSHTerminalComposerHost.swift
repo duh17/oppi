@@ -177,7 +177,12 @@ final class SSHTerminalComposerHost: ComposerBarHosting {
         return ([trimmed].filter { !$0.isEmpty } + [paths.joined(separator: "\n")]).joined(separator: "\n\n")
     }
 
-    func setText(_ text: String) { self.text = text }
+    /// The terminal re-measures the bar for each draft change: a taller bar
+    /// grows over the grid and may move its picture up.
+    func setText(_ text: String) {
+        self.text = text
+        onNeedsLayout?()
+    }
     func setTextBeforeRecording(_ value: String?) { textBeforeRecording = value }
     func setPendingAttachments(_ value: [PendingAttachment]) {
         pendingAttachments = value
