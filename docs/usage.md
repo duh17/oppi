@@ -142,7 +142,7 @@ Below it: **Instructions** (its own editor with **Save**), **Skills** and **Exte
 
 ## Server settings
 
-**Server Settings** (host switcher → Server Settings, or Settings → your server) opens with the server's name and connection status, then a list: **Model Providers**, **Workspaces**, **Dictionary**, **Paired Devices**, **About This Server**, and **Badge Icon**. **Mobile Output Guide** and **Remove Server** follow on the same screen. Add another server from Settings.
+**Server Settings** (host switcher → Server Settings, or Settings → your server) opens with the server's name and connection status, then a list: **Model Providers**, **Workspaces**, **Dictionary**, **Paired Devices**, **About This Server**, and **Badge Icon**. Below the list on the same screen: **Mobile Output Guide**, **Server Metrics** (sampling is off by default; see [Server Metrics](server-configuration.md#server-metrics)), **Notifications** (push and Live Activities, per server), **Lock Server**, and **Remove Server**. Add another server from Settings.
 
 **About This Server** shows connection, uptime, Pi SDK and Pi TUI versions, and the server version. Its row reads **Update Available** when a newer `oppi-server` is on npm.
 

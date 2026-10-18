@@ -26,7 +26,7 @@ const PUSH_TTL_SECONDS = 3600;
  * Pushes one device may get from this server (protocol/push/spec.md §5). Matches the relay's
  * per-phone quota, so the server stops asking before the relay refuses. Routine alerts stop
  * at the lower numbers; the rest is kept for alerts that wait on the user (`blocked`,
- * `pairing_approval`), so a busy day of finished runs never hides an approval.
+ * `pairing_approval`), so a busy day of failed runs and agent messages never hides an approval.
  */
 export const PUSH_DEVICE_BUDGET = {
   perDay: 100,
