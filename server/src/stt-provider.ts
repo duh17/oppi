@@ -25,6 +25,8 @@ export interface SttTranscriptUpdate {
   snap?: boolean;
   committedText?: string;
   activeText?: string;
+  /** The backend session was recreated mid-take; `text` starts a new transcript. */
+  transcriptRestarted?: boolean;
 }
 
 /** Final transcript payload returned when the backend session is closed. */
@@ -172,6 +174,7 @@ export class StreamingSttProvider implements SttProvider {
    * segment-commit can still surface even when the visible text is unchanged.
    */
   private lastPreviewSignature: string | null = null;
+  private transcriptRestarted = false;
   private audioQueue: Buffer[] = [];
   private feeding = false;
   private stopped = false;
@@ -479,11 +482,14 @@ export class StreamingSttProvider implements SttProvider {
         if (text && signature !== this.lastPreviewSignature) {
           this.lastText = text;
           this.lastPreviewSignature = signature;
+          const restarted = this.transcriptRestarted;
+          this.transcriptRestarted = false;
           this.tokenCb?.({
             text,
             ...(snap ? { snap: true } : {}),
             ...(committedText !== undefined ? { committedText } : {}),
             ...(activeText !== undefined ? { activeText } : {}),
+            ...(restarted ? { transcriptRestarted: true } : {}),
           });
         }
       } else if (res.status === 404) {
@@ -498,6 +504,9 @@ export class StreamingSttProvider implements SttProvider {
           await this.createSession();
           this.startupFeed = true;
           this.forwardedStartupBytes = 0;
+          // The new session's first text starts a new transcript, even if it repeats the old one.
+          this.lastPreviewSignature = null;
+          this.transcriptRestarted = true;
         } catch (err) {
           log.warn("stt.session_recreate.failed", {
             error: err instanceof Error ? err.message : String(err),

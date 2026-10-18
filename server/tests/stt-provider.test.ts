@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DictationManager } from "../src/dictation-manager.js";
 import type { DictationServerMessage } from "../src/dictation-types.js";
-import { SttSessionCreateError, StreamingSttProvider } from "../src/stt-provider.js";
+import {
+  SttSessionCreateError,
+  StreamingSttProvider,
+  type SttTranscriptUpdate,
+} from "../src/stt-provider.js";
 
 const BASE = "http://localhost:9999";
 const STREAM_URL = `${BASE}/v1/audio/transcriptions/stream`;
@@ -277,14 +281,14 @@ describe("StreamingSttProvider", () => {
     ]);
 
     const provider = makeProvider(fetchFn);
-    const tokens: string[] = [];
-    provider.onToken((update) => tokens.push(update.text));
+    const updates: SttTranscriptUpdate[] = [];
+    provider.onToken((update) => updates.push(update));
     await provider.start({ contextualStrings: ["Yuwp"] });
 
     provider.feedAudio(Buffer.from([1, 2]));
     vi.advanceTimersByTime(100);
     await flush();
-    expect(tokens).toEqual(["recovered"]);
+    expect(updates).toEqual([{ text: "recovered" }]);
 
     feedStatus = 404;
     provider.feedAudio(Buffer.from([3, 4]));
@@ -295,7 +299,11 @@ describe("StreamingSttProvider", () => {
     provider.feedAudio(Buffer.from([5, 6]));
     vi.advanceTimersByTime(100);
     await flush();
-    expect(tokens[tokens.length - 1]).toBe("recovered");
+    // The new session's transcript starts over, so Live Voice can count turns from zero.
+    expect(updates).toEqual([
+      { text: "recovered" },
+      { text: "recovered", transcriptRestarted: true },
+    ]);
 
     const creates = createBodies(calls);
     expect(creates.length).toBeGreaterThanOrEqual(2);
@@ -870,7 +878,8 @@ describe("StreamingSttProvider", () => {
       const burst = patternPcm(STARTUP_EXIT_BYTES, STARTUP_FEED_BYTES * 8);
       provider.feedAudio(burst);
       await waitUntil(
-        () => feedPcmCalls(calls).length >= feedsBeforeBurst + STARTUP_EXIT_BYTES / STARTUP_FEED_BYTES,
+        () =>
+          feedPcmCalls(calls).length >= feedsBeforeBurst + STARTUP_EXIT_BYTES / STARTUP_FEED_BYTES,
         "post-recreate startup slices",
       );
 

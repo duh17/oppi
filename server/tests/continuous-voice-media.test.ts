@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  LIVE_VOICE_PLAYBACK_SAMPLE_RATE,
+  ReadAloudLiveVoiceTts,
   selectLiveVoiceMediaAdapter,
   type LiveVoiceTtsPort,
   VoiceCallMediaCoordinator,
@@ -26,8 +28,18 @@ import {
 import { WsMessageHandler, type WsMessageHandlerDeps } from "../src/ws-message-handler.js";
 import type { ServerMessage, Session } from "../src/types.js";
 
-/** Spoken approval delivery awaits the runtime's UI response; let it settle. */
-const flushMicrotasks = () => new Promise<void>((resolve) => setImmediate(resolve));
+/** Test turns end after a short pause; the default is sized for real speech. */
+const TEST_TURN_END_PAUSE_MS = 5;
+
+function localAdapter(
+  stt: SttProvider,
+  options: ConstructorParameters<typeof YuwpVoiceMediaAdapter>[1] = {},
+): YuwpVoiceMediaAdapter {
+  return new YuwpVoiceMediaAdapter(stt, { turnEndPauseMs: TEST_TURN_END_PAUSE_MS, ...options });
+}
+
+/** Let the user's pause end the turn and spoken approval delivery settle. */
+const turnEnd = () => new Promise<void>((resolve) => setTimeout(resolve, 60));
 
 class ScriptedSttProvider implements SttProvider {
   readonly name = "scripted-yuwp";
@@ -150,18 +162,19 @@ function presentArmedChallenge(
 }
 
 describe("continuous voice media", () => {
-  it("commits a Yuwp/ASR segment through commitFrontendUtterance on the attached lease", async () => {
+  it("hands Pi one request per spoken turn while streaming ASR locks in words", async () => {
     const calls = makeCalls();
     const stt = new ScriptedSttProvider();
     const frontend = new DeterministicVoiceCallFrontend({
       connectionId: "connection-1",
       authenticatedDeviceId: "paired-device-a",
     });
+    let sequence = 0;
     const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => new YuwpVoiceMediaAdapter(stt),
+      createAdapter: () => localAdapter(stt),
       calls,
-      nextUtteranceId: () => "utterance-1",
-      nextDelegationId: () => "delegation-1",
+      nextUtteranceId: () => `utterance-${++sequence}`,
+      nextDelegationId: () => `delegation-${sequence}`,
     });
 
     const started = calls.startCall(
@@ -173,32 +186,59 @@ describe("continuous voice media", () => {
       controllerLeaseEpoch: started.state.controllerLeaseEpoch,
       frontend: frontend.connection,
     });
-
     coordinator.feedAudio("connection-1", Buffer.from("pcm-bytes"));
-    stt.emit({
-      text: "list open sessions",
-      committedText: "list open sessions",
-      activeText: "",
-    });
+    // R2T2 shape: the call's transcript is cumulative and every update is committed.
+    const lockIn = (text: string) => stt.emit({ text, committedText: text, activeText: "" });
 
-    const snapshot = calls.snapshot(started.state.callId);
-    expect(stt.started).toBe(true);
+    lockIn("Can");
+    lockIn("Can you ask pi how");
+    lockIn("Can you ask pi how many sessions are running?");
+    expect(calls.snapshot(started.state.callId).delegations).toEqual([]);
+    await turnEnd();
+
+    // The next turn revises the earlier punctuation; only the new words are handed off.
+    lockIn("Can you ask pi how many sessions are running, and");
+    lockIn("Can you ask pi how many sessions are running, and then check the tests?");
+    await turnEnd();
+
     expect(stt.fed).toHaveLength(1);
-    expect(snapshot.delegations).toEqual([
+    expect(calls.snapshot(started.state.callId).delegations).toEqual([
       expect.objectContaining({
         delegationId: "delegation-1",
-        utteranceId: "utterance-1",
-        request: "list open sessions",
+        request: "Can you ask pi how many sessions are running?",
+        state: "delegated",
+      }),
+      expect.objectContaining({
+        delegationId: "delegation-2",
+        request: "and then check the tests?",
         state: "delegated",
       }),
     ]);
     expect(frontend.messages).toContainEqual(
       expect.objectContaining({
-        type: "voice_delegation_update",
-        kind: "delegated",
-        text: "list open sessions",
+        type: "voice_call_state",
+        partialTranscript: "and then check the tests?",
       }),
     );
+    await coordinator.detach("connection-1");
+    expect(calls.snapshot(started.state.callId).delegations).toHaveLength(2);
+  });
+
+  it("hands Pi the next turn after the ASR session restarts its transcript", async () => {
+    const stt = new ScriptedSttProvider();
+    const adapter = localAdapter(stt);
+    const committed: string[] = [];
+    await adapter.start((event) => {
+      if (event.type === "user_utterance_committed") committed.push(event.text);
+    });
+
+    stt.emit({ text: "list every open session in the oppi workspace" });
+    await turnEnd();
+    // A long mute outlasted Yuwp's idle timeout; the recreated session hears from scratch.
+    stt.emit({ text: "stop the build", transcriptRestarted: true });
+    await turnEnd();
+
+    expect(committed).toEqual(["list every open session in the oppi workspace", "stop the build"]);
   });
 
   it("updates a partial transcript without creating a delegation", async () => {
@@ -209,7 +249,7 @@ describe("continuous voice media", () => {
       authenticatedDeviceId: "paired-device-a",
     });
     const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => new YuwpVoiceMediaAdapter(stt),
+      createAdapter: () => localAdapter(stt),
       calls,
     });
     const started = calls.startCall(
@@ -243,7 +283,7 @@ describe("continuous voice media", () => {
       authenticatedDeviceId: "paired-device-a",
     });
     const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => new YuwpVoiceMediaAdapter(stt, { idleCommitMs: 15 }),
+      createAdapter: () => localAdapter(stt, { turnEndPauseMs: 15 }),
       calls,
       nextUtteranceId: () => "utterance-idle-1",
       nextDelegationId: () => "delegation-idle-1",
@@ -292,7 +332,7 @@ describe("continuous voice media", () => {
       authenticatedDeviceId: "paired-device-a",
     });
     const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => new YuwpVoiceMediaAdapter(stt),
+      createAdapter: () => localAdapter(stt),
       calls,
       nextUtteranceId: () => "utterance-stop-1",
       nextDelegationId: () => "delegation-stop-1",
@@ -335,7 +375,7 @@ describe("continuous voice media", () => {
         committedText: "list open sessions",
         activeText: "",
       };
-      const adapter = new YuwpVoiceMediaAdapter(stt, { idleCommitMs: 15 });
+      const adapter = localAdapter(stt, { turnEndPauseMs: 15 });
       const committed: string[] = [];
       let releaseFirst = () => {};
       const holdFirst = new Promise<void>((resolve) => {
@@ -408,7 +448,7 @@ describe("continuous voice media", () => {
       authenticatedDeviceId: "paired-device-a",
     });
     const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => new YuwpVoiceMediaAdapter(stt),
+      createAdapter: () => localAdapter(stt),
       calls,
       nextUtteranceId: () => "utterance-pi-1",
       nextDelegationId: () => "delegation-pi-1",
@@ -452,7 +492,7 @@ describe("continuous voice media", () => {
       authenticatedDeviceId: "paired-device-a",
     });
     const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => new YuwpVoiceMediaAdapter(stt),
+      createAdapter: () => localAdapter(stt),
       calls,
       nextUtteranceId: () => "utterance-1",
       nextDelegationId: () => "delegation-1",
@@ -469,6 +509,7 @@ describe("continuous voice media", () => {
     });
     coordinator.feedAudio("connection-1", Buffer.from("pcm"));
     stt.emit({ text: "hello", committedText: "hello" });
+    await turnEnd();
 
     expect(createDictationManager).not.toHaveBeenCalled();
     expect(stt.name).toBe("scripted-yuwp");
@@ -480,7 +521,7 @@ describe("continuous voice media", () => {
     const stt = new ScriptedSttProvider();
     stt.startError = new Error("STT backend unreachable");
     const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => new YuwpVoiceMediaAdapter(stt),
+      createAdapter: () => localAdapter(stt),
       calls,
     });
     const sent: ServerMessage[] = [];
@@ -584,7 +625,7 @@ describe("continuous voice media", () => {
     }) as typeof fetch;
 
     const stt = new StreamingSttProvider({ endpoint, model: "test-asr", warmUp: false }, fetchFn);
-    const adapter = new YuwpVoiceMediaAdapter(stt);
+    const adapter = localAdapter(stt);
     await adapter.start(async () => {});
     expect(creates).toBe(1);
     expect(maxInFlight).toBe(1);
@@ -643,7 +684,7 @@ describe("continuous voice media", () => {
       authenticatedDeviceId: "paired-device-a",
     });
     const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => new YuwpVoiceMediaAdapter(stt),
+      createAdapter: () => localAdapter(stt),
       calls,
       nextUtteranceId: () => "utterance-live-1",
       nextDelegationId: () => "delegation-live-1",
@@ -663,6 +704,7 @@ describe("continuous voice media", () => {
       committedText: "summarize the inbox",
       activeText: "",
     });
+    await turnEnd();
 
     expect(calls.snapshot(started.state.callId).lifecycle).toBe("active");
     expect(calls.snapshot(started.state.callId).frontend).toBe("attached");
@@ -678,17 +720,19 @@ describe("continuous voice media", () => {
 
   it("Yuwp adapter emits only semantic frontend events", async () => {
     const stt = new ScriptedSttProvider();
-    const adapter = new YuwpVoiceMediaAdapter(stt);
+    const adapter = localAdapter(stt);
     const events: VoiceFrontendSemanticEvent[] = [];
     await adapter.start((event) => {
       events.push(event);
     });
     stt.emit({ text: "hi", activeText: "hi" });
     stt.emit({ text: "hi there", committedText: "hi there", activeText: "" });
+    await turnEnd();
 
     expect(events.map((event) => event.type)).toEqual([
       "connected",
       "user_speech_started",
+      "user_transcript_partial",
       "user_transcript_partial",
       "user_speech_ended",
       "user_utterance_committed",
@@ -696,10 +740,64 @@ describe("continuous voice media", () => {
     expect(JSON.stringify(events)).not.toMatch(/gpt.?live|grok|openai.?realtime|webrtc/i);
   });
 
-  it("speaks voice_update text through publish and cancels the previous generation", async () => {
+  it("speaks with the read-aloud voice at the phone's 24 kHz whatever rate the engine uses", async () => {
+    // Drama 3 returns 44.1 kHz float WAV; played as 24 kHz it would sound slow and low.
+    const engineRate = 44_100;
+    const requests: Record<string, unknown>[] = [];
+    const fetchFn = (async (_url: string, init: RequestInit) => {
+      requests.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return new Response(floatMonoWav(new Array(engineRate / 10).fill(0.25), engineRate));
+    }) as unknown as typeof fetch;
+    const tts = new ReadAloudLiveVoiceTts(
+      { provider: "http", endpoint: "http://127.0.0.1:7938", voice: "elena" },
+      { fetchFn },
+    );
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of tts.speak(
+      "Three sessions are running.",
+      new AbortController().signal,
+    )) {
+      chunks.push(chunk);
+    }
+
+    const pcm = Buffer.concat(chunks);
+    expect(requests).toEqual([expect.objectContaining({ voice: "elena" })]);
+    expect(pcm.length / 2).toBe(LIVE_VOICE_PLAYBACK_SAMPLE_RATE / 10);
+    expect(pcm.readInt16LE(0)).toBe(Math.round(0.25 * 32767));
+    expect(pcm.readInt16LE(pcm.length - 2)).toBe(Math.round(0.25 * 32767));
+  });
+
+  it("drops queued voice_updates when the user starts talking and speaks later ones", async () => {
+    const stt = new ScriptedSttProvider();
+    const spoken: string[] = [];
+    const pcm: string[] = [];
+    const tts = new GateableTtsPort({ onSpeak: (text) => spoken.push(text) });
+    const adapter = localAdapter(stt, { tts, turnEndPauseMs: 60_000 });
+    adapter.setPlaybackSink((chunk) => pcm.push(chunk.toString()));
+    await adapter.start(() => {});
+    const update = (text: string) =>
+      adapter.publish({ delegationId: "delegation-1", kind: "progress", text });
+
+    const playing = update("working on it");
+    const queued = update("still working");
+    await tts.waitForSpeak("working on it");
+    stt.emit({ text: "wait" });
+    await Promise.all([playing, queued]);
+    const later = update("done");
+    await tts.waitForSpeak("done");
+    tts.release("done");
+    await later;
+
+    expect(spoken).toEqual(["working on it", "done"]);
+    expect(pcm).toEqual(["done"]);
+  });
+
+  it("speaks a newer voice_update after the one playing instead of cutting it off", async () => {
     const stt = new ScriptedSttProvider();
     const spoken: string[] = [];
     const cancelled: string[] = [];
+    const pcm: string[] = [];
     const tts = new GateableTtsPort({
       onSpeak(text) {
         spoken.push(text);
@@ -708,7 +806,8 @@ describe("continuous voice media", () => {
         cancelled.push(text);
       },
     });
-    const adapter = new YuwpVoiceMediaAdapter(stt, { tts });
+    const adapter = localAdapter(stt, { tts });
+    adapter.setPlaybackSink((chunk) => pcm.push(chunk.toString()));
     const events: VoiceFrontendSemanticEvent[] = [];
     await adapter.start((event) => {
       events.push(event);
@@ -725,12 +824,17 @@ describe("continuous voice media", () => {
       kind: "final",
       text: "three open sessions",
     });
+    await turnEnd();
+    expect(spoken).toEqual(["working on it"]);
+
+    tts.release("working on it");
     await tts.waitForSpeak("three open sessions");
     tts.release("three open sessions");
-    await Promise.allSettled([first, second]);
+    await Promise.all([first, second]);
 
     expect(spoken).toEqual(["working on it", "three open sessions"]);
-    expect(cancelled).toEqual(["working on it"]);
+    expect(cancelled).toEqual([]);
+    expect(pcm).toEqual(["working on it", "three open sessions"]);
     expect(events.map((event) => event.type)).toEqual([
       "connected",
       "assistant_speech_started",
@@ -749,7 +853,7 @@ describe("continuous voice media", () => {
       authenticatedDeviceId: "paired-device-a",
     });
     const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => new YuwpVoiceMediaAdapter(stt, { tts }),
+      createAdapter: () => localAdapter(stt, { tts }),
       calls,
       nextUtteranceId: () => "utterance-1",
       nextDelegationId: () => "delegation-1",
@@ -765,6 +869,7 @@ describe("continuous voice media", () => {
     });
     coordinator.feedAudio("connection-1", Buffer.from("pcm"));
     stt.emit({ text: "list open sessions", committedText: "list open sessions" });
+    await turnEnd();
 
     const update = {
       delegationId: "delegation-1",
@@ -796,7 +901,7 @@ describe("continuous voice media", () => {
         authenticatedDeviceId: "paired-device-a",
       });
       const coordinator = new VoiceCallMediaCoordinator({
-        createAdapter: () => new YuwpVoiceMediaAdapter(stt),
+        createAdapter: () => localAdapter(stt),
         calls: harness.calls,
         nextUtteranceId: () => "utterance-1",
         nextDelegationId: () => "delegation-1",
@@ -815,7 +920,7 @@ describe("continuous voice media", () => {
       const submit = vi.spyOn(harness.calls, "submitApprovalTranscript");
 
       stt.emit({ text: transcript, committedText: transcript, activeText: "" });
-      await flushMicrotasks();
+      await turnEnd();
 
       expect(submit).toHaveBeenCalledWith(
         {
@@ -860,7 +965,7 @@ describe("continuous voice media", () => {
         authenticatedDeviceId: "paired-device-a",
       });
       const coordinator = new VoiceCallMediaCoordinator({
-        createAdapter: () => new YuwpVoiceMediaAdapter(stt),
+        createAdapter: () => localAdapter(stt),
         calls: harness.calls,
         nextUtteranceId: () => "utterance-1",
         nextDelegationId: () => "delegation-1",
@@ -878,7 +983,7 @@ describe("continuous voice media", () => {
       const commit = vi.spyOn(harness.calls, "commitFrontendUtterance");
 
       stt.emit({ text: transcript, committedText: transcript, activeText: "" });
-      await flushMicrotasks();
+      await turnEnd();
 
       expect(commit).not.toHaveBeenCalled();
       expect(harness.calls.snapshot(started.state.callId).delegations).toEqual([]);
@@ -905,7 +1010,7 @@ describe("continuous voice media", () => {
         authenticatedDeviceId: "paired-device-a",
       });
       const coordinator = new VoiceCallMediaCoordinator({
-        createAdapter: () => new YuwpVoiceMediaAdapter(stt),
+        createAdapter: () => localAdapter(stt),
         calls: harness.calls,
         nextUtteranceId: () => "utterance-1",
         nextDelegationId: () => "delegation-1",
@@ -924,7 +1029,7 @@ describe("continuous voice media", () => {
       const submit = vi.spyOn(harness.calls, "submitApprovalTranscript");
 
       stt.emit({ text: transcript, committedText: transcript, activeText: "" });
-      await flushMicrotasks();
+      await turnEnd();
 
       expect(submit).not.toHaveBeenCalled();
       expect(commit).not.toHaveBeenCalled();
@@ -951,7 +1056,7 @@ describe("continuous voice media", () => {
       authenticatedDeviceId: "paired-device-a",
     });
     const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => new YuwpVoiceMediaAdapter(stt),
+      createAdapter: () => localAdapter(stt),
       calls,
       nextUtteranceId: () => "utterance-1",
       nextDelegationId: () => "delegation-1",
@@ -973,7 +1078,7 @@ describe("continuous voice media", () => {
       committedText: "approve once",
       activeText: "",
     });
-    await flushMicrotasks();
+    await turnEnd();
 
     expect(submit).not.toHaveBeenCalled();
     expect(commit).toHaveBeenCalled();
@@ -994,7 +1099,7 @@ describe("continuous voice media", () => {
       authenticatedDeviceId: "paired-device-a",
     });
     const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => new YuwpVoiceMediaAdapter(stt),
+      createAdapter: () => localAdapter(stt),
       calls: harness.calls,
       nextUtteranceId: () => "utterance-1",
       nextDelegationId: () => "delegation-1",
@@ -1023,7 +1128,7 @@ describe("continuous voice media", () => {
       committedText: "approve once",
       activeText: "",
     });
-    await flushMicrotasks();
+    await turnEnd();
 
     expect(submit).toHaveBeenCalledWith(
       expect.objectContaining({ challengeId: oldest.challengeId }),
@@ -1055,7 +1160,7 @@ describe("continuous voice media", () => {
         cancelled.push(text);
       },
     });
-    const adapter = new YuwpVoiceMediaAdapter(stt, { tts, idleCommitMs: 0 });
+    const adapter = localAdapter(stt, { tts, turnEndPauseMs: 60_000 });
     adapter.setPlaybackSink((chunk) => pcm.push(Buffer.from(chunk)));
     const events: VoiceFrontendSemanticEvent[] = [];
     await adapter.start((event) => {
@@ -1098,7 +1203,7 @@ describe("continuous voice media", () => {
       authenticatedDeviceId: "paired-device-a",
     });
     const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => new YuwpVoiceMediaAdapter(stt, { tts, idleCommitMs: 0 }),
+      createAdapter: () => localAdapter(stt, { tts, turnEndPauseMs: 25 }),
       calls,
       nextUtteranceId: () => "utterance-1",
       nextDelegationId: () => "delegation-1",
@@ -1141,8 +1246,9 @@ describe("continuous voice media", () => {
       text: "list open sessions",
       committedText: "list open sessions",
     };
+    await turnEnd();
 
-    expect(commit).toHaveBeenCalled();
+    expect(commit).toHaveBeenCalledTimes(1);
     expect(calls.snapshot(started.state.callId).delegations).toEqual([
       expect.objectContaining({
         request: "list open sessions",
@@ -1167,7 +1273,7 @@ describe("continuous voice media", () => {
       authenticatedDeviceId: "paired-device-a",
     });
     const coordinator = new VoiceCallMediaCoordinator({
-      createAdapter: () => new YuwpVoiceMediaAdapter(stt, { tts, idleCommitMs: 0 }),
+      createAdapter: () => localAdapter(stt, { tts, turnEndPauseMs: 25 }),
       calls: harness.calls,
       nextUtteranceId: () => "utterance-1",
       nextDelegationId: () => "delegation-1",
@@ -1209,7 +1315,7 @@ describe("continuous voice media", () => {
       committedText: "approve once",
       activeText: "",
     });
-    await flushMicrotasks();
+    await turnEnd();
 
     expect(submit).toHaveBeenCalledWith(
       {
@@ -1283,6 +1389,26 @@ class GateableTtsPort implements LiveVoiceTtsPort {
   release(text: string): void {
     this.gates.get(text)?.release();
   }
+}
+
+function floatMonoWav(samples: number[], sampleRate: number): Buffer {
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + samples.length * 4, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(3, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 4, 28);
+  header.writeUInt16LE(4, 32);
+  header.writeUInt16LE(32, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(samples.length * 4, 40);
+  const data = Buffer.alloc(samples.length * 4);
+  samples.forEach((sample, index) => data.writeFloatLE(sample, index * 4));
+  return Buffer.concat([header, data]);
 }
 
 function abortError(): Error {

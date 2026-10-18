@@ -45,11 +45,12 @@ import { JsonlMetricWriter } from "./server-metric-writer.js";
 import { WsMessageHandler } from "./ws-message-handler.js";
 import { VoiceCallController } from "./continuous-voice-call.js";
 import {
+  ReadAloudLiveVoiceTts,
   selectLiveVoiceMediaAdapter,
   VoiceCallMediaCoordinator,
-  YuwpLiveVoiceTts,
   type VoiceMediaAdapter,
 } from "./continuous-voice-media.js";
+import { isSpeechEnabled } from "./speech-synthesis.js";
 import { FileVoiceCallStore, voiceCallStorePath } from "./voice-call-store.js";
 import { VoiceApprovalBridge } from "./voice-approval-bridge.js";
 import {
@@ -147,7 +148,11 @@ import {
   resolveAsrProvider,
   type DictationConfig,
 } from "./dictation-types.js";
-import { createSttProvider, resolveSttBearerToken } from "./create-stt-provider.js";
+import {
+  createSttProvider,
+  resolveSttBearerToken,
+  type SttGetAuth,
+} from "./create-stt-provider.js";
 import { GrokVoiceMediaAdapter, grokVoiceFromTts } from "./grok-live-voice.js";
 import { StreamingSttProvider } from "./stt-provider.js";
 import { DEFAULT_XAI_STT_MODEL } from "./xai-stt-provider.js";
@@ -1434,23 +1439,21 @@ export class Server {
     const asr = this.storage.getConfig().asr;
     const endpoint = this.dictationConfig?.sttEndpoint ?? asr?.sttEndpoint;
     const model = this.dictationConfig?.sttModel ?? DEFAULT_DICTATION_CONFIG.sttModel;
-    const ttsEndpoint =
-      this.storage.getConfig().runtimeEnv?.TTS_BASE_URL?.trim() || process.env.TTS_BASE_URL?.trim();
+    const tts = this.storage.getConfig().tts;
+    const getAuth: SttGetAuth = async (providerId) => this.modelRuntime?.getAuth(providerId);
     return selectLiveVoiceMediaAdapter({
       liveVoiceBackend: asr?.liveVoiceBackend,
       sttEndpoint: endpoint,
       createStt: endpoint
         ? () => new StreamingSttProvider({ endpoint, model }, globalThis.fetch)
         : undefined,
-      tts: ttsEndpoint ? new YuwpLiveVoiceTts({ endpoint: ttsEndpoint }) : undefined,
+      // Local calls speak like read aloud: same engine, same voice.
+      tts: tts && isSpeechEnabled(tts) ? new ReadAloudLiveVoiceTts(tts, { getAuth }) : undefined,
       // Same xAI credential path as Grok dictation and read aloud: sign-in first, then API key.
       createGrokVoice: () =>
         new GrokVoiceMediaAdapter({
-          voice: grokVoiceFromTts(this.storage.getConfig().tts),
-          resolveApiKey: () =>
-            resolveSttBearerToken("xai", {
-              getAuth: async (providerId) => this.modelRuntime?.getAuth(providerId),
-            }),
+          voice: grokVoiceFromTts(tts),
+          resolveApiKey: () => resolveSttBearerToken("xai", { getAuth }),
         }),
     });
   }

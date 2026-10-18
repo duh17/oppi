@@ -9,6 +9,7 @@ import type {
 } from "./continuous-voice.js";
 import type { SttProvider, SttTranscriptUpdate } from "./stt-provider.js";
 import { createLogger } from "./logger.js";
+import { startSpeech, type SpeechDeps, type TtsConfig } from "./speech-synthesis.js";
 import { parseVoiceApprovalDecision } from "./voice-approval-bridge.js";
 
 const log = createLogger({ base: { component: "voice_media" } });
@@ -22,9 +23,15 @@ export interface VoiceMediaAdapter extends VoiceFrontend {
   setPlaybackSink?(sendAudio: (pcm: Buffer) => void): void;
 }
 
-/** Injectable TTS for Live Voice. Not the extension voice_speak / audio_presentation path. */
+/** The phone plays Live Voice audio as 16-bit mono PCM at this rate, whatever the backend. */
+export const LIVE_VOICE_PLAYBACK_SAMPLE_RATE = 24_000;
+
+/**
+ * Injectable TTS for Live Voice. Not the extension voice_speak / audio_presentation path.
+ * Yields 16-bit mono PCM at LIVE_VOICE_PLAYBACK_SAMPLE_RATE.
+ */
 export interface LiveVoiceTtsPort {
-  speak(text: string, signal?: AbortSignal): AsyncIterable<Buffer>;
+  speak(text: string, signal: AbortSignal): AsyncIterable<Buffer>;
 }
 
 /** Production selector: one adapter per attached call. */
@@ -55,27 +62,38 @@ export interface VoiceCallMediaAttachInput {
   frontend: VoiceCallFrontendConnection;
 }
 
+/**
+ * Local Live Voice: streaming ASR in, read-aloud TTS out, Pi does the work.
+ *
+ * A user turn ends at a pause, not at an ASR commit. Streaming ASR (Yuwp R2T2)
+ * locks in text every few hundred milliseconds, so a commit is a stable prefix,
+ * not the end of what the user is saying. The transcript is cumulative for the
+ * call; a turn is the words after the ones already handed to Pi.
+ */
 export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   private handler: VoiceFrontendEventHandler | undefined;
-  private lastCommitted = "";
-  private lastPartial = "";
+  /** The call's whole transcript as last heard. */
+  private transcript = "";
+  /** Words of `transcript` already handed to Pi. Words, not characters: ASR revises punctuation and case of earlier text. */
+  private delegatedWords = 0;
+  private lastTurnText = "";
   private commitInFlight: Promise<void> | undefined;
   private speaking = false;
   private outputSpeaking = false;
+  /** Bumped by barge-in and stop; queued speech from an older generation is dropped. */
   private speechGeneration = 0;
   private speechAbort: AbortController | undefined;
+  private speechQueue: Promise<void> = Promise.resolve();
   private playbackSink: ((pcm: Buffer) => void) | undefined;
-  private idleTimer: ReturnType<typeof setTimeout> | undefined;
-  private readonly idleCommitMs: number;
+  private turnEndTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly turnEndPauseMs: number;
   private readonly tts: LiveVoiceTtsPort | undefined;
 
   constructor(
     private readonly stt: SttProvider,
-    options: { idleCommitMs?: number; tts?: LiveVoiceTtsPort } = {},
+    options: { turnEndPauseMs?: number; tts?: LiveVoiceTtsPort } = {},
   ) {
-    // Yuwp often keeps text in activeText until a long pause or stop. Commit a
-    // stable partial so a mid-call pause can delegate without ending the call.
-    this.idleCommitMs = options.idleCommitMs ?? 1_800;
+    this.turnEndPauseMs = options.turnEndPauseMs ?? 1_800;
     this.tts = options.tts;
   }
 
@@ -85,9 +103,6 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
 
   async start(handler: VoiceFrontendEventHandler): Promise<void> {
     this.handler = handler;
-    this.lastCommitted = "";
-    this.commitInFlight = undefined;
-    this.speaking = false;
     this.stt.onToken((update) => {
       this.handleTranscript(update);
     });
@@ -99,125 +114,121 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
     this.stt.feedAudio(pcm);
   }
 
-  async publish(update: VoiceDelegationUpdate): Promise<void> {
+  /** Pi updates are spoken in order; a newer one waits for the one playing instead of cutting it off. */
+  publish(update: VoiceDelegationUpdate): Promise<void> {
     const text = update.text.trim();
-    if (!text) return;
-
-    const previousAbort = this.speechAbort;
-    const generation = ++this.speechGeneration;
-    const abort = new AbortController();
-    this.speechAbort = abort;
-    previousAbort?.abort();
-
-    const handler = this.handler;
-    if (this.outputSpeaking) {
-      this.outputSpeaking = false;
-      if (handler) await handler({ type: "assistant_speech_stopped" });
-      if (generation !== this.speechGeneration) return;
-    }
-
-    this.outputSpeaking = true;
-    if (handler) await handler({ type: "assistant_speech_started" });
-    if (generation !== this.speechGeneration) return;
-
-    try {
-      if (!this.tts) return;
-      for await (const chunk of this.tts.speak(text, abort.signal)) {
-        if (generation !== this.speechGeneration || abort.signal.aborted) return;
-        if (chunk.length === 0) continue;
-        this.playbackSink?.(chunk);
-      }
-    } catch {
-      if (abort.signal.aborted || generation !== this.speechGeneration) return;
-    } finally {
-      if (generation === this.speechGeneration) {
-        this.speechAbort = undefined;
-        if (this.outputSpeaking) {
-          this.outputSpeaking = false;
-          if (handler) await handler({ type: "assistant_speech_stopped" });
-        }
-      }
-    }
+    if (!text) return Promise.resolve();
+    const generation = this.speechGeneration;
+    const run = (): Promise<void> => this.speak(text, generation);
+    const work = this.speechQueue.then(run, run);
+    this.speechQueue = work.catch(() => undefined);
+    return work;
   }
 
   async stop(): Promise<void> {
-    this.speechGeneration += 1;
-    this.speechAbort?.abort();
-    this.speechAbort = undefined;
-    if (this.outputSpeaking) {
-      this.outputSpeaking = false;
-      const speakingHandler = this.handler;
-      if (speakingHandler) await speakingHandler({ type: "assistant_speech_stopped" });
-    }
-    // Yuwp often keeps the whole utterance in activeText until VAD silence or
-    // session DELETE. Commit that leftover so End still produces a delegation.
-    this.clearIdleCommit();
+    this.cancelAssistantSpeech();
+    // End can arrive mid-sentence; hand Pi whatever the user said since the last turn.
+    this.clearTurnEnd();
     const final = await this.stt.stop().catch(() => undefined);
-    await this.commitTranscript(final?.committedText || final?.text || this.lastPartial);
+    if (final?.text.trim()) this.transcript = final.text.trim();
+    await this.commitTurn();
     const handler = this.handler;
     this.handler = undefined;
     if (handler) await handler({ type: "disconnected" });
   }
 
+  private async speak(text: string, generation: number): Promise<void> {
+    if (generation !== this.speechGeneration) return;
+    const abort = new AbortController();
+    this.speechAbort = abort;
+    this.outputSpeaking = true;
+    const handler = this.handler;
+    if (handler) await handler({ type: "assistant_speech_started" });
+    try {
+      if (!this.tts || abort.signal.aborted) return;
+      for await (const chunk of this.tts.speak(text, abort.signal)) {
+        if (abort.signal.aborted) return;
+        if (chunk.length > 0) this.playbackSink?.(chunk);
+      }
+    } catch (error) {
+      if (!abort.signal.aborted) {
+        log.warn("voice_media.tts_failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    } finally {
+      // A barge-in already reported the stop and cleared speechAbort.
+      if (this.speechAbort === abort) {
+        this.speechAbort = undefined;
+        this.outputSpeaking = false;
+        if (handler) await handler({ type: "assistant_speech_stopped" });
+      }
+    }
+  }
+
   private handleTranscript(update: SttTranscriptUpdate): void {
     const handler = this.handler;
     if (!handler) return;
-
-    const partial = (update.activeText ?? update.text).trim();
-    if (partial) {
-      if (!this.speaking) {
-        this.speaking = true;
-        this.abortAssistantSpeech();
-        void handler({ type: "user_speech_started" });
-      }
-      this.lastPartial = partial;
-      void handler({ type: "user_transcript_partial", text: partial });
-      this.scheduleIdleCommit();
+    // A recreated ASR session (Yuwp restart, or a long mute outlasting its idle
+    // timeout) starts its transcript over; count handed-off words from zero.
+    if (update.transcriptRestarted) {
+      this.delegatedWords = 0;
+      this.lastTurnText = "";
     }
-
-    void this.commitTranscript(update.committedText ?? "");
+    this.transcript = update.text.trim();
+    const turn = this.pendingTurnText();
+    // Repeats of the same text are not new speech and must not push the turn end back.
+    if (!turn || turn === this.lastTurnText) return;
+    this.lastTurnText = turn;
+    if (!this.speaking) {
+      this.speaking = true;
+      this.cancelAssistantSpeech();
+      void handler({ type: "user_speech_started" });
+    }
+    void handler({ type: "user_transcript_partial", text: turn });
+    this.scheduleTurnEnd();
   }
 
-  private abortAssistantSpeech(): void {
-    // Same generation bump as a newer voice_update: abort TTS and emit stopped.
-    if (!this.outputSpeaking && !this.speechAbort) return;
+  private pendingTurnText(): string {
+    return words(this.transcript).slice(this.delegatedWords).join(" ");
+  }
+
+  /** Barge-in and End: stop the sentence playing and drop queued ones. */
+  private cancelAssistantSpeech(): void {
     this.speechGeneration += 1;
-    this.speechAbort?.abort();
+    const abort = this.speechAbort;
+    if (!abort) return;
     this.speechAbort = undefined;
-    if (!this.outputSpeaking) return;
+    abort.abort();
     this.outputSpeaking = false;
     const handler = this.handler;
     if (handler) void handler({ type: "assistant_speech_stopped" });
   }
 
-  private scheduleIdleCommit(): void {
-    this.clearIdleCommit();
-    if (this.idleCommitMs <= 0) return;
-    this.idleTimer = setTimeout(() => {
-      void this.commitTranscript(this.lastPartial);
-    }, this.idleCommitMs);
+  private scheduleTurnEnd(): void {
+    this.clearTurnEnd();
+    this.turnEndTimer = setTimeout(() => {
+      this.turnEndTimer = undefined;
+      void this.commitTurn();
+    }, this.turnEndPauseMs);
   }
 
-  private clearIdleCommit(): void {
-    if (this.idleTimer) {
-      clearTimeout(this.idleTimer);
-      this.idleTimer = undefined;
+  private clearTurnEnd(): void {
+    if (this.turnEndTimer) {
+      clearTimeout(this.turnEndTimer);
+      this.turnEndTimer = undefined;
     }
   }
 
-  private commitTranscript(raw: string): Promise<void> {
-    // Token, idle-pause, and leftover/stop can overlap. Queue so one claim
-    // of lastCommitted happens per distinct segment.
-    if (!raw.trim()) return Promise.resolve();
+  private commitTurn(): Promise<void> {
+    // A pause and End can overlap. Chain them so each word is handed to Pi once.
     const perform = async (): Promise<void> => {
       const handler = this.handler;
       if (!handler) return;
-      const next = raw.trim();
-      const previous = this.lastCommitted;
-      if (!next || next === previous) return;
-      const segment = next.startsWith(previous) ? next.slice(previous.length).trim() : next;
-      if (!segment) return;
-      this.lastCommitted = next;
+      const turn = this.pendingTurnText();
+      if (!turn) return;
+      this.delegatedWords = words(this.transcript).length;
+      this.lastTurnText = "";
       if (this.speaking) {
         this.speaking = false;
         void handler({ type: "user_speech_ended" });
@@ -225,7 +236,7 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
       await handler({
         type: "user_utterance_committed",
         utteranceId: randomUUID(),
-        text: segment,
+        text: turn,
       });
     };
 
@@ -239,70 +250,54 @@ export class YuwpVoiceMediaAdapter implements VoiceMediaAdapter {
   }
 }
 
-/** Yuwp HTTP TTS for Live Voice. Does not use the voice_speak extension. */
-export class YuwpLiveVoiceTts implements LiveVoiceTtsPort {
+function words(text: string): string[] {
+  return text.split(/\s+/).filter(Boolean);
+}
+
+/**
+ * Live Voice speaks with the read-aloud engine and voice (`tts` config), converted
+ * to the phone's playback format. Not the voice_speak extension.
+ */
+export class ReadAloudLiveVoiceTts implements LiveVoiceTtsPort {
   constructor(
-    private readonly options: {
-      endpoint: string;
-      voice?: string;
-      fetch?: typeof fetch;
-    },
+    private readonly tts: TtsConfig,
+    private readonly deps: SpeechDeps = {},
   ) {}
 
-  async *speak(text: string, signal?: AbortSignal): AsyncIterable<Buffer> {
-    const endpoint = this.options.endpoint.replace(/\/$/, "");
-    const response = await (this.options.fetch ?? fetch)(`${endpoint}/v1/audio/speech/stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
-      body: JSON.stringify({
-        model: "yuwp-tts",
-        voice: this.options.voice ?? "elena",
-        input: text,
-        response_format: "wav",
-        stream: true,
-      }),
-      signal,
-    });
-    if (!response.ok || !response.body) {
-      throw new Error(await response.text().catch(() => "Live Voice TTS is unavailable"));
+  async *speak(text: string, signal: AbortSignal): AsyncIterable<Buffer> {
+    const speech = await startSpeech(this.tts, text, signal, this.deps);
+    yield toLiveVoicePcm(speech.first, speech.sampleRate, speech.channels);
+    for await (const pcm of speech.rest) {
+      yield toLiveVoicePcm(pcm, speech.sampleRate, speech.channels);
     }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let pending = "";
-    while (true) {
-      if (signal?.aborted) {
-        await reader.cancel().catch(() => undefined);
-        return;
-      }
-      const { value, done } = await reader.read();
-      if (done) break;
-      pending += decoder.decode(value, { stream: true });
-      const lines = pending.split("\n");
-      pending = lines.pop() ?? "";
-      for (const line of lines) {
-        const chunk = pcmChunkFromYuwpLine(line);
-        if (chunk) yield chunk;
-      }
-    }
-    const tail = pcmChunkFromYuwpLine(pending);
-    if (tail) yield tail;
   }
 }
 
-function pcmChunkFromYuwpLine(line: string): Buffer | undefined {
-  const trimmed = line.trim();
-  if (!trimmed) return undefined;
-  let event: { event?: string; audio?: string; error?: string };
-  try {
-    event = JSON.parse(trimmed) as { event?: string; audio?: string; error?: string };
-  } catch {
-    return undefined;
+/** 16-bit PCM at any rate and 1–2 channels to mono at LIVE_VOICE_PLAYBACK_SAMPLE_RATE (linear interpolation). */
+export function toLiveVoicePcm(pcm: Buffer, sampleRate: number, channels: number): Buffer {
+  const frames = Math.floor(pcm.length / (2 * channels));
+  if (sampleRate === LIVE_VOICE_PLAYBACK_SAMPLE_RATE && channels === 1) {
+    return pcm.subarray(0, frames * 2);
   }
-  if (event.event === "error") {
-    throw new Error(event.error ?? "TTS stream error");
+  const sample = (frame: number): number => {
+    let sum = 0;
+    for (let channel = 0; channel < channels; channel++) {
+      sum += pcm.readInt16LE((frame * channels + channel) * 2);
+    }
+    return sum / channels;
+  };
+  const outFrames = Math.floor((frames * LIVE_VOICE_PLAYBACK_SAMPLE_RATE) / sampleRate);
+  const out = Buffer.alloc(outFrames * 2);
+  const step = sampleRate / LIVE_VOICE_PLAYBACK_SAMPLE_RATE;
+  for (let i = 0; i < outFrames; i++) {
+    const position = i * step;
+    const index = Math.floor(position);
+    const fraction = position - index;
+    const a = sample(index);
+    const b = index + 1 < frames ? sample(index + 1) : a;
+    out.writeInt16LE(Math.round(a + (b - a) * fraction), i * 2);
   }
-  if (event.event !== "audio" || !event.audio) return undefined;
-  return Buffer.from(event.audio, "base64");
+  return out;
 }
 
 export class VoiceCallMediaCoordinator {
