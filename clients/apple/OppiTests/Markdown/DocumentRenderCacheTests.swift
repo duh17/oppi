@@ -58,6 +58,52 @@ struct DocumentRenderCacheTests {
         #expect(wideAgain.image === wide.image, "the same width reuses its cached raster")
     }
 
+    /// The inline height cap changes which layout wins, so inline and full
+    /// screen at one width must not share a cached layout or raster.
+    @MainActor @Test func inlineAndFullScreenAtOneWidthKeepTheirOwnLayouts() throws {
+        // Inline keeps this left to right, since turning it would come out
+        // taller than the cap; full screen has no cap and turns it to fit.
+        let source = """
+        flowchart LR
+          subgraph TOP
+            direction TB
+            subgraph B1
+                direction RL
+                i1 -->f1
+            end
+            subgraph B2
+                direction BT
+                i2 -->f2
+            end
+          end
+          A --> TOP --> B
+          B1 --> B2
+        """
+        let theme = ThemeID.dark.palette.renderTheme
+        let inline = NativeMermaidBlockView.configuration(theme: theme, availableWidth: 360)
+        let fullScreen = DocumentRenderPipeline.mermaidConfiguration(theme: theme, availableWidth: 360)
+        func layoutSize(_ config: RenderConfiguration) -> CGSize {
+            DocumentRenderPipeline.layoutGraphical(
+                parser: MermaidParser(), renderer: MermaidRenderer(), text: source, config: config
+            ).size
+        }
+        func rasterSize(_ config: RenderConfiguration) throws -> CGSize {
+            try #require(DocumentRenderPipeline.renderInlineGraphicalImage(
+                parser: MermaidParser(), renderer: MermaidRenderer(), text: source, config: config
+            )).size
+        }
+
+        let inlineSize = layoutSize(inline)
+        let fullScreenSize = layoutSize(fullScreen)
+        #expect(inlineSize.width > 360, "inline keeps the wide layout and scales it")
+        #expect(fullScreenSize.width <= 360, "full screen turns the diagram to fit")
+        // Second lookups come from the cache and must stay apart.
+        #expect(layoutSize(inline) == inlineSize)
+        #expect(layoutSize(fullScreen) == fullScreenSize)
+        #expect(try rasterSize(inline) == inlineSize)
+        #expect(try rasterSize(fullScreen) == fullScreenSize)
+    }
+
     @Test func identicalLaTeXRendersReuseTheSameRaster() throws {
         DocumentRenderPipeline.debugRemoveAllCachedRendersForTesting()
         let first = try #require(DocumentRenderPipeline.renderLatexGraphicalImage(
