@@ -57,6 +57,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     private var copyNoticeTask: Task<Void, Never>?
     private var lastCopies = 0
     private var detached = false
+    /// The cursor shift was held for history or a touch on the last update.
+    private var cursorShiftHeld = false
     private var rawKeyboard = false
     private var herdr = HerdrMonitor()
     private var keymap = SSHTerminalKeymapLoader()
@@ -114,7 +116,6 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        navigationItem.largeTitleDisplayMode = .inline
         buildLayout()
         defaultsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
@@ -427,12 +428,6 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             overlay.leadingAnchor.constraint(equalTo: grid.leadingAnchor),
             overlay.trailingAnchor.constraint(equalTo: grid.trailingAnchor),
         ])
-        // Output moves the cursor; keep its row above a grown chat bar.
-        let paint = channel.engine.onPictureChange
-        channel.engine.onPictureChange = { [weak self] in
-            paint?()
-            self?.cursorMayHaveMoved()
-        }
     }
 
     private func makeGrid() -> SSHTerminalGridView {
@@ -446,6 +441,8 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
             }
         )
         grid.translatesAutoresizingMaskIntoConstraints = false
+        // Output moves the cursor; keep its row above a grown chat bar.
+        grid.didDrawFrame = { [weak self] in self?.cursorMayHaveMoved() }
         grid.rawKeyboardChanged = { [weak self] raw in
             guard let self else { return }
             self.rawKeyboard = raw
@@ -478,6 +475,7 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
         pasteNotice = nil
         copyNoticeText = nil
         detached = false
+        cursorShiftHeld = false
         rawKeyboard = false
         sawClosedForBackground = false
         reconnectOnReturn = false
@@ -1002,24 +1000,43 @@ final class SSHTerminalViewController: UIViewController, RouterHidesNavigationBa
     }
 
     private func cursorMayHaveMoved() {
-        guard composerCoveredHeight > 0 else { return }
+        // A synchronized-output hold still shows the last picture.
+        guard composerCoveredHeight > 0, !channel.engine.renderHeld else { return }
         updateCursorShift()
     }
 
     /// Moves the grid's picture up so the program's cursor row stays above
     /// a chat bar that grew over the grid. The grid's size does not change.
+    /// The picture holds still while you read history and while a finger is
+    /// on it or it coasts: moving the grid then would move the scroll
+    /// under the finger. It eases to the live position when that ends.
     private func updateCursorShift() {
         guard let gridView else { return }
-        let shift = SSHTerminalComposerOverlap.shift(
-            gridHeight: gridView.bounds.height,
-            covered: composerCoveredHeight,
-            cursorRow: detached ? nil : channel.engine.cursorCell.row,
-            cellHeight: gridView.cellSize.height
-        )
+        let cellHeight = gridView.cellSize.height
+        let held = detached || gridView.isHistoryScrolling
+        let settling = cursorShiftHeld && !held
+        cursorShiftHeld = held
+        let shift = held
+            ? SSHTerminalComposerOverlap.held(
+                -gridView.transform.ty, covered: composerCoveredHeight, cellHeight: cellHeight
+            )
+            : SSHTerminalComposerOverlap.shift(
+                gridHeight: gridView.bounds.height,
+                covered: composerCoveredHeight,
+                cursorRow: channel.engine.cursorCell.row,
+                cellHeight: cellHeight
+            )
         let scale = max(view.traitCollection.displayScale, 1)
         let snapped = (shift * scale).rounded(.up) / scale
         let transform = snapped > 0 ? CGAffineTransform(translationX: 0, y: -snapped) : .identity
-        if gridView.transform != transform { gridView.transform = transform }
+        guard gridView.transform != transform else { return }
+        if settling, !reduceMotion, gridView.window != nil {
+            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) {
+                gridView.transform = transform
+            }
+        } else {
+            gridView.transform = transform
+        }
     }
 
     // MARK: - Mode

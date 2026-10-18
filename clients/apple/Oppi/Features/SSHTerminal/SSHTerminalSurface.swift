@@ -67,6 +67,11 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     var rawKeyboardChanged: (Bool) -> Void = { _ in }
     var focusComposer: () -> Void = {}
     var useChatBar: () -> Void = {}
+    /// Runs on every display-link tick, after that tick's frame is encoded:
+    /// output, resize, and scroll are applied, and a move of the grid made
+    /// here commits in the same frame as the picture. Sub-row history moves
+    /// paint without `onPictureChange`; this still sees them.
+    var didDrawFrame: () -> Void = {}
     var paintedChangeCount = -1
     /// Rebuilt when Code Font, Code Text Size, or the Nerd Font symbols change;
     /// a new cell size resizes the remote terminal on the next layout.
@@ -222,6 +227,17 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
     override var inputAccessoryView: UIView? { bar }
     override var keyCommands: [UIKeyCommand]? { shortcutCommands }
 
+    /// A grid moved up past a clipping parent (the chat bar's cursor shift)
+    /// is outlined only where it shows.
+    override var accessibilityFrame: CGRect {
+        get {
+            guard let superview, superview.clipsToBounds else { return super.accessibilityFrame }
+            let shown = bounds.intersection(superview.convert(superview.bounds, to: self))
+            return UIAccessibility.convertToScreenCoordinates(shown.isNull ? .zero : shown, in: self)
+        }
+        set { super.accessibilityFrame = newValue }
+    }
+
     @objc private func performHardwareShortcut(_ command: UIKeyCommand) {
         guard let raw = command.propertyList as? Int,
               let shortcut = SSHTerminalHardwareShortcut(rawValue: raw) else { return }
@@ -306,7 +322,8 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         publishDisplayLinkDebug()
     }
 
-    private var isHistoryScrolling: Bool {
+    /// A finger is on local history, or it is still coasting.
+    var isHistoryScrolling: Bool {
         historyScroll.isTracking || historyScroll.isDragging || historyScroll.isDecelerating
     }
 
@@ -1440,30 +1457,36 @@ final class SSHTerminalGridView: UIView, UITextInput, UIScrollViewDelegate, UIGe
         }
     }
 
+    /// One display-link frame: pending scroll input goes out, the engine is
+    /// snapshotted and drawn if it changed, then `didDrawFrame` runs.
+    func drawFrame() {
+        flushPendingAppScroll()
+        flushTrackpadArrows()
+        // A hold has a one-second deadline even if no more bytes arrive.
+        let changes = channel.engine.changeCount
+        applyFrameRate(scrolling: isHistoryScrolling)
+        // Consume the gate after presentIfNeeded submits, finds nothing
+        // to draw, or hits a deterministic encode miss. Transient misses
+        // leave needsPaint set so the next tick retries without a new byte.
+        updateTouchMode()
+        syncHistoryScrollFromEngine()
+        if needsPaint || paintedChangeCount != changes || channel.engine.renderHeld {
+            if presentIfNeeded() {
+                needsPaint = false
+                paintedChangeCount = changes
+            }
+        }
+        didDrawFrame()
+    }
+
     @MainActor private final class DisplayTarget {
         weak var view: SSHTerminalGridView?
         init(_ view: SSHTerminalGridView) { self.view = view }
         @objc func tick() {
             guard let view else { return }
             view.displayLinkTickCount &+= 1
-            view.flushPendingAppScroll()
-            view.flushTrackpadArrows()
-            // A hold has a one-second deadline even if no more bytes arrive.
-            let changes = view.channel.engine.changeCount
             let generation = view.displayLinkGeneration
-            let scrolling = view.isHistoryScrolling
-            view.applyFrameRate(scrolling: scrolling)
-            // Consume the gate after presentIfNeeded submits, finds nothing
-            // to draw, or hits a deterministic encode miss. Transient misses
-            // leave needsPaint set so the next tick retries without a new byte.
-            view.updateTouchMode()
-            view.syncHistoryScrollFromEngine()
-            if view.needsPaint || view.paintedChangeCount != changes || view.channel.engine.renderHeld {
-                if view.presentIfNeeded() {
-                    view.needsPaint = false
-                    view.paintedChangeCount = changes
-                }
-            }
+            view.drawFrame()
             let still = SSHTerminalDisplayLinkPolicy.resolve(
                 hasWindow: view.window != nil,
                 sceneActive: view.sceneActive,

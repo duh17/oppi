@@ -977,14 +977,13 @@ struct SSHTerminalTests {
 
     @Test func cursorShiftKeepsTheCursorRowAboveAGrownChatBar() {
         // 40 rows of 20 pt; the bar covers the bottom 100 pt.
-        let shift = { (row: Int?) in
+        let shift = { (row: Int) in
             SSHTerminalComposerOverlap.shift(gridHeight: 800, covered: 100, cursorRow: row, cellHeight: 20)
         }
         #expect(shift(39) == 100, "cursor on the last row: the whole cover")
         #expect(shift(36) == 40, "just far enough: row 36 ends at 740, 40 below the bar's top")
         #expect(shift(34) == 0, "a cursor already above the bar moves nothing")
         #expect(shift(0) == 0)
-        #expect(shift(nil) == 0, "reading history moves nothing")
         #expect(
             shift(43) == 0,
             "a cursor past the last row belongs to the size before the keyboard; no jump while the terminal catches up"
@@ -1100,6 +1099,53 @@ struct SSHTerminalTests {
         try await settle()
         #expect(try keyStripShows(), "refocusing with a draft shows the key strip again")
         textView.resignFirstResponder()
+    }
+
+    @Test func outputWalkingTheCursorUnderAGrownChatBarKeepsItsRowAboveTheBar() async throws {
+        let terminal = try await GrownChatBarTerminal()
+        defer { terminal.close() }
+        let grid = terminal.grid
+        // A half-empty screen, like after `clear`: the cursor starts at the top.
+        try await terminal.output("\u{1b}[H\u{1b}[2J")
+        #expect(grid.transform == .identity, "a cursor well above the bar moves nothing")
+        let rows = Int(grid.bounds.height / grid.cellSize.height)
+        var walked = 0
+        while terminal.channel.engine.cursorCell.row < rows - 1 {
+            // Each chunk lands in one frame; no layout pass runs in between.
+            try await terminal.output(String(repeating: "line \(walked)\r\n", count: 3))
+            walked += 3
+            let row = terminal.channel.engine.cursorCell.row
+            #expect(
+                terminal.cursorBottom() <= terminal.barTop() + 0.5,
+                "cursor row \(row) of \(rows): its bottom \(terminal.cursorBottom()) is under the bar at \(terminal.barTop())"
+            )
+            if walked > rows + 6 { break }
+        }
+        #expect(grid.transform.ty < 0, "the walk reached the rows the bar covers")
+    }
+
+    @Test func readingHistoryWhileTheChatBarCoversTheCursorKeepsThePictureStill() async throws {
+        let terminal = try await GrownChatBarTerminal()
+        defer { terminal.close() }
+        let grid = terminal.grid
+        let engine = terminal.channel.engine
+        let shifted = terminal.gridTop()
+        #expect(grid.transform.ty < 0, "the cursor on the last row lifts the picture")
+
+        // A drag into history detaches from live; the grid must not jump by the shift.
+        engine.scroll(rows: -3)
+        try await terminal.nextFrame()
+        #expect(!engine.following)
+        #expect(terminal.gridTop() == shifted, "starting to read history")
+        // Output while you read history moves nothing either.
+        try await terminal.output("more\r\nmore\r\n")
+        #expect(terminal.gridTop() == shifted)
+
+        // Dragging back to the bottom follows live again from the same place.
+        engine.scrollToRow(Int(engine.scrollbar.total) - Int(engine.scrollbar.len))
+        try await terminal.nextFrame()
+        #expect(engine.following)
+        #expect(terminal.gridTop() == shifted, "back at live")
     }
 
     @Test func terminalBarsShareOneShotModifiersAndEncodeAllBaseKeys() async throws {
@@ -1590,6 +1636,28 @@ struct SSHTerminalTests {
         #expect(grid.bounds.size == gridBefore)
         #expect(nav.isNavigationBarHidden)
 
+        // Back's dot means a blocked program (or Herdr) wants you; a notification does not.
+        let back = try control("sshTerminal.back")
+        channel.event(.data(Data("\u{1b}]9;Build finished\u{7}".utf8)))
+        #expect(await waitForMainActorConditionToStayTrue(for: .milliseconds(200)) {
+            terminal.updatePropertiesIfNeeded()
+            return back.accessibilityValue == nil
+        }, "a notification is not attention")
+        channel.event(.data(Data("\u{1b}]7501;state=blocked:kind=permission:app=pi\u{1b}\\".utf8)))
+        #expect(await waitForMainActorCondition {
+            terminal.updatePropertiesIfNeeded()
+            return back.accessibilityValue == "Attention pending"
+        })
+
+        // A broken connection keeps Back and Reconnect in reach with the keyboard up.
+        keyboard(top: window.bounds.maxY - 336)
+        #expect(try touched("sshTerminal.back")?.isDescendant(of: grid) == true)
+        channel.event(.closed)
+        #expect(await waitForMainActorCondition {
+            terminal.updatePropertiesIfNeeded()
+            return (try? touched("sshTerminal.back")) === back
+        }, "Back stays with the keyboard up once the connection is gone")
+
         keyboard(top: window.bounds.maxY - 336)
         nav.popViewController(animated: false)
         // The keyboard goes down on the way out.
@@ -1762,6 +1830,77 @@ private final class MountedTerminalComposer {
             if let match = find(in: child, matching: predicate) { return match }
         }
         return nil
+    }
+}
+
+/// A terminal whose chat bar holds a six-line draft over a screen filled
+/// down to its last row, so the cursor sits under the grown bar.
+@MainActor
+private final class GrownChatBarTerminal {
+    let channel: SSHTerminalChannel
+    let mounted: MountedTerminalTestController
+    let grid: SSHTerminalGridView
+    let bar: UIView
+
+    init() async throws {
+        channel = try SSHTerminalChannel()
+        channel.opened(TerminalConnectionFixture())
+        mounted = try MountedTerminalTestController(
+            SSHTerminalViewController(channel: channel, reconnect: {}, editHost: {})
+        )
+        channel.event(.data(Data("\u{1b}]7501;state=idle:app=pi\u{1b}\\".utf8)))
+        try await Self.settle(mounted)
+        let textView = try #require(mounted.find { $0 is PastableUITextView } as? PastableUITextView)
+        grid = try #require(mounted.controller.gridView)
+        let controllerView = mounted.controller.view
+        bar = try #require(sequence(first: textView as UIView, next: \.superview).first { $0.superview === controllerView })
+        channel.event(.data(Data(String(repeating: "output\r\n", count: 120).utf8)))
+        channel.event(.data(Data("pi> ".utf8)))
+        textView.text = "one\ntwo\nthree\nfour\nfive\nsix"
+        textView.delegate?.textViewDidChange?(textView)
+        try await Self.settle(mounted)
+    }
+
+    func close() {
+        mounted.dismiss()
+        channel.close(reason: "done")
+    }
+
+    private static func settle(_ mounted: MountedTerminalTestController) async throws {
+        for _ in 0..<4 {
+            await Task.yield()
+            mounted.host.view.setNeedsLayout()
+            mounted.host.view.layoutIfNeeded()
+        }
+        try await Task.sleep(for: .milliseconds(250))
+        mounted.host.view.layoutIfNeeded()
+    }
+
+    /// Writes `text` as one output chunk and waits for the frame that draws it.
+    func output(_ text: String) async throws {
+        channel.event(.data(Data(text.utf8)))
+        try await nextFrame()
+    }
+
+    /// The display link's frame for what changed, without a layout pass. Run
+    /// directly: a loaded simulator can delay real ticks past any timeout.
+    func nextFrame() async throws {
+        await Task.yield()
+        grid.drawFrame()
+    }
+
+    /// Where the grid's picture starts on screen, shift included.
+    func gridTop() -> CGFloat {
+        grid.convert(CGPoint.zero, to: mounted.controller.view).y
+    }
+
+    func barTop() -> CGFloat {
+        bar.convert(CGPoint.zero, to: mounted.controller.view).y
+    }
+
+    func cursorBottom() -> CGFloat {
+        let row = channel.engine.cursorCell.row
+        return grid.convert(CGPoint(x: 0, y: CGFloat(row + 1) * grid.cellSize.height), to: mounted.controller.view).y
     }
 }
 

@@ -27,18 +27,25 @@ enum SSHTerminalFloatingControls {
 /// row the program's cursor is on, the grid's picture moves up by the fewest
 /// whole rows that keep that row above the bar, as a chat transcript moves
 /// up for a growing composer. Whole rows leave no half-cut row at the top
-/// edge; the rows above slide under it until the bar shrinks. Reading
-/// history (not following live) moves nothing, and neither does a cursor
-/// below the grid's last row: the keyboard just resized the grid and the
-/// terminal has not taken the new size yet.
+/// edge; the rows above slide under it until the bar shrinks. A cursor
+/// below the grid's last row moves nothing: the keyboard just resized the
+/// grid and the terminal has not taken the new size yet.
 enum SSHTerminalComposerOverlap {
-    static func shift(gridHeight: CGFloat, covered: CGFloat, cursorRow: Int?, cellHeight: CGFloat) -> CGFloat {
-        guard covered > 0, cellHeight > 0, let cursorRow,
+    static func shift(gridHeight: CGFloat, covered: CGFloat, cursorRow: Int, cellHeight: CGFloat) -> CGFloat {
+        guard covered > 0, cellHeight > 0,
               cursorRow < Int(gridHeight / cellHeight) else { return 0 }
         let cursorBottom = CGFloat(cursorRow + 1) * cellHeight
         let needed = cursorBottom - (gridHeight - covered)
         guard needed > 0 else { return 0 }
         return (needed / cellHeight).rounded(.up) * cellHeight
+    }
+
+    /// While you read history the picture keeps the shift it had, so
+    /// nothing moves; a bar that shrank still gives back the rows it no
+    /// longer covers.
+    static func held(_ current: CGFloat, covered: CGFloat, cellHeight: CGFloat) -> CGFloat {
+        guard covered > 0, cellHeight > 0 else { return 0 }
+        return min(current, (covered / cellHeight).rounded(.up) * cellHeight)
     }
 }
 
