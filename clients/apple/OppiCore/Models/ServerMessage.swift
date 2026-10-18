@@ -445,13 +445,9 @@ extension ServerMessage: Decodable {
         case stage, clientTurnId, duplicate
         // error
         case error, code, fatal
-        case id, sessionId, timeoutAt, nativeSurface, extensionScopeId, extensionDisplayName
-        // extension_ui_request
-        case method, title, options, message, placeholder, prefill, timeout
-        // ask extension (extension_ui_request with method: "ask")
-        case questions, allowCustom
-        // extension_ui_notification
-        case notifyType, statusKey, statusText, widgetKey, widgetLines, widgetPlacement, workingIndicator, workingVisible, hiddenThinkingLabel, toolsExpanded
+        // extension_ui_settled; extension UI requests and notifications decode through their own types
+        case id, sessionId
+        case message
         // command_result
         case command, requestId, success, data
         // message queue
@@ -710,26 +706,8 @@ extension ServerMessage: Decodable {
             self = .error(message: msg, code: code, fatal: fatal)
 
         case "extension_ui_request":
-            let askQuestions = try c.decodeIfPresent([AskQuestion].self, forKey: .questions)
-            let allowCustom = try c.decodeIfPresent(Bool.self, forKey: .allowCustom)
-            let req = ExtensionUIRequest(
-                id: try c.decode(String.self, forKey: .id),
-                sessionId: try c.decode(String.self, forKey: .sessionId),
-                method: try c.decode(String.self, forKey: .method),
-                title: try c.decodeIfPresent(String.self, forKey: .title),
-                options: try c.decodeIfPresent([String].self, forKey: .options),
-                message: try c.decodeIfPresent(String.self, forKey: .message),
-                placeholder: try c.decodeIfPresent(String.self, forKey: .placeholder),
-                prefill: try c.decodeIfPresent(String.self, forKey: .prefill),
-                timeout: try c.decodeIfPresent(Int.self, forKey: .timeout),
-                timeoutAt: try c.decodeIfPresent(Double.self, forKey: .timeoutAt).map { Date(timeIntervalSince1970: $0 / 1000) },
-                workspaceId: try c.decodeIfPresent(String.self, forKey: .workspaceId),
-                extensionScopeId: try c.decodeIfPresent(String.self, forKey: .extensionScopeId),
-                extensionDisplayName: try c.decodeIfPresent(String.self, forKey: .extensionDisplayName),
-                askQuestions: askQuestions,
-                allowCustom: allowCustom
-            )
-            self = .extensionUIRequest(req)
+            // Same wire shape as the app-event stream; one decoder for both.
+            self = .extensionUIRequest(try ExtensionUIRequest(from: decoder))
 
         case "extension_ui_settled":
             let id = try c.decode(String.self, forKey: .id)
@@ -737,44 +715,7 @@ extension ServerMessage: Decodable {
             self = .extensionUISettled(id: id, sessionId: sessionId)
 
         case "extension_ui_notification":
-            let method = try c.decode(String.self, forKey: .method)
-            let msg = try c.decodeIfPresent(String.self, forKey: .message)
-            let notifyType = try c.decodeIfPresent(String.self, forKey: .notifyType)
-            let statusKey = try c.decodeIfPresent(String.self, forKey: .statusKey)
-            let statusText = try c.decodeIfPresent(String.self, forKey: .statusText)
-            let title = try c.decodeIfPresent(String.self, forKey: .title)
-            let text = try c.decodeIfPresent(String.self, forKey: .text)
-            let widgetKey = try c.decodeIfPresent(String.self, forKey: .widgetKey)
-            let widgetLines = try c.decodeIfPresent([String].self, forKey: .widgetLines)
-            let widgetPlacement = try c.decodeIfPresent(String.self, forKey: .widgetPlacement)
-            let extensionScopeId = try c.decodeIfPresent(String.self, forKey: .extensionScopeId)
-            let extensionDisplayName = try c.decodeIfPresent(String.self, forKey: .extensionDisplayName)
-            let workingIndicator = try c.decodeIfPresent(ExtensionUIWorkingIndicator.self, forKey: .workingIndicator)
-            let workingVisible = try c.decodeIfPresent(Bool.self, forKey: .workingVisible)
-            let hiddenThinkingLabel = try c.decodeIfPresent(String.self, forKey: .hiddenThinkingLabel)
-            let toolsExpanded = try c.decodeIfPresent(Bool.self, forKey: .toolsExpanded)
-            let nativeSurface = try c.decodeIfPresent(ExtensionUINativeSurface.self, forKey: .nativeSurface)
-            self = .extensionUINotification(
-                ExtensionUINotification(
-                    method: method,
-                    message: msg,
-                    notifyType: notifyType,
-                    statusKey: statusKey,
-                    statusText: statusText,
-                    title: title,
-                    text: text,
-                    widgetKey: widgetKey,
-                    widgetLines: widgetLines,
-                    widgetPlacement: widgetPlacement,
-                    extensionScopeId: extensionScopeId,
-                    extensionDisplayName: extensionDisplayName,
-                    workingIndicator: workingIndicator,
-                    workingVisible: workingVisible,
-                    hiddenThinkingLabel: hiddenThinkingLabel,
-                    toolsExpanded: toolsExpanded,
-                    nativeSurface: nativeSurface
-                )
-            )
+            self = .extensionUINotification(try ExtensionUINotification(from: decoder))
 
         case "git_status":
             let workspaceId = try c.decode(String.self, forKey: .workspaceId)
